@@ -1,11 +1,11 @@
-# Aworkit — Annotated Product Concept
+# Aworkit — Product Concept
 
 **Expansion:** Agent Workflow Toolkit  
 **Document status:** Researched concept, version 0.1  
 **Research date:** 2026-08-19  
 **Source:** `aworkit_design_concept.md`
 
-This document preserves the ambition of the original brain dump while turning it into a product and architecture concept that can support production planning. Each `Axx` annotation records a material correction, extension, or decision. Citations point to primary documentation, repositories, specifications, or research papers listed under **Research sources**.
+This document preserves the ambition of the original brain dump while turning it into a product and architecture concept that can support production planning. Citations point to primary documentation, repositories, specifications, or research papers listed under **Research sources**.
 
 ## Executive concept
 
@@ -13,11 +13,11 @@ This document preserves the ambition of the original brain dump while turning it
 
 Its differentiator is the combination of a highly approachable desktop experience with unusually deep, transparent customization. Users can begin with excellent defaults and chat naturally, then progressively control workflows, routing, tools, agents, evaluation, and runtime behavior. A durable embedded runtime makes that experience reliable; it is an internal architectural foundation, not a separately offered backend product.
 
-### Annotation A01 — Define Aworkit as a desktop-native, model-location-neutral product
+### Define Aworkit as a desktop-native, model-location-neutral product
 
 Aworkit is one flexible and exceptionally user-friendly desktop application. Its execution is not local-first: local models, hosted APIs, and external agents are equal first-class capability sources that users may combine freely. A local model is optional, and sophisticated workflows will often delegate demanding work to frontier models or specialized agents. The application should provide excellent default configurations while progressively exposing workflow editing, model routing, evaluation, debugging, and extension capabilities to advanced users.
 
-### Annotation A02 — Define a focused first release without narrowing the product
+### Define a focused first release without narrowing the product
 
 Aworkit is a general-purpose agent-workflow desktop application, not a developer-only tool. Nevertheless, its first production release must be designed and evaluated against a bounded set of complete reference workflows. The initial workflow families should cover software development, research and synthesis, and local file or knowledge work. This keeps the architecture domain-neutral while providing concrete standards for usability, reliability, routing quality, and tool integration.
 
@@ -74,7 +74,7 @@ The same person may fill all four roles in a local installation.
 
 ## Reference assessment
 
-### Annotation A03 — Reuse the proven desktop shell selectively
+### Reuse the proven desktop shell selectively
 
 The default strategy is selective reuse rather than either a full ChatShell fork or a complete clean-room rewrite. The original link points to the `chatshell-agent` library; `chatshell-desktop` is the relevant donor for the application shell and standard desktop-agent UI. Aworkit should follow that familiar structure and reuse or adapt license-compatible components when they already implement the same behavior well. [R01](#r01) [R02](#r02)
 
@@ -114,7 +114,7 @@ Aworkit itself is distributed under Apache-2.0. Reused or substantially modified
 
 ## System architecture
 
-### Annotation A04 — Combine a scoped plugin graph with a small trusted application core
+### Combine a scoped plugin graph with a small trusted application core
 
 Aworkit follows the plugin and scoped-service philosophy for functional behavior. Models, providers, agent profiles, agent loops, routers, tools, workflow nodes, context providers, evaluators, external-agent adapters, and suitable UI extensions can be registered, composed, scoped, and replaced through versioned contracts. Each workflow resolves the service graph it requires.
 
@@ -122,7 +122,7 @@ A small embedded Rust application core is deliberately not replaceable by ordina
 
 “Everything is visible and configurable” therefore applies to functional agent behavior, not to replacing the application’s canonical state, approval UI, updater, or core lifecycle. Third-party extensions are explicitly trusted installed software; Aworkit does not claim to contain arbitrary code that the user chose to run with their account. [R05](#r05) [R27](#r27)
 
-### Annotation A05 — Use an internal multi-process architecture with risk-adaptive isolation
+### Use an internal multi-process architecture with risk-adaptive isolation
 
 Aworkit remains a single desktop product, but its presentation, trusted control functions, and agent execution occupy separate internal trust zones. The Tauri WebView is treated as an untrusted presentation client with a narrow command API. Tauri capabilities restrict WebView-to-Rust command access, but they are not an agent-execution sandbox. [R11](#r11) [R12](#r12) A small Rust application core owns durable state, policy, approvals, secrets, and worker lifecycle.
 
@@ -177,7 +177,7 @@ flowchart TB
 
 ## Canonical product and execution model
 
-### Annotation A06 — Separate JSON definitions from scoped, portable session history
+### Separate JSON definitions from scoped, portable session history
 
 Long-lived state uses Aworkit-owned, versioned schemas. Neither Rig run snapshots nor an external agent’s transcript becomes a persistence contract: upstream formats can change, depend on one machine, and contain sensitive provider payloads. Rig’s steppable `AgentRun` remains a version-pinned worker implementation or transient recovery aid behind Aworkit contracts. [R13](#r13)
 
@@ -245,7 +245,7 @@ All objects receive stable IDs. A Chat ID is also its logical Run and session id
 
 ## Workflow language and runtime
 
-### Annotation A07 — Use one visual JSON harness graph with resolvable node and model references
+### Use one visual JSON harness graph with resolvable node and model references
 
 An Aworkit workflow is a long-lived agent harness represented by one schema-versioned JSON file and edited directly by the visual canvas. The same document contains nodes, harness transitions, node configuration, positions, groups, comments, and other shared canvas layout. There is no second editable graph and no database copy of the workflow body. ComfyUI’s current workflow format provides a useful precedent for one JSON Schema-defined visual graph document and approachable missing-node handling, but not for Aworkit’s execution semantics: Aworkit composes context-carrying agent harnesses rather than acyclic inference dataflow. [R08](#r08) [R14](#r14)
 
@@ -332,7 +332,7 @@ An illustrative fragment:
 
 This fragment illustrates the direct document model rather than fixing the final schema. The actual schema and built-in node set should be derived from representative simple workflows and advanced harness loops, then protected by migration and conformance tests as the graph language evolves.
 
-### Annotation A08 — Freeze the graph per Chat/Run while allowing dynamic agent behavior
+### Freeze the graph per Chat/Run while allowing dynamic agent behavior
 
 A newly created Chat remains a draft while the user selects its workflow and prepares the first input. The first submitted input resolves the workflow, models, tools, plugins, configuration, authority, project state, and other references into one immutable Chat/Run snapshot. Resolution must succeed before execution begins. The selected workflow and resolved harness then remain fixed for the entire Chat/Run.
 
@@ -363,7 +363,7 @@ The runtime must support:
 
 ## Agent and model layer
 
-### Annotation A09 — Use Rig behind a narrow Aworkit-owned engine boundary
+### Use Rig behind a narrow Aworkit-owned engine boundary
 
 Rig is a strong Rust foundation for provider-neutral completion, streaming, tools, MCP integration, and agent execution. Aworkit should use those facilities without making Rig its product architecture or persistence model. [R07](#r07)
 
@@ -397,7 +397,7 @@ The runtime—not an opaque prompt template—compiles each model request from v
 
 Persistent memory is an explicit JSON definition or managed artifact, not hidden context. Each entry carries its author, provenance, scope (`chat`, `project`, or local user), creation and validation times, confidence/status, access policy, expiry/invalidation rules, and links to supporting evidence. Memory creation and mutation are recorded as policy decisions in the applicable session history; every retrieval used in a request is visible. Deletion and redaction follow the selected local or portable retention policy, and stale or contradicted memory never silently enters future context.
 
-### Annotation A10 — Provide four portable default model tiers backed by user configuration
+### Provide four portable default model tiers backed by user configuration
 
 Aworkit reserves four stable model-tier IDs that exist in every installation:
 
@@ -426,7 +426,7 @@ The internal model catalog should record at least:
 
 ## Routing architecture
 
-### Annotation A11 — Start with deterministic model routing and controlled escalation
+### Start with deterministic model routing and controlled escalation
 
 Aworkit’s first production router must be understandable from the workflow and the user’s model configuration. A model-based node requests a named tier and declares its requirements; the resolver selects a concrete configured model and returns an inspectable resolution plan. The tier expresses the user’s intent, not a universal model ranking. Research demonstrates useful strong/weak routing and model cascades, but it does not yet establish that a learned router will reliably improve heterogeneous, multi-step desktop-agent workloads. Recent benchmarks also show that sophisticated routers do not consistently beat a strong simple baseline. Aworkit should therefore ship a deterministic router first while preserving a clean extension point for later adaptive routing. [R16](#r16) [R17](#r17) [R46](#r46)
 
@@ -460,7 +460,7 @@ Later, a replaceable scorer may rerank only the candidates that passed the immut
 
 ## External agents and protocol boundaries
 
-### Annotation A12 — Integrate external agents through a small Aworkit adapter contract
+### Integrate external agents through a small Aworkit adapter contract
 
 A model reasons inside an Aworkit-controlled step, an MCP server supplies bounded tools or resources, and an external agent is a separately running executor with its own session, tools, permissions, progress, and failure behavior. Codex and similar autonomous harnesses therefore cannot be treated as ordinary model targets or as tools that merely accept a prompt. Delegation is always an explicit **External Agent** node and can never occur as an implicit model fallback.
 
@@ -489,7 +489,7 @@ Aworkit owns correlation, budgets, capability grants, approval binding, secret b
 
 ## Tools and plugins
 
-### Annotation A13 — Use an explicit trusted-extension model
+### Use an explicit trusted-extension model
 
 Aworkit is a single-user desktop agent whose useful extensions often need broad access to files, processes, networks, GPUs, native libraries, language runtimes, and external applications. Mandatory per-plugin sandboxing would work against that purpose and exclude much of the existing tool ecosystem. Installing and enabling an extension is therefore an explicit decision to run trusted code with the desktop user’s permissions. This follows the practical model used by Hermes plugins, local MCP servers, and ComfyUI custom nodes: their normal extension paths execute trusted installed code, while stronger whole-environment isolation is a separate operator choice. [R04](#r04) [R24](#r24) [R56](#r56) [R57](#r57)
 
@@ -522,7 +522,7 @@ The first release needs only validation, manual installation guidance, enable/di
 
 ## Security and governance
 
-### Annotation A14 — Make the frozen workflow the explicit authority contract
+### Make the frozen workflow the explicit authority contract
 
 For every Aworkit-mediated action, authority comes from the workflow selected by the user. A model may use only the tool and agent nodes present in the frozen graph, with the exact configurations resolved when the first input starts the Chat/Run. Conditions, loops, routing, subagents, and retries may choose among those capabilities, but cannot add a tool, replace a restricted tool with an unrestricted variant, expand a root or destination, bind another credential, or raise a budget. This is a clearer and more flexible contract than a separate global permission-profile system.
 
@@ -558,7 +558,7 @@ Signed Aworkit application updates, atomic activation, rollback, process cleanup
 
 ## Runtime transparency and observability
 
-### Annotation A15 — Make Aworkit-controlled provenance complete and provider reasoning faithfully labelled
+### Make Aworkit-controlled provenance complete and provider reasoning faithfully labelled
 
 Aworkit guarantees inspectability for everything it creates, selects, sends, receives, transforms, stores, or deliberately omits. It cannot guarantee access to a provider’s hidden system prompts, private reasoning, opaque compaction, or internal execution. Likewise, it cannot observe direct operating-system actions performed outside its brokers by a fully trusted plugin or external process. Those limits must be displayed as visibility boundaries rather than filled with reconstructed or invented data.
 
@@ -593,7 +593,7 @@ Rehydration means folding semantic events to rebuild Chat/Run and inspector view
 
 ## Management chat and repair system
 
-### Annotation A16 — Make the management chat a bounded, reversible maintainer
+### Make the management chat a bounded, reversible maintainer
 
 The management chat is one long-lived Chat/Run of Aworkit’s management workflow and the primary control surface for creating and changing workflows, investigating other chats, managing recurring problems, and—when the user requests it—changing Aworkit itself. It defaults to `tier:quality`, while its frozen workflow may use other model tiers or delegate coding work to configured external agents. Its authority comes from the visible tools and settings in that workflow, exactly as defined in A14.
 
@@ -622,7 +622,7 @@ Official distributed releases still use the signed application updater. Local re
 
 ## Desktop experience
 
-### Annotation A17 — Keep the familiar chat shell and reveal expert detail progressively
+### Keep the familiar chat shell and reveal expert detail progressively
 
 Aworkit opens and behaves like a polished desktop chat application rather than a collection of administration dashboards. It follows the familiar ChatShell-style shell and selectively reuses suitable license-compatible components for the sidebar, conversation, composer, settings, providers, models, MCP, attachments, streaming, search, and theme support. Aworkit adds its workflow, model-tier, inspector, repair, and external-agent concepts without replacing that approachable structure. [R01](#r01)
 
@@ -656,7 +656,7 @@ There is no separate Basic mode and Advanced mode. The same underlying state is 
 
 Accessibility is a release requirement: keyboard-complete operation, visible focus, semantic labels, sufficient contrast, scalable typography without clipped layouts, status not conveyed by color alone, reduced motion, screen-reader announcements for streaming and approvals, and WCAG 2.2 AA testing. [R36](#r36)
 
-### Annotation A18 — Make every chat one frozen workflow instance
+### Make every chat one frozen workflow instance
 
 In Aworkit, a Chat, logical Run, and canonical session are the same lifecycle object. A Chat is not a container that starts a new Run for every message. It is one persistent instance of the selected agent-harness workflow, with one history, one frozen resolved snapshot, and potentially many user-input cycles, workflow steps, waits, interruptions, and application restarts.
 
@@ -666,7 +666,7 @@ The workflow determines whether the Chat/Run waits for more input or reaches `co
 
 Rehydrating after application restart continues the same non-terminal Chat/Run from recorded logical state without replaying completed effects. External-agent-native sessions may remain associated with nodes inside that Chat/Run, but their identifiers and continuation rules remain adapter-owned rather than becoming another Aworkit session hierarchy.
 
-### Annotation A19 — Model workflows as context-carrying graphical agent harnesses
+### Model workflows as context-carrying graphical agent harnesses
 
 An Aworkit workflow is a graphical harness program, not an input-to-output inference pipeline. A Chat/Run owns an active, structured Harness Context containing its conversation inputs, goals and current task state, instruction and prompt layers, selected evidence and memory, artifact references, working values and tool results, routing decisions, loop state, lineage, and remaining budgets. Context is therefore an inspectable envelope of structured values and references, not one ever-growing prompt string. Before a model call, the context compiler selects and serializes the permitted layers into the exact provider request and records that request manifest.
 
@@ -687,7 +687,7 @@ Delegation creates a third kind of context movement: **spawn and integrate**. A 
 
 The child context remains active until the subagent completes, fails, is cancelled, or exhausts a limit. Its declared result contract then returns a structured result or failure to an explicit integration step, which evaluates, summarizes, transforms, or maps that result into a new parent-context revision. The child conversation and working state are never merged wholesale into the parent. They leave the active context when their scoped lifetime ends, while permitted provenance remains available in the session history and inspector. This context-centric turn and delegation model is consistent with DeepSeek Harness's separation of queued input, prompt assembly, model/tool activity, scoped services, and durable model-visible history, while Aworkit owns the graphical harness semantics. [R05](#r05) [R06](#r06)
 
-### Annotation A20 — Bind every project Chat/Run directly to one resolved workspace
+### Bind every project Chat/Run directly to one resolved workspace
 
 A project Chat/Run operates directly on one resolved project workspace identity, which may contain several authorized roots. File changes made by its tools, subagents, and external agents affect that workspace immediately. There is no second candidate-write model, automatic copy, hidden staging area, or mandatory apply/merge phase. Cancelling, retrying, or deleting a Chat/Run does not silently undo file side effects; reversal requires an explicit tool action, checkpoint restoration, or ordinary version-control operation.
 
