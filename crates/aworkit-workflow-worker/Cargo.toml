@@ -7,6 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 aworkit-process = { path = "../aworkit-process" }
+aworkit-protocol = { path = "../aworkit-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
 
 [lints]
 workspace = true

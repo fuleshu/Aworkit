@@ -64,6 +64,10 @@ name = "aworkit-workflow-worker"
 version = "0.1.0"
 dependencies = [
  "aworkit-process",
+ "aworkit-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
