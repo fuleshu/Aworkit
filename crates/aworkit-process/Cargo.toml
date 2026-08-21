@@ -1,0 +1,12 @@
+[package]
+name = "aworkit-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aworkit-protocol = { path = "../aworkit-protocol" }
+
+[lints]
+workspace = true

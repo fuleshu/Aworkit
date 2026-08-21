@@ -1,0 +1,12 @@
+[package]
+name = "aworkit-portable-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aworkit-process = { path = "../aworkit-process" }
+
+[lints]
+workspace = true

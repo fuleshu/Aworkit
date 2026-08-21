@@ -1,0 +1,1 @@
+{"schemaVersion":1,"messageId":"msg_01","generation":7,"kind":"command","payload":{"name":"smoke.handshake","targetId":"trusted-core"}}

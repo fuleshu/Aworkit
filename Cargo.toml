@@ -1,0 +1,29 @@
+[workspace]
+members = [
+  "crates/aworkit-protocol",
+  "crates/aworkit-process",
+  "crates/aworkit-trusted-core",
+  "crates/aworkit-workflow-worker",
+  "crates/aworkit-capability-host",
+  "crates/aworkit-local-store",
+  "crates/aworkit-portable-store",
+  "crates/aworkit-bootstrap-helper",
+]
+resolver = "3"
+exclude = ["desktop/src-tauri"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+rust-version = "1.97"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.dev]
+debug = 1
