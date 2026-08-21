@@ -38,6 +38,11 @@ name = "aworkit-portable-store"
 version = "0.1.0"
 dependencies = [
  "aworkit-process",
+ "fs2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -61,6 +66,7 @@ name = "aworkit-trusted-core"
 version = "0.1.0"
 dependencies = [
  "aworkit-local-store",
+ "aworkit-portable-store",
  "aworkit-process",
  "aworkit-protocol",
  "serde",

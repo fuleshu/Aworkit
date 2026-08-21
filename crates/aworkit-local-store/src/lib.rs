@@ -7,6 +7,7 @@
 mod artifacts;
 mod document;
 mod filesystem;
+mod portable_journal;
 mod ledger;
 mod manifest;
 mod projections;
@@ -20,5 +21,6 @@ pub use ledger::{
     LocalHistoryStore, OutboxEntry, PendingOutbox, StoreError,
 };
 pub use projections::{ProjectionStore, TimelineEntry};
+pub use portable_journal::{PortableJournalError, PortableJournalPhase, PortableJournalRecord, PortableRuntimeJournal};
 pub use repository::{DocumentConflict, DocumentRepository, RepositoryError, RepositoryRoot};
 pub use storage::{IntegrityReport, StorageCoordinator, StorageMode};

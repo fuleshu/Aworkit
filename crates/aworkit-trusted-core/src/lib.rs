@@ -10,6 +10,7 @@ mod committer;
 mod broker;
 mod lifecycle;
 mod project;
+mod portable;
 mod recovery;
 mod secrets;
 mod supervisor;
@@ -20,6 +21,7 @@ pub use committer::{CanonicalCommitter, CommitRequest, CoreCommitError, HistoryB
 pub use broker::{InvocationBroker, InvocationDecision, WorkerProposal};
 pub use lifecycle::{ChatAggregate, ChatCommand, ChatEvent, ChatState, LifecycleError, WaitReason};
 pub use project::{ProjectCoordinator, ProjectError, WorkspaceBinding, WorkspaceIdentity};
+pub use portable::{PortableCommitGate, PortableGateError, PortableRecoveryFacts};
 pub use recovery::{LocalRecovery, RecoveryError, RecoveryReport};
 pub use secrets::{CredentialRef, SecretBroker, SecretError, SecretLease};
 pub use supervisor::{WorkerControl, WorkerHandshake, WorkerSupervisor, WorkerSupervisorError};

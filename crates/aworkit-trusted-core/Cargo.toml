@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 aworkit-process = { path = "../aworkit-process" }
 aworkit-local-store = { path = "../aworkit-local-store" }
+aworkit-portable-store = { path = "../aworkit-portable-store" }
 aworkit-protocol = { path = "../aworkit-protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
