@@ -1,0 +1,8 @@
+use std::{collections::BTreeMap, time::{Duration, Instant}};
+use aworkit_protocol::{ProcessGeneration, StableId};
+use thiserror::Error;
+#[derive(Clone, Debug, Eq, PartialEq)] pub struct CredentialRef(pub StableId);
+#[derive(Clone, Debug, Eq, PartialEq)] pub struct SecretLease { pub lease_id: StableId, pub credential: CredentialRef, pub audience_generation: ProcessGeneration, expires_at: Instant, used: bool }
+#[derive(Default)] pub struct SecretBroker { leases: BTreeMap<String, SecretLease> }
+impl SecretBroker { pub fn issue(&mut self, lease_id: StableId, credential: CredentialRef, audience_generation: ProcessGeneration, ttl: Duration) -> Result<SecretLease, SecretError> { if ttl.is_zero() { return Err(SecretError::Expired); } let lease = SecretLease { lease_id: lease_id.clone(), credential, audience_generation, expires_at: Instant::now() + ttl, used: false }; self.leases.insert(lease_id.as_str().to_owned(), lease.clone()); Ok(lease) } pub fn redeem(&mut self, lease_id: &StableId, generation: ProcessGeneration) -> Result<CredentialRef, SecretError> { let lease = self.leases.get_mut(lease_id.as_str()).ok_or(SecretError::Unknown)?; if lease.used { return Err(SecretError::Used); } if lease.audience_generation != generation { return Err(SecretError::Audience); } if Instant::now() >= lease.expires_at { return Err(SecretError::Expired); } lease.used = true; Ok(lease.credential.clone()) } pub fn revoke(&mut self, lease_id: &StableId) { self.leases.remove(lease_id.as_str()); } }
+#[derive(Debug, Error, Eq, PartialEq)] pub enum SecretError { #[error("unknown lease")] Unknown, #[error("lease already redeemed")] Used, #[error("lease audience mismatch")] Audience, #[error("lease expired")] Expired }

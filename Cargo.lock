@@ -14,6 +14,10 @@ name = "aworkit-capability-host"
 version = "0.1.0"
 dependencies = [
  "aworkit-process",
+ "aworkit-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -56,7 +60,13 @@ dependencies = [
 name = "aworkit-trusted-core"
 version = "0.1.0"
 dependencies = [
+ "aworkit-local-store",
  "aworkit-process",
+ "aworkit-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]

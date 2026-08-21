@@ -280,6 +280,30 @@ impl LocalHistoryStore {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Returns committed semantic events in durable sequence order for reducers.
+    ///
+    /// This read surface never exposes an append operation, so recovery can fold
+    /// state without becoming an alternate history writer.
+    pub fn events(&self, chat_id: &str, branch_id: &str) -> Result<Vec<Event>, StoreError> {
+        validate_id(chat_id)?;
+        validate_id(branch_id)?;
+        let connection = self.lock_connection()?;
+        let mut statement = connection.prepare(
+            "SELECT event_id, kind, payload FROM semantic_events
+             WHERE chat_id = ?1 AND branch_id = ?2 ORDER BY sequence",
+        )?;
+        statement
+            .query_map(params![chat_id, branch_id], |row| {
+                let payload: String = row.get(2)?;
+                let payload = serde_json::from_str(&payload).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error))
+                })?;
+                Ok(Event { event_id: row.get(0)?, kind: row.get(1)?, payload })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
     /// Provides committed records for one projection rebuild.
     pub(crate) fn committed_timeline(
         &self,
