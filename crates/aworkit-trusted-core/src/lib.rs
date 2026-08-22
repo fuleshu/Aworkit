@@ -13,6 +13,7 @@ mod lifecycle;
 mod portable;
 mod project;
 mod recovery;
+pub mod repair;
 mod secrets;
 mod supervisor;
 
@@ -54,6 +55,7 @@ pub use recovery::{
     LocalRecovery, RecoveryDecisionV1, RecoveryError, RecoveryEventV1, RecoveryFactsV1,
     RecoveryHistoryPort, RecoveryPortErrorV1, RecoveryReport,
 };
+pub use repair::*;
 pub use secrets::{
     CredentialMetadataV1, CredentialRef, CredentialSecretV1, MemoryCredentialStore,
     PlatformCredentialStorePort, RedeemLeaseRequestV1, ScopedLeaseRequestV1, SecretBroker,

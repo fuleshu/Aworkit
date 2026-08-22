@@ -1,0 +1,159 @@
+/* Explicit, version-bound activation decision and restart recovery. */
+.repair-activation-gate {
+  background: var(--aw-panel);
+  border-top: 1px solid var(--aw-divider);
+  box-shadow: 0 -7px 24px rgb(0 0 0 / 5%);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 0.9fr);
+  min-height: 118px;
+  padding: 10px 12px 9px;
+  position: relative;
+  z-index: 4;
+}
+
+.repair-activation-gate::before {
+  background: var(--aw-danger);
+  bottom: 0;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 3px;
+}
+
+.repair-activation-gate.unavailable::before {
+  background: var(--aw-warning);
+}
+
+.activation-summary > ul {
+  display: grid;
+  gap: 1px;
+  list-style: none;
+  margin: 5px 0 0;
+  padding: 0;
+}
+
+.activation-summary > ul li {
+  color: var(--aw-secondary);
+}
+
+.capability-report-details {
+  margin-top: 4px;
+}
+
+.capability-report-details summary {
+  color: var(--aw-muted);
+  cursor: pointer;
+  font-size: 10px;
+  width: fit-content;
+}
+
+.capability-report-details dl {
+  background: var(--aw-inset);
+  display: grid;
+  gap: 3px;
+  margin: 4px 0 0;
+  padding: 5px 7px;
+}
+
+.capability-report-details dl div {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.capability-report-details dt {
+  color: var(--aw-muted);
+}
+
+.capability-report-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.activation-decision {
+  align-content: center;
+  display: grid;
+  gap: 5px;
+}
+
+.activation-decision fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.activation-decision legend {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.activation-acknowledgement {
+  align-items: start;
+  display: flex;
+  gap: 7px;
+}
+
+.activation-acknowledgement input {
+  margin-top: 3px;
+  min-height: auto;
+}
+
+.activation-acknowledgement span {
+  display: grid;
+}
+
+.activation-acknowledgement small,
+.activation-decision > small {
+  color: var(--aw-muted);
+}
+
+.activation-gate-status,
+.activation-unavailable-reason {
+  color: var(--aw-warning);
+  font-size: 11px;
+}
+
+.activation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.activate-restart-action {
+  background: var(--aw-danger);
+  border-color: var(--aw-danger);
+  color: var(--aw-on-accent);
+  font-weight: 600;
+}
+
+.activate-restart-action:hover:not(:disabled) {
+  background: var(--aw-danger);
+  filter: brightness(0.94);
+}
+
+.restart-recovery {
+  align-items: center;
+  background: var(--aw-info-surface);
+  border-bottom: 1px solid var(--aw-info);
+  color: var(--aw-info);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 5px 12px;
+}
+
+.restart-recovery small {
+  margin-left: auto;
+}
+
+.restart-recovery.rolled_back,
+.restart-recovery.unsupported,
+.restart-recovery.manual_recovery_required {
+  background: var(--aw-warning-surface);
+  border-color: var(--aw-warning);
+  color: var(--aw-warning);
+}

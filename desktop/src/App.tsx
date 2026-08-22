@@ -5,6 +5,7 @@ import {
   type NativePresentationRequest,
 } from "./adapters/contracts";
 import { ChatWorkspaceScreen } from "./chat/ChatWorkspaceScreen";
+import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
@@ -21,6 +22,8 @@ const WorkflowEditorScreen = lazy(() =>
 
 interface AppProps {
   readonly adapters: DesktopAdapters;
+  /** Explicit test/story seam; production resolves the native core adapter. */
+  readonly managementRepairCorePort?: ManagementRepairCorePort;
 }
 const starterWorkflow = {
   schemaVersion: 1,
@@ -96,7 +99,7 @@ const starterWorkflow = {
 } as const;
 
 /** Persistent compact desktop workbench. Feature views own no canonical state. */
-export function App({ adapters }: AppProps): React.JSX.Element {
+export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX.Element {
   const [route, setRoute] = useState<Route>("chat");
   const [mountedRoutes, setMountedRoutes] = useState<ReadonlySet<Route>>(
     new Set(["chat"]),
@@ -201,7 +204,12 @@ export function App({ adapters }: AppProps): React.JSX.Element {
           )}
           {mountedRoutes.has("management") && (
             <div className="route-surface" hidden={route !== "management"}>
-              <ManagementScreen />
+              <ManagementScreen
+                confirmDecision={(title, body) =>
+                  adapters.nativePresentation.confirm(title, body)
+                }
+                corePort={managementRepairCorePort}
+              />
             </div>
           )}
         </Suspense>

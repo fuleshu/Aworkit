@@ -1,0 +1,328 @@
+/* Candidate evidence, disclosure, and virtualized diff presentation. */
+.repair-candidate-review {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.repair-candidate-header {
+  align-items: center;
+  background: var(--aw-panel);
+  border-bottom: 1px solid var(--aw-divider);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 7px 12px;
+}
+
+.candidate-header-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.repair-candidate-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+  scrollbar-gutter: stable;
+}
+
+.candidate-evidence-sections {
+  display: grid;
+  gap: 10px;
+  margin: 0 auto;
+  max-width: 1040px;
+}
+
+.repair-card {
+  background: var(--aw-panel);
+  border: 1px solid var(--aw-divider);
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.repair-card > header {
+  align-items: center;
+  border-bottom: 1px solid var(--aw-divider);
+  display: flex;
+  justify-content: space-between;
+  margin: -2px 0 8px;
+  padding-bottom: 7px;
+}
+
+.repair-card > header > span:not(.status) {
+  color: var(--aw-secondary);
+  font-size: 10px;
+}
+
+.repair-card > p {
+  color: var(--aw-secondary);
+}
+
+.repair-evidence-degraded,
+.repair-evidence-state {
+  background: var(--aw-warning-surface);
+  border: 1px solid var(--aw-warning);
+  color: var(--aw-warning);
+  padding: 7px 8px;
+}
+
+.repair-evidence-state {
+  margin: 8px 10px;
+}
+
+.repair-evidence-state.none_declared,
+.repair-evidence-state.not_performed {
+  background: var(--aw-inset);
+  border-color: var(--aw-divider);
+  color: var(--aw-secondary);
+}
+
+.repair-evidence-state p {
+  margin: 3px 0;
+}
+
+.repair-evidence-state small {
+  overflow-wrap: anywhere;
+}
+
+.diff-card {
+  padding: 0;
+}
+
+.diff-card > header {
+  margin: 0;
+  padding: 7px 11px;
+}
+
+.diff-file-tabs {
+  background: var(--aw-inset);
+  display: flex;
+  gap: 1px;
+  overflow-x: auto;
+  padding: 4px 6px;
+}
+
+.diff-file-tabs button {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.diff-file-tabs button[aria-selected="true"] {
+  background: var(--aw-panel);
+  box-shadow: inset 0 -2px var(--aw-accent);
+}
+
+.virtual-diff {
+  background: var(--aw-panel);
+  max-height: 190px;
+  min-height: 140px;
+  overflow: auto;
+}
+
+.virtual-diff > [role="rowgroup"] {
+  min-width: 620px;
+  position: relative;
+}
+
+.diff-row {
+  align-items: center;
+  display: grid;
+  grid-template-columns: 26px 42px 42px minmax(0, 1fr);
+  height: 28px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+.diff-row > span {
+  color: var(--aw-muted);
+  padding: 4px 6px;
+  text-align: right;
+}
+
+.diff-row code {
+  overflow: hidden;
+  padding: 4px 10px;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.diff-row.added {
+  background: var(--aw-success-surface);
+  box-shadow: inset 3px 0 var(--aw-success);
+}
+
+.diff-row.removed {
+  background: var(--aw-danger-surface);
+  box-shadow: inset 3px 0 var(--aw-danger);
+}
+
+.diff-row .diff-marker {
+  color: var(--aw-text);
+  font-weight: 700;
+  text-align: center;
+}
+
+.configuration-diff {
+  background: var(--aw-inset);
+  border-top: 1px solid var(--aw-divider);
+  padding: 9px 11px 11px;
+}
+
+.configuration-diff dl {
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+}
+
+.configuration-diff dl div {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(120px, 0.4fr) 1fr;
+}
+
+.configuration-diff dd {
+  margin: 0;
+}
+
+.configuration-diff dd small {
+  color: var(--aw-secondary);
+  display: block;
+}
+
+.repair-review-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.repair-result-list,
+.disclosure-list {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.repair-result-list li {
+  align-items: center;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.repair-result-list small {
+  color: var(--aw-muted);
+}
+
+.link-button,
+.benchmark-value {
+  background: transparent;
+  border: 0;
+  min-height: 24px;
+  padding: 1px;
+  text-align: left;
+}
+
+.benchmark-list {
+  border-top: 1px solid var(--aw-divider);
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+}
+
+.benchmark-list > div {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+}
+
+.benchmark-list dd {
+  display: grid;
+  justify-items: end;
+  margin: 0;
+}
+
+.benchmark-list small {
+  color: var(--aw-secondary);
+}
+
+.result-mark {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  font-weight: 700;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.result-mark.passed {
+  background: var(--aw-success-surface);
+  color: var(--aw-success);
+}
+
+.result-mark.failed {
+  background: var(--aw-danger-surface);
+  color: var(--aw-danger);
+}
+
+.result-mark.uncertain {
+  background: var(--aw-warning-surface);
+  color: var(--aw-warning);
+}
+
+.result-mark.unloaded,
+.result-mark.unavailable {
+  background: var(--aw-warning-surface);
+  color: var(--aw-warning);
+}
+
+.result-mark.corrupt {
+  background: var(--aw-danger-surface);
+  color: var(--aw-danger);
+}
+
+.disclosure-list li {
+  display: grid;
+}
+
+.disclosure-list li span {
+  color: var(--aw-secondary);
+}
+
+.scope-disclosures {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 9px;
+}
+
+.scope-disclosures section {
+  background: var(--aw-inset);
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.scope-disclosures p,
+.scope-disclosures ul {
+  color: var(--aw-secondary);
+  margin: 3px 0 0;
+  padding-left: 16px;
+}
+
+.scope-disclosures p {
+  padding-left: 0;
+}

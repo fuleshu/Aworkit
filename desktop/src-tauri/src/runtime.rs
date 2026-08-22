@@ -9,6 +9,11 @@ use aworkit_trusted_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::management::{
+    ManagementRepairCommandInput, ManagementRepairGateway, ManagementRepairProjectionDto,
+    ManagementRepairReceipt,
+};
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiCommandInput {
@@ -118,6 +123,7 @@ pub struct WorkflowSnapshot {
 pub struct DesktopRuntime {
     api: DesktopApi,
     chat: ChatAggregate,
+    management_repair: ManagementRepairGateway,
     timeline: Vec<TimelineItemDto>,
     evidence: Vec<EvidenceRecordDto>,
     processed: HashMap<String, ProcessedCommand>,
@@ -138,11 +144,21 @@ impl Default for DesktopRuntime {
 }
 
 impl DesktopRuntime {
+    /// Replaces the fail-closed Management repair gateway with an explicitly
+    /// composed native gateway while leaving the rest of the desktop state
+    /// unchanged.
+    #[must_use]
+    pub fn with_management_repair(mut self, gateway: ManagementRepairGateway) -> Self {
+        self.management_repair = gateway;
+        self
+    }
+
     #[must_use]
     pub fn draft() -> Self {
         Self {
             api: DesktopApi::default(),
             chat: ChatAggregate::new(id("chat.local")),
+            management_repair: ManagementRepairGateway::default(),
             timeline: Vec::new(),
             evidence: default_evidence(),
             processed: HashMap::new(),
@@ -363,6 +379,21 @@ impl DesktopRuntime {
             },
         );
         Ok(receipt)
+    }
+
+    pub fn management_repair_snapshot(
+        &self,
+        after_sequence: u64,
+    ) -> Result<ManagementRepairProjectionDto, String> {
+        self.management_repair.snapshot(after_sequence)
+    }
+
+    pub fn management_repair_command(
+        &mut self,
+        command: ManagementRepairCommandInput,
+        expected_version: u64,
+    ) -> Result<ManagementRepairReceipt, String> {
+        self.management_repair.command(command, expected_version)
     }
 
     fn publish(

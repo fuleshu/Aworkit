@@ -1,0 +1,316 @@
+/* Management shell, sidebar, and responsive layout. */
+.sr-only {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.management-repair-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.management-title-line {
+  align-items: baseline;
+  display: flex;
+  gap: 14px;
+}
+
+.management-title-line > span {
+  color: var(--aw-secondary);
+  font-size: 10px;
+}
+
+.management-repair-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+.management-master {
+  background: var(--aw-navigation);
+  border-right: 1px solid var(--aw-divider);
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 10px 18px;
+  scrollbar-gutter: stable;
+}
+
+.management-master-section {
+  border-bottom: 1px solid var(--aw-divider);
+  padding: 8px 0 12px;
+}
+
+.management-master-section:first-child {
+  padding-top: 0;
+}
+
+.management-master-section > header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.management-master-section > header > span:not(.status),
+.management-master-section > small {
+  color: var(--aw-muted);
+  font-size: 10px;
+}
+
+.master-button-list,
+.evidence-button-list {
+  display: grid;
+  gap: 3px;
+}
+
+.master-button-list > button,
+.evidence-button-list > button {
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 6px 7px;
+  text-align: left;
+  width: 100%;
+}
+
+.master-button-list > button[aria-pressed="true"],
+.evidence-button-list > button[aria-pressed="true"] {
+  background: var(--aw-selected);
+  box-shadow: inset 2px 0 var(--aw-accent);
+}
+
+.master-button-list button > span:first-child,
+.evidence-button-list button > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.master-button-list strong,
+.master-button-list small,
+.evidence-button-list strong,
+.evidence-button-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-button-list small,
+.evidence-button-list small {
+  color: var(--aw-secondary);
+  font-size: 10px;
+}
+
+.master-button-list .status {
+  flex: 0 0 auto;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.master-full-action {
+  margin-top: 7px;
+  width: 100%;
+}
+
+.investigation-steps {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.investigation-steps li {
+  align-items: center;
+  color: var(--aw-muted);
+  display: flex;
+  gap: 7px;
+}
+
+.investigation-steps li.completed {
+  color: var(--aw-success);
+}
+
+.investigation-steps li.active {
+  color: var(--aw-warning);
+  font-weight: 600;
+}
+
+.evidence-selection > label {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 7px;
+}
+
+.evidence-selection > label > span {
+  color: var(--aw-muted);
+  font-size: 10px;
+}
+
+.evidence-selection input {
+  width: 100%;
+}
+
+.evidence-button-list {
+  max-height: 178px;
+  overflow: auto;
+}
+
+.evidence-button-list > button {
+  grid-template-columns: 18px minmax(0, 1fr);
+  justify-content: start;
+}
+
+.selected-repair-evidence {
+  background: var(--aw-panel);
+  border: 1px solid var(--aw-divider);
+  margin-top: 8px;
+  padding: 8px;
+}
+
+.selected-repair-evidence p {
+  color: var(--aw-secondary);
+  margin: 5px 0 8px;
+}
+
+.selected-repair-evidence dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.selected-repair-evidence dl div {
+  display: grid;
+  gap: 1px;
+}
+
+.selected-repair-evidence dt {
+  color: var(--aw-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.selected-repair-evidence dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.management-detail {
+  background: var(--aw-window);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.management-empty-state {
+  align-content: center;
+  display: grid;
+  height: 100%;
+  justify-items: center;
+}
+
+.management-empty-state p {
+  color: var(--aw-secondary);
+  margin-top: 6px;
+}
+
+@media (max-width: 1180px) {
+  .management-repair-body {
+    grid-template-columns: 270px minmax(0, 1fr);
+  }
+
+  .repair-candidate-header {
+    align-items: start;
+  }
+
+  .candidate-header-actions {
+    max-width: 55%;
+  }
+
+  .repair-activation-gate {
+    grid-template-columns: 1fr;
+    max-height: 250px;
+    overflow: auto;
+  }
+}
+
+@media (max-width: 860px) {
+  .management-title-line > span {
+    display: none;
+  }
+
+  .management-repair-body {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .repair-review-grid,
+  .scope-disclosures {
+    grid-template-columns: 1fr;
+  }
+
+  .repair-candidate-header {
+    display: grid;
+  }
+
+  .candidate-header-actions {
+    justify-content: start;
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .management-repair-body {
+    grid-template-columns: minmax(180px, 38%) minmax(0, 1fr);
+  }
+
+  .management-master {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .master-button-list .status,
+  .management-master-section > header > .status,
+  .candidate-header-actions > .status {
+    display: none;
+  }
+
+  .repair-candidate-scroll {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .repair-activation-gate {
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+@media (forced-colors: active) {
+  .repair-card,
+  .selected-repair-evidence,
+  .repair-activation-gate,
+  .diff-row.added,
+  .diff-row.removed {
+    border: 1px solid CanvasText;
+  }
+
+  .diff-row.added,
+  .diff-row.removed {
+    forced-color-adjust: auto;
+  }
+}

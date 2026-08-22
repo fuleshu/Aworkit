@@ -14,6 +14,8 @@ import { App } from "./App";
 import { defaultDesktopAdapters } from "./adapters/defaultAdapters";
 import { projectAppearancePreference } from "./workbench/appearance";
 
+const lazyRouteWait = { timeout: 5_000 } as const;
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -73,7 +75,11 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     expect(splitter).toHaveAttribute("aria-valuenow", "216");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
     expect(
-      await screen.findByRole("heading", { name: "Repository Engineer" }),
+      await screen.findByRole(
+        "heading",
+        { name: "Repository Engineer" },
+        lazyRouteWait,
+      ),
     ).toBeVisible();
     expect(screen.getByLabelText("Workflow graph")).toBeVisible();
     await user.click(
@@ -82,7 +88,7 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     expect(screen.getByRole("button", { name: /Save/ })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(
-      await screen.findByRole("heading", { name: "Settings" }),
+      await screen.findByRole("heading", { name: "Settings" }, lazyRouteWait),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Appearance" }));
     expect(screen.getByRole("radio", { name: /Dark/ })).toBeVisible();
@@ -90,7 +96,11 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(document.documentElement.dataset.appearance).toBe("dark");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Repository Engineer" });
+    await screen.findByRole(
+      "heading",
+      { name: "Repository Engineer" },
+      lazyRouteWait,
+    );
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
@@ -133,7 +143,7 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     expect(screen.getByText(/tool\.files/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(
-      await screen.findByRole("heading", { name: "New Chat" }),
+      await screen.findByRole("heading", { name: "New Chat" }, lazyRouteWait),
     ).toBeVisible();
   });
 
@@ -149,7 +159,11 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     fireEvent.keyDown(splitter, { key: "ArrowLeft" });
     expect(splitter).toHaveAttribute("aria-valuenow", "328");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Repository Engineer" });
+    await screen.findByRole(
+      "heading",
+      { name: "Repository Engineer" },
+      lazyRouteWait,
+    );
     await user.click(screen.getByRole("button", { name: "Release readiness" }));
     expect(
       await screen.findByRole("textbox", { name: "Chat input" }),
@@ -160,7 +174,11 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Settings/ }));
-    await screen.findByRole("heading", { name: "Settings" });
+    await screen.findByRole(
+      "heading",
+      { name: "Settings" },
+      lazyRouteWait,
+    );
     const localModel = screen.getByRole("checkbox", { name: "Enabled" });
     expect(localModel).toBeChecked();
     await user.click(localModel);

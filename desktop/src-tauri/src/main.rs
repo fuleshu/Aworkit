@@ -2,12 +2,18 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use aworkit_desktop::management::{
+    LocalRepairLedgerAdapter, ManagementRepairCommandInput, ManagementRepairGateway,
+    ManagementRepairProjectionDto, ManagementRepairReceipt,
+};
 use aworkit_desktop::runtime::{
     DesktopRuntime, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, UiCommandInput,
     UiCommandReceipt, WorkflowCommitInput, WorkflowSnapshot,
 };
+use aworkit_local_store::RedactionSet;
+use tauri::Manager;
 
 #[tauri::command]
 fn desktop_snapshot(
@@ -73,6 +79,29 @@ fn workflow_commit(
         .workflow_commit(command)
 }
 
+#[tauri::command]
+fn management_repair_snapshot(
+    runtime: tauri::State<'_, Mutex<DesktopRuntime>>,
+    after_sequence: u64,
+) -> Result<ManagementRepairProjectionDto, String> {
+    runtime
+        .lock()
+        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+        .management_repair_snapshot(after_sequence)
+}
+
+#[tauri::command]
+fn management_repair_command(
+    runtime: tauri::State<'_, Mutex<DesktopRuntime>>,
+    command: ManagementRepairCommandInput,
+    expected_version: u64,
+) -> Result<ManagementRepairReceipt, String> {
+    runtime
+        .lock()
+        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+        .management_repair_command(command, expected_version)
+}
+
 #[cfg(target_os = "linux")]
 fn prepare_graphical_backend() {
     if std::env::var("GDK_BACKEND")
@@ -98,14 +127,31 @@ fn prepare_graphical_backend() {}
 fn main() {
     prepare_graphical_backend();
     tauri::Builder::default()
-        .manage(Mutex::new(DesktopRuntime::default()))
+        .setup(|app| {
+            let repair_root = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?
+                .join("repair");
+            let ledger = Arc::new(
+                LocalRepairLedgerAdapter::for_store_root(repair_root, RedactionSet::default())
+                    .map_err(|error| std::io::Error::other(error.to_string()))?,
+            );
+            let management = ManagementRepairGateway::with_durable_ledger(ledger);
+            app.manage(Mutex::new(
+                DesktopRuntime::default().with_management_repair(management),
+            ));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             desktop_snapshot,
             desktop_command,
             settings_snapshot,
             settings_commit,
             workflow_snapshot,
-            workflow_commit
+            workflow_commit,
+            management_repair_snapshot,
+            management_repair_command
         ])
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
