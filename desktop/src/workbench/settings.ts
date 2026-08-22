@@ -1,7 +1,105 @@
-/** Settings drafts are local and versioned; no partial raw configuration is committed. */
-export interface CapabilityRequirement { readonly id: string; readonly label: string; }
-export interface SettingsDraft { readonly version: number; readonly appearance: "system" | "light" | "dark"; readonly configuredCapabilities: ReadonlySet<string>; }
-export interface CapabilityResolution { readonly available: readonly CapabilityRequirement[]; readonly missing: readonly CapabilityRequirement[]; }
-export function resolveCapabilities(requirements: readonly CapabilityRequirement[], configured: ReadonlySet<string>): CapabilityResolution { const available = requirements.filter((item) => configured.has(item.id)); return { available, missing: requirements.filter((item) => !configured.has(item.id)) }; }
-export function updateDraft(draft: SettingsDraft, patch: Partial<Pick<SettingsDraft, "appearance" | "configuredCapabilities">>): SettingsDraft { return { ...draft, ...patch }; }
-export function canCommitDraft(draft: SettingsDraft, expectedVersion: number): boolean { return draft.version === expectedVersion; }
+/** Aworkit-owned projected settings and local versioned draft contracts. */
+export type SettingsSection =
+  | "providers"
+  | "model_tiers"
+  | "credentials"
+  | "tools"
+  | "extensions"
+  | "mcp"
+  | "external_agents"
+  | "data"
+  | "projects"
+  | "appearance";
+export interface CapabilityRequirement {
+  readonly id: string;
+  readonly label: string;
+  readonly requiredVersion?: string;
+}
+export interface CapabilityRecord {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: string;
+  readonly state: "ready" | "missing" | "disabled" | "incompatible";
+  readonly version?: string;
+  readonly detail?: string;
+}
+export interface SettingsProjection {
+  readonly version: number;
+  readonly appearance: "system" | "light" | "dark";
+  readonly capabilities: readonly CapabilityRecord[];
+  readonly portableHistoryEnabled: boolean;
+  readonly projectRoots: readonly string[];
+}
+export interface SettingsDraft {
+  readonly version: number;
+  readonly appearance: "system" | "light" | "dark";
+  readonly configuredCapabilities: ReadonlySet<string>;
+  readonly portableHistoryEnabled?: boolean;
+  readonly dirtySections?: ReadonlySet<SettingsSection>;
+}
+export interface CapabilityResolution {
+  readonly available: readonly CapabilityRequirement[];
+  readonly missing: readonly CapabilityRequirement[];
+  readonly incompatible: readonly CapabilityRequirement[];
+}
+
+export function resolveCapabilities(
+  requirements: readonly CapabilityRequirement[],
+  configured: ReadonlySet<string>,
+  records: readonly CapabilityRecord[] = [],
+): CapabilityResolution {
+  const recordById = new Map(records.map((record) => [record.id, record]));
+  const available = requirements.filter(
+    (item) =>
+      configured.has(item.id) &&
+      (recordById.get(item.id)?.state ?? "ready") === "ready",
+  );
+  const incompatible = requirements.filter(
+    (item) => recordById.get(item.id)?.state === "incompatible",
+  );
+  return {
+    available,
+    incompatible,
+    missing: requirements.filter(
+      (item) => !available.includes(item) && !incompatible.includes(item),
+    ),
+  };
+}
+export function updateDraft(
+  draft: SettingsDraft,
+  patch: Partial<
+    Pick<
+      SettingsDraft,
+      "appearance" | "configuredCapabilities" | "portableHistoryEnabled"
+    >
+  >,
+  dirtySection?: SettingsSection,
+): SettingsDraft {
+  return {
+    ...draft,
+    ...patch,
+    dirtySections:
+      dirtySection === undefined
+        ? draft.dirtySections
+        : new Set([...(draft.dirtySections ?? []), dirtySection]),
+  };
+}
+export function canCommitDraft(
+  draft: SettingsDraft,
+  expectedVersion: number,
+): boolean {
+  return (
+    draft.version === expectedVersion && (draft.dirtySections?.size ?? 0) > 0
+  );
+}
+export function authorityPreview(
+  capabilities: ReadonlySet<string>,
+): readonly string[] {
+  return [...capabilities]
+    .sort()
+    .map((id) =>
+      id.startsWith("tool.")
+        ? `${id}: workspace-scoped operation`
+        : `${id}: provider or agent invocation`,
+    );
+}

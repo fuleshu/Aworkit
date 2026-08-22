@@ -7,8 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 aworkit-process = { path = "../aworkit-process" }
+aworkit-protocol = { path = "../aworkit-protocol" }
 fs2 = "0.4"
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

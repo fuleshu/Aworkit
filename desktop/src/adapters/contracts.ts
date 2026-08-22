@@ -17,7 +17,22 @@ export interface CollectionAdapter {
 export interface NativePresentationAdapter {
   readonly name: string;
   notify(title: string, body: string): Promise<void>;
+  confirm(title: string, body: string): Promise<boolean>;
 }
+
+export const nativePresentationEvent = "aworkit:native-presentation";
+export type NativePresentationRequest =
+  | {
+      readonly kind: "notification";
+      readonly title: string;
+      readonly body: string;
+    }
+  | {
+      readonly kind: "confirmation";
+      readonly title: string;
+      readonly body: string;
+      readonly resolve: (accepted: boolean) => void;
+    };
 
 export interface DesktopAdapters {
   readonly components: ComponentAdapter;

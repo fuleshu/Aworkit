@@ -3,6 +3,76 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.appearance = dark ? "dark" : "light";
+      })();
+    </script>
+    <style>
+      :root {
+        --aw-window: #f7f8fa;
+        --aw-panel: #fff;
+        --aw-navigation: #f1f3f5;
+        --aw-raised: #fafafb;
+        --aw-inset: #eef1f4;
+        --aw-divider: #d8dde3;
+        --aw-control: #8b95a2;
+        --aw-text: #1e2228;
+        --aw-secondary: #5b6470;
+        --aw-muted: #626b76;
+        --aw-accent: #315fd6;
+        --aw-accent-subtle: #eaf0ff;
+        --aw-selected: #e5ecfa;
+        --aw-on-accent: #fff;
+        --aw-info: #2653a3;
+        --aw-info-surface: #ebf1ff;
+        --aw-success: #176b43;
+        --aw-success-surface: #eaf7f0;
+        --aw-warning: #7a4300;
+        --aw-warning-surface: #fff3d6;
+        --aw-danger: #a52a22;
+        --aw-danger-surface: #fdedec;
+        --aw-opaque: #4f5866;
+        --aw-opaque-surface: #eff1f4;
+        background: #f7f8fa;
+        color: #1e2228;
+        color-scheme: light;
+      }
+      :root[data-appearance="dark"] {
+        --aw-window: #111318;
+        --aw-panel: #17191d;
+        --aw-navigation: #15181d;
+        --aw-raised: #1d2128;
+        --aw-inset: #0d0f13;
+        --aw-divider: #2e343d;
+        --aw-control: #5e6876;
+        --aw-text: #f1f3f5;
+        --aw-secondary: #b7bdc7;
+        --aw-muted: #929aa6;
+        --aw-accent: #8aa8ff;
+        --aw-accent-subtle: #1b2742;
+        --aw-selected: #202a40;
+        --aw-on-accent: #111827;
+        --aw-info: #9bb5ff;
+        --aw-info-surface: #17233a;
+        --aw-success: #79d39e;
+        --aw-success-surface: #14271d;
+        --aw-warning: #f2c36e;
+        --aw-warning-surface: #2b2111;
+        --aw-danger: #ff9b92;
+        --aw-danger-surface: #321817;
+        --aw-opaque: #bcc2cc;
+        --aw-opaque-surface: #242830;
+        background: #111318;
+        color: #f1f3f5;
+        color-scheme: dark;
+      }
+      :root:not([data-appearance-ready="true"]) #root {
+        visibility: hidden;
+      }
+    </style>
     <title>Aworkit</title>
   </head>
   <body>

@@ -2,14 +2,123 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aworkit.local/schema/aworkit-envelope.v1.schema.json",
   "title": "Aworkit Envelope V1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
-  "properties": {
-    "schemaVersion": { "const": 1 },
-    "messageId": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
-    "generation": { "type": "integer", "minimum": 0 },
-    "kind": { "enum": ["command", "event", "request", "result", "error"] },
-    "payload": { "type": "object" }
-  }
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "baseCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "targetId"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "targetId": { "$ref": "#/$defs/stableId" }
+      }
+    },
+    "baseEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sequence"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      }
+    },
+    "baseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "correlationId"],
+      "properties": {
+        "operation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "correlationId": { "$ref": "#/$defs/stableId" }
+      }
+    },
+    "baseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correlationId", "accepted"],
+      "properties": {
+        "correlationId": { "$ref": "#/$defs/stableId" },
+        "accepted": { "type": "boolean" }
+      }
+    },
+    "baseError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "$ref": "#/$defs/stableId" },
+        "generation": { "$ref": "#/$defs/generation" },
+        "kind": { "const": "command" },
+        "payload": { "$ref": "#/$defs/baseCommand" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "$ref": "#/$defs/stableId" },
+        "generation": { "$ref": "#/$defs/generation" },
+        "kind": { "const": "event" },
+        "payload": { "$ref": "#/$defs/baseEvent" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "$ref": "#/$defs/stableId" },
+        "generation": { "$ref": "#/$defs/generation" },
+        "kind": { "const": "request" },
+        "payload": { "$ref": "#/$defs/baseRequest" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "$ref": "#/$defs/stableId" },
+        "generation": { "$ref": "#/$defs/generation" },
+        "kind": { "const": "result" },
+        "payload": { "$ref": "#/$defs/baseResult" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "messageId", "generation", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "$ref": "#/$defs/stableId" },
+        "generation": { "$ref": "#/$defs/generation" },
+        "kind": { "const": "error" },
+        "payload": { "$ref": "#/$defs/baseError" }
+      }
+    }
+  ]
 }

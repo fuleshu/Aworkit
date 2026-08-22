@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::document::{DocumentKind, SchemaVersion};
 
 /// The version of the non-editable repository index format.
-pub(crate) const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub(crate) const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// A compact lookup index; JSON bodies remain the sole editable document form.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -35,4 +35,8 @@ pub(crate) struct ManifestEntry {
     pub(crate) schema_version: SchemaVersion,
     pub(crate) content_hash: String,
     pub(crate) relative_path: String,
+    #[serde(default)]
+    pub(crate) committed_generation: u64,
+    #[serde(default)]
+    pub(crate) inspectable_read_only: bool,
 }

@@ -5,22 +5,35 @@
 //! becomes a second editable representation of a document.
 
 mod artifacts;
+mod database;
 mod document;
+mod document_policy;
 mod filesystem;
-mod portable_journal;
 mod ledger;
+mod maintenance;
 mod manifest;
+mod portable_journal;
 mod projections;
 mod repository;
 mod storage;
 
 pub use artifacts::{ArtifactMetadata, ArtifactStore, ArtifactToken};
 pub use document::{DocumentKind, JsonDocument, SchemaVersion};
+pub use document_policy::DocumentPolicyError;
 pub use ledger::{
     Attempt, Checkpoint, CommitBatch, CommitOutcome, CommitReceipt, Deduplication, Event,
     LocalHistoryStore, OutboxEntry, PendingOutbox, StoreError,
 };
-pub use projections::{ProjectionStore, TimelineEntry};
-pub use portable_journal::{PortableJournalError, PortableJournalPhase, PortableJournalRecord, PortableRuntimeJournal};
-pub use repository::{DocumentConflict, DocumentRepository, RepositoryError, RepositoryRoot};
-pub use storage::{IntegrityReport, StorageCoordinator, StorageMode};
+pub use portable_journal::{
+    PortableJournalError, PortableJournalPhase, PortableJournalRecord, PortableRuntimeJournal,
+};
+pub use projections::{
+    ArtifactProjection, ChatSummary, EvidenceLocator, ProjectionCursor, ProjectionHealth,
+    ProjectionPage, ProjectionStore, SearchHit, TimelineEntry,
+};
+pub use repository::{
+    DocumentAccessMode, DocumentConflict, DocumentRepository, RepositoryError, RepositoryRoot,
+};
+pub use storage::{
+    IntegrityReport, MigrationReceipt, RestoreReceipt, StorageCoordinator, StorageMode,
+};

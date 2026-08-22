@@ -7,14 +7,18 @@ rust-version.workspace = true
 
 [dependencies]
 aworkit-process = { path = "../aworkit-process" }
+aworkit-protocol = { path = "../aworkit-protocol" }
+cap-std = "4.0.3"
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 
 [dev-dependencies]
 serde_json = "1"
+tempfile = "3"
 
 [lints]
 workspace = true

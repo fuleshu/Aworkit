@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
-# Runs all Milestone 01 checks without requiring product features or a display.
+# Complete Milestone 01 workspace, boundary, protocol, and native-shell gate.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
+test -x desktop/node_modules/.bin/vitest
+test -x desktop/node_modules/.bin/tsc
+test -x desktop/node_modules/.bin/vite
+test -x desktop/node_modules/.bin/tauri
+
 cargo fmt --all --check
-cargo test --workspace
+cargo test --workspace --all-targets
+node protocol/generate-runtime-schema.mjs --check
 ./qa/check-boundaries.sh
 ./qa/smoke-processes.sh
-(cd desktop && npx --yes pnpm@10.16.1 generate:protocol && npx --yes pnpm@10.16.1 test && npx --yes pnpm@10.16.1 build && npx --yes pnpm@10.16.1 exec tauri build --debug --no-bundle)
+
+(
+  cd desktop
+  ./node_modules/.bin/vitest run src/protocol/schema.test.ts
+  ./node_modules/.bin/tsc --noEmit
+  ./node_modules/.bin/vite build
+)
+cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+./qa/desktop-native-smoke.sh

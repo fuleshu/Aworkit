@@ -1,56 +1,175 @@
-//! Project, workspace, and canonical-document coordination.
+//! Project, workspace identity, and canonical-document coordination ports.
 
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::UNIX_EPOCH,
+};
 
-use aworkit_local_store::{DocumentKind, DocumentRepository, JsonDocument, RepositoryError, RepositoryRoot};
+use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
-/// A revalidated workspace identity.  It is an identity fact, not a sandbox.
+const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+const SUPPORTED_DOCUMENT_SCHEMA: u16 = 1;
+
+/// Compatibility identity retained for the original M04 API.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceBinding {
-    /// The canonical filesystem root observed while resolving the workspace.
     pub root: PathBuf,
-    /// Stable metadata used to reject a deleted/replaced workspace at freeze.
     pub identity: WorkspaceIdentity,
 }
 
-/// Platform-neutral workspace metadata sufficient for conservative drift checks.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceIdentity {
-    /// Canonical path encoded for diagnostics and stable comparisons.
     pub canonical_path: String,
-    /// Best-effort creation timestamp, if the platform provides it.
     pub created_at_nanos: Option<u128>,
 }
 
-/// Canonical JSON and workspace operations made available to the desktop API.
+/// Conservative workspace identity frozen by current Run snapshots.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceIdentityV1 {
+    pub canonical_path: String,
+    pub platform: String,
+    pub filesystem_object_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceBindingV1 {
+    pub root: PathBuf,
+    pub identity: WorkspaceIdentityV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectDocumentKindV1 {
+    ProjectConfig,
+    Workflow,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectDocumentV1 {
+    pub schema_version: u16,
+    pub body: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredProjectDocumentV1 {
+    pub kind: ProjectDocumentKindV1,
+    pub document_id: StableId,
+    pub version: u64,
+    pub content_hash: String,
+    pub document: ProjectDocumentV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectPortErrorV1 {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+/// Storage-process-neutral document boundary. Concrete local-store adapters
+/// implement this outside the trusted-core crate.
+pub trait ProjectDocumentPort: Send + Sync {
+    fn load(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+    ) -> Result<Option<StoredProjectDocumentV1>, ProjectPortErrorV1>;
+    fn save(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+        expected_version: Option<u64>,
+        document: &ProjectDocumentV1,
+    ) -> Result<StoredProjectDocumentV1, ProjectPortErrorV1>;
+    fn list(
+        &self,
+        kind: ProjectDocumentKindV1,
+        after_id: Option<&StableId>,
+        limit: u32,
+    ) -> Result<Vec<StoredProjectDocumentV1>, ProjectPortErrorV1>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectRecordV1 {
+    pub project_id: StableId,
+    pub display_name: String,
+    pub workspace: WorkspaceBindingV1,
+    pub config_document_id: StableId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DocumentWatchResultV1 {
+    Unchanged { version: u64 },
+    Changed(StoredProjectDocumentV1),
+    Deleted,
+}
+
 #[derive(Clone)]
 pub struct ProjectCoordinator {
-    repository: RepositoryRoot,
+    state_root: PathBuf,
+    documents: Option<Arc<dyn ProjectDocumentPort>>,
+    projects: Arc<Mutex<BTreeMap<String, ProjectRecordV1>>>,
 }
 
 impl ProjectCoordinator {
-    /// Opens the canonical document repository rooted in application-owned state.
+    /// Opens core-owned coordination state only. Canonical document bytes stay
+    /// behind an explicitly injected storage port.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ProjectError> {
-        Ok(Self { repository: RepositoryRoot::open(root.into())? })
+        let state_root = root.into();
+        fs::create_dir_all(&state_root).map_err(|_| ProjectError::StateUnavailable)?;
+        Ok(Self {
+            state_root,
+            documents: None,
+            projects: Arc::new(Mutex::new(BTreeMap::new())),
+        })
     }
 
-    /// Revalidates an existing directory before it can be frozen into a run.
-    pub fn resolve_workspace(&self, root: impl AsRef<Path>) -> Result<WorkspaceBinding, ProjectError> {
-        let canonical = fs::canonicalize(root.as_ref()).map_err(|_| ProjectError::WorkspaceUnavailable)?;
+    pub fn with_document_port(
+        root: impl Into<PathBuf>,
+        documents: impl ProjectDocumentPort + 'static,
+    ) -> Result<Self, ProjectError> {
+        let mut coordinator = Self::open(root)?;
+        coordinator.documents = Some(Arc::new(documents));
+        Ok(coordinator)
+    }
+
+    #[must_use]
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    pub fn resolve_workspace(
+        &self,
+        root: impl AsRef<Path>,
+    ) -> Result<WorkspaceBinding, ProjectError> {
+        let canonical = canonical_directory(root.as_ref())?;
         let metadata = fs::metadata(&canonical).map_err(|_| ProjectError::WorkspaceUnavailable)?;
-        if !metadata.is_dir() {
-            return Err(ProjectError::WorkspaceUnavailable);
-        }
-        let created_at_nanos = metadata.created().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|duration| duration.as_nanos());
+        let created_at_nanos = metadata
+            .created()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos());
         Ok(WorkspaceBinding {
-            identity: WorkspaceIdentity { canonical_path: canonical.to_string_lossy().into_owned(), created_at_nanos },
+            identity: WorkspaceIdentity {
+                canonical_path: canonical.to_string_lossy().into_owned(),
+                created_at_nanos,
+            },
             root: canonical,
         })
     }
 
-    /// Confirms that a selected workspace has not disappeared or changed identity.
     pub fn revalidate_workspace(&self, binding: &WorkspaceBinding) -> Result<(), ProjectError> {
         let observed = self.resolve_workspace(&binding.root)?;
         if observed.identity != binding.identity {
@@ -59,30 +178,289 @@ impl ProjectCoordinator {
         Ok(())
     }
 
-    /// Loads the one canonical editable JSON body for the requested document.
-    pub fn load_document(&self, kind: DocumentKind, id: &str) -> Result<Option<(u64, JsonDocument)>, ProjectError> {
-        self.repository.load(kind, id).map(|document| document.map(|stored| (stored.version, stored.document))).map_err(ProjectError::from)
+    pub fn resolve_workspace_v1(
+        &self,
+        root: impl AsRef<Path>,
+    ) -> Result<WorkspaceBindingV1, ProjectError> {
+        let canonical = canonical_directory(root.as_ref())?;
+        let metadata = fs::metadata(&canonical).map_err(|_| ProjectError::WorkspaceUnavailable)?;
+        Ok(WorkspaceBindingV1 {
+            root: canonical.clone(),
+            identity: WorkspaceIdentityV1 {
+                canonical_path: canonical.to_string_lossy().into_owned(),
+                platform: std::env::consts::OS.to_owned(),
+                filesystem_object_id: filesystem_object_id(&metadata),
+            },
+        })
     }
 
-    /// Saves JSON only when the caller's document version still matches.
-    pub fn save_document(&self, kind: DocumentKind, id: &str, expected_version: Option<u64>, document: &JsonDocument) -> Result<u64, ProjectError> {
-        Ok(self.repository.save(kind, id, expected_version, document)?.version)
+    pub fn revalidate_workspace_v1(
+        &self,
+        binding: &WorkspaceBindingV1,
+    ) -> Result<(), ProjectError> {
+        let observed = self.resolve_workspace_v1(&binding.root)?;
+        if observed.identity != binding.identity {
+            return Err(ProjectError::WorkspaceDrift);
+        }
+        Ok(())
+    }
+
+    pub fn register_project(&self, record: ProjectRecordV1) -> Result<(), ProjectError> {
+        validate_display_name(&record.display_name)?;
+        self.revalidate_workspace_v1(&record.workspace)?;
+        let mut projects = self.projects.lock().map_err(|_| ProjectError::Poisoned)?;
+        if projects
+            .insert(record.project_id.as_str().to_owned(), record)
+            .is_some()
+        {
+            return Err(ProjectError::DuplicateProject);
+        }
+        Ok(())
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectRecordV1>, ProjectError> {
+        Ok(self
+            .projects
+            .lock()
+            .map_err(|_| ProjectError::Poisoned)?
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    pub fn load_document_v1(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+    ) -> Result<Option<StoredProjectDocumentV1>, ProjectError> {
+        let stored = self.document_port()?.load(kind, document_id)?;
+        if let Some(stored) = &stored {
+            validate_stored_document(kind, document_id, stored)?;
+        }
+        Ok(stored)
+    }
+
+    pub fn save_document_v1(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+        expected_version: Option<u64>,
+        document: &ProjectDocumentV1,
+    ) -> Result<StoredProjectDocumentV1, ProjectError> {
+        validate_document(document)?;
+        let stored = self
+            .document_port()?
+            .save(kind, document_id, expected_version, document)?;
+        validate_stored_document(kind, document_id, &stored)?;
+        Ok(stored)
+    }
+
+    pub fn export_document_v1(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+    ) -> Result<Vec<u8>, ProjectError> {
+        let stored = self
+            .load_document_v1(kind, document_id)?
+            .ok_or(ProjectError::DocumentMissing)?;
+        serde_jcs::to_vec(&stored.document).map_err(|_| ProjectError::InvalidDocument)
+    }
+
+    pub fn import_document_v1(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+        expected_version: Option<u64>,
+        bytes: &[u8],
+    ) -> Result<StoredProjectDocumentV1, ProjectError> {
+        if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
+            return Err(ProjectError::InvalidDocument);
+        }
+        let document: ProjectDocumentV1 =
+            serde_json::from_slice(bytes).map_err(|_| ProjectError::InvalidDocument)?;
+        self.save_document_v1(kind, document_id, expected_version, &document)
+    }
+
+    pub fn watch_document_v1(
+        &self,
+        kind: ProjectDocumentKindV1,
+        document_id: &StableId,
+        observed_version: Option<u64>,
+    ) -> Result<DocumentWatchResultV1, ProjectError> {
+        match self.load_document_v1(kind, document_id)? {
+            None => Ok(DocumentWatchResultV1::Deleted),
+            Some(stored) if Some(stored.version) == observed_version => {
+                Ok(DocumentWatchResultV1::Unchanged {
+                    version: stored.version,
+                })
+            }
+            Some(stored) => Ok(DocumentWatchResultV1::Changed(stored)),
+        }
+    }
+
+    fn document_port(&self) -> Result<&dyn ProjectDocumentPort, ProjectError> {
+        self.documents
+            .as_deref()
+            .ok_or(ProjectError::DocumentPortUnavailable)
     }
 }
 
-/// Project operations fail closed on ambiguous workspace or document state.
+fn canonical_directory(path: &Path) -> Result<PathBuf, ProjectError> {
+    let canonical = fs::canonicalize(path).map_err(|_| ProjectError::WorkspaceUnavailable)?;
+    if !fs::metadata(&canonical)
+        .map_err(|_| ProjectError::WorkspaceUnavailable)?
+        .is_dir()
+    {
+        return Err(ProjectError::WorkspaceUnavailable);
+    }
+    Ok(canonical)
+}
+
+#[cfg(unix)]
+fn filesystem_object_id(metadata: &fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!("unix:{}:{}", metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn filesystem_object_id(metadata: &fs::Metadata) -> String {
+    let created = metadata
+        .created()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    format!("portable:{created}:{}", metadata.len())
+}
+
+fn validate_display_name(name: &str) -> Result<(), ProjectError> {
+    if name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+        Err(ProjectError::InvalidProject)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_document(document: &ProjectDocumentV1) -> Result<(), ProjectError> {
+    if document.schema_version == 0 || document.schema_version > SUPPORTED_DOCUMENT_SCHEMA {
+        return Err(ProjectError::UnsupportedDocumentSchema(
+            document.schema_version,
+        ));
+    }
+    if serde_json::to_vec(document)
+        .map_err(|_| ProjectError::InvalidDocument)?
+        .len()
+        > MAX_DOCUMENT_BYTES
+        || !document.body.is_object()
+        || contains_secret_material(&document.body, 0)?
+    {
+        return Err(ProjectError::InvalidDocument);
+    }
+    Ok(())
+}
+
+fn validate_stored_document(
+    kind: ProjectDocumentKindV1,
+    document_id: &StableId,
+    stored: &StoredProjectDocumentV1,
+) -> Result<(), ProjectError> {
+    if stored.kind != kind
+        || stored.document_id != *document_id
+        || stored.version == 0
+        || !is_sha256(&stored.content_hash)
+    {
+        return Err(ProjectError::InvalidPortResponse);
+    }
+    validate_document(&stored.document)?;
+    let calculated = format!(
+        "{:x}",
+        sha2::Sha256::digest(
+            serde_jcs::to_vec(&stored.document).map_err(|_| ProjectError::InvalidDocument)?
+        )
+    );
+    if calculated != stored.content_hash {
+        return Err(ProjectError::InvalidPortResponse);
+    }
+    Ok(())
+}
+
+fn contains_secret_material(value: &Value, depth: usize) -> Result<bool, ProjectError> {
+    if depth > 64 {
+        return Err(ProjectError::InvalidDocument);
+    }
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                let normalized = key.to_ascii_lowercase().replace('-', "_");
+                let compact = normalized.replace('_', "");
+                let forbidden = ["password", "secret", "apikey", "accesstoken", "privatekey"];
+                if forbidden.iter().any(|needle| compact.contains(needle)) {
+                    return Ok(true);
+                }
+                if contains_secret_material(value, depth + 1)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Value::Array(values) => {
+            for value in values {
+                if contains_secret_material(value, depth + 1)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 #[derive(Debug, Error)]
 pub enum ProjectError {
-    /// A selected path is absent, inaccessible, or not a directory.
     #[error("the selected workspace is unavailable")]
     WorkspaceUnavailable,
-    /// The workspace identity changed after it was selected.
     #[error("the selected workspace changed and must be selected again")]
     WorkspaceDrift,
-    /// Canonical repository operations retain their precise failure reason.
-    #[error(transparent)]
-    Repository(#[from] RepositoryError),
+    #[error("trusted-core project coordination state is unavailable")]
+    StateUnavailable,
+    #[error("no canonical document port was configured")]
+    DocumentPortUnavailable,
+    #[error("canonical document is missing")]
+    DocumentMissing,
+    #[error("document schema version {0} is unsupported")]
+    UnsupportedDocumentSchema(u16),
+    #[error("project document is malformed, oversized, or contains direct secret material")]
+    InvalidDocument,
+    #[error("document port returned inconsistent identity or content")]
+    InvalidPortResponse,
+    #[error("project record is invalid")]
+    InvalidProject,
+    #[error("project is already registered")]
+    DuplicateProject,
+    #[error("project state lock is unavailable")]
+    Poisoned,
+    #[error("document port failed: {code}: {message}")]
+    Port {
+        code: String,
+        message: String,
+        retryable: bool,
+    },
 }
+
+impl From<ProjectPortErrorV1> for ProjectError {
+    fn from(error: ProjectPortErrorV1) -> Self {
+        Self::Port {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+        }
+    }
+}
+
+use sha2::Digest;
 
 #[cfg(test)]
 mod tests {
@@ -90,11 +468,36 @@ mod tests {
 
     #[test]
     fn workspace_revalidation_rejects_deleted_root() {
-        let root = std::env::temp_dir().join(format!("aworkit-core-workspace-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "aworkit-core-workspace-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
         fs::create_dir_all(&root).expect("root");
         let coordinator = ProjectCoordinator::open(root.join("state")).expect("coordinator");
-        let binding = coordinator.resolve_workspace(&root).expect("binding");
+        let binding = coordinator.resolve_workspace_v1(&root).expect("binding");
         fs::remove_dir_all(&root).expect("cleanup");
-        assert!(matches!(coordinator.revalidate_workspace(&binding), Err(ProjectError::WorkspaceUnavailable)));
+        assert!(matches!(
+            coordinator.revalidate_workspace_v1(&binding),
+            Err(ProjectError::WorkspaceUnavailable)
+        ));
+    }
+
+    #[test]
+    fn direct_secret_shapes_are_rejected_but_credential_refs_are_allowed() {
+        assert!(
+            validate_document(&ProjectDocumentV1 {
+                schema_version: 1,
+                body: serde_json::json!({"password": "cleartext"}),
+            })
+            .is_err()
+        );
+        assert!(
+            validate_document(&ProjectDocumentV1 {
+                schema_version: 1,
+                body: serde_json::json!({"credentialRef": "credential.one"}),
+            })
+            .is_ok()
+        );
     }
 }

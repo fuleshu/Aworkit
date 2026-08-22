@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "name": "aworkit-trusted-core",
+      "dependencies": [
+        { "name": "serde", "kinds": ["normal"] },
+        { "name": "aworkit-process", "kinds": ["normal"] },
+        { "name": "aworkit-protocol", "kinds": ["normal"] },
+        { "name": "aworkit-local-store", "kinds": ["dev"] },
+        { "name": "aworkit-portable-store", "kinds": ["dev"] }
+      ]
+    },
+    {
+      "name": "aworkit-protocol",
+      "dependencies": [
+        { "name": "serde", "kinds": ["normal"] },
+        { "name": "thiserror", "kinds": ["normal"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"messageId":"request.msg_01","generation":7,"kind":"request","payload":{"operation":"snapshot.read","correlationId":"correlation_01"}}

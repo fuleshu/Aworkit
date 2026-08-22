@@ -6,7 +6,7 @@
 
 use std::{env, io::Write, time::Duration};
 
-use aworkit_protocol::ProcessGeneration;
+use aworkit_protocol::{MAX_SAFE_WIRE_INTEGER, ProcessGeneration};
 
 /// A process identity used exclusively by the startup smoke handshake.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +37,11 @@ pub fn launch(identity: ProcessIdentity) -> Result<(), String> {
                         .parse()
                         .map_err(|_| "--generation must be an unsigned integer".to_owned())?,
                 );
+                if generation.0 > MAX_SAFE_WIRE_INTEGER {
+                    return Err(format!(
+                        "--generation must not exceed {MAX_SAFE_WIRE_INTEGER}"
+                    ));
+                }
             }
             "--help" | "-h" => {
                 println!("Usage: {} [--smoke] [--generation <n>]", identity.name);

@@ -25,12 +25,19 @@ pub(crate) fn write_and_sync_atomic(path: &Path, bytes: &[u8]) -> io::Result<()>
 
     let temporary_path = temporary_path(parent, path.file_name().unwrap_or_default());
     let write_result = write_temporary_file(&temporary_path, bytes)
-        .and_then(|()| fs::rename(&temporary_path, path))
+        .and_then(|()| atomic_replace(&temporary_path, path))
         .and_then(|()| sync_directory(parent));
     if write_result.is_err() {
         let _ = fs::remove_file(&temporary_path);
     }
     write_result
+}
+
+fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    // Rust's platform implementation maps same-volume file replacement to the
+    // native atomic rename/replace operation. Both paths are deliberately in
+    // the destination directory.
+    fs::rename(source, destination)
 }
 
 fn temporary_path(parent: &Path, file_name: &std::ffi::OsStr) -> PathBuf {

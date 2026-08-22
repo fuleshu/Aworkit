@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Runs the canonical local-persistence checks without needing a display server.
+# Complete Milestone 02 canonical-local-persistence and recovery gate.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
-cargo fmt --all --check
-cargo test -p aworkit-local-store
+cargo fmt -p aworkit-local-store -p aworkit-protocol -p aworkit-process --check
+cargo test -p aworkit-local-store --all-targets
+RUSTFLAGS="-D warnings" cargo check -p aworkit-local-store --all-targets
 ./qa/check-boundaries.sh

@@ -1,0 +1,25 @@
+{
+  "packages": [
+    {
+      "name": "aworkit-trusted-core",
+      "dependencies": [
+        { "name": "aworkit-local-store", "kinds": ["normal"] },
+        { "name": "aworkit-portable-store", "kinds": ["build"] },
+        { "name": "aworkit-capability-host", "kinds": ["normal"] }
+      ]
+    },
+    {
+      "name": "aworkit-protocol",
+      "dependencies": [
+        { "name": "aworkit-capability-host", "kinds": ["dev"] },
+        { "name": "tauri", "kinds": ["normal"] }
+      ]
+    }
+  ],
+  "expectedFragments": [
+    "aworkit-local-store",
+    "aworkit-portable-store",
+    "aworkit-capability-host",
+    "tauri"
+  ]
+}

@@ -1,11 +1,17 @@
 //! Frozen capability authority and first-input Run snapshot construction.
 
-use aworkit_protocol::StableId;
+use std::collections::{BTreeMap, BTreeSet};
+
+use aworkit_protocol::{
+    HistoryBackendV1, StableId, WorkerBudgetV1, WorkerExecutorKindV1, WorkerFrozenRunSnapshotV1,
+    WorkerJoinDescriptorV1, WorkerLoopDescriptorV1, WorkerNodeV1, WorkerRouteRuleV1,
+    WorkerTransitionV1,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{ProjectCoordinator, ProjectError, WorkspaceBinding};
+use crate::{ProjectCoordinator, ProjectError, WorkspaceBinding, project::WorkspaceBindingV1};
 
 /// An exact capability adapter version that may be admitted for one run.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -61,24 +67,66 @@ pub struct SnapshotFreezer;
 
 impl SnapshotFreezer {
     /// Resolves all required bindings and freezes one immutable snapshot.
-    pub fn freeze(projects: &ProjectCoordinator, request: SnapshotRequest) -> Result<FrozenRunSnapshot, SnapshotError> {
+    pub fn freeze(
+        projects: &ProjectCoordinator,
+        request: SnapshotRequest,
+    ) -> Result<FrozenRunSnapshot, SnapshotError> {
         projects.revalidate_workspace(&request.workspace)?;
         if request.capability_bindings.is_empty() {
             return Err(SnapshotError::NoCapabilities);
         }
-        if request.capability_bindings.iter().any(|binding| !binding.enabled || !binding.compatible) {
+        if request
+            .capability_bindings
+            .iter()
+            .any(|binding| !binding.enabled || !binding.compatible)
+        {
             return Err(SnapshotError::UnresolvedBinding);
         }
         let mut bindings = request.capability_bindings;
-        bindings.sort_by(|left, right| left.capability_id.as_str().cmp(right.capability_id.as_str()));
-        if bindings.windows(2).any(|pair| pair[0].capability_id == pair[1].capability_id) {
+        bindings.sort_by(|left, right| {
+            left.capability_id
+                .as_str()
+                .cmp(right.capability_id.as_str())
+        });
+        if bindings
+            .windows(2)
+            .any(|pair| pair[0].capability_id == pair[1].capability_id)
+        {
             return Err(SnapshotError::DuplicateCapability);
         }
-        let canonical = serde_json::to_vec(&(request.chat_id.as_str(), request.workflow_id.as_str(), request.workflow_version, &request.workflow_hash, &request.workspace.identity, &bindings)).map_err(|_| SnapshotError::Encoding)?;
+        let canonical = serde_jcs::to_vec(&(
+            request.chat_id.as_str(),
+            request.workflow_id.as_str(),
+            request.workflow_version,
+            &request.workflow_hash,
+            &request.workspace.identity,
+            &bindings,
+        ))
+        .map_err(|_| SnapshotError::Encoding)?;
         let digest = format!("{:x}", Sha256::digest(canonical));
-        let manifest_id = StableId::parse(format!("manifest.{}", &digest[..24])).map_err(|_| SnapshotError::Encoding)?;
-        let summary = format!("{} frozen capability binding(s); {} require per-invocation approval", bindings.len(), bindings.iter().filter(|binding| binding.approval == ApprovalRequirement::PerInvocation).count());
-        Ok(FrozenRunSnapshot { chat_id: request.chat_id, workflow_id: request.workflow_id, workflow_version: request.workflow_version, workflow_hash: request.workflow_hash, workspace: request.workspace, authority: AuthorityManifest { manifest_id, capability_bindings: bindings, summary }, snapshot_hash: digest })
+        let manifest_id = StableId::parse(format!("manifest.{}", &digest[..24]))
+            .map_err(|_| SnapshotError::Encoding)?;
+        let summary = format!(
+            "{} frozen capability binding(s); {} require per-invocation approval",
+            bindings.len(),
+            bindings
+                .iter()
+                .filter(|binding| binding.approval == ApprovalRequirement::PerInvocation)
+                .count()
+        );
+        Ok(FrozenRunSnapshot {
+            chat_id: request.chat_id,
+            workflow_id: request.workflow_id,
+            workflow_version: request.workflow_version,
+            workflow_hash: request.workflow_hash,
+            workspace: request.workspace,
+            authority: AuthorityManifest {
+                manifest_id,
+                capability_bindings: bindings,
+                summary,
+            },
+            snapshot_hash: digest,
+        })
     }
 }
 
@@ -94,5 +142,373 @@ pub enum SnapshotError {
     #[error("a capability may appear only once in a frozen authority manifest")]
     DuplicateCapability,
     #[error("the snapshot could not be encoded deterministically")]
+    Encoding,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CapabilityBindingV1 {
+    pub capability_id: StableId,
+    pub adapter_id: StableId,
+    pub adapter_version: String,
+    pub descriptor_hash: String,
+    pub enabled: bool,
+    pub compatible: bool,
+    pub approval: ApprovalRequirement,
+    pub allowed_node_types: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthorityManifestV1 {
+    pub manifest_id: StableId,
+    pub manifest_hash: String,
+    pub capability_bindings: Vec<CapabilityBindingV1>,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnapshotRequestV1 {
+    pub snapshot_id: StableId,
+    pub chat_id: StableId,
+    pub run_id: StableId,
+    pub workflow_hash: String,
+    pub nodes: Vec<WorkerNodeV1>,
+    pub transitions: Vec<WorkerTransitionV1>,
+    pub entry_nodes: Vec<StableId>,
+    pub loop_descriptors: Vec<WorkerLoopDescriptorV1>,
+    pub join_descriptors: Vec<WorkerJoinDescriptorV1>,
+    pub route_rules: Vec<WorkerRouteRuleV1>,
+    pub workspace: WorkspaceBindingV1,
+    pub capability_bindings: Vec<CapabilityBindingV1>,
+    pub budget: WorkerBudgetV1,
+    pub history_mode: HistoryBackendV1,
+}
+
+/// Core-owned freezer for the exact process-neutral worker DTO.
+pub struct SnapshotFreezerV1;
+
+impl SnapshotFreezerV1 {
+    pub fn freeze(
+        projects: &ProjectCoordinator,
+        request: SnapshotRequestV1,
+    ) -> Result<(WorkerFrozenRunSnapshotV1, AuthorityManifestV1), SnapshotErrorV1> {
+        projects.revalidate_workspace_v1(&request.workspace)?;
+        validate_budget(&request.budget)?;
+        let calculated_workflow_hash = workflow_graph_hash_v1(
+            &request.nodes,
+            &request.transitions,
+            &request.entry_nodes,
+            &request.loop_descriptors,
+            &request.join_descriptors,
+            &request.route_rules,
+        )?;
+        if request.workflow_hash != calculated_workflow_hash {
+            return Err(SnapshotErrorV1::WorkflowHashMismatch);
+        }
+
+        let mut bindings = request.capability_bindings;
+        bindings.sort_by(|left, right| {
+            left.capability_id
+                .as_str()
+                .cmp(right.capability_id.as_str())
+        });
+        let mut binding_ids = BTreeSet::new();
+        for binding in &mut bindings {
+            binding.allowed_node_types.sort();
+            binding.allowed_node_types.dedup();
+            if !binding_ids.insert(binding.capability_id.as_str()) {
+                return Err(SnapshotErrorV1::DuplicateCapability);
+            }
+            validate_binding(binding)?;
+        }
+
+        let binding_map: BTreeMap<_, _> = bindings
+            .iter()
+            .map(|binding| (binding.capability_id.as_str(), binding))
+            .collect();
+        for node in &request.nodes {
+            match (&node.executor, &node.capability_ref) {
+                (
+                    WorkerExecutorKindV1::Brokered
+                    | WorkerExecutorKindV1::Model
+                    | WorkerExecutorKindV1::Agent,
+                    Some(capability),
+                ) => {
+                    let binding = binding_map
+                        .get(capability.as_str())
+                        .ok_or_else(|| SnapshotErrorV1::UnresolvedCapability(capability.clone()))?;
+                    if !binding.allowed_node_types.is_empty()
+                        && !binding.allowed_node_types.contains(&node.node_type)
+                    {
+                        return Err(SnapshotErrorV1::NodeTypeDenied(node.node_id.clone()));
+                    }
+                }
+                (
+                    WorkerExecutorKindV1::Brokered
+                    | WorkerExecutorKindV1::Model
+                    | WorkerExecutorKindV1::Agent,
+                    None,
+                ) => return Err(SnapshotErrorV1::NodeCapabilityMissing(node.node_id.clone())),
+                (_, Some(capability)) if !binding_map.contains_key(capability.as_str()) => {
+                    return Err(SnapshotErrorV1::UnresolvedCapability(capability.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        let manifest_bytes = serde_jcs::to_vec(&bindings).map_err(|_| SnapshotErrorV1::Encoding)?;
+        let manifest_hash = format!("{:x}", Sha256::digest(manifest_bytes));
+        let manifest_id = StableId::parse(format!("manifest.{}", &manifest_hash[..32]))
+            .map_err(|_| SnapshotErrorV1::Encoding)?;
+        let manifest = AuthorityManifestV1 {
+            manifest_id: manifest_id.clone(),
+            manifest_hash: manifest_hash.clone(),
+            summary: format!(
+                "{} exact capability binding(s); {} require per-invocation approval",
+                bindings.len(),
+                bindings
+                    .iter()
+                    .filter(|binding| binding.approval == ApprovalRequirement::PerInvocation)
+                    .count()
+            ),
+            capability_bindings: bindings,
+        };
+        let capability_refs = manifest
+            .capability_bindings
+            .iter()
+            .map(|binding| binding.capability_id.clone())
+            .collect();
+        let workspace_identity = serde_json::to_value(&request.workspace.identity)
+            .map_err(|_| SnapshotErrorV1::Encoding)?;
+        let mut snapshot = WorkerFrozenRunSnapshotV1 {
+            snapshot_id: request.snapshot_id,
+            snapshot_hash: String::new(),
+            chat_id: request.chat_id,
+            run_id: request.run_id,
+            schema_version: 1,
+            compiler_version: "aworkit-worker-v1".to_owned(),
+            workflow_hash: request.workflow_hash,
+            nodes: request.nodes,
+            transitions: request.transitions,
+            entry_nodes: request.entry_nodes,
+            loop_descriptors: request.loop_descriptors,
+            join_descriptors: request.join_descriptors,
+            route_rules: request.route_rules,
+            authority_manifest_ref: manifest_id,
+            authority_manifest_hash: manifest_hash,
+            capability_refs,
+            workspace_identity,
+            budget: request.budget,
+            history_mode: request.history_mode,
+        };
+        snapshot.snapshot_hash = snapshot_hash_v1(&snapshot)?;
+        Ok((snapshot, manifest))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalGrantV1 {
+    pub approval_id: StableId,
+    pub invocation_id: StableId,
+    pub authority_manifest_ref: StableId,
+    pub expires_at_tick: u64,
+    pub constraints: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApprovalDecisionV1 {
+    NotRequired,
+    Approved { approval_id: StableId },
+    Required,
+    Denied,
+    Expired,
+    AlreadyConsumed,
+}
+
+#[derive(Debug, Default)]
+pub struct ApprovalEngineV1 {
+    consumed: BTreeSet<String>,
+    denied_invocations: BTreeSet<String>,
+}
+
+impl ApprovalEngineV1 {
+    pub fn deny(&mut self, invocation_id: &StableId) {
+        self.denied_invocations
+            .insert(invocation_id.as_str().to_owned());
+    }
+
+    pub fn authorize(
+        &mut self,
+        binding: &CapabilityBindingV1,
+        manifest: &AuthorityManifestV1,
+        invocation_id: &StableId,
+        current_tick: u64,
+        grant: Option<&ApprovalGrantV1>,
+    ) -> ApprovalDecisionV1 {
+        if self.denied_invocations.contains(invocation_id.as_str()) {
+            return ApprovalDecisionV1::Denied;
+        }
+        if binding.approval == ApprovalRequirement::Never {
+            return ApprovalDecisionV1::NotRequired;
+        }
+        let Some(grant) = grant else {
+            return ApprovalDecisionV1::Required;
+        };
+        if grant.invocation_id != *invocation_id
+            || grant.authority_manifest_ref != manifest.manifest_id
+        {
+            return ApprovalDecisionV1::Denied;
+        }
+        if current_tick >= grant.expires_at_tick {
+            return ApprovalDecisionV1::Expired;
+        }
+        if !self.consumed.insert(grant.approval_id.as_str().to_owned()) {
+            return ApprovalDecisionV1::AlreadyConsumed;
+        }
+        ApprovalDecisionV1::Approved {
+            approval_id: grant.approval_id.clone(),
+        }
+    }
+}
+
+pub fn workflow_graph_hash_v1(
+    nodes: &[WorkerNodeV1],
+    transitions: &[WorkerTransitionV1],
+    entry_nodes: &[StableId],
+    loops: &[WorkerLoopDescriptorV1],
+    joins: &[WorkerJoinDescriptorV1],
+    routes: &[WorkerRouteRuleV1],
+) -> Result<String, SnapshotErrorV1> {
+    let mut nodes = nodes.to_vec();
+    let mut transitions = transitions.to_vec();
+    let mut entry_nodes = entry_nodes.to_vec();
+    let mut loops = loops.to_vec();
+    let mut joins = joins.to_vec();
+    let mut routes = routes.to_vec();
+    nodes.sort_by(|left, right| left.node_id.as_str().cmp(right.node_id.as_str()));
+    for node in &mut nodes {
+        node.inputs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        node.outputs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    transitions.sort_by(|left, right| {
+        left.transition_id
+            .as_str()
+            .cmp(right.transition_id.as_str())
+    });
+    entry_nodes.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    loops.sort_by(|left, right| left.loop_id.as_str().cmp(right.loop_id.as_str()));
+    joins.sort_by(|left, right| left.join_id.as_str().cmp(right.join_id.as_str()));
+    // `expected_branches` is a declared reconciliation order and is therefore
+    // semantic data, not a set. Sorting it would make workflows with different
+    // ordered-join results share one graph identity.
+    routes.sort_by(|left, right| {
+        left.node_id
+            .as_str()
+            .cmp(right.node_id.as_str())
+            .then_with(|| left.priority.cmp(&right.priority))
+            .then_with(|| left.route_id.as_str().cmp(right.route_id.as_str()))
+    });
+    let bytes = serde_jcs::to_vec(&(nodes, transitions, entry_nodes, loops, joins, routes))
+        .map_err(|_| SnapshotErrorV1::Encoding)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn snapshot_hash_v1(snapshot: &WorkerFrozenRunSnapshotV1) -> Result<String, SnapshotErrorV1> {
+    let mut canonical = snapshot.clone();
+    canonical.snapshot_hash.clear();
+    canonical
+        .nodes
+        .sort_by(|left, right| left.node_id.as_str().cmp(right.node_id.as_str()));
+    for node in &mut canonical.nodes {
+        node.inputs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        node.outputs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    canonical.transitions.sort_by(|left, right| {
+        left.transition_id
+            .as_str()
+            .cmp(right.transition_id.as_str())
+    });
+    canonical
+        .entry_nodes
+        .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    canonical
+        .loop_descriptors
+        .sort_by(|left, right| left.loop_id.as_str().cmp(right.loop_id.as_str()));
+    canonical
+        .join_descriptors
+        .sort_by(|left, right| left.join_id.as_str().cmp(right.join_id.as_str()));
+    canonical
+        .route_rules
+        .sort_by(|left, right| left.route_id.as_str().cmp(right.route_id.as_str()));
+    canonical
+        .capability_refs
+        .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    let bytes = serde_jcs::to_vec(&canonical).map_err(|_| SnapshotErrorV1::Encoding)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_binding(binding: &CapabilityBindingV1) -> Result<(), SnapshotErrorV1> {
+    if !binding.enabled
+        || !binding.compatible
+        || binding.adapter_version.trim().is_empty()
+        || binding.adapter_version.len() > 128
+        || !is_sha256(&binding.descriptor_hash)
+        || binding.allowed_node_types.iter().any(|node_type| {
+            node_type.is_empty() || node_type.len() > 128 || node_type.chars().any(char::is_control)
+        })
+    {
+        Err(SnapshotErrorV1::InvalidCapability(
+            binding.capability_id.clone(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_budget(budget: &WorkerBudgetV1) -> Result<(), SnapshotErrorV1> {
+    if budget.turns == 0
+        || budget.attempts == 0
+        || budget.actions == 0
+        || budget.depth > 64
+        || budget.fanout > 1_024
+        || budget.parallel == 0
+        || budget.parallel > budget.fanout.max(1)
+        || budget.deadline_ms == 0
+    {
+        Err(SnapshotErrorV1::InvalidBudget)
+    } else {
+        Ok(())
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[derive(Debug, Error)]
+pub enum SnapshotErrorV1 {
+    #[error(transparent)]
+    Workspace(#[from] ProjectError),
+    #[error("workflow hash does not match the exact frozen graph")]
+    WorkflowHashMismatch,
+    #[error("a capability is duplicated")]
+    DuplicateCapability,
+    #[error("capability {0} is disabled, incompatible, or malformed")]
+    InvalidCapability(StableId),
+    #[error("node {0} requires an explicit capability reference")]
+    NodeCapabilityMissing(StableId),
+    #[error("capability {0} cannot be resolved exactly")]
+    UnresolvedCapability(StableId),
+    #[error("node type for {0} is outside its frozen binding")]
+    NodeTypeDenied(StableId),
+    #[error("run budget is empty or structurally invalid")]
+    InvalidBudget,
+    #[error("snapshot could not be encoded deterministically")]
     Encoding,
 }

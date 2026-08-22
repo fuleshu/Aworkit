@@ -6,4 +6,5 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
+  test: { setupFiles: ["./src/test/setup.ts"] },
 });
