@@ -316,9 +316,25 @@ export function SettingsScreen({
                   </dd>
                 </div>
                 <div>
+                  <dt>Disabled</dt>
+                  <dd>
+                    {resolution.disabled
+                      .map((item) => item.label)
+                      .join(", ") || "None"}
+                  </dd>
+                </div>
+                <div>
                   <dt>Incompatible</dt>
                   <dd>
                     {resolution.incompatible
+                      .map((item) => item.label)
+                      .join(", ") || "None"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Drifted</dt>
+                  <dd>
+                    {resolution.drifted
                       .map((item) => item.label)
                       .join(", ") || "None"}
                   </dd>

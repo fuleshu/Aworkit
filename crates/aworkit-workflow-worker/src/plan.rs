@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use aworkit_protocol::{
     ProcessGeneration, StableId, WorkerExecutorKindV1, WorkerFrozenRunSnapshotV1,
     WorkerJoinDescriptorV1, WorkerLoopDescriptorV1, WorkerNodeV1, WorkerRouteRuleV1,
-    WorkerTransitionV1,
+    WorkerTransitionV1, is_canonical_sha256,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -232,6 +232,46 @@ impl ExecutionPlanV1 {
                 "duplicate capability reference".to_owned(),
             ));
         }
+        let frozen_binding_refs: BTreeSet<_> = snapshot
+            .capability_bindings
+            .iter()
+            .map(|binding| binding.capability_id.as_str().to_owned())
+            .collect();
+        if frozen_binding_refs.len() != snapshot.capability_bindings.len()
+            || frozen_binding_refs != capability_refs
+        {
+            return Err(PlanError::InvalidNodeContract(
+                "frozen capability bindings differ from capability references".to_owned(),
+            ));
+        }
+        for binding in &snapshot.capability_bindings {
+            let invalid_extension = binding.extension.as_ref().is_some_and(|extension| {
+                extension.host_generation.0 == 0
+                    || extension.contribution_id != binding.adapter_id
+                    || !is_canonical_sha256(&extension.identity.content_hash)
+                    || !is_canonical_sha256(&extension.handshake_hash)
+            });
+            let invalid_isolation =
+                binding
+                    .required_isolation_profile
+                    .as_deref()
+                    .is_some_and(|profile| {
+                        profile.is_empty()
+                            || profile.len() > 256
+                            || profile.trim() != profile
+                            || profile.chars().any(char::is_control)
+                    });
+            if binding.adapter_version.trim().is_empty()
+                || !is_canonical_sha256(&binding.descriptor_hash)
+                || invalid_extension
+                || invalid_isolation
+            {
+                return Err(PlanError::InvalidNodeContract(format!(
+                    "invalid frozen capability binding {}",
+                    binding.capability_id
+                )));
+            }
+        }
 
         let mut nodes = BTreeMap::new();
         for node in &snapshot.nodes {
@@ -366,6 +406,8 @@ fn validate_snapshot_bounds(snapshot: &WorkerFrozenRunSnapshotV1) -> Result<(), 
         || snapshot.loop_descriptors.len() > 10_000
         || snapshot.join_descriptors.len() > 10_000
         || snapshot.route_rules.len() > 100_000
+        || snapshot.capability_bindings.len() > 4_096
+        || snapshot.capability_refs.len() > 4_096
         || serde_json::to_vec(snapshot)
             .map_err(|_| PlanError::Encoding)?
             .len()
@@ -721,6 +763,9 @@ fn canonicalize_snapshot(snapshot: &mut WorkerFrozenRunSnapshotV1) {
     snapshot
         .route_rules
         .sort_by(|left, right| left.route_id.as_str().cmp(right.route_id.as_str()));
+    snapshot
+        .capability_bindings
+        .sort_by(|left, right| left.capability_id.cmp(&right.capability_id));
     snapshot
         .capability_refs
         .sort_by(|left, right| left.as_str().cmp(right.as_str()));

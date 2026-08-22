@@ -13,17 +13,21 @@ use aworkit_capability_host::{
     ArgumentVectorInvocationV1, BuiltInProcessTools, CancellationToken, CapabilityDescriptor,
     CapabilityHost, CapabilityKind, ControlledProcessResult, DispatchEvidenceV1, EffectEvidenceV1,
     FileAuthority, FileEditRequestV1, FileEffectKindV1, FileReadRequestV1, FileSearchRequestV1,
-    FileToolError, FrozenModelGateway, HermeticProcessPort, HermeticProcessStep, HostError,
-    HostToolLimitsV1, InjectionTargetV1, InvocationNormalizer, ModelCandidateV1, ModelEventV1,
-    ModelRequestV1, ModelResolutionPlanV1, NativeProcessPort, NormalizeError, NormalizedContentV1,
-    OutcomeDispositionV1, PlatformProcessPort, ProcessRunner, ProcessSpecV1, ProcessTermination,
-    ProjectFiles, ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError, PythonInvocationV1,
-    Redactor, RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1, SecretFieldPlanV1,
-    SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
-    SecretMaterializationPlanV1, SecretMaterializer, ShellInvocationV1, SideEffectClass,
-    TerminalEvidenceV1, ToolAdapterError, ToolAuthorityModeV1, classify_outcome,
+    FileToolError, FrozenModelGateway, HermeticProcessPort, HermeticProcessStep,
+    HostControlEnvelopeV1, HostControlKindV1, HostError, HostToolLimitsV1, InjectionTargetV1,
+    InvocationNormalizer, ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1,
+    NativeProcessPort, NormalizeError, NormalizedContentV1, OutcomeDispositionV1,
+    PlatformProcessPort, ProcessRunner, ProcessSpecV1, ProcessTermination, ProjectFiles,
+    ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError, PythonInvocationV1, Redactor,
+    RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
+    SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
+    SecretMaterializer, ShellInvocationV1, SideEffectClass, TerminalEvidenceV1, ToolAdapterError,
+    ToolAuthorityModeV1, classify_outcome,
 };
-use aworkit_protocol::{ProcessGeneration, SchemaVersion, StableId};
+use aworkit_protocol::{
+    AttestedExtensionSetV1, ProcessGeneration, SchemaVersion, StableId,
+    attested_extension_set_hash_v1,
+};
 use serde_json::json;
 use tempfile::TempDir;
 use zeroize::Zeroizing;
@@ -50,6 +54,23 @@ fn descriptor() -> CapabilityDescriptor {
     descriptor
 }
 
+fn materialize_builtin_registry(
+    registry: AdapterRegistry,
+    generation: ProcessGeneration,
+) -> aworkit_capability_host::FrozenAdapterRegistry {
+    let mut set = AttestedExtensionSetV1 {
+        host_id: id("host.primary"),
+        host_generation: generation,
+        host_protocol: 1,
+        extensions: Vec::new(),
+        set_hash: String::new(),
+    };
+    set.set_hash = attested_extension_set_hash_v1(&set).expect("empty attested set hash");
+    registry
+        .materialize_attested_set(&set)
+        .expect("materialize built-ins under attestation")
+}
+
 fn envelope(descriptor: &CapabilityDescriptor, invocation: &str) -> ApprovedInvocationEnvelopeV1 {
     let mut envelope = ApprovedInvocationEnvelopeV1 {
         schema_version: SchemaVersion::V1,
@@ -59,6 +80,8 @@ fn envelope(descriptor: &CapabilityDescriptor, invocation: &str) -> ApprovedInvo
         capability_id: descriptor.capability_id.clone(),
         adapter_version: descriptor.version.clone(),
         binding_hash: descriptor.version_hash.clone(),
+        extension: None,
+        required_isolation_profile: descriptor.required_isolation.clone(),
         kind: descriptor.kind,
         enforced_scopes: vec!["project.read".into()],
         deadline_epoch_millis: 10_000,
@@ -79,8 +102,9 @@ fn authenticated_gateway_fences_drift_authority_backpressure_and_deduplication()
     registry
         .register_capability(descriptor.clone())
         .expect("register");
-    let host =
-        CapabilityHost::new_authenticated(ProcessGeneration(7), registry, b"core-key".to_vec(), 1);
+    let frozen = materialize_builtin_registry(registry, ProcessGeneration(7));
+    let host = CapabilityHost::from_attested_registry(frozen, b"core-key".to_vec(), 1)
+        .expect("authenticated host");
 
     let approved = envelope(&descriptor, "invocation.1");
     let first = host.admit_v1(&approved, 9_000).expect("admit");
@@ -95,8 +119,32 @@ fn authenticated_gateway_fences_drift_authority_backpressure_and_deduplication()
         host.admit_v1(&second, 9_000),
         Err(HostError::Backpressure)
     ));
-    host.cancel(&approved.invocation_id)
-        .expect("reserved cancel");
+    let mut cancel = HostControlEnvelopeV1 {
+        schema_version: SchemaVersion::V1,
+        control_id: id("control.cancel.1"),
+        invocation_id: approved.invocation_id.clone(),
+        host_generation: ProcessGeneration(7),
+        cancellation_token: approved.cancellation_token.clone(),
+        kind: HostControlKindV1::Cancel,
+        core_authentication_tag: String::new(),
+    };
+    cancel.sign(b"core-key").expect("sign cancellation");
+    let mut retargeted = cancel.clone();
+    retargeted.cancellation_token = id("cancel.other");
+    retargeted
+        .sign(b"core-key")
+        .expect("sign retargeted control");
+    assert!(matches!(
+        host.apply_control_v1(&retargeted),
+        Err(HostError::CancellationTokenMismatch)
+    ));
+    let mut unauthenticated = cancel.clone();
+    unauthenticated.control_id = id("control.tampered");
+    assert!(matches!(
+        host.apply_control_v1(&unauthenticated),
+        Err(HostError::Authentication)
+    ));
+    host.apply_control_v1(&cancel).expect("reserved cancel");
     assert!(host.is_cancelled(&approved.invocation_id));
     host.complete(&approved.invocation_id).expect("complete");
     assert_eq!(

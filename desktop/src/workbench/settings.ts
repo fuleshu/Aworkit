@@ -19,7 +19,12 @@ export interface CapabilityRecord {
   readonly id: string;
   readonly label: string;
   readonly kind: string;
-  readonly state: "ready" | "missing" | "disabled" | "incompatible";
+  readonly state:
+    | "ready"
+    | "missing"
+    | "disabled"
+    | "incompatible"
+    | "drifted";
   readonly version?: string;
   readonly detail?: string;
 }
@@ -40,7 +45,9 @@ export interface SettingsDraft {
 export interface CapabilityResolution {
   readonly available: readonly CapabilityRequirement[];
   readonly missing: readonly CapabilityRequirement[];
+  readonly disabled: readonly CapabilityRequirement[];
   readonly incompatible: readonly CapabilityRequirement[];
+  readonly drifted: readonly CapabilityRequirement[];
 }
 
 export function resolveCapabilities(
@@ -49,20 +56,40 @@ export function resolveCapabilities(
   records: readonly CapabilityRecord[] = [],
 ): CapabilityResolution {
   const recordById = new Map(records.map((record) => [record.id, record]));
-  const available = requirements.filter(
-    (item) =>
-      configured.has(item.id) &&
-      (recordById.get(item.id)?.state ?? "ready") === "ready",
-  );
-  const incompatible = requirements.filter(
-    (item) => recordById.get(item.id)?.state === "incompatible",
-  );
+  const buckets: Record<
+    "available" | "missing" | "disabled" | "incompatible" | "drifted",
+    CapabilityRequirement[]
+  > = {
+    available: [],
+    missing: [],
+    disabled: [],
+    incompatible: [],
+    drifted: [],
+  };
+  for (const requirement of requirements) {
+    const record = recordById.get(requirement.id);
+    if (record?.state === "disabled") {
+      buckets.disabled.push(requirement);
+    } else if (record?.state === "incompatible") {
+      buckets.incompatible.push(requirement);
+    } else if (
+      record?.state === "drifted" ||
+      (record?.state === "ready" &&
+        requirement.requiredVersion !== undefined &&
+        record.version !== requirement.requiredVersion)
+    ) {
+      buckets.drifted.push(requirement);
+    } else if (
+      configured.has(requirement.id) &&
+      (record?.state ?? "ready") === "ready"
+    ) {
+      buckets.available.push(requirement);
+    } else {
+      buckets.missing.push(requirement);
+    }
+  }
   return {
-    available,
-    incompatible,
-    missing: requirements.filter(
-      (item) => !available.includes(item) && !incompatible.includes(item),
-    ),
+    ...buckets,
   };
 }
 export function updateDraft(

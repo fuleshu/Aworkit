@@ -9,9 +9,11 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use thiserror::Error;
 
+mod extension;
 mod history;
 mod runtime;
 
+pub use extension::*;
 pub use history::*;
 pub use runtime::*;
 
@@ -30,7 +32,7 @@ impl SchemaVersion {
 }
 
 /// A validated, opaque identifier shared between protocol headers.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct StableId(String);
 

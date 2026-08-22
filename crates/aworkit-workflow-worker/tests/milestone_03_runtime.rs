@@ -97,6 +97,7 @@ fn frozen_snapshot() -> WorkerFrozenRunSnapshotV1 {
         route_rules: Vec::new(),
         authority_manifest_ref: id("authority.v1"),
         authority_manifest_hash: hash('d'),
+        capability_bindings: Vec::new(),
         capability_refs: Vec::new(),
         workspace_identity: json!({"root": "/fixture", "device": 1}),
         budget: WorkerBudgetV1 {

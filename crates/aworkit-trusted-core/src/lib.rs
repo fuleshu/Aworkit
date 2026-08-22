@@ -8,6 +8,7 @@ mod authority;
 mod broker;
 mod committer;
 mod desktop;
+mod extensions;
 mod lifecycle;
 mod portable;
 mod project;
@@ -37,6 +38,7 @@ pub use desktop::{
     CoreServiceResponseV1, DesktopApi, DesktopApiError, DesktopCommand, DesktopEvent,
     DesktopReceipt, DesktopSnapshot, DesktopTransactionV1, serve_core_stdio,
 };
+pub use extensions::{ExtensionRegistry, ExtensionRegistryError};
 pub use lifecycle::{
     AttemptStateV1, ChatAggregate, ChatCommand, ChatEvent, ChatState, CommittedRunEventV1,
     LifecycleError, LifecycleErrorV1, RunAggregateV1, RunCommandKindV1, RunCommandOutcomeV1,

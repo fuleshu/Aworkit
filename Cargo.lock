@@ -41,6 +41,7 @@ dependencies = [
  "fs2",
  "rusqlite",
  "serde",
+ "serde_jcs",
  "serde_json",
  "sha2",
  "thiserror",
@@ -74,7 +75,9 @@ name = "aworkit-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_jcs",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 
@@ -86,6 +89,7 @@ dependencies = [
  "aworkit-portable-store",
  "aworkit-process",
  "aworkit-protocol",
+ "semver",
  "serde",
  "serde_jcs",
  "serde_json",
@@ -509,6 +513,12 @@ name = "ryu-js"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f"
+
+[[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"

@@ -8,6 +8,7 @@ mod artifacts;
 mod database;
 mod document;
 mod document_policy;
+mod extension_inventory;
 mod filesystem;
 mod ledger;
 mod maintenance;
@@ -20,6 +21,9 @@ mod storage;
 pub use artifacts::{ArtifactMetadata, ArtifactStore, ArtifactToken};
 pub use document::{DocumentKind, JsonDocument, SchemaVersion};
 pub use document_policy::DocumentPolicyError;
+pub use extension_inventory::{
+    ExtensionInventory, ExtensionInventoryError, ExtensionInventoryMode,
+};
 pub use ledger::{
     Attempt, Checkpoint, CommitBatch, CommitOutcome, CommitReceipt, Deduplication, Event,
     LocalHistoryStore, OutboxEntry, PendingOutbox, StoreError,

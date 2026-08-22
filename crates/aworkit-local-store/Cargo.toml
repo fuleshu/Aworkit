@@ -11,6 +11,7 @@ aworkit-protocol = { path = "../aworkit-protocol" }
 fs2 = "0.4"
 rusqlite = { version = "0.38", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"

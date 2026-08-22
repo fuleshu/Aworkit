@@ -62,7 +62,7 @@ impl From<&ProcessRequest> for ProcessSpecV1 {
 }
 
 /// Thread-safe cancellation control kept on a reserved control path.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
 }

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{HistoryBackendV1, ProcessGeneration, StableId};
+use crate::{ExtensionRuntimeBindingV1, HistoryBackendV1, ProcessGeneration, StableId};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -103,6 +103,20 @@ pub struct WorkerBudgetV1 {
     pub deadline_ms: u64,
 }
 
+/// Exact execution identity copied from the trusted core authority manifest
+/// into an immutable worker snapshot. The worker never resolves or substitutes
+/// these values; it only references the logical `capability_id` in proposals.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FrozenCapabilityBindingV1 {
+    pub capability_id: StableId,
+    pub adapter_id: StableId,
+    pub adapter_version: String,
+    pub descriptor_hash: String,
+    pub extension: Option<ExtensionRuntimeBindingV1>,
+    pub required_isolation_profile: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerFrozenRunSnapshotV1 {
@@ -123,6 +137,10 @@ pub struct WorkerFrozenRunSnapshotV1 {
     pub route_rules: Vec<WorkerRouteRuleV1>,
     pub authority_manifest_ref: StableId,
     pub authority_manifest_hash: String,
+    /// Complete immutable bindings retained for provenance and recovery.
+    pub capability_bindings: Vec<FrozenCapabilityBindingV1>,
+    /// Sorted mirror used by the worker's compact capability lookup. It must
+    /// exactly equal the IDs in `capability_bindings`.
     pub capability_refs: Vec<StableId>,
     pub workspace_identity: Value,
     pub budget: WorkerBudgetV1,

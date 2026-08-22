@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use aworkit_protocol::{
-    HistoryBackendV1, StableId, WorkerBudgetV1, WorkerExecutorKindV1, WorkerFrozenRunSnapshotV1,
-    WorkerJoinDescriptorV1, WorkerLoopDescriptorV1, WorkerNodeV1, WorkerRouteRuleV1,
-    WorkerTransitionV1,
+    ExtensionRuntimeBindingV1, FrozenCapabilityBindingV1, HistoryBackendV1,
+    PinnedExtensionContributionV1, StableId, WorkerBudgetV1, WorkerExecutorKindV1,
+    WorkerFrozenRunSnapshotV1, WorkerJoinDescriptorV1, WorkerLoopDescriptorV1, WorkerNodeV1,
+    WorkerRouteRuleV1, WorkerTransitionV1, is_canonical_sha256,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -152,10 +153,47 @@ pub struct CapabilityBindingV1 {
     pub adapter_id: StableId,
     pub adapter_version: String,
     pub descriptor_hash: String,
+    pub extension: Option<ExtensionRuntimeBindingV1>,
+    pub required_isolation_profile: Option<String>,
     pub enabled: bool,
     pub compatible: bool,
     pub approval: ApprovalRequirement,
     pub allowed_node_types: Vec<String>,
+}
+
+impl CapabilityBindingV1 {
+    /// Creates an executable binding directly from the core registry's exact
+    /// contribution pin. This copies only immutable metadata, never code.
+    #[must_use]
+    pub fn from_extension_pin(
+        pin: &PinnedExtensionContributionV1,
+        approval: ApprovalRequirement,
+        allowed_node_types: Vec<String>,
+    ) -> Self {
+        Self {
+            capability_id: pin.contribution.descriptor.capability_id.clone(),
+            adapter_id: pin.contribution.contribution_id.clone(),
+            adapter_version: pin.contribution.descriptor.adapter_version.clone(),
+            descriptor_hash: pin.contribution.descriptor.descriptor_hash.clone(),
+            extension: Some(pin.runtime_binding()),
+            required_isolation_profile: pin.contribution.descriptor.required_isolation.clone(),
+            enabled: true,
+            compatible: true,
+            approval,
+            allowed_node_types,
+        }
+    }
+
+    fn frozen_execution_binding(&self) -> FrozenCapabilityBindingV1 {
+        FrozenCapabilityBindingV1 {
+            capability_id: self.capability_id.clone(),
+            adapter_id: self.adapter_id.clone(),
+            adapter_version: self.adapter_version.clone(),
+            descriptor_hash: self.descriptor_hash.clone(),
+            extension: self.extension.clone(),
+            required_isolation_profile: self.required_isolation_profile.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -261,6 +299,10 @@ impl SnapshotFreezerV1 {
         let manifest_hash = format!("{:x}", Sha256::digest(manifest_bytes));
         let manifest_id = StableId::parse(format!("manifest.{}", &manifest_hash[..32]))
             .map_err(|_| SnapshotErrorV1::Encoding)?;
+        let frozen_capability_bindings = bindings
+            .iter()
+            .map(CapabilityBindingV1::frozen_execution_binding)
+            .collect::<Vec<_>>();
         let manifest = AuthorityManifestV1 {
             manifest_id: manifest_id.clone(),
             manifest_hash: manifest_hash.clone(),
@@ -297,6 +339,7 @@ impl SnapshotFreezerV1 {
             route_rules: request.route_rules,
             authority_manifest_ref: manifest_id,
             authority_manifest_hash: manifest_hash,
+            capability_bindings: frozen_capability_bindings,
             capability_refs,
             workspace_identity,
             budget: request.budget,
@@ -447,6 +490,9 @@ pub fn snapshot_hash_v1(snapshot: &WorkerFrozenRunSnapshotV1) -> Result<String, 
         .route_rules
         .sort_by(|left, right| left.route_id.as_str().cmp(right.route_id.as_str()));
     canonical
+        .capability_bindings
+        .sort_by(|left, right| left.capability_id.cmp(&right.capability_id));
+    canonical
         .capability_refs
         .sort_by(|left, right| left.as_str().cmp(right.as_str()));
     let bytes = serde_jcs::to_vec(&canonical).map_err(|_| SnapshotErrorV1::Encoding)?;
@@ -454,11 +500,30 @@ pub fn snapshot_hash_v1(snapshot: &WorkerFrozenRunSnapshotV1) -> Result<String, 
 }
 
 fn validate_binding(binding: &CapabilityBindingV1) -> Result<(), SnapshotErrorV1> {
+    let invalid_extension = binding.extension.as_ref().is_some_and(|extension| {
+        extension.host_generation.0 == 0
+            || extension.contribution_id != binding.adapter_id
+            || extension.identity.version.trim().is_empty()
+            || extension.identity.version.len() > 128
+            || !is_canonical_sha256(&extension.identity.content_hash)
+            || !is_canonical_sha256(&extension.handshake_hash)
+    });
+    let invalid_isolation = binding
+        .required_isolation_profile
+        .as_deref()
+        .is_some_and(|profile| {
+            profile.is_empty()
+                || profile.len() > 256
+                || profile.trim() != profile
+                || profile.chars().any(char::is_control)
+        });
     if !binding.enabled
         || !binding.compatible
         || binding.adapter_version.trim().is_empty()
         || binding.adapter_version.len() > 128
-        || !is_sha256(&binding.descriptor_hash)
+        || !is_canonical_sha256(&binding.descriptor_hash)
+        || invalid_extension
+        || invalid_isolation
         || binding.allowed_node_types.iter().any(|node_type| {
             node_type.is_empty() || node_type.len() > 128 || node_type.chars().any(char::is_control)
         })
@@ -485,10 +550,6 @@ fn validate_budget(budget: &WorkerBudgetV1) -> Result<(), SnapshotErrorV1> {
     } else {
         Ok(())
     }
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Error)]

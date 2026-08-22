@@ -10,11 +10,12 @@ use std::{
 
 use aworkit_local_store::LocalHistoryStore;
 use aworkit_protocol::{
-    CheckpointV1, CommitBatchV1, CommitOutcomeV1, DedupV1, EventV1, HistoryBackendV1, OutboxV1,
-    ProcessGeneration, StableId, WorkerBudgetV1, WorkerCheckpointV1, WorkerControlEnvelopeV1,
-    WorkerControlKindV1, WorkerExecutorKindV1, WorkerFrozenRunSnapshotV1, WorkerJoinDescriptorV1,
-    WorkerNodeV1, WorkerOutputKindV1, WorkerPortV1, WorkerProposalKindV1, WorkerTransitionV1,
-    decode_frame, encode_frame,
+    CheckpointV1, CommitBatchV1, CommitOutcomeV1, DedupV1, EventV1, ExtensionIdentityV1,
+    ExtensionRuntimeBindingV1, HistoryBackendV1, OutboxV1, ProcessGeneration, StableId,
+    WorkerBudgetV1, WorkerCheckpointV1, WorkerControlEnvelopeV1, WorkerControlKindV1,
+    WorkerExecutorKindV1, WorkerFrozenRunSnapshotV1, WorkerJoinDescriptorV1, WorkerNodeV1,
+    WorkerOutputKindV1, WorkerPortV1, WorkerProposalKindV1, WorkerTransitionV1, decode_frame,
+    encode_frame,
 };
 use aworkit_trusted_core::{
     ApprovalDecisionV1, ApprovalEngineV1, ApprovalGrantV1, ApprovalRequirement,
@@ -709,7 +710,9 @@ fn approval_grants_are_exact_expiring_and_single_use() {
         capability_id: id("capability.shell"),
         adapter_id: id("adapter.shell"),
         adapter_version: "1.0.0".to_owned(),
-        descriptor_hash: hash('e'),
+        descriptor_hash: format!("sha256:{}", "e".repeat(64)),
+        extension: None,
+        required_isolation_profile: None,
         enabled: true,
         compatible: true,
         approval: ApprovalRequirement::PerInvocation,
@@ -768,6 +771,66 @@ fn snapshot_freezing_discloses_authority_and_rejects_unresolved_or_drifting_inpu
     assert_eq!(
         manifest.summary,
         "0 exact capability binding(s); 0 require per-invocation approval"
+    );
+
+    let mut bound = request_from_snapshot(&snapshot, workspace.clone());
+    bound.nodes[0].executor = WorkerExecutorKindV1::Brokered;
+    bound.nodes[0].capability_ref = Some(id("extension.tool"));
+    bound.capability_bindings = vec![CapabilityBindingV1 {
+        capability_id: id("extension.tool"),
+        adapter_id: id("extension.example.primary"),
+        adapter_version: "1.0.0".to_owned(),
+        descriptor_hash: format!("sha256:{}", "d".repeat(64)),
+        extension: Some(ExtensionRuntimeBindingV1 {
+            identity: ExtensionIdentityV1 {
+                extension_id: id("extension.example"),
+                version: "1.0.0".to_owned(),
+                content_hash: format!("sha256:{}", "e".repeat(64)),
+            },
+            contribution_id: id("extension.example.primary"),
+            host_id: id("host.primary"),
+            host_generation: ProcessGeneration(7),
+            handshake_hash: format!("sha256:{}", "f".repeat(64)),
+        }),
+        required_isolation_profile: Some("isolation.strict.v1".to_owned()),
+        enabled: true,
+        compatible: true,
+        approval: ApprovalRequirement::PerInvocation,
+        allowed_node_types: vec![bound.nodes[0].node_type.clone()],
+    }];
+    bound.workflow_hash = workflow_graph_hash_v1(
+        &bound.nodes,
+        &bound.transitions,
+        &bound.entry_nodes,
+        &bound.loop_descriptors,
+        &bound.join_descriptors,
+        &bound.route_rules,
+    )
+    .expect("bound workflow hash");
+    let (bound_snapshot, _) =
+        SnapshotFreezerV1::freeze(&coordinator, bound).expect("exact extension binding freezes");
+    assert_eq!(bound_snapshot.capability_bindings.len(), 1);
+    let frozen_binding = &bound_snapshot.capability_bindings[0];
+    assert_eq!(
+        frozen_binding
+            .extension
+            .as_ref()
+            .expect("extension provenance")
+            .identity
+            .content_hash,
+        format!("sha256:{}", "e".repeat(64))
+    );
+    assert_eq!(
+        frozen_binding
+            .extension
+            .as_ref()
+            .expect("extension provenance")
+            .handshake_hash,
+        format!("sha256:{}", "f".repeat(64))
+    );
+    assert_eq!(
+        frozen_binding.required_isolation_profile.as_deref(),
+        Some("isolation.strict.v1")
     );
 
     let mut unresolved = request_from_snapshot(&snapshot, workspace.clone());
