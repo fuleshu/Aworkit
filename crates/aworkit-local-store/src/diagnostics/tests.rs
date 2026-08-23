@@ -58,6 +58,21 @@ fn input(message: impl Into<String>) -> DiagnosticInput {
     }
 }
 
+fn append_when_queue_available(
+    store: &DiagnosticLogStore,
+    input: &DiagnosticInput,
+    redaction: &RedactionSet,
+) -> DiagnosticWriteOutcome {
+    for _ in 0..1_000 {
+        let outcome = store.try_append(input, redaction);
+        if outcome != DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::QueueContended) {
+            return outcome;
+        }
+        thread::yield_now();
+    }
+    panic!("diagnostic fixture queue remained contended");
+}
+
 #[test]
 fn queues_only_redacted_allowlisted_records() {
     let root = root("redaction");
@@ -69,7 +84,7 @@ fn queues_only_redacted_allowlisted_records() {
         .fields
         .insert("operation".to_owned(), "call_top-secret".to_owned());
     assert_eq!(
-        store.try_append(&record, &redaction),
+        append_when_queue_available(&store, &record, &redaction),
         DiagnosticWriteOutcome::Accepted
     );
 
@@ -158,25 +173,40 @@ fn flush_and_shutdown_are_fifo_durability_fences() {
             let mut record = input(format!("record {index}"));
             record.occurred_at_epoch_ms = 1_000 + index;
             assert_eq!(
-                store.try_append(&record, &RedactionSet::default()),
+                append_when_queue_available(&store, &record, &RedactionSet::default()),
                 DiagnosticWriteOutcome::Accepted
             );
         }
         store.flush_at(1_010).expect("flush");
-        assert_eq!(store.read_page(None, 32).expect("page").records.len(), 8);
+        let records = store.read_page(None, 32).expect("page").records;
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.code == "ipc_health")
+                .count(),
+            8
+        );
+        let durable_record_count = records.len();
         store.shutdown().expect("shutdown");
-    }
 
-    let mut reopened =
-        DiagnosticLogStore::open_at(&root, config("writer.2"), 2_000).expect("reopen");
-    let page = reopened.read_page(None, 32).expect("recovered page");
-    assert_eq!(page.records.len(), 8);
-    assert!(
-        page.records
-            .windows(2)
-            .all(|pair| pair[0].record_id.sequence + 1 == pair[1].record_id.sequence)
-    );
-    reopened.shutdown().expect("shutdown");
+        let mut reopened =
+            DiagnosticLogStore::open_at(&root, config("writer.2"), 2_000).expect("reopen");
+        let page = reopened.read_page(None, 32).expect("recovered page");
+        assert_eq!(page.records.len(), durable_record_count);
+        assert_eq!(
+            page.records
+                .iter()
+                .filter(|record| record.code == "ipc_health")
+                .count(),
+            8
+        );
+        assert!(
+            page.records
+                .windows(2)
+                .all(|pair| pair[0].record_id.sequence + 1 == pair[1].record_id.sequence)
+        );
+        reopened.shutdown().expect("shutdown");
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -267,12 +297,14 @@ fn worker_exit_closes_and_drains_pending_controls() {
 #[test]
 fn rotation_expiry_and_corruption_keep_unavailable_metadata() {
     let root = root("retention");
-    let mut store = DiagnosticLogStore::open_at(&root, config("writer.1"), 1_000).expect("store");
+    let mut retention_config = config("writer.1");
+    retention_config.queue_capacity = 64;
+    let mut store = DiagnosticLogStore::open_at(&root, retention_config, 1_000).expect("store");
     for index in 0..20 {
         let mut record = input(format!("rotation.{index}"));
         record.occurred_at_epoch_ms = 1_000 + index;
         assert_eq!(
-            store.try_append(&record, &RedactionSet::default()),
+            append_when_queue_available(&store, &record, &RedactionSet::default()),
             DiagnosticWriteOutcome::Accepted
         );
     }
@@ -315,7 +347,7 @@ fn recovery_reconciles_a_published_closed_segment_before_manifest_commit() {
     let root = root("rotation-crash");
     let mut store = DiagnosticLogStore::open_at(&root, config("writer.1"), 1_000).expect("store");
     assert_eq!(
-        store.try_append(&input("before.crash"), &RedactionSet::default()),
+        append_when_queue_available(&store, &input("before.crash"), &RedactionSet::default(),),
         DiagnosticWriteOutcome::Accepted
     );
     store.shutdown().expect("shutdown");

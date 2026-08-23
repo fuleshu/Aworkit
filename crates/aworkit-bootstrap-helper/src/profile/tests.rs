@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     ActivationEligibilityV1, BootstrapDeadlinesV1, BuildBundleRefV1, BuildOriginV1,
     BuildProvenanceV1, ManagedLocalEnrollmentRequestV1, RepairArtifactRefV1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use crate::journal::{BootstrapPhaseV1, canonical_hash};
 use crate::protocol::{

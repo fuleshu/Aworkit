@@ -1,7 +1,7 @@
 //! Core-facing coordinator policy port.
 
+use aworkit_protocol::BootstrapResultV1;
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::BootstrapResultV1;
 
 use super::{ActivationExecutionV1, CoordinatorError};
 

@@ -11,6 +11,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
+mod native;
+
+pub use native::{NativeCredentialStore, NativeCredentialStoreStatusV1};
+
 const MAX_LEASE_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_LEASE_USES: u32 = 64;
 
@@ -27,6 +31,12 @@ pub struct CredentialMetadataV1 {
 /// Plaintext store payload deliberately has no serialization or `Debug` implementation.
 pub struct CredentialSecretV1 {
     fields: BTreeMap<String, Zeroizing<Vec<u8>>>,
+}
+
+/// Unforgeable outside the trusted-core crate. Store reads require the broker
+/// to complete lease validation before constructing this authorization.
+pub struct CredentialReadAuthorizationV1 {
+    _core_only: (),
 }
 
 impl CredentialSecretV1 {
@@ -72,7 +82,11 @@ pub trait PlatformCredentialStorePort: Send + Sync {
         credential: &CredentialRef,
         secret: CredentialSecretV1,
     ) -> Result<(), SecretError>;
-    fn get(&self, credential: &CredentialRef) -> Result<CredentialSecretV1, SecretError>;
+    fn retrieve_for_lease(
+        &self,
+        credential: &CredentialRef,
+        authorization: &CredentialReadAuthorizationV1,
+    ) -> Result<CredentialSecretV1, SecretError>;
     fn delete(&self, credential: &CredentialRef) -> Result<(), SecretError>;
 }
 
@@ -99,7 +113,11 @@ impl PlatformCredentialStorePort for MemoryCredentialStore {
         Ok(())
     }
 
-    fn get(&self, credential: &CredentialRef) -> Result<CredentialSecretV1, SecretError> {
+    fn retrieve_for_lease(
+        &self,
+        credential: &CredentialRef,
+        _authorization: &CredentialReadAuthorizationV1,
+    ) -> Result<CredentialSecretV1, SecretError> {
         let values = self
             .values
             .lock()
@@ -205,7 +223,7 @@ pub struct SecretBroker {
 
 impl Default for SecretBroker {
     fn default() -> Self {
-        Self::with_store(Arc::new(MemoryCredentialStore::default()))
+        Self::native()
     }
 }
 
@@ -218,6 +236,18 @@ impl SecretBroker {
             leases: BTreeMap::new(),
             audit: Vec::new(),
         }
+    }
+
+    /// Constructs the production broker over the current user's native OS
+    /// credential store. Store lock or initialization failures remain explicit.
+    #[must_use]
+    pub fn native() -> Self {
+        Self::with_store(Arc::new(NativeCredentialStore::new()))
+    }
+
+    #[must_use]
+    pub fn describe_credential(&self, credential: &CredentialRef) -> Option<&CredentialMetadataV1> {
+        self.metadata.get(credential.0.as_str())
     }
 
     pub fn put_credential(
@@ -258,6 +288,26 @@ impl SecretBroker {
         self.metadata
             .insert(credential.0.as_str().to_owned(), metadata.clone());
         Ok(metadata)
+    }
+
+    /// Creates an opaque random reference before placing the value in the OS
+    /// credential store. Plaintext never becomes part of the returned DTO.
+    pub fn create_credential(
+        &mut self,
+        fields: BTreeMap<String, Vec<u8>>,
+    ) -> Result<CredentialMetadataV1, SecretError> {
+        let mut random = [0_u8; 24];
+        getrandom::fill(&mut random).map_err(|_| SecretError::StoreUnavailable)?;
+        let opaque = random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        random.zeroize();
+        let credential = CredentialRef(
+            StableId::parse(format!("credential.{opaque}"))
+                .map_err(|_| SecretError::StoreUnavailable)?,
+        );
+        self.put_credential(credential, fields)
     }
 
     pub fn delete_credential(&mut self, credential: &CredentialRef) -> Result<(), SecretError> {
@@ -399,7 +449,10 @@ impl SecretBroker {
             Some(&request.invocation_id),
             &request.requested_fields,
         )?;
-        let secret = self.store.get(&lease.credential)?;
+        let secret = self.store.retrieve_for_lease(
+            &lease.credential,
+            &CredentialReadAuthorizationV1 { _core_only: () },
+        )?;
         Ok(SecretDeliveryV1 {
             fields: secret.select(&request.requested_fields)?,
         })
@@ -547,6 +600,10 @@ pub enum SecretError {
     IdentityConflict,
     #[error("credential store is unavailable")]
     StoreUnavailable,
+    #[error("credential store is locked or user interaction was denied")]
+    StoreLocked,
+    #[error("credential store access-control guarantees could not be validated")]
+    StoreAccessControlInvalid,
     #[error("credential secret material exceeds its invocation-safe bound")]
     SecretTooLarge,
 }

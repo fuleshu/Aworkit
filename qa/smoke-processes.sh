@@ -8,6 +8,10 @@ cd "$root_dir"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf -- "$temporary_dir"' EXIT
 
+run_with_timeout() {
+  node qa/run-with-timeout.mjs 20000 "$@"
+}
+
 processes=(
   'aworkit-trusted-core:trusted-core'
   'aworkit-workflow-worker:workflow-worker'
@@ -20,14 +24,14 @@ processes=(
 for specification in "${processes[@]}"; do
   package="${specification%%:*}"
   process_name="${specification#*:}"
-  output="$(timeout 20s cargo run --quiet -p "$package" -- --smoke --generation 1)"
+  output="$(run_with_timeout cargo run --quiet -p "$package" --bin "$package" -- --smoke --generation 1)"
   expected="aworkit-smoke process=$process_name generation=1 status=ready shutdown=bounded"
   if [[ "$output" != "$expected" ]]; then
     echo "unexpected smoke handshake for $package: $output" >&2
     exit 1
   fi
 
-  if timeout 20s cargo run --quiet -p "$package" -- --smoke --unknown \
+  if run_with_timeout cargo run --quiet -p "$package" --bin "$package" -- --smoke --unknown \
       >"$temporary_dir/unknown.out" 2>"$temporary_dir/unknown.err"; then
     echo "$package accepted an unknown argument" >&2
     exit 1
@@ -38,7 +42,7 @@ for specification in "${processes[@]}"; do
     exit 1
   fi
 
-  if timeout 20s cargo run --quiet -p "$package" -- --smoke \
+  if run_with_timeout cargo run --quiet -p "$package" --bin "$package" -- --smoke \
       --generation 9007199254740992 \
       >"$temporary_dir/generation.out" 2>"$temporary_dir/generation.err"; then
     echo "$package accepted an inexact cross-language generation" >&2

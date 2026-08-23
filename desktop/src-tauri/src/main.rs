@@ -8,12 +8,65 @@ use aworkit_desktop::management::{
     LocalRepairLedgerAdapter, ManagementRepairCommandInput, ManagementRepairGateway,
     ManagementRepairProjectionDto, ManagementRepairReceipt,
 };
+use aworkit_desktop::presentation::{
+    NativeAppearanceV1, NativePresentationCapabilitiesV1, NativeWindowActionV1,
+};
 use aworkit_desktop::runtime::{
     DesktopRuntime, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, UiCommandInput,
     UiCommandReceipt, WorkflowCommitInput, WorkflowSnapshot,
 };
 use aworkit_local_store::RedactionSet;
 use tauri::Manager;
+
+#[tauri::command]
+fn native_presentation_capabilities() -> NativePresentationCapabilitiesV1 {
+    aworkit_desktop::presentation::capabilities()
+}
+
+#[tauri::command]
+fn native_set_appearance(
+    window: tauri::WebviewWindow,
+    appearance: NativeAppearanceV1,
+) -> Result<(), String> {
+    aworkit_desktop::presentation::apply_appearance(&window, appearance)
+}
+
+#[tauri::command]
+fn native_window_action(
+    window: tauri::WebviewWindow,
+    action: NativeWindowActionV1,
+) -> Result<(), String> {
+    aworkit_desktop::presentation::apply_window_action(&window, action)
+}
+
+#[tauri::command]
+fn native_notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    aworkit_desktop::presentation::show_notification(&app, title, body)
+}
+
+#[tauri::command]
+async fn native_confirm(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+) -> Result<bool, String> {
+    aworkit_desktop::presentation::confirm_message(&app, title, body)
+}
+
+#[tauri::command]
+async fn native_message(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    aworkit_desktop::presentation::show_message(&app, title, body)
+}
+
+#[tauri::command]
+async fn native_pick_file(app: tauri::AppHandle) -> Option<tauri_plugin_dialog::FilePath> {
+    aworkit_desktop::presentation::pick_file(&app)
+}
+
+#[tauri::command]
+async fn native_pick_folder(app: tauri::AppHandle) -> Option<tauri_plugin_dialog::FilePath> {
+    aworkit_desktop::presentation::pick_folder(&app)
+}
 
 #[tauri::command]
 fn desktop_snapshot(
@@ -127,7 +180,10 @@ fn prepare_graphical_backend() {}
 fn main() {
     prepare_graphical_backend();
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            aworkit_desktop::presentation::install_application_menu(app.handle())?;
             let repair_root = app
                 .path()
                 .app_data_dir()
@@ -151,8 +207,17 @@ fn main() {
             workflow_snapshot,
             workflow_commit,
             management_repair_snapshot,
-            management_repair_command
+            management_repair_command,
+            native_presentation_capabilities,
+            native_set_appearance,
+            native_window_action,
+            native_notify,
+            native_confirm,
+            native_message,
+            native_pick_file,
+            native_pick_folder
         ])
+        .on_menu_event(aworkit_desktop::presentation::forward_menu_event)
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running the Aworkit desktop shell");

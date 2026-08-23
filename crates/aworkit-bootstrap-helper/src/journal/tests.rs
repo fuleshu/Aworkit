@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, BootstrapResultKindV1, BootstrapResultV1, BuildBundleRefV1,
     EnrollmentPreparedV1, FocusedVerificationEvidenceV1, ManagedLocalEnrollmentRequestV1,
     ManualRecoveryNoticeV1, PlatformReasonV1, ReasonCodeV1, RepairArtifactRefV1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use super::ActivationJournalPortV1;
 use super::error::BootstrapJournalError;
@@ -144,7 +144,7 @@ fn activated_result(activation_id: &str) -> BootstrapResultV1 {
         receipt_hash: String::new(),
     };
     result.receipt_hash =
-        aworkit_trusted_core::bootstrap_result_hash_v1(&result).expect("receipt hash");
+        aworkit_protocol::bootstrap_result_hash_v1(&result).expect("receipt hash");
     result
 }
 
@@ -167,7 +167,7 @@ fn unsupported_result(activation_id: &str) -> BootstrapResultV1 {
         receipt_hash: String::new(),
     };
     result.receipt_hash =
-        aworkit_trusted_core::bootstrap_result_hash_v1(&result).expect("receipt hash");
+        aworkit_protocol::bootstrap_result_hash_v1(&result).expect("receipt hash");
     result
 }
 
@@ -428,7 +428,7 @@ fn unsupported_before_quiescence_seals_an_unsupported_receipt() {
 }
 
 #[test]
-fn terminal_receipt_must_use_the_shared_trusted_core_hash_contract() {
+fn terminal_receipt_must_use_the_shared_bootstrap_protocol_hash_contract() {
     let (journal, storage) = start_activation();
     advance(&journal, &storage, BootstrapPhaseV1::Unsupported).expect("advance");
     let mut receipt = unsupported_result("activation.1");

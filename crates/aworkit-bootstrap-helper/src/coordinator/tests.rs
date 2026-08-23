@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, BootstrapResultKindV1, BuildBundleRefV1, BuildProvenanceV1,
     FocusedVerificationCheckV1, FocusedVerificationPlanV1, ManagedLocalEnrollmentRequestV1,
     RepairArtifactRefV1, focused_verification_plan_hash_v1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use crate::journal::{
     ActivationJournal, ActivationJournalPortV1, BatonAcceptedV1, BootstrapEffectV1,
@@ -419,7 +419,7 @@ fn candidate_is_activated_only_after_focused_verification_and_durable_result() {
     ));
     assert_eq!(
         receipt.receipt_hash,
-        aworkit_trusted_core::bootstrap_result_hash_v1(&receipt).expect("shared receipt hash")
+        aworkit_protocol::bootstrap_result_hash_v1(&receipt).expect("shared receipt hash")
     );
     let BootstrapResultKindV1::ActivatedVerified {
         focused_verification,

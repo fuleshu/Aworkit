@@ -3,6 +3,7 @@
 mod adapter;
 mod error;
 mod model;
+mod native;
 mod ports;
 mod selector;
 
@@ -12,5 +13,6 @@ mod tests;
 pub use adapter::ManagedLocalBuildProfileAdapter;
 pub use error::ProfileError;
 pub use model::*;
+pub use native::NativeSelectorPort;
 pub use ports::{PlatformActivationPortV1, ProfileObservationPortV1, SelectorMutationPortV1};
 pub use selector::{HermeticSelectorPort, ManagedLocalSelectorAdapter};

@@ -11,6 +11,7 @@ use std::{
     sync::Arc,
 };
 
+use aworkit_process::filesystem::{AnchoredDirectory, FilesystemCapabilityReportV1};
 use cap_std::{
     ambient_authority,
     fs::{Dir, File, OpenOptions},
@@ -88,6 +89,7 @@ pub struct WorkspaceRoot {
     root: PathBuf,
     directory: Arc<Dir>,
     identity: RootIdentity,
+    native: Arc<AnchoredDirectory>,
 }
 
 impl std::fmt::Debug for WorkspaceRoot {
@@ -106,11 +108,14 @@ impl WorkspaceRoot {
             return Err(WorkspaceError::NotDirectory);
         }
         let identity = root_identity(&root)?;
+        let native = AnchoredDirectory::open(&root)
+            .map_err(|error| WorkspaceError::Native(error.to_string()))?;
         let directory = Dir::open_ambient_dir(&root, ambient_authority())?;
         Ok(Self {
             root,
             directory: Arc::new(directory),
             identity,
+            native: Arc::new(native),
         })
     }
 
@@ -118,6 +123,13 @@ impl WorkspaceRoot {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.root
+    }
+
+    /// Fresh native guarantees used to decide whether portable writes are
+    /// durable, local, and safe enough or must remain read-only/degraded.
+    #[must_use]
+    pub fn filesystem_capabilities(&self) -> &FilesystemCapabilityReportV1 {
+        self.native.capability_report()
     }
 
     pub fn resolve_existing(
@@ -255,6 +267,7 @@ impl WorkspaceRoot {
         target: &ProjectReference,
         bytes: &[u8],
     ) -> Result<(), WorkspaceError> {
+        self.require_durable_write_capabilities()?;
         self.revalidate()?;
         self.reject_symlinks(temporary.path(), false)?;
         self.reject_symlinks(target.path(), false)?;
@@ -289,6 +302,7 @@ impl WorkspaceRoot {
         target: &ProjectReference,
         bytes: &[u8],
     ) -> Result<(), WorkspaceError> {
+        self.require_durable_write_capabilities()?;
         self.revalidate()?;
         self.reject_symlinks(temporary.path(), false)?;
         self.reject_symlinks(target.path(), false)?;
@@ -358,10 +372,28 @@ impl WorkspaceRoot {
     }
 
     fn revalidate(&self) -> Result<(), WorkspaceError> {
+        self.native
+            .revalidate()
+            .map_err(|error| WorkspaceError::Native(error.to_string()))?;
         if root_identity(&self.root)? == self.identity {
             Ok(())
         } else {
             Err(WorkspaceError::RootChanged)
+        }
+    }
+
+    fn require_durable_write_capabilities(&self) -> Result<(), WorkspaceError> {
+        let capability = self.native.capability_report();
+        if capability.anchored_identity
+            && capability.no_follow_components
+            && capability.local_volume_proven
+            && capability.atomic_file_replace
+            && capability.file_sync
+            && capability.directory_sync
+        {
+            Ok(())
+        } else {
+            Err(WorkspaceError::DurableWriteUnavailable)
         }
     }
 
@@ -498,6 +530,10 @@ pub enum WorkspaceError {
     InvalidGitFacts,
     #[error("project file exceeds its bounded size")]
     FileTooLarge,
+    #[error("native filesystem guarantee failed: {0}")]
+    Native(String),
+    #[error("portable workspace is read-only because native durability is unavailable")]
+    DurableWriteUnavailable,
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

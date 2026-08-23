@@ -1,9 +1,7 @@
 //! Runtime observations, activation plans, and selector mutation receipts.
 
+use aworkit_protocol::{BootstrapDeadlinesV1, BuildBundleRefV1, BuildOriginV1, PlatformReasonV1};
 use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
-    BootstrapDeadlinesV1, BuildBundleRefV1, BuildOriginV1, PlatformReasonV1,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::journal::BootstrapPhaseV1;
@@ -131,6 +129,6 @@ pub enum NativeSelectorMutationOutcomeV1 {
 pub struct ProfileDecisionV1 {
     pub origin: BuildOriginV1,
     pub enrollment: LocalBuildEnrollmentStateV1,
-    pub eligibility: aworkit_trusted_core::ActivationEligibilityV1,
+    pub eligibility: aworkit_protocol::ActivationEligibilityV1,
     pub reason: PlatformReasonV1,
 }

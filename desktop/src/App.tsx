@@ -143,6 +143,37 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let dispose: (() => void) | undefined;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>("aworkit:native-menu", ({ payload }) => {
+          const actions: Record<string, () => void> = {
+            "aworkit.new-chat": openNewChat,
+            "aworkit.open-workflow": () => navigate("workflows"),
+            "aworkit.settings": () => navigate("settings"),
+            "aworkit.chat": () => navigate("chat"),
+            "aworkit.workflows": () => navigate("workflows"),
+            "aworkit.management": () => navigate("management"),
+            "aworkit.shortcuts": () =>
+              setNotification({
+                kind: "notification",
+                title: "Keyboard shortcuts",
+                body: "Use Ctrl/Command+1 for Chat, +2 for Workflows, and +, for Settings.",
+              }),
+          };
+          actions[payload]?.();
+        }),
+      )
+      .then((unlisten) => {
+        dispose = unlisten;
+      })
+      .catch(() => {
+        // Browser and denied-native-event runs keep keyboard navigation.
+      });
+    return () => dispose?.();
+  }, []);
+  useEffect(() => {
     const receive = (event: Event) => {
       const request = (event as CustomEvent<NativePresentationRequest>).detail;
       if (request.kind === "notification") setNotification(request);

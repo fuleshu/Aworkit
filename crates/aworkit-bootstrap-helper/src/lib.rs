@@ -13,6 +13,7 @@ pub mod coordinator;
 pub mod journal;
 pub mod profile;
 pub mod protocol;
+pub mod release;
 pub mod slots;
 pub mod watchdog;
 

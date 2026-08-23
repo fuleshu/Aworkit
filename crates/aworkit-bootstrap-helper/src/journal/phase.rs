@@ -191,9 +191,9 @@ pub fn bootstrap_is_terminal(phase: BootstrapPhaseV1) -> bool {
 #[must_use]
 pub fn result_can_seal(
     phase: BootstrapPhaseV1,
-    kind: &aworkit_trusted_core::BootstrapResultKindV1,
+    kind: &aworkit_protocol::BootstrapResultKindV1,
 ) -> bool {
-    use aworkit_trusted_core::BootstrapResultKindV1;
+    use aworkit_protocol::BootstrapResultKindV1;
     match kind {
         BootstrapResultKindV1::ActivatedVerified { .. } => phase == BootstrapPhaseV1::Verified,
         BootstrapResultKindV1::RolledBack { .. } => phase == BootstrapPhaseV1::RolledBack,

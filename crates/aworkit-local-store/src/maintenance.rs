@@ -49,6 +49,7 @@ impl MaintenanceGate {
     fn open(&self) -> io::Result<File> {
         Ok(OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&self.lock_path)?)

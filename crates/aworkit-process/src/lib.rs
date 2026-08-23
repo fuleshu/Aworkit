@@ -1,8 +1,27 @@
-//! Minimal lifecycle primitives shared by the isolated Aworkit processes.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_return,
+    clippy::struct_excessive_bools
+)]
+//! Native lifecycle and operating-system primitives shared by Aworkit processes.
 //!
-//! This crate deliberately contains no domain messages or privileged behavior.
-//! It supplies only a bounded process handshake so the first milestone can prove
-//! that process entry points start and terminate independently.
+//! This crate deliberately contains no product-domain policy. It supplies the
+//! bounded process handshake plus fail-closed filesystem, process, IPC, and
+//! identity adapters used by the trusted process boundaries.
+//!
+//! Capability reports intentionally expose independent Boolean guarantees, and
+//! each fallible adapter's typed error is the authoritative exhaustive error set.
+//! Registry poisoning is an internal invariant failure rather than a recoverable
+//! operating-system boundary condition.
+
+pub mod filesystem;
+pub mod identity;
+pub mod ipc;
+pub mod runtime;
+pub mod time;
+
+pub use runtime::NativeProcessCapabilityReportV1;
 
 use std::{env, io::Write, time::Duration};
 

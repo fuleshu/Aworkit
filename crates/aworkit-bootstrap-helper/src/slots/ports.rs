@@ -1,7 +1,7 @@
 //! Narrow artifact and immutable-slot ports used by the slot manager.
 
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::{BuildBundleRefV1, BuildProvenanceV1};
+use aworkit_protocol::{BuildBundleRefV1, BuildProvenanceV1};
 
 use super::error::BuildSlotError;
 use super::model::{

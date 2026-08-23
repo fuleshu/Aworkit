@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use aworkit_protocol::{CapabilityOutcomeClassV1, ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, ManualRecoveryNoticeV1, focused_verification_evidence_hash_v1,
     focused_verification_plan_hash_v1,
 };
+use aworkit_protocol::{CapabilityOutcomeClassV1, ProcessGeneration, StableId};
 
 use crate::journal::canonical_hash;
 use crate::protocol::MAX_BOOTSTRAP_DEADLINE_MS;
@@ -79,7 +79,7 @@ impl ApplicationLaunchWatchdog {
             capability_generation: 0,
             capability_digest: String::new(),
             verification_plan_hash: String::new(),
-            verification_plan: aworkit_trusted_core::FocusedVerificationPlanV1 {
+            verification_plan: aworkit_protocol::FocusedVerificationPlanV1 {
                 plan_id: StableId::parse("invalid.plan").expect("static id"),
                 checks: Vec::new(),
                 plan_hash: String::new(),

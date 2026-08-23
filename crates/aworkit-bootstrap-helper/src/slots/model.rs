@@ -1,7 +1,7 @@
 //! Closed manifests, observations, handles, and role descriptors for slots.
 
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::{BuildBundleRefV1, BuildProvenanceV1};
+use aworkit_protocol::{BuildBundleRefV1, BuildProvenanceV1};
 use serde::{Deserialize, Serialize};
 
 /// First immutable-slot schema.

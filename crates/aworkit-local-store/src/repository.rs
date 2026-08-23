@@ -139,6 +139,7 @@ impl RepositoryRoot {
         reject_symlink(&collection_root)?;
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(collection_root.join(LOCK_FILE_NAME))?;

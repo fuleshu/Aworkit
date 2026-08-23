@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "requiredBundleRoles": [
+    "bootstrap_helper",
+    "capability_host",
+    "desktop",
+    "desktop_ui",
+    "trusted_core",
+    "workflow_worker"
+  ],
+  "platforms": [
+    {
+      "id": "windows",
+      "filesystem": "anchored-handles-atomic-replace-directory-flush",
+      "process": "named-pipe-peer-pid-job-object",
+      "credential": "windows-credential-manager",
+      "presentation": "tauri-windows-native",
+      "degradedStates": [
+        "non-local-or-package-owned-volume",
+        "process-containment-unavailable",
+        "credential-store-locked",
+        "native-presentation-unavailable-workbench-fallback",
+        "packaged-self-activation-unsupported"
+      ]
+    },
+    {
+      "id": "macos",
+      "filesystem": "anchored-handles-atomic-rename-directory-fsync",
+      "process": "unix-socket-peer-user-process-group",
+      "credential": "macos-keychain",
+      "presentation": "tauri-macos-native",
+      "degradedStates": [
+        "non-local-or-package-owned-volume",
+        "process-containment-unavailable",
+        "credential-store-locked",
+        "native-presentation-unavailable-workbench-fallback",
+        "packaged-self-activation-unsupported"
+      ]
+    },
+    {
+      "id": "linux",
+      "filesystem": "anchored-handles-atomic-rename-directory-fsync",
+      "process": "unix-socket-peer-pid-process-group",
+      "credential": "freedesktop-secret-service",
+      "presentation": "tauri-linux-native",
+      "degradedStates": [
+        "non-local-or-package-owned-volume",
+        "process-containment-unavailable",
+        "credential-store-locked",
+        "native-presentation-unavailable-workbench-fallback",
+        "packaged-self-activation-unsupported"
+      ]
+    }
+  ]
+}

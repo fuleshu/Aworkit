@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use aworkit_protocol::ProcessGeneration;
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     AuthenticatedBootstrapResultV1, BootstrapAdmissionV1, BuildBundleRefV1, BuildProvenanceV1,
     EnrollmentPreparedV1, ManagedLocalEnrollmentRequestV1, PlatformCapabilityReportV1,
     RepairActivationBatonV1,

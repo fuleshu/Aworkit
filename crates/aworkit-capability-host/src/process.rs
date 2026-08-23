@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aworkit_process::identity::ExecutableIdentityV1;
 use command_group::{CommandGroup, GroupChild};
 #[cfg(unix)]
 use command_group::{Signal, UnixChildExt};
@@ -245,7 +246,11 @@ impl ProcessRunner {
         if cancellation.is_cancelled() {
             return Err(ProcessError::CancelledBeforeLaunch);
         }
-        let mut command = Command::new(&request.program);
+        let executable_path = std::fs::canonicalize(&request.program)
+            .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
+        let executable = ExecutableIdentityV1::open(&executable_path)
+            .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
+        let mut command = Command::new(&executable.canonical_path);
         command
             .args(&request.arguments)
             .env_clear()
@@ -254,9 +259,16 @@ impl ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(path) = &request.working_directory {
-            command.current_dir(path);
+            command.current_dir(std::fs::canonicalize(path)?);
         }
         let mut child = command.group_spawn()?;
+        if !ExecutableIdentityV1::open(&executable.canonical_path)
+            .is_ok_and(|observed| observed == executable)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ProcessError::ExecutableIdentityMismatch);
+        }
         let process_group_id = child.id();
         let stdout = child
             .inner()
@@ -350,6 +362,9 @@ fn validate_request(request: &ProcessSpecV1) -> Result<(), ProcessError> {
     {
         return Err(ProcessError::InvalidEnvironment);
     }
+    if !request.program.is_absolute() {
+        return Err(ProcessError::ExecutableIdentityMismatch);
+    }
     if request
         .working_directory
         .as_ref()
@@ -420,6 +435,8 @@ pub enum ProcessError {
     InvalidOutputLimit,
     #[error("process output exceeds its bound")]
     OutputTooLarge,
+    #[error("process executable is not an exact stable absolute identity")]
+    ExecutableIdentityMismatch,
     #[error("deadline elapsed before launch")]
     DeadlineElapsed,
     #[error("process was cancelled before launch")]

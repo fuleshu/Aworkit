@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     ActivationEligibilityV1, BuildBundleRefV1, BuildOriginV1, BuildProvenanceV1,
     ManagedLocalEnrollmentRequestV1, PlatformCapabilityReportV1, PlatformReasonV1,
     RepairActivationBatonV1,

@@ -10,7 +10,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapResultKindV1, BootstrapResultV1, EnrollmentPreparedV1,
     ManagedLocalEnrollmentRequestV1, ManualRecoveryNoticeV1,
 };
@@ -856,7 +856,7 @@ impl ActivationJournalPortV1 for ActivationJournal {
         if result.activation_id != id {
             return Err(BootstrapJournalError::IdentityConflict);
         }
-        if !aworkit_trusted_core::bootstrap_result_hash_v1(result)
+        if !aworkit_protocol::bootstrap_result_hash_v1(result)
             .is_ok_and(|hash| hash == result.receipt_hash)
         {
             return Err(BootstrapJournalError::Invalid(

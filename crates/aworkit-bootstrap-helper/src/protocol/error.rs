@@ -5,7 +5,7 @@
 //! durable journal record was not committed. No acknowledgement is ever
 //! returned before its underlying journal write succeeds.
 
-use aworkit_trusted_core::PlatformReasonV1;
+use aworkit_protocol::PlatformReasonV1;
 use thiserror::Error;
 
 use crate::journal::BootstrapJournalError;

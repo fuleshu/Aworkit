@@ -2,6 +2,7 @@
 
 mod hermetic;
 mod model;
+mod native;
 mod ports;
 mod watchdog;
 
@@ -10,5 +11,6 @@ mod tests;
 
 pub use hermetic::{HermeticGenerationScriptV1, HermeticPlatformProcessPort};
 pub use model::*;
+pub use native::NativeBootstrapProcessPort;
 pub use ports::{ApplicationLaunchWatchdogPortV1, PlatformProcessPortV1};
 pub use watchdog::ApplicationLaunchWatchdog;

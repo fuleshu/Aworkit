@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use aworkit_protocol::PlatformReasonV1;
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::PlatformReasonV1;
 
 use crate::journal::{BootstrapPhaseV1, canonical_hash};
 use crate::slots::{BuildSlotVerifyPortV1, OpenBuildSlotHandleV1};

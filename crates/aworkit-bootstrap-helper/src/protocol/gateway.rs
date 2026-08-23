@@ -12,14 +12,14 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     ActivationEligibilityV1, AuthenticatedBootstrapResultV1, BootstrapAcceptedAdmissionV1,
     BootstrapAdmissionV1, BootstrapPeerProofV1, BootstrapResultKindV1, BootstrapResultV1,
     BuildBundleRefV1, BuildProvenanceV1, EnrollmentPreparedV1, ManagedLocalEnrollmentRequestV1,
     PlatformCapabilityReportV1, PlatformReasonV1, RepairActivationBatonV1,
     bootstrap_result_hash_v1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use crate::journal::{
     ActivationJournalPortV1, BatonAcceptedV1, BootstrapPhaseAdvanceV1, BootstrapPhaseV1,

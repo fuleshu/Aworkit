@@ -1,8 +1,8 @@
 //! Immutable execution context for one admitted activation.
 
 use crate::profile::ActivationPlanV1;
+use aworkit_protocol::FocusedVerificationPlanV1;
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::FocusedVerificationPlanV1;
 
 /// Facts not duplicated in the durable baton but required to launch and seal
 /// its result. Callers cannot choose selector targets or process generations;

@@ -1,29 +1,12 @@
 //! Candidate evidence, disclosure, and bounded-investigation records.
 
 use aworkit_protocol::StableId;
+pub use aworkit_protocol::{
+    BuildBundleRefV1, BuildProvenanceV1, FocusedVerificationCheckResultV1,
+    FocusedVerificationCheckV1, FocusedVerificationEvidenceV1, FocusedVerificationPlanV1,
+    REPAIR_SCHEMA_VERSION_V1, RepairArtifactRefV1,
+};
 use serde::{Deserialize, Serialize};
-
-/// Schema version shared by all M10 repair/bootstrap records.
-pub const REPAIR_SCHEMA_VERSION_V1: u16 = 1;
-
-/// Immutable local evidence referenced by ID and exact content hash.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RepairArtifactRefV1 {
-    pub artifact_id: StableId,
-    pub content_hash: String,
-    pub byte_size: u64,
-    pub media_type: String,
-    pub logical_name: String,
-}
-
-/// A complete application bundle staged in the artifact store.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BuildBundleRefV1 {
-    pub artifact: RepairArtifactRefV1,
-    pub manifest_relative_entry: String,
-}
 
 /// Explicit evidence or an explicit explanation that evidence is absent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -65,58 +48,6 @@ pub enum DataCompatibilityV1 {
     RollbackCompatible,
     DeferredUntilVerified { explanation: String },
     ForwardOnlyMigrationRequired { explanation: String },
-}
-
-/// One exact check in the focused startup-verification plan.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FocusedVerificationCheckV1 {
-    pub check_id: StableId,
-    pub label: String,
-    /// An approved capability reference, never an executable shell string.
-    pub capability_id: StableId,
-    pub timeout_ms: u64,
-}
-
-/// Plan sealed into the activation baton before the current core quiesces.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FocusedVerificationPlanV1 {
-    pub plan_id: StableId,
-    pub checks: Vec<FocusedVerificationCheckV1>,
-    pub plan_hash: String,
-}
-
-/// Result for one plan-bound verification check.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FocusedVerificationCheckResultV1 {
-    pub check_id: StableId,
-    pub passed: bool,
-    pub summary: String,
-    pub evidence: Vec<RepairArtifactRefV1>,
-}
-
-/// Exact focused-verification evidence submitted by the candidate generation.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FocusedVerificationEvidenceV1 {
-    pub plan_id: StableId,
-    pub plan_hash: String,
-    pub results: Vec<FocusedVerificationCheckResultV1>,
-    pub evidence_hash: String,
-}
-
-/// Reproducible, secret-free provenance for the whole candidate build.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BuildProvenanceV1 {
-    pub source_revision: String,
-    pub source_tree_hash: String,
-    pub workspace_identity_hash: String,
-    pub toolchain_hash: String,
-    pub build_manifest_hash: String,
-    pub provenance_hash: String,
 }
 
 /// Complete user-visible disclosure required before activation is possible.

@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, Mutex, TryLockError};
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapResultKindV1, BootstrapResultV1, BuildProvenanceV1, ManualRecoveryNoticeV1,
     PlatformReasonV1, ReasonCodeV1, RepairArtifactRefV1, bootstrap_result_hash_v1,
     focused_verification_plan_hash_v1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use crate::journal::{
     ActivationJournalPortV1, BatonAcceptedV1, BootstrapEffectV1, BootstrapJournalMutationV1,
@@ -831,7 +831,7 @@ impl ActivationControlPortV1 for ActivationRollbackCoordinator {
 impl BootstrapEnrollmentPortV1 for ActivationRollbackCoordinator {
     fn materialize(
         &self,
-        request: &aworkit_trusted_core::ManagedLocalEnrollmentRequestV1,
+        request: &aworkit_protocol::ManagedLocalEnrollmentRequestV1,
         plan: &EnrollmentPlanV1,
     ) -> Result<EnrollmentPreparationV1, String> {
         let _flight = self
@@ -878,7 +878,7 @@ impl BootstrapEnrollmentPortV1 for ActivationRollbackCoordinator {
                 initial_active_bundle_hash: slot.build_content_hash,
                 published_slot_verified: true,
             },
-            prepared: aworkit_trusted_core::EnrollmentPreparedV1 {
+            prepared: aworkit_protocol::EnrollmentPreparedV1 {
                 preparation_id,
                 request_id: request.request_id.clone(),
                 enrollment_digest,

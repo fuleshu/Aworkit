@@ -6,11 +6,11 @@
 //! phase machine; ordinals and record hashes form one append-only chain per
 //! transaction id. Terminal receipts are sealed exactly once and are immutable.
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, BootstrapResultV1, EnrollmentPreparedV1, ManagedLocalEnrollmentRequestV1,
     ManualRecoveryNoticeV1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 use serde::{Deserialize, Serialize};
 
 /// Journal schema version. V1 is the first durable journal layout.

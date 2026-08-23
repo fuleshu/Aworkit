@@ -61,13 +61,15 @@ pub fn build_provenance_hash_v1(
 pub fn focused_verification_plan_hash_v1(
     plan: &FocusedVerificationPlanV1,
 ) -> Result<String, RepairValidationError> {
-    canonical_hash(&(&plan.plan_id, &plan.checks))
+    aworkit_protocol::focused_verification_plan_hash_v1(plan)
+        .map_err(|_| RepairValidationError::Encoding)
 }
 
 pub fn focused_verification_evidence_hash_v1(
     evidence: &FocusedVerificationEvidenceV1,
 ) -> Result<String, RepairValidationError> {
-    canonical_hash(&(&evidence.plan_id, &evidence.plan_hash, &evidence.results))
+    aworkit_protocol::focused_verification_evidence_hash_v1(evidence)
+        .map_err(|_| RepairValidationError::Encoding)
 }
 
 pub fn repair_disclosure_hash_v1(
@@ -187,14 +189,5 @@ pub fn core_quiescence_facts_hash_v1(
 pub fn bootstrap_result_hash_v1(
     result: &BootstrapResultV1,
 ) -> Result<String, RepairValidationError> {
-    canonical_hash(&(
-        result.schema_version,
-        &result.receipt_id,
-        &result.activation_id,
-        &result.baton_hash,
-        &result.management_checkpoint_id,
-        result.recipient_process_generation,
-        result.sealed_at_epoch_ms,
-        &result.result,
-    ))
+    aworkit_protocol::bootstrap_result_hash_v1(result).map_err(|_| RepairValidationError::Encoding)
 }

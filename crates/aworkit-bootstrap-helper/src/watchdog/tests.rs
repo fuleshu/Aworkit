@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aworkit_protocol::{ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, FocusedVerificationCheckV1, FocusedVerificationPlanV1,
     ManualRecoveryNoticeV1, ReasonCodeV1, focused_verification_plan_hash_v1,
 };
+use aworkit_protocol::{ProcessGeneration, StableId};
 
 use crate::journal::canonical_hash;
 use crate::profile::ActiveSelectorObservationV1;
@@ -50,15 +50,15 @@ struct StaticSlots(HashMap<StableId, VerifiedBuildSlotV1>);
 impl BuildSlotVerifyPortV1 for StaticSlots {
     fn verify_staged_artifact(
         &self,
-        _bundle: &aworkit_trusted_core::BuildBundleRefV1,
-        _provenance: &aworkit_trusted_core::BuildProvenanceV1,
+        _bundle: &aworkit_protocol::BuildBundleRefV1,
+        _provenance: &aworkit_protocol::BuildProvenanceV1,
     ) -> Result<VerifiedStagedBuildV1, BuildSlotError> {
         Err(BuildSlotError::NotFound)
     }
     fn materialize_immutable_slot(
         &self,
-        _bundle: &aworkit_trusted_core::BuildBundleRefV1,
-        _provenance: &aworkit_trusted_core::BuildProvenanceV1,
+        _bundle: &aworkit_protocol::BuildBundleRefV1,
+        _provenance: &aworkit_protocol::BuildProvenanceV1,
     ) -> Result<VerifiedBuildSlotV1, BuildSlotError> {
         Err(BuildSlotError::NotFound)
     }

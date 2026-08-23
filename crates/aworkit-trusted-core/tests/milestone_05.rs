@@ -24,7 +24,9 @@ fn fields(values: &[&str]) -> BTreeSet<String> {
 
 #[test]
 fn scoped_secret_leases_enforce_every_audience_ttl_field_use_and_revocation_fence() {
-    let mut broker = SecretBroker::default();
+    let mut broker = SecretBroker::with_store(Arc::new(
+        aworkit_trusted_core::MemoryCredentialStore::default(),
+    ));
     let credential = aworkit_trusted_core::CredentialRef(id("credential.model"));
     let metadata = broker
         .put_credential(

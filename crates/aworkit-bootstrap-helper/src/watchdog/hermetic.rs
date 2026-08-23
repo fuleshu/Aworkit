@@ -326,7 +326,7 @@ impl PlatformProcessPortV1 for HermeticPlatformProcessPort {
                     &request.verification_plan_hash,
                 ))
                 .map_err(|error| error.to_string())?;
-                let mut evidence = aworkit_trusted_core::FocusedVerificationEvidenceV1 {
+                let mut evidence = aworkit_protocol::FocusedVerificationEvidenceV1 {
                     plan_id: request.verification_plan_id.clone(),
                     plan_hash: request.verification_plan_hash.clone(),
                     results: request
@@ -334,7 +334,7 @@ impl PlatformProcessPortV1 for HermeticPlatformProcessPort {
                         .iter()
                         .enumerate()
                         .map(|(index, check_id)| {
-                            Ok(aworkit_trusted_core::FocusedVerificationCheckResultV1 {
+                            Ok(aworkit_protocol::FocusedVerificationCheckResultV1 {
                                 check_id: check_id.clone(),
                                 passed: script.verification_passed,
                                 summary: if script.verification_passed {
@@ -342,7 +342,7 @@ impl PlatformProcessPortV1 for HermeticPlatformProcessPort {
                                 } else {
                                     "focused verification failed".to_owned()
                                 },
-                                evidence: vec![aworkit_trusted_core::RepairArtifactRefV1 {
+                                evidence: vec![aworkit_protocol::RepairArtifactRefV1 {
                                     artifact_id: StableId::parse(format!(
                                         "verification.evidence.{}.{index}",
                                         request.process_generation.0
@@ -359,7 +359,7 @@ impl PlatformProcessPortV1 for HermeticPlatformProcessPort {
                     evidence_hash: String::new(),
                 };
                 evidence.evidence_hash =
-                    aworkit_trusted_core::focused_verification_evidence_hash_v1(&evidence)
+                    aworkit_protocol::focused_verification_evidence_hash_v1(&evidence)
                         .map_err(|error| error.to_string())?;
                 evidence
             },

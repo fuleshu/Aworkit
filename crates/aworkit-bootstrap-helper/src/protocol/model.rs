@@ -7,8 +7,8 @@
 //! identity and command facts are written through the activation journal
 //! before any acknowledgement is returned.
 
+use aworkit_protocol::IntegrityStrengthV1;
 use aworkit_protocol::{CapabilityOutcomeV1, ProcessGeneration, StableId};
-use aworkit_trusted_core::IntegrityStrengthV1;
 use serde::{Deserialize, Serialize};
 
 use crate::journal::EnrollmentIdentitiesV1;
@@ -184,7 +184,7 @@ pub struct BootstrapCommandAckV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnrollmentPreparationV1 {
     pub observation: crate::journal::EnrollmentObservationV1,
-    pub prepared: aworkit_trusted_core::EnrollmentPreparedV1,
+    pub prepared: aworkit_protocol::EnrollmentPreparedV1,
 }
 
 /// Helper-controlled storage and protocol identity the gateway holds.

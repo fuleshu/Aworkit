@@ -1,10 +1,10 @@
 //! Exact process-generation, handshake, health, cleanup, and verification DTOs.
 
-use aworkit_protocol::{CapabilityOutcomeV1, ProcessGeneration, StableId};
-use aworkit_trusted_core::{
+use aworkit_protocol::{
     BootstrapDeadlinesV1, FocusedVerificationEvidenceV1, FocusedVerificationPlanV1,
     ManualRecoveryNoticeV1,
 };
+use aworkit_protocol::{CapabilityOutcomeV1, ProcessGeneration, StableId};
 use serde::{Deserialize, Serialize};
 
 use crate::profile::ActiveSelectorObservationV1;

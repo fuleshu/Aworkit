@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aworkit_process::identity::ExecutableIdentityV1;
 use command_group::{CommandGroup, GroupChild};
 #[cfg(unix)]
 use command_group::{Signal, UnixChildExt};
@@ -85,7 +86,11 @@ impl NativePluginProcessV1 {
         limits: PluginProcessLimitsV1,
     ) -> Result<Self, PluginProcessError> {
         validate_spec(spec, limits)?;
-        let mut command = Command::new(&spec.program);
+        let executable_path = std::fs::canonicalize(&spec.program)
+            .map_err(|_| PluginProcessError::ExecutableIdentityMismatch)?;
+        let executable = ExecutableIdentityV1::open(&executable_path)
+            .map_err(|_| PluginProcessError::ExecutableIdentityMismatch)?;
+        let mut command = Command::new(&executable.canonical_path);
         command
             .args(&spec.arguments)
             .env_clear()
@@ -94,9 +99,16 @@ impl NativePluginProcessV1 {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(directory) = &spec.working_directory {
-            command.current_dir(directory);
+            command.current_dir(std::fs::canonicalize(directory)?);
         }
         let mut child = command.group_spawn()?;
+        if !ExecutableIdentityV1::open(&executable.canonical_path)
+            .is_ok_and(|observed| observed == executable)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(PluginProcessError::ExecutableIdentityMismatch);
+        }
         let stdin = child
             .inner()
             .stdin
@@ -343,6 +355,7 @@ fn validate_spec(
     limits: PluginProcessLimitsV1,
 ) -> Result<(), PluginProcessError> {
     if spec.program.as_os_str().is_empty()
+        || !spec.program.is_absolute()
         || spec.timeout.is_zero()
         || spec.cancellation_grace.is_zero()
         || limits.maximum_queued_frames == 0
@@ -393,6 +406,8 @@ pub enum PluginProcessError {
     Frame(#[from] PluginFrameError),
     #[error("plugin process specification or bounds are invalid")]
     InvalidSpecification,
+    #[error("plugin executable is not an exact stable absolute identity")]
+    ExecutableIdentityMismatch,
     #[error("plugin process did not expose all protocol pipes")]
     MissingPipe,
     #[error("plugin process protocol receive deadline elapsed")]

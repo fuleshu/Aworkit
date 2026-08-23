@@ -105,6 +105,15 @@ impl DiagnosticLogStore {
         input: &DiagnosticInput,
         redaction: &RedactionSet,
     ) -> DiagnosticWriteOutcome {
+        // Once close or worker exit is already published, return the stable
+        // terminal outcome without racing a now-irrelevant queue lock. The
+        // authoritative check remains under the lock below for concurrent
+        // shutdown that has not yet become visible here.
+        if self.shared.closed.load(Ordering::Acquire)
+            || !self.shared.worker_alive.load(Ordering::Acquire)
+        {
+            return DiagnosticWriteOutcome::Dropped(DiagnosticDropReason::StoreClosed);
+        }
         self.shared
             .last_epoch_ms
             .fetch_max(input.occurred_at_epoch_ms, Ordering::Relaxed);

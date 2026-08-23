@@ -18,6 +18,9 @@ export interface NativePresentationAdapter {
   readonly name: string;
   notify(title: string, body: string): Promise<void>;
   confirm(title: string, body: string): Promise<boolean>;
+  message(title: string, body: string): Promise<void>;
+  pickFile(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
 }
 
 export const nativePresentationEvent = "aworkit:native-presentation";

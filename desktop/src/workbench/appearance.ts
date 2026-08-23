@@ -106,6 +106,15 @@ export function projectAppearancePreference(
   preference: AppearancePreference,
 ): ResolvedAppearance {
   projectedAppearance = preference;
+  if ("__TAURI_INTERNALS__" in window) {
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke("native_set_appearance", { appearance: preference }),
+      )
+      .catch(() => {
+        // CSS token projection below remains the visual fallback.
+      });
+  }
   return applyAppearance(
     document.documentElement,
     preference,

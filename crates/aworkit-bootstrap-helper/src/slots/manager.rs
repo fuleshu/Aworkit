@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aworkit_protocol::StableId;
-use aworkit_trusted_core::{BuildBundleRefV1, BuildProvenanceV1};
+use aworkit_protocol::{BuildBundleRefV1, BuildProvenanceV1};
 use sha2::{Digest, Sha256};
 
 use crate::journal::canonical_hash;

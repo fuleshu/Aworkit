@@ -17,7 +17,7 @@ use std::{
     },
 };
 
-use aworkit_trusted_core::ManualRecoveryNoticeV1;
+use aworkit_protocol::ManualRecoveryNoticeV1;
 use fs2::FileExt;
 use serde::Serialize;
 

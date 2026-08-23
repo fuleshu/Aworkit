@@ -4,17 +4,19 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
+use aworkit_process::identity::ExecutableIdentityV1;
 use aworkit_protocol::{
     MAX_FRAME_BYTES, ProcessGeneration, StableId, WorkerControlEnvelopeV1, WorkerControlKindV1,
     WorkerFrozenRunSnapshotV1, WorkerHandshakeV1, WorkerOutputEnvelopeV1, WorkerOutputKindV1,
     decode_frame, encode_frame,
 };
+use command_group::{CommandGroup, GroupChild};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -196,7 +198,7 @@ pub enum WorkerSupervisorError {
 }
 
 struct LiveWorkerV1 {
-    child: Child,
+    child: GroupChild,
     input: ChildStdin,
     outputs: Receiver<Result<WorkerOutputEnvelopeV1, String>>,
     pump: Option<JoinHandle<()>>,
@@ -218,7 +220,7 @@ struct RestartStateV1 {
 /// bounded cleanup. Workers have no process-spawn capability, so the direct
 /// child is the complete runtime process tree by contract.
 pub struct ProcessWorkerSupervisorV1 {
-    executable: PathBuf,
+    executable: ExecutableIdentityV1,
     workers: BTreeMap<String, LiveWorkerV1>,
     restart_state: BTreeMap<String, RestartStateV1>,
     maximum_restarts: u32,
@@ -229,13 +231,10 @@ impl ProcessWorkerSupervisorV1 {
         executable: impl Into<PathBuf>,
         maximum_restarts: u32,
     ) -> Result<Self, WorkerSupervisorError> {
-        let executable = std::fs::canonicalize(executable.into())
+        let executable_path = std::fs::canonicalize(executable.into())
             .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
-        if !executable.is_file() {
-            return Err(WorkerSupervisorError::Spawn(
-                "worker executable is not a file".to_owned(),
-            ));
-        }
+        let executable = ExecutableIdentityV1::open(executable_path)
+            .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
         Ok(Self {
             executable,
             workers: BTreeMap::new(),
@@ -246,7 +245,7 @@ impl ProcessWorkerSupervisorV1 {
 
     #[must_use]
     pub fn executable(&self) -> &Path {
-        &self.executable
+        &self.executable.canonical_path
     }
 
     pub fn spawn_start(
@@ -492,25 +491,28 @@ impl ProcessWorkerSupervisorV1 {
         let chat_id = control.chat_id.clone();
         let run_id = control.run_id.clone();
         let generation = control.generation;
-        let mut command = Command::new(&self.executable);
+        let mut command = Command::new(&self.executable.canonical_path);
         command
             .arg("--serve")
+            .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
         let mut child = command
-            .spawn()
+            .group_spawn()
             .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
-        let input = child
-            .stdin
-            .take()
-            .ok_or_else(|| WorkerSupervisorError::Spawn("worker stdin was not piped".to_owned()))?;
-        let output = child.stdout.take().ok_or_else(|| {
+        if !ExecutableIdentityV1::open(&self.executable.canonical_path)
+            .is_ok_and(|observed| observed == self.executable)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(WorkerSupervisorError::ExecutableIdentityMismatch);
+        }
+        let input =
+            child.inner().stdin.take().ok_or_else(|| {
+                WorkerSupervisorError::Spawn("worker stdin was not piped".to_owned())
+            })?;
+        let output = child.inner().stdout.take().ok_or_else(|| {
             WorkerSupervisorError::Spawn("worker stdout was not piped".to_owned())
         })?;
         let (sender, receiver) = mpsc::sync_channel(1_024);
@@ -561,7 +563,7 @@ impl ProcessWorkerSupervisorV1 {
             || handshake.run_id != run_id
             || handshake.generation != generation
             || handshake.snapshot_hash != snapshot_hash
-            || executable_identity != self.executable
+            || executable_identity != self.executable.canonical_path
         {
             terminate_worker(&mut worker);
             return Err(WorkerSupervisorError::StaleHandshake);

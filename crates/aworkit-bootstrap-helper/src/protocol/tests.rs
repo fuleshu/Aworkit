@@ -3,13 +3,13 @@
 use std::sync::{Arc, Mutex};
 
 use aworkit_protocol::{
-    CapabilityOutcomeClassV1, CapabilityOutcomeV1, ProcessGeneration, StableId,
-};
-use aworkit_trusted_core::{
     ActivationEligibilityV1, BootstrapAdmissionV1, BootstrapDeadlinesV1, BuildBundleRefV1,
     BuildOriginV1, BuildProvenanceV1, EnrollmentPreparedV1, FocusedVerificationPlanV1,
     ManagedLocalEnrollmentRequestV1, ManagementCheckpointRefV1, PlatformCapabilityReportV1,
     PlatformReasonV1, RepairActivationBatonV1, RepairArtifactRefV1,
+};
+use aworkit_protocol::{
+    CapabilityOutcomeClassV1, CapabilityOutcomeV1, ProcessGeneration, StableId,
 };
 
 use crate::journal::{

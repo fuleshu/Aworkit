@@ -1,7 +1,7 @@
 //! Native process mechanics and platform-neutral watchdog contract.
 
+use aworkit_protocol::ManualRecoveryNoticeV1;
 use aworkit_protocol::ProcessGeneration;
-use aworkit_trusted_core::ManualRecoveryNoticeV1;
 
 use super::model::*;
 
@@ -55,7 +55,7 @@ pub trait ApplicationLaunchWatchdogPortV1: Send + Sync {
         activation_id: &aworkit_protocol::StableId,
         attempt_id: &aworkit_protocol::StableId,
         generation: ProcessGeneration,
-        deadlines: &aworkit_trusted_core::BootstrapDeadlinesV1,
+        deadlines: &aworkit_protocol::BootstrapDeadlinesV1,
         rollback_required: bool,
     ) -> Result<ProcessTreeCleanupV1, WatchdogFailureV1>;
 

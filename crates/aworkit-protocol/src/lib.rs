@@ -1,18 +1,33 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::items_after_statements,
+    clippy::large_enum_variant,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::struct_excessive_bools
+)]
 //! Stable, provider-neutral protocol primitives for Aworkit process boundaries.
 //!
 //! Domain DTO families belong to their respective core, worker, host, UI,
 //! portable, or bootstrap module. This crate owns only envelopes, stable IDs,
 //! versioning, framing, and the deliberately small base payloads.
+//!
+//! The wire DTOs deliberately retain their direct, schema-visible field shapes;
+//! boxing variants or replacing capability booleans solely to reduce in-memory
+//! enum size would obscure the stable cross-process contract. Individual fallible
+//! protocol methods use their typed error return as the authoritative error set.
 
 use std::fmt::{Display, Formatter};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use thiserror::Error;
 
+mod bootstrap;
 mod extension;
 mod history;
 mod runtime;
 
+pub use bootstrap::*;
 pub use extension::*;
 pub use history::*;
 pub use runtime::*;
