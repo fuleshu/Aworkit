@@ -276,3 +276,55 @@ pub struct AuthenticatedBootstrapResultV1 {
     pub receipt: BootstrapResultV1,
     pub peer: BootstrapPeerProofV1,
 }
+
+/// Closed bootstrap reason code carried by receipts and manual-recovery notices.
+///
+/// Codes are deterministic and never derived from timestamps, so the same
+/// observed condition always yields the same code across helper restarts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasonCodeV1 {
+    UnsupportedPlatform,
+    UnsupportedVolume,
+    UnsupportedSelector,
+    UnsupportedProcessCleanup,
+    DataMigrationRequired,
+    OriginUnverifiable,
+    EnrollmentMismatch,
+    CapabilityDrift,
+    CandidateFailure,
+    RollbackFailure,
+    TornJournal,
+    ChainBroken,
+    GenerationProofMissing,
+    AmbiguousSelectorState,
+    DiskFull,
+    SyncFailure,
+    OwnershipLost,
+}
+
+/// Same-user integrity strength.
+///
+/// V1 deliberately makes no publisher-authentication claim: the strength is a
+/// SHA-256 content identity plus per-user ownership verification, which is the
+/// strongest guarantee available to a helper running as the desktop user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegrityStrengthV1 {
+    SameUserHashAndOwnership,
+}
+
+/// Durable notice emitted when no safe automatic terminal can be reached.
+///
+/// The notice is stored alongside (never instead of) the journal chain and is
+/// the only surface that instructs a user to recover manually.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualRecoveryNoticeV1 {
+    pub notice_id: StableId,
+    pub activation_id: StableId,
+    pub reason: ReasonCodeV1,
+    pub observed_slot_state_hash: String,
+    pub diagnostic_id: StableId,
+    pub instructions: Vec<String>,
+}

@@ -6,7 +6,19 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+aworkit-protocol = { path = "../aworkit-protocol" }
 aworkit-process = { path = "../aworkit-process" }
+aworkit-trusted-core = { path = "../aworkit-trusted-core" }
+fs2 = "0.4"
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true
