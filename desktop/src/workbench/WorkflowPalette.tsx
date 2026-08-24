@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { NODE_CATALOG } from "./nodeCatalog";
 import {
   workflowEdgeId,
   workflowNodeId,
@@ -21,19 +22,6 @@ interface WorkflowPaletteProps {
   readonly onConnect: (source: string, target: string) => void;
   readonly onDelete: (ids: readonly string[]) => void;
 }
-
-const NODE_TYPES = [
-  ["input", "Chat Input", "→"],
-  ["agent", "Agent", "AI"],
-  ["model_call", "Model Call", "AI"],
-  ["tool", "Tool", ">_"],
-  ["condition", "Condition", "◇"],
-  ["parallel", "Parallel", "⋈"],
-  ["approval", "Approval", "✓"],
-  ["output", "Chat Output", "←"],
-  ["wait", "Wait for Input", "…"],
-  ["completion", "Completion", "■"],
-] as const;
 
 export function WorkflowPalette({
   document,
@@ -71,7 +59,7 @@ export function WorkflowPalette({
       </p>
       <section className="node-type-grid" aria-label="Node types">
         <small>NODE TYPES</small>
-        {NODE_TYPES.map(([type, label, icon]) => (
+        {NODE_CATALOG.map(({ type, label, icon, description }) => (
           <button
             aria-label={`Add ${label} node`}
             disabled={!editable}
@@ -79,7 +67,7 @@ export function WorkflowPalette({
             key={type}
             title={
               editable
-                ? `Add a ${label} document node; native execution support is validated separately`
+                ? `Add a ${label} node; ${description}`
                 : "This workflow schema is inspectable but read-only"
             }
             type="button"

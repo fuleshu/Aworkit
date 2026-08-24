@@ -234,23 +234,75 @@ fn workspace_is_root_anchored_case_safe_symlink_safe_and_git_read_only() {
         ));
     }
 
-    let moved = temp.path().join("moved");
-    std::fs::rename(&project, &moved).unwrap();
-    std::fs::create_dir(&project).unwrap();
-    assert!(
-        workspace
-            .read(&ProjectReference::parse("data.txt").unwrap())
-            .is_err()
-    );
+    // A renamed or replaced project root is rejected rather than silently
+    // changing the authority granted at open time.
+    #[cfg(unix)]
+    {
+        // A live Unix directory descriptor survives rename, so the swap is
+        // detected by inode identity on the next access.
+        let moved = temp.path().join("moved");
+        std::fs::rename(&project, &moved).unwrap();
+        std::fs::create_dir(&project).unwrap();
+        assert!(
+            workspace
+                .read(&ProjectReference::parse("data.txt").unwrap())
+                .is_err()
+        );
+    }
+    #[cfg(windows)]
+    {
+        // cap_std opens directory handles without FILE_SHARE_DELETE, so a live
+        // root cannot be renamed or replaced underneath the workspace; that
+        // handle policy itself enforces the no-rebind guarantee. Release the
+        // handle, swap the root, and confirm a fresh open binds the replacement
+        // directory rather than the stale authority.
+        let moved = temp.path().join("moved");
+        assert!(std::fs::rename(&project, &moved).is_err());
+        drop(workspace);
+        std::fs::rename(&project, &moved).unwrap();
+        std::fs::create_dir(&project).unwrap();
+        let reopened = WorkspaceRoot::open(&project).unwrap();
+        assert!(matches!(
+            reopened.read(&ProjectReference::parse("data.txt").unwrap()),
+            Err(WorkspaceError::Io(_))
+        ));
+    }
 
     let aliases = temp.path().join("aliases");
     std::fs::create_dir_all(aliases.join(".aworkit/portable/refs")).unwrap();
-    std::fs::write(aliases.join(".aworkit/portable/refs/Main.json"), b"{}").unwrap();
-    std::fs::write(aliases.join(".aworkit/portable/refs/main.json"), b"{}").unwrap();
-    let engine = PortableIntegrityEngine::new(PortableRepository::new(
-        PortablePaths::open(&aliases).unwrap(),
-    ));
-    assert!(engine.inspect().is_err());
+    // Ref files that differ only by case are a case-insensitive alias and must
+    // fail closed.
+    #[cfg(unix)]
+    {
+        std::fs::write(aliases.join(".aworkit/portable/refs/Main.json"), b"{}").unwrap();
+        std::fs::write(aliases.join(".aworkit/portable/refs/main.json"), b"{}").unwrap();
+        let engine = PortableIntegrityEngine::new(PortableRepository::new(
+            PortablePaths::open(&aliases).unwrap(),
+        ));
+        assert!(engine.inspect().is_err());
+    }
+    #[cfg(windows)]
+    {
+        // A case-insensitive volume collapses the two names into one file, so a
+        // case alias can never be materialized. The equivalent guarantee is
+        // exact-case component substitution: the ref is readable only with its
+        // on-disk casing.
+        std::fs::write(aliases.join(".aworkit/portable/refs/Main.json"), b"{}").unwrap();
+        let paths = PortablePaths::open(&aliases).unwrap();
+        assert!(matches!(
+            paths
+                .root()
+                .read(&ProjectReference::parse(".aworkit/portable/refs/main.json").unwrap()),
+            Err(WorkspaceError::CaseAliasDenied)
+        ));
+        assert_eq!(
+            paths
+                .root()
+                .read(&ProjectReference::parse(".aworkit/portable/refs/Main.json").unwrap())
+                .unwrap(),
+            b"{}"
+        );
+    }
 }
 
 #[test]

@@ -11,6 +11,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(unix))]
+use std::sync::Mutex;
+
 use aworkit_protocol::ProcessGeneration;
 use interprocess::local_socket::{
     GenericNamespaced, Listener, ListenerNonblockingMode, ListenerOptions, Stream, prelude::*,
@@ -65,6 +68,8 @@ struct AuthenticatedHelloV1 {
 /// Accepted stream plus immutable authentication facts.
 pub struct AuthenticatedLocalStream {
     stream: Stream,
+    #[cfg(not(unix))]
+    deadline: Mutex<Option<MonotonicDeadline>>,
     pub peer: PeerProcessIdentityV1,
     pub process_generation: ProcessGeneration,
 }
@@ -79,21 +84,84 @@ impl AuthenticatedLocalStream {
         if timeout.is_zero() {
             return Err(LocalIpcError::Deadline);
         }
-        self.stream.set_recv_timeout(Some(timeout))?;
-        self.stream.set_send_timeout(Some(timeout))?;
+        #[cfg(unix)]
+        {
+            self.stream.set_recv_timeout(Some(timeout))?;
+            self.stream.set_send_timeout(Some(timeout))?;
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows named pipes reject OS-level I/O timeouts, so the
+            // deadline is stored and enforced by the poll loops below while
+            // the stream itself switches to nonblocking mode.
+            let deadline =
+                MonotonicDeadline::after(timeout).map_err(|_| LocalIpcError::Deadline)?;
+            self.stream.set_nonblocking(true)?;
+            *self.deadline.lock().expect("deadline lock") = Some(deadline);
+        }
         Ok(())
     }
 }
 
+#[cfg(unix)]
 impl Read for AuthenticatedLocalStream {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         self.stream.read(buffer)
     }
 }
 
+#[cfg(not(unix))]
+impl Read for AuthenticatedLocalStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let deadline = *self.deadline.lock().expect("deadline lock");
+        let Some(deadline) = deadline else {
+            return self.stream.read(buffer);
+        };
+        loop {
+            match self.stream.read(buffer) {
+                Ok(count) => return Ok(count),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if deadline.expired() {
+                        return Err(error);
+                    }
+                    thread::sleep(POLL_INTERVAL.min(deadline.remaining()));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 impl Write for AuthenticatedLocalStream {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.stream.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+#[cfg(not(unix))]
+impl Write for AuthenticatedLocalStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let deadline = *self.deadline.lock().expect("deadline lock");
+        let Some(deadline) = deadline else {
+            return self.stream.write(buffer);
+        };
+        loop {
+            match self.stream.write(buffer) {
+                Ok(count) => return Ok(count),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if deadline.expired() {
+                        return Err(error);
+                    }
+                    thread::sleep(POLL_INTERVAL.min(deadline.remaining()));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -147,10 +215,17 @@ impl AuthenticatedLocalListener {
         loop {
             match self.listener.accept() {
                 Ok(mut stream) => {
-                    stream.set_recv_timeout(Some(deadline.remaining()))?;
-                    stream.set_send_timeout(Some(deadline.remaining()))?;
+                    #[cfg(unix)]
+                    {
+                        stream.set_recv_timeout(Some(deadline.remaining()))?;
+                        stream.set_send_timeout(Some(deadline.remaining()))?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        stream.set_nonblocking(true)?;
+                    }
                     let credentials = stream.peer_creds()?;
-                    let hello: AuthenticatedHelloV1 = read_frame(&mut stream)?;
+                    let hello: AuthenticatedHelloV1 = read_frame(&mut stream, Some(deadline))?;
                     if hello.nonce != self.nonce
                         || hello.process_generation != self.expected_generation
                         || hello.executable_hash != self.expected_executable_hash
@@ -184,6 +259,8 @@ impl AuthenticatedLocalListener {
                     }
                     return Ok(AuthenticatedLocalStream {
                         stream,
+                        #[cfg(not(unix))]
+                        deadline: Mutex::new(None),
                         peer: PeerProcessIdentityV1 {
                             process_id,
                             effective_user_id,
@@ -212,10 +289,21 @@ pub fn connect_authenticated(
     executable: &ExecutableIdentityV1,
     timeout: Duration,
 ) -> Result<Stream, LocalIpcError> {
+    if timeout.is_zero() {
+        return Err(LocalIpcError::Deadline);
+    }
+    let deadline = MonotonicDeadline::after(timeout).map_err(|_| LocalIpcError::Deadline)?;
     let name = address.as_str().to_ns_name::<GenericNamespaced>()?;
     let mut stream = Stream::connect(name)?;
-    stream.set_recv_timeout(Some(timeout))?;
-    stream.set_send_timeout(Some(timeout))?;
+    #[cfg(unix)]
+    {
+        stream.set_recv_timeout(Some(timeout))?;
+        stream.set_send_timeout(Some(timeout))?;
+    }
+    #[cfg(not(unix))]
+    {
+        stream.set_nonblocking(true)?;
+    }
     write_frame(
         &mut stream,
         &AuthenticatedHelloV1 {
@@ -223,32 +311,100 @@ pub fn connect_authenticated(
             process_generation: generation,
             executable_hash: executable.content_hash.clone(),
         },
+        Some(deadline),
     )?;
     Ok(stream)
 }
 
-fn write_frame(stream: &mut Stream, value: &AuthenticatedHelloV1) -> Result<(), LocalIpcError> {
+fn write_frame(
+    stream: &mut Stream,
+    value: &AuthenticatedHelloV1,
+    deadline: Option<MonotonicDeadline>,
+) -> Result<(), LocalIpcError> {
     let bytes = serde_json::to_vec(value).map_err(|_| LocalIpcError::MalformedHandshake)?;
     if bytes.len() > MAX_HANDSHAKE_BYTES {
         return Err(LocalIpcError::MalformedHandshake);
     }
     let length = u32::try_from(bytes.len()).map_err(|_| LocalIpcError::MalformedHandshake)?;
-    stream.write_all(&length.to_be_bytes())?;
-    stream.write_all(&bytes)?;
+    write_all_bounded(stream, &length.to_be_bytes(), deadline)?;
+    write_all_bounded(stream, &bytes, deadline)?;
     stream.flush()?;
     Ok(())
 }
 
-fn read_frame(stream: &mut Stream) -> Result<AuthenticatedHelloV1, LocalIpcError> {
+fn read_frame(
+    stream: &mut Stream,
+    deadline: Option<MonotonicDeadline>,
+) -> Result<AuthenticatedHelloV1, LocalIpcError> {
     let mut length = [0_u8; 4];
-    stream.read_exact(&mut length)?;
+    read_exact_bounded(stream, &mut length, deadline)?;
     let length = u32::from_be_bytes(length) as usize;
     if length == 0 || length > MAX_HANDSHAKE_BYTES {
         return Err(LocalIpcError::MalformedHandshake);
     }
     let mut bytes = vec![0_u8; length];
-    stream.read_exact(&mut bytes)?;
+    read_exact_bounded(stream, &mut bytes, deadline)?;
     serde_json::from_slice(&bytes).map_err(|_| LocalIpcError::MalformedHandshake)
+}
+
+/// Deadline-aware `read_exact`: on platforms with OS-level timeouts the
+/// blocking read surfaces a timeout as `WouldBlock`, which is converted to an
+/// error once the deadline passes; on nonblocking Windows streams the same
+/// loop polls until bytes arrive or the deadline expires.
+fn read_exact_bounded(
+    stream: &mut Stream,
+    mut buffer: &mut [u8],
+    deadline: Option<MonotonicDeadline>,
+) -> Result<(), LocalIpcError> {
+    while !buffer.is_empty() {
+        match stream.read(buffer) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "local IPC stream closed",
+                )
+                .into());
+            }
+            Ok(count) => buffer = &mut buffer[count..],
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => match deadline {
+                Some(deadline) if !deadline.expired() => {
+                    thread::sleep(POLL_INTERVAL.min(deadline.remaining()));
+                }
+                _ => return Err(error.into()),
+            },
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Deadline-aware `write_all` with the same platform strategy as
+/// `read_exact_bounded`.
+fn write_all_bounded(
+    stream: &mut Stream,
+    mut buffer: &[u8],
+    deadline: Option<MonotonicDeadline>,
+) -> Result<(), LocalIpcError> {
+    while !buffer.is_empty() {
+        match stream.write(buffer) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "local IPC stream closed",
+                )
+                .into());
+            }
+            Ok(count) => buffer = &buffer[count..],
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => match deadline {
+                Some(deadline) if !deadline.expired() => {
+                    thread::sleep(POLL_INTERVAL.min(deadline.remaining()));
+                }
+                _ => return Err(error.into()),
+            },
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {

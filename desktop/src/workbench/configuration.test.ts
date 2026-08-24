@@ -205,7 +205,7 @@ describe("Settings configuration v2", () => {
     ).toHaveLength(2);
   });
 
-  it("blocks MCP STDIO targets and paths the native consumer cannot use", () => {
+  it("blocks MCP STDIO targets the native consumer cannot use", () => {
     const value = configuration();
     value.credentials.push({
       credentialRef: "credential.integration",
@@ -243,8 +243,7 @@ describe("Settings configuration v2", () => {
     );
     expect(messages).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("executable path must be absolute"),
-        expect.stringContaining("working directory must be absolute"),
+        expect.stringContaining("absolute or one bare command name from PATH"),
         expect.stringContaining("ASCII letters, digits, or underscores"),
         expect.stringContaining("cross-platform portability"),
       ]),

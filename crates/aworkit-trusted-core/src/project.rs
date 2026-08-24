@@ -183,13 +183,14 @@ impl ProjectCoordinator {
         root: impl AsRef<Path>,
     ) -> Result<WorkspaceBindingV1, ProjectError> {
         let canonical = canonical_directory(root.as_ref())?;
-        let metadata = fs::metadata(&canonical).map_err(|_| ProjectError::WorkspaceUnavailable)?;
+        let handle = same_file::Handle::from_path(&canonical)
+            .map_err(|_| ProjectError::WorkspaceUnavailable)?;
         Ok(WorkspaceBindingV1 {
             root: canonical.clone(),
             identity: WorkspaceIdentityV1 {
                 canonical_path: canonical.to_string_lossy().into_owned(),
                 platform: std::env::consts::OS.to_owned(),
-                filesystem_object_id: filesystem_object_id(&metadata),
+                filesystem_object_id: filesystem_object_id(&handle),
             },
         })
     }
@@ -316,20 +317,15 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ProjectError> {
     Ok(canonical)
 }
 
-#[cfg(unix)]
-fn filesystem_object_id(metadata: &fs::Metadata) -> String {
-    use std::os::unix::fs::MetadataExt;
-    format!("unix:{}:{}", metadata.dev(), metadata.ino())
-}
-
-#[cfg(not(unix))]
-fn filesystem_object_id(metadata: &fs::Metadata) -> String {
-    let created = metadata
-        .created()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |duration| duration.as_nanos());
-    format!("portable:{created}:{}", metadata.len())
+/// Platform object identity for a workspace root: device/inode on Unix and
+/// volume serial/file index on Windows, folded through the same `Handle` hash
+/// the executable identity uses. Creation-time or directory-size fallbacks are
+/// not used because they are not stable enough to detect a swapped directory.
+fn filesystem_object_id(handle: &same_file::Handle) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    handle.hash(&mut hasher);
+    format!("object:{:016x}", hasher.finish())
 }
 
 fn validate_display_name(name: &str) -> Result<(), ProjectError> {
@@ -468,10 +464,24 @@ mod tests {
 
     #[test]
     fn workspace_revalidation_rejects_deleted_root() {
+        // Test-harness thread names contain ':' which is not a valid Windows
+        // filename component; sanitize the suffix for the temporary path.
+        let thread_suffix: String = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect();
         let root = std::env::temp_dir().join(format!(
             "aworkit-core-workspace-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            thread_suffix
         ));
         fs::create_dir_all(&root).expect("root");
         let coordinator = ProjectCoordinator::open(root.join("state")).expect("coordinator");

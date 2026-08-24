@@ -25,11 +25,13 @@ export interface IntegrationProbeResult {
 export function McpServersSection({
   servers,
   credentials,
+  onPickCommand,
   onChange,
   onProbe,
 }: {
   readonly servers: readonly McpServerConfiguration[];
   readonly credentials: readonly CredentialMetadataConfiguration[];
+  readonly onPickCommand: () => Promise<string | null>;
   readonly onChange: (servers: readonly McpServerConfiguration[]) => void;
   readonly onProbe: (server: McpServerConfiguration) => Promise<IntegrationProbeResult>;
 }): React.JSX.Element {
@@ -57,9 +59,8 @@ export function McpServersSection({
     <div className="settings-section-stack">
       <div className="section-heading-row">
         <p className="section-intro">
-          Configure MCP tool, resource, and prompt servers. Discovery and Test
-          connect to the real peer for diagnostics only. This Simple Chat build
-          has no MCP workflow executor, so discovery never means execution readiness.
+          Configure MCP tool, resource, and prompt servers. Discover and test
+          validates the exact current server configuration.
         </p>
         <button
           title="Add a secret-free MCP transport configuration"
@@ -102,37 +103,21 @@ export function McpServersSection({
                     updateServer({ ...server, name })
                   }
                 />
-                <div className="settings-inline-switches">
-                  <Switch
-                    id={`${server.id}-enabled`}
-                    label={unavailableExecutionLabel(server.enabled)}
-                    title={unavailableExecutionTitle("MCP", server.enabled)}
-                    checked={server.enabled}
-                    disabled={!server.enabled}
-                    onChange={(enabled) =>
-                      updateServer({ ...server, enabled })
-                    }
-                  />
-                  <Switch
-                    id={`${server.id}-auto-connect`}
-                    label="Connect at launch (not available)"
-                    title="Unavailable: this build implements explicit one-shot Discover and Test sessions, not launch lifecycle composition"
-                    checked={false}
-                    disabled
-                    onChange={() => undefined}
-                  />
-                </div>
               </div>
-              <p className="field-warning">
-                MCP sessions open only for Discover and Test, then close. MCP
-                workflow execution and launch auto-connect are not available.
-              </p>
               <ConnectionEditor
                 id={server.id}
                 value={server.transport}
                 credentials={integrationCredentials}
+                showWorkingDirectory={false}
+                onPickCommand={onPickCommand}
                 onChange={(transport) =>
-                  updateServer({ ...server, transport })
+                  updateServer({
+                    ...server,
+                    transport:
+                      transport.transport === "stdio"
+                        ? { ...transport, cwd: null }
+                        : transport,
+                  })
                 }
               />
               <ProbeActions
@@ -695,10 +680,6 @@ function ProbeActions({
           )}
         </div>
       )}
-      <p className="field-warning">
-        Diagnostic only; a successful probe does not make this integration
-        executable or bindable in Simple Chat.
-      </p>
       <span hidden>{id}</span>
     </div>
   );

@@ -45,6 +45,26 @@ afterEach(() => {
 });
 
 describe("Settings v2 workbench", () => {
+  it("picks an MCP executable and does not expose a working-directory field", async () => {
+    const port = new RecordingSettingsV2Port();
+    const picker = presentation({
+      pickFile: async () => "C:\\Program Files\\MCP Server\\server.exe",
+    });
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={picker} />);
+
+    await screen.findByLabelText("Base URL");
+    await user.click(screen.getByRole("button", { name: /MCP servers/ }));
+    await user.click(screen.getByRole("button", { name: "Add server" }));
+    expect(screen.queryByLabelText("Working directory")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Browse/ }));
+    expect(picker.pickFile).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Command")).toHaveValue(
+      "C:\\Program Files\\MCP Server\\server.exe",
+    );
+  });
+
   it("edits and atomically saves the complete configuration across ten real sections", async () => {
     const port = new RecordingSettingsV2Port();
     const user = userEvent.setup();
@@ -1247,17 +1267,18 @@ describe("Settings v2 workbench", () => {
 
     await user.click(screen.getByRole("button", { name: /MCP servers/ }));
     await user.click(screen.getByRole("button", { name: "Add server" }));
-    await user.type(screen.getByLabelText("Command"), "/usr/bin/aworkit-mcp-example");
+    await user.type(screen.getByLabelText("Command"), "aworkit-mcp-example");
     expect(
-      screen.getByRole("checkbox", {
+      screen.queryByRole("checkbox", {
         name: "Connect at launch (not available)",
       }),
-    ).toBeDisabled();
+    ).toBeNull();
     expect(
-      screen.getByRole("checkbox", {
+      screen.queryByRole("checkbox", {
         name: "Simple Chat execution not available",
       }),
-    ).toBeDisabled();
+    ).toBeNull();
+    expect(screen.queryByText(/Diagnostic only/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Discover and test" }));
     expect(
       await screen.findByText(/Connected using MCP 2026-07-28/),
@@ -1317,7 +1338,7 @@ describe("Settings v2 workbench", () => {
       tools: [expect.objectContaining({ enabled: false })],
       mcpServers: [
         expect.objectContaining({
-          transport: expect.objectContaining({ command: "/usr/bin/aworkit-mcp-example" }),
+          transport: expect.objectContaining({ command: "aworkit-mcp-example" }),
         }),
       ],
       externalAgents: [expect.objectContaining({ adapter: "codex_app_server" })],
@@ -2181,7 +2202,10 @@ function configurationWithSharedCredential(
       autoConnect: false,
       transport: {
         transport: "stdio",
-        command: "/usr/bin/fixture-mcp",
+        // A valid launcher shape on every platform: absolute on Unix, one
+        // bare PATH command name on Windows.
+        command:
+          process.platform === "win32" ? "fixture-mcp" : "/usr/bin/fixture-mcp",
         args: [],
         cwd: null,
         env: [

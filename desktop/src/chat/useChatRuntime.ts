@@ -3,11 +3,13 @@ import type { ChatIntent } from "./types";
 import {
   createChatCorePort,
   type ChatCorePort,
+  type RuntimeEvent,
   type RuntimeSnapshot,
 } from "./corePort";
 
 export interface ChatRuntimeState {
   readonly snapshot: RuntimeSnapshot | null;
+  readonly events: readonly RuntimeEvent[];
   readonly stale: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -27,6 +29,8 @@ export function useChatRuntime(
   );
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const snapshotRef = useRef<RuntimeSnapshot | null>(null);
+  const eventsRef = useRef<RuntimeEvent[]>([]);
+  const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +41,8 @@ export function useChatRuntime(
   const replaceSnapshot = useCallback((next: RuntimeSnapshot) => {
     snapshotRef.current = next;
     setSnapshot(next);
+    eventsRef.current = mergeEvents(eventsRef.current, next.events);
+    setEvents(eventsRef.current);
   }, []);
 
   const resynchronize = useCallback(async (): Promise<boolean> => {
@@ -138,6 +144,7 @@ export function useChatRuntime(
 
   return {
     snapshot,
+    events,
     stale,
     loading,
     error,
@@ -149,6 +156,20 @@ export function useChatRuntime(
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Merges ordered event deltas, deduplicating by sequence for idempotent refresh. */
+function mergeEvents(
+  current: readonly RuntimeEvent[],
+  incoming: readonly RuntimeEvent[],
+): RuntimeEvent[] {
+  if (incoming.length === 0) return current as RuntimeEvent[];
+  const bySequence = new Map<number, RuntimeEvent>();
+  for (const event of current) bySequence.set(event.sequence, event);
+  for (const event of incoming) bySequence.set(event.sequence, event);
+  return [...bySequence.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
 }
 
 /** Session recovery and other auxiliary projections can change durably before

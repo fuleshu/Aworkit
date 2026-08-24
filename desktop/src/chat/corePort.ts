@@ -306,6 +306,7 @@ function knownKind(value: string): TimelineItem["kind"] {
       "artifact",
       "approval",
       "route",
+      "todo",
       "error",
       "verification",
       "repair",

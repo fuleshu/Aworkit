@@ -37,7 +37,10 @@ def main():
         method = message.get("method")
         request_id = message.get("id")
         if method == "server/discover":
-            error(request_id, -32601, "legacy fixture")
+            # Older STDIO servers commonly terminate on the unknown 2026
+            # discovery handshake. Aworkit must retry them with initialize in a
+            # new process because the original transport is already closed.
+            return
         elif not credential_available and request_id is not None:
             error(request_id, -32000, "required credential was not injected")
         elif method == "initialize":

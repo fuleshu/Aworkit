@@ -11,6 +11,7 @@ aworkit-protocol = { path = "../aworkit-protocol" }
 command-group = "5.0.1"
 getrandom = "0.3"
 keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
+same-file = "1"
 serde = { version = "1", features = ["derive"] }
 serde_jcs = "0.2"
 serde_json = "1"

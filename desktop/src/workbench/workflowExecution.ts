@@ -45,7 +45,25 @@ export function simpleChatBindsProjectTools(
   document: WorkflowDocument,
 ): boolean {
   const agent = document.nodes.find((node) => node.id === "agent.1");
-  const configuration = agent?.configuration;
+  return nodeBindsProjectTools(agent);
+}
+
+/** Reports whether any node in the document binds a project-scoped file tool. */
+export function bindsProjectTools(document: WorkflowDocument): boolean {
+  return document.nodes.some((node) => nodeBindsProjectTools(node));
+}
+
+const PROJECT_SCOPED_TOOL_IDS = [
+  "tool.files.read",
+  "tool.files.search",
+  "tool.files.list",
+  "tool.files.grep",
+  "tool.files.edit",
+  "tool.files.write",
+];
+
+function nodeBindsProjectTools(node: JsonObject | undefined): boolean {
+  const configuration = node?.configuration;
   if (
     typeof configuration !== "object" ||
     configuration === null ||
@@ -57,7 +75,7 @@ export function simpleChatBindsProjectTools(
     Array.isArray(toolIds) &&
     toolIds.some(
       (toolId) =>
-        toolId === "tool.files.read" || toolId === "tool.files.search",
+        typeof toolId === "string" && PROJECT_SCOPED_TOOL_IDS.includes(toolId),
     )
   );
 }

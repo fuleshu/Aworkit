@@ -5,19 +5,19 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use aworkit_capability_host::{
     AdapterRegistry, AdmissionDispositionV1, ApprovedInvocationEnvelopeV1,
     ArgumentVectorInvocationV1, BuiltInProcessTools, CancellationToken, CapabilityDescriptor,
     CapabilityHost, CapabilityKind, ControlledProcessResult, DispatchEvidenceV1, EffectEvidenceV1,
-    FileAuthority, FileEditRequestV1, FileEffectKindV1, FileReadRequestV1, FileSearchRequestV1,
-    FileToolError, FrozenModelGateway, HermeticProcessPort, HermeticProcessStep,
-    HostControlEnvelopeV1, HostControlKindV1, HostError, HostToolLimitsV1, InjectionTargetV1,
-    InvocationNormalizer, ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1,
-    NativeProcessPort, NormalizeError, NormalizedContentV1, OutcomeDispositionV1,
-    PlatformProcessPort, ProcessRunner, ProcessSpecV1, ProcessTermination, ProjectFiles,
+    FileAuthority, FileEditRequestV1, FileEffectKindV1, FileGrepRequestV1, FileListRequestV1,
+    FileReadRequestV1, FileSearchRequestV1, FileToolError, FileWriteRequestV1, FrozenModelGateway,
+    HermeticProcessPort, HermeticProcessStep, HostControlEnvelopeV1, HostControlKindV1, HostError,
+    HostToolLimitsV1, InjectionTargetV1, InvocationNormalizer, ModelCandidateV1, ModelEventV1,
+    ModelRequestV1, ModelResolutionPlanV1, NormalizeError, NormalizedContentV1,
+    OutcomeDispositionV1, PlatformProcessPort, ProcessSpecV1, ProcessTermination, ProjectFiles,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError, PythonInvocationV1, Redactor,
     RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
     SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
@@ -282,6 +282,72 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
         b"changed"
     );
 
+    // Extended v1 file tools: glob list, regex grep, and guarded write.
+    std::fs::write(project.join("second.txt"), b"beta gamma beta").expect("second seed");
+    let list = files
+        .list_v1(
+            &FileListRequestV1 {
+                pattern: "*.txt".into(),
+                maximum_entries: 8,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("list");
+    let listed: Vec<&str> = list
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.contains(&"notes.txt") && listed.contains(&"second.txt"));
+    assert_eq!(list.effect.kind, FileEffectKindV1::List);
+    let grep = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "beta".into(),
+                maximum_matches: 8,
+                maximum_files: 8,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(grep.files_scanned, 2);
+    assert_eq!(grep.matches.len(), 2);
+    assert!(
+        grep.matches
+            .iter()
+            .all(|found| found.line_text.contains("beta"))
+    );
+    assert_eq!(grep.effect.kind, FileEffectKindV1::Grep);
+    assert!(matches!(
+        files.write_v1(
+            &FileWriteRequestV1 {
+                path: "second.txt".into(),
+                content: b"replaced".to_vec(),
+                expected_content_hash: Some(format!("sha256:{}", "0".repeat(64))),
+            },
+            &CancellationToken::default(),
+        ),
+        Err(FileToolError::Conflict)
+    ));
+    let written = files
+        .write_v1(
+            &FileWriteRequestV1 {
+                path: "second.txt".into(),
+                content: b"replaced".to_vec(),
+                expected_content_hash: None,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("write");
+    assert!(written.effect.write_committed);
+    assert_eq!(written.effect.kind, FileEffectKindV1::Write);
+    assert_eq!(
+        std::fs::read(project.join("second.txt")).unwrap(),
+        b"replaced"
+    );
+
     let cancelled = CancellationToken::default();
     cancelled.cancel();
     assert!(matches!(
@@ -318,13 +384,28 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
         Err(FileToolError::WriteDenied)
     ));
 
-    let moved = temp.path().join("moved-project");
-    std::fs::rename(&project, &moved).expect("replace root");
-    std::fs::create_dir(&project).expect("replacement root");
-    assert!(matches!(
-        files.read("notes.txt"),
-        Err(FileToolError::RootChanged)
-    ));
+    // Root-swap defense differs by platform: Unix detects the swap through
+    // device/inode identity after the rename; Windows prevents the rename
+    // itself because the capability handle omits FILE_SHARE_DELETE.
+    #[cfg(unix)]
+    {
+        let moved = temp.path().join("moved-project");
+        std::fs::rename(&project, &moved).expect("replace root");
+        std::fs::create_dir(&project).expect("replacement root");
+        assert!(matches!(
+            files.read("notes.txt"),
+            Err(FileToolError::RootChanged)
+        ));
+    }
+    #[cfg(windows)]
+    {
+        let moved = temp.path().join("moved-project");
+        assert!(
+            std::fs::rename(&project, &moved).is_err(),
+            "an open capability handle must pin the root against rename"
+        );
+        assert_eq!(files.read("notes.txt").expect("still readable"), b"changed");
+    }
 }
 
 fn controlled(stdout: &[u8]) -> ControlledProcessResult {
@@ -362,7 +443,10 @@ fn process_port_and_builtin_tools_preserve_exact_authority_and_lifecycle_facts()
         b"ok"
     );
     let observed = platform.observed().unwrap();
+    #[cfg(unix)]
     assert_eq!(observed[0].arguments, vec!["-c", "printf ok"]);
+    #[cfg(windows)]
+    assert_eq!(observed[0].arguments, vec!["/D", "/S", "/C", "printf ok"]);
     assert!(platform.health().unwrap().process_tree_cleanup);
 
     let wrong_mode = ArgumentVectorInvocationV1 {

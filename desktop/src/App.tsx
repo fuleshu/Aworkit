@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -16,6 +17,7 @@ import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
+import { createWorkflowLibraryPort } from "./workbench/corePort";
 const SettingsScreen = lazy(() =>
   import("./workbench/SettingsScreen").then((module) => ({
     default: module.SettingsScreen,
@@ -77,6 +79,7 @@ const starterWorkflow = {
 /** Persistent compact desktop workbench. Feature views own no canonical state. */
 export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX.Element {
   const [route, setRoute] = useState<Route>("chat");
+  const workflowLibraryPort = useMemo(() => createWorkflowLibraryPort(), []);
   const [mountedRoutes, setMountedRoutes] = useState<ReadonlySet<Route>>(
     new Set(["chat"]),
   );
@@ -222,6 +225,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             <div className="route-surface" hidden={route !== "workflows"}>
               <WorkflowEditorScreen
                 document={starterWorkflow}
+                libraryPort={workflowLibraryPort}
                 onOpenSettings={() => navigate("settings")}
                 onRun={openNewChat}
                 runBlockedReason={

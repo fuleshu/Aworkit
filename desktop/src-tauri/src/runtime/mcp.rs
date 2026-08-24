@@ -41,9 +41,54 @@ const MAX_TEXT_BYTES: usize = 16 * 1024;
 const MAX_PROBE_CATALOG_ENTRIES: usize = 2_048;
 const ADAPTER_VERSION: &str = "rmcp-3.1.4";
 
+/// Production limits shared by the one-shot probe and frozen Run sessions.
+pub(crate) fn production_peer_limits() -> ProductionMcpPeerLimitsV1 {
+    ProductionMcpPeerLimitsV1 {
+        initialization_timeout: Duration::from_secs(30),
+        request_timeout: Duration::from_secs(30),
+        close_timeout: Duration::from_secs(5),
+        maximum_catalog_entries: MAX_PROBE_CATALOG_ENTRIES,
+        maximum_catalog_bytes: 2 * 1024 * 1024,
+        maximum_schema_bytes: 512 * 1024,
+        maximum_result_bytes: 1024 * 1024,
+    }
+}
+
+/// Everything one saved Settings server contributes to a frozen Run: the
+/// core-attested manifest, the exact transport endpoint, and the secret
+/// bindings the CredentialVault must materialize before the session opens.
+pub(crate) struct PreparedMcpServerV1 {
+    pub manifest: McpServerManifestV1,
+    pub endpoint: McpTransportEndpointV1,
+    pub secret_bindings: Vec<ProbeSecretBindingV1>,
+}
+
+/// Prepares one enabled saved MCP server for a frozen Run without opening a
+/// session or touching the credential store.
+pub(crate) fn prepare_mcp_server(
+    server: &super::settings_v2::McpServerConfigurationV2,
+    credentials: &[CredentialMetadataConfigurationV2],
+) -> Result<PreparedMcpServerV1, String> {
+    let server_id = stable(&server.id, "MCP server id")?;
+    let (endpoint, bindings) = prepare_transport(&server.transport, credentials)?;
+    let binding_hash = binding_hash(&server_id, &endpoint, &bindings)?;
+    let transport = McpPeerTransportConfigV1 {
+        server_id: server_id.clone(),
+        binding_hash: binding_hash.clone(),
+        endpoint: endpoint.clone(),
+    }
+    .transport_kind();
+    let manifest = mcp_server_manifest(server_id, transport, binding_hash, &bindings);
+    Ok(PreparedMcpServerV1 {
+        manifest,
+        endpoint,
+        secret_bindings: bindings,
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", content = "name", rename_all = "snake_case")]
-enum ProbeSecretTargetV1 {
+pub(crate) enum ProbeSecretTargetV1 {
     Header(String),
     Environment(String),
 }
@@ -69,7 +114,7 @@ impl ProbeSecretTargetV1 {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProbeSecretBindingV1 {
+pub(crate) struct ProbeSecretBindingV1 {
     slot: String,
     target: ProbeSecretTargetV1,
     credential_ref: String,
@@ -178,7 +223,7 @@ pub(crate) fn probe_mcp_server(
             .map_err(|error| format!("MCP credential binding could not be staged: {error}"))?;
     }
     let manager = McpSessionManager::new(HOST_GENERATION, peer);
-    let manifest = manifest(
+    let manifest = mcp_server_manifest(
         server_id.clone(),
         transport,
         binding_hash.clone(),
@@ -230,7 +275,7 @@ pub(crate) fn probe_mcp_server(
     })
 }
 
-fn prepare_transport(
+pub(crate) fn prepare_transport(
     transport: &IntegrationTransportV2,
     credentials: &[CredentialMetadataConfigurationV2],
 ) -> Result<(McpTransportEndpointV1, Vec<ProbeSecretBindingV1>), String> {
@@ -253,13 +298,16 @@ fn prepare_transport(
         IntegrationTransportV2::Stdio {
             command,
             args,
-            cwd,
+            cwd: _,
             env,
         } => {
             validate_text("MCP STDIO command", command, true)?;
-            let executable = PathBuf::from(command);
-            if !executable.is_absolute() {
-                return Err("MCP STDIO command must be an absolute executable path".into());
+            let executable = PathBuf::from(unquote_runtime_path(command));
+            if !launchable_mcp_command(&executable) {
+                return Err(
+                    "MCP STDIO command must be an absolute executable path or one bare command name from PATH"
+                        .into(),
+                );
             }
             if args.len() > MAX_ARGUMENTS {
                 return Err(format!(
@@ -269,24 +317,13 @@ fn prepare_transport(
             for argument in args {
                 validate_secret_free_stdio_argument("MCP STDIO argument", argument)?;
             }
-            let working_directory = cwd
-                .as_deref()
-                .map(|cwd| {
-                    validate_text("MCP STDIO working directory", cwd, true)?;
-                    let path = PathBuf::from(cwd);
-                    if !path.is_absolute() {
-                        return Err(
-                            "MCP STDIO working directory must be an absolute path".to_owned()
-                        );
-                    }
-                    Ok(path)
-                })
-                .transpose()?;
             (
                 McpTransportEndpointV1::Stdio(McpStdioTransportConfigV1 {
                     executable,
                     arguments: args.clone(),
-                    working_directory,
+                    // MCP servers use the app's inherited directory. The generic
+                    // integration schema keeps `cwd` for external agents only.
+                    working_directory: None,
                     public_environment: BTreeMap::new(),
                 }),
                 env,
@@ -298,7 +335,7 @@ fn prepare_transport(
     Ok((endpoint, bindings))
 }
 
-fn prepare_secret_bindings(
+pub(crate) fn prepare_secret_bindings(
     bindings: &[NamedCredentialBindingV2],
     target_kind: &str,
     credentials: &[CredentialMetadataConfigurationV2],
@@ -396,7 +433,7 @@ fn prepare_secret_bindings(
     Ok(prepared)
 }
 
-fn materialize_bindings(
+pub(crate) fn materialize_bindings(
     vault: &mut CredentialVault,
     bindings: &[ProbeSecretBindingV1],
 ) -> Result<Option<aworkit_capability_host::SecretMaterializationV1>, String> {
@@ -456,7 +493,7 @@ fn materialize_bindings(
         .map_err(|error| format!("MCP credential materialization failed: {error}"))
 }
 
-fn manifest(
+pub(crate) fn mcp_server_manifest(
     server_id: StableId,
     transport: McpTransportKindV1,
     binding_hash: String,
@@ -483,7 +520,7 @@ fn manifest(
     }
 }
 
-fn binding_hash(
+pub(crate) fn binding_hash(
     server_id: &StableId,
     endpoint: &McpTransportEndpointV1,
     bindings: &[ProbeSecretBindingV1],
@@ -531,6 +568,28 @@ fn validate_text(label: &str, value: &str, nonempty: bool) -> Result<(), String>
         return Err(format!("{label} cannot be empty"));
     }
     Ok(())
+}
+
+/// Accept an executable path copied from a Windows shell with one quote pair.
+fn unquote_runtime_path(value: &str) -> &str {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2
+        && matches!(trimmed.as_bytes()[0], b'\'' | b'"')
+        && trimmed.as_bytes()[0] == *trimmed.as_bytes().last().expect("length checked")
+    {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    }
+}
+
+fn launchable_mcp_command(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        || path.components().count() == 1
+            && matches!(
+                path.components().next(),
+                Some(std::path::Component::Normal(_))
+            )
 }
 
 fn validate_symbol(label: &str, value: &str) -> Result<(), String> {

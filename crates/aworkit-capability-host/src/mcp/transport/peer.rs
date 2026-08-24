@@ -735,16 +735,50 @@ async fn establish_session(
             McpTransportEndpointV1::Stdio(stdio) => {
                 let transport = build_stdio_transport(stdio, &secrets, &limits)?;
                 let transport = ProgressObservingTransport::new(transport, progress.clone());
-                handler
+                let retry_legacy = matches!(
+                    &lifecycle,
+                    ClientLifecycleMode::Auto {
+                        legacy_version: Some(_),
+                        ..
+                    }
+                );
+                match handler
                     .clone()
                     .serve_with_lifecycle(transport, lifecycle.clone())
                     .await
-                    .map_err(|error| {
-                        not_started(
+                {
+                    Ok(service) => service,
+                    Err(error)
+                        if retry_legacy
+                            && error
+                                .to_string()
+                                .contains("connection closed: discover response") =>
+                    {
+                        // Some pre-2026 STDIO servers terminate when their first
+                        // request is the new server/discover handshake. Start a
+                        // fresh process and use the newest attested legacy
+                        // initialize version instead.
+                        let transport = build_stdio_transport(stdio, &secrets, &limits)?;
+                        let transport =
+                            ProgressObservingTransport::new(transport, progress.clone());
+                        handler
+                            .clone()
+                            .serve_with_lifecycle(transport, ClientLifecycleMode::Initialize)
+                            .await
+                            .map_err(|error| {
+                                not_started(
+                                    "initialization_failed",
+                                    &secrets.redact_text(&error.to_string()),
+                                )
+                            })?
+                    }
+                    Err(error) => {
+                        return Err(not_started(
                             "initialization_failed",
                             &secrets.redact_text(&error.to_string()),
-                        )
-                    })?
+                        ));
+                    }
+                }
             }
             McpTransportEndpointV1::StreamableHttp(http) => {
                 let client = SecretHttpClient::new(
@@ -833,14 +867,17 @@ fn build_stdio_transport(
     secrets: &MaterializedTransportSecrets,
     limits: &ProductionMcpPeerLimitsV1,
 ) -> Result<BoundedStdioTransport, McpPeerErrorV1> {
-    let mut environment_names = config
-        .public_environment
-        .keys()
-        .map(|name| fold_environment_name(name))
+    let mut environment_names = inherited_runtime_environment()
+        .into_iter()
+        .map(|(name, _)| fold_environment_name(name))
         .collect::<BTreeSet<_>>();
     let mut command = Command::new(&config.executable);
     command.args(&config.arguments).env_clear();
+    for (name, value) in inherited_runtime_environment() {
+        command.env(name, value);
+    }
     for (name, value) in &config.public_environment {
+        environment_names.insert(fold_environment_name(name));
         command.env(name, value);
     }
     for (name, value) in secrets.environment() {
@@ -867,6 +904,30 @@ fn build_stdio_transport(
             &format!("MCP STDIO server could not be started: {error}"),
         )
     })
+}
+
+/// Preserve the OS runtime variables required by common local MCP launchers
+/// such as `npx.cmd`, while keeping arbitrary parent secrets out of the child.
+fn inherited_runtime_environment() -> Vec<(&'static str, std::ffi::OsString)> {
+    let names: &[&str] = if cfg!(windows) {
+        &[
+            "SystemRoot",
+            "ComSpec",
+            "Path",
+            "PATHEXT",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TEMP",
+            "TMP",
+        ]
+    } else {
+        &["PATH", "HOME", "TMPDIR", "TMP", "TEMP"]
+    };
+    names
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (*name, value)))
+        .collect()
 }
 
 fn maximum_wire_bytes(limits: &ProductionMcpPeerLimitsV1) -> usize {
@@ -910,9 +971,13 @@ async fn discover_catalog(
                 }
                 tools.push(McpToolDescriptorV1 {
                     name: tool.name.into_owned(),
-                    input_schema_hash: format!("sha256:{:x}", Sha256::digest(schema)),
+                    input_schema_hash: format!("sha256:{:x}", Sha256::digest(&schema)),
                     // Server annotations are hints, not proof of side-effect freedom.
                     side_effect_known_read_only: false,
+                    description: tool
+                        .description
+                        .map_or_else(String::new, |value| value.into_owned()),
+                    input_schema: Value::Object(tool.input_schema.as_ref().clone()),
                 });
                 enforce_catalog_count(tools.len(), 0, 0, limits)?;
             }

@@ -12,6 +12,8 @@ use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
 };
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -19,6 +21,9 @@ use crate::CancellationToken;
 
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 1024;
+const MAX_LIST_ENTRIES: usize = 1000;
+const MAX_GREP_MATCHES: usize = 512;
+const MAX_GREP_FILES: usize = 128;
 
 #[derive(Clone, Debug)]
 pub struct FileAuthority {
@@ -50,7 +55,10 @@ pub struct FileSearchRequestV1 {
 pub enum FileEffectKindV1 {
     Read,
     Search,
+    List,
+    Grep,
     Edit,
+    Write,
 }
 
 /// Durable callers can normalize this descriptor without inferring effects
@@ -83,13 +91,71 @@ pub struct FileEditResultV1 {
     pub effect: FileEffectDescriptorV1,
 }
 
+/// Bounded glob listing beneath the root. Patterns use `*`, `**`, and `?`
+/// segments; results are relative paths sorted by modification time, newest
+/// first, capped at `maximum_entries`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileListRequestV1 {
+    pub pattern: String,
+    pub maximum_entries: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileListResultV1 {
+    pub entries: Vec<FileListEntryV1>,
+    pub effect: FileEffectDescriptorV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileListEntryV1 {
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_epoch_millis: u64,
+}
+
+/// Bounded regex search across files beneath the root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileGrepRequestV1 {
+    pub pattern: String,
+    pub maximum_matches: usize,
+    pub maximum_files: usize,
+    pub maximum_file_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileGrepResultV1 {
+    pub matches: Vec<FileGrepMatchV1>,
+    pub files_scanned: usize,
+    pub effect: FileEffectDescriptorV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileGrepMatchV1 {
+    pub path: String,
+    pub line: u64,
+    pub offset: usize,
+    pub line_text: String,
+}
+
+/// Full-content create-or-replace write beneath the root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileWriteRequestV1 {
+    pub path: PathBuf,
+    pub content: Vec<u8>,
+    pub expected_content_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileWriteResultV1 {
+    pub effect: FileEffectDescriptorV1,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RootIdentity {
     canonical_path: PathBuf,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
+    handle: Arc<same_file::Handle>,
 }
 
 /// Project tool rooted in an open directory capability, not a working-directory claim.
@@ -309,12 +375,18 @@ impl ProjectFiles {
                 return Err(FileToolError::Conflict);
             }
             self.directory.rename(&temporary, &self.directory, path)?;
-            let sync_parent = if parent.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                parent
-            };
-            self.directory.open(sync_parent)?.sync_all()?;
+            // Directory-entry durability: fsync the parent on Unix. Windows
+            // exposes no directory fsync through cap-std; the rename itself
+            // is committed by the OS before it returns.
+            #[cfg(unix)]
+            {
+                let sync_parent = if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                };
+                self.directory.open(sync_parent)?.sync_all()?;
+            }
             Ok(())
         })();
         if staged_result.is_err() {
@@ -328,6 +400,343 @@ impl ProjectFiles {
                 before_content_hash: request.expected_content_hash.clone(),
                 after_content_hash: content_hash(&request.replacement),
                 bytes_observed_or_written: request.replacement.len(),
+                write_committed: true,
+            },
+        })
+    }
+
+    /// Lists files matching a bounded glob beneath the root, newest first.
+    pub fn list_v1(
+        &self,
+        request: &FileListRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<FileListResultV1, FileToolError> {
+        if request.pattern.is_empty()
+            || request.pattern.len() > 4096
+            || request.pattern.contains('\0')
+            || request.maximum_entries == 0
+            || request.maximum_entries > MAX_LIST_ENTRIES
+        {
+            return Err(FileToolError::InvalidList);
+        }
+        let segments = glob_segments(&request.pattern)?;
+        self.revalidate_root()?;
+        let mut entries = Vec::new();
+        let mut scanned = 0_u64;
+        self.collect_glob(
+            &Path::new(""),
+            &segments,
+            0,
+            request.maximum_entries,
+            &mut entries,
+            &mut scanned,
+            cancellation,
+        )?;
+        entries.sort_by(|left, right| {
+            right
+                .modified_epoch_millis
+                .cmp(&left.modified_epoch_millis)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        entries.truncate(request.maximum_entries);
+        Ok(FileListResultV1 {
+            effect: FileEffectDescriptorV1 {
+                kind: FileEffectKindV1::List,
+                relative_path: PathBuf::new(),
+                before_content_hash: content_hash(&[]),
+                after_content_hash: content_hash(&[]),
+                bytes_observed_or_written: usize::try_from(scanned).unwrap_or(usize::MAX),
+                write_committed: false,
+            },
+            entries,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_glob(
+        &self,
+        directory_path: &Path,
+        segments: &[GlobSegment],
+        segment_index: usize,
+        maximum_entries: usize,
+        entries: &mut Vec<FileListEntryV1>,
+        scanned: &mut u64,
+        cancellation: &CancellationToken,
+    ) -> Result<(), FileToolError> {
+        if entries.len() >= maximum_entries {
+            return Ok(());
+        }
+        check_cancelled(cancellation)?;
+        let directory = if directory_path.as_os_str().is_empty() {
+            self.directory.clone()
+        } else {
+            self.reject_symlinks(directory_path, false)?;
+            Arc::new(self.directory.open_dir(directory_path).map_err(
+                |error| match error.kind() {
+                    std::io::ErrorKind::NotFound => FileToolError::NoMatch(format!(
+                        "path {} does not exist",
+                        directory_path.display()
+                    )),
+                    _ => error.into(),
+                },
+            )?)
+        };
+        let Some(segment) = segments.get(segment_index) else {
+            return Ok(());
+        };
+        let last = segment_index + 1 == segments.len();
+        for entry in directory.entries().map_err(FileToolError::Io)? {
+            let entry = entry.map_err(FileToolError::Io)?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !segment.matches(&name) {
+                continue;
+            }
+            let relative = directory_path.join(name.as_ref());
+            *scanned = scanned.saturating_add(1);
+            let file_type = entry.file_type().map_err(FileToolError::Io)?;
+            if file_type.is_dir() {
+                if segment.recursive && !last {
+                    self.collect_glob(
+                        &relative,
+                        segments,
+                        segment_index + 1,
+                        maximum_entries,
+                        entries,
+                        scanned,
+                        cancellation,
+                    )?;
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            if !last && !segment.recursive {
+                continue;
+            }
+            let metadata = entry.metadata().map_err(FileToolError::Io)?;
+            entries.push(FileListEntryV1 {
+                path: relative.to_string_lossy().replace('\\', "/"),
+                size_bytes: metadata.len(),
+                modified_epoch_millis: metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.into_std().duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |duration| {
+                        duration.as_millis().try_into().unwrap_or(u64::MAX)
+                    }),
+            });
+            if entries.len() >= maximum_entries {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Regex search across text files beneath the root with line context.
+    pub fn grep_v1(
+        &self,
+        request: &FileGrepRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<FileGrepResultV1, FileToolError> {
+        if request.pattern.is_empty()
+            || request.pattern.len() > 16 * 1024
+            || request.maximum_matches == 0
+            || request.maximum_matches > MAX_GREP_MATCHES
+            || request.maximum_files == 0
+            || request.maximum_files > MAX_GREP_FILES
+            || request.maximum_file_bytes == 0
+            || request.maximum_file_bytes > MAX_FILE_BYTES
+        {
+            return Err(FileToolError::InvalidGrep);
+        }
+        let pattern = Regex::new(&request.pattern).map_err(|_| FileToolError::InvalidGrep)?;
+        self.revalidate_root()?;
+        let mut matches = Vec::new();
+        let mut files_scanned = 0_usize;
+        self.collect_regex(
+            &Path::new(""),
+            &pattern,
+            request,
+            &mut matches,
+            &mut files_scanned,
+            cancellation,
+        )?;
+        Ok(FileGrepResultV1 {
+            effect: FileEffectDescriptorV1 {
+                kind: FileEffectKindV1::Grep,
+                relative_path: PathBuf::new(),
+                before_content_hash: content_hash(&[]),
+                after_content_hash: content_hash(&[]),
+                bytes_observed_or_written: files_scanned,
+                write_committed: false,
+            },
+            matches,
+            files_scanned,
+        })
+    }
+
+    fn collect_regex(
+        &self,
+        directory_path: &Path,
+        pattern: &Regex,
+        request: &FileGrepRequestV1,
+        matches: &mut Vec<FileGrepMatchV1>,
+        files_scanned: &mut usize,
+        cancellation: &CancellationToken,
+    ) -> Result<(), FileToolError> {
+        if matches.len() >= request.maximum_matches || *files_scanned >= request.maximum_files {
+            return Ok(());
+        }
+        check_cancelled(cancellation)?;
+        let directory: Arc<Dir> = if directory_path.as_os_str().is_empty() {
+            self.directory.clone()
+        } else {
+            self.reject_symlinks(directory_path, false)?;
+            match self.directory.open_dir(directory_path) {
+                Ok(directory) => Arc::new(directory),
+                Err(_) => return Ok(()),
+            }
+        };
+        for entry in directory.entries().map_err(FileToolError::Io)? {
+            let entry = entry.map_err(FileToolError::Io)?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let relative = directory_path.join(&name);
+            let file_type = entry.file_type().map_err(FileToolError::Io)?;
+            if file_type.is_dir() {
+                self.collect_regex(
+                    &relative,
+                    pattern,
+                    request,
+                    matches,
+                    files_scanned,
+                    cancellation,
+                )?;
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            if *files_scanned >= request.maximum_files {
+                return Ok(());
+            }
+            *files_scanned = files_scanned.saturating_add(1);
+            let Ok(read) = self.read_v1(
+                &FileReadRequestV1 {
+                    path: relative.clone(),
+                    maximum_bytes: request.maximum_file_bytes,
+                },
+                cancellation,
+            ) else {
+                continue;
+            };
+            let Ok(text) = String::from_utf8(read.bytes) else {
+                continue;
+            };
+            let path_text = relative.to_string_lossy().replace('\\', "/");
+            for (line_index, line) in text.lines().enumerate() {
+                for found in pattern.find_iter(line) {
+                    matches.push(FileGrepMatchV1 {
+                        path: path_text.clone(),
+                        line: line_index as u64 + 1,
+                        offset: found.start(),
+                        line_text: truncate_line(line, 256),
+                    });
+                    if matches.len() >= request.maximum_matches {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Creates or replaces one file with the exact content, optionally gated
+    /// on the current content hash. Symlinks and reparse aliases are denied.
+    pub fn write_v1(
+        &self,
+        request: &FileWriteRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<FileWriteResultV1, FileToolError> {
+        if !self.authority.allow_write {
+            return Err(FileToolError::WriteDenied);
+        }
+        if request.content.len() > MAX_FILE_BYTES {
+            return Err(FileToolError::TooLarge);
+        }
+        check_cancelled(cancellation)?;
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| FileToolError::Poisoned)?;
+        self.revalidate_root()?;
+        let path = validate_relative(&request.path)?;
+        self.reject_symlinks(path, false)?;
+        let existing = self.directory.open(path).ok().map(|mut file| {
+            let mut body = Vec::new();
+            let _ = file.read_to_end(&mut body);
+            body
+        });
+        if let (Some(expected), Some(current)) = (&request.expected_content_hash, &existing)
+            && content_hash(current) != *expected
+        {
+            return Err(FileToolError::Conflict);
+        }
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(FileToolError::OutsideRoot)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| FileToolError::Clock)?
+            .as_nanos();
+        let temporary = parent.join(format!(".{file_name}.{nonce}.aworkit-tmp"));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut staged = self.directory.open_with(&temporary, &options)?;
+        let staged_result = (|| -> Result<(), FileToolError> {
+            staged.write_all(&request.content)?;
+            staged.sync_all()?;
+            check_cancelled(cancellation)?;
+            if let (Some(expected), Some(current)) = (&request.expected_content_hash, &existing)
+                && content_hash(current) != *expected
+            {
+                return Err(FileToolError::Conflict);
+            }
+            if existing.is_some() {
+                let _ = self.directory.remove_file(path);
+            }
+            self.directory.rename(&temporary, &self.directory, path)?;
+            // Directory-entry durability: fsync the parent on Unix. Windows
+            // exposes no directory fsync through cap-std; the rename itself
+            // is committed by the OS before it returns.
+            #[cfg(unix)]
+            {
+                let sync_parent = if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                };
+                self.directory.open(sync_parent)?.sync_all()?;
+            }
+            Ok(())
+        })();
+        if staged_result.is_err() {
+            let _ = self.directory.remove_file(&temporary);
+        }
+        staged_result?;
+        Ok(FileWriteResultV1 {
+            effect: FileEffectDescriptorV1 {
+                kind: FileEffectKindV1::Write,
+                relative_path: path.to_path_buf(),
+                before_content_hash: existing
+                    .as_deref()
+                    .map(content_hash)
+                    .unwrap_or_else(|| content_hash(&[])),
+                after_content_hash: content_hash(&request.content),
+                bytes_observed_or_written: request.content.len(),
                 write_committed: true,
             },
         })
@@ -389,28 +798,113 @@ fn validate_relative(path: &Path) -> Result<&Path, FileToolError> {
     Ok(path)
 }
 
+/// File-system object identity that survives a path-level directory swap:
+/// device/inode on Unix, volume serial/file index on Windows.
 fn root_identity(path: &Path) -> Result<RootIdentity, std::io::Error> {
-    let metadata = fs::metadata(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(RootIdentity {
-            canonical_path: fs::canonicalize(path)?,
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Ok(RootIdentity {
-            canonical_path: fs::canonicalize(path)?,
-        })
-    }
+    Ok(RootIdentity {
+        canonical_path: fs::canonicalize(path)?,
+        handle: Arc::new(same_file::Handle::from_path(path)?),
+    })
 }
 
 fn content_hash(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GlobSegment {
+    parts: Vec<GlobPart>,
+    recursive: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum GlobPart {
+    Literal(String),
+    Any,
+    AnySequence,
+}
+
+impl GlobSegment {
+    fn matches(&self, name: &str) -> bool {
+        match_segments(&self.parts, name)
+    }
+}
+
+fn match_segments(parts: &[GlobPart], name: &str) -> bool {
+    match parts.split_first() {
+        None => name.is_empty(),
+        Some((GlobPart::AnySequence, rest)) => {
+            for index in 0..=name.len() {
+                if name.is_char_boundary(index) && match_segments(rest, &name[index..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        Some((GlobPart::Any, rest)) => name.chars().next().is_some_and(|_| {
+            match_segments(rest, &name[name.chars().next().unwrap().len_utf8()..])
+        }),
+        Some((GlobPart::Literal(literal), rest)) => name
+            .strip_prefix(literal.as_str())
+            .is_some_and(|remaining| match_segments(rest, remaining)),
+    }
+}
+
+/// Splits a bounded glob pattern into slash-separated segments. `**` marks a
+/// recursive segment.
+fn glob_segments(pattern: &str) -> Result<Vec<GlobSegment>, FileToolError> {
+    let mut segments = Vec::new();
+    for raw in pattern.split('/') {
+        if raw.is_empty() {
+            continue;
+        }
+        let mut parts = Vec::new();
+        let mut literal = String::new();
+        let mut recursive = false;
+        for character in raw.chars() {
+            match character {
+                '*' => {
+                    if !literal.is_empty() {
+                        parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
+                    }
+                    match parts.last() {
+                        Some(GlobPart::AnySequence) => {
+                            recursive = true;
+                        }
+                        _ => parts.push(GlobPart::AnySequence),
+                    }
+                }
+                '?' => {
+                    if !literal.is_empty() {
+                        parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
+                    }
+                    parts.push(GlobPart::Any);
+                }
+                other => literal.push(other),
+            }
+        }
+        if !literal.is_empty() {
+            parts.push(GlobPart::Literal(literal));
+        }
+        if parts.is_empty() {
+            return Err(FileToolError::InvalidList);
+        }
+        segments.push(GlobSegment { parts, recursive });
+    }
+    if segments.is_empty() {
+        return Err(FileToolError::InvalidList);
+    }
+    Ok(segments)
+}
+
+fn truncate_line(line: &str, maximum_chars: usize) -> String {
+    if line.chars().count() <= maximum_chars {
+        line.to_owned()
+    } else {
+        let mut truncated: String = line.chars().take(maximum_chars).collect();
+        truncated.push('…');
+        truncated
+    }
 }
 
 #[derive(Debug, Error)]
@@ -429,6 +923,12 @@ pub enum FileToolError {
     NotText,
     #[error("search query is invalid")]
     InvalidSearch,
+    #[error("glob pattern is invalid")]
+    InvalidList,
+    #[error("regex pattern or grep bounds are invalid")]
+    InvalidGrep,
+    #[error("glob matched no files: {0}")]
+    NoMatch(String),
     #[error("write authority denied")]
     WriteDenied,
     #[error("optimistic content identity conflict")]

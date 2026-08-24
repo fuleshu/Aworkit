@@ -483,8 +483,14 @@ mod tests {
             inspect_extension_manifest_v2(Path::new("extension.json")),
             Err(ExtensionInspectionError::PathNotAbsolute)
         ));
+        // Windows treats "/tmp/..." as drive-relative; use an absolute path
+        // with a parent component on every platform.
+        #[cfg(windows)]
+        let traversal = Path::new(r"C:\tmp\..\extension.json");
+        #[cfg(not(windows))]
+        let traversal = Path::new("/tmp/../extension.json");
         assert!(matches!(
-            inspect_extension_manifest_v2(Path::new("/tmp/../extension.json")),
+            inspect_extension_manifest_v2(traversal),
             Err(ExtensionInspectionError::ParentTraversal)
         ));
 

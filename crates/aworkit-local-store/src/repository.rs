@@ -75,6 +75,16 @@ pub trait DocumentRepository {
         kind: DocumentKind,
     ) -> Result<Vec<(String, u64, SchemaVersion)>, RepositoryError>;
 
+    /// Removes a document entry only when `expected_version` still matches the
+    /// manifest generation. Content-addressed bodies may be retained; the
+    /// manifest entry is what makes a document visible and CAS-addressable.
+    fn delete(
+        &self,
+        kind: DocumentKind,
+        document_id: &str,
+        expected_version: Option<u64>,
+    ) -> Result<(), RepositoryError>;
+
     /// Stores a lossless, non-executable import, including forward schemas.
     fn import_inert(
         &self,
@@ -346,6 +356,34 @@ impl DocumentRepository for RepositoryRoot {
         document: &JsonDocument,
     ) -> Result<StoredDocument, RepositoryError> {
         self.save_document(kind, document_id, expected_version, document, true)
+    }
+
+    fn delete(
+        &self,
+        kind: DocumentKind,
+        document_id: &str,
+        expected_version: Option<u64>,
+    ) -> Result<(), RepositoryError> {
+        validate_document_id(document_id)?;
+        let _maintenance = self.gate.shared()?;
+        let _lock = self.lock_collection(kind)?;
+        let mut manifest = self.load_manifest(kind)?;
+        let current_version = manifest
+            .documents
+            .get(document_id)
+            .map(|entry| entry.document_version);
+        if current_version.is_none() {
+            return Ok(());
+        }
+        if current_version != expected_version {
+            return Err(RepositoryError::Conflict(DocumentConflict {
+                expected_version,
+                actual_version: current_version,
+            }));
+        }
+        manifest.documents.remove(document_id);
+        self.save_manifest(kind, &manifest)?;
+        Ok(())
     }
 }
 

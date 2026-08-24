@@ -118,6 +118,9 @@ fn start_healthy(runtime: &mut TrustedPluginLifecycleV1) {
     runtime.complete_handshake(&result, 100).expect("handshake");
 }
 
+/// Absolute stable interpreter identity: PATH-relative names are resolved
+/// through the PATH search list (including the platform executable suffix)
+/// because supervised specs require absolute program identities.
 fn python_program() -> PathBuf {
     let mut candidates = Vec::new();
     for key in ["PYTHON3", "PYTHON"] {
@@ -132,6 +135,7 @@ fn python_program() -> PathBuf {
     ]);
     candidates
         .into_iter()
+        .filter_map(resolve_executable)
         .find(|candidate| {
             Command::new(candidate)
                 .arg("--version")
@@ -139,6 +143,22 @@ fn python_program() -> PathBuf {
                 .is_ok_and(|output| output.status.success())
         })
         .expect("a Python 3 interpreter for the language-neutral fixture")
+}
+
+/// Resolves a PATH-relative executable name to one absolute file identity;
+/// unresolvable names are skipped instead of leaking a bare name into the
+/// supervised process spec.
+fn resolve_executable(candidate: PathBuf) -> Option<PathBuf> {
+    if candidate.is_absolute() {
+        return candidate.is_file().then_some(candidate);
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .flat_map(|directory| {
+            let joined = directory.join(&candidate);
+            [joined.clone(), joined.with_extension("exe")]
+        })
+        .find(|resolved| resolved.is_file())
 }
 
 fn fixture_process_spec() -> ProcessSpecV1 {

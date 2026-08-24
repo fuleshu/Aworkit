@@ -367,7 +367,19 @@ impl WorkspaceRoot {
         } else {
             path
         };
-        self.directory.open(path)?.sync_all()?;
+        #[cfg(unix)]
+        {
+            self.directory.open(path)?.sync_all()?;
+        }
+        // On Windows `FlushFileBuffers` requires a directory handle opened with
+        // write access and FILE_FLAG_BACKUP_SEMANTICS, so the read-only
+        // capability handle cannot be flushed. The caller has already
+        // revalidated the pinned root, so resolving the validated relative
+        // path against it is safe.
+        #[cfg(not(unix))]
+        {
+            sync_directory_native(&self.root.join(path))?;
+        }
         Ok(())
     }
 
@@ -490,6 +502,25 @@ fn validate_relative_path(path: &Path) -> Result<(), WorkspaceError> {
     } else {
         Ok(())
     }
+}
+
+/// Flushes a directory's entries so renames and creates survive a crash.
+///
+/// A capability-rooted directory handle is read-only on Windows, which
+/// `FlushFileBuffers` rejects. The directory is therefore reopened with write
+/// access and `FILE_FLAG_BACKUP_SEMANTICS`, mirroring the platform helper in
+/// `aworkit-process`.
+#[cfg(not(unix))]
+fn sync_directory_native(path: &Path) -> Result<(), WorkspaceError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    directory.sync_all()?;
+    Ok(())
 }
 
 fn root_identity(path: &Path) -> Result<RootIdentity, std::io::Error> {

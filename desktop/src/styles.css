@@ -1384,6 +1384,17 @@ pre {
   min-width: 0;
   width: 100%;
 }
+.settings-command-picker {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.settings-command-picker > input {
+  color: var(--aw-text);
+  min-width: 0;
+  width: 100%;
+}
 .settings-field > textarea {
   min-height: 78px;
   resize: vertical;
@@ -2010,4 +2021,172 @@ pre {
     scroll-behavior: auto !important;
     transition-duration: 0ms !important;
   }
+}
+
+/* Typed node configuration forms */
+.node-config-form {
+  border-top: 1px solid var(--aw-divider);
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+}
+.node-config-form fieldset {
+  border: 1px solid var(--aw-control);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 8px;
+}
+.node-config-form legend {
+  color: var(--aw-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.config-field-stack {
+  display: grid;
+  gap: 6px;
+}
+.config-field-stack label {
+  display: grid;
+  gap: 3px;
+}
+.config-help {
+  color: var(--aw-muted);
+  font-size: 9px;
+  line-height: 13px;
+}
+.tool-multi-field .checkbox-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.tool-multi-field .checkbox-row input {
+  flex: none;
+  margin: 0;
+}
+.tool-multi-field .checkbox-row span {
+  font-size: 10px;
+}
+.tool-multi-field .checkbox-row code,
+.config-help code {
+  color: var(--aw-secondary);
+}
+.predicate-field {
+  margin: 0;
+}
+
+/* Workflow library strip */
+.workflow-editor.with-library {
+  grid-template-rows: 48px 44px minmax(0, 1fr);
+}
+.workflow-library-bar {
+  align-items: center;
+  background: var(--aw-panel);
+  border-bottom: 1px solid var(--aw-divider);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+}
+.workflow-library-bar label {
+  align-items: center;
+  display: flex;
+  font-size: 10px;
+  gap: 5px;
+}
+.workflow-library-bar select,
+.workflow-library-bar input {
+  max-width: 220px;
+}
+.workflow-library-bar button {
+  min-height: 0;
+  padding: 3px 8px;
+}
+.workflow-editor.with-library > .command-banner {
+  top: 92px;
+}
+
+/* Timeline activity cards (plan, web results, todo, subagent) */
+.plan-call-card,
+.todo-card {
+  padding: 10px;
+}
+.plan-call-body,
+.subagent-body {
+  color: var(--aw-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+.todo-list {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.todo-list li {
+  color: var(--aw-secondary);
+  font-size: 11px;
+  padding-left: 18px;
+  position: relative;
+}
+.todo-list li::before {
+  color: var(--aw-muted);
+  content: "○";
+  left: 2px;
+  position: absolute;
+}
+.todo-list li.done {
+  color: var(--aw-muted);
+  text-decoration: line-through;
+}
+.todo-list li.done::before {
+  color: var(--aw-success);
+  content: "✓";
+}
+.subagent-card > details > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  list-style: none;
+}
+.subagent-card > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Per-node run status badge on the graph canvas */
+.node-run-status {
+  align-items: center;
+  background: var(--aw-inset);
+  border-radius: 50%;
+  display: inline-flex;
+  flex: none;
+  font-size: 9px;
+  height: 16px;
+  justify-content: center;
+  margin-left: auto;
+  min-width: 16px;
+}
+.node-run-status.completed {
+  color: var(--aw-success);
+}
+.node-run-status.failed {
+  color: var(--aw-warning);
+}
+.node-run-status.running {
+  color: var(--aw-accent);
+}
+.node-run-status.waiting {
+  color: var(--aw-muted);
+}
+.node-run-status.skipped {
+  color: var(--aw-muted);
+  opacity: 0.7;
 }

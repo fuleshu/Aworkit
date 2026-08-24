@@ -1054,6 +1054,8 @@ mod tests {
             .expect("search");
         assert_eq!(hits.items[0].event_id, "event_02");
         assert!(projection.health().expect("health").healthy);
+        drop(projection);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1109,6 +1111,8 @@ mod tests {
                 .len(),
             1
         );
+        drop(projection);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1157,6 +1161,8 @@ mod tests {
             projection.chats_page(None, 8).expect("chats").items.len(),
             2
         );
+        drop(projection);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1174,6 +1180,7 @@ mod tests {
                 .flatten()
                 .any(|entry| entry.file_name().to_string_lossy().contains("corrupt-"))
         );
+        drop(projection);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

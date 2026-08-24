@@ -485,6 +485,7 @@ pub enum NativeProcessError {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn shell_spec(generation: u64, command: &str) -> SanitizedProcessSpecV1 {
         SanitizedProcessSpecV1 {
             executable: std::fs::canonicalize("/bin/sh").expect("shell executable"),

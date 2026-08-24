@@ -834,20 +834,12 @@ function validateConnection(
     return;
   }
   if (options.mcp === true) {
-    if (!runtimePathIsAbsolute(connection.command)) {
+    if (!runtimePathIsAbsolute(unquoteRuntimePath(connection.command)) && !runtimePathIsBareCommand(unquoteRuntimePath(connection.command))) {
       issues.push({
         section,
         path: `${path}.command`,
         message:
-          "MCP STDIO executable path must be absolute for the installed native adapter.",
-      });
-    }
-    if (connection.cwd != null && !runtimePathIsAbsolute(connection.cwd)) {
-      issues.push({
-        section,
-        path: `${path}.cwd`,
-        message:
-          "MCP STDIO working directory must be absolute for the installed native adapter.",
+          "MCP STDIO executable must be absolute or one bare command name from PATH for the installed native adapter.",
       });
     }
   }
@@ -1053,6 +1045,17 @@ function runtimePathIsAbsolute(value: string): boolean {
     );
   }
   return value.startsWith("/");
+}
+
+/** Windows users commonly paste a quoted executable path from a shell. */
+function unquoteRuntimePath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2) {
+    const quote = trimmed[0];
+    if ((quote === '"' || quote === "'") && trimmed.at(-1) === quote)
+      return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 function runtimePathIsBareCommand(value: string): boolean {

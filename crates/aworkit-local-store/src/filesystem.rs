@@ -1,7 +1,7 @@
 //! Small crash-consistent filesystem primitives used by canonical repositories.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -58,7 +58,7 @@ fn write_temporary_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
-    File::open(path)?.sync_all()
+    std::fs::File::open(path)?.sync_all()
 }
 
 #[cfg(not(unix))]

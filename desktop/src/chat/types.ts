@@ -47,6 +47,7 @@ export type TimelineKind =
   | "artifact"
   | "approval"
   | "route"
+  | "todo"
   | "error"
   | "verification"
   | "repair"

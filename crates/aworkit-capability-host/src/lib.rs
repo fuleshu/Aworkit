@@ -57,6 +57,7 @@ mod provider_tools;
 mod provider_transport;
 mod registry;
 mod tools;
+mod web;
 pub use anthropic_messages::{
     AnthropicConnectionTestV1, AnthropicMessagesLimitsV1, AnthropicMessagesProvider,
     AnthropicMessagesProviderConfig, AnthropicMessagesProviderError, AnthropicModelV1,
@@ -69,8 +70,9 @@ pub use codex_app_server::{
 pub use external_agent::*;
 pub use files::{
     FileAuthority, FileEditRequestV1, FileEditResultV1, FileEffectDescriptorV1, FileEffectKindV1,
-    FileReadRequestV1, FileReadResultV1, FileSearchRequestV1, FileSearchResultV1, FileToolError,
-    ProjectFiles,
+    FileGrepMatchV1, FileGrepRequestV1, FileGrepResultV1, FileListEntryV1, FileListRequestV1,
+    FileListResultV1, FileReadRequestV1, FileReadResultV1, FileSearchRequestV1, FileSearchResultV1,
+    FileToolError, FileWriteRequestV1, FileWriteResultV1, ProjectFiles,
 };
 pub use gateway::{
     AdmissionDispositionV1, AdmissionReceipt, AdmittedInvocationDispatcherV1,
@@ -137,3 +139,4 @@ pub use tools::{
     ArgumentVectorInvocationV1, BuiltInProcessTools, HostToolLimitsV1, PythonInvocationV1,
     ShellInvocationV1, ToolAdapterError, ToolAuthorityModeV1,
 };
+pub use web::{WebFetchResultV1, WebSearchResultV1, WebToolError, WebTools, WebTransportPort};

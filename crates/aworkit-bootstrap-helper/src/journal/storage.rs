@@ -338,12 +338,15 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 }
 
 fn owner_only_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
     #[cfg(unix)]
-    {
+    let options = {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
         options.mode(0o600);
-    }
+        options
+    };
+    #[cfg(not(unix))]
+    let options = OpenOptions::new();
     options
 }
 

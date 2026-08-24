@@ -734,9 +734,16 @@ fn acquire_writer_lock(root: &Path) -> Result<File, DiagnosticError> {
         .write(true)
         .truncate(false)
         .open(root.join(".writer.lock"))?;
+    // Lock contention surfaces as `WouldBlock` on Unix and as the raw
+    // ERROR_LOCK_VIOLATION code on Windows; compare against the canonical
+    // contended error identity for both platforms.
+    let contended = fs2::lock_contended_error();
     match file.try_lock_exclusive() {
         Ok(()) => Ok(file),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+        Err(error)
+            if error.kind() == contended.kind()
+                && error.raw_os_error() == contended.raw_os_error() =>
+        {
             Err(DiagnosticError::WriterActive)
         }
         Err(error) => Err(error.into()),

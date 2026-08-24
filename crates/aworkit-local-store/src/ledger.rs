@@ -1732,6 +1732,7 @@ mod tests {
         let pending = store.pending_outbox_v1(0, 8).expect("outbox");
         assert_eq!(pending.len(), 1);
         assert_ne!(pending[0].payload_hash, "");
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1762,6 +1763,7 @@ mod tests {
             store.commit(&changed),
             Err(StoreError::DeduplicationKeyReused)
         ));
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1780,6 +1782,7 @@ mod tests {
             })
         ));
         assert_eq!(store.event_ids("chat_01", "main").expect("events").len(), 1);
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1795,6 +1798,7 @@ mod tests {
             store.commit(&rejected),
             Err(StoreError::ForbiddenSecretMaterial)
         ));
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1831,6 +1835,7 @@ mod tests {
             store.commit_v1(&protocol),
             Err(StoreError::WrongHistoryBackend)
         ));
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1851,6 +1856,7 @@ mod tests {
         store
             .mark_outbox_delivered_v1(&first[0].outbox_id, first[0].delivery_cursor)
             .expect("ack");
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1879,6 +1885,7 @@ mod tests {
                     .is_empty()
             );
             store.commit(&batch(0)).expect("retry after rollback");
+            drop(store);
             fs::remove_dir_all(root).expect("cleanup");
         }
 
@@ -1900,6 +1907,7 @@ mod tests {
             store.event_ids("chat_01", "main").expect("one event").len(),
             1
         );
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1930,6 +1938,8 @@ mod tests {
                 .expect("partial verify"),
             Verification::Partial(_)
         ));
+        drop(connection);
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

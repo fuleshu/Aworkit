@@ -7,6 +7,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+use aworkit_capability_host::{McpCapabilitySnapshotV1, McpPeerPort, ModelToolDefinitionV1};
 use aworkit_protocol::StableId;
 use aworkit_trusted_core::{
     CredentialMetadataV1, CredentialRef, NativeCredentialStore, PlatformCredentialStorePort,
@@ -27,7 +28,10 @@ use super::{
         random_credential_ref,
     },
     credentials::CredentialVault,
-    documents::{CanonicalDocuments, ProviderDocument, SettingsDocument},
+    documents::{
+        CanonicalDocuments, ProviderDocument, SIMPLE_CHAT_WORKFLOW_ID, SettingsDocument,
+        validate_v1_executable_catalog,
+    },
     dto::{
         CredentialDeleteInputV2, CredentialMutationOperationV2, CredentialMutationOutcomeV2,
         CredentialStoreInputV2, DiscoveredModelV2, ExtensionRegisterInputV2, McpProbeRequestV2,
@@ -35,18 +39,24 @@ use super::{
         ProviderHealthSnapshotV2, ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput,
         ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
         SettingsV2CommitInput, SettingsV2Snapshot, UiCommandInput, UiCommandReceipt,
-        WorkflowCommitInput, WorkflowSnapshot,
+        WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
+        WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
     },
     extension_registration::{register_extension_installation_v2, verify_registered_extension_v2},
     external_agent::{
         ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, probe_external_agent,
     },
+    graph_pass::GraphNodeActivityV1,
     history::{
         ChatHistory, ConversationMessage, FrozenChatExecutionContextV1,
         FrozenChatExecutionRecordV1, FrozenCredentialBindingV1, FrozenToolBindingV1,
         PendingChatCommandV1, canonical_hash, identity_for_seed, message_fact, now_label,
     },
     mcp::probe_mcp_server,
+    mcp::{materialize_bindings, prepare_mcp_server},
+    mcp_tools::{
+        MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
+    },
     pipeline::{
         SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES, SimpleChatExecutionPipeline,
         SimpleChatExecutionRequestV1, SimpleChatExecutionResultV1, SimpleChatExecutionStatusV1,
@@ -88,6 +98,31 @@ trait SimpleChatPipelinePort: Send + Sync {
         &self,
         request: SimpleChatExecutionRequestV1,
     ) -> Result<SimpleChatExecutionResultV1, String>;
+
+    fn resume_approval(
+        &self,
+        _decision_id: &str,
+        _approved: bool,
+    ) -> Result<SimpleChatExecutionResultV1, String> {
+        Err("approval resume is not available from this pipeline".into())
+    }
+
+    fn run_todo_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+
+    #[allow(dead_code)] // used by pipeline tests through the concrete type
+    fn install_mcp_peer(&self, _peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
+        Err("MCP peer installation is not available from this pipeline".into())
+    }
+
+    fn prepare_mcp_sessions(
+        &self,
+        _run_id: &StableId,
+        _servers: &mut [McpRunServerPreparationV1],
+    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+        Err("MCP session preparation is not available from this pipeline".into())
+    }
 }
 
 impl SimpleChatPipelinePort for SimpleChatExecutionPipeline {
@@ -100,6 +135,32 @@ impl SimpleChatPipelinePort for SimpleChatExecutionPipeline {
         request: SimpleChatExecutionRequestV1,
     ) -> Result<SimpleChatExecutionResultV1, String> {
         self.execute(request).map_err(|error| error.to_string())
+    }
+
+    fn resume_approval(
+        &self,
+        decision_id: &str,
+        approved: bool,
+    ) -> Result<SimpleChatExecutionResultV1, String> {
+        SimpleChatExecutionPipeline::resume_approval(self, decision_id, approved)
+            .map_err(|error| error.to_string())
+    }
+
+    fn run_todo_state(&self, run_id: &StableId) -> Result<Option<Value>, String> {
+        SimpleChatExecutionPipeline::run_todo_state(self, run_id).map_err(|error| error.to_string())
+    }
+
+    #[allow(dead_code)] // exercised by pipeline tests through the concrete type
+    fn install_mcp_peer(&self, peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
+        SimpleChatExecutionPipeline::install_mcp_peer(self, peer)
+    }
+
+    fn prepare_mcp_sessions(
+        &self,
+        run_id: &StableId,
+        servers: &mut [McpRunServerPreparationV1],
+    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+        SimpleChatExecutionPipeline::prepare_mcp_sessions(self, run_id, servers)
     }
 }
 
@@ -399,7 +460,10 @@ impl DesktopRuntime {
         if let Some(pending) = self
             .history
             .pending_effect_command_at_head(self.history.head()?)?
-            && !matches!(input.action.as_str(), "resume" | "abandon_recovery")
+            && !matches!(
+                input.action.as_str(),
+                "resume" | "abandon_recovery" | "approval"
+            )
             && (input.command_id != pending.command.command_id
                 || fingerprint != pending.command_hash)
         {
@@ -410,7 +474,13 @@ impl DesktopRuntime {
         }
         if matches!(
             input.action.as_str(),
-            "new_chat" | "start" | "enqueue" | "resume" | "abandon_recovery" | "cancel"
+            "new_chat"
+                | "start"
+                | "enqueue"
+                | "resume"
+                | "abandon_recovery"
+                | "cancel"
+                | "approval"
         ) {
             self.ensure_current_chat_target(input.target_id.as_deref())?;
         }
@@ -432,6 +502,7 @@ impl DesktopRuntime {
                 )
             }
             "start" | "enqueue" => self.complete_simple_chat(input, fingerprint),
+            "approval" => self.complete_approval(input, fingerprint),
             "resume" => {
                 self.recover_pending_effect(&input.command_id, &fingerprint, input.expected_version)
             }
@@ -462,9 +533,15 @@ impl DesktopRuntime {
         self.history.ensure_expected(input.expected_version)?;
         if input.action == "start" {
             let workflow_id = string_field(&input.payload, "workflowId")?;
-            if workflow_id != "workflow.simple-chat" {
+            let workflow = self.documents.workflow_snapshot_for(&workflow_id);
+            if workflow.document.is_null() {
                 return Err(format!(
-                    "workflow '{workflow_id}' is not executable in this build; select Simple Chat"
+                    "workflow '{workflow_id}' does not exist in the workflow library"
+                ));
+            }
+            if !workflow.editable {
+                return Err(format!(
+                    "workflow '{workflow_id}' uses a read-only schema and cannot run"
                 ));
             }
         } else if input.payload.get("projectId").is_some() {
@@ -533,8 +610,11 @@ impl DesktopRuntime {
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
+        let graph_mode = context.workflow_id != SIMPLE_CHAT_WORKFLOW_ID;
         let mut provider_messages = Vec::with_capacity(conversation.len().saturating_add(1));
-        if let Some(instructions) = simple_chat_agent_instructions(&context.workflow_snapshot)? {
+        if !graph_mode
+            && let Some(instructions) = simple_chat_agent_instructions(&context.workflow_snapshot)?
+        {
             provider_messages.push(SimpleChatMessageV1 {
                 role: "system".into(),
                 content: instructions,
@@ -581,9 +661,11 @@ impl DesktopRuntime {
                     capability_id: tool.tool_id.clone(),
                     configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
                         .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
+                    definition: tool.definition.clone(),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
+        execution_request.mcp_servers = context.mcp_manifests.values().cloned().collect();
         execution_request.maximum_turns = context.agent_maximum_turns;
         execution_request.workflow_snapshot = context.workflow_snapshot.clone();
         execution_request.budget.turns = u64::from(context.agent_maximum_turns);
@@ -640,6 +722,12 @@ impl DesktopRuntime {
         ));
         match result.status {
             SimpleChatExecutionStatusV1::Succeeded => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
                 let assistant = result.assistant_text.as_deref().ok_or_else(|| {
                     "authority pipeline reported success without assistant output".to_owned()
                 })?;
@@ -698,9 +786,47 @@ impl DesktopRuntime {
                     &frozen.context_hash,
                     &created_at,
                 ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push(("message.assistant", fact));
             }
+            SimpleChatExecutionStatusV1::AwaitingApproval => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
+                let approval = result.approval.ok_or_else(|| {
+                    "authority pipeline reported an approval suspension without a decision identity"
+                        .to_owned()
+                })?;
+                facts.extend(tool_activity_facts(
+                    &result.tool_activity,
+                    context,
+                    &frozen.context_hash,
+                    &created_at,
+                ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
+                facts.push((
+                    "approval.requested",
+                    json!({
+                        "createdAt": created_at,
+                        "decisionId": approval.decision_id,
+                        "nodeId": approval.node_id,
+                        "title": approval.title,
+                        "body": approval.message,
+                        "frozenContextHash": frozen.context_hash,
+                        "invocationId": result.broker_invocation_id,
+                    }),
+                ));
+            }
             status => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
                 let error = result.error.unwrap_or_else(|| {
                     "The authority pipeline did not produce a conclusive assistant response.".into()
                 });
@@ -716,6 +842,208 @@ impl DesktopRuntime {
                     &frozen.context_hash,
                     &created_at,
                 ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
+                facts.push((
+                    "execution.failed",
+                    json!({
+                        "createdAt": created_at,
+                        "status": execution_status_name(status),
+                        "body": error,
+                        "providerId": context.provider_id,
+                        "modelId": context.model_id,
+                        "modelTierId": context.model_tier_id,
+                        "frozenContextHash": frozen.context_hash,
+                        "snapshotId": result.snapshot_id,
+                        "snapshotHash": result.snapshot_hash,
+                        "authorityManifestId": result.authority_manifest_id,
+                        "invocationId": result.broker_invocation_id,
+                        "outcomeHash": result.outcome_hash,
+                        "modelTurns": result.model_turns,
+                        "toolCalls": result.tool_calls,
+                        "automaticReplayAllowed": false
+                    }),
+                ));
+            }
+        }
+        self.history.append(
+            &input.command_id,
+            &fingerprint,
+            input.expected_version,
+            facts,
+        )
+    }
+
+    /// Applies one committed approval decision to a durably suspended graph
+    /// pass. Approve/reject resume the exact frozen pass from its stored
+    /// prefix; the command is idempotent by command ID and recoverable through
+    /// the same pending-effect staging as first inputs.
+    fn complete_approval(
+        &mut self,
+        input: UiCommandInput,
+        fingerprint: String,
+    ) -> Result<UiCommandReceipt, String> {
+        self.history.ensure_expected(input.expected_version)?;
+        let decision_id = string_field(&input.payload, "decisionId")?;
+        let approved = match input.payload.get("approved") {
+            Some(Value::Bool(approved)) => *approved,
+            _ => return Err("approval command requires a boolean approved field".into()),
+        };
+        let frozen = self.history.current_frozen_context()?.ok_or_else(|| {
+            "the current Chat has no durable frozen execution context for approval".to_owned()
+        })?;
+        if self
+            .history
+            .pending_effect_command_at_head(self.history.head()?)?
+            .is_some_and(|pending| {
+                pending.command.command_id != input.command_id
+                    || pending.command_hash != fingerprint
+            })
+        {
+            self.history.stage_effect_command(PendingChatCommandV1 {
+                schema_version: 1,
+                frozen_context_hash: frozen.context_hash.clone(),
+                command_hash: fingerprint.clone(),
+                command: input.clone(),
+            })?;
+        }
+        let result = self
+            .pipeline
+            .resume_approval(&decision_id, approved)
+            .map_err(|error| error.to_string())?;
+        let created_at = now_label();
+        let context = &frozen.context;
+        let mut facts = vec![(
+            "approval.resolved",
+            json!({
+                "createdAt": created_at,
+                "decisionId": decision_id,
+                "approved": approved,
+                "frozenContextHash": frozen.context_hash,
+            }),
+        )];
+        match result.status {
+            SimpleChatExecutionStatusV1::Succeeded => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
+                let assistant = result.assistant_text.as_deref().ok_or_else(|| {
+                    "authority pipeline reported approval success without assistant output"
+                        .to_owned()
+                })?;
+                let mut fact = message_fact(
+                    assistant,
+                    &created_at,
+                    Some(&result.model),
+                    Some(result.input_units),
+                    Some(result.output_units),
+                );
+                if let Some(object) = fact.as_object_mut() {
+                    object.insert(
+                        "providerId".into(),
+                        Value::String(context.provider_id.clone()),
+                    );
+                    object.insert("modelId".into(), Value::String(context.model_id.clone()));
+                    object.insert(
+                        "modelTierId".into(),
+                        Value::String(context.model_tier_id.clone()),
+                    );
+                    object.insert(
+                        "frozenContextHash".into(),
+                        Value::String(frozen.context_hash.clone()),
+                    );
+                    object.insert(
+                        "snapshotId".into(),
+                        Value::String(result.snapshot_id.to_string()),
+                    );
+                    object.insert(
+                        "snapshotHash".into(),
+                        Value::String(result.snapshot_hash.clone()),
+                    );
+                    object.insert(
+                        "authorityManifestId".into(),
+                        Value::String(result.authority_manifest_id.to_string()),
+                    );
+                    object.insert(
+                        "invocationId".into(),
+                        Value::String(result.broker_invocation_id.to_string()),
+                    );
+                    object.insert("outcomeHash".into(), Value::String(result.outcome_hash));
+                    object.insert("modelTurns".into(), Value::from(result.model_turns));
+                    object.insert("toolCalls".into(), Value::from(result.tool_calls));
+                }
+                let _ = self.record_provider_health(
+                    &context.provider_snapshot,
+                    ProviderHealth::ready(format!(
+                        "Last authority-checked completion succeeded with '{}'.",
+                        result.model
+                    )),
+                );
+                facts.extend(tool_activity_facts(
+                    &result.tool_activity,
+                    context,
+                    &frozen.context_hash,
+                    &created_at,
+                ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
+                facts.push(("message.assistant", fact));
+            }
+            SimpleChatExecutionStatusV1::AwaitingApproval => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
+                let approval = result.approval.ok_or_else(|| {
+                    "authority pipeline reported a second approval without a decision identity"
+                        .to_owned()
+                })?;
+                facts.extend(tool_activity_facts(
+                    &result.tool_activity,
+                    context,
+                    &frozen.context_hash,
+                    &created_at,
+                ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
+                facts.push((
+                    "approval.requested",
+                    json!({
+                        "createdAt": created_at,
+                        "decisionId": approval.decision_id,
+                        "nodeId": approval.node_id,
+                        "title": approval.title,
+                        "body": approval.message,
+                        "frozenContextHash": frozen.context_hash,
+                        "invocationId": result.broker_invocation_id,
+                    }),
+                ));
+            }
+            status => {
+                facts.extend(todo_state_fact(
+                    self.pipeline.as_ref(),
+                    &result,
+                    &context.identity.run_id,
+                    &created_at,
+                )?);
+                let error = result.error.unwrap_or_else(|| {
+                    "The authority pipeline did not produce a conclusive approval outcome.".into()
+                });
+                let _ = self.record_provider_health(
+                    &context.provider_snapshot,
+                    ProviderHealth::error(
+                        "The approved workflow step failed. Inspect the Chat evidence for details.",
+                    ),
+                );
+                facts.extend(tool_activity_facts(
+                    &result.tool_activity,
+                    context,
+                    &frozen.context_hash,
+                    &created_at,
+                ));
+                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push((
                     "execution.failed",
                     json!({
@@ -747,7 +1075,7 @@ impl DesktopRuntime {
     }
 
     fn prepare_simple_chat_context(
-        &self,
+        &mut self,
         command: &UiCommandInput,
         command_id: &str,
         command_hash: &str,
@@ -769,25 +1097,160 @@ impl DesktopRuntime {
                 Err("the current Chat already has a different frozen execution context".into())
             };
         }
+        let workflow_id = string_field(&command.payload, "workflowId")?;
+        let graph_mode = workflow_id != SIMPLE_CHAT_WORKFLOW_ID;
+        let workflow = self.documents.workflow_snapshot_for(&workflow_id);
+        if workflow.document.is_null() {
+            return Err(format!(
+                "workflow '{workflow_id}' does not exist in the workflow library"
+            ));
+        }
+        if !workflow.editable {
+            return Err(format!(
+                "workflow '{workflow_id}' uses a read-only schema and cannot run"
+            ));
+        }
+        if graph_mode {
+            validate_v1_executable_catalog(&workflow.document)
+                .map_err(|error| format!("workflow '{workflow_id}' is not executable: {error}"))?;
+        }
         let project = resolve_project_scope(
             &self.project_coordinator,
             &self.documents.settings().projects,
             selected_project_id,
         )?;
-        let resolved = resolve_simple_chat_model(self.documents.settings(), "tier:balanced")?;
-        let workflow = self.documents.workflow_snapshot();
+        // MCP resolution: every mcp:// tool id must name an enabled saved MCP
+        // server whose exact manifest is opened, credential-staged, and
+        // discovered at freeze. The discovery snapshot supplies the exact
+        // model-facing definition; sessions then open on demand per Run.
+        let mut mcp_definitions = BTreeMap::new();
+        let mut mcp_manifests = BTreeMap::new();
+        if graph_mode {
+            let mcp_ids = graph_mcp_tool_ids(&workflow.document);
+            if !mcp_ids.is_empty() {
+                let settings = self.documents.settings().clone();
+                let credentials = settings.credentials.clone();
+                let mut preparations = Vec::new();
+                let mut resolved_servers = BTreeSet::new();
+                for capability_id in mcp_ids {
+                    let (server_id, _tool) =
+                        split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
+                    let server = settings
+                        .mcp_servers
+                        .iter()
+                        .find(|server| server.id == server_id)
+                        .ok_or_else(|| {
+                            format!(
+                                "workflow binds MCP server '{server_id}' which is not installed in saved Settings"
+                            )
+                        })?;
+                    if !server.enabled {
+                        return Err(format!(
+                            "workflow binds MCP server '{server_id}' which is disabled in saved Settings"
+                        ));
+                    }
+                    if !resolved_servers.contains(server_id) {
+                        let prepared = prepare_mcp_server(server, &credentials)?;
+                        let materialization =
+                            materialize_bindings(&mut self.credentials, &prepared.secret_bindings)?;
+                        preparations.push(McpRunServerPreparationV1 {
+                            manifest: prepared.manifest.clone(),
+                            endpoint: prepared.endpoint.clone(),
+                            materialization,
+                        });
+                        resolved_servers.insert(server_id.to_owned());
+                    }
+                }
+                let snapshots = self
+                    .pipeline
+                    .prepare_mcp_sessions(&identity.run_id, &mut preparations)?;
+                for preparation in &preparations {
+                    mcp_manifests.insert(
+                        preparation.manifest.server_id.to_string(),
+                        preparation.manifest.clone(),
+                    );
+                }
+                for capability_id in graph_mcp_tool_ids(&workflow.document) {
+                    let (server_id, tool) =
+                        split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
+                    let snapshot = snapshots
+                        .iter()
+                        .find(|snapshot| snapshot.server_id.as_str() == server_id)
+                        .ok_or_else(|| {
+                            format!("MCP server '{server_id}' has no discovery snapshot")
+                        })?;
+                    let descriptor = snapshot
+                        .catalog
+                        .tools
+                        .iter()
+                        .find(|descriptor| descriptor.name == tool)
+                        .ok_or_else(|| {
+                            format!("MCP server '{server_id}' did not discover tool '{tool}'")
+                        })?;
+                    mcp_definitions.insert(
+                        capability_id.clone(),
+                        ModelToolDefinitionV1 {
+                            capability_id: capability_id.clone(),
+                            name: mcp_provider_name(server_id, tool),
+                            description: if descriptor.description.is_empty() {
+                                format!("Call MCP tool '{tool}' on server '{server_id}'.")
+                            } else {
+                                descriptor.description.clone()
+                            },
+                            input_schema: descriptor.input_schema.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        // v1 model resolution: every referenced tier must resolve to the same
+        // provider/model binding so the single frozen secret lease covers the
+        // whole pass.
+        let mut resolved: Option<ResolvedSimpleChatModel> = None;
+        for tier_id in if graph_mode {
+            graph_model_tier_ids(&workflow.document)
+        } else {
+            vec!["tier:balanced".to_owned()]
+        } {
+            let candidate = resolve_simple_chat_model(self.documents.settings(), &tier_id)?;
+            match &resolved {
+                None => resolved = Some(candidate),
+                Some(previous)
+                    if previous.provider.id == candidate.provider.id
+                        && previous.model.id == candidate.model.id =>
+                {
+                    resolved = Some(candidate);
+                }
+                Some(previous) => {
+                    return Err(format!(
+                        "workflow '{workflow_id}' references model tiers resolving to different provider/model bindings ('{}' vs '{}'); v1 graph execution requires one resolved binding",
+                        previous.model.name, candidate.model.name
+                    ));
+                }
+            }
+        }
+        let resolved = resolved.expect("at least one model tier is resolved");
         let workflow_name = workflow
             .document
             .get("name")
             .and_then(Value::as_str)
-            .unwrap_or("Simple Chat")
+            .unwrap_or(&workflow_id)
             .to_owned();
-        let agent = freeze_simple_chat_agent(
-            &workflow.document,
-            self.documents.settings(),
-            project.is_some(),
-            &resolved.model,
-        )?;
+        let agent = if graph_mode {
+            freeze_graph_bindings(
+                &workflow.document,
+                self.documents.settings(),
+                project.is_some(),
+                &mcp_definitions,
+            )?
+        } else {
+            freeze_simple_chat_agent(
+                &workflow.document,
+                self.documents.settings(),
+                project.is_some(),
+                &resolved.model,
+            )?
+        };
         let credential = resolved
             .credential
             .as_ref()
@@ -806,7 +1269,7 @@ impl DesktopRuntime {
             pending_start_command: Some(command.clone()),
             settings_version: self.settings_v2_snapshot().version,
             project,
-            workflow_id: "workflow.simple-chat".into(),
+            workflow_id,
             workflow_name,
             workflow_version: workflow.version,
             workflow_snapshot_hash: canonical_hash(&workflow.document)?,
@@ -829,6 +1292,7 @@ impl DesktopRuntime {
             model_hash: canonical_hash(&resolved.model)?,
             model_snapshot: resolved.model.clone(),
             credential,
+            mcp_manifests,
         };
         Ok(FrozenChatExecutionRecordV1 {
             context_hash: canonical_hash(&context)?,
@@ -838,7 +1302,7 @@ impl DesktopRuntime {
 
     #[cfg(test)]
     fn freeze_simple_chat_context(
-        &self,
+        &mut self,
         command: &UiCommandInput,
         command_id: &str,
         command_hash: &str,
@@ -1918,6 +2382,16 @@ impl DesktopRuntime {
         self.documents.workflow_snapshot()
     }
 
+    #[must_use]
+    pub fn workflow_snapshot_for(&self, workflow_id: String) -> WorkflowSnapshot {
+        self.documents.workflow_snapshot_for(&workflow_id)
+    }
+
+    #[must_use]
+    pub fn workflow_library(&self) -> WorkflowLibrarySnapshot {
+        self.documents.workflow_library()
+    }
+
     pub fn workflow_commit(
         &mut self,
         input: WorkflowCommitInput,
@@ -1927,13 +2401,159 @@ impl DesktopRuntime {
         if let Some(processed) = self.processed.get(&input.command_id) {
             return replay_processed(processed, &fingerprint);
         }
-        let next_version = self
-            .documents
-            .save_workflow(input.expected_version, input.document)?;
+        let next_version = match input.workflow_id.as_deref() {
+            Some(workflow_id) => self.documents.save_workflow_document(
+                workflow_id,
+                input.expected_version,
+                input.document,
+            )?,
+            None => self
+                .documents
+                .save_workflow(input.expected_version, input.document)?,
+        };
         let receipt = UiCommandReceipt {
             command_id: input.command_id.clone(),
             accepted: true,
             current_version: next_version,
+            reason: None,
+            credential_mutation: None,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: receipt.clone(),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_create(
+        &mut self,
+        input: WorkflowCreateInput,
+    ) -> Result<WorkflowCreateReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_create_receipt(processed, &fingerprint);
+        }
+        let (workflow_id, version) = self
+            .documents
+            .create_workflow(&input.name, input.template.as_deref())?;
+        let receipt = WorkflowCreateReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: version,
+            workflow_id,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: create_receipt_into_ui(&receipt),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_duplicate(
+        &mut self,
+        input: WorkflowDuplicateInput,
+    ) -> Result<WorkflowCreateReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_create_receipt(processed, &fingerprint);
+        }
+        let (workflow_id, version) = self
+            .documents
+            .duplicate_workflow(&input.workflow_id, &input.name)?;
+        let receipt = WorkflowCreateReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: version,
+            workflow_id,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: create_receipt_into_ui(&receipt),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_delete(
+        &mut self,
+        input: WorkflowTargetInput,
+    ) -> Result<UiCommandReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_processed(processed, &fingerprint);
+        }
+        self.documents.delete_workflow(&input.workflow_id)?;
+        let receipt = UiCommandReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: self.documents.workflow_library().version,
+            reason: None,
+            credential_mutation: None,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: receipt.clone(),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_rename(
+        &mut self,
+        input: WorkflowRenameInput,
+    ) -> Result<UiCommandReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_processed(processed, &fingerprint);
+        }
+        let next_version = self
+            .documents
+            .rename_workflow(&input.workflow_id, &input.name)?;
+        let receipt = UiCommandReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: next_version,
+            reason: None,
+            credential_mutation: None,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: receipt.clone(),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_set_default(
+        &mut self,
+        input: WorkflowTargetInput,
+    ) -> Result<UiCommandReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_processed(processed, &fingerprint);
+        }
+        let library_version = self.documents.set_default_workflow(&input.workflow_id)?;
+        let receipt = UiCommandReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: library_version,
             reason: None,
             credential_mutation: None,
         };
@@ -2220,6 +2840,7 @@ fn freeze_simple_chat_agent(
             tool_id: tool_id.to_owned(),
             tool_hash: canonical_hash(configured)?,
             tool_snapshot: configured.clone(),
+            definition: None,
         });
     }
     if tools.is_empty() {
@@ -2252,6 +2873,183 @@ fn freeze_simple_chat_agent(
             .min(32),
         tools,
     })
+}
+
+/// Freezes the tool subset and turn budget for a catalog-valid graph workflow:
+/// the union of every agent/tool node's bindings, resolved only against saved
+/// enabled Settings records. Only tools this build can execute survive the
+/// pipeline freeze; a node binding anything else fails closed.
+/// The distinct `mcp://<server>/<tool>` capability ids referenced by the
+/// graph's agent and tool nodes, in document order.
+fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut seen = BTreeSet::new();
+    if let Some(nodes) = workflow.get("nodes").and_then(Value::as_array) {
+        for node in nodes {
+            let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
+            let configuration = node.get("configuration").and_then(Value::as_object);
+            let candidate_ids: Vec<String> = match node_type {
+                "agent" => configuration
+                    .and_then(|config| config.get("toolIds"))
+                    .and_then(Value::as_array)
+                    .map(|ids| {
+                        ids.iter()
+                            .filter_map(|id| id.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                "tool" => configuration
+                    .and_then(|config| config.get("toolId"))
+                    .and_then(Value::as_str)
+                    .map(|tool_id| vec![tool_id.to_owned()])
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            for id in candidate_ids {
+                if id.starts_with(MCP_CAPABILITY_PREFIX) && seen.insert(id.clone()) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn freeze_graph_bindings(
+    workflow: &Value,
+    settings: &SettingsConfigurationV2,
+    has_project: bool,
+    mcp_definitions: &BTreeMap<String, ModelToolDefinitionV1>,
+) -> Result<FrozenSimpleChatAgentV1, String> {
+    let nodes = workflow
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "workflow nodes are missing".to_owned())?;
+    let mut maximum_turns = 1_u32;
+    let mut seen = BTreeSet::new();
+    let mut tools = Vec::new();
+    for node in nodes {
+        let node_id = node
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "workflow node id is missing".to_owned())?;
+        let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
+        let configuration = node.get("configuration").and_then(Value::as_object);
+        let tool_ids: Vec<String> = match node_type {
+            "agent" => configuration
+                .and_then(|config| config.get("toolIds"))
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .map(|id| id.as_str().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| format!("workflow node '{node_id}' toolIds must be an array"))?
+                .unwrap_or_default(),
+            "tool" => configuration
+                .and_then(|config| config.get("toolId"))
+                .and_then(Value::as_str)
+                .map(|tool_id| vec![tool_id.to_owned()])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        if node_type == "agent"
+            && let Some(turns) = configuration
+                .and_then(|config| config.get("maxTurns"))
+                .and_then(Value::as_u64)
+        {
+            maximum_turns = maximum_turns.max(
+                u32::try_from(turns)
+                    .map_err(|_| format!("workflow node '{node_id}' maxTurns is out of range"))?,
+            );
+        }
+        for tool_id in tool_ids {
+            if !seen.insert(tool_id.clone()) {
+                continue;
+            }
+            if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                let definition = mcp_definitions.get(&tool_id).cloned().ok_or_else(|| {
+                    format!("workflow MCP tool '{tool_id}' has no frozen definition")
+                })?;
+                let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
+                let snapshot = BuiltInToolConfigurationV2 {
+                    id: tool_id.clone(),
+                    name: mcp_provider_name(server_id, tool),
+                    enabled: true,
+                    requires_project: false,
+                    credential_bindings: Vec::new(),
+                    configuration: BTreeMap::from([
+                        ("serverId".to_owned(), Value::String(server_id.to_owned())),
+                        ("tool".to_owned(), Value::String(tool.to_owned())),
+                    ]),
+                };
+                let tool_hash = canonical_hash(&snapshot)?;
+                tools.push(FrozenToolBindingV1 {
+                    tool_id,
+                    tool_hash,
+                    tool_snapshot: snapshot,
+                    definition: Some(definition),
+                });
+                continue;
+            }
+            let configured = settings
+                .tools
+                .iter()
+                .find(|tool| tool.id == tool_id)
+                .ok_or_else(|| format!("workflow tool '{tool_id}' is not installed"))?;
+            if !configured.enabled {
+                return Err(format!(
+                    "workflow tool '{tool_id}' is disabled in saved Settings"
+                ));
+            }
+            if configured.requires_project && !has_project {
+                return Err(format!(
+                    "workflow tool '{tool_id}' requires selecting a saved project before the first input"
+                ));
+            }
+            tools.push(FrozenToolBindingV1 {
+                tool_id,
+                tool_hash: canonical_hash(configured)?,
+                tool_snapshot: configured.clone(),
+                definition: None,
+            });
+        }
+    }
+    let maximum_tool_calls = if tools.is_empty() {
+        0
+    } else {
+        u64::from(maximum_turns.saturating_sub(1))
+            .saturating_mul(8)
+            .min(64)
+    };
+    Ok(FrozenSimpleChatAgentV1 {
+        maximum_turns: maximum_turns.max(1),
+        maximum_tool_calls,
+        tools,
+    })
+}
+
+/// The distinct model tiers referenced by the graph's model-consuming nodes.
+fn graph_model_tier_ids(workflow: &Value) -> Vec<String> {
+    let mut tiers = BTreeSet::new();
+    if let Some(nodes) = workflow.get("nodes").and_then(Value::as_array) {
+        for node in nodes {
+            if !matches!(
+                node.get("type").and_then(Value::as_str),
+                Some("agent" | "model_call")
+            ) {
+                continue;
+            }
+            if let Some(tier) = node
+                .get("configuration")
+                .and_then(|config| config.get("modelTierId"))
+                .and_then(Value::as_str)
+            {
+                tiers.insert(tier.to_owned());
+            }
+        }
+    }
+    tiers.into_iter().collect()
 }
 
 fn simple_chat_agent_instructions(workflow: &Value) -> Result<Option<String>, String> {
@@ -2407,6 +3205,7 @@ const fn execution_status_name(status: SimpleChatExecutionStatusV1) -> &'static 
         SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted => "failed_definitely_not_started",
         SimpleChatExecutionStatusV1::FailedKnownStarted => "failed_known_started",
         SimpleChatExecutionStatusV1::OutcomeUncertain => "outcome_uncertain",
+        SimpleChatExecutionStatusV1::AwaitingApproval => "awaiting_approval",
     }
 }
 
@@ -2605,37 +3404,110 @@ fn tool_activity_facts(
     frozen_context_hash: &str,
     created_at: &str,
 ) -> Vec<(&'static str, Value)> {
-    activities
-        .iter()
-        .map(|activity| {
-            let frozen_tool_hash = context
-                .tools
-                .iter()
-                .find(|tool| tool.tool_id == activity.capability_id)
-                .map(|tool| tool.tool_hash.as_str());
-            (
+    let mut facts = Vec::new();
+    for activity in activities {
+        let frozen_tool_hash = context
+            .tools
+            .iter()
+            .find(|tool| tool.tool_id == activity.capability_id)
+            .map(|tool| tool.tool_hash.as_str());
+        let payload = json!({
+            "body": activity.summary,
+            "createdAt": created_at,
+            "callId": activity.call_id,
+            "invocationId": activity.invocation_id,
+            "capabilityId": activity.capability_id,
+            "path": activity.path,
+            "status": activity.status,
+            "outcomeHash": activity.outcome_hash,
+            "replayed": activity.replayed,
+            "frozenToolHash": frozen_tool_hash,
+            "workspaceIdentityHash": context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
+            "frozenContextHash": frozen_context_hash,
+        });
+        if activity.capability_id == "tool.subagent" {
+            // Subagent runs render as a collapsible timeline card with an
+            // explicit start and terminal event pair.
+            facts.push(("subagent.started", payload.clone()));
+            facts.push((
+                if activity.status == "completed" {
+                    "subagent.completed"
+                } else {
+                    "subagent.failed"
+                },
+                payload,
+            ));
+        } else {
+            facts.push((
                 if activity.status == "completed" {
                     "tool.completed"
                 } else {
                     "tool.failed"
                 },
+                payload,
+            ));
+        }
+    }
+    facts
+}
+
+/// Committed per-node graph-pass lifecycle facts. The editor and timeline
+/// project node status from these events; skipped nodes stay explicit.
+fn node_activity_facts(
+    activities: &[GraphNodeActivityV1],
+    created_at: &str,
+) -> Vec<(&'static str, Value)> {
+    activities
+        .iter()
+        .filter(|activity| activity.status != "started")
+        .map(|activity| {
+            (
+                match activity.status.as_str() {
+                    "completed" => "node.completed",
+                    "failed" => "node.failed",
+                    "waiting" => "node.waiting",
+                    "skipped" => "node.skipped",
+                    _ => "node.completed",
+                },
                 json!({
                     "body": activity.summary,
                     "createdAt": created_at,
-                    "callId": activity.call_id,
-                    "invocationId": activity.invocation_id,
-                    "capabilityId": activity.capability_id,
-                    "path": activity.path,
+                    "nodeId": activity.node_id,
+                    "nodeType": activity.node_type,
+                    "label": activity.label,
                     "status": activity.status,
-                    "outcomeHash": activity.outcome_hash,
-                    "replayed": activity.replayed,
-                    "frozenToolHash": frozen_tool_hash,
-                    "workspaceIdentityHash": context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
-                    "frozenContextHash": frozen_context_hash,
                 }),
             )
         })
         .collect()
+}
+
+/// Run-local task-list fact: when the pass settled a completed todo call,
+/// the newest durable snapshot becomes a timeline event for the editor.
+fn todo_state_fact(
+    pipeline: &dyn SimpleChatPipelinePort,
+    result: &SimpleChatExecutionResultV1,
+    run_id: &StableId,
+    created_at: &str,
+) -> Result<Vec<(&'static str, Value)>, String> {
+    if !result
+        .tool_activity
+        .iter()
+        .any(|activity| activity.capability_id == "tool.todo" && activity.status == "completed")
+    {
+        return Ok(Vec::new());
+    }
+    let Some(todos) = pipeline.run_todo_state(run_id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![(
+        "tool.todo",
+        json!({
+            "todos": todos,
+            "runId": run_id,
+            "createdAt": created_at,
+        }),
+    )])
 }
 
 fn validate_command_id(value: &str) -> Result<(), String> {
@@ -2675,6 +3547,35 @@ fn replay_processed(
     } else {
         Err("desktop command ID was reused with different content".into())
     }
+}
+
+fn create_receipt_into_ui(receipt: &WorkflowCreateReceipt) -> UiCommandReceipt {
+    UiCommandReceipt {
+        command_id: receipt.command_id.clone(),
+        accepted: receipt.accepted,
+        current_version: receipt.current_version,
+        reason: Some(receipt.workflow_id.clone()),
+        credential_mutation: None,
+    }
+}
+
+fn replay_create_receipt(
+    processed: &ProcessedCommand,
+    fingerprint: &str,
+) -> Result<WorkflowCreateReceipt, String> {
+    if processed.fingerprint != fingerprint {
+        return Err("desktop command ID was reused with different content".into());
+    }
+    let receipt = &processed.receipt;
+    Ok(WorkflowCreateReceipt {
+        command_id: receipt.command_id.clone(),
+        accepted: receipt.accepted,
+        current_version: receipt.current_version,
+        workflow_id: receipt
+            .reason
+            .clone()
+            .ok_or_else(|| "stored workflow-create replay has no workflow id".to_owned())?,
+    })
 }
 
 #[cfg(test)]
@@ -2827,6 +3728,8 @@ mod tests {
                 model_turns: 1,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
                 replayed: false,
             })
         }
@@ -2895,6 +3798,8 @@ mod tests {
                 model_turns: 1,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
                 replayed: false,
             };
             *self.settled.lock().unwrap() = Some(result.clone());
@@ -2956,6 +3861,8 @@ mod tests {
                     outcome_hash: format!("sha256:{}", "5".repeat(64)),
                     replayed: false,
                 }],
+                node_activity: Vec::new(),
+                approval: None,
                 replayed: false,
             })
         }
@@ -3213,6 +4120,7 @@ mod tests {
                 command_id: "workflow.tool-test".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
+                workflow_id: None,
             })
             .expect("tool workflow");
     }
@@ -3963,6 +4871,7 @@ mod tests {
                 command_id: "workflow.agent-instructions".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
+                workflow_id: None,
             })
             .unwrap();
         runtime
@@ -3990,6 +4899,7 @@ mod tests {
                 command_id: "workflow.unsupported-agent-field".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
+                workflow_id: None,
             })
             .unwrap_err();
         assert!(error.contains("accepts exactly"));
@@ -4095,7 +5005,7 @@ mod tests {
         let settings = reopened.settings_v2_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION_V2);
-        assert_eq!(settings.settings.tools.len(), 5);
+        assert_eq!(settings.settings.tools.len(), 12);
         assert!(
             settings
                 .settings
@@ -4116,7 +5026,22 @@ mod tests {
         let root = TempDir::new().unwrap();
         let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));
 
-        for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
+        // Every built-in tool now has an installed v1 executor, so generic
+        // Settings may enable any of them.
+        for tool_id in [
+            "tool.files.read",
+            "tool.files.search",
+            "tool.files.list",
+            "tool.files.grep",
+            "tool.files.edit",
+            "tool.files.write",
+            "tool.shell.host",
+            "tool.python.host",
+            "tool.todo",
+            "tool.web_search",
+            "tool.web_fetch",
+            "tool.subagent",
+        ] {
             let mut attempted = runtime.settings_v2_snapshot().settings;
             attempted
                 .tools
@@ -4124,15 +5049,13 @@ mod tests {
                 .find(|tool| tool.id == tool_id)
                 .expect("built-in tool")
                 .enabled = true;
-            let error = runtime
+            runtime
                 .settings_v2_commit(SettingsV2CommitInput {
-                    command_id: format!("settings.unavailable.enable.{tool_id}"),
-                    expected_version: 1,
+                    command_id: format!("settings.available.enable.{tool_id}"),
+                    expected_version: runtime.settings_v2_snapshot().version,
                     settings: attempted,
                 })
-                .unwrap_err();
-            assert!(error.contains(tool_id));
-            assert_eq!(runtime.settings_v2_snapshot().version, 1);
+                .unwrap_or_else(|error| panic!("enabling {tool_id} failed: {error}"));
         }
 
         let mut attempted_mcp = runtime.settings_v2_snapshot().settings;
@@ -4146,15 +5069,16 @@ mod tests {
                 headers: Vec::new(),
             },
         });
+        let mcp_version = runtime.settings_v2_snapshot().version;
         let error = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.unavailable.enable-mcp".into(),
-                expected_version: 1,
+                expected_version: mcp_version,
                 settings: attempted_mcp,
             })
             .unwrap_err();
         assert!(error.contains("MCP server 'mcp.unavailable' cannot be enabled"));
-        assert_eq!(runtime.settings_v2_snapshot().version, 1);
+        assert_eq!(runtime.settings_v2_snapshot().version, mcp_version);
 
         let mut attempted_agent = runtime.settings_v2_snapshot().settings;
         attempted_agent
@@ -4175,15 +5099,16 @@ mod tests {
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
             });
+        let agent_version = runtime.settings_v2_snapshot().version;
         let error = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.unavailable.enable-agent".into(),
-                expected_version: 1,
+                expected_version: agent_version,
                 settings: attempted_agent,
             })
             .unwrap_err();
         assert!(error.contains("external agent 'agent.unavailable' cannot be enabled"));
-        assert_eq!(runtime.settings_v2_snapshot().version, 1);
+        assert_eq!(runtime.settings_v2_snapshot().version, agent_version);
 
         let mut supported = runtime.settings_v2_snapshot().settings;
         for tool_id in ["tool.files.read", "tool.files.search"] {
@@ -4194,14 +5119,15 @@ mod tests {
                 .expect("built-in tool")
                 .enabled = true;
         }
+        let supported_version = runtime.settings_v2_snapshot().version;
         let supported_receipt = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.available.enable-read-only-tools".into(),
-                expected_version: 1,
+                expected_version: supported_version,
                 settings: supported,
             })
             .expect("implemented read-only tools may be enabled");
-        assert_eq!(supported_receipt.current_version, 2);
+        assert_eq!(supported_receipt.current_version, supported_version + 1);
 
         // Simulate a profile written by an older build. Generic Settings must
         // round-trip this truth without manufacturing another enable action,
@@ -4244,12 +5170,13 @@ mod tests {
                 .expect("built-in tool")
                 .enabled = true;
         }
+        let legacy_version = runtime.settings_v2_snapshot().version;
         assert_eq!(
             runtime
                 .documents
-                .save_settings(2, legacy_enabled)
+                .save_settings(legacy_version, legacy_enabled)
                 .expect("seed preexisting legacy enabled metadata"),
-            3
+            legacy_version + 1
         );
 
         let mut preserved = runtime.settings_v2_snapshot().settings;
@@ -4258,11 +5185,11 @@ mod tests {
         let preserved_receipt = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.unavailable.preserve-legacy".into(),
-                expected_version: 3,
+                expected_version: legacy_version + 1,
                 settings: preserved,
             })
             .expect("preexisting enabled metadata remains lossless");
-        assert_eq!(preserved_receipt.current_version, 4);
+        assert_eq!(preserved_receipt.current_version, legacy_version + 2);
 
         let mut disabled = runtime.settings_v2_snapshot().settings;
         disabled.mcp_servers[0].enabled = false;
@@ -4278,11 +5205,11 @@ mod tests {
         let disabled_receipt = runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.unavailable.disable-legacy".into(),
-                expected_version: 4,
+                expected_version: legacy_version + 2,
                 settings: disabled,
             })
             .expect("preexisting enabled metadata may be cleared");
-        assert_eq!(disabled_receipt.current_version, 5);
+        assert_eq!(disabled_receipt.current_version, legacy_version + 3);
         let saved = runtime.settings_v2_snapshot().settings;
         assert!(!saved.mcp_servers[0].enabled);
         assert!(!saved.external_agents[0].enabled);
@@ -5608,6 +6535,7 @@ mod tests {
                 command_id: "workflow.future".into(),
                 expected_version: workflow.version,
                 document: workflow.document.clone(),
+                workflow_id: None,
             })
             .unwrap();
         drop(runtime);
@@ -6115,6 +7043,7 @@ mod tests {
                 command_id: "workflow.advanced.save".into(),
                 expected_version: snapshot.version,
                 document: advanced.clone(),
+                workflow_id: None,
             })
             .unwrap();
         assert!(receipt.accepted);

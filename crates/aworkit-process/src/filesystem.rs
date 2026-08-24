@@ -549,10 +549,18 @@ fn sync_directory(path: &Path) -> Result<(), NativeFilesystemError> {
 
 #[cfg(not(unix))]
 fn sync_directory(path: &Path) -> Result<(), NativeFilesystemError> {
-    let directory = cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_FLAG_BACKUP_SEMANTICS makes CreateFileW open a real directory
+    // handle, and write access lets FlushFileBuffers commit the directory
+    // entries so renames and creates survive a crash.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let directory = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
     directory
-        .open(".")
-        .and_then(|handle| handle.sync_all())
+        .sync_all()
         .map_err(|_| NativeFilesystemError::DirectorySyncUnavailable)
 }
 

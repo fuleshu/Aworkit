@@ -67,9 +67,9 @@ pub enum McpTransportEndpointV1 {
 
 /// STDIO process configuration.
 ///
-/// The executable and working directory must be absolute. The child starts
-/// with a cleared environment; entries here are explicitly public. Materialized
-/// secret fields targeting environment variables are injected separately.
+/// The executable may be an absolute path or a bare command resolved through
+/// the user's normal runtime PATH. Materialized secret fields targeting
+/// environment variables are injected separately.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpStdioTransportConfigV1 {
@@ -177,7 +177,7 @@ fn validate_config(
 fn validate_stdio(
     config: &McpStdioTransportConfigV1,
 ) -> Result<(), McpTransportConfigurationError> {
-    if !absolute_nonempty_path(&config.executable)
+    if !launchable_executable(&config.executable)
         || config
             .working_directory
             .as_deref()
@@ -253,6 +253,15 @@ fn valid_slot_name(value: &str) -> bool {
 
 fn absolute_nonempty_path(value: &Path) -> bool {
     value.is_absolute() && !value.as_os_str().is_empty()
+}
+
+fn launchable_executable(value: &Path) -> bool {
+    absolute_nonempty_path(value)
+        || value
+            .components()
+            .next()
+            .is_some_and(|component| matches!(component, std::path::Component::Normal(_)))
+            && value.components().count() == 1
 }
 
 fn valid_hash(value: &str) -> bool {

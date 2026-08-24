@@ -711,6 +711,8 @@ mod tests {
                 .availability,
             "corrupt"
         );
+        drop(artifacts);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -749,6 +751,8 @@ mod tests {
                 .expect("events")
                 .is_empty()
         );
+        drop(artifacts);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -766,6 +770,7 @@ mod tests {
             ),
             Err(StoreError::ArtifactTooLarge)
         ));
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -839,6 +844,8 @@ mod tests {
                 .expect("shared finalized bytes"),
             b"shared evidence"
         );
+        drop(artifacts);
+        drop(history);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -862,6 +869,7 @@ mod tests {
         );
         assert!(!object.exists());
         assert!(!temporary.exists());
+        drop(artifacts);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

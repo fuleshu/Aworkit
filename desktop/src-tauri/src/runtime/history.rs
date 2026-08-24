@@ -1,9 +1,10 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use aworkit_capability_host::{McpServerManifestV1, ModelToolDefinitionV1};
 use aworkit_local_store::{CommitBatch, CommitOutcome, Deduplication, Event, LocalHistoryStore};
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,10 @@ pub(crate) struct FrozenToolBindingV1 {
     pub tool_id: String,
     pub tool_hash: String,
     pub tool_snapshot: BuiltInToolConfigurationV2,
+    /// Exact model-facing definition discovered at freeze for dynamic tools
+    /// (MCP). Absent for compile-time owned built-ins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<ModelToolDefinitionV1>,
 }
 
 /// Secret-free execution inputs resolved exactly once when the first message
@@ -99,6 +104,10 @@ pub(crate) struct FrozenChatExecutionContextV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "opaqueBinding")]
     pub credential: Option<FrozenCredentialBindingV1>,
+    /// Core-attested MCP manifests frozen with this Run, keyed by server id.
+    /// Sessions open from these exact manifests; binding drift fails closed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mcp_manifests: BTreeMap<String, McpServerManifestV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -522,6 +531,22 @@ impl ChatHistory {
         let started = current.iter().any(|event| event.kind == "chat.started");
         let failed = current.iter().any(|event| event.kind == "execution.failed");
         let cancelled = current.iter().any(|event| event.kind == "chat.cancelled");
+        let open_approvals = current
+            .iter()
+            .filter(|event| event.kind == "approval.requested")
+            .filter(|event| {
+                let decision_id = event
+                    .payload
+                    .get("decisionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                !current.iter().any(|resolved| {
+                    resolved.kind == "approval.resolved"
+                        && resolved.payload.get("decisionId").and_then(Value::as_str)
+                            == Some(decision_id)
+                })
+            })
+            .count();
         let title = timeline
             .iter()
             .find(|item| item.title == "You")
@@ -531,6 +556,8 @@ impl ChatHistory {
             "cancelled"
         } else if failed {
             "failed"
+        } else if open_approvals > 0 {
+            "awaiting_approval"
         } else if has_exchange {
             "waiting_input"
         } else {
@@ -804,21 +831,26 @@ fn validate_frozen_context_record(record: &FrozenChatExecutionRecordV1) -> Resul
         !tool_ids.insert(tool.tool_id.as_str())
             || tool.tool_id != tool.tool_snapshot.id
             || !tool.tool_snapshot.enabled
-            || !tool.tool_snapshot.requires_project
-            || !matches!(
-                tool.tool_id.as_str(),
-                "tool.files.read" | "tool.files.search"
-            )
             || canonical_hash(&tool.tool_snapshot).ok().as_deref() != Some(&tool.tool_hash)
+            || !(super::documents::builtin_tool_binding_ids().contains(&tool.tool_id)
+                || (tool.tool_id.starts_with("mcp://")
+                    && tool.definition.is_some()
+                    && tool.tool_snapshot.configuration.len() == 2
+                    && tool.tool_snapshot.configuration.contains_key("serverId")
+                    && tool.tool_snapshot.configuration.contains_key("tool")))
     }) {
         return Err("stored frozen Chat tool bindings failed integrity validation".into());
     }
-    if (context.tools.is_empty()
-        && (context.agent_maximum_turns != 1 || context.maximum_tool_calls != 0))
-        || (!context.tools.is_empty()
-            && (context.project.is_none()
-                || !(2..=8).contains(&context.agent_maximum_turns)
-                || !(1..=32).contains(&context.maximum_tool_calls)))
+    if context
+        .tools
+        .iter()
+        .any(|tool| tool.tool_snapshot.requires_project)
+        && context.project.is_none()
+        || context.agent_maximum_turns == 0
+        || context.agent_maximum_turns > 12
+        || context.maximum_tool_calls > 64
+        || (context.tools.is_empty()
+            && (context.agent_maximum_turns != 1 || context.maximum_tool_calls != 0))
     {
         return Err("stored frozen Chat Agent tool budget is invalid".into());
     }
@@ -906,11 +938,57 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
     events
         .iter()
         .filter_map(|event| {
-            let (title, kind, status) = match event.kind.as_str() {
-                "message.user" => ("You", "message", "completed"),
-                "message.assistant" => ("Aworkit", "message", "completed"),
-                "tool.completed" => ("Project file tool", "tool", "completed"),
-                "tool.failed" => ("Project file tool", "tool", "failed"),
+            let (title, kind, status, action) = match event.kind.as_str() {
+                "message.user" => ("You", "message", "completed", None),
+                "message.assistant" => ("Aworkit", "message", "completed", None),
+                "tool.completed" => ("Project file tool", "tool", "completed", None),
+                "tool.failed" => ("Project file tool", "tool", "failed", None),
+                "approval.requested" => ("Approval required", "approval", "pending", Some("approve")),
+                "approval.resolved" => ("Approval resolved", "approval", "completed", None),
+                "node.completed" => {
+                    let node_type = event
+                        .payload
+                        .get("nodeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("node");
+                    (
+                        event
+                            .payload
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Workflow node"),
+                        match node_type {
+                            "agent" | "model_call" => "model",
+                            "tool" => "tool",
+                            "condition" => "route",
+                            "approval" => "approval",
+                            "input" | "output" | "wait" | "completion" | "parallel" => "route",
+                            _ => "unknown",
+                        },
+                        "completed",
+                        None,
+                    )
+                }
+                "node.failed" => (
+                    event
+                        .payload
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Workflow node"),
+                    "error",
+                    "failed",
+                    None,
+                ),
+                "node.waiting" => (
+                    event
+                        .payload
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Workflow node"),
+                    "approval",
+                    "pending",
+                    None,
+                ),
                 "execution.failed" => {
                     let title = if event.payload.get("status").and_then(Value::as_str)
                         == Some("outcome_uncertain")
@@ -919,7 +997,7 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                     } else {
                         "Execution failed"
                     };
-                    (title, "error", "failed")
+                    (title, "error", "failed", None)
                 }
                 _ => return None,
             };
@@ -948,7 +1026,15 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                     "outcomeHash": event.payload.get("outcomeHash").cloned().unwrap_or(Value::Null),
                     "replayed": event.payload.get("replayed").cloned().unwrap_or(Value::Bool(false)),
                 })
-            } else if event.kind == "execution.failed" {
+            } else if matches!(
+                event.kind.as_str(),
+                "execution.failed"
+                    | "approval.requested"
+                    | "approval.resolved"
+                    | "node.completed"
+                    | "node.failed"
+                    | "node.waiting"
+            ) {
                 event.payload.clone()
             } else {
                 json!({"commandId": event.payload.get("commandId").cloned().unwrap_or(Value::Null)})
@@ -960,7 +1046,7 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                 body,
                 created_at,
                 status: Some(status.into()),
-                action: None,
+                action: action.map(str::to_owned),
                 metadata,
             })
         })

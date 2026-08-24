@@ -47,12 +47,18 @@ pub struct McpFeatureSetV1 {
 }
 
 /// A discovered callable entry with the schema identity frozen at initialization.
+/// The schema and description are retained so an owning core can build exact
+/// model-facing tool definitions without a second discovery round trip.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpToolDescriptorV1 {
     pub name: String,
     pub input_schema_hash: String,
     pub side_effect_known_read_only: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub input_schema: Value,
 }
 
 /// Runtime discovery evidence. It is not canonical configuration.

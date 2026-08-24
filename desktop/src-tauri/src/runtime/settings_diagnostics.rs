@@ -8,6 +8,7 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf, time::Duration};
 use aworkit_capability_host::{
     BuiltInProcessTools, CancellationToken, FileAuthority, HostToolLimitsV1, NativeProcessPort,
     PlatformProcessPort, ProjectFiles, PythonInvocationV1, ShellInvocationV1, ToolAuthorityModeV1,
+    WebTools,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,11 +86,15 @@ pub(crate) fn probe_tool(request: ToolProbeRequestV2) -> ToolProbeResultV2 {
     let tool_id = request.tool.id.clone();
     let outcome = if request.tool.credential_bindings.is_empty() {
         match tool_id.as_str() {
-            "tool.files.read" | "tool.files.search" | "tool.files.edit" => {
+            "tool.files.read" | "tool.files.search" | "tool.files.list" | "tool.files.grep"
+            | "tool.files.edit" | "tool.files.write" => {
                 probe_project_file_tool(&request.tool, request.project.as_ref())
             }
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
+            "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.subagent" => probe_subagent_tool(&request.tool),
+            "tool.web_search" | "tool.web_fetch" => probe_web_tool(&request.tool),
             _ => Err(format!(
                 "No native built-in adapter is installed for '{}'.",
                 request.tool.id
@@ -152,7 +157,7 @@ fn probe_project_file_tool(
     let root = inspect_project(project)?;
     ProjectFiles::new(FileAuthority {
         root,
-        allow_write: tool.id == "tool.files.edit",
+        allow_write: matches!(tool.id.as_str(), "tool.files.edit" | "tool.files.write"),
     })
     .map_err(|error| format!("Project-files capability could not open the root: {error}"))?;
     Ok((
@@ -160,6 +165,50 @@ fn probe_project_file_tool(
         format!(
             "{} can open the selected project as a root-confined directory capability.",
             tool.name
+        ),
+    ))
+}
+
+/// The run-local task list needs no external adapter; it stores ordered
+/// snapshots inside the Run record.
+fn probe_todo_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+    Ok((
+        "run-local-todo".into(),
+        format!(
+            "{} uses the built-in run-local task list; no external adapter is required.",
+            tool.name
+        ),
+    ))
+}
+
+/// The subagent tool runs bounded child loops over the frozen model gateway
+/// already resolved by the Run; no external adapter exists to probe.
+fn probe_subagent_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+    Ok((
+        "run-local-subagent".into(),
+        format!(
+            "{} executes bounded child loops on the frozen model gateway; no external adapter is required.",
+            tool.name
+        ),
+    ))
+}
+
+/// The web adapters perform a live bounded HTTPS round trip so the probe
+/// reports real connectivity instead of a static capability claim.
+fn probe_web_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+    let fetched = WebTools::production()
+        .fetch_v1(
+            "https://example.com/",
+            4096,
+            1024,
+            &CancellationToken::default(),
+        )
+        .map_err(|error| format!("Bounded web round trip failed: {error}"))?;
+    Ok((
+        "https-web-tools".into(),
+        format!(
+            "{} completed a bounded HTTPS round trip ({} byte(s) downloaded).",
+            tool.name, fetched.bytes_downloaded
         ),
     ))
 }
@@ -429,5 +478,68 @@ mod tests {
                 .message
                 .contains("do not consume credential bindings")
         );
+    }
+
+    #[test]
+    fn extended_tool_probes_route_without_side_effects() {
+        let temporary = tempfile::tempdir().expect("temporary root");
+        let project = project(temporary.path());
+        // The extended project-files tools reuse the same root-confined probe.
+        for tool_id in [
+            "tool.files.list",
+            "tool.files.grep",
+            "tool.files.edit",
+            "tool.files.write",
+        ] {
+            let result = probe_tool(ToolProbeRequestV2 {
+                tool: file_tool(tool_id),
+                project: Some(project.clone()),
+                draft_fingerprint: format!("draft.{tool_id}"),
+            });
+            assert!(result.ok, "{tool_id}: {}", result.message);
+            assert_eq!(result.adapter, "cap-std-project-files");
+        }
+        // The run-local todo adapter needs no project and no network.
+        let todo_result = probe_tool(ToolProbeRequestV2 {
+            tool: BuiltInToolConfigurationV2 {
+                id: "tool.todo".into(),
+                name: "Run task list".into(),
+                enabled: true,
+                requires_project: false,
+                credential_bindings: Vec::new(),
+                configuration: BTreeMap::from([("authorityMode".into(), json!("run_todo"))]),
+            },
+            project: None,
+            draft_fingerprint: "draft.todo".into(),
+        });
+        assert!(todo_result.ok, "{}", todo_result.message);
+        assert_eq!(todo_result.adapter, "run-local-todo");
+        // The subagent adapter is built into the frozen model gateway.
+        let subagent_result = probe_tool(ToolProbeRequestV2 {
+            tool: BuiltInToolConfigurationV2 {
+                id: "tool.subagent".into(),
+                name: "Subagent delegation".into(),
+                enabled: true,
+                requires_project: false,
+                credential_bindings: Vec::new(),
+                configuration: BTreeMap::from([
+                    ("authorityMode".into(), json!("run_subagent")),
+                    ("requiresApproval".into(), json!(true)),
+                    ("maximumTurns".into(), json!(4)),
+                ]),
+            },
+            project: None,
+            draft_fingerprint: "draft.subagent".into(),
+        });
+        assert!(subagent_result.ok, "{}", subagent_result.message);
+        assert_eq!(subagent_result.adapter, "run-local-subagent");
+        // An unknown tool id still fails explicitly.
+        let unknown = probe_tool(ToolProbeRequestV2 {
+            tool: file_tool("tool.unknown"),
+            project: None,
+            draft_fingerprint: "draft.unknown".into(),
+        });
+        assert!(!unknown.ok);
+        assert!(unknown.message.contains("No native built-in adapter"));
     }
 }

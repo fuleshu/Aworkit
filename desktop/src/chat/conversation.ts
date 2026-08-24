@@ -21,6 +21,7 @@ const labels: Record<TimelineItem["kind"], string> = {
   artifact: "Artifact",
   approval: "Approval",
   route: "Route",
+  todo: "Task list",
   error: "Error",
   verification: "Verification",
   repair: "Repair",

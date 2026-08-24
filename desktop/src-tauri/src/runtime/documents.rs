@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    dto::{ProviderSettingsSnapshot, SettingsSnapshot, WorkflowSnapshot},
+    dto::{
+        ProviderSettingsSnapshot, SettingsSnapshot, WorkflowEntryDto, WorkflowLibrarySnapshot,
+        WorkflowSnapshot,
+    },
     pipeline::MAXIMUM_WORKFLOW_SNAPSHOT_BYTES,
     provider_health::ProviderHealth,
     settings_v2::{
@@ -25,8 +28,29 @@ use super::{
 
 const SETTINGS_ID: &str = "settings.desktop";
 const WORKFLOW_ID: &str = "workflow.simple-chat";
+pub(crate) const SIMPLE_CHAT_WORKFLOW_ID: &str = "workflow.simple-chat";
+pub(crate) const STANDARD_AGENT_WORKFLOW_ID: &str = "workflow.standard-agent";
+const WORKFLOW_LIBRARY_ID: &str = "workflow-library.desktop";
+const WORKFLOW_LIBRARY_SCHEMA_VERSION: u64 = 1;
 const SUPPORTED_WORKFLOW_SCHEMA_VERSION: u64 = 1;
 const MAXIMUM_AGENT_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const MAXIMUM_WORKFLOW_NAME_BYTES: usize = 128;
+const MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const MAXIMUM_MODEL_CALL_TOKENS: u64 = 8192;
+const MINIMUM_AGENT_TURNS: u64 = 1;
+const MAXIMUM_AGENT_TURNS: u64 = 12;
+pub(crate) const KNOWN_NODE_TYPES: &[&str] = &[
+    "input",
+    "agent",
+    "model_call",
+    "tool",
+    "condition",
+    "parallel",
+    "approval",
+    "output",
+    "wait",
+    "completion",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -59,9 +83,16 @@ pub(crate) struct CanonicalDocuments {
     repository: RepositoryRoot,
     settings_version: u64,
     settings: SettingsDocument,
-    workflow_version: u64,
-    workflow: Value,
-    workflow_editable: bool,
+    library_version: u64,
+    default_workflow_id: String,
+    workflows: BTreeMap<String, StoredWorkflowState>,
+}
+
+#[derive(Clone, Debug)]
+struct StoredWorkflowState {
+    version: u64,
+    document: Value,
+    editable: bool,
 }
 
 impl CanonicalDocuments {
@@ -69,14 +100,21 @@ impl CanonicalDocuments {
         let repository = RepositoryRoot::open(data_root.join("documents"))
             .map_err(|error| format!("cannot open desktop document store: {error}"))?;
         let (settings_version, settings) = load_or_create_settings(&repository)?;
-        let (workflow_version, workflow, workflow_editable) = load_or_create_workflow(&repository)?;
+        let (workflows, simple_chat_fresh) = load_or_create_workflows(&repository)?;
+        let (library_version, default_workflow_id) =
+            load_or_create_workflow_library(&repository, simple_chat_fresh)?;
+        let default_workflow_id = if workflows.contains_key(default_workflow_id.as_str()) {
+            default_workflow_id
+        } else {
+            SIMPLE_CHAT_WORKFLOW_ID.to_owned()
+        };
         Ok(Self {
             repository,
             settings_version,
             settings,
-            workflow_version,
-            workflow,
-            workflow_editable,
+            library_version,
+            default_workflow_id,
+            workflows,
         })
     }
 
@@ -134,10 +172,39 @@ impl CanonicalDocuments {
     }
 
     pub(crate) fn workflow_snapshot(&self) -> WorkflowSnapshot {
-        WorkflowSnapshot {
-            version: self.workflow_version,
-            document: self.workflow.clone(),
-            editable: self.workflow_editable,
+        self.workflow_snapshot_for(SIMPLE_CHAT_WORKFLOW_ID)
+    }
+
+    pub(crate) fn workflow_snapshot_for(&self, workflow_id: &str) -> WorkflowSnapshot {
+        match self.workflows.get(workflow_id) {
+            Some(state) => WorkflowSnapshot {
+                version: state.version,
+                document: state.document.clone(),
+                editable: state.editable,
+            },
+            None => WorkflowSnapshot {
+                version: 0,
+                document: Value::Null,
+                editable: false,
+            },
+        }
+    }
+
+    pub(crate) fn workflow_library(&self) -> WorkflowLibrarySnapshot {
+        WorkflowLibrarySnapshot {
+            version: self.library_version,
+            default_workflow_id: self.default_workflow_id.clone(),
+            entries: self
+                .workflows
+                .iter()
+                .map(|(id, state)| WorkflowEntryDto {
+                    id: id.clone(),
+                    name: workflow_display_name(&state.document, id),
+                    version: state.version,
+                    editable: state.editable,
+                    is_default: *id == self.default_workflow_id,
+                })
+                .collect(),
         }
     }
 
@@ -146,20 +213,34 @@ impl CanonicalDocuments {
         expected_version: u64,
         workflow: Value,
     ) -> Result<u64, String> {
-        if expected_version != self.workflow_version {
+        self.save_workflow_document(SIMPLE_CHAT_WORKFLOW_ID, expected_version, workflow)
+    }
+
+    pub(crate) fn save_workflow_document(
+        &mut self,
+        workflow_id: &str,
+        expected_version: u64,
+        workflow: Value,
+    ) -> Result<u64, String> {
+        let state = self.workflows.get(workflow_id).ok_or_else(|| {
+            format!("workflow '{workflow_id}' does not exist in the workflow library")
+        })?;
+        if expected_version != state.version {
             return Err(format!(
                 "workflow version conflict: expected {expected_version}, actual {}",
-                self.workflow_version
+                state.version
             ));
         }
-        if !self.workflow_editable {
+        if !state.editable {
             return Err(
                 "stored workflow uses an inspectable read-only schema and cannot be overwritten"
                     .into(),
             );
         }
         validate_editable_workflow_graph(&workflow)?;
-        if exact_simple_chat_graph(&workflow, "agent.1", "agent") {
+        if workflow_id == SIMPLE_CHAT_WORKFLOW_ID
+            && exact_simple_chat_graph(&workflow, "agent.1", "agent")
+        {
             validate_simple_chat_executable_configuration(&workflow)?;
         }
         let document = json_document(&workflow)?;
@@ -167,19 +248,209 @@ impl CanonicalDocuments {
             .repository
             .save(
                 DocumentKind::Workflow,
-                WORKFLOW_ID,
+                workflow_id,
                 Some(expected_version),
                 &document,
             )
             .map_err(|error| format!("cannot commit workflow: {error}"))?;
-        self.workflow_version = saved.version;
-        self.workflow = workflow;
-        self.workflow_editable = true;
+        self.workflows.insert(
+            workflow_id.to_owned(),
+            StoredWorkflowState {
+                version: saved.version,
+                document: workflow,
+                editable: true,
+            },
+        );
         Ok(saved.version)
     }
 
+    pub(crate) fn create_workflow(
+        &mut self,
+        name: &str,
+        template: Option<&str>,
+    ) -> Result<(String, u64), String> {
+        validate_workflow_name(name)?;
+        let workflow_id = self.next_custom_workflow_id()?;
+        let mut document = match template {
+            None | Some("blank") => json!({
+                "schemaVersion": SUPPORTED_WORKFLOW_SCHEMA_VERSION,
+                "id": workflow_id,
+                "name": name,
+                "nodes": [],
+                "edges": []
+            }),
+            Some("simple-chat") => default_simple_chat_workflow(),
+            Some("standard-agent") => default_standard_agent_workflow(),
+            Some(other) => {
+                return Err(format!(
+                    "unknown workflow template '{other}'; expected blank, simple-chat, or standard-agent"
+                ));
+            }
+        };
+        document["id"] = Value::String(workflow_id.clone());
+        document["name"] = Value::String(name.to_owned());
+        let saved = self
+            .repository
+            .save(
+                DocumentKind::Workflow,
+                &workflow_id,
+                None,
+                &json_document(&document)?,
+            )
+            .map_err(|error| format!("cannot create workflow: {error}"))?;
+        self.workflows.insert(
+            workflow_id.clone(),
+            StoredWorkflowState {
+                version: saved.version,
+                document,
+                editable: true,
+            },
+        );
+        Ok((workflow_id, saved.version))
+    }
+
+    pub(crate) fn rename_workflow(&mut self, workflow_id: &str, name: &str) -> Result<u64, String> {
+        validate_workflow_name(name)?;
+        let state = self.workflows.get(workflow_id).ok_or_else(|| {
+            format!("workflow '{workflow_id}' does not exist in the workflow library")
+        })?;
+        if !state.editable {
+            return Err("stored workflow is inspectable and read-only".into());
+        }
+        let mut document = state.document.clone();
+        document["name"] = Value::String(name.to_owned());
+        let saved = self
+            .repository
+            .save(
+                DocumentKind::Workflow,
+                workflow_id,
+                Some(state.version),
+                &json_document(&document)?,
+            )
+            .map_err(|error| format!("cannot rename workflow: {error}"))?;
+        self.workflows.insert(
+            workflow_id.to_owned(),
+            StoredWorkflowState {
+                version: saved.version,
+                document,
+                editable: true,
+            },
+        );
+        Ok(saved.version)
+    }
+
+    pub(crate) fn duplicate_workflow(
+        &mut self,
+        workflow_id: &str,
+        name: &str,
+    ) -> Result<(String, u64), String> {
+        validate_workflow_name(name)?;
+        let state = self.workflows.get(workflow_id).ok_or_else(|| {
+            format!("workflow '{workflow_id}' does not exist in the workflow library")
+        })?;
+        if !state.editable {
+            return Err("stored workflow is inspectable and cannot be duplicated".into());
+        }
+        let new_id = self.next_custom_workflow_id()?;
+        let mut document = state.document.clone();
+        document["id"] = Value::String(new_id.clone());
+        document["name"] = Value::String(name.to_owned());
+        let saved = self
+            .repository
+            .save(
+                DocumentKind::Workflow,
+                &new_id,
+                None,
+                &json_document(&document)?,
+            )
+            .map_err(|error| format!("cannot duplicate workflow: {error}"))?;
+        self.workflows.insert(
+            new_id.clone(),
+            StoredWorkflowState {
+                version: saved.version,
+                document,
+                editable: true,
+            },
+        );
+        Ok((new_id, saved.version))
+    }
+
+    pub(crate) fn delete_workflow(&mut self, workflow_id: &str) -> Result<(), String> {
+        if self.workflows.len() <= 1 {
+            return Err("at least one workflow must remain in the workflow library".into());
+        }
+        let state = self.workflows.get(workflow_id).ok_or_else(|| {
+            format!("workflow '{workflow_id}' does not exist in the workflow library")
+        })?;
+        self.repository
+            .delete(DocumentKind::Workflow, workflow_id, Some(state.version))
+            .map_err(|error| format!("cannot delete workflow: {error}"))?;
+        self.workflows.remove(workflow_id);
+        if self.default_workflow_id == workflow_id {
+            let fallback = if self.workflows.contains_key(SIMPLE_CHAT_WORKFLOW_ID) {
+                SIMPLE_CHAT_WORKFLOW_ID.to_owned()
+            } else {
+                self.workflows
+                    .keys()
+                    .next()
+                    .expect("at least one workflow remains")
+                    .clone()
+            };
+            self.persist_default_workflow(&fallback)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_default_workflow(&mut self, workflow_id: &str) -> Result<u64, String> {
+        if !self.workflows.contains_key(workflow_id) {
+            return Err(format!(
+                "workflow '{workflow_id}' does not exist in the workflow library"
+            ));
+        }
+        if self.default_workflow_id == workflow_id {
+            return Ok(self.library_version);
+        }
+        self.persist_default_workflow(workflow_id)
+    }
+
+    fn persist_default_workflow(&mut self, workflow_id: &str) -> Result<u64, String> {
+        let library = json!({
+            "schemaVersion": WORKFLOW_LIBRARY_SCHEMA_VERSION,
+            "defaultWorkflowId": workflow_id,
+        });
+        let saved = self
+            .repository
+            .save(
+                DocumentKind::Configuration,
+                WORKFLOW_LIBRARY_ID,
+                (self.library_version > 0).then_some(self.library_version),
+                &json_document(&library)?,
+            )
+            .map_err(|error| format!("cannot commit workflow library default: {error}"))?;
+        self.library_version = saved.version;
+        self.default_workflow_id = workflow_id.to_owned();
+        Ok(saved.version)
+    }
+
+    fn next_custom_workflow_id(&self) -> Result<String, String> {
+        for index in 1..=10_000_u32 {
+            let candidate = format!("workflow.custom.{index}");
+            if !self.workflows.contains_key(&candidate)
+                && StableId::parse(candidate.clone()).is_ok()
+            {
+                return Ok(candidate);
+            }
+        }
+        Err("workflow library id space is exhausted".into())
+    }
+
     pub(crate) fn require_supported_simple_chat(&self) -> Result<(), String> {
-        validate_simple_chat_graph(&self.workflow)
+        let workflow = self
+            .workflows
+            .get(SIMPLE_CHAT_WORKFLOW_ID)
+            .map(|state| state.document.clone())
+            .unwrap_or(Value::Null);
+        validate_simple_chat_graph(&workflow)
     }
 
     pub(crate) fn legacy_provider(&self) -> ProviderDocument {
@@ -406,42 +677,158 @@ fn parse_legacy_appearance(value: &str) -> Result<AppearanceModeV2, String> {
     }
 }
 
-fn load_or_create_workflow(repository: &RepositoryRoot) -> Result<(u64, Value, bool), String> {
-    match repository
-        .load(DocumentKind::Workflow, WORKFLOW_ID)
-        .map_err(|error| format!("cannot load Simple Chat workflow: {error}"))?
+fn load_or_create_workflows(
+    repository: &RepositoryRoot,
+) -> Result<(BTreeMap<String, StoredWorkflowState>, bool), String> {
+    let mut workflows = BTreeMap::new();
+    for (id, version, _schema) in repository
+        .list(DocumentKind::Workflow)
+        .map_err(|error| format!("cannot list workflow library: {error}"))?
     {
-        Some(stored) => {
-            let version = stored.version;
-            let editable = stored.access == DocumentAccessMode::Editable;
-            let mut workflow = stored_value(stored, "workflow")?;
-            if editable && migrate_rescue_model_node(&mut workflow) {
-                let saved = repository
-                    .save(
-                        DocumentKind::Workflow,
-                        WORKFLOW_ID,
-                        Some(version),
-                        &json_document(&workflow)?,
-                    )
-                    .map_err(|error| format!("cannot migrate Simple Chat Agent node: {error}"))?;
-                Ok((saved.version, workflow, true))
-            } else {
-                Ok((version, workflow, editable))
-            }
-        }
-        None => {
-            let workflow = default_simple_chat_workflow();
+        let Some(stored) = repository
+            .load(DocumentKind::Workflow, &id)
+            .map_err(|error| format!("cannot load workflow '{id}': {error}"))?
+        else {
+            continue;
+        };
+        let editable = stored.access == DocumentAccessMode::Editable;
+        let mut document = stored_value(stored, "workflow")?;
+        if editable && id == SIMPLE_CHAT_WORKFLOW_ID && migrate_rescue_model_node(&mut document) {
             let saved = repository
                 .save(
                     DocumentKind::Workflow,
-                    WORKFLOW_ID,
-                    None,
-                    &json_document(&workflow)?,
+                    &id,
+                    Some(version),
+                    &json_document(&document)?,
                 )
-                .map_err(|error| format!("cannot create Simple Chat workflow: {error}"))?;
-            Ok((saved.version, workflow, true))
+                .map_err(|error| format!("cannot migrate Simple Chat Agent node: {error}"))?;
+            workflows.insert(
+                id,
+                StoredWorkflowState {
+                    version: saved.version,
+                    document,
+                    editable: true,
+                },
+            );
+        } else {
+            workflows.insert(
+                id,
+                StoredWorkflowState {
+                    version,
+                    document,
+                    editable,
+                },
+            );
         }
     }
+    let simple_chat_fresh = !workflows.contains_key(SIMPLE_CHAT_WORKFLOW_ID);
+    if simple_chat_fresh {
+        let document = default_simple_chat_workflow();
+        let saved = repository
+            .save(
+                DocumentKind::Workflow,
+                SIMPLE_CHAT_WORKFLOW_ID,
+                None,
+                &json_document(&document)?,
+            )
+            .map_err(|error| format!("cannot create Simple Chat workflow: {error}"))?;
+        workflows.insert(
+            SIMPLE_CHAT_WORKFLOW_ID.to_owned(),
+            StoredWorkflowState {
+                version: saved.version,
+                document,
+                editable: true,
+            },
+        );
+    }
+    if !workflows.contains_key(STANDARD_AGENT_WORKFLOW_ID) {
+        let document = default_standard_agent_workflow();
+        let saved = repository
+            .save(
+                DocumentKind::Workflow,
+                STANDARD_AGENT_WORKFLOW_ID,
+                None,
+                &json_document(&document)?,
+            )
+            .map_err(|error| format!("cannot create Standard Agent workflow: {error}"))?;
+        workflows.insert(
+            STANDARD_AGENT_WORKFLOW_ID.to_owned(),
+            StoredWorkflowState {
+                version: saved.version,
+                document,
+                editable: true,
+            },
+        );
+    }
+    Ok((workflows, simple_chat_fresh))
+}
+
+/// Loads or creates the small secret-free workflow-library configuration
+/// document holding the per-profile default workflow selection. Fresh
+/// profiles default to the Standard Agent; upgraded profiles keep Simple Chat
+/// so the composer behavior does not change under the user's feet.
+fn load_or_create_workflow_library(
+    repository: &RepositoryRoot,
+    simple_chat_fresh: bool,
+) -> Result<(u64, String), String> {
+    match repository
+        .load(DocumentKind::Configuration, WORKFLOW_LIBRARY_ID)
+        .map_err(|error| format!("cannot load workflow library: {error}"))?
+    {
+        Some(stored) => {
+            let value = stored_value(stored, "workflow library")?;
+            let default_workflow_id = value
+                .get("defaultWorkflowId")
+                .and_then(Value::as_str)
+                .filter(|id| StableId::parse((*id).to_owned()).is_ok())
+                .ok_or_else(|| {
+                    "stored workflow library has no valid defaultWorkflowId".to_owned()
+                })?;
+            Ok((1, default_workflow_id.to_owned()))
+        }
+        None => {
+            let default_workflow_id = if simple_chat_fresh {
+                STANDARD_AGENT_WORKFLOW_ID
+            } else {
+                SIMPLE_CHAT_WORKFLOW_ID
+            };
+            let library = json!({
+                "schemaVersion": WORKFLOW_LIBRARY_SCHEMA_VERSION,
+                "defaultWorkflowId": default_workflow_id,
+            });
+            let saved = repository
+                .save(
+                    DocumentKind::Configuration,
+                    WORKFLOW_LIBRARY_ID,
+                    None,
+                    &json_document(&library)?,
+                )
+                .map_err(|error| format!("cannot create workflow library: {error}"))?;
+            Ok((saved.version, default_workflow_id.to_owned()))
+        }
+    }
+}
+
+fn validate_workflow_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("workflow name is required".into());
+    }
+    if trimmed.len() > MAXIMUM_WORKFLOW_NAME_BYTES || trimmed.contains('\0') {
+        return Err(format!(
+            "workflow name must be at most {MAXIMUM_WORKFLOW_NAME_BYTES} bytes without NUL"
+        ));
+    }
+    Ok(())
+}
+
+fn workflow_display_name(document: &Value, fallback_id: &str) -> String {
+    document
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| fallback_id.to_owned())
 }
 
 fn decode_ref<T: for<'de> Deserialize<'de>>(
@@ -581,7 +968,8 @@ fn validate_editable_workflow_graph(document: &Value) -> Result<(), String> {
 fn validate_simple_chat_graph(document: &Value) -> Result<(), String> {
     validate_editable_workflow_graph(document)?;
     if exact_simple_chat_graph(document, "agent.1", "agent") {
-        return validate_simple_chat_executable_configuration(document);
+        validate_simple_chat_executable_configuration(document)?;
+        return validate_v1_executable_catalog(document);
     }
     Err(
         "this build can run only the Simple Chat graph: Input → Agent → Output → Wait for Input"
@@ -816,6 +1204,552 @@ pub(crate) fn default_simple_chat_workflow() -> Value {
     })
 }
 
+/// The seeded standard agent workflow: Chat Input → Plan (model_call) → Agent
+/// (full built-in tool set) → Chat Output → Wait for Input. It is the
+/// user-editable v1 graph whose agent node runs the standard model/tool loop.
+pub(crate) fn default_standard_agent_workflow() -> Value {
+    json!({
+        "schemaVersion": 1,
+        "id": "workflow.standard-agent",
+        "name": "Standard Agent",
+        "nodes": [
+            {"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}},
+            {
+                "id":"plan.1","label":"Plan","type":"model_call","position":{"x":245,"y":205},
+                "configuration":{
+                    "modelTierId":"tier:balanced",
+                    "instructions":"Analyze the user request and produce a concise plan before acting. Note open questions, needed evidence, and the intended tool order.",
+                    "maximumTokens":1024
+                }
+            },
+            {
+                "id":"agent.1","label":"Agent","type":"agent","position":{"x":470,"y":205},
+                "configuration":{
+                    "modelTierId":"tier:balanced",
+                    "toolIds":[
+                        "tool.files.read","tool.files.search","tool.files.list","tool.files.grep",
+                        "tool.todo","tool.web_search","tool.web_fetch"
+                    ],
+                    "maxTurns":8,
+                    "instructions":"You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
+                }
+            },
+            {"id":"output.1","label":"Output","type":"output","position":{"x":695,"y":205}},
+            {"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":904,"y":205}}
+        ],
+        "edges": [
+            {"id":"input-plan","source":"input.1","target":"plan.1"},
+            {"id":"plan-agent","source":"plan.1","target":"agent.1"},
+            {"id":"agent-output","source":"agent.1","target":"output.1"},
+            {"id":"output-wait","source":"output.1","target":"wait.1"}
+        ],
+        "comments": "Standard Agent: Chat Input → Plan → Agent (full tool set) → Chat Output → Wait for Input."
+    })
+}
+
+/// The closed v1 executable catalog: known node types, per-type configuration
+/// contracts, acyclic structure, reachability, and condition-route labels.
+/// Unknown node types and inert configuration are preserved by the editor but
+/// block execution. Tool bindings are checked against the built-in id set;
+/// Settings enablement is enforced separately at freeze time.
+pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), String> {
+    validate_editable_workflow_graph(document)?;
+    let nodes = document["nodes"]
+        .as_array()
+        .expect("validated workflow nodes");
+    let edges = document["edges"]
+        .as_array()
+        .expect("validated workflow edges");
+    let mut node_ids = BTreeSet::new();
+    for node in nodes {
+        let object = node.as_object().expect("validated workflow node object");
+        let node_id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("validated workflow node id");
+        let node_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .expect("validated workflow node type");
+        node_ids.insert(node_id.to_owned());
+        if !KNOWN_NODE_TYPES.contains(&node_type) {
+            return Err(format!(
+                "workflow node '{node_id}' has node type '{node_type}' with no installed executor in this build"
+            ));
+        }
+        let configuration = object.get("configuration").cloned().unwrap_or(json!({}));
+        let config = configuration
+            .as_object()
+            .expect("validated workflow configuration object");
+        match node_type {
+            "input" | "output" | "wait" | "completion" | "parallel" => {
+                if !config.is_empty() {
+                    return Err(format!(
+                        "workflow node '{node_id}' of type {node_type} accepts no configuration"
+                    ));
+                }
+            }
+            "agent" => validate_agent_configuration(node_id, config)?,
+            "model_call" => validate_model_call_configuration(node_id, config)?,
+            "tool" => validate_tool_configuration(node_id, config)?,
+            "condition" => validate_condition_configuration(node_id, config)?,
+            "approval" => validate_approval_configuration(node_id, config)?,
+            _ => unreachable!("catalog node type"),
+        }
+        validate_declared_ports(node_id, object)?;
+    }
+
+    // Structural execution contract: exactly one input entry, at least one
+    // terminal (wait or completion), no cycles, and every node on a path from
+    // the input to a terminal.
+    let input_ids: Vec<&str> = nodes
+        .iter()
+        .filter(|node| node.get("type").and_then(Value::as_str) == Some("input"))
+        .filter_map(|node| node.get("id").and_then(Value::as_str))
+        .collect();
+    if input_ids.len() != 1 {
+        return Err("an executable v1 workflow requires exactly one input node".into());
+    }
+    let terminal_ids: BTreeSet<&str> = nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.get("type").and_then(Value::as_str),
+                Some("wait" | "completion")
+            )
+        })
+        .filter_map(|node| node.get("id").and_then(Value::as_str))
+        .collect();
+    if terminal_ids.is_empty() {
+        return Err("an executable v1 workflow requires a wait or completion node".into());
+    }
+    let successors: BTreeMap<&str, Vec<&str>> = {
+        let mut map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for node in nodes {
+            let id = node.get("id").and_then(Value::as_str).expect("node id");
+            map.entry(id).or_default();
+        }
+        for edge in edges {
+            let source = edge
+                .get("source")
+                .and_then(Value::as_str)
+                .expect("validated edge source");
+            let target = edge
+                .get("target")
+                .and_then(Value::as_str)
+                .expect("validated edge target");
+            map.entry(source).or_default().push(target);
+        }
+        map
+    };
+    if has_cycle(&successors) {
+        return Err("an executable v1 workflow graph must be acyclic".into());
+    }
+    let entry = input_ids[0];
+    let mut reachable = BTreeSet::from([entry]);
+    let mut frontier = vec![entry];
+    while let Some(id) = frontier.pop() {
+        for next in successors.get(id).into_iter().flatten() {
+            if reachable.insert(next) {
+                frontier.push(next);
+            }
+        }
+    }
+    if reachable.len() != node_ids.len() {
+        return Err(
+            "an executable v1 workflow requires every node to be reachable from the input node"
+                .into(),
+        );
+    }
+
+    // Condition nodes must declare exactly one true and one false (or
+    // fallback) outgoing route.
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some("condition") {
+            continue;
+        }
+        let id = node.get("id").and_then(Value::as_str).expect("node id");
+        let mut routes = BTreeSet::new();
+        for edge in edges {
+            if edge.get("source").and_then(Value::as_str) == Some(id) {
+                let route = edge
+                    .get("configuration")
+                    .and_then(|configuration| configuration.get("route"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        format!(
+                            "transition leaving condition node '{id}' requires configuration.route of true, false, or fallback"
+                        )
+                    })?;
+                if !matches!(route, "true" | "false" | "fallback") {
+                    return Err(format!(
+                        "transition leaving condition node '{id}' has unsupported route '{route}'"
+                    ));
+                }
+                routes.insert(route);
+            }
+        }
+        if !routes.contains("true") || !routes.contains("false") {
+            return Err(format!(
+                "condition node '{id}' requires one true route and one false or fallback route"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The tool binding ids this build can execute. MCP tools match the mcp:
+/// prefix and are resolved to an enabled, core-attested server at freeze.
+pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
+    [
+        "tool.files.read",
+        "tool.files.search",
+        "tool.files.list",
+        "tool.files.grep",
+        "tool.files.edit",
+        "tool.files.write",
+        "tool.shell.host",
+        "tool.python.host",
+        "tool.todo",
+        "tool.web_search",
+        "tool.web_fetch",
+        "tool.subagent",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn is_tool_binding_id(value: &str) -> bool {
+    value.starts_with("tool.") || value.starts_with("mcp:")
+}
+
+fn validate_declared_ports(
+    node_id: &str,
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    for port_key in ["inputPorts", "outputPorts"] {
+        let Some(ports) = object.get(port_key) else {
+            continue;
+        };
+        let ports = ports
+            .as_array()
+            .ok_or_else(|| format!("workflow node '{node_id}' {port_key} must be an array"))?;
+        for (index, port) in ports.iter().enumerate() {
+            let port = port.as_object().ok_or_else(|| {
+                format!("workflow node '{node_id}' {port_key}[{index}] must be an object")
+            })?;
+            port.get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "workflow node '{node_id}' {port_key}[{index}] requires a non-empty name"
+                    )
+                })?;
+        }
+    }
+    Ok(())
+}
+
+fn configuration_keys(config: &serde_json::Map<String, Value>) -> BTreeSet<&str> {
+    config.keys().map(String::as_str).collect()
+}
+
+fn validate_agent_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let required = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
+    let allowed = BTreeSet::from(["instructions", "maxTurns", "modelTierId", "toolIds"]);
+    if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
+        return Err(format!(
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions"
+        ));
+    }
+    if config
+        .get("modelTierId")
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with("tier:"))
+        .is_none()
+    {
+        return Err(format!(
+            "workflow node '{node_id}' agent modelTierId must reference a tier:<name> model tier"
+        ));
+    }
+    let tool_ids = config
+        .get("toolIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("workflow node '{node_id}' agent toolIds must be an array"))?;
+    let mut seen = BTreeSet::new();
+    for tool_id in tool_ids {
+        let tool_id = tool_id
+            .as_str()
+            .filter(|value| is_tool_binding_id(value))
+            .ok_or_else(|| {
+                format!(
+                    "workflow node '{node_id}' agent toolIds must reference tool.<name> or mcp:<server> bindings"
+                )
+            })?;
+        if !builtin_tool_binding_ids().contains(tool_id) && !tool_id.starts_with("mcp:") {
+            return Err(format!(
+                "workflow node '{node_id}' agent binds tool '{tool_id}' with no installed executor in this build"
+            ));
+        }
+        if !seen.insert(tool_id) {
+            return Err(format!(
+                "workflow node '{node_id}' agent toolIds must be unique"
+            ));
+        }
+    }
+    let maximum_turns = config
+        .get("maxTurns")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("workflow node '{node_id}' agent maxTurns must be an integer"))?;
+    if !(MINIMUM_AGENT_TURNS..=MAXIMUM_AGENT_TURNS).contains(&maximum_turns) {
+        return Err(format!(
+            "workflow node '{node_id}' agent maxTurns must be {MINIMUM_AGENT_TURNS}..={MAXIMUM_AGENT_TURNS}"
+        ));
+    }
+    validate_optional_instructions(node_id, config.get("instructions"))?;
+    Ok(())
+}
+
+fn validate_model_call_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let required = BTreeSet::from(["modelTierId"]);
+    let allowed = BTreeSet::from(["instructions", "maximumTokens", "modelTierId"]);
+    if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
+        return Err(format!(
+            "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens"
+        ));
+    }
+    if config
+        .get("modelTierId")
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with("tier:"))
+        .is_none()
+    {
+        return Err(format!(
+            "workflow node '{node_id}' model_call modelTierId must reference a tier:<name> model tier"
+        ));
+    }
+    if let Some(tokens) = config.get("maximumTokens") {
+        let tokens = tokens
+            .as_u64()
+            .ok_or_else(|| format!("workflow node '{node_id}' maximumTokens must be an integer"))?;
+        if tokens == 0 || tokens > MAXIMUM_MODEL_CALL_TOKENS {
+            return Err(format!(
+                "workflow node '{node_id}' maximumTokens must be 1..={MAXIMUM_MODEL_CALL_TOKENS}"
+            ));
+        }
+    }
+    validate_optional_instructions(node_id, config.get("instructions"))?;
+    Ok(())
+}
+
+fn validate_tool_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let required = BTreeSet::from(["toolId"]);
+    let allowed = BTreeSet::from(["parameters", "toolId"]);
+    if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
+        return Err(format!(
+            "workflow node '{node_id}' tool configuration accepts exactly toolId plus optional parameters"
+        ));
+    }
+    config
+        .get("toolId")
+        .and_then(Value::as_str)
+        .filter(|value| is_tool_binding_id(value))
+        .ok_or_else(|| {
+            format!(
+                "workflow node '{node_id}' tool toolId must reference a tool.<name> or mcp:<server> binding"
+            )
+        })?;
+    let tool_id = config
+        .get("toolId")
+        .and_then(Value::as_str)
+        .expect("validated toolId");
+    if !builtin_tool_binding_ids().contains(tool_id) && !tool_id.starts_with("mcp:") {
+        return Err(format!(
+            "workflow node '{node_id}' tool binds '{tool_id}' with no installed executor in this build"
+        ));
+    }
+    if config
+        .get("parameters")
+        .is_some_and(|parameters| !parameters.is_object())
+    {
+        return Err(format!(
+            "workflow node '{node_id}' tool parameters must be a JSON object"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_condition_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let allowed = BTreeSet::from(["predicate"]);
+    if !keys.is_subset(&allowed) || !config.contains_key("predicate") {
+        return Err(format!(
+            "workflow node '{node_id}' condition configuration accepts exactly a predicate object"
+        ));
+    }
+    validate_predicate(
+        node_id,
+        config.get("predicate").expect("predicate present"),
+        0,
+    )
+}
+
+fn validate_predicate(node_id: &str, value: &Value, depth: u32) -> Result<(), String> {
+    if depth > 4 {
+        return Err(format!(
+            "workflow node '{node_id}' predicate nesting exceeds 4 levels"
+        ));
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("workflow node '{node_id}' predicate must be an object"))?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("workflow node '{node_id}' predicate requires a kind"))?;
+    if !matches!(
+        kind,
+        "always" | "exists" | "eq" | "neq" | "and" | "or" | "not"
+    ) {
+        return Err(format!(
+            "workflow node '{node_id}' predicate kind '{kind}' is unsupported"
+        ));
+    }
+    if matches!(kind, "eq" | "neq") && !object.contains_key("value") {
+        return Err(format!(
+            "workflow node '{node_id}' predicate kind {kind} requires a comparison value"
+        ));
+    }
+    if matches!(kind, "exists") && !object.contains_key("path") {
+        return Err(format!(
+            "workflow node '{node_id}' predicate kind exists requires a path"
+        ));
+    }
+    if matches!(kind, "and" | "or") {
+        let operands = object
+            .get("operands")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("workflow node '{node_id}' predicate kind {kind} requires operands")
+            })?;
+        if operands.is_empty() || operands.len() > 8 {
+            return Err(format!(
+                "workflow node '{node_id}' predicate operands must contain 1..=8 items"
+            ));
+        }
+        for operand in operands {
+            validate_predicate(node_id, operand, depth + 1)?;
+        }
+    }
+    if kind == "not" {
+        let operand = object.get("operand").ok_or_else(|| {
+            format!("workflow node '{node_id}' predicate kind not requires operand")
+        })?;
+        validate_predicate(node_id, operand, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn validate_approval_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let allowed = BTreeSet::from(["message", "title"]);
+    if !keys.is_subset(&allowed) {
+        return Err(format!(
+            "workflow node '{node_id}' approval configuration accepts only title and message"
+        ));
+    }
+    for (key, maximum) in [("title", 4 * 1024_usize), ("message", 16 * 1024_usize)] {
+        if let Some(value) = config.get(key) {
+            let text = value.as_str().ok_or_else(|| {
+                format!("workflow node '{node_id}' approval {key} must be a string")
+            })?;
+            if text.len() > maximum || text.contains('\0') {
+                return Err(format!(
+                    "workflow node '{node_id}' approval {key} exceeds its bound"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_instructions(
+    node_id: &str,
+    instructions: Option<&Value>,
+) -> Result<(), String> {
+    let Some(instructions) = instructions else {
+        return Ok(());
+    };
+    let instructions = instructions
+        .as_str()
+        .filter(|value| {
+            !value.trim().is_empty()
+                && value.len() <= MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES
+                && !value.contains('\0')
+        })
+        .ok_or_else(|| {
+            format!(
+                "workflow node '{node_id}' instructions must be a non-empty string of at most {} KiB",
+                MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES / 1024
+            )
+        })?;
+    debug_assert!(!instructions.is_empty());
+    Ok(())
+}
+
+fn has_cycle(successors: &BTreeMap<&str, Vec<&str>>) -> bool {
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    enum Visit {
+        Unseen,
+        Visiting,
+        Done,
+    }
+    fn visit(
+        id: &str,
+        successors: &BTreeMap<&str, Vec<&str>>,
+        states: &mut BTreeMap<String, Visit>,
+    ) -> bool {
+        match states.get(id).copied().unwrap_or(Visit::Unseen) {
+            Visit::Done => false,
+            Visit::Visiting => true,
+            Visit::Unseen => {
+                states.insert(id.to_owned(), Visit::Visiting);
+                for next in successors.get(id).into_iter().flatten() {
+                    if visit(next, successors, states) {
+                        return true;
+                    }
+                }
+                states.insert(id.to_owned(), Visit::Done);
+                false
+            }
+        }
+    }
+    let mut states = BTreeMap::new();
+    successors
+        .keys()
+        .any(|id| visit(id, successors, &mut states))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::runtime::settings_v2::{IntegrationTransportV2, McpServerConfigurationV2};
@@ -989,7 +1923,7 @@ mod tests {
             migrated.settings.projects[0].workspace.location,
             "/workspace/atlas"
         );
-        assert_eq!(migrated.settings.tools.len(), 5);
+        assert_eq!(migrated.settings.tools.len(), 12);
         assert!(migrated.settings.tools.iter().all(|tool| !tool.enabled));
         let canonical = repository
             .export_lossless(DocumentKind::Configuration, SETTINGS_ID)
@@ -1257,5 +2191,307 @@ mod tests {
             {"source":"output.1","target":"wait.1"}
         ]);
         assert!(validate_simple_chat_graph(&duplicate).is_err());
+    }
+
+    #[test]
+    fn library_seeds_simple_chat_and_standard_agent_with_a_fresh_default() {
+        let root = TempDir::new().unwrap();
+        let documents = CanonicalDocuments::open(root.path()).unwrap();
+        let library = documents.workflow_library();
+        assert_eq!(library.entries.len(), 2);
+        assert!(
+            library
+                .entries
+                .iter()
+                .any(|entry| entry.id == SIMPLE_CHAT_WORKFLOW_ID && !entry.is_default)
+        );
+        assert!(
+            library
+                .entries
+                .iter()
+                .any(|entry| entry.id == STANDARD_AGENT_WORKFLOW_ID && entry.is_default)
+        );
+        assert_eq!(library.default_workflow_id, STANDARD_AGENT_WORKFLOW_ID);
+        let standard = documents.workflow_snapshot_for(STANDARD_AGENT_WORKFLOW_ID);
+        assert!(standard.editable);
+        validate_v1_executable_catalog(&standard.document).unwrap();
+        assert_eq!(
+            standard.document["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|node| node.get("type").and_then(Value::as_str) == Some("model_call"))
+                .count(),
+            1
+        );
+        assert!(documents.require_supported_simple_chat().is_ok());
+
+        drop(documents);
+        let reopened = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(reopened.workflow_library().entries.len(), 2);
+        assert_eq!(
+            reopened.workflow_library().default_workflow_id,
+            STANDARD_AGENT_WORKFLOW_ID
+        );
+    }
+
+    #[test]
+    fn upgraded_profiles_keep_simple_chat_as_the_library_default() {
+        let root = TempDir::new().unwrap();
+        let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        repository
+            .save(
+                DocumentKind::Workflow,
+                SIMPLE_CHAT_WORKFLOW_ID,
+                None,
+                &json_document(&default_simple_chat_workflow()).unwrap(),
+            )
+            .unwrap();
+        let documents = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(
+            documents.workflow_library().default_workflow_id,
+            SIMPLE_CHAT_WORKFLOW_ID
+        );
+        assert!(
+            documents
+                .workflow_library()
+                .entries
+                .iter()
+                .any(|entry| entry.id == STANDARD_AGENT_WORKFLOW_ID)
+        );
+    }
+
+    #[test]
+    fn library_crud_create_rename_duplicate_delete_and_set_default() {
+        let root = TempDir::new().unwrap();
+        let mut documents = CanonicalDocuments::open(root.path()).unwrap();
+
+        let (created_id, created_version) = documents
+            .create_workflow("Research loop", Some("standard-agent"))
+            .unwrap();
+        assert_eq!(created_id, "workflow.custom.1");
+        assert_eq!(created_version, 1);
+        let snapshot = documents.workflow_snapshot_for(&created_id);
+        assert_eq!(snapshot.document["name"], "Research loop");
+        assert_eq!(
+            snapshot.document["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|node| node.get("type").and_then(Value::as_str) == Some("agent"))
+                .count(),
+            1
+        );
+
+        assert_eq!(
+            documents
+                .rename_workflow(&created_id, "Research v2")
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            documents.workflow_snapshot_for(&created_id).document["name"],
+            "Research v2"
+        );
+
+        let (duplicate_id, duplicate_version) = documents
+            .duplicate_workflow(&created_id, "Research copy")
+            .unwrap();
+        assert_eq!(duplicate_id, "workflow.custom.2");
+        assert_eq!(duplicate_version, 1);
+        assert_eq!(
+            documents.workflow_snapshot_for(&duplicate_id).document["name"],
+            "Research copy"
+        );
+
+        let library_version = documents.set_default_workflow(&duplicate_id).unwrap();
+        assert_eq!(
+            documents.workflow_library().default_workflow_id,
+            duplicate_id
+        );
+
+        documents.delete_workflow(&duplicate_id).unwrap();
+        assert!(
+            !documents
+                .workflow_library()
+                .entries
+                .iter()
+                .any(|entry| entry.id == duplicate_id)
+        );
+        // Deleting the default reassigns it to Simple Chat.
+        assert_eq!(
+            documents.workflow_library().default_workflow_id,
+            SIMPLE_CHAT_WORKFLOW_ID
+        );
+        assert_eq!(documents.workflow_library().version, library_version + 1);
+
+        drop(documents);
+        let reopened = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(reopened.workflow_library().entries.len(), 3);
+        assert!(
+            !reopened
+                .workflow_library()
+                .entries
+                .iter()
+                .any(|entry| entry.id == duplicate_id)
+        );
+    }
+
+    #[test]
+    fn library_refuses_deleting_the_last_workflow_and_unknown_targets() {
+        let root = TempDir::new().unwrap();
+        let mut documents = CanonicalDocuments::open(root.path()).unwrap();
+        let library = documents.workflow_library();
+        for entry in &library.entries {
+            if entry.id == SIMPLE_CHAT_WORKFLOW_ID {
+                documents.delete_workflow(&entry.id).unwrap();
+                break;
+            }
+        }
+        assert!(
+            documents
+                .delete_workflow(STANDARD_AGENT_WORKFLOW_ID)
+                .unwrap_err()
+                .contains("at least one workflow")
+        );
+        assert!(
+            documents
+                .create_workflow("nope", Some("missing-template"))
+                .is_err()
+        );
+        assert!(
+            documents
+                .set_default_workflow("workflow.missing")
+                .unwrap_err()
+                .contains("does not exist")
+        );
+        assert!(documents.rename_workflow("workflow.missing", "x").is_err());
+        assert!(
+            documents
+                .duplicate_workflow("workflow.missing", "x")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn catalog_rejects_unknown_nodes_cycles_bad_conditions_and_bad_configs() {
+        let unknown = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"plugin.1","type":"plugin.future@2"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"plugin.1"},
+                {"id":"e2","source":"plugin.1","target":"wait.1"}
+            ]
+        });
+        assert!(
+            validate_v1_executable_catalog(&unknown)
+                .unwrap_err()
+                .contains("no installed executor")
+        );
+
+        let cycle = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"agent.1"},
+                {"id":"e2","source":"agent.1","target":"input.1"},
+                {"id":"e3","source":"agent.1","target":"wait.1"}
+            ]
+        });
+        assert!(
+            validate_v1_executable_catalog(&cycle)
+                .unwrap_err()
+                .contains("acyclic")
+        );
+
+        let unrouted_condition = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"always"}}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"check.1"},
+                {"id":"e2","source":"check.1","target":"agent.1"},
+                {"id":"e3","source":"agent.1","target":"wait.1"}
+            ]
+        });
+        assert!(
+            validate_v1_executable_catalog(&unrouted_condition)
+                .unwrap_err()
+                .contains("configuration.route")
+        );
+
+        let bad_agent = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":99}},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"agent.1"},
+                {"id":"e2","source":"agent.1","target":"wait.1"}
+            ]
+        });
+        assert!(
+            validate_v1_executable_catalog(&bad_agent)
+                .unwrap_err()
+                .contains("maxTurns")
+        );
+
+        let unreachable = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"orphan.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"agent.1"},
+                {"id":"e2","source":"agent.1","target":"wait.1"}
+            ]
+        });
+        assert!(
+            validate_v1_executable_catalog(&unreachable)
+                .unwrap_err()
+                .contains("reachable")
+        );
+    }
+
+    #[test]
+    fn catalog_accepts_the_standard_agent_graph_with_conditions_and_parallelism() {
+        validate_v1_executable_catalog(&default_standard_agent_workflow()).unwrap();
+        let branched = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"exists","path":"text"}}},
+                {"id":"plan.1","type":"model_call","configuration":{"modelTierId":"tier:balanced"}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":["tool.todo"],"maxTurns":6}},
+                {"id":"output.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"check.1"},
+                {"id":"e2","source":"check.1","target":"plan.1","configuration":{"route":"true"}},
+                {"id":"e3","source":"check.1","target":"agent.1","configuration":{"route":"false"}},
+                {"id":"e4","source":"plan.1","target":"agent.1"},
+                {"id":"e5","source":"agent.1","target":"output.1"},
+                {"id":"e6","source":"output.1","target":"wait.1"}
+            ]
+        });
+        validate_v1_executable_catalog(&branched).unwrap();
     }
 }

@@ -240,6 +240,8 @@ impl NativePluginProcessV1 {
         let Some(mut child) = self.child.take() else {
             return Err(PluginProcessError::AlreadyStopped);
         };
+        #[cfg(not(unix))]
+        let _ = self.termination_grace; // Windows has no graceful signal phase.
         #[cfg(unix)]
         {
             let _ = child.signal(Signal::SIGTERM);

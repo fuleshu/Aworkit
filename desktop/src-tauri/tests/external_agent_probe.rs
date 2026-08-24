@@ -7,16 +7,33 @@ use aworkit_desktop::runtime::{
 use aworkit_trusted_core::MemoryCredentialStore;
 use tempfile::TempDir;
 
-fn python_executable() -> PathBuf {
-    ["/usr/bin/python3", "/usr/local/bin/python3"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|path| path.is_file())
-        .expect("a system Python 3 interpreter for the hermetic Codex fixture")
+fn python_executable() -> Option<PathBuf> {
+    for candidate in [
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "python3",
+        "python",
+        "py",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.is_file()
+            || std::process::Command::new(&path)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 #[test]
 fn desktop_probe_runs_documented_codex_app_server_handshake_without_starting_a_turn() {
+    let Some(python) = python_executable() else {
+        eprintln!("skipping: no Python 3 interpreter available for the hermetic Codex fixture");
+        return;
+    };
     let root = TempDir::new().expect("runtime root");
     let mut runtime = DesktopRuntime::open_with_credential_store(
         root.path(),
@@ -33,7 +50,7 @@ fn desktop_probe_runs_documented_codex_app_server_handshake_without_starting_a_t
                 adapter: "codex_app_server".into(),
                 enabled: false,
                 connection: IntegrationTransportV2::Stdio {
-                    command: python_executable().display().to_string(),
+                    command: python.display().to_string(),
                     args: vec!["app-server".into()],
                     cwd: Some(fixture_directory.display().to_string()),
                     env: Vec::new(),

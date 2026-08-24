@@ -14,7 +14,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use super::{PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1};
+use super::{
+    PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
+    PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
+    PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
+    WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1, WEB_SEARCH_MAXIMUM_RESULTS_V1,
+};
 
 /// Current canonical desktop-settings schema.
 pub const SETTINGS_SCHEMA_VERSION_V2: u16 = 2;
@@ -32,13 +37,23 @@ const STANDARD_TIERS: [(&str, &str); 4] = [
     ("tier:balanced", "Balanced"),
     ("tier:quality", "Quality"),
 ];
-const BUILTIN_TOOL_IDS: [&str; 5] = [
+const BUILTIN_TOOL_IDS: [&str; 12] = [
     "tool.files.read",
     "tool.files.search",
+    "tool.files.list",
+    "tool.files.grep",
     "tool.files.edit",
+    "tool.files.write",
     "tool.shell.host",
     "tool.python.host",
+    "tool.todo",
+    "tool.web_search",
+    "tool.web_fetch",
+    "tool.subagent",
 ];
+
+/// Maximum child-loop turn budget accepted for the subagent tool contract.
+const SUBAGENT_MAXIMUM_TURNS_V1: u64 = 8;
 
 /// Complete canonical configuration persisted as one versioned JSON document.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -327,20 +342,36 @@ impl SettingsConfigurationV2 {
     pub(crate) fn normalize_legacy_project_tool_limits(&mut self) -> bool {
         let mut changed = false;
         for tool in &mut self.tools {
-            let (field, maximum) = match tool.id.as_str() {
-                "tool.files.read" => ("maximumBytes", PROJECT_FILE_READ_MAXIMUM_BYTES_V1),
-                "tool.files.search" => ("maximumResults", PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1),
-                _ => continue,
-            };
-            if tool
-                .configuration
-                .get(field)
-                .and_then(Value::as_u64)
-                .is_some_and(|value| value > maximum)
-            {
-                tool.configuration
-                    .insert(field.to_owned(), Value::from(maximum));
-                changed = true;
+            match tool.id.as_str() {
+                "tool.files.read" => {
+                    if tool
+                        .configuration
+                        .get("maximumBytes")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|value| value > PROJECT_FILE_READ_MAXIMUM_BYTES_V1)
+                    {
+                        tool.configuration.insert(
+                            "maximumBytes".to_owned(),
+                            Value::from(PROJECT_FILE_READ_MAXIMUM_BYTES_V1),
+                        );
+                        changed = true;
+                    }
+                }
+                "tool.files.search" => {
+                    if tool
+                        .configuration
+                        .get("maximumResults")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|value| value > PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1)
+                    {
+                        tool.configuration.insert(
+                            "maximumResults".to_owned(),
+                            Value::from(PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1),
+                        );
+                        changed = true;
+                    }
+                }
+                _ => {}
             }
         }
         changed
@@ -688,6 +719,82 @@ impl BuiltInToolConfigurationV2 {
                 require_config_u64(self, "timeoutSeconds", 1, 300)?;
                 require_config_u64(self, "maximumOutputBytes", 1, 262_144)
             }
+            "tool.files.list" => {
+                require_exact_config_keys(self, &["authorityMode", "effect", "maximumEntries"])?;
+                require_tool_project_scope(self, true)?;
+                require_config_string(self, "authorityMode", "project_files")?;
+                require_config_string(self, "effect", "list")?;
+                require_config_u64(
+                    self,
+                    "maximumEntries",
+                    1,
+                    PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
+                )
+            }
+            "tool.files.grep" => {
+                require_exact_config_keys(self, &["authorityMode", "effect", "maximumMatches"])?;
+                require_tool_project_scope(self, true)?;
+                require_config_string(self, "authorityMode", "project_files")?;
+                require_config_string(self, "effect", "grep")?;
+                require_config_u64(
+                    self,
+                    "maximumMatches",
+                    1,
+                    PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
+                )
+            }
+            "tool.files.write" => {
+                require_exact_config_keys(
+                    self,
+                    &[
+                        "authorityMode",
+                        "effect",
+                        "requiresApproval",
+                        "maximumBytes",
+                    ],
+                )?;
+                require_tool_project_scope(self, true)?;
+                require_config_string(self, "authorityMode", "project_files")?;
+                require_config_string(self, "effect", "write")?;
+                require_config_bool(self, "requiresApproval", true)?;
+                require_config_u64(self, "maximumBytes", 1, PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1)
+            }
+            "tool.todo" => {
+                require_exact_config_keys(self, &["authorityMode"])?;
+                require_tool_project_scope(self, false)?;
+                require_config_string(self, "authorityMode", "run_todo")
+            }
+            "tool.web_search" => {
+                require_exact_config_keys(self, &["maximumResults"])?;
+                require_tool_project_scope(self, false)?;
+                require_config_u64(self, "maximumResults", 1, WEB_SEARCH_MAXIMUM_RESULTS_V1)
+            }
+            "tool.web_fetch" => {
+                require_exact_config_keys(self, &["maximumDownloadBytes", "maximumExtractBytes"])?;
+                require_tool_project_scope(self, false)?;
+                require_config_u64(
+                    self,
+                    "maximumDownloadBytes",
+                    1,
+                    WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
+                )?;
+                require_config_u64(
+                    self,
+                    "maximumExtractBytes",
+                    1,
+                    WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
+                )
+            }
+            "tool.subagent" => {
+                require_exact_config_keys(
+                    self,
+                    &["authorityMode", "requiresApproval", "maximumTurns"],
+                )?;
+                require_tool_project_scope(self, false)?;
+                require_config_string(self, "authorityMode", "run_subagent")?;
+                require_config_bool(self, "requiresApproval", true)?;
+                require_config_u64(self, "maximumTurns", 1, SUBAGENT_MAXIMUM_TURNS_V1)
+            }
             _ => Err(format!("built-in tool '{}' is not implemented", self.id)),
         }
     }
@@ -871,27 +978,14 @@ pub(crate) fn validate_unavailable_executor_enablement_update(
         }
     }
 
-    let previous_tool_enabled = previous
+    // All eleven built-in tools have installed v1 executors (W4); enabling a
+    // tool through generic Settings is supported. MCP servers and external
+    // agents remain gated until their chat execution paths ship.
+    let _previous_tool_enabled = previous
         .tools
         .iter()
         .map(|tool| (tool.id.as_str(), tool.enabled))
         .collect::<BTreeMap<_, _>>();
-    for tool in &next.tools {
-        if matches!(
-            tool.id.as_str(),
-            "tool.files.edit" | "tool.shell.host" | "tool.python.host"
-        ) && tool.enabled
-            && !previous_tool_enabled
-                .get(tool.id.as_str())
-                .copied()
-                .unwrap_or(false)
-        {
-            return Err(format!(
-                "built-in tool '{}' cannot be enabled through generic Settings; its execution path is unavailable in this build",
-                tool.id
-            ));
-        }
-    }
 
     Ok(())
 }
@@ -1009,24 +1103,34 @@ fn validate_mcp_transport_targets(
         IntegrationTransportV2::Http { headers, .. } => {
             validate_http_credential_targets(&owner, headers, true)
         }
-        IntegrationTransportV2::Stdio {
-            command, cwd, env, ..
-        } => {
-            if !Path::new(command).is_absolute() {
+        IntegrationTransportV2::Stdio { command, env, .. } => {
+            if !launchable_mcp_command(Path::new(unquote_runtime_path(command))) {
                 return Err(format!(
-                    "{owner} STDIO executable path must be absolute for the installed MCP adapter"
-                ));
-            }
-            if let Some(cwd) = cwd
-                && !Path::new(cwd).is_absolute()
-            {
-                return Err(format!(
-                    "{owner} STDIO working directory must be absolute for the installed MCP adapter"
+                    "{owner} STDIO executable must be absolute or one bare command name from PATH for the installed MCP adapter"
                 ));
             }
             validate_environment_credential_targets(&owner, env.iter())
         }
     }
+}
+
+/// A quoted executable path is a common, harmless Windows shell copy/paste.
+fn unquote_runtime_path(value: &str) -> &str {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2
+        && matches!(trimmed.as_bytes()[0], b'\'' | b'"')
+        && trimmed.as_bytes()[0] == *trimmed.as_bytes().last().expect("length checked")
+    {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    }
+}
+
+fn launchable_mcp_command(path: &Path) -> bool {
+    path.is_absolute()
+        || path.components().count() == 1
+            && matches!(path.components().next(), Some(Component::Normal(_)))
 }
 
 fn validate_external_agent_transport_targets(
@@ -1446,6 +1550,46 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             ]),
         ),
         builtin_tool(
+            "tool.files.list",
+            "Project file list (glob)",
+            true,
+            BTreeMap::from([
+                ("authorityMode".into(), Value::from("project_files")),
+                ("effect".into(), Value::from("list")),
+                (
+                    "maximumEntries".into(),
+                    Value::from(crate::runtime::PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1),
+                ),
+            ]),
+        ),
+        builtin_tool(
+            "tool.files.grep",
+            "Project file regex search",
+            true,
+            BTreeMap::from([
+                ("authorityMode".into(), Value::from("project_files")),
+                ("effect".into(), Value::from("grep")),
+                (
+                    "maximumMatches".into(),
+                    Value::from(crate::runtime::PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1),
+                ),
+            ]),
+        ),
+        builtin_tool(
+            "tool.files.write",
+            "Project file write",
+            true,
+            BTreeMap::from([
+                ("authorityMode".into(), Value::from("project_files")),
+                ("effect".into(), Value::from("write")),
+                ("requiresApproval".into(), Value::Bool(true)),
+                (
+                    "maximumBytes".into(),
+                    Value::from(crate::runtime::PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1),
+                ),
+            ]),
+        ),
+        builtin_tool(
             "tool.shell.host",
             "Host shell",
             false,
@@ -1466,6 +1610,46 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
                 ("isolatedInterpreter".into(), Value::Bool(true)),
                 ("timeoutSeconds".into(), Value::from(30_u64)),
                 ("maximumOutputBytes".into(), Value::from(262_144_u64)),
+            ]),
+        ),
+        builtin_tool(
+            "tool.todo",
+            "Run task list",
+            false,
+            BTreeMap::from([("authorityMode".into(), Value::from("run_todo"))]),
+        ),
+        builtin_tool(
+            "tool.web_search",
+            "Web search",
+            false,
+            BTreeMap::from([(
+                "maximumResults".into(),
+                Value::from(crate::runtime::WEB_SEARCH_MAXIMUM_RESULTS_V1),
+            )]),
+        ),
+        builtin_tool(
+            "tool.web_fetch",
+            "Web page fetch",
+            false,
+            BTreeMap::from([
+                (
+                    "maximumDownloadBytes".into(),
+                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
+                ),
+                (
+                    "maximumExtractBytes".into(),
+                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
+                ),
+            ]),
+        ),
+        builtin_tool(
+            "tool.subagent",
+            "Subagent delegation",
+            false,
+            BTreeMap::from([
+                ("authorityMode".into(), Value::from("run_subagent")),
+                ("requiresApproval".into(), Value::Bool(true)),
+                ("maximumTurns".into(), Value::from(4_u64)),
             ]),
         ),
     ]
@@ -2051,8 +2235,15 @@ mod tests {
                 "tool.files.read",
                 "tool.files.search",
                 "tool.files.edit",
+                "tool.files.list",
+                "tool.files.grep",
+                "tool.files.write",
                 "tool.shell.host",
-                "tool.python.host"
+                "tool.python.host",
+                "tool.todo",
+                "tool.web_search",
+                "tool.web_fetch",
+                "tool.subagent"
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));
@@ -2060,7 +2251,7 @@ mod tests {
             settings
                 .tools
                 .iter()
-                .all(|tool| tool.id != "tool.python.sandboxed" && !tool.id.starts_with("tool.web"))
+                .all(|tool| tool.id != "tool.python.sandboxed")
         );
     }
 
@@ -2479,7 +2670,7 @@ mod tests {
     }
 
     #[test]
-    fn installed_mcp_stdio_contract_requires_native_paths_and_portable_env_targets() {
+    fn installed_mcp_stdio_contract_accepts_quoted_paths_and_ignores_cwd() {
         let mut settings = configured();
         add_integration_credential(&mut settings);
         settings.mcp_servers.push(McpServerConfigurationV2 {
@@ -2501,7 +2692,7 @@ mod tests {
             settings
                 .validate_installed_runtime_consumers()
                 .unwrap_err()
-                .contains("executable path must be absolute")
+                .contains("absolute or one bare command name from PATH")
         );
 
         let IntegrationTransportV2::Stdio { command, cwd, .. } =
@@ -2509,28 +2700,21 @@ mod tests {
         else {
             unreachable!()
         };
-        *command = std::env::current_exe()
+        let executable = std::env::current_exe()
             .expect("current executable")
             .to_string_lossy()
             .into_owned();
+        *command = format!("\"{executable}\"");
         *cwd = Some("relative/workspace".into());
-        assert!(
-            settings
-                .validate_installed_runtime_consumers()
-                .unwrap_err()
-                .contains("working directory must be absolute")
-        );
+        settings
+            .validate_installed_runtime_consumers()
+            .expect("quoted executable and ignored MCP cwd are accepted");
 
-        let IntegrationTransportV2::Stdio { cwd, env, .. } = &mut settings.mcp_servers[0].transport
+        let IntegrationTransportV2::Stdio { cwd: _, env, .. } =
+            &mut settings.mcp_servers[0].transport
         else {
             unreachable!()
         };
-        *cwd = Some(
-            std::env::current_dir()
-                .expect("current directory")
-                .to_string_lossy()
-                .into_owned(),
-        );
         *env = vec![integration_binding("API-KEY")];
         settings
             .validate()
@@ -2879,7 +3063,9 @@ mod tests {
                 .contains("external agent 'agent.codex' cannot be enabled")
         );
 
-        for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
+        // Every built-in tool now has an installed v1 executor, so generic
+        // Settings may enable any of them.
+        for tool_id in BUILTIN_TOOL_IDS {
             let mut enabled_tool = previous.clone();
             enabled_tool
                 .tools
@@ -2887,9 +3073,8 @@ mod tests {
                 .find(|tool| tool.id == tool_id)
                 .expect("built-in tool")
                 .enabled = true;
-            let error = validate_unavailable_executor_enablement_update(&previous, &enabled_tool)
-                .unwrap_err();
-            assert!(error.contains(tool_id));
+            validate_unavailable_executor_enablement_update(&previous, &enabled_tool)
+                .unwrap_or_else(|error| panic!("enabling {tool_id} failed: {error}"));
         }
 
         let mut supported_tools = previous.clone();
@@ -2947,7 +3132,7 @@ mod tests {
         );
 
         let mut settings = SettingsConfigurationV2::default();
-        settings.tools[4]
+        settings.tools[7]
             .configuration
             .insert("authorityMode".into(), Value::from("sandboxed_python"));
         assert!(

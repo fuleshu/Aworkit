@@ -108,10 +108,56 @@ export interface WorkflowCommit {
   readonly commandId: string;
   readonly expectedVersion: number;
   readonly document: WorkflowDocument;
+  /** Optional library target; defaults to the legacy Simple Chat document. */
+  readonly workflowId?: string;
 }
 export interface WorkflowCorePort {
-  snapshot(): Promise<WorkflowSnapshot>;
+  snapshot(workflowId?: string): Promise<WorkflowSnapshot>;
   commit(command: WorkflowCommit): Promise<WorkbenchReceipt>;
+}
+
+/** One saved workflow in the native workflow library. */
+export interface WorkflowLibraryEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly version: number;
+  readonly editable: boolean;
+  readonly default: boolean;
+}
+export interface WorkflowLibrarySnapshot {
+  readonly version: number;
+  readonly defaultWorkflowId: string;
+  readonly entries: readonly WorkflowLibraryEntry[];
+}
+export interface WorkflowCreateCommand {
+  readonly commandId: string;
+  readonly name: string;
+  readonly template?: string;
+}
+export interface WorkflowTargetCommand {
+  readonly commandId: string;
+  readonly workflowId: string;
+}
+export interface WorkflowRenameCommand {
+  readonly commandId: string;
+  readonly workflowId: string;
+  readonly name: string;
+}
+export interface WorkflowCreateReceipt {
+  readonly commandId: string;
+  readonly accepted: boolean;
+  readonly currentVersion: number;
+  readonly workflowId: string;
+}
+
+/** Native workflow-library surface: list, create, and reorganize saved documents. */
+export interface WorkflowLibraryPort {
+  snapshot(): Promise<WorkflowLibrarySnapshot>;
+  create(command: WorkflowCreateCommand): Promise<WorkflowCreateReceipt>;
+  duplicate(command: WorkflowRenameCommand): Promise<WorkflowCreateReceipt>;
+  rename(command: WorkflowRenameCommand): Promise<WorkbenchReceipt>;
+  remove(command: WorkflowTargetCommand): Promise<WorkbenchReceipt>;
+  setDefault(command: WorkflowTargetCommand): Promise<WorkbenchReceipt>;
 }
 
 export class TauriSettingsCorePort implements SettingsCorePort {
@@ -131,8 +177,10 @@ export class TauriSettingsCorePort implements SettingsCorePort {
 }
 
 export class TauriWorkflowCorePort implements WorkflowCorePort {
-  public async snapshot(): Promise<WorkflowSnapshot> {
-    return normalizeWorkflowSnapshot(await invoke("workflow_snapshot"));
+  public async snapshot(workflowId?: string): Promise<WorkflowSnapshot> {
+    return normalizeWorkflowSnapshot(
+      await invoke("workflow_snapshot", { workflowId: workflowId ?? null }),
+    );
   }
   public async commit(command: WorkflowCommit): Promise<WorkbenchReceipt> {
     return receiptSchema.parse(await invoke("workflow_commit", { command }));
@@ -254,7 +302,7 @@ export class PreviewWorkflowCorePort implements WorkflowCorePort {
     this.document = parseWorkflow(JSON.stringify(document));
     this.editable = this.document.schemaVersion === 1;
   }
-  public async snapshot(): Promise<WorkflowSnapshot> {
+  public async snapshot(_workflowId?: string): Promise<WorkflowSnapshot> {
     return {
       version: this.version,
       document: this.document,
@@ -319,4 +367,223 @@ function normalizeWorkflowSnapshot(value: unknown): WorkflowSnapshot {
     document: parseWorkflow(JSON.stringify(parsed.document)),
     editable: parsed.editable,
   };
+}
+
+const workflowLibraryEntrySchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    version: z.number().int().nonnegative(),
+    editable: z.boolean(),
+    default: z.boolean(),
+  })
+  .strict();
+const workflowLibrarySnapshotSchema = z
+  .object({
+    version: z.number().int().nonnegative(),
+    defaultWorkflowId: z.string().min(1),
+    entries: z.array(workflowLibraryEntrySchema),
+  })
+  .strict();
+const workflowCreateReceiptSchema = z
+  .object({
+    commandId: z.string().min(1),
+    accepted: z.boolean(),
+    currentVersion: z.number().int().nonnegative(),
+    workflowId: z.string().min(1),
+  })
+  .strict();
+
+export class TauriWorkflowLibraryPort implements WorkflowLibraryPort {
+  public async snapshot(): Promise<WorkflowLibrarySnapshot> {
+    return workflowLibrarySnapshotSchema.parse(await invoke("workflow_library"));
+  }
+  public async create(
+    command: WorkflowCreateCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    return workflowCreateReceiptSchema.parse(
+      await invoke("workflow_create", { command }),
+    );
+  }
+  public async duplicate(
+    command: WorkflowRenameCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    return workflowCreateReceiptSchema.parse(
+      await invoke("workflow_duplicate", { command }),
+    );
+  }
+  public async rename(command: WorkflowRenameCommand): Promise<WorkbenchReceipt> {
+    return receiptSchema.parse(await invoke("workflow_rename", { command }));
+  }
+  public async remove(command: WorkflowTargetCommand): Promise<WorkbenchReceipt> {
+    return receiptSchema.parse(await invoke("workflow_delete", { command }));
+  }
+  public async setDefault(
+    command: WorkflowTargetCommand,
+  ): Promise<WorkbenchReceipt> {
+    return receiptSchema.parse(
+      await invoke("workflow_set_default", { command }),
+    );
+  }
+}
+
+/** Deterministic browser preview seeded with the two built-in workflows. */
+export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
+  private version = 2;
+  private entries: WorkflowLibraryEntry[] = [
+    { id: "workflow.simple-chat", name: "Simple Chat", version: 1, editable: true, default: true },
+    {
+      id: "workflow.standard-agent",
+      name: "Standard Agent",
+      version: 1,
+      editable: true,
+      default: false,
+    },
+  ];
+  private readonly receipts = new Map<
+    string,
+    { readonly fingerprint: string; readonly receipt: WorkbenchReceipt | WorkflowCreateReceipt }
+  >();
+  private defaultWorkflowId = "workflow.simple-chat";
+
+  public async snapshot(): Promise<WorkflowLibrarySnapshot> {
+    return {
+      version: this.version,
+      defaultWorkflowId: this.defaultWorkflowId,
+      entries: this.entries.map((entry) => ({ ...entry })),
+    };
+  }
+  public async create(
+    command: WorkflowCreateCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    return this.createReceipt(command, (id) => ({
+      id,
+      name: command.name,
+      version: 1,
+      editable: true,
+      default: false,
+    }));
+  }
+  public async duplicate(
+    command: WorkflowRenameCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    const source = this.entries.find((entry) => entry.id === command.workflowId);
+    if (source === undefined)
+      throw new Error(`workflow '${command.workflowId}' does not exist`);
+    return this.createReceipt(command, (id) => ({
+      id,
+      name: command.name,
+      version: source.version,
+      editable: source.editable,
+      default: false,
+    }));
+  }
+  public async rename(command: WorkflowRenameCommand): Promise<WorkbenchReceipt> {
+    const fingerprint = JSON.stringify(command);
+    const seen = this.receipts.get(command.commandId);
+    if (seen !== undefined) return seen.receipt as WorkbenchReceipt;
+    this.mutateEntry(command.workflowId, (entry) => ({
+      ...entry,
+      name: command.name,
+    }));
+    this.version += 1;
+    const receipt = {
+      commandId: command.commandId,
+      accepted: true,
+      currentVersion: this.version,
+      reason: null,
+    };
+    this.receipts.set(command.commandId, { fingerprint, receipt });
+    return receipt;
+  }
+  public async remove(command: WorkflowTargetCommand): Promise<WorkbenchReceipt> {
+    const fingerprint = JSON.stringify(command);
+    const seen = this.receipts.get(command.commandId);
+    if (seen !== undefined) return seen.receipt as WorkbenchReceipt;
+    if (this.entries.length <= 1)
+      throw new Error("the workflow library requires at least one workflow");
+    this.entries = this.entries.filter((entry) => entry.id !== command.workflowId);
+    if (this.defaultWorkflowId === command.workflowId)
+      this.defaultWorkflowId = this.entries[0]?.id ?? command.workflowId;
+    this.version += 1;
+    const receipt = {
+      commandId: command.commandId,
+      accepted: true,
+      currentVersion: this.version,
+      reason: null,
+    };
+    this.receipts.set(command.commandId, { fingerprint, receipt });
+    return receipt;
+  }
+  public async setDefault(
+    command: WorkflowTargetCommand,
+  ): Promise<WorkbenchReceipt> {
+    const fingerprint = JSON.stringify(command);
+    const seen = this.receipts.get(command.commandId);
+    if (seen !== undefined) return seen.receipt as WorkbenchReceipt;
+    if (!this.entries.some((entry) => entry.id === command.workflowId))
+      throw new Error(`workflow '${command.workflowId}' does not exist`);
+    this.entries = this.entries.map((entry) => ({
+      ...entry,
+      default: entry.id === command.workflowId,
+    }));
+    this.defaultWorkflowId = command.workflowId;
+    this.version += 1;
+    const receipt = {
+      commandId: command.commandId,
+      accepted: true,
+      currentVersion: this.version,
+      reason: null,
+    };
+    this.receipts.set(command.commandId, { fingerprint, receipt });
+    return receipt;
+  }
+
+  private createReceipt(
+    command: WorkflowCreateCommand | WorkflowRenameCommand,
+    seed: (id: string) => WorkflowLibraryEntry,
+  ): WorkflowCreateReceipt {
+    const fingerprint = JSON.stringify(command);
+    const seen = this.receipts.get(command.commandId);
+    if (seen !== undefined) return seen.receipt as WorkflowCreateReceipt;
+    const id = uniqueWorkflowId(this.entries.map((entry) => entry.id), command.name);
+    this.entries = [...this.entries, seed(id)];
+    this.version += 1;
+    const receipt = {
+      commandId: command.commandId,
+      accepted: true,
+      currentVersion: this.version,
+      workflowId: id,
+    };
+    this.receipts.set(command.commandId, { fingerprint, receipt });
+    return receipt;
+  }
+
+  private mutateEntry(
+    workflowId: string,
+    mutate: (entry: WorkflowLibraryEntry) => WorkflowLibraryEntry,
+  ): void {
+    this.entries = this.entries.map((entry) =>
+      entry.id === workflowId ? mutate(entry) : entry,
+    );
+  }
+}
+
+function uniqueWorkflowId(existing: readonly string[], name: string): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const prefix = base === "" ? "workflow" : `workflow.${base}`;
+  if (!existing.includes(prefix)) return prefix;
+  let ordinal = 2;
+  while (existing.includes(`${prefix}-${ordinal}`)) ordinal += 1;
+  return `${prefix}-${ordinal}`;
+}
+
+export function createWorkflowLibraryPort(): WorkflowLibraryPort {
+  return "__TAURI_INTERNALS__" in window
+    ? new TauriWorkflowLibraryPort()
+    : new PreviewWorkflowLibraryPort();
 }

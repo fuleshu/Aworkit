@@ -126,11 +126,26 @@ export function reconcileCredentialReplacementDraft(
   previousCredentialRef: string | null,
   replacementCredentialRef: string,
   previousCanonical: SettingsConfigurationV2,
+  latestCanonical: SettingsConfigurationV2,
 ): SettingsConfigurationV2 {
   if (previousCredentialRef === null) return draft;
 
+  // The fresh credential metadata only exists in the canonical snapshot after
+  // the mutation; carry it into the draft so the rewritten consumer
+  // references stay resolvable and the draft remains saveable.
+  const freshCredential = latestCanonical.credentials.find(
+    ({ credentialRef }) => credentialRef === replacementCredentialRef,
+  );
   return {
     ...draft,
+    credentials: [
+      ...draft.credentials.filter(
+        ({ credentialRef }) =>
+          credentialRef !== previousCredentialRef &&
+          credentialRef !== replacementCredentialRef,
+      ),
+      ...(freshCredential === undefined ? [] : [freshCredential]),
+    ],
     providers: draft.providers.map((provider) => ({
       ...provider,
       credentialRef:

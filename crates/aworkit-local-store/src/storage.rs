@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeSet,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Read,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -737,7 +737,7 @@ fn snapshot_tree(
             } else {
                 fs::copy(&source_path, &destination_path)?;
             }
-            File::open(&destination_path)?.sync_all()?;
+            sync_file(&destination_path)?;
             entries.push(BackupFile {
                 relative_path: portable_relative(relative_path)?,
                 byte_size: fs::metadata(&destination_path)?.len(),
@@ -834,7 +834,7 @@ fn copy_validated_backup(source: &Path, destination: &Path) -> Result<(), StoreE
             fs::create_dir_all(parent)?;
         }
         fs::copy(source_path, &destination_path)?;
-        File::open(destination_path)?.sync_all()?;
+        sync_file(&destination_path)?;
     }
     Ok(())
 }
@@ -913,7 +913,7 @@ fn sha256_file_bytes(bytes: &[u8]) -> String {
 
 fn sync_tree(root: &Path) -> Result<(), StoreError> {
     for path in collect_files(root)? {
-        File::open(path)?.sync_all()?;
+        sync_file(&path)?;
     }
     let directories = collect_directories(root)?;
     for directory in directories.into_iter().rev() {
@@ -946,6 +946,16 @@ fn sync_directory(path: &Path) -> Result<(), StoreError> {
 
 #[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> Result<(), StoreError> {
+    Ok(())
+}
+
+/// Flushes a freshly written backup/staging file to durable storage.
+///
+/// A read-only handle cannot flush file buffers on Windows (`FlushFileBuffers`
+/// requires write access), so the file is opened for write before syncing. This
+/// is equivalent to `File::open(path)?.sync_all()` on Unix.
+fn sync_file(path: &Path) -> Result<(), StoreError> {
+    OpenOptions::new().write(true).open(path)?.sync_all()?;
     Ok(())
 }
 
@@ -1075,6 +1085,7 @@ mod tests {
 
         let projection = ProjectionStore::open(&projection_path).expect("replace projection");
         assert!(projection.health().expect("projection health").healthy);
+        drop(projection);
         fs::remove_dir_all(root).expect("cleanup");
         fs::remove_dir_all(backups).expect("backup cleanup");
     }

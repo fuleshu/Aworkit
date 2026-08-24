@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import type { SettingsV2Snapshot } from "./configuration";
+import {
+  catalogEntryForType,
+  isCatalogNodeType,
+} from "./nodeCatalog";
+import { NodeConfigurationForm } from "./NodeConfigurationForm";
 import {
   workflowNodeId,
   type JsonObject,
@@ -18,10 +24,12 @@ interface WorkflowPropertiesPaneProps {
   readonly summary: WorkflowSummary;
   readonly issues: readonly WorkflowValidationIssue[];
   readonly compatibility: WorkflowExecutionCompatibility;
+  readonly settings?: SettingsV2Snapshot;
   readonly onOpenSettings?: () => void;
   readonly onWorkflowField: (key: string, value: JsonValue) => void;
   readonly onNodeProperty: (key: "label" | "type", value: string) => void;
   readonly onNodeField: (key: string, value: JsonValue) => void;
+  readonly onNodeConfiguration: (patch: JsonObject) => void;
   readonly onRenameNode: (currentId: string, nextId: string) => void;
   readonly onEdgeFields: (patch: JsonObject) => void;
   readonly onDelete: () => void;
@@ -38,10 +46,12 @@ export function WorkflowPropertiesPane({
   summary,
   issues,
   compatibility,
+  settings,
   onOpenSettings,
   onWorkflowField,
   onNodeProperty,
   onNodeField,
+  onNodeConfiguration,
   onRenameNode,
   onEdgeFields,
   onDelete,
@@ -80,6 +90,8 @@ export function WorkflowPropertiesPane({
           editable={editable}
           node={selectedNode}
           nodeId={selectedId}
+          settings={settings}
+          onConfiguration={onNodeConfiguration}
           onDelete={onDelete}
           onField={onNodeField}
           onOpenSettings={onOpenSettings}
@@ -114,8 +126,10 @@ function NodeProperties({
   editable,
   node,
   nodeId,
+  settings,
   onProperty,
   onField,
+  onConfiguration,
   onRename,
   onOpenSettings,
   onPendingDraftChange,
@@ -124,20 +138,29 @@ function NodeProperties({
   readonly editable: boolean;
   readonly node: JsonObject;
   readonly nodeId: string;
+  readonly settings?: SettingsV2Snapshot;
   readonly onDelete: () => void;
   readonly onProperty: (key: "label" | "type", value: string) => void;
   readonly onField: (key: string, value: JsonValue) => void;
+  readonly onConfiguration: (patch: JsonObject) => void;
   readonly onRename: (currentId: string, nextId: string) => void;
   readonly onOpenSettings?: () => void;
   readonly onPendingDraftChange: (pending: boolean) => void;
 }): React.JSX.Element {
+  const nodeType = typeof node.type === "string" ? node.type : "";
+  const entry = isCatalogNodeType(nodeType)
+    ? catalogEntryForType(nodeType)
+    : undefined;
+  const showTypedForm = entry !== undefined && entry.fields.length > 0;
   const configurationValue = useMemo(
     () => JSON.stringify(node.configuration ?? {}, null, 2),
     [node.configuration],
   );
+  const configuration = asObject(node.configuration);
   const [idDraft, setIdDraft] = useState(nodeId);
   const [configurationDraft, setConfigurationDraft] =
     useState(configurationValue);
+  const [typedFormPending, setTypedFormPending] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [configurationError, setConfigurationError] = useState<string | null>(
     null,
@@ -151,7 +174,9 @@ function NodeProperties({
     setConfigurationError(null);
   }, [nodeId, configurationValue]);
   const pendingDraft =
-    idDraft !== nodeId || configurationDraft !== configurationValue;
+    idDraft !== nodeId ||
+    typedFormPending ||
+    configurationDraft !== configurationValue;
   useEffect(() => {
     onPendingDraftChange(pendingDraft);
   }, [onPendingDraftChange, pendingDraft]);
@@ -209,7 +234,7 @@ function NodeProperties({
         <input
           disabled={!editable}
           title="Edit the stable node type; unknown types remain preserved and exportable"
-          value={String(node.type ?? "")}
+          value={nodeType}
           onChange={(event) => onProperty("type", event.target.value)}
         />
       </label>
@@ -237,6 +262,16 @@ function NodeProperties({
         <p className="field-error" role="alert">
           {idError}
         </p>
+      )}
+      {showTypedForm && (
+        <NodeConfigurationForm
+          configuration={configuration}
+          editable={editable}
+          nodeType={nodeType}
+          settings={settings}
+          onChange={onConfiguration}
+          onPendingDraftChange={setTypedFormPending}
+        />
       )}
       <label>
         Configuration JSON
@@ -290,6 +325,12 @@ function NodeProperties({
       </details>
     </div>
   );
+}
+
+function asObject(value: unknown): JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : {};
 }
 
 function EdgeProperties({

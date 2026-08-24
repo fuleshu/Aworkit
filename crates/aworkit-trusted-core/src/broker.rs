@@ -658,73 +658,104 @@ impl DurableInvocationBroker {
     ) -> Result<usize, BrokerError> {
         let mut delivered = 0;
         for outbox in self.ledger.pending_dispatches()? {
-            let invocation_id = &outbox.dispatch.invocation_id;
-            let events = self.ledger.events(invocation_id)?;
-            if events.iter().any(|event| {
-                matches!(event, InvocationLedgerEventV1::Settled { .. })
-                    || matches!(event, InvocationLedgerEventV1::DispatchAccepted { .. })
-            }) {
-                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+            if self.deliver_outbox(&outbox, host)? {
                 delivered += 1;
-                continue;
-            }
-            if events
-                .iter()
-                .any(|event| matches!(event, InvocationLedgerEventV1::DispatchAttempted { .. }))
-            {
-                self.settle_unaccepted_dispatch(
-                    invocation_id,
-                    "host_dispatch_recovery_uncertain",
-                    true,
-                )?;
-                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
-                return Err(BrokerError::AmbiguousDispatch);
-            }
-            self.ledger.append_atomic(
-                &[InvocationLedgerEventV1::DispatchAttempted {
-                    invocation_id: invocation_id.clone(),
-                }],
-                None,
-            )?;
-            let acceptance = match host.dispatch(&outbox.dispatch) {
-                Ok(acceptance) => acceptance,
-                Err(error) => {
-                    self.settle_unaccepted_dispatch(
-                        invocation_id,
-                        "host_dispatch_transport_uncertain",
-                        true,
-                    )?;
-                    self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
-                    return Err(error);
-                }
-            };
-            match acceptance {
-                DeliveryAcceptanceV1::Accepted | DeliveryAcceptanceV1::AlreadyAccepted => {
-                    self.accept_dispatch(invocation_id)?;
-                    self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
-                    delivered += 1;
-                }
-                DeliveryAcceptanceV1::RejectedDefinitelyNotStarted => {
-                    self.settle_unaccepted_dispatch(
-                        invocation_id,
-                        "host_dispatch_definitely_not_started",
-                        false,
-                    )?;
-                    self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
-                    return Err(BrokerError::DispatchRejected);
-                }
-                DeliveryAcceptanceV1::Ambiguous => {
-                    self.settle_unaccepted_dispatch(
-                        invocation_id,
-                        "host_dispatch_acceptance_uncertain",
-                        true,
-                    )?;
-                    self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
-                    return Err(BrokerError::AmbiguousDispatch);
-                }
             }
         }
         Ok(delivered)
+    }
+
+    /// Delivers exactly one pending outbox entry and leaves every other
+    /// pending dispatch untouched. Nested dispatches use this so an in-flight
+    /// sibling dispatch (the subagent tool runs its child loop inside the
+    /// parent tool dispatch) is never mistaken for an abandoned one.
+    pub fn deliver_pending_dispatch_for(
+        &self,
+        invocation_id: &StableId,
+        host: &dyn ApprovedHostDispatchPortV1,
+    ) -> Result<bool, BrokerError> {
+        let Some(outbox) = self
+            .ledger
+            .pending_dispatches()?
+            .into_iter()
+            .find(|entry| entry.dispatch.invocation_id == *invocation_id)
+        else {
+            return Ok(false);
+        };
+        self.deliver_outbox(&outbox, host)
+    }
+
+    /// Delivers one outbox entry with the shared attempt/accept/settle state
+    /// machine; returns whether this call delivered it.
+    fn deliver_outbox(
+        &self,
+        outbox: &DispatchOutboxV1,
+        host: &dyn ApprovedHostDispatchPortV1,
+    ) -> Result<bool, BrokerError> {
+        let invocation_id = &outbox.dispatch.invocation_id;
+        let events = self.ledger.events(invocation_id)?;
+        if events.iter().any(|event| {
+            matches!(event, InvocationLedgerEventV1::Settled { .. })
+                || matches!(event, InvocationLedgerEventV1::DispatchAccepted { .. })
+        }) {
+            self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+            return Ok(true);
+        }
+        if events
+            .iter()
+            .any(|event| matches!(event, InvocationLedgerEventV1::DispatchAttempted { .. }))
+        {
+            self.settle_unaccepted_dispatch(
+                invocation_id,
+                "host_dispatch_recovery_uncertain",
+                true,
+            )?;
+            self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+            return Err(BrokerError::AmbiguousDispatch);
+        }
+        self.ledger.append_atomic(
+            &[InvocationLedgerEventV1::DispatchAttempted {
+                invocation_id: invocation_id.clone(),
+            }],
+            None,
+        )?;
+        let acceptance = match host.dispatch(&outbox.dispatch) {
+            Ok(acceptance) => acceptance,
+            Err(error) => {
+                self.settle_unaccepted_dispatch(
+                    invocation_id,
+                    "host_dispatch_transport_uncertain",
+                    true,
+                )?;
+                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+                return Err(error);
+            }
+        };
+        match acceptance {
+            DeliveryAcceptanceV1::Accepted | DeliveryAcceptanceV1::AlreadyAccepted => {
+                self.accept_dispatch(invocation_id)?;
+                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+                Ok(true)
+            }
+            DeliveryAcceptanceV1::RejectedDefinitelyNotStarted => {
+                self.settle_unaccepted_dispatch(
+                    invocation_id,
+                    "host_dispatch_definitely_not_started",
+                    false,
+                )?;
+                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+                Err(BrokerError::DispatchRejected)
+            }
+            DeliveryAcceptanceV1::Ambiguous => {
+                self.settle_unaccepted_dispatch(
+                    invocation_id,
+                    "host_dispatch_acceptance_uncertain",
+                    true,
+                )?;
+                self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;
+                Err(BrokerError::AmbiguousDispatch)
+            }
+        }
     }
 
     fn settle_unaccepted_dispatch(

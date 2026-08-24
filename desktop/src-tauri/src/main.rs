@@ -21,7 +21,9 @@ use aworkit_desktop::runtime::{
     ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
     ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
     SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
-    UiCommandInput, UiCommandReceipt, WorkflowCommitInput, WorkflowSnapshot,
+    UiCommandInput, UiCommandReceipt, WorkflowCommitInput, WorkflowCreateInput,
+    WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot, WorkflowRenameInput,
+    WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
 use tauri::Manager;
@@ -332,11 +334,27 @@ async fn settings_v2_register_extension(
 }
 
 #[tauri::command]
-fn workflow_snapshot(runtime: tauri::State<'_, SharedRuntime>) -> Result<WorkflowSnapshot, String> {
+fn workflow_snapshot(
+    runtime: tauri::State<'_, SharedRuntime>,
+    workflow_id: Option<String>,
+) -> Result<WorkflowSnapshot, String> {
+    let runtime = runtime
+        .lock()
+        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
+    Ok(match workflow_id {
+        Some(workflow_id) => runtime.workflow_snapshot_for(workflow_id),
+        None => runtime.workflow_snapshot(),
+    })
+}
+
+#[tauri::command]
+fn workflow_library(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<WorkflowLibrarySnapshot, String> {
     Ok(runtime
         .lock()
         .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .workflow_snapshot())
+        .workflow_library())
 }
 
 #[tauri::command]
@@ -353,6 +371,86 @@ async fn workflow_commit(
     })
     .await
     .map_err(|error| format!("workflow command worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn workflow_create(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowCreateInput,
+) -> Result<WorkflowCreateReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_create(command)
+    })
+    .await
+    .map_err(|error| format!("workflow create worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn workflow_duplicate(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowDuplicateInput,
+) -> Result<WorkflowCreateReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_duplicate(command)
+    })
+    .await
+    .map_err(|error| format!("workflow duplicate worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn workflow_delete(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowTargetInput,
+) -> Result<UiCommandReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_delete(command)
+    })
+    .await
+    .map_err(|error| format!("workflow delete worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn workflow_rename(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowRenameInput,
+) -> Result<UiCommandReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_rename(command)
+    })
+    .await
+    .map_err(|error| format!("workflow rename worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn workflow_set_default(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowTargetInput,
+) -> Result<UiCommandReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_set_default(command)
+    })
+    .await
+    .map_err(|error| format!("workflow default worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -442,7 +540,13 @@ fn main() {
             settings_v2_inspect_extension,
             settings_v2_register_extension,
             workflow_snapshot,
+            workflow_library,
             workflow_commit,
+            workflow_create,
+            workflow_duplicate,
+            workflow_delete,
+            workflow_rename,
+            workflow_set_default,
             management_repair_snapshot,
             management_repair_command,
             native_presentation_capabilities,

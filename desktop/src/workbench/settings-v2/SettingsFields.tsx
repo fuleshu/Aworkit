@@ -272,12 +272,18 @@ export function ConnectionEditor({
   value,
   credentials,
   allowedTransports = ["stdio", "http"],
+  showWorkingDirectory = true,
+  onPickCommand,
   onChange,
 }: {
   readonly id: string;
   readonly value: ConnectionConfiguration;
   readonly credentials: readonly CredentialMetadataConfiguration[];
   readonly allowedTransports?: readonly ("http" | "stdio")[];
+  /** MCP processes inherit Aworkit's directory; external agents may opt in. */
+  readonly showWorkingDirectory?: boolean;
+  /** Opens a native executable picker when the containing screen provides one. */
+  readonly onPickCommand?: () => Promise<string | null>;
   readonly onChange: (value: ConnectionConfiguration) => void;
 }): React.JSX.Element {
   const selectTransport = (transport: "http" | "stdio") => {
@@ -349,32 +355,50 @@ export function ConnectionEditor({
       ) : (
         <>
           <div className="settings-grid two-columns">
-            <label className="settings-field" htmlFor={`${id}-command`}>
-              Command
-              <input
-                id={`${id}-command`}
-                spellCheck={false}
-                title="Exact executable to launch under Aworkit process supervision"
-                type="text"
-                value={value.command}
-                onChange={(event) =>
-                  onChange({ ...value, command: event.target.value })
-                }
-              />
-            </label>
-            <label className="settings-field" htmlFor={`${id}-cwd`}>
-              Working directory
-              <input
-                id={`${id}-cwd`}
-                spellCheck={false}
-                title="Optional working directory; this is not a security restriction"
-                type="text"
-                value={value.cwd ?? ""}
-                onChange={(event) =>
-                  onChange({ ...value, cwd: event.target.value || null })
-                }
-              />
-            </label>
+            <div className="settings-field">
+              <label htmlFor={`${id}-command`}>Command</label>
+              <div className="settings-command-picker">
+                <input
+                  id={`${id}-command`}
+                  spellCheck={false}
+                  title="Exact executable to launch. Windows paths may contain spaces; shell quotes are optional."
+                  type="text"
+                  value={value.command}
+                  onChange={(event) =>
+                    onChange({ ...value, command: event.target.value })
+                  }
+                />
+                {onPickCommand !== undefined && (
+                  <button
+                    title="Choose the MCP executable with the native file picker"
+                    type="button"
+                    onClick={() => {
+                      void onPickCommand().then((command) => {
+                        if (command === null) return;
+                        onChange({ ...value, command, cwd: null });
+                      });
+                    }}
+                  >
+                    Browse…
+                  </button>
+                )}
+              </div>
+            </div>
+            {showWorkingDirectory && (
+              <label className="settings-field" htmlFor={`${id}-cwd`}>
+                Working directory
+                <input
+                  id={`${id}-cwd`}
+                  spellCheck={false}
+                  title="Optional working directory; this is not a security restriction"
+                  type="text"
+                  value={value.cwd ?? ""}
+                  onChange={(event) =>
+                    onChange({ ...value, cwd: event.target.value || null })
+                  }
+                />
+              </label>
+            )}
           </div>
           <label className="settings-field" htmlFor={`${id}-args`}>
             Arguments

@@ -13,11 +13,14 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import type { JSX } from "react";
+import { catalogInputPorts, catalogOutputPorts } from "./nodeCatalog";
+import type { NodeRunStatus } from "./runStatus";
 import type { JsonObject, WorkflowEditorState } from "./workflow";
 import { workflowEdgeId, workflowNodeId } from "./workflow";
 
 export interface WorkflowGraphCallbacks {
   readonly structureLocked?: boolean;
+  readonly runStatus?: ReadonlyMap<string, NodeRunStatus>;
   readonly onSelect: (id: string) => void;
   readonly onClearSelection: () => void;
   readonly onMove: (
@@ -63,6 +66,7 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   readonly label: string;
   readonly type: string;
   readonly missing: boolean;
+  readonly status: NodeRunStatus;
   readonly inputPorts: readonly string[];
   readonly outputPorts: readonly string[];
 }
@@ -70,9 +74,11 @@ function toNode(
   node: JsonObject,
   index: number,
   selected: boolean,
+  runStatus?: ReadonlyMap<string, NodeRunStatus>,
 ): Node<WorkflowNodeData> {
   const id = workflowNodeId(node, index);
   const point = asObject(node.position);
+  const nodeType = typeof node.type === "string" ? node.type : "unknown";
   return {
     id,
     type: "aworkit",
@@ -82,10 +88,11 @@ function toNode(
     },
     data: {
       label: typeof node.label === "string" ? node.label : id,
-      type: typeof node.type === "string" ? node.type : "unknown",
+      type: nodeType,
       missing: node.capabilityStatus === "missing",
-      inputPorts: stringArray(node.inputPorts, "in"),
-      outputPorts: stringArray(node.outputPorts, "out"),
+      status: runStatus?.get(id) ?? "idle",
+      inputPorts: portIds(node.inputPorts, catalogInputPorts(nodeType), "in"),
+      outputPorts: portIds(node.outputPorts, catalogOutputPorts(nodeType), "out"),
     },
     parentId: typeof node.parentId === "string" ? node.parentId : undefined,
     extent: typeof node.parentId === "string" ? "parent" : undefined,
@@ -128,10 +135,15 @@ function optionalNumber(value: unknown): number | undefined {
     ? value
     : undefined;
 }
-function stringArray(value: unknown, fallback: string): readonly string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? value
-    : [fallback];
+function portIds(
+  explicit: unknown,
+  catalog: readonly { readonly id: string }[],
+  fallback: string,
+): readonly string[] {
+  if (Array.isArray(explicit) && explicit.every((item) => typeof item === "string"))
+    return explicit;
+  const ids = catalog.map(({ id }) => id);
+  return ids.length > 0 ? ids : [fallback];
 }
 
 function WorkflowCanvas({
@@ -142,7 +154,7 @@ function WorkflowCanvas({
   readonly callbacks: WorkflowGraphCallbacks;
 }): JSX.Element {
   const { screenToFlowPosition } = useReactFlow();
-  const { nodes, edges } = projectWorkflowSurface(state);
+  const { nodes, edges } = projectWorkflowSurface(state, callbacks.runStatus);
   const structureLocked = callbacks.structureLocked === true;
   return (
     <ReactFlow
@@ -219,13 +231,21 @@ function WorkflowCanvas({
 }
 
 /** Deterministic adapter projection kept testable outside React Flow widget state. */
-export function projectWorkflowSurface(state: WorkflowEditorState): {
+export function projectWorkflowSurface(
+  state: WorkflowEditorState,
+  runStatus?: ReadonlyMap<string, NodeRunStatus>,
+): {
   readonly nodes: Node<WorkflowNodeData>[];
   readonly edges: Edge[];
 } {
   return {
     nodes: state.document.nodes.map((node, index) =>
-      toNode(node, index, state.selectedIds.has(workflowNodeId(node, index))),
+      toNode(
+        node,
+        index,
+        state.selectedIds.has(workflowNodeId(node, index)),
+        runStatus,
+      ),
     ),
     edges: state.document.edges.map((edge, index) => {
       const id = workflowEdgeId(edge, index);
@@ -241,7 +261,7 @@ function WorkflowNode({
 }: NodeProps<Node<WorkflowNodeData>>): JSX.Element {
   return (
     <div
-      className={`aworkit-node ${selected ? "selected" : ""} ${data.missing ? "missing" : ""}`}
+      className={`aworkit-node ${selected ? "selected" : ""} ${data.missing ? "missing" : ""} run-${data.status}`}
     >
       {data.inputPorts.map((port, index) => (
         <Handle
@@ -263,6 +283,11 @@ function WorkflowNode({
           {data.missing ? " · unresolved" : ""}
         </span>
       </div>
+      {data.status !== "idle" && (
+        <span className={`node-run-status ${data.status}`} title={`Node ${data.status}`}>
+          {runStatusIcon(data.status)}
+        </span>
+      )}
       {data.outputPorts.map((port, index) => (
         <Handle
           key={port}
@@ -284,4 +309,21 @@ function nodeIcon(type: string): string {
   if (type.includes("input")) return "→";
   if (type.includes("gate")) return "◇";
   return "◆";
+}
+
+function runStatusIcon(status: NodeRunStatus): string {
+  switch (status) {
+    case "completed":
+      return "✓";
+    case "failed":
+      return "×";
+    case "running":
+      return "▶";
+    case "waiting":
+      return "…";
+    case "skipped":
+      return "−";
+    default:
+      return "";
+  }
 }

@@ -18,12 +18,13 @@ use aworkit_capability_host::{
     AnthropicMessagesProvider, AnthropicMessagesProviderConfig, ApprovedInvocationEnvelopeV1,
     CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind, FrozenModelGateway,
     GoogleGeminiLimitsV1, GoogleGeminiProvider, GoogleGeminiProviderConfig, InjectionTargetV1,
+    McpCapabilitySnapshotV1, McpPeerPort, McpPeerTransportConfigV1, McpServerManifestV1,
     ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1, ModelToolExchangeV1,
     OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
-    ProviderEnginePortV1, ProviderError, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
-    SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
-    SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
-    SecretMaterializer, SideEffectClass,
+    ProductionMcpPeer, ProviderEnginePortV1, ProviderError,
+    RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1, SecretDeliveryV1 as HostSecretDeliveryV1,
+    SecretFieldPlanV1, SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
+    SecretMaterializationPlanV1, SecretMaterializer, SideEffectClass,
 };
 use aworkit_local_store::{
     CommitBatch, Deduplication, Event, LocalHistoryStore, OutboxEntry, StoreError,
@@ -58,12 +59,19 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use super::{
+    documents::validate_v1_executable_catalog,
+    graph_pass::{
+        GraphApprovalRequestV1, GraphNodeActivityV1, GraphPassBudgetV1, GraphPassStatusV1,
+        PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass,
+    },
+    mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
     model_tool_loop::{ModelToolLoopErrorV1, ModelToolLoopRequestV1, execute_model_tool_loop_v1},
     project_scope::revalidate_git_branch,
     tool_loop::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, SimpleChatToolActivityV1,
-        SimpleChatToolBindingV1, StoredFileToolBindingV1, file_tool_capability_binding,
-        file_tool_descriptors, freeze_file_tool_bindings,
+        SimpleChatToolBindingV1, StoredFileToolBindingV1, ToolApprovalChallengeV1,
+        file_tool_capability_binding, file_tool_capability_binding_with_nodes,
+        file_tool_descriptors, freeze_file_tool_bindings, mcp_tool_descriptor,
     },
 };
 
@@ -188,6 +196,9 @@ pub struct SimpleChatExecutionRequestV1 {
     pub now_epoch_millis: u64,
     pub deadline_epoch_millis: u64,
     pub budget: WorkerBudgetV1,
+    /// Core-attested MCP manifests frozen with the Run so the dispatcher can
+    /// open exact sessions on demand. Empty for tool sets without MCP.
+    pub mcp_servers: Vec<McpServerManifestV1>,
 }
 
 impl SimpleChatExecutionRequestV1 {
@@ -214,6 +225,7 @@ impl SimpleChatExecutionRequestV1 {
             messages,
             now_epoch_millis,
             deadline_epoch_millis: now_epoch_millis.saturating_add(60_000),
+            mcp_servers: Vec::new(),
             budget: WorkerBudgetV1 {
                 turns: 1,
                 attempts: 1,
@@ -237,6 +249,7 @@ pub enum SimpleChatExecutionStatusV1 {
     FailedDefinitelyNotStarted,
     FailedKnownStarted,
     OutcomeUncertain,
+    AwaitingApproval,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -260,6 +273,8 @@ pub struct SimpleChatExecutionResultV1 {
     pub model_turns: u64,
     pub tool_calls: u64,
     pub tool_activity: Vec<SimpleChatToolActivityV1>,
+    pub node_activity: Vec<GraphNodeActivityV1>,
+    pub approval: Option<GraphApprovalRequestV1>,
     pub replayed: bool,
 }
 
@@ -275,6 +290,8 @@ pub enum SimpleChatPipelineError {
     Broker(String),
     #[error("Simple Chat invocation requires an approval flow that is not supplied by this API")]
     ApprovalRequired,
+    #[error("tool invocation requires a user approval decision")]
+    ToolApproval(ToolApprovalChallengeV1),
     #[error("Simple Chat invocation was denied by its frozen authority")]
     AuthorityDenied,
     #[error("Simple Chat worker contract failed: {0}")]
@@ -398,6 +415,15 @@ impl SimpleChatExecutionPipeline {
         self.validated_prepared(request).map(|_| ())
     }
 
+    /// Latest durable Run task list recorded by the todo tool, if any. The
+    /// newest stored snapshot is the live list shown in the editor.
+    pub(crate) fn run_todo_state(
+        &self,
+        run_id: &StableId,
+    ) -> Result<Option<Value>, SimpleChatPipelineError> {
+        self.file_tool_authority.todo_state(run_id)
+    }
+
     fn validated_prepared(
         &self,
         request: &SimpleChatExecutionRequestV1,
@@ -502,9 +528,8 @@ impl SimpleChatExecutionPipeline {
                     })
             });
         let frozen_context_matches = existing.snapshot.nodes.iter().any(|node| {
-            node.node_id.as_str() == "agent.1"
-                && node.config.get("frozenContextHash").and_then(Value::as_str)
-                    == Some(request.frozen_context_hash.as_str())
+            node.config.get("frozenContextHash").and_then(Value::as_str)
+                == Some(request.frozen_context_hash.as_str())
         });
         let identity_matches = existing.request_id == request.request_id
             && existing.snapshot.chat_id == request.chat_id
@@ -548,7 +573,11 @@ impl SimpleChatExecutionPipeline {
                 InvocationLedgerEventV1::DispatchAttempted { .. }
                     | InvocationLedgerEventV1::Settled { .. }
             )
-        }) || self.records.outcome(&invocation_id)?.is_some();
+        }) || self.records.outcome(&invocation_id)?.is_some()
+            || self
+                .records
+                .pending_approval_for_invocation(&invocation_id)?
+                .is_some();
         Ok(!effect_fenced)
     }
 
@@ -613,6 +642,42 @@ impl SimpleChatExecutionPipeline {
             self.reconcile_persisted_outcomes(&broker)?;
         }
 
+        if self.ledger.settlement(&broker_invocation_id)?.is_none()
+            && let Some(pending) = self
+                .records
+                .pending_approval_for_invocation(&broker_invocation_id)?
+        {
+            // The graph pass is durably suspended at an approval gate.
+            return Ok(SimpleChatExecutionResultV1 {
+                request_id: prepared.request_id,
+                chat_id: prepared.snapshot.chat_id.clone(),
+                run_id: prepared.snapshot.run_id.clone(),
+                snapshot_id: prepared.snapshot.snapshot_id.clone(),
+                snapshot_hash: prepared.snapshot.snapshot_hash.clone(),
+                authority_manifest_id: prepared.manifest.manifest_id.clone(),
+                worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
+                broker_invocation_id,
+                outcome_hash: String::new(),
+                status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                assistant_text: None,
+                error: None,
+                model: prepared.provider.model.clone(),
+                input_units: pending.input_units,
+                output_units: pending.output_units,
+                model_turns: u64::from(pending.attempted_model_turns),
+                tool_calls: u64::from(pending.settled_tool_calls),
+                tool_activity: pending.tool_activity.clone(),
+                node_activity: pending.activity.clone(),
+                approval: Some(GraphApprovalRequestV1 {
+                    decision_id: pending.decision_id.clone(),
+                    node_id: pending.pending_node_id.clone(),
+                    title: pending.title.clone(),
+                    message: pending.message.clone(),
+                }),
+                replayed: record_existing,
+            });
+        }
+
         let (outcome_hash, uncertain) = self
             .ledger
             .settlement(&broker_invocation_id)?
@@ -646,10 +711,14 @@ impl SimpleChatExecutionPipeline {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             };
-            finalize_scheduler_evidence(&prepared, &mut outcome)?;
+            if prepared.scheduler_checkpoint.is_some() {
+                finalize_scheduler_evidence(&prepared, &mut outcome)?;
+            }
             outcome
         };
         settle_worker_contract(&prepared, &outcome, &outcome_hash)?;
@@ -673,8 +742,315 @@ impl SimpleChatExecutionPipeline {
             model_turns: u64::from(outcome.attempted_model_turns),
             tool_calls: u64::from(outcome.settled_tool_calls),
             tool_activity: outcome.tool_activity,
+            node_activity: outcome.node_activity,
+            approval: outcome.approval,
             replayed: record_existing,
         })
+    }
+
+    /// Applies a committed user decision to a durably suspended graph-pass
+    /// approval gate. Approve continues the pass from the stored prefix;
+    /// reject fails the pass. The terminal outcome is recorded and the outer
+    /// invocation settled exactly like a fresh dispatch, so replaying the same
+    /// decision is idempotent and no model or tool work is recomputed.
+    pub fn resume_approval(
+        &self,
+        decision_id: &str,
+        approved: bool,
+    ) -> Result<SimpleChatExecutionResultV1, SimpleChatPipelineError> {
+        if self.records.approval_resolved(decision_id)? {
+            return Err(SimpleChatPipelineError::Store(
+                "approval decision was already applied".to_owned(),
+            ));
+        }
+        let decision = stable(decision_id)?;
+        let pending =
+            self.records
+                .pending_approval(decision_id)?
+                .ok_or(SimpleChatPipelineError::Store(
+                    "unknown approval decision".to_owned(),
+                ))?;
+        let request_id = stable(&pending.request_id)?;
+        let prepared = self
+            .records
+            .execution(&request_id)?
+            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+        let broker_invocation_id = stable(&pending.invocation_id)?;
+        let recorded_invocation = self
+            .ledger
+            .invocation_for_proposal(&prepared.broker_proposal.proposal_id)?
+            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+        if recorded_invocation != broker_invocation_id
+            || prepared.snapshot.chat_id.as_str() != pending.chat_id
+            || prepared.snapshot.run_id.as_str() != pending.run_id
+        {
+            return Err(SimpleChatPipelineError::IncompleteEvidence);
+        }
+        let workspace = prepared
+            .workspace
+            .as_ref()
+            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+        if self.projects.revalidate_workspace_v1(workspace).is_err()
+            || revalidate_optional_project_branch(workspace, prepared.project_branch.as_deref())
+                .is_err()
+        {
+            return Err(SimpleChatPipelineError::Authority(
+                "frozen project workspace or Git branch drifted before approval resume".into(),
+            ));
+        }
+        let protocol = ProviderProtocolV1::parse(&prepared.provider.kind)?;
+        let descriptor = self
+            .descriptors
+            .get(&protocol)
+            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+        let lease_authority = Arc::new(PipelineLeaseAuthority::new(
+            self.generation,
+            self.credential_store.clone(),
+        ));
+        let materialized = if let Some(secret) = prepared.secret.as_ref() {
+            let lease = lease_id(&broker_invocation_id, secret)?;
+            lease_authority.prepare(
+                Some(secret),
+                &broker_invocation_id,
+                &prepared.snapshot.run_id,
+                &[lease.clone()],
+            )?;
+            let materializer = SecretMaterializer::new(CoreSecretLeaseClient {
+                authority: lease_authority,
+            });
+            match materializer.materialize(&SecretMaterializationPlanV1 {
+                decision_id: broker_invocation_id.clone(),
+                invocation_id: broker_invocation_id.clone(),
+                host_generation: self.generation,
+                lease: SecretLeaseHandleV1 { lease_id: lease },
+                fields: vec![SecretFieldPlanV1 {
+                    field: API_KEY_FIELD.to_owned(),
+                    target: InjectionTargetV1::Header(protocol.api_key_header().to_owned()),
+                }],
+            }) {
+                Ok(materialized) => Some(materialized),
+                Err(error) => {
+                    return Err(SimpleChatPipelineError::Store(format!(
+                        "credential lease materialization failed: {error}"
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+        let api_key_bytes = materialized
+            .as_ref()
+            .and_then(|secret| secret.value(API_KEY_FIELD));
+        let api_key = match api_key_bytes {
+            Some(bytes) => match String::from_utf8(bytes.to_vec()) {
+                Ok(value) => Some(Zeroizing::new(value)),
+                Err(_) => {
+                    return Err(SimpleChatPipelineError::Store(
+                        "credential API-key field is not valid UTF-8".to_owned(),
+                    ));
+                }
+            },
+            None => None,
+        };
+        let provider = self
+            .provider_factory
+            .create(descriptor, &prepared.provider, api_key)
+            .map_err(|error| SimpleChatPipelineError::Store(redact_error(&materialized, &error)))?;
+        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
+        let workflow = prepared
+            .worker_proposal
+            .payload
+            .get("config")
+            .and_then(|config| config.get("workflow"))
+            .cloned()
+            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+        let compiled = compile_graph_pass(&workflow, &prepared.tool_bindings)
+            .map_err(SimpleChatPipelineError::InvalidInput)?;
+        let cancellation = CancellationToken::default();
+        let authority = self
+            .file_tool_authority
+            .bind(FrozenFileToolAuthorityContextV1 {
+                manifest: prepared.manifest.clone(),
+                run_id: prepared.snapshot.run_id.clone(),
+                node_id: prepared.worker_proposal.node_id.clone(),
+                workspace: workspace.clone(),
+                project_branch: prepared.project_branch.clone(),
+                bindings: prepared.tool_bindings.clone(),
+                deadline_epoch_millis: prepared.deadline_epoch_millis,
+                model_gateway: Some(gateway.clone()),
+                model_binding_id: Some(descriptor.capability_id.clone()),
+                model_version_hash: Some(descriptor.version_hash.clone()),
+                mcp_manifests: prepared.mcp_manifests.clone(),
+                cancellation: cancellation.clone(),
+            });
+        let pass = execute_graph_pass(
+            &compiled,
+            &pending.conversation,
+            GraphPassBudgetV1 {
+                turns: prepared.snapshot.budget.turns,
+                tool_calls: prepared.snapshot.budget.tool_calls,
+                tokens: prepared.snapshot.budget.tokens,
+                actions: prepared.snapshot.budget.actions,
+            },
+            &gateway,
+            &authority,
+            &broker_invocation_id,
+            prepared.request_id.as_str(),
+            prepared.snapshot.chat_id.as_str(),
+            prepared.snapshot.run_id.as_str(),
+            &descriptor.capability_id,
+            &descriptor.version_hash,
+            current_epoch_millis(),
+            Some(&pending),
+            Some(approved),
+            &cancellation,
+        );
+        match pass.status {
+            GraphPassStatusV1::AwaitingApproval => {
+                let next = pass
+                    .pending_state
+                    .clone()
+                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                self.records.mark_approval_resolved(&decision)?;
+                self.records.store_pending_approval(&next)?;
+                Ok(SimpleChatExecutionResultV1 {
+                    request_id: prepared.request_id,
+                    chat_id: prepared.snapshot.chat_id.clone(),
+                    run_id: prepared.snapshot.run_id.clone(),
+                    snapshot_id: prepared.snapshot.snapshot_id.clone(),
+                    snapshot_hash: prepared.snapshot.snapshot_hash.clone(),
+                    authority_manifest_id: prepared.manifest.manifest_id.clone(),
+                    worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
+                    broker_invocation_id,
+                    outcome_hash: String::new(),
+                    status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                    assistant_text: None,
+                    error: None,
+                    model: prepared.provider.model.clone(),
+                    input_units: next.input_units,
+                    output_units: next.output_units,
+                    model_turns: u64::from(next.attempted_model_turns),
+                    tool_calls: u64::from(next.settled_tool_calls),
+                    tool_activity: next.tool_activity.clone(),
+                    node_activity: next.activity.clone(),
+                    approval: pass.approval,
+                    replayed: false,
+                })
+            }
+            GraphPassStatusV1::Succeeded | GraphPassStatusV1::Failed => {
+                let status = if matches!(pass.status, GraphPassStatusV1::Succeeded) {
+                    SimpleChatExecutionStatusV1::Succeeded
+                } else {
+                    SimpleChatExecutionStatusV1::FailedKnownStarted
+                };
+                let mut record = ProviderOutcomeRecordV1 {
+                    schema_version: 1,
+                    invocation_id: broker_invocation_id.clone(),
+                    status,
+                    assistant_text: pass.assistant_text,
+                    error: pass.error,
+                    model: prepared.provider.model.clone(),
+                    input_units: pass.input_units,
+                    output_units: pass.output_units,
+                    attempted_model_turns: pass.attempted_model_turns,
+                    settled_tool_calls: pass.settled_tool_calls,
+                    tool_exchanges: pass.exchanges.clone(),
+                    tool_activity: pass.tool_activity.clone(),
+                    node_activity: pass.activity.clone(),
+                    approval: None,
+                    scheduler_checkpoint: None,
+                    scheduler_trace: Vec::new(),
+                };
+                validate_provider_outcome_accounting(&prepared, &record)?;
+                compact_provider_outcome_if_needed(&mut record)?;
+                enforce_serialized_bound(
+                    &record,
+                    MAXIMUM_PROVIDER_OUTCOME_BYTES,
+                    "provider outcome record",
+                )?;
+                self.records.record_outcome(&record)?;
+                let broker = DurableInvocationBroker::new(self.ledger.clone(), APPROVAL_TTL_MILLIS);
+                self.reconcile_persisted_outcomes(&broker)?;
+                let (outcome_hash, _uncertain) = self
+                    .ledger
+                    .settlement(&broker_invocation_id)?
+                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                settle_worker_contract(&prepared, &record, &outcome_hash)?;
+                let _ = broker.deliver_worker_results(&CommittedWorkerAck);
+                self.records.mark_approval_resolved(&decision)?;
+                Ok(SimpleChatExecutionResultV1 {
+                    request_id: prepared.request_id,
+                    chat_id: prepared.snapshot.chat_id.clone(),
+                    run_id: prepared.snapshot.run_id.clone(),
+                    snapshot_id: prepared.snapshot.snapshot_id.clone(),
+                    snapshot_hash: prepared.snapshot.snapshot_hash.clone(),
+                    authority_manifest_id: prepared.manifest.manifest_id.clone(),
+                    worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
+                    broker_invocation_id,
+                    outcome_hash,
+                    status: record.status,
+                    assistant_text: record.assistant_text,
+                    error: record.error,
+                    model: record.model,
+                    input_units: record.input_units,
+                    output_units: record.output_units,
+                    model_turns: u64::from(record.attempted_model_turns),
+                    tool_calls: u64::from(record.settled_tool_calls),
+                    tool_activity: record.tool_activity,
+                    node_activity: record.node_activity,
+                    approval: None,
+                    replayed: false,
+                })
+            }
+        }
+    }
+
+    /// Installs a scripted MCP peer for tests. Fails closed when a peer is
+    /// already installed for this application generation.
+    pub fn install_mcp_peer(&self, peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
+        self.file_tool_authority.mcp.install_scripted_peer(peer)
+    }
+
+    /// Prepares production MCP sessions for one frozen Run: installs the
+    /// production peer on first use, stages every server's materialized
+    /// credential slots, opens the exact core-attested sessions, and returns
+    /// their discovery snapshots. Binding drift fails closed without touching
+    /// an active session.
+    pub(crate) fn prepare_mcp_sessions(
+        &self,
+        run_id: &StableId,
+        servers: &mut [McpRunServerPreparationV1],
+    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+        let needs_install = self.file_tool_authority.mcp.needs_install()?;
+        if needs_install && !servers.is_empty() {
+            let configs = servers
+                .iter()
+                .map(|server| McpPeerTransportConfigV1 {
+                    server_id: server.manifest.server_id.clone(),
+                    binding_hash: server.manifest.binding_hash.clone(),
+                    endpoint: server.endpoint.clone(),
+                })
+                .collect();
+            let peer = Arc::new(
+                ProductionMcpPeer::with_limits(configs, super::mcp::production_peer_limits())
+                    .map_err(|error| format!("MCP transport configuration is invalid: {error}"))?,
+            );
+            self.file_tool_authority.mcp.install_production_peer(peer)?;
+        }
+        let mut snapshots = Vec::with_capacity(servers.len());
+        for server in servers {
+            if let Some(materialization) = server.materialization.take() {
+                self.file_tool_authority
+                    .mcp
+                    .stage_secrets(&server.manifest.server_id, materialization)?;
+            }
+            let snapshot = self
+                .file_tool_authority
+                .mcp
+                .open_frozen(run_id, &server.manifest)?;
+            snapshots.push(snapshot);
+        }
+        Ok(snapshots)
     }
 
     fn prepare_pending_leases(
@@ -717,18 +1093,30 @@ impl SimpleChatExecutionPipeline {
             model: request.provider.model.clone(),
         };
         let tool_bindings = freeze_file_tool_bindings(&request.tools)?;
-        let CompiledSimpleChatGraphV1 {
-            nodes,
-            transitions,
-            entry_nodes,
-            model_node_id,
-        } = compile_simple_chat_graph(
-            request,
-            descriptor,
-            &provider,
-            secret.as_ref(),
-            &tool_bindings,
-        )?;
+        let graph_mode = !is_simple_chat_document(&request.workflow_snapshot);
+        let (nodes, transitions, entry_nodes, model_node_id) = if graph_mode {
+            compile_graph_snapshot(
+                request,
+                descriptor,
+                &provider,
+                secret.as_ref(),
+                &tool_bindings,
+            )?
+        } else {
+            let CompiledSimpleChatGraphV1 {
+                nodes,
+                transitions,
+                entry_nodes,
+                model_node_id,
+            } = compile_simple_chat_graph(
+                request,
+                descriptor,
+                &provider,
+                secret.as_ref(),
+                &tool_bindings,
+            )?;
+            (nodes, transitions, entry_nodes, model_node_id)
+        };
         let workflow_hash =
             workflow_graph_hash_v1(&nodes, &transitions, &entry_nodes, &[], &[], &[])
                 .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
@@ -751,16 +1139,45 @@ impl SimpleChatExecutionPipeline {
             enabled: true,
             compatible: true,
             approval: ApprovalRequirement::Never,
-            allowed_node_types: vec![MODEL_NODE_TYPE.to_owned()],
+            allowed_node_types: if graph_mode {
+                vec!["agent".to_owned(), "model_call".to_owned()]
+            } else {
+                vec![MODEL_NODE_TYPE.to_owned()]
+            },
         };
+        let mut dynamic_descriptors = BTreeMap::new();
+        for tool in &tool_bindings {
+            if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                dynamic_descriptors.insert(
+                    tool.internal_id.clone(),
+                    mcp_tool_descriptor(&tool.internal_id)?,
+                );
+            }
+        }
         let mut capability_bindings = vec![model_binding];
         for tool in &tool_bindings {
+            let descriptor_key = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                &tool.internal_id
+            } else {
+                &tool.capability_id
+            };
             let descriptor = self
                 .file_tool_descriptors
-                .get(&tool.capability_id)
+                .get(descriptor_key)
+                .or_else(|| dynamic_descriptors.get(descriptor_key))
                 .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            capability_bindings.push(file_tool_capability_binding(tool, descriptor)?);
+            let binding = if graph_mode {
+                file_tool_capability_binding_with_nodes(
+                    tool,
+                    descriptor,
+                    vec!["agent".to_owned(), "tool".to_owned()],
+                )
+            } else {
+                file_tool_capability_binding(tool, descriptor)
+            }?;
+            capability_bindings.push(binding);
         }
+        let entry_node_id = entry_nodes.first().cloned();
         let (snapshot, manifest) = SnapshotFreezerV1::freeze(
             &self.projects,
             SnapshotRequestV1 {
@@ -783,7 +1200,13 @@ impl SimpleChatExecutionPipeline {
         .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
 
         let (scheduler_checkpoint, scheduler_trace, scheduler_continuation, agent_token_id) =
-            prepare_scheduler_for_agent(&snapshot, scheduler_basis.as_ref())?;
+            if graph_mode {
+                (None, Vec::new(), 0, None)
+            } else {
+                let (checkpoint, trace, continuation, token_id) =
+                    prepare_scheduler_for_agent(&snapshot, scheduler_basis.as_ref())?;
+                (Some(checkpoint), trace, continuation, Some(token_id))
+            };
 
         let budget_ref = digest_id("budget", request.request_id.as_str())?;
         let scope_id = format!("run.{}", &digest_hex(request.run_id.as_str())[..24]);
@@ -808,7 +1231,7 @@ impl SimpleChatExecutionPipeline {
             node_id: model_node_id,
             model_capability_ref: capability_id.clone(),
             authority_manifest_ref: manifest.manifest_id.clone(),
-            budget_ref,
+            budget_ref: budget_ref.clone(),
             scope_id,
             maximum_turns: request.maximum_turns,
             turn_reservation: Usage {
@@ -822,19 +1245,46 @@ impl SimpleChatExecutionPipeline {
             context_pointers: Vec::new(),
             allowed_tool_capability_refs: tool_bindings
                 .iter()
-                .map(|binding| stable(&binding.capability_id))
+                .map(|binding| {
+                    stable(
+                        if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                            &binding.internal_id
+                        } else {
+                            &binding.capability_id
+                        },
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         })
         .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
         let context = json!({"messages": request.messages});
-        let worker_proposal = agent
-            .propose_model_turn(&context, &mut limits)
-            .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-        if worker_proposal.authority_manifest_ref != manifest.manifest_id
-            || worker_proposal.capability_ref != capability_id
-        {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
+        let worker_proposal = if graph_mode {
+            let invocation_id = digest_id("pass", request.request_id.as_str())?;
+            let node_id = entry_node_id.ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            let payload = json!({
+                "context": context,
+                "config": {"workflow": request.workflow_snapshot},
+            });
+            WorkerInvocationProposalContractV1 {
+                invocation_id: invocation_id.clone(),
+                node_id,
+                attempt_id: digest_id("pass.attempt", request.request_id.as_str())?,
+                capability_ref: capability_id.clone(),
+                authority_manifest_ref: manifest.manifest_id.clone(),
+                budget_ref: budget_ref.clone(),
+                payload,
+            }
+        } else {
+            let proposal = agent
+                .propose_model_turn(&context, &mut limits)
+                .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
+            if proposal.authority_manifest_ref != manifest.manifest_id
+                || proposal.capability_ref != capability_id
+            {
+                return Err(SimpleChatPipelineError::IncompleteEvidence);
+            }
+            proposal
+        };
         let payload_hash = canonical_hash(&worker_proposal.payload)?;
         let broker_proposal = BrokerInvocationProposalV1 {
             proposal_id: worker_proposal.invocation_id.clone(),
@@ -859,10 +1309,15 @@ impl SimpleChatExecutionPipeline {
             broker_proposal,
             agent_checkpoint: agent.checkpoint(),
             limit_checkpoint: limits.checkpoint(),
-            scheduler_checkpoint: Some(scheduler_checkpoint),
+            scheduler_checkpoint,
             scheduler_trace,
             scheduler_continuation,
-            agent_token_id: Some(agent_token_id),
+            agent_token_id,
+            mcp_manifests: request
+                .mcp_servers
+                .iter()
+                .map(|manifest| (manifest.server_id.to_string(), manifest.clone()))
+                .collect(),
             deadline_epoch_millis: request.deadline_epoch_millis,
         };
         enforce_serialized_bound(
@@ -895,6 +1350,11 @@ impl SimpleChatExecutionPipeline {
             return Err(SimpleChatPipelineError::Store(
                 "Chat and Run identities no longer refer to the same frozen session".to_owned(),
             ));
+        }
+        if !is_simple_chat_document(&request.workflow_snapshot) {
+            // Graph passes are one fresh pass per input; there is no
+            // Wait-token scheduler continuation to reconstruct.
+            return Ok(None);
         }
         let session = executions
             .iter()
@@ -1090,6 +1550,9 @@ struct PreparedExecutionRecordV1 {
     /// and therefore safely decode as the initial Input only.
     #[serde(default)]
     scheduler_continuation: u64,
+    /// Core-attested MCP manifests frozen with this Run, keyed by server id.
+    #[serde(default)]
+    mcp_manifests: BTreeMap<String, McpServerManifestV1>,
     #[serde(default)]
     agent_token_id: Option<StableId>,
     deadline_epoch_millis: u64,
@@ -1146,6 +1609,10 @@ struct ProviderOutcomeRecordV1 {
     tool_exchanges: Vec<ModelToolExchangeV1>,
     #[serde(default)]
     tool_activity: Vec<SimpleChatToolActivityV1>,
+    #[serde(default)]
+    node_activity: Vec<GraphNodeActivityV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval: Option<GraphApprovalRequestV1>,
     #[serde(default)]
     scheduler_checkpoint: Option<SchedulerCheckpointV1>,
     #[serde(default)]
@@ -1586,6 +2053,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             });
@@ -1606,6 +2075,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    node_activity: Vec::new(),
+                    approval: None,
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 });
@@ -1640,6 +2111,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
+                        node_activity: Vec::new(),
+                        approval: None,
                         scheduler_checkpoint: None,
                         scheduler_trace: Vec::new(),
                     });
@@ -1668,6 +2141,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
+                        node_activity: Vec::new(),
+                        approval: None,
                         scheduler_checkpoint: None,
                         scheduler_trace: Vec::new(),
                     });
@@ -1694,6 +2169,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    node_activity: Vec::new(),
+                    approval: None,
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 });
@@ -1713,12 +2190,118 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             });
         };
-        let gateway = FrozenModelGateway::new(vec![provider]);
-        let outcome = if self.prepared.tool_bindings.is_empty() {
+        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
+        let graph_workflow = envelope
+            .payload
+            .get("config")
+            .and_then(|config| config.get("workflow"))
+            .cloned()
+            .filter(|workflow| !is_simple_chat_document(workflow));
+        let outcome = if let Some(workflow) = graph_workflow {
+            let conversation: Vec<SimpleChatMessageV1> = serde_json::from_value(
+                context
+                    .get("messages")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(json_error)?;
+            let workspace = self
+                .prepared
+                .workspace
+                .clone()
+                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            let authority = self
+                .file_tool_authority
+                .bind(FrozenFileToolAuthorityContextV1 {
+                    manifest: self.prepared.manifest.clone(),
+                    run_id: self.prepared.snapshot.run_id.clone(),
+                    node_id: self.prepared.worker_proposal.node_id.clone(),
+                    workspace,
+                    project_branch: self.prepared.project_branch.clone(),
+                    bindings: self.prepared.tool_bindings.clone(),
+                    deadline_epoch_millis: self.prepared.deadline_epoch_millis,
+                    model_gateway: Some(gateway.clone()),
+                    model_binding_id: Some(self.descriptor.capability_id.clone()),
+                    model_version_hash: Some(self.descriptor.version_hash.clone()),
+                    mcp_manifests: self.prepared.mcp_manifests.clone(),
+                    cancellation: cancellation.clone(),
+                });
+            let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
+                .map_err(|error| SimpleChatPipelineError::InvalidInput(error))?;
+            let pass = execute_graph_pass(
+                &compiled,
+                &conversation,
+                GraphPassBudgetV1 {
+                    turns: self.prepared.snapshot.budget.turns,
+                    tool_calls: self.prepared.snapshot.budget.tool_calls,
+                    tokens: self.prepared.snapshot.budget.tokens,
+                    actions: self.prepared.snapshot.budget.actions,
+                },
+                &gateway,
+                &authority,
+                &envelope.invocation_id,
+                self.prepared.request_id.as_str(),
+                self.prepared.snapshot.chat_id.as_str(),
+                self.prepared.snapshot.run_id.as_str(),
+                &self.descriptor.capability_id,
+                &self.descriptor.version_hash,
+                current_epoch_millis(),
+                None,
+                None,
+                cancellation,
+            );
+            let base = ProviderOutcomeRecordV1 {
+                schema_version: 1,
+                invocation_id: envelope.invocation_id.clone(),
+                status: SimpleChatExecutionStatusV1::FailedKnownStarted,
+                assistant_text: None,
+                error: None,
+                model: self.provider.model.clone(),
+                input_units: pass.input_units,
+                output_units: pass.output_units,
+                attempted_model_turns: pass.attempted_model_turns,
+                settled_tool_calls: pass.settled_tool_calls,
+                tool_exchanges: pass.exchanges.clone(),
+                tool_activity: pass.tool_activity.clone(),
+                node_activity: pass.activity.clone(),
+                approval: pass.approval.clone(),
+                scheduler_checkpoint: None,
+                scheduler_trace: Vec::new(),
+            };
+            match pass.status {
+                GraphPassStatusV1::Succeeded => ProviderOutcomeRecordV1 {
+                    status: SimpleChatExecutionStatusV1::Succeeded,
+                    assistant_text: pass.assistant_text,
+                    error: None,
+                    ..base
+                },
+                GraphPassStatusV1::Failed => ProviderOutcomeRecordV1 {
+                    status: SimpleChatExecutionStatusV1::FailedKnownStarted,
+                    assistant_text: None,
+                    error: pass.error,
+                    ..base
+                },
+                GraphPassStatusV1::AwaitingApproval => {
+                    let pending = pass
+                        .pending_state
+                        .clone()
+                        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                    self.records.store_pending_approval(&pending)?;
+                    ProviderOutcomeRecordV1 {
+                        status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                        assistant_text: None,
+                        error: None,
+                        ..base
+                    }
+                }
+            }
+        } else if self.prepared.tool_bindings.is_empty() {
             text_only_outcome(
                 &gateway,
                 &self.descriptor,
@@ -1744,6 +2327,11 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     project_branch: self.prepared.project_branch.clone(),
                     bindings: self.prepared.tool_bindings.clone(),
                     deadline_epoch_millis: self.prepared.deadline_epoch_millis,
+                    model_gateway: Some(gateway.clone()),
+                    model_binding_id: Some(self.descriptor.capability_id.clone()),
+                    model_version_hash: Some(self.descriptor.version_hash.clone()),
+                    mcp_manifests: self.prepared.mcp_manifests.clone(),
+                    cancellation: cancellation.clone(),
                 });
             match execute_model_tool_loop_v1(
                 &gateway,
@@ -1781,6 +2369,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: completed.settled_tool_calls,
                     tool_exchanges: completed.exchanges,
                     tool_activity: completed.activities,
+                    node_activity: Vec::new(),
+                    approval: None,
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 },
@@ -1806,12 +2396,19 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: failure.settled_tool_calls,
                         tool_exchanges: failure.exchanges,
                         tool_activity: failure.activities,
+                        node_activity: Vec::new(),
+                        approval: None,
                         scheduler_checkpoint: None,
                         scheduler_trace: Vec::new(),
                     }
                 }
             }
         };
+        if outcome.status == SimpleChatExecutionStatusV1::AwaitingApproval {
+            // The pending approval record is the durable suspension point; the
+            // invocation stays unsettled until a decision resumes the pass.
+            return Ok(outcome);
+        }
         self.persist(outcome)
     }
 }
@@ -1823,7 +2420,9 @@ impl ModelInvocationDispatcher {
     ) -> Result<ProviderOutcomeRecordV1, SimpleChatPipelineError> {
         validate_provider_outcome_accounting(&self.prepared, &outcome)?;
         compact_provider_outcome_if_needed(&mut outcome)?;
-        finalize_scheduler_evidence(&self.prepared, &mut outcome)?;
+        if self.prepared.scheduler_checkpoint.is_some() {
+            finalize_scheduler_evidence(&self.prepared, &mut outcome)?;
+        }
         enforce_serialized_bound(
             &outcome,
             MAXIMUM_PROVIDER_OUTCOME_BYTES,
@@ -1890,6 +2489,8 @@ fn text_only_outcome(
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    node_activity: Vec::new(),
+                    approval: None,
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 }
@@ -1907,6 +2508,8 @@ fn text_only_outcome(
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    node_activity: Vec::new(),
+                    approval: None,
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 }
@@ -1925,6 +2528,8 @@ fn text_only_outcome(
             settled_tool_calls: 0,
             tool_exchanges: Vec::new(),
             tool_activity: Vec::new(),
+            node_activity: Vec::new(),
+            approval: None,
             scheduler_checkpoint: None,
             scheduler_trace: Vec::new(),
         },
@@ -1995,6 +2600,7 @@ impl PipelineRecordStore {
         if executions.iter().any(|existing| {
             existing.snapshot.chat_id == record.snapshot.chat_id
                 && existing.snapshot.run_id == record.snapshot.run_id
+                && existing.scheduler_checkpoint.is_some()
                 && existing.scheduler_continuation == record.scheduler_continuation
         }) {
             return Err(SimpleChatPipelineError::Store(
@@ -2157,6 +2763,74 @@ impl PipelineRecordStore {
             .filter(|event| event.kind == kind)
             .filter_map(|event| event.payload.get("record").cloned())
             .collect())
+    }
+
+    fn store_pending_approval(
+        &self,
+        pending: &PendingGraphPassStateV1,
+    ) -> Result<bool, SimpleChatPipelineError> {
+        let decision_id = stable(&pending.decision_id)?;
+        self.append_record(
+            "pipeline.pending-approval",
+            &decision_id,
+            serde_json::to_value(pending).map_err(json_error)?,
+        )?;
+        Ok(false)
+    }
+
+    fn pending_approvals(&self) -> Result<Vec<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+        self.events_of_kind("pipeline.pending-approval")?
+            .into_iter()
+            .map(|event| serde_json::from_value(event).map_err(json_error))
+            .collect()
+    }
+
+    fn pending_approval(
+        &self,
+        decision_id: &str,
+    ) -> Result<Option<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+        Ok(self
+            .pending_approvals()?
+            .into_iter()
+            .find(|pending| pending.decision_id == decision_id))
+    }
+
+    fn pending_approval_for_invocation(
+        &self,
+        invocation_id: &StableId,
+    ) -> Result<Option<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+        Ok(self
+            .pending_approvals()?
+            .into_iter()
+            .find(|pending| pending.invocation_id == invocation_id.as_str()))
+    }
+
+    fn mark_approval_resolved(
+        &self,
+        decision_id: &StableId,
+    ) -> Result<bool, SimpleChatPipelineError> {
+        if self
+            .events_of_kind("pipeline.approval-resolved")?
+            .iter()
+            .any(|event| {
+                event.get("decisionId").and_then(Value::as_str) == Some(decision_id.as_str())
+            })
+        {
+            return Ok(true);
+        }
+        self.append_record(
+            "pipeline.approval-resolved",
+            decision_id,
+            json!({"decisionId": decision_id.as_str()}),
+        )?;
+        Ok(false)
+    }
+
+    fn approval_resolved(&self, decision_id: &str) -> Result<bool, SimpleChatPipelineError> {
+        Ok(self
+            .events_of_kind("pipeline.approval-resolved")?
+            .iter()
+            .any(|event| event.get("decisionId").and_then(Value::as_str) == Some(decision_id)))
     }
 }
 
@@ -2805,10 +3479,11 @@ fn validate_provider_outcome_accounting(
         outcome.status,
         SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
     );
-    if turns > u64::from(prepared.maximum_turns)
+    let graph_mode = prepared.scheduler_checkpoint.is_none();
+    if turns > prepared.snapshot.budget.turns
         || tool_calls > prepared.snapshot.budget.tool_calls
-        || (turns == 0 && requires_attempt)
-        || (tool_calls > 0 && turns == 0)
+        || (turns == 0 && requires_attempt && !graph_mode)
+        || (tool_calls > 0 && turns == 0 && !graph_mode)
         || turns.saturating_add(tool_calls) > prepared.snapshot.budget.actions
     {
         return Err(SimpleChatPipelineError::IncompleteEvidence);
@@ -2868,6 +3543,10 @@ fn settle_worker_contract(
     outcome: &ProviderOutcomeRecordV1,
     outcome_hash: &str,
 ) -> Result<(), SimpleChatPipelineError> {
+    if prepared.scheduler_checkpoint.is_none() {
+        // Graph-pass records settle without the simple-chat token walk.
+        return Ok(());
+    }
     validate_final_scheduler_evidence(prepared, outcome)?;
     let observed_tokens = outcome.input_units.saturating_add(outcome.output_units);
     // Provider usage can arrive above the frozen allowance only after the
@@ -2890,6 +3569,9 @@ fn settle_worker_contract(
             CapabilityOutcomeClassV1::FailedKnownStarted
         }
         SimpleChatExecutionStatusV1::OutcomeUncertain => CapabilityOutcomeClassV1::Uncertain,
+        SimpleChatExecutionStatusV1::AwaitingApproval => {
+            CapabilityOutcomeClassV1::FailedKnownStarted
+        }
     };
     let worker_outcome = WorkerCapabilityOutcomeV1 {
         outcome_id: digest_id("worker.outcome", outcome_hash)?,
@@ -3157,6 +3839,285 @@ fn compile_simple_chat_graph(
     })
 }
 
+fn is_simple_chat_document(workflow: &Value) -> bool {
+    workflow.get("id").and_then(Value::as_str) == Some("workflow.simple-chat")
+}
+
+/// Compiles any catalog-valid v1 workflow document into a frozen worker graph.
+/// Every node keeps its saved source for identity validation; agent nodes carry
+/// their resolved tool subset and maximum turn count; condition edges carry
+/// route predicates.
+#[allow(clippy::too_many_lines)]
+fn compile_graph_snapshot(
+    request: &SimpleChatExecutionRequestV1,
+    descriptor: &CapabilityDescriptor,
+    provider: &StoredProviderBindingV1,
+    secret: Option<&StoredSecretBindingV1>,
+    tool_bindings: &[StoredFileToolBindingV1],
+) -> Result<
+    (
+        Vec<WorkerNodeV1>,
+        Vec<WorkerTransitionV1>,
+        Vec<StableId>,
+        StableId,
+    ),
+    SimpleChatPipelineError,
+> {
+    let model_capability = stable(descriptor.capability_id.as_str())?;
+    let source_nodes = request
+        .workflow_snapshot
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_workflow("nodes are missing"))?;
+    let port = || WorkerPortV1 {
+        name: "value".to_owned(),
+        schema_ref: None,
+        required: true,
+    };
+    let mut nodes = Vec::with_capacity(source_nodes.len());
+    let mut entry_nodes = Vec::new();
+    let mut model_node_id: Option<StableId> = None;
+    for source in source_nodes {
+        let object = source
+            .as_object()
+            .ok_or_else(|| invalid_workflow("node must be an object"))?;
+        let id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_workflow("node id is missing"))?;
+        let node_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_workflow("node type is missing"))?;
+        let node_id = stable(id)?;
+        let configuration = object
+            .get("configuration")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let mut config = serde_json::Map::new();
+        config.insert("savedNode".into(), source.clone());
+        config.insert(
+            "frozenContextHash".into(),
+            Value::String(request.frozen_context_hash.clone()),
+        );
+        let (executor, capability_ref, node_tools, maximum_turns) = match node_type {
+            "input" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
+            "output" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
+            "parallel" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
+            "approval" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
+            "wait" => (WorkerExecutorKindV1::Wait, None, Vec::new(), None),
+            "completion" => (WorkerExecutorKindV1::Terminal, None, Vec::new(), None),
+            "condition" => (WorkerExecutorKindV1::Router, None, Vec::new(), None),
+            "model_call" => {
+                let mut model_config = config.clone();
+                model_config.insert(
+                    "provider".into(),
+                    serde_json::to_value(provider).map_err(json_error)?,
+                );
+                model_config.insert(
+                    "opaqueSecretRef".into(),
+                    secret
+                        .map(|binding| Value::String(binding.opaque_ref.to_string()))
+                        .unwrap_or(Value::Null),
+                );
+                model_config.insert(
+                    "secretRevision".into(),
+                    secret
+                        .map(|binding| Value::from(binding.revision))
+                        .unwrap_or(Value::Null),
+                );
+                nodes.push(WorkerNodeV1 {
+                    node_id: node_id.clone(),
+                    node_type: node_type.to_owned(),
+                    node_version: 1,
+                    contribution_hash: canonical_digest(&json!({
+                        "savedNode": source,
+                        "modelDescriptor": descriptor.version_hash,
+                    }))?,
+                    inputs: vec![port()],
+                    outputs: vec![port()],
+                    executor: WorkerExecutorKindV1::Model,
+                    config: Value::Object(model_config),
+                    capability_ref: Some(model_capability.clone()),
+                    result_schema_ref: None,
+                });
+                if model_node_id.is_none() {
+                    model_node_id = Some(node_id.clone());
+                }
+                continue;
+            }
+            "agent" => {
+                let tool_ids = configuration
+                    .get("toolIds")
+                    .and_then(Value::as_array)
+                    .map(|tool_ids| {
+                        tool_ids
+                            .iter()
+                            .map(|tool_id| tool_id.as_str().map(str::to_owned))
+                            .collect::<Option<Vec<String>>>()
+                    })
+                    .ok_or_else(|| invalid_workflow("agent toolIds must be an array of strings"))?
+                    .unwrap_or_default();
+                let mut node_tools = Vec::with_capacity(tool_ids.len());
+                for tool_id in tool_ids {
+                    let binding = tool_bindings
+                        .iter()
+                        .find(|binding| binding.capability_id == tool_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            invalid_workflow("agent binds a tool with no frozen native binding")
+                        })?;
+                    node_tools.push(binding);
+                }
+                let maximum_turns = configuration
+                    .get("maxTurns")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1);
+                (
+                    WorkerExecutorKindV1::Agent,
+                    Some(model_capability.clone()),
+                    node_tools,
+                    Some(maximum_turns),
+                )
+            }
+            "tool" => {
+                let tool_id = configuration
+                    .get("toolId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_workflow("tool node has no toolId"))?;
+                let binding = tool_bindings
+                    .iter()
+                    .find(|binding| binding.capability_id == tool_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        invalid_workflow("tool node binds a tool with no frozen native binding")
+                    })?;
+                (
+                    WorkerExecutorKindV1::Brokered,
+                    Some(stable(
+                        if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                            &binding.internal_id
+                        } else {
+                            &binding.capability_id
+                        },
+                    )?),
+                    vec![binding],
+                    None,
+                )
+            }
+            other => {
+                return Err(invalid_workflow(&format!(
+                    "node type '{other}' has no installed executor in this build"
+                )));
+            }
+        };
+        let mut config = config.clone();
+        config.insert(
+            "provider".into(),
+            serde_json::to_value(provider).map_err(json_error)?,
+        );
+        config.insert(
+            "opaqueSecretRef".into(),
+            secret
+                .map(|binding| Value::String(binding.opaque_ref.to_string()))
+                .unwrap_or(Value::Null),
+        );
+        config.insert(
+            "secretRevision".into(),
+            secret
+                .map(|binding| Value::from(binding.revision))
+                .unwrap_or(Value::Null),
+        );
+        config.insert(
+            "tools".into(),
+            serde_json::to_value(&node_tools).map_err(json_error)?,
+        );
+        if let Some(maximum_turns) = maximum_turns {
+            config.insert("maximumTurns".into(), Value::from(maximum_turns));
+        }
+        let contribution = json!({
+            "savedNode": source,
+            "modelDescriptor": descriptor.version_hash,
+            "tools": node_tools,
+            "maximumTurns": maximum_turns,
+        });
+        nodes.push(WorkerNodeV1 {
+            node_id: node_id.clone(),
+            node_type: node_type.to_owned(),
+            node_version: 1,
+            contribution_hash: canonical_digest(&contribution)?,
+            inputs: vec![port()],
+            outputs: vec![port()],
+            executor,
+            config: Value::Object(config),
+            capability_ref,
+            result_schema_ref: None,
+        });
+        if node_type == "input" {
+            entry_nodes.push(node_id.clone());
+        }
+        if node_type == "agent" && model_node_id.is_none() {
+            model_node_id = Some(node_id.clone());
+        }
+    }
+    if entry_nodes.len() != 1 {
+        return Err(invalid_workflow(
+            "an executable v1 workflow requires exactly one input node",
+        ));
+    }
+    let source_edges = request
+        .workflow_snapshot
+        .get("edges")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_workflow("edges are missing"))?;
+    let mut transitions = Vec::with_capacity(source_edges.len());
+    for edge in source_edges {
+        let object = edge
+            .as_object()
+            .ok_or_else(|| invalid_workflow("transition must be an object"))?;
+        let source = object
+            .get("source")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_workflow("transition source is missing"))?;
+        let target = object
+            .get("target")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_workflow("transition target is missing"))?;
+        let transition_id = stable(
+            object
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_workflow("transition ID is missing"))?,
+        )?;
+        let route = object
+            .get("configuration")
+            .and_then(|configuration| configuration.get("route"))
+            .and_then(Value::as_str);
+        let predicate = match route {
+            Some(route) => json!({"kind": "route", "route": route}),
+            None => json!({"always": true}),
+        };
+        transitions.push(WorkerTransitionV1 {
+            transition_id,
+            from_node: stable(source)?,
+            from_port: "value".into(),
+            to_node: stable(target)?,
+            to_port: "value".into(),
+            priority: 0,
+            predicate: Some(predicate),
+            declared_loop_id: None,
+        });
+    }
+    Ok((
+        nodes,
+        transitions,
+        entry_nodes,
+        model_node_id.ok_or_else(|| {
+            invalid_workflow("an executable v1 workflow requires an agent or model_call node")
+        })?,
+    ))
+}
+
 fn validate_simple_chat_workflow_request(
     request: &SimpleChatExecutionRequestV1,
 ) -> Result<(), SimpleChatPipelineError> {
@@ -3335,9 +4296,62 @@ fn validate_request(
     protocol: ProviderProtocolV1,
     descriptor: &CapabilityDescriptor,
 ) -> Result<(), SimpleChatPipelineError> {
-    validate_simple_chat_workflow_request(request)?;
+    let graph_mode = !is_simple_chat_document(&request.workflow_snapshot);
     let agent_instructions = workflow_agent_instructions(&request.workflow_snapshot);
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
+    if graph_mode {
+        if let Err(error) = validate_v1_executable_catalog(&request.workflow_snapshot) {
+            return Err(SimpleChatPipelineError::InvalidInput(format!(
+                "workflow graph is not executable: {error}"
+            )));
+        }
+        if request.maximum_turns == 0 || request.budget.turns == 0 {
+            return Err(SimpleChatPipelineError::InvalidInput(
+                "graph workflows require at least one agent turn in the budget".to_owned(),
+            ));
+        }
+        if request.budget.tool_calls > 64 {
+            return Err(SimpleChatPipelineError::InvalidInput(
+                "graph workflows cap tool calls at 64 per pass".to_owned(),
+            ));
+        }
+        if request.tools.is_empty() && request.budget.tool_calls != 0 {
+            return Err(SimpleChatPipelineError::InvalidInput(
+                "graph workflow budgets must not reserve tool calls without frozen tool bindings"
+                    .to_owned(),
+            ));
+        }
+    } else {
+        validate_simple_chat_workflow_request(request)?;
+        if request.tools.is_empty() {
+            if request.maximum_turns != 1
+                || request.budget.turns != 1
+                || request.budget.tool_calls != 0
+            {
+                return Err(SimpleChatPipelineError::InvalidInput(
+                    "tool-free Simple Chat requires exactly one model turn and zero tool calls"
+                        .into(),
+                ));
+            }
+        } else if request.workspace.is_none()
+            || !(2..=8).contains(&request.maximum_turns)
+            || request.budget.turns != u64::from(request.maximum_turns)
+            || request.budget.attempts < u64::from(request.maximum_turns)
+            || request.budget.tool_calls == 0
+            || request.budget.tool_calls > 32
+            || request.budget.actions
+                < request
+                    .budget
+                    .turns
+                    .saturating_add(request.budget.tool_calls)
+            || frozen_tools.len() != request.tools.len()
+        {
+            return Err(SimpleChatPipelineError::InvalidInput(
+                "tool-bound Simple Chat requires a frozen project, 2-8 model turns, and matching bounded turn/tool/action budgets"
+                    .into(),
+            ));
+        }
+    }
     if request.messages.is_empty()
         || request.deadline_epoch_millis <= request.now_epoch_millis
         || request.budget.turns == 0
@@ -3348,31 +4362,6 @@ fn validate_request(
     {
         return Err(SimpleChatPipelineError::InvalidInput(
             "messages, deadline, and model budget must be non-empty".to_owned(),
-        ));
-    }
-    if request.tools.is_empty() {
-        if request.maximum_turns != 1 || request.budget.turns != 1 || request.budget.tool_calls != 0
-        {
-            return Err(SimpleChatPipelineError::InvalidInput(
-                "tool-free Simple Chat requires exactly one model turn and zero tool calls".into(),
-            ));
-        }
-    } else if request.workspace.is_none()
-        || !(2..=8).contains(&request.maximum_turns)
-        || request.budget.turns != u64::from(request.maximum_turns)
-        || request.budget.attempts < u64::from(request.maximum_turns)
-        || request.budget.tool_calls == 0
-        || request.budget.tool_calls > 32
-        || request.budget.actions
-            < request
-                .budget
-                .turns
-                .saturating_add(request.budget.tool_calls)
-        || frozen_tools.len() != request.tools.len()
-    {
-        return Err(SimpleChatPipelineError::InvalidInput(
-            "tool-bound Simple Chat requires a frozen project, 2-8 model turns, and matching bounded turn/tool/action budgets"
-                .into(),
         ));
     }
     if !is_sha256(&request.frozen_context_hash) {
@@ -3410,18 +4399,28 @@ fn validate_request(
         .enumerate()
         .filter(|(_, message)| message.role == "system")
         .collect::<Vec<_>>();
-    let system_layer_matches = match agent_instructions {
-        Some(instructions) => {
-            system_messages.len() == 1
-                && system_messages[0].0 == 0
-                && system_messages[0].1.content == instructions
+    let system_layer_matches = if graph_mode {
+        // The graph pass executor composes per-node system layers; the frozen
+        // conversation must not carry a competing leading system message.
+        system_messages.is_empty()
+    } else {
+        match agent_instructions {
+            Some(instructions) => {
+                system_messages.len() == 1
+                    && system_messages[0].0 == 0
+                    && system_messages[0].1.content == instructions
+            }
+            None => system_messages.is_empty(),
         }
-        None => system_messages.is_empty(),
     };
     if !system_layer_matches {
         return Err(SimpleChatPipelineError::InvalidInput(
-            "the provider context must contain exactly the saved Agent instructions as its sole leading system message"
-                .to_owned(),
+            if graph_mode {
+                "graph workflow conversations must not embed a leading system message; instructions belong to the workflow nodes"
+            } else {
+                "the provider context must contain exactly the saved Agent instructions as its sole leading system message"
+            }
+            .to_owned(),
         ));
     }
     if serde_json::to_vec(&request.messages)
@@ -3692,15 +4691,26 @@ fn broker_error(error: BrokerError) -> SimpleChatPipelineError {
 #[cfg(test)]
 mod tests {
     use crate::runtime::{
+        PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
         PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
+        PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
+        WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1, WEB_SEARCH_MAXIMUM_RESULTS_V1,
     };
 
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::runtime::tool_loop::{FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID};
+    use crate::runtime::tool_loop::{
+        FILE_EDIT_CAPABILITY_ID, FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID,
+        FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, MAXIMUM_TOOL_RESULT_BYTES,
+        SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_FETCH_CAPABILITY_ID,
+        WEB_SEARCH_CAPABILITY_ID,
+    };
     use aworkit_capability_host::{
-        ModelToolCallV1, ModelToolEventV1, ModelToolRequestV1, ProviderAcceptanceV1,
+        McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
+        McpInitializeRequestV1, McpInitializeResponseV1, McpPeerCallResultV1, McpPeerErrorV1,
+        McpPeerPort, McpServerManifestV1, McpToolDescriptorV1, ModelToolCallV1,
+        ModelToolDefinitionV1, ModelToolEventV1, ModelToolRequestV1, ProviderAcceptanceV1,
     };
     use aworkit_trusted_core::{MemoryCredentialStore, SecretBroker};
     use tempfile::TempDir;
@@ -3817,6 +4827,11 @@ mod tests {
         Escape,
         Malformed,
         ReadThenProviderFailure,
+        Edit,
+        Todo,
+        Subagent,
+        SubagentNest,
+        SubagentLoop,
     }
 
     struct ToolProviderFactoryV1 {
@@ -3862,11 +4877,17 @@ mod tests {
         fn execute(
             &self,
             _request: &ModelRequestV1,
-            _emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+            emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
         ) -> Result<ProviderAcceptanceV1, ProviderError> {
-            Err(ProviderError::Failed(
-                "tool test provider requires the tool-turn API".into(),
-            ))
+            // Plain model calls (plan/model_call nodes) answer with fixed text;
+            // the tool loop is driven through `execute_tool_turn_cancellable`.
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            emit(ModelEventV1::AssistantOutput("working answer".to_owned()))?;
+            emit(ModelEventV1::Usage {
+                input_tokens: 7,
+                output_tokens: 3,
+            })?;
+            Ok(ProviderAcceptanceV1::Accepted)
         }
 
         fn execute_tool_turn_cancellable(
@@ -3919,6 +4940,81 @@ mod tests {
                         "aworkit_read_project_file",
                         json!({"path":"notes.txt"}),
                     ))?,
+                    ToolScriptV1::Edit => emit(tool_call(
+                        "call.edit",
+                        "tool.files.edit",
+                        "aworkit_edit_project_file",
+                        json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
+                    ))?,
+                    ToolScriptV1::Todo => emit(tool_call(
+                        "call.todo",
+                        "tool.todo",
+                        "aworkit_todo",
+                        json!({"todos":[
+                            {"content":"Write tests","status":"pending"},
+                            {"content":"Fix pipeline","status":"completed"},
+                        ]}),
+                    ))?,
+                    ToolScriptV1::Subagent => {
+                        // The child conversation is recognized by the context
+                        // marker appended to its single user message; the parent
+                        // delegates once, the child reads and searches, and both
+                        // loops finish with the fixed completion text.
+                        let child_turn = request.input["messages"]
+                            .as_array()
+                            .and_then(|messages| messages.first())
+                            .and_then(|message| message["content"].as_str())
+                            .is_some_and(|content| content.contains("Relevant context:"));
+                        if child_turn {
+                            emit(tool_call(
+                                "call.read",
+                                FILE_READ_CAPABILITY_ID,
+                                "aworkit_read_project_file",
+                                json!({"path":"notes.txt"}),
+                            ))?;
+                            emit(tool_call(
+                                "call.search",
+                                FILE_SEARCH_CAPABILITY_ID,
+                                "aworkit_search_project_file",
+                                json!({"path":"notes.txt","query":"alpha"}),
+                            ))?;
+                        } else {
+                            emit(tool_call(
+                                "call.subagent",
+                                SUBAGENT_CAPABILITY_ID,
+                                "aworkit_spawn_subagent",
+                                json!({"task":"Summarize the project notes.","context":"notes.txt mentions alpha beta alpha."}),
+                            ))?;
+                        }
+                    }
+                    ToolScriptV1::SubagentNest => emit(tool_call(
+                        "call.nested",
+                        SUBAGENT_CAPABILITY_ID,
+                        "aworkit_spawn_subagent",
+                        json!({"task":"Nested delegation attempt."}),
+                    ))?,
+                    ToolScriptV1::SubagentLoop => {
+                        let child_turn = request.input["messages"]
+                            .as_array()
+                            .and_then(|messages| messages.first())
+                            .and_then(|message| message["content"].as_str())
+                            .is_some_and(|content| content.contains("Relevant context:"));
+                        if child_turn {
+                            emit(tool_call(
+                                "call.loop-read",
+                                FILE_READ_CAPABILITY_ID,
+                                "aworkit_read_project_file",
+                                json!({"path":"notes.txt"}),
+                            ))?;
+                        } else {
+                            emit(tool_call(
+                                "call.subagent",
+                                SUBAGENT_CAPABILITY_ID,
+                                "aworkit_spawn_subagent",
+                                json!({"task":"Never finish.","context":"notes.txt"}),
+                            ))?;
+                        }
+                    }
                 }
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 5,
@@ -3955,6 +5051,28 @@ mod tests {
                 return Err(ProviderError::Failed(
                     "provider failed after one settled tool call".into(),
                 ));
+            }
+            if matches!(self.script, ToolScriptV1::SubagentLoop) {
+                // The child keeps requesting reads until its turn budget
+                // exhausts; the parent still finishes normally.
+                let child_turn = request.input["messages"]
+                    .as_array()
+                    .and_then(|messages| messages.first())
+                    .and_then(|message| message["content"].as_str())
+                    .is_some_and(|content| content.contains("Relevant context:"));
+                if child_turn {
+                    emit(tool_call(
+                        "call.loop-read",
+                        FILE_READ_CAPABILITY_ID,
+                        "aworkit_read_project_file",
+                        json!({"path":"notes.txt"}),
+                    ))?;
+                    emit(ModelToolEventV1::Usage {
+                        input_tokens: 5,
+                        output_tokens: 2,
+                    })?;
+                    return Ok(ProviderAcceptanceV1::Accepted);
+                }
             }
             emit(ModelToolEventV1::AssistantOutput {
                 text: "tool loop complete".into(),
@@ -4104,8 +5222,27 @@ mod tests {
                         "effect":"search",
                         "maximumResults":PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
                     }),
+                    FILE_LIST_CAPABILITY_ID => json!({
+                        "authorityMode":"project_files",
+                        "effect":"list",
+                        "maximumEntries":PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
+                    }),
+                    FILE_GREP_CAPABILITY_ID => json!({
+                        "authorityMode":"project_files",
+                        "effect":"grep",
+                        "maximumMatches":PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
+                    }),
+                    TODO_CAPABILITY_ID => json!({"authorityMode":"run_todo"}),
+                    WEB_SEARCH_CAPABILITY_ID => json!({
+                        "maximumResults":WEB_SEARCH_MAXIMUM_RESULTS_V1,
+                    }),
+                    WEB_FETCH_CAPABILITY_ID => json!({
+                        "maximumDownloadBytes":WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
+                        "maximumExtractBytes":WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
+                    }),
                     _ => json!({}),
                 },
+                definition: None,
             })
             .collect();
         request.workflow_snapshot = default_simple_chat_workflow_snapshot();
@@ -5093,5 +6230,1183 @@ mod tests {
         assert_eq!(result.status, SimpleChatExecutionStatusV1::OutcomeUncertain);
         assert!(result.replayed);
         assert_eq!(reopened_calls.load(Ordering::SeqCst), 0);
+    }
+
+    fn graph_workflow(approval: bool) -> Value {
+        let mut nodes = vec![
+            json!({"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}}),
+            json!({"id":"plan.1","label":"Plan","type":"model_call","position":{"x":245,"y":205},"configuration":{"modelTierId":"tier:balanced","instructions":"Produce a plan.","maximumTokens":1024}}),
+        ];
+        if approval {
+            nodes.push(json!({"id":"gate.1","label":"Approve","type":"approval","position":{"x":454,"y":205},"configuration":{"title":"Continue?","message":"Approve the plan."}}));
+        }
+        nodes.extend([
+            json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":663,"y":205},"configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":1}}),
+            json!({"id":"output.1","label":"Output","type":"output","position":{"x":872,"y":205}}),
+            json!({"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":1081,"y":205}}),
+        ]);
+        let mut edges = vec![
+            json!({"id":"e1","source":"input.1","target":"plan.1"}),
+            json!({"id":"e3","source":"agent.1","target":"output.1"}),
+            json!({"id":"e4","source":"output.1","target":"wait.1"}),
+        ];
+        if approval {
+            edges.insert(1, json!({"id":"e2a","source":"plan.1","target":"gate.1"}));
+            edges.insert(2, json!({"id":"e2b","source":"gate.1","target":"agent.1"}));
+        } else {
+            edges.insert(1, json!({"id":"e2","source":"plan.1","target":"agent.1"}));
+        }
+        json!({
+            "schemaVersion": 1,
+            "id": "workflow.graph-test",
+            "name": "Graph test",
+            "nodes": nodes,
+            "edges": edges
+        })
+    }
+
+    fn graph_request(metadata: CredentialMetadataV1) -> SimpleChatExecutionRequestV1 {
+        let mut request = request(metadata);
+        request.workflow_snapshot = graph_workflow(false);
+        request.frozen_context_hash = format!("sha256:{}", "b".repeat(64));
+        request.budget.turns = 4;
+        request.budget.attempts = 4;
+        request.budget.tool_calls = 0;
+        request.budget.actions = 4;
+        request
+    }
+
+    #[test]
+    fn graph_pass_runs_plan_agent_output_wait_with_node_activity() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, _store, metadata, calls, _saw_secret) =
+            setup(&root, ScriptedBehavior::Succeed);
+        let result = pipeline
+            .execute(graph_request(metadata))
+            .expect("graph pass");
+        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(result.assistant_text.as_deref(), Some("working answer"));
+        assert_eq!(result.model_turns, 2, "plan + agent completions");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let completed: Vec<&str> = result
+            .node_activity
+            .iter()
+            .filter(|activity| activity.status == "completed")
+            .map(|activity| activity.node_id.as_str())
+            .collect();
+        assert_eq!(
+            completed,
+            vec!["input.1", "plan.1", "agent.1", "output.1", "wait.1"]
+        );
+    }
+
+    #[test]
+    fn graph_pass_suspends_at_approval_and_resumes_with_decision() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, _store, metadata, calls, _saw_secret) =
+            setup(&root, ScriptedBehavior::Succeed);
+        let mut request = graph_request(metadata.clone());
+        request.workflow_snapshot = graph_workflow(true);
+        let suspended = pipeline.execute(request).expect("suspend");
+        assert_eq!(
+            suspended.status,
+            SimpleChatExecutionStatusV1::AwaitingApproval
+        );
+        let approval = suspended.approval.expect("approval evidence");
+        assert_eq!(approval.node_id, "gate.1");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "only the plan completes before the gate suspends"
+        );
+
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, true)
+            .expect("resume approve");
+        assert_eq!(resumed.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(resumed.assistant_text.as_deref(), Some("working answer"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "plan before the gate + agent after approval"
+        );
+        let resumed_completed: Vec<&str> = resumed
+            .node_activity
+            .iter()
+            .filter(|activity| activity.status == "completed")
+            .map(|activity| activity.node_id.as_str())
+            .collect();
+        assert_eq!(
+            resumed_completed,
+            vec![
+                "input.1", "plan.1", "gate.1", "agent.1", "output.1", "wait.1"
+            ]
+        );
+        // Reapplying the same decision is idempotent and rejected.
+        assert!(
+            pipeline
+                .resume_approval(&approval.decision_id, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn graph_pass_rejection_fails_without_completing_downstream_nodes() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, _store, metadata, calls, _saw_secret) =
+            setup(&root, ScriptedBehavior::Succeed);
+        let mut request = graph_request(metadata);
+        request.workflow_snapshot = graph_workflow(true);
+        let suspended = pipeline.execute(request).expect("suspend");
+        let approval = suspended.approval.expect("approval evidence");
+        let rejected = pipeline
+            .resume_approval(&approval.decision_id, false)
+            .expect("resume reject");
+        assert_eq!(
+            rejected.status,
+            SimpleChatExecutionStatusV1::FailedKnownStarted
+        );
+        assert!(rejected.error.unwrap_or_default().contains("rejected"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "only the pre-gate plan completed; rejection blocks downstream work"
+        );
+        assert!(rejected.assistant_text.is_none());
+    }
+
+    /// Creates a Git-backed project workspace containing notes.txt ("alpha")
+    /// for the edit-approval integration tests.
+    fn edit_approval_project(root: &TempDir) -> std::path::PathBuf {
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::create_dir(project.join(".git")).expect("git metadata");
+        fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
+        fs::write(project.join("notes.txt"), b"alpha").expect("notes");
+        project
+    }
+
+    /// Graph workflow whose agent node holds the approval-required edit tool:
+    /// input -> agent(tool.files.edit) -> output -> wait.
+    fn edit_approval_workflow() -> Value {
+        json!({
+            "schemaVersion": 1,
+            "id": "workflow.edit-approval-test",
+            "name": "Edit approval test",
+            "nodes": [
+                json!({"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}}),
+                json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{
+                    "modelTierId":"tier:balanced",
+                    "toolIds":["tool.files.edit"],
+                    "maxTurns":1,
+                    "instructions":"Edit the project file."
+                }}),
+                json!({"id":"output.1","label":"Output","type":"output","position":{"x":454,"y":205}}),
+                json!({"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":663,"y":205}}),
+            ],
+            "edges": [
+                json!({"id":"e1","source":"input.1","target":"agent.1"}),
+                json!({"id":"e2","source":"agent.1","target":"output.1"}),
+                json!({"id":"e3","source":"output.1","target":"wait.1"}),
+            ]
+        })
+    }
+
+    /// Graph-mode execution request binding the edit tool against the frozen
+    /// project workspace with per-invocation approval.
+    fn edit_approval_request(
+        pipeline: &SimpleChatExecutionPipeline,
+        metadata: CredentialMetadataV1,
+        project: &Path,
+    ) -> SimpleChatExecutionRequestV1 {
+        let mut request = request(metadata);
+        request.request_id = stable("command.pipeline-edit-approval-test").expect("request");
+        request.chat_id = stable("chat.pipeline-edit-approval-test").expect("chat");
+        request.run_id = stable("run.pipeline-edit-approval-test").expect("run");
+        request.workspace = Some(
+            pipeline
+                .projects
+                .resolve_workspace_v1(project)
+                .expect("workspace"),
+        );
+        request.maximum_turns = 2;
+        request.budget.turns = 4;
+        request.budget.attempts = 4;
+        request.budget.tool_calls = 8;
+        request.budget.actions = 8;
+        request.tools = vec![SimpleChatToolBindingV1 {
+            capability_id: FILE_EDIT_CAPABILITY_ID.into(),
+            configuration: json!({
+                "authorityMode": "project_files",
+                "effect": "write",
+                "requiresApproval": true,
+                "maximumBytes": PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1,
+            }),
+            definition: None,
+        }];
+        request.workflow_snapshot = edit_approval_workflow();
+        request.frozen_context_hash = format!("sha256:{}", "c".repeat(64));
+        request
+    }
+
+    #[test]
+    fn graph_agent_tool_approval_suspends_and_approval_edits_the_file() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = edit_approval_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::Edit);
+        let mut execution_request = edit_approval_request(&pipeline, metadata.clone(), &project);
+        execution_request.project_branch = Some("main".into());
+
+        let suspended = pipeline
+            .execute(execution_request)
+            .expect("suspend on edit tool approval");
+        assert_eq!(
+            suspended.status,
+            SimpleChatExecutionStatusV1::AwaitingApproval,
+            "{:?}",
+            suspended.error
+        );
+        let approval = suspended.approval.expect("tool approval evidence");
+        assert_eq!(approval.node_id, "agent.1");
+        assert!(approval.title.contains(FILE_EDIT_CAPABILITY_ID));
+        assert!(
+            !approval.message.is_empty(),
+            "the challenge summary describes the pending call"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "exactly one model turn runs before the edit call suspends"
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("notes.txt")).expect("notes"),
+            "alpha",
+            "the file must not change before the user approves"
+        );
+        let waiting: Vec<&str> = suspended
+            .node_activity
+            .iter()
+            .filter(|activity| activity.status == "waiting")
+            .map(|activity| activity.node_id.as_str())
+            .collect();
+        assert_eq!(waiting, vec!["agent.1"]);
+
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, true)
+            .expect("resume approve");
+        assert_eq!(
+            resumed.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            resumed.error
+        );
+        assert_eq!(
+            resumed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        assert_eq!(resumed.tool_calls, 1);
+        assert_eq!(
+            fs::read_to_string(project.join("notes.txt")).expect("edited notes"),
+            "beta",
+            "the approved edit replaces alpha with beta"
+        );
+        let edit = resumed
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == FILE_EDIT_CAPABILITY_ID)
+            .expect("edit tool activity");
+        assert_eq!(edit.status, "completed");
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0]["path"], "notes.txt");
+        assert_eq!(observed[0]["oldString"], "alpha");
+        assert_eq!(observed[0]["newString"], "beta");
+        drop(observed);
+        // Reapplying the same decision is idempotent and rejected.
+        assert!(
+            pipeline
+                .resume_approval(&approval.decision_id, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn graph_agent_tool_approval_rejection_denies_the_call_without_mutation() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = edit_approval_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::Edit);
+        let mut execution_request = edit_approval_request(&pipeline, metadata.clone(), &project);
+        execution_request.project_branch = Some("main".into());
+
+        let suspended = pipeline
+            .execute(execution_request)
+            .expect("suspend on edit tool approval");
+        let approval = suspended.approval.expect("tool approval evidence");
+
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, false)
+            .expect("resume reject");
+        // A rejected tool call surfaces a denial result and the agent loop
+        // continues instead of failing the whole pass.
+        assert_eq!(
+            resumed.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            resumed.error
+        );
+        assert_eq!(
+            resumed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("notes.txt")).expect("notes"),
+            "alpha",
+            "the rejected edit leaves the file untouched"
+        );
+        assert_eq!(resumed.tool_calls, 1);
+        let edit = resumed
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == FILE_EDIT_CAPABILITY_ID)
+            .expect("edit tool activity");
+        assert_eq!(edit.status, "denied");
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0]["error"], "user_rejected");
+        drop(observed);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn provider_todo_call_records_run_local_todo_state() {
+        let root = TempDir::new().expect("root");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::create_dir(project.join(".git")).expect("git metadata");
+        fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::Todo);
+        let mut execution_request =
+            tool_bound_request(&pipeline, metadata.clone(), &project, &[TODO_CAPABILITY_ID]);
+        execution_request.project_branch = Some("main".into());
+
+        let first = pipeline
+            .execute(execution_request.clone())
+            .expect("todo execution");
+        assert_eq!(
+            first.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            first.error
+        );
+        assert_eq!(first.assistant_text.as_deref(), Some("tool loop complete"));
+        assert_eq!(first.tool_calls, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let todo = first
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == TODO_CAPABILITY_ID)
+            .expect("todo tool activity");
+        assert_eq!(todo.status, "completed");
+        let stored = pipeline
+            .run_todo_state(&execution_request.run_id)
+            .expect("todo state")
+            .expect("stored todo list");
+        assert_eq!(
+            stored,
+            json!([
+                {"content":"Write tests","status":"pending"},
+                {"content":"Fix pipeline","status":"completed"},
+            ])
+        );
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0]["todos"], stored);
+    }
+
+    #[test]
+    fn standard_agent_workflow_runs_plan_agent_output_wait_end_to_end() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::create_dir(project.join(".git")).expect("git metadata");
+        fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
+        fs::write(project.join("notes.txt"), b"alpha beta alpha").expect("notes");
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::ReadAndSearch);
+        let mut execution_request = tool_bound_request(
+            &pipeline,
+            metadata.clone(),
+            &project,
+            &[
+                FILE_READ_CAPABILITY_ID,
+                FILE_SEARCH_CAPABILITY_ID,
+                FILE_LIST_CAPABILITY_ID,
+                FILE_GREP_CAPABILITY_ID,
+                TODO_CAPABILITY_ID,
+                WEB_SEARCH_CAPABILITY_ID,
+                WEB_FETCH_CAPABILITY_ID,
+            ],
+        );
+        // The seeded production workflow: Input -> Plan -> Agent -> Output -> Wait.
+        execution_request.workflow_snapshot =
+            crate::runtime::documents::default_standard_agent_workflow();
+        execution_request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
+        execution_request.project_branch = Some("main".into());
+        execution_request.budget.turns = 4;
+        execution_request.budget.attempts = 4;
+
+        let result = pipeline
+            .execute(execution_request)
+            .expect("standard agent pass");
+        assert_eq!(
+            result.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            result.error
+        );
+        assert_eq!(result.assistant_text.as_deref(), Some("tool loop complete"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "plan model call + two agent turns"
+        );
+        assert_eq!(result.tool_calls, 2, "read + search tool calls settle");
+        let completed: Vec<&str> = result
+            .node_activity
+            .iter()
+            .filter(|activity| activity.status == "completed")
+            .map(|activity| activity.node_id.as_str())
+            .collect();
+        assert_eq!(
+            completed,
+            vec!["input.1", "plan.1", "agent.1", "output.1", "wait.1"]
+        );
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0]["content"], "alpha beta alpha");
+        assert_eq!(observed[1]["offsets"], json!([0, 11]));
+    }
+
+    /// Git-backed project with notes.txt for the subagent delegation tests.
+    fn subagent_project(root: &TempDir) -> std::path::PathBuf {
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::create_dir(project.join(".git")).expect("git metadata");
+        fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
+        fs::write(project.join("notes.txt"), b"alpha beta alpha").expect("notes");
+        project
+    }
+
+    /// Workflow whose agent node binds exactly one tool id.
+    fn single_agent_tool_workflow(tool_id: &str) -> Value {
+        json!({
+            "schemaVersion": 1,
+            "id": "workflow.single-tool-test",
+            "name": "Single tool test",
+            "nodes": [
+                json!({"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}}),
+                json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{
+                    "modelTierId":"tier:balanced",
+                    "toolIds":[tool_id],
+                    "maxTurns":1,
+                    "instructions":"Use the tool and finish."
+                }}),
+                json!({"id":"output.1","label":"Output","type":"output","position":{"x":454,"y":205}}),
+                json!({"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":663,"y":205}}),
+            ],
+            "edges": [
+                json!({"id":"e1","source":"input.1","target":"agent.1"}),
+                json!({"id":"e2","source":"agent.1","target":"output.1"}),
+                json!({"id":"e3","source":"output.1","target":"wait.1"}),
+            ]
+        })
+    }
+
+    /// Graph-mode request delegating through the subagent tool with the given
+    /// frozen bindings; `subagent_maximum_turns` sets the child turn budget.
+    fn subagent_request(
+        pipeline: &SimpleChatExecutionPipeline,
+        metadata: CredentialMetadataV1,
+        project: &Path,
+        tool_ids: &[&str],
+        subagent_maximum_turns: u64,
+    ) -> SimpleChatExecutionRequestV1 {
+        let mut request = request(metadata);
+        request.request_id = stable("command.pipeline-subagent-test").expect("request");
+        request.chat_id = stable("chat.pipeline-subagent-test").expect("chat");
+        request.run_id = stable("run.pipeline-subagent-test").expect("run");
+        request.workspace = Some(
+            pipeline
+                .projects
+                .resolve_workspace_v1(project)
+                .expect("workspace"),
+        );
+        request.maximum_turns = 2;
+        request.budget.turns = 6;
+        request.budget.attempts = 6;
+        request.budget.tool_calls = 12;
+        request.budget.actions = 16;
+        request.tools = tool_ids
+            .iter()
+            .map(|tool_id| SimpleChatToolBindingV1 {
+                capability_id: (*tool_id).into(),
+                configuration: match *tool_id {
+                    FILE_READ_CAPABILITY_ID => json!({
+                        "authorityMode":"project_files",
+                        "effect":"read",
+                        "maximumBytes":PROJECT_FILE_READ_MAXIMUM_BYTES_V1,
+                    }),
+                    FILE_SEARCH_CAPABILITY_ID => json!({
+                        "authorityMode":"project_files",
+                        "effect":"search",
+                        "maximumResults":PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
+                    }),
+                    SUBAGENT_CAPABILITY_ID => json!({
+                        "authorityMode":"run_subagent",
+                        "requiresApproval":true,
+                        "maximumTurns":subagent_maximum_turns,
+                    }),
+                    _ => json!({}),
+                },
+                definition: None,
+            })
+            .collect();
+        request.workflow_snapshot = single_agent_tool_workflow(SUBAGENT_CAPABILITY_ID);
+        request.frozen_context_hash = format!("sha256:{}", "e".repeat(64));
+        request
+    }
+
+    #[test]
+    fn subagent_delegation_runs_the_child_loop_and_returns_the_final_text() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = subagent_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::Subagent);
+        let mut execution_request = subagent_request(
+            &pipeline,
+            metadata.clone(),
+            &project,
+            &[
+                FILE_READ_CAPABILITY_ID,
+                FILE_SEARCH_CAPABILITY_ID,
+                SUBAGENT_CAPABILITY_ID,
+            ],
+            4,
+        );
+        execution_request.project_branch = Some("main".into());
+
+        // The subagent tool is approval-required: the pass suspends with a
+        // durable challenge before the child run starts.
+        let suspended = pipeline
+            .execute(execution_request)
+            .expect("suspend on subagent approval");
+        assert_eq!(
+            suspended.status,
+            SimpleChatExecutionStatusV1::AwaitingApproval,
+            "{:?}",
+            suspended.error
+        );
+        let approval = suspended.approval.expect("subagent approval");
+        assert_eq!(approval.node_id, "agent.1");
+        assert!(approval.title.contains(SUBAGENT_CAPABILITY_ID));
+
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, true)
+            .expect("resume approve");
+        assert_eq!(
+            resumed.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            resumed.error
+        );
+        assert_eq!(
+            resumed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        assert_eq!(resumed.tool_calls, 1, "one subagent call settles");
+        let subagent = resumed
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == SUBAGENT_CAPABILITY_ID)
+            .expect("subagent activity");
+        assert_eq!(subagent.status, "completed");
+        assert!(subagent.summary.contains("Subagent completed"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            4,
+            "parent call + child call + child final + parent final"
+        );
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(
+            observed.len(),
+            3,
+            "child results followed by the subagent result"
+        );
+        assert_eq!(observed[0]["content"], "alpha beta alpha");
+        assert_eq!(observed[1]["offsets"], json!([0, 11]));
+        assert_eq!(observed[2]["finalText"], "tool loop complete");
+        assert_eq!(observed[2]["modelTurns"], 2, "child usage is recorded");
+        assert_eq!(observed[2]["toolCalls"], 2);
+        assert_eq!(observed[2]["inputTokens"], 14);
+        assert_eq!(observed[2]["outputTokens"], 6);
+        drop(observed);
+        // Reapplying the same decision is idempotent and rejected.
+        assert!(
+            pipeline
+                .resume_approval(&approval.decision_id, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn subagent_nesting_is_denied_and_the_failure_reaches_the_parent_loop() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = subagent_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::SubagentNest);
+        let mut execution_request = subagent_request(
+            &pipeline,
+            metadata.clone(),
+            &project,
+            &[FILE_READ_CAPABILITY_ID, SUBAGENT_CAPABILITY_ID],
+            4,
+        );
+        execution_request.project_branch = Some("main".into());
+
+        let suspended = pipeline
+            .execute(execution_request)
+            .expect("suspend on subagent approval");
+        let approval = suspended.approval.expect("subagent approval");
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, true)
+            .expect("resume approve");
+        // The child tried to delegate again; the depth guard failed its loop
+        // and the denied result flowed back without failing the parent pass.
+        assert_eq!(
+            resumed.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            resumed.error
+        );
+        assert_eq!(
+            resumed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        let subagent = resumed
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == SUBAGENT_CAPABILITY_ID)
+            .expect("subagent activity");
+        assert_eq!(subagent.status, "failed");
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 1);
+        // The child's provider turn referenced a tool outside its restricted
+        // definitions, so the gateway rejected the turn before the subagent
+        // port guard could see the call.
+        assert!(
+            observed[0]["error"].as_str().is_some_and(
+                |error| error.contains("provider tool response is invalid or unsupported")
+            ),
+            "{:?}",
+            observed[0]
+        );
+        drop(observed);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn subagent_turn_budget_exhaustion_returns_an_error_result() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = subagent_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::SubagentLoop);
+        let mut execution_request = subagent_request(
+            &pipeline,
+            metadata.clone(),
+            &project,
+            &[
+                FILE_READ_CAPABILITY_ID,
+                FILE_SEARCH_CAPABILITY_ID,
+                SUBAGENT_CAPABILITY_ID,
+            ],
+            2,
+        );
+        execution_request.project_branch = Some("main".into());
+
+        let suspended = pipeline
+            .execute(execution_request)
+            .expect("suspend on subagent approval");
+        let approval = suspended.approval.expect("subagent approval");
+        let resumed = pipeline
+            .resume_approval(&approval.decision_id, true)
+            .expect("resume approve");
+        assert_eq!(
+            resumed.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            resumed.error
+        );
+        assert_eq!(
+            resumed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        let subagent = resumed
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == SUBAGENT_CAPABILITY_ID)
+            .expect("subagent activity");
+        assert_eq!(subagent.status, "failed");
+        let observed = observed_results.lock().expect("tool results");
+        // The child recorded its first read result before requesting another
+        // read on its final turn, where the turn budget fired; the parent then
+        // observed only the subagent error result.
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0]["content"], "alpha beta alpha");
+        assert!(
+            observed[1]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("model turn limit")),
+            "{:?}",
+            observed[1]
+        );
+        drop(observed);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    // ---------------------------------------------------------------------
+    // MCP tools in the agent loop (W6)
+    // ---------------------------------------------------------------------
+
+    const MCP_FIXTURE_SERVER: &str = "serv.fixture";
+    const MCP_FIXTURE_TOOL: &str = "echo";
+    const MCP_FIXTURE_CAPABILITY: &str = "mcp://serv.fixture/echo";
+    const MCP_FIXTURE_NAME: &str = "mcp__serv_fixture__echo";
+
+    fn mcp_echo_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"]
+        })
+    }
+
+    fn mcp_echo_definition() -> ModelToolDefinitionV1 {
+        ModelToolDefinitionV1 {
+            capability_id: MCP_FIXTURE_CAPABILITY.into(),
+            name: MCP_FIXTURE_NAME.into(),
+            description: "Echo the given text.".into(),
+            input_schema: mcp_echo_schema(),
+        }
+    }
+
+    fn mcp_fixture_manifest(generation: ProcessGeneration) -> McpServerManifestV1 {
+        McpServerManifestV1 {
+            server_id: stable(MCP_FIXTURE_SERVER).expect("server id"),
+            adapter_version: "rmcp-3.1.4".into(),
+            binding_hash: format!("sha256:{}", "c".repeat(64)),
+            host_generation: generation,
+            configured: true,
+            enabled: true,
+            core_attested: true,
+            transport: aworkit_capability_host::McpTransportKindV1::Stdio,
+            minimum_protocol_version: 1,
+            maximum_protocol_version: 5,
+            maximum_in_flight: 1,
+            maximum_progress_events: 16,
+            secret_slots: Vec::new(),
+            workspace_roots: Vec::new(),
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ScriptedMcpBehavior {
+        Echo,
+        CallFailure,
+        OversizedResult,
+    }
+
+    struct ScriptedMcpPeer {
+        behavior: ScriptedMcpBehavior,
+        calls: Arc<AtomicUsize>,
+        observed_arguments: Arc<Mutex<Vec<Value>>>,
+    }
+
+    impl McpPeerPort for ScriptedMcpPeer {
+        fn initialize(
+            &self,
+            _manifest: &McpServerManifestV1,
+            _request: &McpInitializeRequestV1,
+        ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+            let schema = serde_json::to_vec(&mcp_echo_schema()).unwrap_or_default();
+            Ok(McpInitializeResponseV1 {
+                server_id: stable(MCP_FIXTURE_SERVER).expect("server id"),
+                protocol_version: 2,
+                features: McpFeatureSetV1 {
+                    tools: true,
+                    resources: false,
+                    prompts: false,
+                    progress: false,
+                    cancellation: false,
+                },
+                catalog: McpCatalogV1 {
+                    tools: vec![McpToolDescriptorV1 {
+                        name: MCP_FIXTURE_TOOL.into(),
+                        input_schema_hash: format!("sha256:{:x}", Sha256::digest(schema)),
+                        side_effect_known_read_only: false,
+                        description: "Echo the given text.".into(),
+                        input_schema: mcp_echo_schema(),
+                    }],
+                    resources: Vec::new(),
+                    prompts: Vec::new(),
+                },
+            })
+        }
+
+        fn invoke(
+            &self,
+            _manifest: &McpServerManifestV1,
+            call: &McpCallV1,
+        ) -> Result<McpPeerCallResultV1, McpPeerErrorV1> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.observed_arguments
+                .lock()
+                .expect("observed mcp arguments")
+                .push(call.arguments.clone());
+            match self.behavior {
+                ScriptedMcpBehavior::Echo => {
+                    let text = call.arguments["text"].as_str().unwrap_or_default();
+                    Ok(McpPeerCallResultV1 {
+                        result: json!({"echo": text}),
+                        progress: Vec::new(),
+                    })
+                }
+                ScriptedMcpBehavior::CallFailure => Err(McpPeerErrorV1 {
+                    code: "scripted_failure".into(),
+                    message: "scripted MCP call failure".into(),
+                    dispatch: aworkit_capability_host::McpDispatchMilestoneV1::DefinitelyNotStarted,
+                    transport_lost: false,
+                }),
+                ScriptedMcpBehavior::OversizedResult => Ok(McpPeerCallResultV1 {
+                    result: json!({"echo": "x".repeat(MAXIMUM_TOOL_RESULT_BYTES + 1)}),
+                    progress: Vec::new(),
+                }),
+            }
+        }
+
+        fn cancel(
+            &self,
+            _manifest: &McpServerManifestV1,
+            _invocation_id: &StableId,
+        ) -> Result<McpCancellationEvidenceV1, McpPeerErrorV1> {
+            Ok(McpCancellationEvidenceV1::Unsupported)
+        }
+
+        fn close(&self, _manifest: &McpServerManifestV1) -> Result<(), McpPeerErrorV1> {
+            Ok(())
+        }
+    }
+
+    struct McpToolProviderFactoryV1 {
+        calls: Arc<AtomicUsize>,
+        observed_results: Arc<Mutex<Vec<Value>>>,
+    }
+
+    impl ProviderFactoryV1 for McpToolProviderFactoryV1 {
+        fn create(
+            &self,
+            descriptor: &CapabilityDescriptor,
+            _provider: &StoredProviderBindingV1,
+            _api_key: Option<Zeroizing<String>>,
+        ) -> Result<Box<dyn ProviderEnginePortV1>, String> {
+            Ok(Box::new(McpToolProvider {
+                calls: self.calls.clone(),
+                observed_results: self.observed_results.clone(),
+                binding: descriptor.capability_id.clone(),
+                version: descriptor.version_hash.clone(),
+            }))
+        }
+    }
+
+    struct McpToolProvider {
+        calls: Arc<AtomicUsize>,
+        observed_results: Arc<Mutex<Vec<Value>>>,
+        binding: String,
+        version: String,
+    }
+
+    impl ProviderEnginePortV1 for McpToolProvider {
+        fn binding_id(&self) -> &str {
+            &self.binding
+        }
+
+        fn version_hash(&self) -> &str {
+            &self.version
+        }
+
+        fn execute(
+            &self,
+            _request: &ModelRequestV1,
+            emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+        ) -> Result<ProviderAcceptanceV1, ProviderError> {
+            // Plain model calls (plan/model_call nodes) answer with fixed text;
+            // the MCP tool loop is driven through `execute_tool_turn_cancellable`.
+            emit(ModelEventV1::AssistantOutput("working answer".to_owned()))?;
+            emit(ModelEventV1::Usage {
+                input_tokens: 7,
+                output_tokens: 3,
+            })?;
+            Ok(ProviderAcceptanceV1::Accepted)
+        }
+
+        fn execute_tool_turn_cancellable(
+            &self,
+            request: &ModelToolRequestV1,
+            cancellation: &CancellationToken,
+            emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+        ) -> Result<ProviderAcceptanceV1, ProviderError> {
+            if cancellation.is_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if request.exchanges.is_empty() {
+                emit(ModelToolEventV1::ToolCall {
+                    call: ModelToolCallV1 {
+                        call_id: "call.echo".into(),
+                        provider_call_id: Some("call.echo".into()),
+                        capability_id: MCP_FIXTURE_CAPABILITY.into(),
+                        name: MCP_FIXTURE_NAME.into(),
+                        arguments: json!({"text": "hello"}),
+                        provider_context: None,
+                    },
+                })?;
+                emit(ModelToolEventV1::Usage {
+                    input_tokens: 5,
+                    output_tokens: 2,
+                })?;
+                return Ok(ProviderAcceptanceV1::Accepted);
+            }
+            let results = request
+                .exchanges
+                .last()
+                .expect("tool exchange")
+                .results
+                .iter()
+                .map(|result| result.content.clone())
+                .collect::<Vec<_>>();
+            self.observed_results
+                .lock()
+                .expect("observed mcp results")
+                .extend(results);
+            emit(ModelToolEventV1::AssistantOutput {
+                text: "mcp loop complete".into(),
+            })?;
+            emit(ModelToolEventV1::Usage {
+                input_tokens: 9,
+                output_tokens: 4,
+            })?;
+            Ok(ProviderAcceptanceV1::Accepted)
+        }
+    }
+
+    fn mcp_graph_request(
+        pipeline: &SimpleChatExecutionPipeline,
+        metadata: CredentialMetadataV1,
+    ) -> SimpleChatExecutionRequestV1 {
+        let mut request = request(metadata);
+        request.request_id = stable("command.pipeline-mcp-test").expect("request");
+        request.chat_id = stable("chat.pipeline-mcp-test").expect("chat");
+        request.run_id = stable("run.pipeline-mcp-test").expect("run");
+        request.maximum_turns = 2;
+        request.budget.turns = 4;
+        request.budget.attempts = 4;
+        request.budget.tool_calls = 4;
+        request.budget.actions = 8;
+        request.tools = vec![SimpleChatToolBindingV1 {
+            capability_id: MCP_FIXTURE_CAPABILITY.into(),
+            configuration: json!({"serverId": MCP_FIXTURE_SERVER, "tool": MCP_FIXTURE_TOOL}),
+            definition: Some(mcp_echo_definition()),
+        }];
+        request.mcp_servers = vec![mcp_fixture_manifest(pipeline.generation)];
+        request.workflow_snapshot = graph_workflow(false);
+        request.workflow_snapshot["id"] = json!("workflow.mcp-test");
+        request.workflow_snapshot["nodes"][2]["configuration"]["toolIds"] =
+            json!([MCP_FIXTURE_CAPABILITY]);
+        request.workflow_snapshot["nodes"][2]["configuration"]["maxTurns"] = json!(2);
+        request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
+        request
+    }
+
+    fn setup_mcp_pipeline(
+        root: &TempDir,
+        behavior: ScriptedMcpBehavior,
+    ) -> (
+        SimpleChatExecutionPipeline,
+        CredentialMetadataV1,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<Value>>>,
+    ) {
+        let credential_store = Arc::new(MemoryCredentialStore::default());
+        let mut secret_broker = SecretBroker::with_store(credential_store.clone());
+        let metadata = secret_broker
+            .put_credential(
+                CredentialRef(stable("credential.mcp-pipeline-test").expect("credential ID")),
+                BTreeMap::from([(API_KEY_FIELD.to_owned(), b"test-secret".to_vec())]),
+            )
+            .expect("credential");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed_results = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = SimpleChatExecutionPipeline::compose(
+            root.path(),
+            credential_store,
+            Arc::new(McpToolProviderFactoryV1 {
+                calls: calls.clone(),
+                observed_results: observed_results.clone(),
+            }),
+        )
+        .expect("mcp pipeline");
+        let peer_calls = Arc::new(AtomicUsize::new(0));
+        let observed_arguments = Arc::new(Mutex::new(Vec::new()));
+        pipeline
+            .install_mcp_peer(Arc::new(ScriptedMcpPeer {
+                behavior,
+                calls: peer_calls.clone(),
+                observed_arguments: observed_arguments.clone(),
+            }))
+            .expect("scripted MCP peer");
+        (
+            pipeline,
+            metadata,
+            peer_calls,
+            observed_arguments,
+            observed_results,
+        )
+    }
+
+    #[test]
+    fn mcp_tool_settles_in_the_agent_loop_approval_free() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, metadata, peer_calls, observed_arguments, observed_results) =
+            setup_mcp_pipeline(&root, ScriptedMcpBehavior::Echo);
+        let result = pipeline
+            .execute(mcp_graph_request(&pipeline, metadata))
+            .expect("mcp graph pass");
+        assert_eq!(
+            result.status,
+            SimpleChatExecutionStatusV1::Succeeded,
+            "{:?}",
+            result.error
+        );
+        assert_eq!(result.assistant_text.as_deref(), Some("mcp loop complete"));
+        assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
+        let arguments = observed_arguments.lock().expect("arguments");
+        assert_eq!(arguments.len(), 1);
+        assert_eq!(arguments[0]["text"], "hello");
+        let results = observed_results.lock().expect("results");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["result"]["echo"], "hello");
+        assert_eq!(result.tool_activity.len(), 1);
+        assert_eq!(
+            result.tool_activity[0].capability_id,
+            MCP_FIXTURE_CAPABILITY
+        );
+        assert_eq!(result.tool_activity[0].status, "completed");
+    }
+
+    #[test]
+    fn mcp_call_failure_surfaces_as_error_result_and_the_pass_continues() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, metadata, peer_calls, _arguments, observed_results) =
+            setup_mcp_pipeline(&root, ScriptedMcpBehavior::CallFailure);
+        let result = pipeline
+            .execute(mcp_graph_request(&pipeline, metadata))
+            .expect("mcp failure pass");
+        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
+        let results = observed_results.lock().expect("results");
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0]["error"],
+            "MCP serv.fixture/echo failed: the call definitely did not start"
+        );
+        assert_eq!(result.tool_activity[0].status, "failed");
+    }
+
+    #[test]
+    fn mcp_oversized_result_is_rejected_without_crashing_the_pass() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, metadata, peer_calls, _arguments, observed_results) =
+            setup_mcp_pipeline(&root, ScriptedMcpBehavior::OversizedResult);
+        let result = pipeline
+            .execute(mcp_graph_request(&pipeline, metadata))
+            .expect("mcp oversize pass");
+        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
+        let results = observed_results.lock().expect("results");
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("provider continuation bound")),
+            "{:?}",
+            results[0]
+        );
+        assert_eq!(result.tool_activity[0].status, "failed");
+    }
+
+    #[test]
+    fn mcp_dispatch_cancellation_scope_is_session_scoped_and_fails_closed() {
+        let generation = ProcessGeneration(21);
+        let runtime = crate::runtime::mcp_tools::McpToolRuntimeV1::new(generation);
+        assert!(runtime.needs_install().expect("install state"));
+        runtime
+            .install_scripted_peer(Arc::new(ScriptedMcpPeer {
+                behavior: ScriptedMcpBehavior::Echo,
+                calls: Arc::new(AtomicUsize::new(0)),
+                observed_arguments: Arc::new(Mutex::new(Vec::new())),
+            }))
+            .expect("scripted peer");
+        // A second peer install fails closed: sessions are never hot-replaced.
+        assert!(
+            runtime
+                .install_scripted_peer(Arc::new(ScriptedMcpPeer {
+                    behavior: ScriptedMcpBehavior::Echo,
+                    calls: Arc::new(AtomicUsize::new(0)),
+                    observed_arguments: Arc::new(Mutex::new(Vec::new())),
+                }))
+                .is_err()
+        );
+        let run_id = stable("run.mcp-cancel").expect("run");
+        let snapshot = runtime
+            .open_frozen(&run_id, &mcp_fixture_manifest(generation))
+            .expect("open frozen session");
+        assert_eq!(snapshot.catalog.tools.len(), 1);
+
+        let token_id = stable("cancel.mcp-scope").expect("token id");
+        let token = runtime
+            .register_dispatch_token(&token_id)
+            .expect("token registration");
+        assert!(!token.is_cancelled());
+        let server = stable(MCP_FIXTURE_SERVER).expect("server");
+        let invocation = stable("invoke.mcp-cancel").expect("invocation");
+        // With no in-flight invocation the session manager rejects the cancel
+        // (it can never invent evidence), but the scoped token is cancelled
+        // first, so a pre-flight dispatch fails closed.
+        assert!(
+            runtime
+                .cancel_dispatch(&token_id, &server, &invocation)
+                .is_err()
+        );
+        assert!(token.is_cancelled());
+        runtime.unregister_dispatch_token(&token_id);
+        // The scope is gone: a later cancel for the same id cannot target it.
+        assert!(
+            runtime
+                .cancel_dispatch(&token_id, &server, &invocation)
+                .is_err()
+        );
     }
 }

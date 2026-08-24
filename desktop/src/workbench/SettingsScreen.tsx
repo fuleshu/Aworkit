@@ -137,6 +137,14 @@ export function SettingsScreen({
       ),
     [nativePresentation, runDraftScoped],
   );
+  const draftScopedPickFile = useCallback(
+    () =>
+      runDraftScoped(
+        () => nativePresentation.pickFile(),
+        () => null,
+      ),
+    [nativePresentation, runDraftScoped],
+  );
 
   const applySnapshot = useCallback(
     (
@@ -466,12 +474,14 @@ export function SettingsScreen({
       const reconcileReplacement: SettingsDraftReconciler = (
         rebasedDraft,
         previousCanonical,
+        latestCanonical,
       ) =>
         reconcileCredentialReplacementDraft(
           rebasedDraft,
           secretDraft.replaceCredentialRef,
           receipt.credentialMutation.freshCredentialRef,
           previousCanonical,
+          latestCanonical,
         );
       const snapshotPostcondition: SettingsSnapshotPostcondition = (latest) =>
         credentialSnapshotPostconditionIssue(latest, receipt);
@@ -913,6 +923,7 @@ export function SettingsScreen({
                   key={`mcp-${credentialDiagnosticEpoch}`}
                   servers={draft.mcpServers}
                   credentials={draft.credentials}
+                  onPickCommand={draftScopedPickFile}
                   onChange={(mcpServers) =>
                     updateRenderedDraft((current) => ({
                       ...current,

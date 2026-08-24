@@ -1,4 +1,11 @@
 /** Framework-independent, lossless workflow-document editor kernel. */
+import {
+  catalogEntryForType,
+  portKindsConnect,
+  resolveInputPortKind,
+  resolveOutputPortKind,
+} from "./nodeCatalog";
+
 export type JsonValue =
   | null
   | boolean
@@ -30,7 +37,11 @@ export interface WorkflowValidationIssue {
     | "invalid_node"
     | "invalid_edge"
     | "invalid_configuration"
-    | "missing_dependency";
+    | "missing_dependency"
+    | "unknown_port"
+    | "connection_type_mismatch"
+    | "condition_route_missing"
+    | "cycle_detected";
   readonly itemId: string;
   readonly message: string;
 }
@@ -187,7 +198,7 @@ export function addWorkflowNode(
         type,
         label: labelFor(type),
         position: { x: position.x, y: position.y },
-        configuration: {},
+        configuration: defaultConfigurationFor(type),
       },
     ],
   }));
@@ -338,6 +349,31 @@ export function updateSelectedEdgeFields(
       edgeId(edge, index) === selected ? { ...edge, ...patch } : edge,
     ),
   }));
+}
+
+/** Merges typed fields into the selected node's `configuration` object. */
+export function updateSelectedNodeConfiguration(
+  state: WorkflowEditorState,
+  patch: JsonObject,
+): WorkflowEditorState {
+  const selected = state.selectedIds.values().next().value as
+    | string
+    | undefined;
+  if (selected === undefined || Object.keys(patch).length === 0) return state;
+  return editWorkflow(state, (document) => ({
+    ...document,
+    nodes: document.nodes.map((node, index) => {
+      if (nodeId(node, index) !== selected) return node;
+      const existing = asConfigurationObject(node.configuration);
+      return { ...node, configuration: { ...existing, ...patch } };
+    }),
+  }));
+}
+
+function asConfigurationObject(value: unknown): JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : {};
 }
 
 export function replaceWorkflowDocument(
@@ -502,8 +538,107 @@ export function validateWorkflow(
         itemId: id,
         message: `Transition target ${edge.target} does not exist.`,
       });
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) return;
+    const sourceNode = document.nodes.find(
+      (node, nodeIndex) => nodeId(node, nodeIndex) === edge.source,
+    );
+    const targetNode = document.nodes.find(
+      (node, nodeIndex) => nodeId(node, nodeIndex) === edge.target,
+    );
+    const sourceType =
+      typeof sourceNode?.type === "string" ? sourceNode.type : undefined;
+    const targetType =
+      typeof targetNode?.type === "string" ? targetNode.type : undefined;
+    const sourcePort = typeof edge.sourcePort === "string" ? edge.sourcePort : "out";
+    const targetPort = typeof edge.targetPort === "string" ? edge.targetPort : "in";
+    const route = typeof edge.route === "string" ? edge.route : undefined;
+    if (
+      sourceType === "condition" &&
+      route !== "true" &&
+      route !== "false" &&
+      sourcePort !== "true" &&
+      sourcePort !== "false"
+    )
+      issues.push({
+        code: "condition_route_missing",
+        itemId: id,
+        message:
+          "A condition transition must route true or false through a typed handle or route label.",
+      });
+    const sourceKind = resolveOutputPortKind(sourceType, sourcePort);
+    const targetKind = resolveInputPortKind(targetType, targetPort);
+    if (sourceKind === "unknown-port")
+      issues.push({
+        code: "unknown_port",
+        itemId: id,
+        message: `Transition source port ${sourcePort} does not exist on a ${sourceType ?? "node"}.`,
+      });
+    if (targetKind === "unknown-port")
+      issues.push({
+        code: "unknown_port",
+        itemId: id,
+        message: `Transition target port ${targetPort} does not exist on a ${targetType ?? "node"}.`,
+      });
+    if (
+      sourceKind !== undefined &&
+      sourceKind !== "unknown-port" &&
+      targetKind !== undefined &&
+      targetKind !== "unknown-port" &&
+      !portKindsConnect(sourceKind, targetKind)
+    )
+      issues.push({
+        code: "connection_type_mismatch",
+        itemId: id,
+        message: `Transition connects an incompatible ${sourceKind} output to a ${targetKind} input.`,
+      });
   });
+  const cycleNodes = nodesInCycles(document);
+  for (const nodeIdValue of cycleNodes) {
+    issues.push({
+      code: "cycle_detected",
+      itemId: nodeIdValue,
+      message: `Node ${nodeIdValue} participates in a cycle; a workflow pass must be acyclic.`,
+    });
+  }
   return issues;
+}
+
+/** Returns node IDs that participate in at least one directed edge cycle. */
+export function nodesInCycles(document: WorkflowDocument): readonly string[] {
+  const ids = document.nodes.map((node, index) => nodeId(node, index));
+  const idSet = new Set(ids);
+  const adjacency = new Map<string, string[]>(
+    ids.map((id) => [id, [] as string[]]),
+  );
+  const indegree = new Map<string, number>(ids.map((id) => [id, 0]));
+  document.edges.forEach((edge) => {
+    const source = edgeIdSource(edge);
+    const target = edgeIdTarget(edge);
+    if (source !== null && target !== null && idSet.has(source) && idSet.has(target)) {
+      adjacency.get(source)?.push(target);
+      indegree.set(target, (indegree.get(target) ?? 0) + 1);
+    }
+  });
+  const queue = ids.filter((id) => (indegree.get(id) ?? 0) === 0);
+  const ordered = new Set<string>();
+  for (let head = 0; head < queue.length; head += 1) {
+    const node = queue[head]!;
+    ordered.add(node);
+    for (const next of adjacency.get(node) ?? []) {
+      const remaining = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  if (ordered.size === ids.length) return [];
+  return ids.filter((id) => !ordered.has(id)).sort();
+}
+
+function edgeIdSource(edge: JsonObject): string | null {
+  return typeof edge.source === "string" ? edge.source : null;
+}
+function edgeIdTarget(edge: JsonObject): string | null {
+  return typeof edge.target === "string" ? edge.target : null;
 }
 export function workflowSummary(document: WorkflowDocument): WorkflowSummary {
   return {
@@ -568,4 +703,10 @@ function labelFor(type: string): string {
   return type
     .replaceAll("_", " ")
     .replace(/^./, (value) => value.toUpperCase());
+}
+
+/** Seeds a typed node's configuration from its catalog default when known. */
+function defaultConfigurationFor(type: string): JsonObject {
+  const entry = catalogEntryForType(type);
+  return entry === undefined ? {} : { ...entry.defaultConfiguration };
 }

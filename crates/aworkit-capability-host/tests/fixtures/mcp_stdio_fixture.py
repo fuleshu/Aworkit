@@ -30,7 +30,7 @@ def main():
         method = message.get("method")
         request_id = message.get("id")
         if method == "server/discover":
-            error(request_id, -32601, "legacy fixture")
+            return
         elif method == "initialize":
             response(
                 request_id,

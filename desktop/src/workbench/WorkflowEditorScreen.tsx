@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import type { SettingsV2Snapshot } from "./configuration";
+import { createSettingsV2CorePort } from "./settingsV2Port";
 import {
   createWorkflowCorePort,
+  createWorkflowLibraryPort,
   nextWorkbenchCommandId,
   type WorkflowCorePort,
+  type WorkflowLibraryPort,
+  type WorkflowLibrarySnapshot,
+  type WorkflowSnapshot,
 } from "./corePort";
 import { WorkflowGraphSurfaceAdapter } from "./graphSurface";
+import { WorkflowLibraryBar } from "./WorkflowLibraryBar";
 import { WorkflowPalette } from "./WorkflowPalette";
 import { WorkflowPropertiesPane } from "./WorkflowPropertiesPane";
 import { WorkflowToolbar } from "./WorkflowToolbar";
@@ -27,6 +34,7 @@ import {
   serializeWorkflow,
   undoWorkflow,
   updateSelectedEdgeFields,
+  updateSelectedNodeConfiguration,
   updateSelectedNodeField,
   updateSelectedNodeProperty,
   validateWorkflow,
@@ -34,10 +42,14 @@ import {
   type WorkflowDocument,
 } from "./workflow";
 import { assessNativeWorkflow } from "./workflowExecution";
+import { projectNodeRunStatus, type NodeRunFact } from "./runStatus";
 
 interface WorkflowEditorScreenProps {
   readonly document: WorkflowDocument;
   readonly workflowPort?: WorkflowCorePort;
+  readonly libraryPort?: WorkflowLibraryPort;
+  readonly settings?: SettingsV2Snapshot;
+  readonly runFacts?: readonly NodeRunFact[];
   readonly onOpenSettings?: () => void;
   readonly onRun?: () => void;
   readonly runBlockedReason?: string;
@@ -47,6 +59,9 @@ interface WorkflowEditorScreenProps {
 export function WorkflowEditorScreen({
   document,
   workflowPort,
+  libraryPort,
+  settings: settingsProp,
+  runFacts,
   onOpenSettings,
   onRun,
   runBlockedReason,
@@ -55,6 +70,24 @@ export function WorkflowEditorScreen({
     () => workflowPort ?? createWorkflowCorePort(document),
     [document, workflowPort],
   );
+  const [settings, setSettings] = useState<SettingsV2Snapshot | undefined>(
+    settingsProp,
+  );
+  useEffect(() => {
+    if (settingsProp !== undefined || !("__TAURI_INTERNALS__" in window)) return;
+    let active = true;
+    void createSettingsV2CorePort()
+      .snapshot()
+      .then((snapshot) => {
+        if (active) setSettings(snapshot);
+      })
+      .catch(() => {
+        // The typed property forms fall back to standard tiers without Settings.
+      });
+    return () => {
+      active = false;
+    };
+  }, [settingsProp]);
   const [editor, setEditor] = useState(() => createSelectedEditor(document));
   const [savedFingerprint, setSavedFingerprint] = useState(() =>
     serializeWorkflow(document),
@@ -68,19 +101,28 @@ export function WorkflowEditorScreen({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [retryCommandId, setRetryCommandId] = useState<string | null>(null);
+  const [library, setLibrary] = useState<WorkflowLibrarySnapshot | null>(null);
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const graph = useMemo(() => new WorkflowGraphSurfaceAdapter(), []);
 
+  /** Applies a freshly loaded workflow snapshot to the editor surface. */
+  const applySnapshot = (snapshot: WorkflowSnapshot): void => {
+    setProjectedVersion(snapshot.version);
+    setStoredEditable(snapshot.editable);
+    setEditor(createSelectedEditor(snapshot.document));
+    setSavedFingerprint(serializeWorkflow(snapshot.document));
+    setError(null);
+  };
+
   useEffect(() => {
+    if (libraryPort !== undefined) return;
     let active = true;
     void port
       .snapshot()
       .then((snapshot) => {
-        if (!active) return;
-        setProjectedVersion(snapshot.version);
-        setStoredEditable(snapshot.editable);
-        setEditor(createSelectedEditor(snapshot.document));
-        setSavedFingerprint(serializeWorkflow(snapshot.document));
-        setError(null);
+        if (active) applySnapshot(snapshot);
       })
       .catch((failure: unknown) => {
         if (active)
@@ -91,7 +133,48 @@ export function WorkflowEditorScreen({
     return () => {
       active = false;
     };
-  }, [port]);
+  }, [port, libraryPort]);
+
+  useEffect(() => {
+    if (libraryPort === undefined) return;
+    let active = true;
+    setLibraryError(null);
+    void libraryPort
+      .snapshot()
+      .then((snapshot) => {
+        if (!active) return;
+        setLibrary(snapshot);
+        setActiveWorkflowId((current) => current ?? snapshot.defaultWorkflowId);
+      })
+      .catch((failure: unknown) => {
+        if (active)
+          setLibraryError(
+            failure instanceof Error ? failure.message : String(failure),
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [libraryPort]);
+
+  useEffect(() => {
+    if (libraryPort === undefined || activeWorkflowId === null) return;
+    let current = true;
+    void port
+      .snapshot(activeWorkflowId)
+      .then((snapshot) => {
+        if (current) applySnapshot(snapshot);
+      })
+      .catch((failure: unknown) => {
+        if (current)
+          setError(
+            failure instanceof Error ? failure.message : String(failure),
+          );
+      });
+    return () => {
+      current = false;
+    };
+  }, [port, libraryPort, activeWorkflowId]);
 
   const selectedId =
     (editor.selectedIds.values().next().value as string | undefined) ?? null;
@@ -134,6 +217,7 @@ export function WorkflowEditorScreen({
         commandId,
         expectedVersion: projectedVersion,
         document: editor.document,
+        workflowId: activeWorkflowId ?? undefined,
       });
       if (!receipt.accepted) {
         setRetryCommandId(null);
@@ -211,6 +295,90 @@ export function WorkflowEditorScreen({
     }
   };
 
+  const refreshLibrary = async (): Promise<void> => {
+    if (libraryPort === undefined) return;
+    setLibrary(await libraryPort.snapshot());
+  };
+
+  const runLibraryAction = async (action: () => Promise<void>): Promise<void> => {
+    if (libraryPort === undefined) return;
+    setLibraryBusy(true);
+    setLibraryError(null);
+    try {
+      await action();
+      await refreshLibrary();
+    } catch (failure) {
+      setLibraryError(
+        failure instanceof Error ? failure.message : String(failure),
+      );
+    } finally {
+      setLibraryBusy(false);
+    }
+  };
+
+  const createWorkflow = (template: string, name: string): void => {
+    if (libraryPort === undefined) return;
+    setLibraryBusy(true);
+    setLibraryError(null);
+    void libraryPort
+      .create({
+        commandId: nextWorkbenchCommandId("workflow"),
+        name: name.trim(),
+        template,
+      })
+      .then(async (receipt) => {
+        await refreshLibrary();
+        setActiveWorkflowId(receipt.workflowId);
+      })
+      .catch((failure: unknown) =>
+        setLibraryError(
+          failure instanceof Error ? failure.message : String(failure),
+        ),
+      )
+      .finally(() => setLibraryBusy(false));
+  };
+
+  const duplicateWorkflow = (workflowId: string, name: string): void => {
+    void runLibraryAction(async () => {
+      const receipt = await libraryPort!.duplicate({
+        commandId: nextWorkbenchCommandId("workflow"),
+        workflowId,
+        name: name.trim(),
+      });
+      setActiveWorkflowId(receipt.workflowId);
+    });
+  };
+
+  const renameWorkflow = (workflowId: string, name: string): void => {
+    void runLibraryAction(async () => {
+      await libraryPort!.rename({
+        commandId: nextWorkbenchCommandId("workflow"),
+        workflowId,
+        name: name.trim(),
+      });
+    });
+  };
+
+  const deleteWorkflow = (workflowId: string): void => {
+    void runLibraryAction(async () => {
+      await libraryPort!.remove({
+        commandId: nextWorkbenchCommandId("workflow"),
+        workflowId,
+      });
+      const snapshot = await libraryPort!.snapshot();
+      setActiveWorkflowId(snapshot.defaultWorkflowId);
+    });
+  };
+
+  const setDefaultWorkflow = (workflowId: string): void => {
+    void runLibraryAction(async () => {
+      await libraryPort!.setDefault({
+        commandId: nextWorkbenchCommandId("workflow"),
+        workflowId,
+      });
+    });
+  };
+
   const saveTitle = saveTitleFor(
     saveBlockingIssues.length,
     documentEditable,
@@ -225,9 +393,15 @@ export function WorkflowEditorScreen({
     !dirty &&
     runBlockedReason === undefined &&
     onRun !== undefined;
+  const runStatus = useMemo(
+    () => projectNodeRunStatus(editor.document, runFacts ?? []),
+    [editor.document, runFacts],
+  );
 
   return (
-    <section className="workflow-editor">
+    <section
+      className={`workflow-editor ${libraryPort !== undefined ? "with-library" : ""}`}
+    >
       <WorkflowToolbar
         canRedo={editor.redo.length > 0}
         canUndo={editor.undo.length > 0}
@@ -265,6 +439,24 @@ export function WorkflowEditorScreen({
         onUndo={() => setEditor(undoWorkflow)}
         onValidate={selectValidationResult}
       />
+      {libraryPort !== undefined && library !== null && activeWorkflowId !== null && (
+        <WorkflowLibraryBar
+          activeWorkflowId={activeWorkflowId}
+          busy={libraryBusy}
+          library={library}
+          onCreate={createWorkflow}
+          onDelete={deleteWorkflow}
+          onDuplicate={duplicateWorkflow}
+          onRename={renameWorkflow}
+          onSelect={setActiveWorkflowId}
+          onSetDefault={setDefaultWorkflow}
+        />
+      )}
+      {libraryError !== null && (
+        <div className="command-banner error-banner" role="alert">
+          {libraryError}
+        </div>
+      )}
       {error !== null && (
         <div className="command-banner error-banner" role="alert">
           {error} The complete local document remains available for Undo or
@@ -329,6 +521,7 @@ export function WorkflowEditorScreen({
         />
         {graph.render(editor, {
           structureLocked: !documentEditable,
+          runStatus,
           onSelect: (id) =>
             setEditor((state) => selectWorkflowItem(state, id)),
           onClearSelection: () => setEditor(clearWorkflowSelection),
@@ -357,10 +550,14 @@ export function WorkflowEditorScreen({
           selectedEdge={selectedEdge}
           selectedId={selectedId}
           selectedNode={selectedNode}
+          settings={settings}
           summary={summary}
           onDelete={() => setEditor(deleteSelectedWorkflowItems)}
           onEdgeFields={(patch) =>
             setEditor((state) => updateSelectedEdgeFields(state, patch))
+          }
+          onNodeConfiguration={(patch) =>
+            setEditor((state) => updateSelectedNodeConfiguration(state, patch))
           }
           onNodeField={(key, value) =>
             setEditor((state) => updateSelectedNodeField(state, key, value))

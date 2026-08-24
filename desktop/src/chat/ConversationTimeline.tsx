@@ -154,6 +154,72 @@ export function TimelineCard({
       </article>
     );
   }
+  if (isPlanCall(item))
+    return (
+      <article className="activity-card plan-call-card" aria-label={`Plan: ${item.title}`}>
+        <div className="activity-heading">
+          <span className="activity-icon">◇</span>
+          <strong>{item.title}</strong>
+          <span>{item.status}</span>
+        </div>
+        <p className="plan-call-body">{item.body}</p>
+      </article>
+    );
+  if (isWebResult(item))
+    return (
+      <article className={`activity-card web-result-card ${selected ? "selected" : ""}`} aria-label={`${webTitle(item)}: ${item.title}`}>
+        <button className="activity-main" type="button" title={`Inspect ${item.title} evidence`} onClick={() => onSelect(item.id)}>
+          <span className="activity-icon">⌕</span>
+          <span>
+            <strong>{webTitle(item)}</strong>
+            <code>{item.body}</code>
+          </span>
+          <span className={`status ${item.status ?? ""}`}>{item.status ?? "result"}</span>
+        </button>
+        {card.inspectable && (
+          <details className="activity-raw">
+            <summary>Inspect source record</summary>
+            <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
+          </details>
+        )}
+      </article>
+    );
+  if (item.kind === "todo")
+    return (
+      <article className="activity-card todo-card" aria-label={`Task list: ${item.title}`}>
+        <div className="activity-heading">
+          <span className="activity-icon">☑</span>
+          <strong>{item.title}</strong>
+          <span>{todoCount(item)}</span>
+        </div>
+        <ul className="todo-list">
+          {todosOf(item).map((todo, index) => (
+            <li className={todo.done ? "done" : ""} key={`${index}-${todo.content}`}>
+              {todo.content}
+            </li>
+          ))}
+        </ul>
+      </article>
+    );
+  if (item.kind === "subagent")
+    return (
+      <article className={`activity-card subagent-card ${selected ? "selected" : ""}`} aria-label={`Subagent: ${item.title}`}>
+        <details>
+          <summary className="activity-heading">
+            <span className="activity-icon">≋</span>
+            <strong>{item.title}</strong>
+            <span className={`status ${item.status ?? ""}`}>{item.status ?? "run"}</span>
+          </summary>
+          <p className="subagent-body">{item.body}</p>
+          {card.inspectable && (
+            <details className="activity-raw">
+              <summary>Inspect source record</summary>
+              <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
+            </details>
+          )}
+        </details>
+      </article>
+    );
   return (
     <article
       className={`activity-card ${selected ? "selected" : ""}`}
@@ -214,8 +280,9 @@ export function TimelineCard({
 }
 
 function estimate(item: TimelineItem | undefined): number {
-  if (item?.kind === "plan") return 168;
+  if (item?.kind === "plan" || item?.kind === "todo") return 168;
   if (item?.kind === "message") return 92;
+  if (item?.kind === "subagent") return 96;
   return item !== undefined && toConversationCard(item).inspectable ? 132 : 92;
 }
 
@@ -236,4 +303,52 @@ function icon(kind: TimelineItem["kind"]): string {
         : kind === "verification"
           ? "✓"
           : "◇";
+}
+
+function metadataOf(item: TimelineItem): Record<string, unknown> {
+  const value = item.metadata;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** A plan card is the output of a model_call node committed as node.completed. */
+function isPlanCall(item: TimelineItem): boolean {
+  return item.kind === "model" && metadataOf(item).nodeType === "model_call";
+}
+
+/** A web-result card is a tool call settled by the built-in web capabilities. */
+function isWebResult(item: TimelineItem): boolean {
+  if (item.kind !== "tool") return false;
+  const capabilityId = metadataOf(item).capabilityId;
+  return (
+    capabilityId === "tool.web_search" || capabilityId === "tool.web_fetch"
+  );
+}
+
+function webTitle(item: TimelineItem): string {
+  return metadataOf(item).capabilityId === "tool.web_fetch"
+    ? "Web fetch"
+    : "Web search";
+}
+
+function todosOf(item: TimelineItem): readonly { readonly content: string; readonly done: boolean }[] {
+  const todos = metadataOf(item).todos;
+  if (!Array.isArray(todos)) return [];
+  return todos.map((todo) => {
+    const record =
+      typeof todo === "object" && todo !== null && !Array.isArray(todo)
+        ? (todo as Record<string, unknown>)
+        : {};
+    const content =
+      typeof record.content === "string" ? record.content : String(record.content ?? "");
+    const status = typeof record.status === "string" ? record.status : "";
+    return { content, done: status === "completed" || status === "done" };
+  });
+}
+
+function todoCount(item: TimelineItem): string {
+  const todos = todosOf(item);
+  const done = todos.filter((todo) => todo.done).length;
+  return `${done}/${todos.length}`;
 }

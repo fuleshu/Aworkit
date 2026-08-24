@@ -338,6 +338,9 @@ pub(crate) enum ExtensionRegistrationError {
     #[error("the extension entry point path must be valid UTF-8")]
     EntryPointPathNotUtf8,
     #[error("the extension entry point is not executable")]
+    // Constructed only by the Unix executable-permission check; Windows has no
+    // executable-bit concept, so the variant is never built there.
+    #[cfg_attr(not(unix), allow(dead_code))]
     EntryPointNotExecutable,
     #[error("the extension entry-point identity could not be encoded")]
     EntryPointIdentityEncoding,

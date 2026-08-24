@@ -404,6 +404,8 @@ fn spawn_reader(
 }
 
 fn terminate_group(child: &mut GroupChild, grace: Duration) -> Result<Option<i32>, ProcessError> {
+    #[cfg(not(unix))]
+    let _ = grace; // Windows has no graceful signal phase before kill.
     #[cfg(unix)]
     {
         let _ = child.signal(Signal::SIGTERM);

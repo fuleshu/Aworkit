@@ -328,6 +328,9 @@ pub struct WorkflowCommitInput {
     pub command_id: String,
     pub expected_version: u64,
     pub document: Value,
+    /// Optional library target; defaults to the legacy Simple Chat document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -336,4 +339,64 @@ pub struct WorkflowSnapshot {
     pub version: u64,
     pub document: Value,
     pub editable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowEntryDto {
+    pub id: String,
+    pub name: String,
+    pub version: u64,
+    pub editable: bool,
+    #[serde(rename = "default")]
+    pub is_default: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowLibrarySnapshot {
+    pub version: u64,
+    pub default_workflow_id: String,
+    pub entries: Vec<WorkflowEntryDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowCreateInput {
+    pub command_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowTargetInput {
+    pub command_id: String,
+    pub workflow_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowRenameInput {
+    pub command_id: String,
+    pub workflow_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowDuplicateInput {
+    pub command_id: String,
+    pub workflow_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowCreateReceipt {
+    pub command_id: String,
+    pub accepted: bool,
+    pub current_version: u64,
+    pub workflow_id: String,
 }

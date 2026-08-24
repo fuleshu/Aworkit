@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
 };
 
@@ -18,6 +19,19 @@ fn python_executable() -> PathBuf {
         .into_iter()
         .map(PathBuf::from)
         .find(|path| path.is_file())
+        .or_else(|| {
+            // Windows commonly exposes Python through PATH rather than either
+            // Unix location. Ask that launcher for its resolved executable so
+            // the MCP configuration still exercises an absolute path.
+            Command::new("python")
+                .args(["-c", "import sys; print(sys.executable)"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|path| PathBuf::from(path.trim()))
+                .filter(|path| path.is_file())
+        })
         .expect("a system Python 3 interpreter for the hermetic MCP fixture")
 }
 
@@ -57,7 +71,13 @@ fn desktop_probe_redeems_named_field_and_discovers_real_stdio_catalog() {
                 enabled: false,
                 auto_connect: false,
                 transport: IntegrationTransportV2::Stdio {
-                    command: python_executable().display().to_string(),
+                    // Windows agents normally use the standard bare `python`
+                    // command, while Unix coverage retains quoted-path support.
+                    command: if cfg!(windows) {
+                        "python".into()
+                    } else {
+                        format!("\"{}\"", python_executable().display())
+                    },
                     args: vec![fixture_script().display().to_string()],
                     cwd: None,
                     env: vec![NamedCredentialBindingV2 {

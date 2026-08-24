@@ -1,20 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   canSubmit,
   emptyComposer,
   submitIntent,
   updateComposer,
+  type ComposerState,
 } from "./composer";
 import type { ChatProjectChoice, ChatProjection } from "./types";
+
+export interface WorkflowOption {
+  readonly id: string;
+  readonly name: string;
+}
 
 interface ChatComposerProps {
   readonly chat: ChatProjection;
   readonly projects: readonly ChatProjectChoice[];
   readonly stale: boolean;
   readonly pending: boolean;
+  readonly workflows?: readonly WorkflowOption[];
+  readonly defaultWorkflowId?: string | null;
   readonly workflowRequiresProject?: boolean | null;
   readonly workflowReadinessError?: string | null;
   readonly nextCommandId: () => string;
+  readonly onWorkflowChange?: (workflowId: string) => void;
   readonly onSubmit: (
     intent: ReturnType<typeof submitIntent>,
   ) => Promise<boolean>;
@@ -26,12 +35,26 @@ export function ChatComposer({
   projects,
   stale,
   pending,
+  workflows,
+  defaultWorkflowId,
   workflowRequiresProject = false,
   workflowReadinessError = null,
   nextCommandId,
+  onWorkflowChange,
   onSubmit,
 }: ChatComposerProps): React.JSX.Element {
-  const [state, setState] = useState(emptyComposer);
+  const workflowOptions: readonly WorkflowOption[] =
+    workflows !== undefined && workflows.length > 0
+      ? workflows
+      : [{ id: "workflow.simple-chat", name: "Simple Chat" }];
+  const [state, setState] = useState<ComposerState>(() => ({
+    ...emptyComposer,
+    workflowId: defaultWorkflowId ?? "workflow.simple-chat",
+  }));
+  useEffect(() => {
+    onWorkflowChange?.(state.workflowId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [retryIntent, setRetryIntent] = useState<ReturnType<
     typeof submitIntent
   > | null>(null);
@@ -94,9 +117,21 @@ export function ChatComposer({
             disabled={
               chat.lockedWorkflow || chat.recoveryPending || commandPending
             }
-            onChange={(event) => edit({ workflowId: event.target.value })}
+            onChange={(event) => {
+              edit({ workflowId: event.target.value });
+              onWorkflowChange?.(event.target.value);
+            }}
           >
-            <option value="workflow.simple-chat">Simple Chat</option>
+            {workflowOptions.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>
+                {workflow.name}
+              </option>
+            ))}
+            {!workflowOptions.some(
+              (workflow) => workflow.id === state.workflowId,
+            ) && (
+              <option value={state.workflowId}>{state.workflowId}</option>
+            )}
           </select>
         </label>
         <label>

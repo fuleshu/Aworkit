@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
+import { deriveActivityCards, mergeTimeline } from "./activityProjection";
 import type { ChatCorePort } from "./corePort";
-import { ChatComposer } from "./ChatComposer";
+import {
+  ChatComposer,
+  type WorkflowOption,
+} from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { controlsFor } from "./composer";
 import { EvidenceInspector } from "./EvidenceInspector";
@@ -9,10 +13,12 @@ import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
 import type { ChatIntent, TimelineItem } from "./types";
 import {
+  createWorkflowLibraryPort,
   TauriWorkflowCorePort,
   type WorkflowCorePort,
+  type WorkflowLibraryPort,
 } from "../workbench/corePort";
-import { simpleChatBindsProjectTools } from "../workbench/workflowExecution";
+import { bindsProjectTools } from "../workbench/workflowExecution";
 
 interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;
@@ -20,6 +26,7 @@ interface ChatWorkspaceScreenProps {
   readonly newChatRequest?: number;
   readonly active?: boolean;
   readonly workflowPort?: Pick<WorkflowCorePort, "snapshot">;
+  readonly libraryPort?: WorkflowLibraryPort;
   readonly onRecoveryPendingChange?: (pending: boolean) => void;
   readonly confirmRecoveryAbandon?: (
     title: string,
@@ -34,6 +41,7 @@ export function ChatWorkspaceScreen({
   newChatRequest = 0,
   active = true,
   workflowPort,
+  libraryPort,
   onRecoveryPendingChange,
   confirmRecoveryAbandon = browserRecoveryConfirmation,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
@@ -48,6 +56,11 @@ export function ChatWorkspaceScreen({
       ("__TAURI_INTERNALS__" in window ? new TauriWorkflowCorePort() : null),
     [workflowPort],
   );
+  const [workflows, setWorkflows] = useState<readonly WorkflowOption[]>([]);
+  const [defaultWorkflowId, setDefaultWorkflowId] = useState<string | null>(null);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
+    null,
+  );
   const [workflowRequiresProject, setWorkflowRequiresProject] = useState<
     boolean | null
   >(nativeWorkflowPort === null ? false : null);
@@ -60,6 +73,50 @@ export function ChatWorkspaceScreen({
   const wasActive = useRef(active);
   const snapshot = runtime.snapshot;
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
+  const timelineItems = useMemo(
+    () =>
+      snapshot === null
+        ? []
+        : mergeTimeline(
+            snapshot.timeline,
+            deriveActivityCards(runtime.events),
+          ),
+    [snapshot, runtime.events],
+  );
+
+  // Load the saved-workflow library once so the composer can list and default
+  // to the profile default workflow.
+  useEffect(() => {
+    const port: WorkflowLibraryPort =
+      libraryPort ?? createWorkflowLibraryPort();
+    let current = true;
+    void port
+      .snapshot()
+      .then((library) => {
+        if (!current) return;
+        const entries = library.entries.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+        }));
+        setWorkflows(entries);
+        setDefaultWorkflowId(library.defaultWorkflowId);
+        setSelectedWorkflowId((currentId) =>
+          currentId ?? library.defaultWorkflowId,
+        );
+      })
+      .catch(() => {
+        if (current) {
+          setWorkflows([{ id: "workflow.simple-chat", name: "Simple Chat" }]);
+          setDefaultWorkflowId("workflow.simple-chat");
+          setSelectedWorkflowId((currentId) =>
+            currentId ?? "workflow.simple-chat",
+          );
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [libraryPort]);
   useEffect(() => {
     const reentered = active && !wasActive.current;
     wasActive.current = active;
@@ -67,7 +124,7 @@ export function ChatWorkspaceScreen({
   }, [active, runtime.resynchronize]);
   useEffect(() => {
     if (!active) return;
-    if (nativeWorkflowPort === null) {
+    if (nativeWorkflowPort === null || selectedWorkflowId === null) {
       setWorkflowRequiresProject(false);
       setWorkflowReadinessError(null);
       return;
@@ -76,23 +133,30 @@ export function ChatWorkspaceScreen({
     setWorkflowRequiresProject(null);
     setWorkflowReadinessError(null);
     void nativeWorkflowPort
-      .snapshot()
-      .then(({ document }) => {
-        if (current)
-          setWorkflowRequiresProject(simpleChatBindsProjectTools(document));
+      .snapshot(selectedWorkflowId)
+      .then(({ document, editable }) => {
+        if (!current) return;
+        if (!editable) {
+          setWorkflowRequiresProject(null);
+          setWorkflowReadinessError(
+            "The selected workflow uses a read-only schema and cannot run.",
+          );
+          return;
+        }
+        setWorkflowRequiresProject(bindsProjectTools(document));
       })
       .catch(() => {
         if (current) {
           setWorkflowRequiresProject(null);
           setWorkflowReadinessError(
-            "The saved Simple Chat workflow could not be checked; resynchronize before sending.",
+            "The selected workflow could not be checked; resynchronize before sending.",
           );
         }
       });
     return () => {
       current = false;
     };
-  }, [active, nativeWorkflowPort]);
+  }, [active, nativeWorkflowPort, selectedWorkflowId]);
   useEffect(() => {
     if (projectedRecoveryPending !== undefined)
       onRecoveryPendingChange?.(projectedRecoveryPending);
@@ -311,20 +375,23 @@ export function ChatWorkspaceScreen({
           </div>
         ) : null}
         <ConversationTimeline
-          items={snapshot.timeline}
+          items={timelineItems}
           selectedId={selectedTimelineId}
           onSelect={setSelectedTimelineId}
           onAction={cardAction}
         />
         <ChatComposer
-          key={chat.chatId}
+          key={chat.chatId + (defaultWorkflowId ?? "")}
           chat={chat}
           projects={snapshot.projects}
           stale={runtime.stale}
           pending={runtime.pendingCommandIds.size > 0}
+          workflows={workflows}
+          defaultWorkflowId={defaultWorkflowId}
           workflowRequiresProject={workflowRequiresProject}
           workflowReadinessError={workflowReadinessError}
           nextCommandId={() => commandIds.createIntent("enqueue").commandId}
+          onWorkflowChange={setSelectedWorkflowId}
           onSubmit={runtime.dispatch}
         />
       </main>
