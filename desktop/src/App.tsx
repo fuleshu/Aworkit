@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { DesktopAdapters } from "./adapters/contracts";
 import {
   nativePresentationEvent,
@@ -27,75 +34,44 @@ interface AppProps {
 }
 const starterWorkflow = {
   schemaVersion: 1,
-  name: "Repository Engineer",
+  id: "workflow.simple-chat",
+  name: "Simple Chat",
   nodes: [
     {
       id: "input.1",
-      label: "Request",
+      label: "Input",
       type: "input",
       position: { x: 36, y: 205 },
     },
     {
-      id: "model.fast",
-      label: "Fast model",
-      type: "model",
-      position: { x: 245, y: 112 },
-      requirement: "model.fast",
-      capabilityStatus: "ready",
-    },
-    {
-      id: "model.quality",
-      label: "Quality model",
-      type: "model",
-      position: { x: 245, y: 296 },
-      requirement: "model.quality",
-      capabilityStatus: "ready",
-    },
-    {
-      id: "plugin.review",
-      label: "acme.code-review@2.x",
-      type: "plugin",
-      position: { x: 470, y: 112 },
-      requirement: "plugin.code-review@2.x",
-      capabilityStatus: "missing",
-    },
-    {
-      id: "gate.1",
-      label: "Review approval",
-      type: "gate",
-      position: { x: 470, y: 296 },
-      required: true,
+      id: "agent.1",
+      label: "Agent",
+      type: "agent",
+      position: { x: 245, y: 205 },
+      configuration: {
+        modelTierId: "tier:balanced",
+        maxTurns: 1,
+        toolIds: [],
+      },
     },
     {
       id: "output.1",
-      label: "Response",
+      label: "Output",
       type: "output",
-      position: { x: 710, y: 205 },
+      position: { x: 470, y: 205 },
+    },
+    {
+      id: "wait.1",
+      label: "Wait for input",
+      type: "wait",
+      position: { x: 695, y: 205 },
     },
   ],
   edges: [
-    { id: "request-fast", source: "input.1", target: "model.fast" },
-    {
-      id: "fast-review",
-      source: "model.fast",
-      target: "plugin.review",
-    },
-    {
-      id: "request-quality",
-      source: "input.1",
-      target: "model.quality",
-      label: "deep review",
-    },
-    {
-      id: "review-gate",
-      source: "plugin.review",
-      target: "gate.1",
-    },
-    { id: "quality-gate", source: "model.quality", target: "gate.1" },
-    { id: "gate-response", source: "gate.1", target: "output.1" },
+    { id: "input-agent", source: "input.1", target: "agent.1" },
+    { id: "agent-output", source: "agent.1", target: "output.1" },
+    { id: "output-wait", source: "output.1", target: "wait.1" },
   ],
-  unknownExtension: { retain: true },
-  comments: "Unknown fields stay lossless.",
 } as const;
 
 /** Persistent compact desktop workbench. Feature views own no canonical state. */
@@ -107,6 +83,9 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
   const [navigationWidth, setNavigationWidth] = useState(208);
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
+  const [chatRecoveryPending, setChatRecoveryPending] = useState<
+    boolean | null
+  >(null);
   const [notification, setNotification] = useState<Extract<
     NativePresentationRequest,
     { kind: "notification" }
@@ -116,15 +95,16 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
     { kind: "confirmation" }
   > | null>(null);
   const mainRef = useRef<HTMLElement>(null);
-  const navigate = (next: Route) => {
+  const navigate = useCallback((next: Route) => {
     setMountedRoutes((current) => new Set([...current, next]));
     setRoute(next);
     window.requestAnimationFrame(() => mainRef.current?.focus());
-  };
-  const openNewChat = () => {
+  }, []);
+  const openNewChat = useCallback(() => {
+    if (chatRecoveryPending !== false) return;
     navigate("chat");
     setNewChatRequest((request) => request + 1);
-  };
+  }, [chatRecoveryPending, navigate]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -141,7 +121,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, []);
+  }, [navigate]);
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let dispose: (() => void) | undefined;
@@ -154,7 +134,12 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             "aworkit.settings": () => navigate("settings"),
             "aworkit.chat": () => navigate("chat"),
             "aworkit.workflows": () => navigate("workflows"),
-            "aworkit.management": () => navigate("management"),
+            "aworkit.management": () =>
+              setNotification({
+                kind: "notification",
+                title: "Management Chat unavailable",
+                body: "Management Chat is unsupported in this rescue build.",
+              }),
             "aworkit.shortcuts": () =>
               setNotification({
                 kind: "notification",
@@ -172,7 +157,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
         // Browser and denied-native-event runs keep keyboard navigation.
       });
     return () => dispose?.();
-  }, []);
+  }, [navigate, openNewChat]);
   useEffect(() => {
     const receive = (event: Event) => {
       const request = (event as CustomEvent<NativePresentationRequest>).detail;
@@ -197,6 +182,13 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
         collapsed={collapsed}
         onNavigate={navigate}
         onNewChat={openNewChat}
+        newChatDisabledReason={
+          chatRecoveryPending === null
+            ? "Checking interrupted-command recovery state before starting a New Chat"
+            : chatRecoveryPending
+            ? "Resume the interrupted command before starting a New Chat"
+            : null
+        }
         onToggleCollapsed={() => setCollapsed((value) => !value)}
       />
       <PaneSplitter
@@ -216,7 +208,14 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
         >
           {mountedRoutes.has("chat") && (
             <div className="route-surface" hidden={route !== "chat"}>
-              <ChatWorkspaceScreen newChatRequest={newChatRequest} />
+              <ChatWorkspaceScreen
+                active={route === "chat"}
+                confirmRecoveryAbandon={(title, body) =>
+                  adapters.nativePresentation.confirm(title, body)
+                }
+                newChatRequest={newChatRequest}
+                onRecoveryPendingChange={setChatRecoveryPending}
+              />
             </div>
           )}
           {mountedRoutes.has("workflows") && (
@@ -225,12 +224,19 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
                 document={starterWorkflow}
                 onOpenSettings={() => navigate("settings")}
                 onRun={openNewChat}
+                runBlockedReason={
+                  chatRecoveryPending === null
+                    ? "Checking interrupted-command recovery state before starting a Run"
+                    : chatRecoveryPending
+                      ? "Resume or abandon the interrupted command before starting another Run"
+                      : undefined
+                }
               />
             </div>
           )}
           {mountedRoutes.has("settings") && (
             <div className="route-surface" hidden={route !== "settings"}>
-              <SettingsScreen />
+              <SettingsScreen presentation={adapters.nativePresentation} />
             </div>
           )}
           {mountedRoutes.has("management") && (

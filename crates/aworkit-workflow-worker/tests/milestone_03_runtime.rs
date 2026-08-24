@@ -23,7 +23,7 @@ use aworkit_workflow_worker::{
         AttemptDecisionV1, AttemptInputV1, AttemptLedger, AttemptPolicyV1, OutcomeClass, RetryProof,
     },
     routing::{RoutingError, choose_route, evaluate_predicate},
-    scheduler::{SchedulerV1, TokenStateV1},
+    scheduler::{ExternalCompletionV1, SchedulerV1, TokenStateV1},
     suspension::{
         RehydratorV1, SuspensionControllerV1, SuspensionFrameV1, SuspensionKindV1, checkpoint_hash,
     },
@@ -361,6 +361,75 @@ fn scheduler_progress_is_deterministic_and_commit_ack_gated() {
     )
     .expect("restore");
     assert_eq!(restored.checkpoint(), scheduler.checkpoint());
+}
+
+#[test]
+fn suspended_wait_consumes_durable_input_before_same_scheduler_reenters_input() {
+    let mut snapshot = frozen_snapshot();
+    snapshot.nodes[1].node_type = "wait".to_owned();
+    snapshot.nodes[1].executor = WorkerExecutorKindV1::Wait;
+    snapshot.snapshot_hash = canonical_snapshot_hash(&snapshot).expect("rehash Wait graph");
+    let declared = snapshot.snapshot_hash.clone();
+    let plan = ExecutionPlanV1::compile(snapshot.clone(), &declared).expect("Wait plan");
+    let mut scheduler = SchedulerV1::new(plan);
+    scheduler.seed_entries(0).expect("initial Input");
+    let input = scheduler.claim_next().expect("claim Input");
+    let transition = scheduler
+        .propose_transition(&input.token_id, json!({"inputCommitted":true}))
+        .expect("Input proposal");
+    let admitted_wait = scheduler
+        .acknowledge_transition(&transition.proposal_id, 1, 1)
+        .expect("Input ack")
+        .admitted_token
+        .expect("Wait admitted");
+    let wait = scheduler.claim_next().expect("claim Wait");
+    assert_eq!(wait.token_id, admitted_wait.token_id);
+    scheduler.suspend(&wait.token_id).expect("suspend Wait");
+    let checkpoint = scheduler.checkpoint();
+    assert_eq!(checkpoint.next_token_ordinal, 3);
+
+    let plan = ExecutionPlanV1::compile(snapshot.clone(), &declared).expect("restored Wait plan");
+    let mut restored = SchedulerV1::restore(plan, checkpoint).expect("restore suspended Wait");
+    restored.resume(&wait.token_id).expect("resume Wait");
+    let resumed_wait = restored.claim_next().expect("claim resumed Wait");
+    assert_eq!(resumed_wait.token_id, wait.token_id);
+    let input_received = restored
+        .propose_wait_input(&resumed_wait.token_id, json!({"inputReceived":true}))
+        .expect("propose input_received");
+    assert!(
+        restored
+            .acknowledge_terminal(&input_received.proposal_id, 2)
+            .is_err(),
+        "a Wait proposal cannot be acknowledged through the terminal API"
+    );
+    let acknowledged = restored
+        .acknowledge_wait_input(&input_received.proposal_id, 2)
+        .expect("ack input_received");
+    assert!(!acknowledged.duplicate);
+    assert!(
+        restored
+            .acknowledge_wait_input(&input_received.proposal_id, 2)
+            .expect("duplicate input_received ack")
+            .duplicate
+    );
+    let continued_input = restored
+        .enqueue(id("start"), 2, resumed_wait.branch_lineage)
+        .expect("same-scheduler Input");
+    assert_ne!(continued_input.token_id, input.token_id);
+    assert_eq!(restored.checkpoint().next_token_ordinal, 4);
+    assert!(restored.checkpoint().tokens.iter().any(|token| {
+        token.token_id == wait.token_id
+            && token.state == TokenStateV1::Completed
+            && token.external_completion == Some(ExternalCompletionV1::WaitInputReceived)
+    }));
+    let continued_input = restored.claim_next().expect("claim continued Input");
+    assert_eq!(continued_input.context_revision, 2);
+    let restored_again = SchedulerV1::restore(
+        ExecutionPlanV1::compile(snapshot, &declared).expect("second restored plan"),
+        restored.checkpoint(),
+    )
+    .expect("restore consumed Wait and continued Input");
+    assert_eq!(restored_again.checkpoint(), restored.checkpoint());
 }
 
 #[test]
@@ -992,6 +1061,138 @@ fn model_agent_settles_turns_and_subagents_keep_context_and_budgets_isolated() {
                 },
             )
             .is_err()
+    );
+}
+
+#[test]
+fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usage() {
+    let budget = BudgetEnvelope {
+        turns: 8,
+        attempts: 8,
+        tool_calls: 32,
+        tokens: 1_000,
+        cost_micros: 10_000,
+        actions: 40,
+        max_depth: 0,
+        max_fan_out: 1,
+        max_parallel: 1,
+        deadline_tick: 100,
+    };
+    let mut limits = LimitLedger::new("root", budget).expect("limits");
+    let mut agent = AgentLoopV1::new(AgentLoopConfigV1 {
+        loop_id: id("agent.aggregate-loop"),
+        node_id: id("agent.aggregate-node"),
+        model_capability_ref: id("capability.aggregate-model"),
+        authority_manifest_ref: id("authority.aggregate"),
+        budget_ref: id("budget.aggregate"),
+        scope_id: "root".into(),
+        maximum_turns: 8,
+        turn_reservation: Usage {
+            turns: 8,
+            attempts: 8,
+            tool_calls: 32,
+            tokens: 1_000,
+            cost_micros: 10_000,
+            actions: 40,
+        },
+        context_pointers: Vec::new(),
+        allowed_tool_capability_refs: vec![id("capability.aggregate-tool")],
+    })
+    .expect("agent");
+    let proposal = agent
+        .propose_model_turn(&json!({"messages":[]}), &mut limits)
+        .expect("aggregate proposal");
+    let outcome = CapabilityOutcomeV1 {
+        outcome_id: id("outcome.aggregate-success"),
+        invocation_id: proposal.invocation_id,
+        class: CapabilityOutcomeClassV1::Success,
+        retry_safe_proof: false,
+        payload: json!({"answer":"done"}),
+        usage: None,
+    };
+    let actual = Usage {
+        turns: 2,
+        attempts: 2,
+        tool_calls: 3,
+        tokens: 125,
+        cost_micros: 0,
+        actions: 5,
+    };
+    assert!(
+        agent
+            .settle_committed_run_outcome(&outcome, &mut limits, actual)
+            .expect("aggregate settlement")
+    );
+    assert_eq!(limits.remaining("root").expect("remaining").turns, 6);
+    assert_eq!(limits.remaining("root").expect("remaining").tool_calls, 29);
+    assert_eq!(limits.remaining("root").expect("remaining").tokens, 875);
+    assert!(
+        !agent
+            .settle_committed_run_outcome(&outcome, &mut limits, Usage::default())
+            .expect("duplicate aggregate settlement")
+    );
+
+    let mut no_start_limits = LimitLedger::new("no-start", budget).expect("no-start limits");
+    let mut no_start_agent = AgentLoopV1::new(AgentLoopConfigV1 {
+        loop_id: id("agent.no-start-loop"),
+        node_id: id("agent.no-start-node"),
+        model_capability_ref: id("capability.no-start-model"),
+        authority_manifest_ref: id("authority.no-start"),
+        budget_ref: id("budget.no-start"),
+        scope_id: "no-start".into(),
+        maximum_turns: 8,
+        turn_reservation: Usage {
+            turns: 8,
+            attempts: 8,
+            tool_calls: 32,
+            tokens: 1_000,
+            cost_micros: 10_000,
+            actions: 40,
+        },
+        context_pointers: Vec::new(),
+        allowed_tool_capability_refs: Vec::new(),
+    })
+    .expect("no-start agent");
+    let proposal = no_start_agent
+        .propose_model_turn(&json!({}), &mut no_start_limits)
+        .expect("no-start proposal");
+    let no_start = CapabilityOutcomeV1 {
+        outcome_id: id("outcome.aggregate-no-start"),
+        invocation_id: proposal.invocation_id,
+        class: CapabilityOutcomeClassV1::DefiniteNotStarted,
+        retry_safe_proof: true,
+        payload: json!({}),
+        usage: None,
+    };
+    assert!(matches!(
+        no_start_agent.settle_committed_run_outcome(
+            &no_start,
+            &mut no_start_limits,
+            Usage {
+                turns: 9,
+                attempts: 9,
+                actions: 9,
+                ..Usage::default()
+            },
+        ),
+        Err(AgentErrorV1::Budget(_))
+    ));
+    let mut mismatched = no_start.clone();
+    mismatched.invocation_id = id("invocation.not-pending");
+    assert!(matches!(
+        no_start_agent.settle_committed_run_outcome(
+            &mismatched,
+            &mut no_start_limits,
+            Usage::default(),
+        ),
+        Err(AgentErrorV1::OutcomeMismatch)
+    ));
+    no_start_agent
+        .settle_committed_run_outcome(&no_start, &mut no_start_limits, Usage::default())
+        .expect("zero-use definite no-start");
+    assert_eq!(
+        no_start_limits.remaining("no-start").expect("remaining"),
+        budget
     );
 }
 

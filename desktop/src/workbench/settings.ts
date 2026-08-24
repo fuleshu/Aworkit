@@ -31,14 +31,24 @@ export interface CapabilityRecord {
 export interface SettingsProjection {
   readonly version: number;
   readonly appearance: "system" | "light" | "dark";
-  readonly capabilities: readonly CapabilityRecord[];
   readonly portableHistoryEnabled: boolean;
-  readonly projectRoots: readonly string[];
+  readonly provider: ProviderProjection;
+}
+export interface ProviderProjection {
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly credentialConfigured: boolean;
+  readonly state: "unconfigured" | "configured" | "ready" | "error";
+  readonly detail: string | null;
+}
+export interface ProviderDraft extends ProviderProjection {
+  readonly credentialAction: "keep" | "replace" | "clear";
+  readonly apiKey: string;
 }
 export interface SettingsDraft {
   readonly version: number;
   readonly appearance: "system" | "light" | "dark";
-  readonly configuredCapabilities: ReadonlySet<string>;
+  readonly provider: ProviderDraft;
   readonly portableHistoryEnabled?: boolean;
   readonly dirtySections?: ReadonlySet<SettingsSection>;
 }
@@ -97,7 +107,7 @@ export function updateDraft(
   patch: Partial<
     Pick<
       SettingsDraft,
-      "appearance" | "configuredCapabilities" | "portableHistoryEnabled"
+      "appearance" | "provider" | "portableHistoryEnabled"
     >
   >,
   dirtySection?: SettingsSection,

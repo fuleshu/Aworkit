@@ -17,8 +17,10 @@ const initialChat: ChatProjection = {
   scope: "No project",
   workflowName: null,
   branch: null,
+  projectId: null,
   phase: "draft",
   lockedWorkflow: false,
+  recoveryPending: false,
   queuedInputs: [],
   expectedVersion: 0,
 };
@@ -65,7 +67,14 @@ export class ChatWorkspaceController {
   public createIntent(type: ChatIntent["type"], targetId?: string): ChatIntent {
     const commandId = this.gateway.createCommandId("chat");
     if (type === "start")
-      return { type, commandId, workflowId: "", input: "", attachments: [] };
+      return {
+        type,
+        commandId,
+        workflowId: "",
+        projectId: null,
+        input: "",
+        attachments: [],
+      };
     if (type === "enqueue") return { type, commandId, input: "" };
     if (type === "approval")
       return { type, commandId, targetId: targetId ?? "", approved: false };

@@ -126,6 +126,15 @@ pub enum TokenStateV1 {
     Cancelled,
 }
 
+/// Frozen completion mode for a node that is completed by an external event
+/// rather than by a declared graph transition. The only v1 mode is delivery
+/// of a new Input to a suspended Wait node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalCompletionV1 {
+    WaitInputReceived,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TokenV1 {
@@ -138,6 +147,8 @@ pub struct TokenV1 {
     pub awaiting_proposal_id: Option<StableId>,
     pub selected_transition_id: Option<StableId>,
     pub selected_loop_id: Option<StableId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_completion: Option<ExternalCompletionV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -164,6 +175,14 @@ pub struct TerminalProposalV1 {
     pub proposal_id: StableId,
     pub token_id: StableId,
     pub outcome: String,
+    pub facts: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WaitInputProposalV1 {
+    pub proposal_id: StableId,
+    pub token_id: StableId,
     pub facts: Value,
 }
 
@@ -204,6 +223,8 @@ pub enum SchedulerErrorV1 {
     AckMismatch,
     #[error("token {0} does not name a frozen terminal node")]
     NotTerminal(String),
+    #[error("token {0} does not name a frozen Wait node")]
+    NotWait(String),
     #[error("committed cursor regressed")]
     CursorRegression,
     #[error("scheduler checkpoint is inconsistent")]
@@ -300,6 +321,7 @@ impl SchedulerV1 {
             awaiting_proposal_id: None,
             selected_transition_id: None,
             selected_loop_id: None,
+            external_completion: None,
         };
         self.ready.insert(ReadyKeyV1 {
             logical_tick: token.logical_tick,
@@ -369,6 +391,7 @@ impl SchedulerV1 {
         token.awaiting_proposal_id = Some(proposal_id.clone());
         token.selected_transition_id = Some(transition.transition_id.clone());
         token.selected_loop_id = transition.declared_loop_id.clone();
+        token.external_completion = None;
         Ok(TransitionProposalV1 {
             proposal_id,
             token_id: token_id.clone(),
@@ -418,10 +441,54 @@ impl SchedulerV1 {
         token.awaiting_proposal_id = Some(proposal_id.clone());
         token.selected_transition_id = None;
         token.selected_loop_id = None;
+        token.external_completion = None;
         Ok(TerminalProposalV1 {
             proposal_id,
             token_id: token_id.clone(),
             outcome,
+            facts,
+        })
+    }
+
+    /// Proposes consuming one externally delivered Input at a claimed Wait.
+    /// Like graph and terminal progress, the Wait remains `AwaitingCommit`
+    /// until the caller durably commits and acknowledges this proposal.
+    pub fn propose_wait_input(
+        &mut self,
+        token_id: &StableId,
+        facts: Value,
+    ) -> Result<WaitInputProposalV1, SchedulerErrorV1> {
+        let token = self
+            .tokens
+            .get(token_id.as_str())
+            .ok_or_else(|| SchedulerErrorV1::UnknownToken(token_id.to_string()))?;
+        if token.state != TokenStateV1::InFlight {
+            return Err(SchedulerErrorV1::InvalidTokenState(token_id.to_string()));
+        }
+        if self
+            .plan
+            .node(&token.node_id)
+            .is_none_or(|node| node.executor != WorkerExecutorKindV1::Wait)
+        {
+            return Err(SchedulerErrorV1::NotWait(token_id.to_string()));
+        }
+        let proposal_id = stable_id(&format!(
+            "wait-input:{}:{}",
+            self.plan.fingerprint(),
+            token_id
+        ))?;
+        let token = self
+            .tokens
+            .get_mut(token_id.as_str())
+            .expect("token checked above");
+        token.state = TokenStateV1::AwaitingCommit;
+        token.awaiting_proposal_id = Some(proposal_id.clone());
+        token.selected_transition_id = None;
+        token.selected_loop_id = None;
+        token.external_completion = Some(ExternalCompletionV1::WaitInputReceived);
+        Ok(WaitInputProposalV1 {
+            proposal_id,
+            token_id: token_id.clone(),
             facts,
         })
     }
@@ -456,7 +523,7 @@ impl SchedulerV1 {
             .get(source_id.as_str())
             .cloned()
             .ok_or(SchedulerErrorV1::AckMismatch)?;
-        if source.state != TokenStateV1::AwaitingCommit {
+        if source.state != TokenStateV1::AwaitingCommit || source.external_completion.is_some() {
             return Err(SchedulerErrorV1::AckMismatch);
         }
         let transition_id = source
@@ -500,6 +567,20 @@ impl SchedulerV1 {
             .acknowledged_proposals
             .contains_key(proposal_id.as_str())
         {
+            let source = self
+                .tokens
+                .values()
+                .find(|token| token.awaiting_proposal_id.as_ref() == Some(proposal_id))
+                .ok_or(SchedulerErrorV1::AckMismatch)?;
+            if source.selected_transition_id.is_some()
+                || source.external_completion.is_some()
+                || self
+                    .plan
+                    .node(&source.node_id)
+                    .is_none_or(|node| node.executor != WorkerExecutorKindV1::Terminal)
+            {
+                return Err(SchedulerErrorV1::AckMismatch);
+            }
             return Ok(AckAdmissionV1 {
                 duplicate: true,
                 admitted_token: None,
@@ -520,10 +601,83 @@ impl SchedulerV1 {
             .ok_or(SchedulerErrorV1::AckMismatch)?;
         if source.state != TokenStateV1::AwaitingCommit
             || source.selected_transition_id.is_some()
+            || source.external_completion.is_some()
             || self
                 .plan
                 .node(&source.node_id)
                 .is_none_or(|node| node.executor != WorkerExecutorKindV1::Terminal)
+        {
+            return Err(SchedulerErrorV1::AckMismatch);
+        }
+        self.tokens
+            .get_mut(source_id.as_str())
+            .expect("source checked above")
+            .state = TokenStateV1::Completed;
+        self.logical_tick = self.logical_tick.saturating_add(1);
+        self.committed_cursor = committed_cursor;
+        self.acknowledged_proposals
+            .insert(proposal_id.as_str().to_owned(), None);
+        Ok(AckAdmissionV1 {
+            duplicate: false,
+            admitted_token: None,
+        })
+    }
+
+    /// Acknowledges the durable `input_received` event for a claimed Wait.
+    /// The Wait becomes completed without inventing an edge in the frozen
+    /// graph. The caller may then enqueue the graph's Input entry in this same
+    /// scheduler instance at the committed context revision.
+    pub fn acknowledge_wait_input(
+        &mut self,
+        proposal_id: &StableId,
+        committed_cursor: u64,
+    ) -> Result<AckAdmissionV1, SchedulerErrorV1> {
+        if committed_cursor < self.committed_cursor {
+            return Err(SchedulerErrorV1::CursorRegression);
+        }
+        if self
+            .acknowledged_proposals
+            .contains_key(proposal_id.as_str())
+        {
+            let source = self
+                .tokens
+                .values()
+                .find(|token| token.awaiting_proposal_id.as_ref() == Some(proposal_id))
+                .ok_or(SchedulerErrorV1::AckMismatch)?;
+            if source.selected_transition_id.is_some()
+                || source.external_completion != Some(ExternalCompletionV1::WaitInputReceived)
+                || self
+                    .plan
+                    .node(&source.node_id)
+                    .is_none_or(|node| node.executor != WorkerExecutorKindV1::Wait)
+            {
+                return Err(SchedulerErrorV1::AckMismatch);
+            }
+            return Ok(AckAdmissionV1 {
+                duplicate: true,
+                admitted_token: None,
+            });
+        }
+        if committed_cursor <= self.committed_cursor {
+            return Err(SchedulerErrorV1::CursorRegression);
+        }
+        let source_id = self
+            .tokens
+            .values()
+            .find(|token| token.awaiting_proposal_id.as_ref() == Some(proposal_id))
+            .map(|token| token.token_id.clone())
+            .ok_or(SchedulerErrorV1::AckMismatch)?;
+        let source = self
+            .tokens
+            .get(source_id.as_str())
+            .ok_or(SchedulerErrorV1::AckMismatch)?;
+        if source.state != TokenStateV1::AwaitingCommit
+            || source.selected_transition_id.is_some()
+            || source.external_completion != Some(ExternalCompletionV1::WaitInputReceived)
+            || self
+                .plan
+                .node(&source.node_id)
+                .is_none_or(|node| node.executor != WorkerExecutorKindV1::Wait)
         {
             return Err(SchedulerErrorV1::AckMismatch);
         }
@@ -736,17 +890,24 @@ impl SchedulerV1 {
                         .ok_or(SchedulerErrorV1::InvalidCheckpoint)?;
                     if transition.to_node != child.node_id
                         || source.branch_lineage != child.branch_lineage
+                        || source.external_completion.is_some()
                     {
                         return Err(SchedulerErrorV1::InvalidCheckpoint);
                     }
                 }
                 None => {
-                    if source.selected_transition_id.is_some()
-                        || scheduler
-                            .plan
-                            .node(&source.node_id)
-                            .is_none_or(|node| node.executor != WorkerExecutorKindV1::Terminal)
-                    {
+                    let valid_completion =
+                        scheduler.plan.node(&source.node_id).is_some_and(|node| {
+                            matches!(
+                                (node.executor, source.external_completion),
+                                (WorkerExecutorKindV1::Terminal, None)
+                                    | (
+                                        WorkerExecutorKindV1::Wait,
+                                        Some(ExternalCompletionV1::WaitInputReceived)
+                                    )
+                            )
+                        });
+                    if source.selected_transition_id.is_some() || !valid_completion {
                         return Err(SchedulerErrorV1::InvalidCheckpoint);
                     }
                 }
@@ -853,6 +1014,7 @@ fn validate_restored_token(
             if token.awaiting_proposal_id.is_some()
                 || token.selected_transition_id.is_some()
                 || token.selected_loop_id.is_some()
+                || token.external_completion.is_some()
             {
                 return Err(SchedulerErrorV1::InvalidCheckpoint);
             }
@@ -868,14 +1030,21 @@ fn validate_restored_token(
                         .ok_or(SchedulerErrorV1::InvalidCheckpoint)?;
                     if transition.from_node != token.node_id
                         || transition.declared_loop_id != token.selected_loop_id
+                        || token.external_completion.is_some()
                     {
                         return Err(SchedulerErrorV1::InvalidCheckpoint);
                     }
                 }
                 None => {
-                    if token.selected_loop_id.is_some()
-                        || node.executor != WorkerExecutorKindV1::Terminal
-                    {
+                    let valid_completion = matches!(
+                        (node.executor, token.external_completion),
+                        (WorkerExecutorKindV1::Terminal, None)
+                            | (
+                                WorkerExecutorKindV1::Wait,
+                                Some(ExternalCompletionV1::WaitInputReceived)
+                            )
+                    );
+                    if token.selected_loop_id.is_some() || !valid_completion {
                         return Err(SchedulerErrorV1::InvalidCheckpoint);
                     }
                 }

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createDurableCommandId } from "../commandId";
 import { evaluateActivationGate, latestCapabilityReport } from "./repair";
 import { createManagementRepairPreviewProjection } from "./preview";
 import type {
@@ -293,13 +294,8 @@ export class PreviewManagementRepairCorePort
   }
 }
 
-let nextCommandFallback = 1;
 export function nextManagementCommandId(): string {
-  const nonce =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now().toString(36)}.${nextCommandFallback++}`;
-  return `desktop.management.${nonce}`;
+  return createDurableCommandId("management");
 }
 
 export function createManagementRepairCorePort(): ManagementRepairCorePort {

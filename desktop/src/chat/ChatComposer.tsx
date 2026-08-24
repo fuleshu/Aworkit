@@ -5,12 +5,15 @@ import {
   submitIntent,
   updateComposer,
 } from "./composer";
-import type { ChatProjection } from "./types";
+import type { ChatProjectChoice, ChatProjection } from "./types";
 
 interface ChatComposerProps {
   readonly chat: ChatProjection;
+  readonly projects: readonly ChatProjectChoice[];
   readonly stale: boolean;
   readonly pending: boolean;
+  readonly workflowRequiresProject?: boolean | null;
+  readonly workflowReadinessError?: string | null;
   readonly nextCommandId: () => string;
   readonly onSubmit: (
     intent: ReturnType<typeof submitIntent>,
@@ -20,8 +23,11 @@ interface ChatComposerProps {
 /** Local IME-safe composer; only a committed core result is allowed to clear its draft. */
 export function ChatComposer({
   chat,
+  projects,
   stale,
   pending,
+  workflowRequiresProject = false,
+  workflowReadinessError = null,
   nextCommandId,
   onSubmit,
 }: ChatComposerProps): React.JSX.Element {
@@ -29,19 +35,30 @@ export function ChatComposer({
   const [retryIntent, setRetryIntent] = useState<ReturnType<
     typeof submitIntent
   > | null>(null);
-  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const commandPending = pending || submitting;
   const edit = (patch: Parameters<typeof updateComposer>[1]) => {
     setRetryIntent(null);
     setState((current) => updateComposer(current, patch));
   };
   const disabledReason = stale
     ? "Reconnect and resynchronize before sending."
-    : pending
+    : commandPending
       ? "The previous command is awaiting a committed core event."
-      : canSubmit(state, chat);
+      : canSubmit(state, chat, {
+          workflowRequiresProject,
+          workflowReadinessError,
+        });
   const send = async () => {
+    if (commandPending) return;
+    setSubmitting(true);
     try {
-      const intent = retryIntent ?? submitIntent(state, chat, nextCommandId());
+      const intent =
+        retryIntent ??
+        submitIntent(state, chat, nextCommandId(), {
+          workflowRequiresProject,
+          workflowReadinessError,
+        });
       setRetryIntent(intent);
       if (await onSubmit(intent)) {
         setRetryIntent(null);
@@ -51,8 +68,20 @@ export function ChatComposer({
       }
     } catch {
       /* The exact disabled reason remains visible next to the control. */
+    } finally {
+      setSubmitting(false);
     }
   };
+  const selectedProjectId = chat.lockedWorkflow
+    ? chat.projectId
+    : state.projectId;
+  const frozenProjectMissing =
+    chat.lockedWorkflow &&
+    chat.projectId !== null &&
+    !projects.some(({ projectId }) => projectId === chat.projectId);
+  const recoveryReason = chat.recoveryPending
+    ? "Resume the interrupted command before composing another input."
+    : null;
   return (
     <section className="composer-shell" aria-label="Chat composer">
       <div className="composer-meta">
@@ -62,13 +91,38 @@ export function ChatComposer({
             aria-label="Workflow for the first Chat input"
             title="The first submitted input freezes this workflow for the Chat"
             value={state.workflowId}
-            disabled={chat.lockedWorkflow}
+            disabled={
+              chat.lockedWorkflow || chat.recoveryPending || commandPending
+            }
             onChange={(event) => edit({ workflowId: event.target.value })}
           >
-            <option value="workflow.repository-engineer">
-              Repository Engineer
-            </option>
-            <option value="workflow.review">Review workflow</option>
+            <option value="workflow.simple-chat">Simple Chat</option>
+          </select>
+        </label>
+        <label>
+          Project
+          <select
+            aria-label="Project for the first Chat input"
+            title="The first submitted input resolves and freezes this saved project workspace; choose No project for an unscoped Chat"
+            value={selectedProjectId ?? ""}
+            disabled={
+              chat.lockedWorkflow || chat.recoveryPending || commandPending
+            }
+            onChange={(event) =>
+              edit({
+                projectId: event.target.value === "" ? null : event.target.value,
+              })
+            }
+          >
+            <option value="">No project</option>
+            {frozenProjectMissing && chat.projectId !== null && (
+              <option value={chat.projectId}>{chat.scope}</option>
+            )}
+            {projects.map((project) => (
+              <option key={project.projectId} value={project.projectId}>
+                {project.name}
+              </option>
+            ))}
           </select>
         </label>
         {chat.lockedWorkflow && (
@@ -83,23 +137,21 @@ export function ChatComposer({
       </div>
       <div className="composer-input">
         <button
-          aria-expanded={attachmentsOpen}
           aria-label="Add attachment references"
-          disabled={chat.lockedWorkflow}
-          title={
-            chat.lockedWorkflow
-              ? "Attachment references are frozen with the first Chat input"
-              : "Add attachment or context references"
-          }
+          disabled
+          title="Attachments are unsupported in this build"
           type="button"
-          onClick={() => setAttachmentsOpen((open) => !open)}
         >
           ＋
         </button>
         <textarea
           aria-label="Chat input"
           placeholder="Message Aworkit"
-          title="Draft text stays local until the trusted core confirms a committed event"
+          disabled={chat.recoveryPending || commandPending}
+          title={
+            recoveryReason ??
+            "Draft text stays local until the trusted core confirms a committed event"
+          }
           value={state.draft}
           onCompositionStart={() => edit({ imeComposing: true })}
           onCompositionEnd={() => edit({ imeComposing: false })}
@@ -137,24 +189,6 @@ export function ChatComposer({
             ))}
           </ol>
         </details>
-      )}
-      {attachmentsOpen && (
-        <label className="attachment-entry">
-          Attachment references
-          <input
-            aria-label="Attachment references"
-            title="Comma-separated local references; the trusted core validates every selected path"
-            value={state.attachments.join(", ")}
-            onChange={(event) =>
-              edit({
-                attachments: event.target.value
-                  .split(",")
-                  .map((value) => value.trim())
-                  .filter(Boolean),
-              })
-            }
-          />
-        </label>
       )}
       <div className="composer-footer">
         <span>

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  createDurableCommandId,
+  type CommandScope,
+} from "../commandId";
 
 const stableId = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/);
 export const coreEventSchema = z
@@ -32,7 +36,6 @@ export interface ProjectionReducer<T> {
 /** Ordered, immutable core-event projection. Gaps require an explicit snapshot. */
 export class ProjectionGateway<T> {
   private state: ProjectionState<T>;
-  private nextCommand = 1;
   public constructor(private readonly reducer: ProjectionReducer<T>) {
     this.state = {
       sequence: 0,
@@ -44,8 +47,8 @@ export class ProjectionGateway<T> {
   public snapshot(): ProjectionState<T> {
     return this.state;
   }
-  public createCommandId(prefix = "desktop.command"): string {
-    return `${prefix}.${this.nextCommand++}`;
+  public createCommandId(scope: CommandScope = "chat"): string {
+    return createDurableCommandId(scope);
   }
   public dispatch(commandId: string): ProjectionState<T> {
     this.state = {

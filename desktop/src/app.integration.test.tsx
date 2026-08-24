@@ -22,49 +22,57 @@ afterEach(() => {
   projectAppearancePreference("system");
 });
 
-describe("Milestone 07–08 native desktop vertical slice", () => {
-  it("renders the accepted desktop navigation and running Chat geometry", async () => {
+describe("honest Simple Chat desktop slice", () => {
+  it("renders a clean draft Chat without fabricated projects, history, or evidence", async () => {
     const { container } = render(<App adapters={defaultDesktopAdapters} />);
     expect(
-      await screen.findByRole("heading", { name: "Release readiness" }),
+      await screen.findByRole("heading", { name: "New Chat" }),
     ).toBeVisible();
     const navigation = screen.getByRole("navigation", {
       name: "Primary navigation",
     });
     expect(navigation).toHaveTextContent("New Chat");
-    expect(navigation).toHaveTextContent("Management Chat");
-    expect(navigation).toHaveTextContent("Workflows");
-    expect(navigation).toHaveTextContent("Project Atlas");
+    expect(navigation).toHaveTextContent("Simple Chat");
     expect(navigation).toHaveTextContent("Settings");
+    expect(navigation).not.toHaveTextContent("Project Atlas");
     expect(
-      screen.getByRole("complementary", { name: "Evidence inspector" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: /Pause/ })).toBeEnabled();
-    expect(screen.getByText(/Workflow locked/)).toBeVisible();
+      screen.getByRole("button", { name: /Management Chat.*Unsupported/ }),
+    ).toBeDisabled();
+    expect(screen.getByText("Draft")).toBeVisible();
+    expect(
+      screen.getByRole("combobox", {
+        name: "Workflow for the first Chat input",
+      }),
+    ).toHaveValue("workflow.simple-chat");
     expect(
       screen.getByRole("button", { name: "Add attachment references" }),
     ).toBeDisabled();
-    expect(screen.getByText("1 queued input(s)")).toBeVisible();
-    await userEvent.click(screen.getByText("1 queued input(s)"));
-    expect(screen.getByText("Review the migration notes too.")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Add attachment references" }),
+    ).toHaveAttribute("title", "Attachments are unsupported in this build");
+    expect(screen.getByText(/No messages yet/)).toBeVisible();
+    expect(
+      screen.getByRole("complementary", { name: "Evidence inspector" }),
+    ).toHaveTextContent("0 records");
     const results = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
   });
 
-  it("dispatches real projection-shaped Run controls and retains drafts until confirmation", async () => {
+  it("keeps the Chat draft when browser Preview honestly refuses provider execution", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
-    await user.click(await screen.findByRole("button", { name: /Pause/ }));
-    expect(await screen.findByRole("button", { name: /Resume/ })).toBeEnabled();
-    const composer = screen.getByRole("textbox", { name: "Chat input" });
-    await user.type(composer, "Review migration notes");
-    await user.click(screen.getByRole("button", { name: "Queue" }));
-    await waitFor(() => expect(composer).toHaveValue(""));
+    const composer = await screen.findByRole("textbox", { name: "Chat input" });
+    await user.type(composer, "Hello from Preview");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(
+      await screen.findByText(/requires the native desktop runtime/),
+    ).toBeVisible();
+    expect(composer).toHaveValue("Hello from Preview");
   });
 
-  it("supports focus-safe navigation, workflow editing, settings drafts, and keyboard splitters", async () => {
+  it("supports focus-safe navigation, Simple Chat editing, settings, and splitters", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     const splitter = screen.getByRole("separator", {
@@ -73,74 +81,67 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     expect(splitter).toHaveAttribute("aria-valuenow", "208");
     fireEvent.keyDown(splitter, { key: "ArrowRight" });
     expect(splitter).toHaveAttribute("aria-valuenow", "216");
+
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
     expect(
-      await screen.findByRole(
-        "heading",
-        { name: "Repository Engineer" },
-        lazyRouteWait,
-      ),
+      await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait),
     ).toBeVisible();
     expect(screen.getByLabelText("Workflow graph")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "Add a Model node to the canvas" }),
-    );
-    expect(screen.getByRole("button", { name: /Save/ })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Import JSON" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Add Model Call node",
+      }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Add transition",
+      }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Validate/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    const inputNode = screen.getByRole("button", { name: "Input" });
+    await user.click(inputNode);
+    expect(
+      screen.getByRole("button", { name: "Delete node" }),
+    ).toBeEnabled();
+    expect(screen.getByLabelText("Node type")).toBeEnabled();
+    fireEvent.keyDown(inputNode, { altKey: true, key: "ArrowRight" });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+
     await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(
       await screen.findByRole("heading", { name: "Settings" }, lazyRouteWait),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Appearance" }));
-    expect(screen.getByRole("radio", { name: /Dark/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Appearance/ }));
     await user.click(screen.getByRole("radio", { name: /Dark/ }));
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(document.documentElement.dataset.appearance).toBe("dark");
-    await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole(
-      "heading",
-      { name: "Repository Engineer" },
-      lazyRouteWait,
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
     );
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  });
+    expect(document.documentElement.dataset.appearance).toBe("dark");
 
-  it("renders the accepted workflow dependency gate and enables Run only after resolution", async () => {
+    await user.click(screen.getByRole("button", { name: /Workflows/ }));
+    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  }, 10_000);
+
+  it("ships only the exact input-to-agent-to-output-to-wait starter graph", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    expect(await screen.findByText("Missing dependency")).toBeVisible();
+    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
+    expect(screen.getByRole("button", { name: "Input" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Agent" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Output" })).toBeVisible();
     expect(
-      screen.getAllByText(/plugin\.code-review@2\.x/).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Configure compatible capability…",
-      }),
-    ).toBeEnabled();
-    fireEvent.keyDown(
-      screen.getByRole("button", { name: "acme.code-review@2.x" }),
-      { key: "ArrowRight", altKey: true },
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Transition source node" }),
-      "input.1",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Transition target node" }),
-      "input.1",
-    );
-    await user.click(screen.getByRole("button", { name: "Add transition" }));
-    await user.click(
-      screen.getByRole("button", { name: "Replace with Project files" }),
-    );
+      screen.getByRole("button", { name: "Wait for input" }),
+    ).toBeVisible();
     expect(screen.queryByText("Missing dependency")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
-    );
-    expect(screen.getByText(/tool\.files/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(
       await screen.findByRole("heading", { name: "New Chat" }, lazyRouteWait),
@@ -159,34 +160,40 @@ describe("Milestone 07–08 native desktop vertical slice", () => {
     fireEvent.keyDown(splitter, { key: "ArrowLeft" });
     expect(splitter).toHaveAttribute("aria-valuenow", "328");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole(
-      "heading",
-      { name: "Repository Engineer" },
-      lazyRouteWait,
-    );
-    await user.click(screen.getByRole("button", { name: "Release readiness" }));
+    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
+    await user.click(screen.getByRole("button", { name: /Simple Chat/ }));
     expect(
       await screen.findByRole("textbox", { name: "Chat input" }),
     ).toHaveValue("keep this local draft");
+    expect(
+      screen.getByRole("separator", { name: "Resize evidence inspector" }),
+    ).toHaveAttribute("aria-valuenow", "328");
   });
 
-  it("preserves a complete unsaved settings draft across route handoff", async () => {
+  it("preserves a complete unsaved provider draft across route handoff", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Settings/ }));
-    await screen.findByRole(
-      "heading",
-      { name: "Settings" },
-      lazyRouteWait,
+    await screen.findByRole("heading", { name: "Settings" }, lazyRouteWait);
+    await user.click(
+      await screen.findByRole("button", { name: "Add" }, lazyRouteWait),
     );
-    const localModel = screen.getByRole("checkbox", { name: "Enabled" });
-    expect(localModel).toBeChecked();
-    await user.click(localModel);
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Release readiness" }));
-    await screen.findByRole("heading", { name: "Release readiness" });
+    const baseUrl = screen.getByLabelText("Base URL");
+    await user.clear(baseUrl);
+    await user.type(baseUrl, "http://localhost:11434/v1");
+    await user.click(screen.getByRole("button", { name: "Add model" }));
+    const remoteModel = screen.getByLabelText("Remote model ID");
+    await user.type(remoteModel, "qwen3");
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /Simple Chat/ }));
+    await screen.findByRole("heading", { name: "New Chat" });
     await user.click(screen.getByRole("button", { name: /Settings/ }));
-    expect(screen.getByRole("checkbox", { name: "Enabled" })).not.toBeChecked();
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "http://localhost:11434/v1",
+    );
+    expect(screen.getByLabelText("Remote model ID")).toHaveValue("qwen3");
   });
 
   it("provides accessible in-workbench notification and confirmation fallbacks", async () => {

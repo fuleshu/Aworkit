@@ -86,7 +86,15 @@ describe("settings drafts", () => {
         {
           version: 2,
           appearance: "system",
-          configuredCapabilities: configured,
+          provider: {
+            baseUrl: "",
+            model: "",
+            credentialConfigured: false,
+            state: "unconfigured",
+            detail: null,
+            credentialAction: "keep",
+            apiKey: "",
+          },
         },
         1,
       ),

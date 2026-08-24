@@ -276,35 +276,26 @@ describe("Management repair review", () => {
     );
   });
 
-  it("uses the shell focus-trapped confirmation before restart", async () => {
-    const user = userEvent.setup();
+  it("marks Management Chat unsupported in the rescue navigation", () => {
     render(
       <App
         adapters={defaultDesktopAdapters}
         managementRepairCorePort={new PreviewManagementRepairCorePort()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /Management Chat/ }));
-    const acknowledgement = await screen.findByRole("checkbox", {
-      name: /I reviewed the complete disclosure/,
+    const management = screen.getByRole("button", {
+      name: /Management Chat.*Unsupported/,
     });
-    await user.click(acknowledgement);
-    await user.click(
-      screen.getByRole("button", { name: "Activate and restart" }),
+    expect(management).toBeDisabled();
+    expect(management).toHaveAttribute(
+      "title",
+      "Management Chat is unsupported in this build",
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "Activate repair R-104 version 3?",
-    });
-    expect(dialog).toBeVisible();
-    expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Confirm" }));
     expect(
-      await screen.findByText(/Management Chat checkpoint committed/),
-    ).toBeVisible();
+      screen.queryByRole("checkbox", {
+        name: /I reviewed the complete disclosure/,
+      }),
+    ).toBeNull();
   });
 });
 

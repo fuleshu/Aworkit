@@ -105,6 +105,7 @@ pub use repair_ledger::{
 };
 pub use repository::{
     DocumentAccessMode, DocumentConflict, DocumentRepository, RepositoryError, RepositoryRoot,
+    StoredDocument,
 };
 pub use storage::{
     IntegrityReport, MigrationReceipt, RestoreReceipt, StorageCoordinator, StorageMode,

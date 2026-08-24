@@ -2,6 +2,7 @@
 export type AppearancePreference = "system" | "light" | "dark";
 export type ResolvedAppearance = Exclude<AppearancePreference, "system">;
 let projectedAppearance: AppearancePreference = "system";
+let projectedFontScale = 1;
 
 export interface AppearanceEnvironment {
   readonly prefersDark: boolean;
@@ -104,8 +105,10 @@ export function browserAppearanceEnvironment(): AppearanceEnvironment {
 /** Applies a core-projected or local-preview preference without web storage. */
 export function projectAppearancePreference(
   preference: AppearancePreference,
+  fontScale = 1,
 ): ResolvedAppearance {
   projectedAppearance = preference;
+  projectedFontScale = fontScale;
   if ("__TAURI_INTERNALS__" in window) {
     void import("@tauri-apps/api/core")
       .then(({ invoke }) =>
@@ -118,7 +121,7 @@ export function projectAppearancePreference(
   return applyAppearance(
     document.documentElement,
     preference,
-    browserAppearanceEnvironment(),
+    { ...browserAppearanceEnvironment(), fontScale },
   );
 }
 
@@ -130,7 +133,10 @@ export function initializeBrowserAppearance(): () => void {
       applyAppearance(
         document.documentElement,
         projectedAppearance,
-        browserAppearanceEnvironment(),
+        {
+          ...browserAppearanceEnvironment(),
+          fontScale: projectedFontScale,
+        },
       );
   };
   applyCurrent();

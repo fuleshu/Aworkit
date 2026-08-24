@@ -34,8 +34,13 @@ export function EvidenceInspector({
     [filter, offset, records],
   );
   useEffect(() => {
-    if (selectedId !== null) setActiveId(selectedId);
-  }, [selectedId]);
+    if (selectedId === null) return;
+    const index = records.findIndex(({ id }) => id === selectedId);
+    if (index < 0) return;
+    setFilter("all");
+    setOffset(Math.floor(index / 10) * 10);
+    setActiveId(selectedId);
+  }, [records, selectedId]);
   const selected =
     page.items.find((record) => record.id === activeId) ?? page.items[0];
   return (

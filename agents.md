@@ -1,8 +1,9 @@
 # Adashi Rule Injection
 
-If the Adashi MCP server is available in this workspace, use it for rule injection.
+If the Adashi MCP server is available in this workspace, use it for rule injection and memory.
 
-The project parameter is Aworkit. Before starting work on a user request, classify the request intend as exactly one of:
+The project parameter is Aworkit. Get the memory rule and use the memory api accordingly.
+Before starting work on a user request, classify the request intend as exactly one of:
 
 - `general`: discussion, explanation, investigation, or operational help where no design deliverable or code edit is expected.
 - `design`: architecture, planning, review of an approach, or discussion-only technical design where code should not be changed unless the user explicitly switches to implementation.

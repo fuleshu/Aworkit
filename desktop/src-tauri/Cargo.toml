@@ -1,5 +1,6 @@
 [package]
 name = "aworkit-desktop"
+default-run = "aworkit-desktop"
 version = "0.1.0"
 description = "Aworkit desktop presentation shell"
 edition = "2024"
@@ -8,15 +9,25 @@ edition = "2024"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+aworkit-capability-host = { path = "../../crates/aworkit-capability-host" }
 aworkit-local-store = { path = "../../crates/aworkit-local-store" }
+aworkit-process = { path = "../../crates/aworkit-process" }
 aworkit-protocol = { path = "../../crates/aworkit-protocol" }
 aworkit-trusted-core = { path = "../../crates/aworkit-trusted-core" }
+aworkit-workflow-worker = { path = "../../crates/aworkit-workflow-worker" }
+getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
 serde_json = "1"
+semver = "1"
+sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-opener = "2"
+thiserror = "2"
+url = "2.5"
+zeroize = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"

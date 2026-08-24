@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import type {
   ChatIntent,
+  ChatProjectChoice,
   ChatProjection,
   EvidenceRecord,
   TimelineItem,
@@ -14,6 +15,7 @@ const chatProjectionSchema = z.object({
   scope: z.string(),
   workflowName: z.string().nullable(),
   branch: z.string().nullable(),
+  projectId: z.string().nullable(),
   phase: z.enum([
     "draft",
     "running",
@@ -26,8 +28,19 @@ const chatProjectionSchema = z.object({
     "failed",
   ]),
   lockedWorkflow: z.boolean(),
+  recoveryPending: z.boolean().default(false),
   queuedInputs: z.array(z.string()),
   expectedVersion: z.number().int().nonnegative(),
+  disabledReason: z.string().nullable().optional(),
+});
+const chatProjectChoiceSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1),
+  workspaceKind: z.enum([
+    "local_directory",
+    "git_worktree",
+    "container_mount",
+  ]),
 });
 const timelineItemSchema = z.object({
   id: z.string(),
@@ -53,6 +66,7 @@ const runtimeSnapshotSchema = z.object({
   version: z.number().int().nonnegative(),
   lastSequence: z.number().int().nonnegative(),
   chat: chatProjectionSchema,
+  projects: z.array(chatProjectChoiceSchema),
   timeline: z.array(timelineItemSchema),
   evidence: z.array(evidenceRecordSchema),
   events: z.array(runtimeEventSchema),
@@ -68,6 +82,7 @@ export interface RuntimeSnapshot {
   readonly version: number;
   readonly lastSequence: number;
   readonly chat: ChatProjection;
+  readonly projects: readonly ChatProjectChoice[];
   readonly timeline: readonly TimelineItem[];
   readonly evidence: readonly EvidenceRecord[];
   readonly events: readonly RuntimeEvent[];
@@ -94,12 +109,10 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
     lastSequence: parsed.lastSequence,
     chat: {
       ...parsed.chat,
-      phase:
-        parsed.chat.phase === "waiting_input" ||
-        parsed.chat.phase === "cancelling"
-          ? "running"
-          : parsed.chat.phase,
+      phase: parsed.chat.phase,
+      disabledReason: parsed.chat.disabledReason ?? undefined,
     },
+    projects: parsed.projects,
     timeline: parsed.timeline.map((item) => ({
       ...item,
       kind: knownKind(item.kind),
@@ -117,10 +130,12 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
   };
 }
 
-function intentPayload(intent: ChatIntent): unknown {
+/** Projects a typed renderer intent into the exact native IPC payload. */
+export function chatIntentPayload(intent: ChatIntent): unknown {
   if (intent.type === "start")
     return {
       workflowId: intent.workflowId,
+      projectId: intent.projectId,
       input: intent.input,
       attachments: intent.attachments,
     };
@@ -148,7 +163,7 @@ export class TauriChatCorePort implements ChatCorePort {
           expectedVersion,
           action: intent.type,
           targetId: "targetId" in intent ? (intent.targetId ?? null) : null,
-          payload: intentPayload(intent),
+          payload: chatIntentPayload(intent),
         },
       }),
     );
@@ -157,34 +172,34 @@ export class TauriChatCorePort implements ChatCorePort {
 
 /** Deterministic browser fallback used by Vite previews and component tests. */
 export class PreviewChatCorePort implements ChatCorePort {
-  private version = 2;
+  private version = 0;
   private readonly seen = new Map<
     string,
     { readonly fingerprint: string; readonly receipt: RuntimeReceipt }
   >();
   private chat: ChatProjection = {
-    chatId: "chat.release",
-    runId: "run.8f2a",
-    title: "Release readiness",
-    scope: "Project Atlas",
-    workflowName: "Repository Engineer",
-    branch: "codex/auth-refresh",
-    phase: "running",
-    lockedWorkflow: true,
-    queuedInputs: ["Review the migration notes too."],
-    expectedVersion: 2,
+    chatId: "chat.preview",
+    runId: "run.draft",
+    title: "New Chat",
+    scope: "No project",
+    workflowName: null,
+    branch: null,
+    projectId: null,
+    phase: "draft",
+    lockedWorkflow: false,
+    recoveryPending: false,
+    queuedInputs: [],
+    expectedVersion: 0,
   };
-  private timeline: TimelineItem[] = previewTimeline();
-  private readonly evidence: EvidenceRecord[] = previewEvidence();
-  private readonly events: RuntimeEvent[] = [
-    { sequence: 1, kind: "chat.started" },
-    { sequence: 2, kind: "timeline.ready" },
-  ];
+  private timeline: TimelineItem[] = [];
+  private readonly evidence: EvidenceRecord[] = [];
+  private readonly events: RuntimeEvent[] = [];
   public async snapshot(afterSequence = 0): Promise<RuntimeSnapshot> {
     return {
       version: this.version,
       lastSequence: this.version,
       chat: this.chat,
+      projects: [],
       timeline: this.timeline,
       evidence: this.evidence,
       events: this.events.filter((event) => event.sequence > afterSequence),
@@ -205,16 +220,29 @@ export class PreviewChatCorePort implements ChatCorePort {
       throw new Error(
         `desktop command version conflict: expected ${expectedVersion}, actual ${this.version}`,
       );
+    if (intent.type === "start") {
+      const receipt = {
+        commandId: intent.commandId,
+        accepted: false,
+        currentVersion: this.version,
+        reason:
+          "Simple Chat execution requires the native desktop runtime; browser Preview did not contact a provider.",
+      };
+      this.seen.set(intent.commandId, { fingerprint, receipt });
+      return receipt;
+    }
     if (intent.type === "new_chat") {
       this.chat = {
         chatId: intent.commandId,
         runId: "run.draft",
         title: "New Chat",
-        scope: "Project Atlas",
+        scope: "No project",
         workflowName: null,
-        branch: "main",
+        branch: null,
+        projectId: null,
         phase: "draft",
         lockedWorkflow: false,
+        recoveryPending: false,
         queuedInputs: [],
         expectedVersion: this.version,
       };
@@ -222,10 +250,12 @@ export class PreviewChatCorePort implements ChatCorePort {
     }
     if (intent.type === "pause") this.chat = { ...this.chat, phase: "paused" };
     if (intent.type === "resume")
-      this.chat = { ...this.chat, phase: "running" };
+      this.chat = { ...this.chat, phase: "running", recoveryPending: false };
+    if (intent.type === "abandon_recovery")
+      this.chat = { ...this.chat, phase: "failed", recoveryPending: false };
     if (intent.type === "cancel")
       this.chat = { ...this.chat, phase: "cancelled" };
-    if (intent.type === "start" || intent.type === "enqueue")
+    if (intent.type === "enqueue")
       this.timeline = [
         ...this.timeline,
         {
@@ -315,113 +345,4 @@ function knownEvidenceState(value: string): EvidenceRecord["state"] {
   ).includes(value as never)
     ? (value as EvidenceRecord["state"])
     : "opaque";
-}
-
-function previewTimeline(): TimelineItem[] {
-  return [
-    {
-      id: "message.user.1",
-      kind: "message",
-      title: "You",
-      body: "Check whether the auth refresh branch is ready to merge.",
-      createdAt: "12:41",
-    },
-    {
-      id: "plan.1",
-      kind: "plan",
-      title: "Release readiness plan",
-      body: "Inspect changes\nRun workspace tests\nReview migration risk\nSummarize readiness",
-      createdAt: "12:41",
-      status: "3 of 4 complete",
-      metadata: { completed: 3, total: 4 },
-    },
-    {
-      id: "tool.1",
-      kind: "tool",
-      title: "Shell",
-      body: "cargo test --workspace --all-targets",
-      createdAt: "12:42",
-      status: "completed",
-      metadata: { exitCode: 0, tests: 428 },
-    },
-    {
-      id: "message.assistant.1",
-      kind: "message",
-      title: "Aworkit",
-      body: "The branch is ready for review. All tests passed; the remaining item is a manual migration sign-off.",
-      createdAt: "12:43",
-    },
-  ];
-}
-function previewEvidence(): EvidenceRecord[] {
-  return [
-    {
-      id: "evidence.tool.1",
-      category: "provenance",
-      label: "Shell invocation",
-      state: "available",
-      value: {
-        command: "cargo test --workspace --all-targets",
-        workingDirectory: "/workspace/project-atlas",
-        exitCode: 0,
-        tests: 428,
-      },
-    },
-    {
-      id: "evidence.usage.1",
-      category: "usage",
-      label: "Usage and cost",
-      state: "available",
-      value: { inputTokens: 1284, outputTokens: 326, cost: "local / unpriced" },
-    },
-    {
-      id: "evidence.debug.1",
-      category: "debug",
-      label: "Detailed protocol capture",
-      state: "redacted",
-      value: null,
-    },
-    {
-      id: "evidence.routing.1",
-      category: "routing",
-      label: "Frozen route decision",
-      state: "available",
-      value: { route: "quality", source: "workflow.transition.deep-review" },
-    },
-    {
-      id: "evidence.approval.1",
-      category: "approval",
-      label: "Approval decision",
-      state: "expired",
-      value: null,
-    },
-    {
-      id: "evidence.artifact.1",
-      category: "artifact",
-      label: "Test report artifact",
-      state: "available",
-      value: { contentId: "sha256:demo", mediaType: "text/plain" },
-    },
-    {
-      id: "evidence.retry.1",
-      category: "retry",
-      label: "Attempt policy",
-      state: "available",
-      value: { attempt: 1, retrySafe: true },
-    },
-    {
-      id: "evidence.opacity.1",
-      category: "opacity",
-      label: "Provider-private reasoning",
-      state: "opaque",
-      value: null,
-    },
-    {
-      id: "evidence.retention.1",
-      category: "retention",
-      label: "Detailed capture retention",
-      state: "unsupported",
-      value: null,
-    },
-  ];
 }

@@ -250,6 +250,32 @@ impl SecretBroker {
         self.metadata.get(credential.0.as_str())
     }
 
+    /// Restores non-secret metadata from the trusted canonical configuration.
+    ///
+    /// Native credential values outlive the process that stored them, while
+    /// lease metadata is intentionally process-local. The desktop core calls
+    /// this during startup so a persisted opaque reference can be leased again
+    /// without ever copying secret material into the configuration store.
+    pub fn restore_credential_metadata(
+        &mut self,
+        metadata: CredentialMetadataV1,
+    ) -> Result<(), SecretError> {
+        validate_fields(metadata.field_names.clone())?;
+        if metadata.revision == 0 {
+            return Err(SecretError::InvalidMetadata);
+        }
+        let key = metadata.credential.0.as_str().to_owned();
+        if let Some(existing) = self.metadata.get(&key) {
+            return if existing == &metadata {
+                Ok(())
+            } else {
+                Err(SecretError::InvalidMetadata)
+            };
+        }
+        self.metadata.insert(key, metadata);
+        Ok(())
+    }
+
     pub fn put_credential(
         &mut self,
         credential: CredentialRef,
@@ -606,4 +632,6 @@ pub enum SecretError {
     StoreAccessControlInvalid,
     #[error("credential secret material exceeds its invocation-safe bound")]
     SecretTooLarge,
+    #[error("persisted credential metadata is invalid or conflicts with the active reference")]
+    InvalidMetadata,
 }

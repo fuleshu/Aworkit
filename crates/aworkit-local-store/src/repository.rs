@@ -278,7 +278,7 @@ impl RepositoryRoot {
                 committed_generation: version,
                 inspectable_read_only: inert
                     && document.schema_version().0
-                        > crate::document_policy::SUPPORTED_DOCUMENT_SCHEMA_VERSION,
+                        > crate::document_policy::supported_document_schema_version(kind),
             },
         );
         self.save_manifest(kind, &manifest)?;
@@ -287,7 +287,7 @@ impl RepositoryRoot {
             document: document.clone(),
             access: if inert
                 && document.schema_version().0
-                    > crate::document_policy::SUPPORTED_DOCUMENT_SCHEMA_VERSION
+                    > crate::document_policy::supported_document_schema_version(kind)
             {
                 DocumentAccessMode::InspectableReadOnly
             } else {
@@ -529,6 +529,70 @@ mod tests {
             JsonDocument::parse(br#"{"future":true}"#.to_vec()),
             Err(DocumentValidationError::MissingSchemaVersion)
         ));
+    }
+
+    #[test]
+    fn editable_schema_support_is_kind_specific_and_future_versions_remain_inert() {
+        let repository = repository();
+        for (id, version) in [("config_v1", 1), ("config_v2", 2)] {
+            let saved = repository
+                .save(
+                    DocumentKind::Configuration,
+                    id,
+                    None,
+                    &document(&format!(r#"{{"schemaVersion":{version}}}"#)),
+                )
+                .expect("supported configuration schema");
+            assert_eq!(saved.access, DocumentAccessMode::Editable);
+        }
+        repository
+            .save(
+                DocumentKind::Workflow,
+                "workflow_v1",
+                None,
+                &document(r#"{"schemaVersion":1}"#),
+            )
+            .expect("workflow v1 remains editable");
+        let workflow_v2 = document(r#"{"schemaVersion":2}"#);
+        assert!(matches!(
+            repository.save(DocumentKind::Workflow, "workflow_v2", None, &workflow_v2),
+            Err(RepositoryError::DocumentPolicy(
+                DocumentPolicyError::ForwardSchema(2)
+            ))
+        ));
+        let inert_workflow = repository
+            .import_inert(DocumentKind::Workflow, "workflow_v2", None, &workflow_v2)
+            .expect("future workflow remains importable as inert data");
+        assert_eq!(
+            inert_workflow.access,
+            DocumentAccessMode::InspectableReadOnly
+        );
+
+        let configuration_v3 = document(r#"{"schemaVersion":3}"#);
+        assert!(matches!(
+            repository.save(
+                DocumentKind::Configuration,
+                "config_v3",
+                None,
+                &configuration_v3
+            ),
+            Err(RepositoryError::DocumentPolicy(
+                DocumentPolicyError::ForwardSchema(3)
+            ))
+        ));
+        let inert_configuration = repository
+            .import_inert(
+                DocumentKind::Configuration,
+                "config_v3",
+                None,
+                &configuration_v3,
+            )
+            .expect("future configuration remains importable as inert data");
+        assert_eq!(
+            inert_configuration.access,
+            DocumentAccessMode::InspectableReadOnly
+        );
+        fs::remove_dir_all(repository.path()).expect("cleanup");
     }
 
     #[test]

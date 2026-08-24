@@ -232,20 +232,70 @@ impl AgentLoopV1 {
         limits: &mut LimitLedger,
         actual_usage: Usage,
     ) -> Result<bool, AgentErrorV1> {
-        if self
-            .completed_outcome_ids
-            .contains(outcome.outcome_id.as_str())
-        {
+        if self.outcome_is_duplicate_or_matching(outcome)? {
             return Ok(false);
-        }
-        if self.pending_invocation_id.as_ref() != Some(&outcome.invocation_id) {
-            return Err(AgentErrorV1::OutcomeMismatch);
         }
         if actual_usage.turns != 1 || actual_usage.attempts != 1 {
             return Err(AgentErrorV1::Budget(
                 "a committed model turn must charge exactly one turn and attempt".to_owned(),
             ));
         }
+        self.settle_reserved_outcome(outcome, limits, actual_usage)
+    }
+
+    /// Settles one outer Agent invocation that durably aggregates a bounded
+    /// provider/tool loop. The reservation contains the frozen maxima while
+    /// committed usage records the provider turns and authority-settled tool
+    /// calls that actually occurred.
+    pub fn settle_committed_run_outcome(
+        &mut self,
+        outcome: &CapabilityOutcomeV1,
+        limits: &mut LimitLedger,
+        actual_usage: Usage,
+    ) -> Result<bool, AgentErrorV1> {
+        if self.outcome_is_duplicate_or_matching(outcome)? {
+            return Ok(false);
+        }
+        let permits_zero_turns = matches!(
+            outcome.class,
+            CapabilityOutcomeClassV1::DefiniteNotStarted | CapabilityOutcomeClassV1::Denied
+        );
+        if actual_usage.turns != actual_usage.attempts
+            || actual_usage.turns > u64::from(self.config.maximum_turns)
+            || (actual_usage.turns == 0 && !permits_zero_turns)
+        {
+            return Err(AgentErrorV1::Budget(
+                "a committed Agent run must charge its actual bounded provider turns and attempts"
+                    .to_owned(),
+            ));
+        }
+        self.settle_reserved_outcome(outcome, limits, actual_usage)
+    }
+
+    /// Returns `true` for an already-settled outcome and otherwise verifies
+    /// that the outcome belongs to the sole pending Agent invocation.
+    fn outcome_is_duplicate_or_matching(
+        &self,
+        outcome: &CapabilityOutcomeV1,
+    ) -> Result<bool, AgentErrorV1> {
+        if self
+            .completed_outcome_ids
+            .contains(outcome.outcome_id.as_str())
+        {
+            return Ok(true);
+        }
+        if self.pending_invocation_id.as_ref() != Some(&outcome.invocation_id) {
+            return Err(AgentErrorV1::OutcomeMismatch);
+        }
+        Ok(false)
+    }
+
+    fn settle_reserved_outcome(
+        &mut self,
+        outcome: &CapabilityOutcomeV1,
+        limits: &mut LimitLedger,
+        actual_usage: Usage,
+    ) -> Result<bool, AgentErrorV1> {
         let reservation_id = self
             .pending_reservation_id
             .as_deref()

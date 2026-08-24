@@ -205,6 +205,49 @@ fn scoped_secret_leases_enforce_every_audience_ttl_field_use_and_revocation_fenc
     }));
 }
 
+#[test]
+fn persisted_opaque_metadata_reconnects_a_new_broker_to_the_native_style_store() {
+    let store = Arc::new(aworkit_trusted_core::MemoryCredentialStore::default());
+    let credential = aworkit_trusted_core::CredentialRef(id("credential.persisted"));
+    let metadata = SecretBroker::with_store(store.clone())
+        .put_credential(
+            credential.clone(),
+            BTreeMap::from([("api_key".into(), b"survives-process-metadata".to_vec())]),
+        )
+        .expect("store credential");
+
+    let mut reopened = SecretBroker::with_store(store);
+    reopened
+        .restore_credential_metadata(metadata)
+        .expect("restore trusted metadata");
+    reopened
+        .issue_scoped(ScopedLeaseRequestV1 {
+            lease_id: id("lease.reopened"),
+            credential,
+            decision_id: id("decision.reopened"),
+            invocation_id: id("invocation.reopened"),
+            run_id: id("run.reopened"),
+            audience_generation: ProcessGeneration(1),
+            permitted_fields: fields(&["api_key"]),
+            ttl: Duration::from_secs(30),
+            maximum_uses: 1,
+        })
+        .expect("issue restored credential lease");
+    let delivery = reopened
+        .redeem_scoped(&RedeemLeaseRequestV1 {
+            lease_id: id("lease.reopened"),
+            decision_id: id("decision.reopened"),
+            invocation_id: id("invocation.reopened"),
+            audience_generation: ProcessGeneration(1),
+            requested_fields: fields(&["api_key"]),
+        })
+        .expect("redeem restored credential");
+    assert_eq!(
+        delivery.field("api_key"),
+        Some(b"survives-process-metadata".as_slice())
+    );
+}
+
 fn manifest(approval: ApprovalRequirement, suffix: &str) -> AuthorityManifest {
     AuthorityManifest {
         manifest_id: id(&format!("manifest.{suffix}")),

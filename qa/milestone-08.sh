@@ -9,6 +9,7 @@ fi
 cd "$repository_root"
 cargo test -p aworkit-trusted-core
 cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+./qa/rescue-simple-chat-e2e.sh
 cd "$repository_root/desktop"
 ./node_modules/.bin/vitest run src/chat src/app.integration.test.tsx
 ./node_modules/.bin/tsc --noEmit
@@ -16,3 +17,4 @@ cd "$repository_root/desktop"
 cd "$repository_root"
 ./qa/desktop-browser-visual.sh
 ./qa/desktop-native-smoke.sh
+./qa/desktop-native-simple-chat-e2e.sh

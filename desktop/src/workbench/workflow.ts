@@ -22,11 +22,14 @@ export interface WorkflowEditorState {
 }
 export interface WorkflowValidationIssue {
   readonly code:
+    | "unsupported_schema"
     | "duplicate_node"
+    | "duplicate_edge"
     | "missing_source"
     | "missing_target"
     | "invalid_node"
     | "invalid_edge"
+    | "invalid_configuration"
     | "missing_dependency";
   readonly itemId: string;
   readonly message: string;
@@ -52,6 +55,9 @@ export interface WorkflowPropertyDraft {
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function asDocument(value: unknown): WorkflowDocument {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("workflow must be a JSON object");
@@ -60,10 +66,12 @@ function asDocument(value: unknown): WorkflowDocument {
     !Number.isInteger(document.schemaVersion) ||
     document.schemaVersion < 1 ||
     !Array.isArray(document.nodes) ||
-    !Array.isArray(document.edges)
+    !Array.isArray(document.edges) ||
+    !document.nodes.every(isJsonObject) ||
+    !document.edges.every(isJsonObject)
   )
     throw new Error(
-      "workflow requires a positive schemaVersion plus nodes and edges arrays",
+      "workflow requires a positive schemaVersion plus arrays of node and transition objects",
     );
   return document;
 }
@@ -146,6 +154,12 @@ export function selectWorkflowNode(
 ): WorkflowEditorState {
   return { ...state, selectedIds: new Set([nodeId]) };
 }
+export function selectWorkflowItem(
+  state: WorkflowEditorState,
+  itemId: string,
+): WorkflowEditorState {
+  return { ...state, selectedIds: new Set([itemId]) };
+}
 export function clearWorkflowSelection(
   state: WorkflowEditorState,
 ): WorkflowEditorState {
@@ -160,10 +174,11 @@ export function addWorkflowNode(
   const existing = new Set(
     state.document.nodes.map((node, index) => nodeId(node, index)),
   );
+  const idPrefix = type.trim().replace(/[^a-zA-Z0-9_-]+/g, "-") || "node";
   let counter = state.document.nodes.length + 1;
-  let id = `${type}.${counter}`;
-  while (existing.has(id)) id = `${type}.${++counter}`;
-  return editWorkflow(state, (document) => ({
+  let id = `${idPrefix}.${counter}`;
+  while (existing.has(id)) id = `${idPrefix}.${++counter}`;
+  const edited = editWorkflow(state, (document) => ({
     ...document,
     nodes: [
       ...document.nodes,
@@ -172,10 +187,11 @@ export function addWorkflowNode(
         type,
         label: labelFor(type),
         position: { x: position.x, y: position.y },
-        config: {},
+        configuration: {},
       },
     ],
   }));
+  return selectWorkflowItem(edited, id);
 }
 export function moveWorkflowNode(
   state: WorkflowEditorState,
@@ -199,7 +215,7 @@ export function connectWorkflowNodes(
   targetHandle?: string | null,
 ): WorkflowEditorState {
   const edgeId = uniqueEdgeId(state.document, source, target);
-  return editWorkflow(state, (document) => ({
+  const edited = editWorkflow(state, (document) => ({
     ...document,
     edges: [
       ...document.edges,
@@ -212,28 +228,40 @@ export function connectWorkflowNodes(
       },
     ],
   }));
+  return selectWorkflowItem(edited, edgeId);
 }
 export function deleteSelectedWorkflowItems(
   state: WorkflowEditorState,
 ): WorkflowEditorState {
-  const ids = state.selectedIds;
-  return {
-    ...editWorkflow(state, (document) => ({
-      ...document,
-      nodes: document.nodes.filter(
-        (node, index) => !ids.has(nodeId(node, index)),
-      ),
-      edges: document.edges.filter((edge, index) => {
-        const id = edgeId(edge, index);
-        return (
-          !ids.has(id) &&
-          !(typeof edge.source === "string" && ids.has(edge.source)) &&
-          !(typeof edge.target === "string" && ids.has(edge.target))
-        );
-      }),
-    })),
-    selectedIds: new Set(),
-  };
+  return deleteWorkflowItems(state, state.selectedIds);
+}
+export function deleteWorkflowItems(
+  state: WorkflowEditorState,
+  itemIds: ReadonlySet<string>,
+): WorkflowEditorState {
+  if (itemIds.size === 0) return state;
+  const remainingNodes = state.document.nodes.filter(
+    (node, index) => !itemIds.has(nodeId(node, index)),
+  );
+  const remainingEdges = state.document.edges.filter((edge, index) => {
+    const id = edgeId(edge, index);
+    return (
+      !itemIds.has(id) &&
+      !(typeof edge.source === "string" && itemIds.has(edge.source)) &&
+      !(typeof edge.target === "string" && itemIds.has(edge.target))
+    );
+  });
+  if (
+    remainingNodes.length === state.document.nodes.length &&
+    remainingEdges.length === state.document.edges.length
+  )
+    return state;
+  const edited = editWorkflow(state, (document) => ({
+    ...document,
+    nodes: remainingNodes,
+    edges: remainingEdges,
+  }));
+  return { ...edited, selectedIds: new Set() };
 }
 export function updateSelectedNodeProperty(
   state: WorkflowEditorState,
@@ -274,6 +302,50 @@ export function updateSelectedNodeFields(
       nodeId(node, index) === selected ? { ...node, ...patch } : node,
     ),
   }));
+}
+
+export function renameWorkflowNode(
+  state: WorkflowEditorState,
+  currentId: string,
+  nextId: string,
+): WorkflowEditorState {
+  if (currentId === nextId) return state;
+  const edited = editWorkflow(state, (document) => ({
+    ...document,
+    nodes: document.nodes.map((node, index) =>
+      nodeId(node, index) === currentId ? { ...node, id: nextId } : node,
+    ),
+    edges: document.edges.map((edge) => ({
+      ...edge,
+      ...(edge.source === currentId ? { source: nextId } : {}),
+      ...(edge.target === currentId ? { target: nextId } : {}),
+    })),
+  }));
+  return selectWorkflowItem(edited, nextId);
+}
+
+export function updateSelectedEdgeFields(
+  state: WorkflowEditorState,
+  patch: JsonObject,
+): WorkflowEditorState {
+  const selected = state.selectedIds.values().next().value as
+    | string
+    | undefined;
+  if (selected === undefined || Object.keys(patch).length === 0) return state;
+  return editWorkflow(state, (document) => ({
+    ...document,
+    edges: document.edges.map((edge, index) =>
+      edgeId(edge, index) === selected ? { ...edge, ...patch } : edge,
+    ),
+  }));
+}
+
+export function replaceWorkflowDocument(
+  state: WorkflowEditorState,
+  document: WorkflowDocument,
+): WorkflowEditorState {
+  const edited = editWorkflow(state, () => asDocument(document));
+  return { ...edited, selectedIds: new Set() };
 }
 
 export function createPropertyDraft(
@@ -342,10 +414,21 @@ export function validateWorkflow(
   document: WorkflowDocument,
 ): readonly WorkflowValidationIssue[] {
   const issues: WorkflowValidationIssue[] = [];
+  if (document.schemaVersion !== 1)
+    issues.push({
+      code: "unsupported_schema",
+      itemId: "workflow",
+      message: `Workflow schemaVersion ${document.schemaVersion} is inspectable and exportable, but this build edits only v1.`,
+    });
   const nodeIds = new Set<string>();
   document.nodes.forEach((node, index) => {
     const id = nodeId(node, index);
-    if (typeof node.id !== "string" || typeof node.type !== "string")
+    if (
+      typeof node.id !== "string" ||
+      node.id.trim() === "" ||
+      typeof node.type !== "string" ||
+      node.type.trim() === ""
+    )
       issues.push({
         code: "invalid_node",
         itemId: id,
@@ -364,10 +447,42 @@ export function validateWorkflow(
         itemId: id,
         message: `${String(node.requirement ?? node.label ?? id)} is not configured.`,
       });
+    if (
+      node.configuration !== undefined &&
+      (typeof node.configuration !== "object" ||
+        node.configuration === null ||
+        Array.isArray(node.configuration))
+    )
+      issues.push({
+        code: "invalid_configuration",
+        itemId: id,
+        message: `${id} configuration must be a JSON object.`,
+      });
   });
+  const edgeIds = new Set<string>();
   document.edges.forEach((edge, index) => {
     const id = edgeId(edge, index);
-    if (typeof edge.source !== "string" || typeof edge.target !== "string") {
+    if (edge.id !== undefined) {
+      if (typeof edge.id !== "string" || edge.id.trim() === "")
+        issues.push({
+          code: "invalid_edge",
+          itemId: id,
+          message: "Transition id must be a non-empty string when present.",
+        });
+      else if (edgeIds.has(edge.id))
+        issues.push({
+          code: "duplicate_edge",
+          itemId: id,
+          message: `Duplicate transition id ${id}.`,
+        });
+      else edgeIds.add(edge.id);
+    }
+    if (
+      typeof edge.source !== "string" ||
+      edge.source.trim() === "" ||
+      typeof edge.target !== "string" ||
+      edge.target.trim() === ""
+    ) {
       issues.push({
         code: "invalid_edge",
         itemId: id,
@@ -410,6 +525,18 @@ export function selectedWorkflowNode(
     ? null
     : (state.document.nodes.find(
         (node, index) => nodeId(node, index) === selected,
+      ) ?? null);
+}
+export function selectedWorkflowEdge(
+  state: WorkflowEditorState,
+): JsonObject | null {
+  const selected = state.selectedIds.values().next().value as
+    | string
+    | undefined;
+  return selected === undefined
+    ? null
+    : (state.document.edges.find(
+        (edge, index) => edgeId(edge, index) === selected,
       ) ?? null);
 }
 export function workflowNodeId(node: JsonObject, fallback: number): string {

@@ -71,7 +71,10 @@ export function useChatRuntime(
     }
     try {
       const next = await port.snapshot(current.lastSequence);
-      if (next.lastSequence === current.lastSequence) return;
+      if (next.lastSequence === current.lastSequence) {
+        if (!sameProjectedSnapshot(current, next)) replaceSnapshot(next);
+        return;
+      }
       let expected = current.lastSequence + 1;
       for (const event of next.events) {
         if (event.sequence !== expected) {
@@ -110,13 +113,16 @@ export function useChatRuntime(
       try {
         const receipt = await port.command(intent, snapshot.version);
         if (!receipt.accepted) {
-          setError(receipt.reason ?? "The trusted core rejected the command.");
+          const reason =
+            receipt.reason ?? "The trusted core rejected the command.";
+          await resynchronize();
+          setError(reason);
           return false;
         }
         return await resynchronize();
       } catch (failure) {
         const failureMessage = message(failure);
-        if (failureMessage.includes("version conflict")) await resynchronize();
+        await resynchronize();
         setError(failureMessage);
         return false;
       } finally {
@@ -143,4 +149,19 @@ export function useChatRuntime(
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Session recovery and other auxiliary projections can change durably before
+ * the semantic history head advances, so lastSequence alone is not freshness. */
+function sameProjectedSnapshot(
+  current: RuntimeSnapshot,
+  next: RuntimeSnapshot,
+): boolean {
+  return (
+    current.version === next.version &&
+    JSON.stringify(current.chat) === JSON.stringify(next.chat) &&
+    JSON.stringify(current.projects) === JSON.stringify(next.projects) &&
+    JSON.stringify(current.timeline) === JSON.stringify(next.timeline) &&
+    JSON.stringify(current.evidence) === JSON.stringify(next.evidence)
+  );
 }

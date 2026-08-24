@@ -7,10 +7,10 @@ import {
   initializeBrowserAppearance,
   projectAppearancePreference,
 } from "./workbench/appearance";
-import { createSettingsCorePort } from "./workbench/corePort";
-import "./styles.css";
+import { createSettingsV2CorePort } from "./workbench/settingsV2Port";
 import "@mantine/core/styles.css";
 import "@xyflow/react/dist/style.css";
+import "./styles.css";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -18,8 +18,11 @@ if (root === null) {
 }
 async function revealDesktop(): Promise<void> {
   try {
-    const settings = await createSettingsCorePort().snapshot();
-    projectAppearancePreference(settings.appearance);
+    const settings = (await createSettingsV2CorePort().snapshot()).settings;
+    projectAppearancePreference(
+      settings.appearance.mode,
+      settings.appearance.fontScale,
+    );
   } catch {
     // The pre-rendered System appearance remains a safe non-persistent fallback.
   }

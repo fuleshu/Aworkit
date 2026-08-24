@@ -96,10 +96,10 @@ pub use recovery::{
 };
 pub use repair::*;
 pub use secrets::{
-    CredentialMetadataV1, CredentialRef, CredentialSecretV1, MemoryCredentialStore,
-    NativeCredentialStore, NativeCredentialStoreStatusV1, PlatformCredentialStorePort,
-    RedeemLeaseRequestV1, ScopedLeaseRequestV1, SecretBroker, SecretDeliveryV1, SecretError,
-    SecretLease, SecretLeaseAuditKindV1, SecretLeaseAuditV1,
+    CredentialMetadataV1, CredentialReadAuthorizationV1, CredentialRef, CredentialSecretV1,
+    MemoryCredentialStore, NativeCredentialStore, NativeCredentialStoreStatusV1,
+    PlatformCredentialStorePort, RedeemLeaseRequestV1, ScopedLeaseRequestV1, SecretBroker,
+    SecretDeliveryV1, SecretError, SecretLease, SecretLeaseAuditKindV1, SecretLeaseAuditV1,
 };
 pub use supervisor::{
     ProcessWorkerSupervisorV1, WorkerControl, WorkerHandshake, WorkerSupervisor,

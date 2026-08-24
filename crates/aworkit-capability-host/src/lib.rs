@@ -38,18 +38,34 @@
     clippy::zero_sized_map_values
 )]
 //! Core-approved, generation-fenced capability execution.
+mod anthropic_messages;
+mod codex_app_server;
 mod external_agent;
 mod files;
 mod gateway;
+mod google_gemini;
 mod isolation;
 mod materialize;
 mod mcp;
 mod model;
+mod model_tools;
 mod normalize;
+mod openai_compatible;
 mod plugin;
 mod process;
+mod provider_tools;
+mod provider_transport;
 mod registry;
 mod tools;
+pub use anthropic_messages::{
+    AnthropicConnectionTestV1, AnthropicMessagesLimitsV1, AnthropicMessagesProvider,
+    AnthropicMessagesProviderConfig, AnthropicMessagesProviderError, AnthropicModelV1,
+};
+pub use codex_app_server::{
+    CodexAppServerAccountV1, CodexAppServerCapabilitiesV1, CodexAppServerEnvironmentV1,
+    CodexAppServerProbeConfigV1, CodexAppServerProbeError, CodexAppServerProbeLimitsV1,
+    CodexAppServerProbeResultV1, probe_codex_app_server_v1,
+};
 pub use external_agent::*;
 pub use files::{
     FileAuthority, FileEditRequestV1, FileEditResultV1, FileEffectDescriptorV1, FileEffectKindV1,
@@ -60,6 +76,10 @@ pub use gateway::{
     AdmissionDispositionV1, AdmissionReceipt, AdmittedInvocationDispatcherV1,
     ApprovedInvocationEnvelopeV1, CapabilityHost, DispatchLifecycleV1, HostControlEnvelopeV1,
     HostControlKindV1, HostDispatchReceiptV1, HostError,
+};
+pub use google_gemini::{
+    GoogleGeminiConnectionTestV1, GoogleGeminiLimitsV1, GoogleGeminiModelV1, GoogleGeminiProvider,
+    GoogleGeminiProviderConfig, GoogleGeminiProviderError,
 };
 pub use isolation::*;
 pub use materialize::{
@@ -73,11 +93,20 @@ pub use model::{
     ModelProvider, ModelRequest, ModelRequestV1, ModelResolutionPlanV1, ModelResponse,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
 };
+pub use model_tools::{
+    ModelAssistantContentV1, ModelProviderContextV1, ModelToolCallV1, ModelToolDefinitionV1,
+    ModelToolDispatchEvidenceV1, ModelToolEventV1, ModelToolExchangeV1, ModelToolRequestV1,
+    ModelToolResultV1,
+};
 pub use normalize::{
     CapabilityOutcome, CapabilityOutcomeV1, DispatchEvidenceV1, EffectEvidenceV1,
     HostInvocationEventV1, InvocationNormalizer, NormalizeError, NormalizedContentV1,
     OutcomeDispositionV1, OutcomeKind, Redactor, RetrySafetyV1, StreamNormalizer,
     StreamingRedactor, TerminalEvidenceV1, classify_outcome,
+};
+pub use openai_compatible::{
+    OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
+    OpenAiCompatibleProviderError, OpenAiConnectionTestV1,
 };
 pub use plugin::{
     AttestedPluginPinV1, ExtensionManifestV1, NativePluginProcessV1, PinnedPluginManifestV1,

@@ -16,7 +16,11 @@ import {
   queryEvidence,
   redactedEvidenceJson,
 } from "./evidence";
-import { normalizeRuntimeSnapshot, PreviewChatCorePort } from "./corePort";
+import {
+  chatIntentPayload,
+  normalizeRuntimeSnapshot,
+  PreviewChatCorePort,
+} from "./corePort";
 import type { ChatProjection, EvidenceRecord } from "./types";
 import { ChatWorkspaceController } from "./workspace";
 
@@ -27,8 +31,10 @@ const draftChat: ChatProjection = {
   scope: "Project",
   workflowName: null,
   branch: "main",
+  projectId: "project.test",
   phase: "draft",
   lockedWorkflow: false,
+  recoveryPending: false,
   queuedInputs: [],
   expectedVersion: 0,
 };
@@ -38,22 +44,49 @@ describe("Milestone 08 Chat and evidence experience", () => {
     const draft = updateComposer(emptyComposer, {
       draft: "hello",
       attachments: ["brief.md"],
+      projectId: "project.atlas",
     });
     expect(submitIntent(draft, draftChat, "chat.1")).toEqual({
       type: "start",
       commandId: "chat.1",
-      workflowId: "workflow.repository-engineer",
+      workflowId: "workflow.simple-chat",
+      projectId: "project.atlas",
       input: "hello",
-      attachments: ["brief.md"],
+      attachments: [],
     });
     expect(
       submitIntent(
         draft,
-        { ...draftChat, lockedWorkflow: true, phase: "running" },
+        { ...draftChat, lockedWorkflow: true, phase: "waiting_input" },
         "chat.2",
       ),
     ).toEqual({ type: "enqueue", commandId: "chat.2", input: "hello" });
     expect(draft.draft).toBe("hello");
+  });
+
+  it("projects projectId into start IPC only and never into a follow-up", () => {
+    expect(
+      chatIntentPayload({
+        type: "start",
+        commandId: "chat.project",
+        workflowId: "workflow.simple-chat",
+        projectId: "project.atlas",
+        input: "hello",
+        attachments: [],
+      }),
+    ).toEqual({
+      workflowId: "workflow.simple-chat",
+      projectId: "project.atlas",
+      input: "hello",
+      attachments: [],
+    });
+    expect(
+      chatIntentPayload({
+        type: "enqueue",
+        commandId: "chat.follow-up",
+        input: "again",
+      }),
+    ).toEqual({ input: "again" });
   });
 
   it("blocks IME composition and exposes projection-derived terminal controls", () => {
@@ -69,11 +102,39 @@ describe("Milestone 08 Chat and evidence experience", () => {
         { ...draftChat, phase: "completed" },
       ),
     ).toContain("terminal");
-    expect(controlsFor({ ...draftChat, phase: "running" })).toContain("pause");
-    expect(controlsFor({ ...draftChat, phase: "completed" })).toEqual([
-      "fork",
-      "continue",
+    expect(
+      canSubmit(
+        { ...emptyComposer, draft: "later" },
+        { ...draftChat, disabledReason: "Configure an Exact model tier." },
+      ),
+    ).toBe("Configure an Exact model tier.");
+    expect(
+      canSubmit(
+        { ...emptyComposer, draft: "read it", projectId: null },
+        { ...draftChat, projectId: null },
+        { workflowRequiresProject: true },
+      ),
+    ).toBe(
+      "Select a saved project before sending because Simple Chat binds project file read/search.",
+    );
+    expect(
+      canSubmit(
+        { ...emptyComposer, draft: "read it", projectId: "project.atlas" },
+        { ...draftChat, projectId: null },
+        { workflowRequiresProject: true },
+      ),
+    ).toBeNull();
+    expect(
+      canSubmit(
+        { ...emptyComposer, draft: "later" },
+        { ...draftChat, recoveryPending: true, phase: "paused" },
+      ),
+    ).toBe("Resume the interrupted command before composing another input.");
+    expect(controlsFor({ ...draftChat, phase: "running" })).toEqual([
+      "cancel",
     ]);
+    expect(controlsFor({ ...draftChat, phase: "waiting_input" })).toEqual([]);
+    expect(controlsFor({ ...draftChat, phase: "completed" })).toEqual([]);
   });
 
   it("freezes the last contiguous projection after a disconnect gap and resyncs explicitly", () => {
@@ -193,10 +254,10 @@ describe("Milestone 08 Chat and evidence experience", () => {
   it("deduplicates exact native-port retries and rejects changed command content", async () => {
     const port = new PreviewChatCorePort();
     const intent = { type: "pause", commandId: "chat.pause.1" } as const;
-    const first = await port.command(intent, 2);
-    await expect(port.command(intent, 2)).resolves.toEqual(first);
+    const first = await port.command(intent, 0);
+    await expect(port.command(intent, 0)).resolves.toEqual(first);
     await expect(
-      port.command({ type: "resume", commandId: intent.commandId }, 2),
+      port.command({ type: "resume", commandId: intent.commandId }, 0),
     ).rejects.toThrow("reused with different content");
   });
 
@@ -210,8 +271,9 @@ describe("Milestone 08 Chat and evidence experience", () => {
       chat: {
         ...draftChat,
         workflowName: null,
-        phase: "running",
+        phase: "waiting_input",
       },
+      projects: [],
       timeline: [
         {
           id: "future",
@@ -243,5 +305,6 @@ describe("Milestone 08 Chat and evidence experience", () => {
       category: "unknown",
       state: "opaque",
     });
+    expect(normalized.chat.phase).toBe("waiting_input");
   });
 });

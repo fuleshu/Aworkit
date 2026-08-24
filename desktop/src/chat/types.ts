@@ -2,8 +2,10 @@
 export type RunPhase =
   | "draft"
   | "running"
+  | "waiting_input"
   | "paused"
   | "awaiting_approval"
+  | "cancelling"
   | "cancelled"
   | "completed"
   | "failed";
@@ -15,11 +17,22 @@ export interface ChatProjection {
   readonly scope: string;
   readonly workflowName: string | null;
   readonly branch: string | null;
+  readonly projectId: string | null;
   readonly phase: RunPhase;
   readonly lockedWorkflow: boolean;
+  readonly recoveryPending: boolean;
   readonly queuedInputs: readonly string[];
   readonly expectedVersion: number;
   readonly disabledReason?: string;
+}
+
+export interface ChatProjectChoice {
+  readonly projectId: string;
+  readonly name: string;
+  readonly workspaceKind:
+    | "local_directory"
+    | "git_worktree"
+    | "container_mount";
 }
 
 export type TimelineKind =
@@ -80,6 +93,7 @@ export type ChatIntent =
       readonly type: "start";
       readonly commandId: string;
       readonly workflowId: string;
+      readonly projectId: string | null;
       readonly input: string;
       readonly attachments: readonly string[];
     }
@@ -93,6 +107,7 @@ export type ChatIntent =
         | "new_chat"
         | "pause"
         | "resume"
+        | "abandon_recovery"
         | "cancel"
         | "retry"
         | "fork"

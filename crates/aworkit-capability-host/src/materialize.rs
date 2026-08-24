@@ -82,6 +82,11 @@ pub struct SecretMaterializationV1 {
 }
 
 impl SecretMaterializationV1 {
+    /// Returns the approved field names without exposing their materialized values.
+    pub fn field_names(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+
     #[must_use]
     pub fn value(&self, field: &str) -> Option<&[u8]> {
         self.values.get(field).map(AsRef::as_ref)

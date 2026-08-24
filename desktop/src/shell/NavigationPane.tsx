@@ -4,6 +4,7 @@ interface NavigationPaneProps {
   readonly collapsed: boolean;
   readonly onNavigate: (route: Route) => void;
   readonly onNewChat: () => void;
+  readonly newChatDisabledReason?: string | null;
   readonly onToggleCollapsed: () => void;
 }
 
@@ -13,6 +14,7 @@ export function NavigationPane({
   collapsed,
   onNavigate,
   onNewChat,
+  newChatDisabledReason = null,
   onToggleCollapsed,
 }: NavigationPaneProps): React.JSX.Element {
   return (
@@ -38,7 +40,8 @@ export function NavigationPane({
       </div>
       <button
         className="new-chat"
-        title="Create a new Chat"
+        disabled={newChatDisabledReason !== null}
+        title={newChatDisabledReason ?? "Create a new Chat"}
         type="button"
         onClick={onNewChat}
       >
@@ -46,11 +49,12 @@ export function NavigationPane({
         {!collapsed && "New Chat"}
       </button>
       <NavigationButton
-        active={route === "management"}
+        active={false}
         icon="●"
-        label="Management Chat"
+        label="Management Chat — Unsupported"
         collapsed={collapsed}
-        onClick={() => onNavigate("management")}
+        disabled
+        disabledTitle="Management Chat is unsupported in this build"
       />
       <NavigationButton
         active={route === "workflows"}
@@ -66,53 +70,14 @@ export function NavigationPane({
         collapsed={collapsed}
         disabled
       />
-      {!collapsed && <p className="nav-section-label">PROJECTS</p>}
+      {!collapsed && <p className="nav-section-label">CHAT</p>}
       <div className="nav-group">
-        <NavigationButton
-          active={false}
-          icon="⌄"
-          label="Project Atlas"
-          collapsed={collapsed}
-          strong
-        />
         <NavigationButton
           active={route === "chat"}
-          icon=""
-          label="Release readiness"
+          icon="○"
+          label="Simple Chat"
           collapsed={collapsed}
-          nested
           onClick={() => onNavigate("chat")}
-        />
-        <NavigationButton
-          active={false}
-          icon=""
-          label="API migration"
-          collapsed={collapsed}
-          nested
-        />
-        <NavigationButton
-          active={false}
-          icon="›"
-          label="Research Lab"
-          collapsed={collapsed}
-          strong
-        />
-      </div>
-      {!collapsed && <p className="nav-section-label">HISTORY</p>}
-      <div className="nav-group">
-        <NavigationButton
-          active={false}
-          icon=""
-          label="Local model setup"
-          collapsed={collapsed}
-          nested
-        />
-        <NavigationButton
-          active={false}
-          icon=""
-          label="Compare note tools"
-          collapsed={collapsed}
-          nested
         />
       </div>
       <div className="navigation-footer">
@@ -124,11 +89,10 @@ export function NavigationPane({
           onClick={() => onNavigate("settings")}
         />
         <div className="account-row">
-          <span className="avatar">T</span>
+          <span className="avatar">L</span>
           {!collapsed && (
             <>
-              <span>Tim</span>
-              <i title="Trusted core connected" />
+              <span>Local desktop</span>
             </>
           )}
         </div>
@@ -143,6 +107,7 @@ function NavigationButton({
   label,
   collapsed,
   disabled,
+  disabledTitle,
   nested,
   strong,
   onClick,
@@ -152,6 +117,7 @@ function NavigationButton({
   readonly label: string;
   readonly collapsed: boolean;
   readonly disabled?: boolean;
+  readonly disabledTitle?: string;
   readonly nested?: boolean;
   readonly strong?: boolean;
   readonly onClick?: () => void;
@@ -164,7 +130,9 @@ function NavigationButton({
       title={
         collapsed
           ? label
-          : `${label}${disabled ? " is not available in this milestone" : ""}`
+          : disabled
+            ? (disabledTitle ?? `${label} is unsupported in this build`)
+            : label
       }
       type="button"
       onClick={onClick}

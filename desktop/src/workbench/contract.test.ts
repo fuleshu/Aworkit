@@ -10,14 +10,32 @@ import {
   connectWorkflowNodes,
   createPropertyDraft,
   createEditor,
+  deleteSelectedWorkflowItems,
   moveWorkflowNode,
   parseWorkflow,
+  renameWorkflowNode,
+  selectWorkflowItem,
   serializeWorkflow,
+  undoWorkflow,
+  updateSelectedNodeField,
   updatePropertyDraft,
   validateWorkflow,
 } from "./workflow";
+import {
+  assessNativeWorkflow,
+  simpleChatBindsProjectTools,
+} from "./workflowExecution";
 
 describe("desktop design and workflow contracts", () => {
+  it("rejects malformed node and transition entries before graph projection", () => {
+    expect(() =>
+      parseWorkflow('{"schemaVersion":1,"nodes":[null],"edges":[]}'),
+    ).toThrow("arrays of node and transition objects");
+    expect(() =>
+      parseWorkflow('{"schemaVersion":1,"nodes":[],"edges":[42]}'),
+    ).toThrow("arrays of node and transition objects");
+  });
+
   it("meets token contrast and exact accepted pane geometry", () => {
     for (const tokens of [lightTokens, darkTokens]) {
       expect(contrastRatio(tokens.text, tokens.panel)).toBeGreaterThanOrEqual(
@@ -43,6 +61,12 @@ describe("desktop design and workflow contracts", () => {
       "prefers-reduced-motion",
     ])
       expect(css).toContain(contract);
+    expect(css).toMatch(
+      /html\[data-appearance="dark"\]\s*\{\s*color-scheme: dark;/u,
+    );
+    expect(css).toMatch(
+      /body\s*\{[^}]*background: var\(--aw-window\);[^}]*color: var\(--aw-text\);/su,
+    );
     const html = readFileSync(
       new URL("../../index.html", import.meta.url),
       "utf8",
@@ -55,8 +79,11 @@ describe("desktop design and workflow contracts", () => {
       html.indexOf("/src/main.tsx"),
     );
     const entry = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
-    expect(entry.indexOf("createSettingsCorePort().snapshot()")).toBeLessThan(
+    expect(entry.indexOf("createSettingsV2CorePort().snapshot()")).toBeLessThan(
       entry.indexOf("createRoot(root!).render"),
+    );
+    expect(entry.indexOf('import "@mantine/core/styles.css"')).toBeLessThan(
+      entry.indexOf('import "./styles.css"'),
     );
   });
 
@@ -163,6 +190,217 @@ describe("desktop design and workflow contracts", () => {
     });
     expect((committed.document as Record<string, unknown>).futureField).toEqual(
       { retained: true },
+    );
+  });
+
+  it("keeps identity, configuration, incident edges, and deletion lossless", () => {
+    const original = parseWorkflow(
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "workflow.simple-chat",
+        futureRoot: { retained: true },
+        nodes: [
+          {
+            id: "source",
+            type: "future",
+            configuration: { known: 1, future: { retained: true } },
+            futureNode: "retained",
+          },
+          { id: "target", type: "output" },
+        ],
+        edges: [
+          {
+            id: "future-edge",
+            source: "source",
+            target: "target",
+            futureEdge: { retained: true },
+          },
+        ],
+      }),
+    );
+    let editor = selectWorkflowItem(createEditor(original), "source");
+    editor = renameWorkflowNode(editor, "source", "renamed");
+    expect(editor.document.edges[0]).toMatchObject({
+      source: "renamed",
+      futureEdge: { retained: true },
+    });
+    editor = updateSelectedNodeField(editor, "configuration", {
+      known: 2,
+      future: { retained: true },
+    });
+    expect(editor.document.nodes[0]).toMatchObject({
+      futureNode: "retained",
+      configuration: { known: 2, future: { retained: true } },
+    });
+    editor = deleteSelectedWorkflowItems(editor);
+    expect(editor.document.nodes).toHaveLength(1);
+    expect(editor.document.edges).toHaveLength(0);
+    const restored = undoWorkflow(editor);
+    expect(restored.document.futureRoot).toEqual({ retained: true });
+    expect(restored.document.edges[0]?.futureEdge).toEqual({ retained: true });
+  });
+
+  it("mirrors the native exact Simple Chat execution boundary", () => {
+    const exact = parseWorkflow(
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "workflow.simple-chat",
+        nodes: [
+          { id: "input.1", type: "input" },
+          {
+            id: "agent.1",
+            type: "agent",
+            configuration: {
+              modelTierId: "tier:balanced",
+              toolIds: [],
+              maxTurns: 1,
+            },
+          },
+          { id: "output.1", type: "output" },
+          { id: "wait.1", type: "wait" },
+        ],
+        edges: [
+          { id: "one", source: "input.1", target: "agent.1" },
+          { id: "two", source: "agent.1", target: "output.1" },
+          { id: "three", source: "output.1", target: "wait.1" },
+        ],
+      }),
+    );
+    expect(assessNativeWorkflow(exact)).toEqual({
+      executable: true,
+      issues: [],
+    });
+    const instructed = {
+      ...exact,
+      nodes: exact.nodes.map((node) =>
+        node.id === "agent.1"
+          ? {
+              ...node,
+              configuration: {
+                modelTierId: "tier:balanced",
+                toolIds: [],
+                maxTurns: 1,
+                instructions: "Use project evidence.",
+              },
+            }
+          : node,
+      ),
+    };
+    expect(assessNativeWorkflow(instructed)).toEqual({
+      executable: true,
+      issues: [],
+    });
+    const oversized = {
+      ...exact,
+      preservedMetadata: "x".repeat(128 * 1024),
+    };
+    expect(assessNativeWorkflow(oversized)).toEqual(
+      expect.objectContaining({
+        executable: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "native_persistence_bound" }),
+        ]),
+      }),
+    );
+    const wrongIdentity = { ...exact, id: "workflow.other" };
+    expect(assessNativeWorkflow(wrongIdentity).issues).toContainEqual(
+      expect.objectContaining({ code: "native_identity" }),
+    );
+    const extraNode = {
+      ...exact,
+      nodes: [...exact.nodes, { id: "tool.5", type: "tool" }],
+    };
+    expect(assessNativeWorkflow(extraNode).executable).toBe(false);
+    const malformedTransitionIdentity = parseWorkflow(
+      JSON.stringify({
+        ...exact,
+        edges: exact.edges.map((edge, index) =>
+          index === 0
+            ? { ...edge, id: "not a stable id!", futureEdge: { retained: true } }
+            : edge,
+        ),
+      }),
+    );
+    expect(assessNativeWorkflow(malformedTransitionIdentity)).toEqual(
+      expect.objectContaining({
+        executable: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "native_transition_identity" }),
+        ]),
+      }),
+    );
+    expect(
+      JSON.parse(serializeWorkflow(malformedTransitionIdentity)).edges[0],
+    ).toEqual(
+      expect.objectContaining({
+        id: "not a stable id!",
+        futureEdge: { retained: true },
+      }),
+    );
+    const unknownExecutableConfiguration = {
+      ...exact,
+      nodes: exact.nodes.map((node) =>
+        node.id === "agent.1"
+          ? {
+              ...node,
+              configuration: {
+                modelTierId: "tier:balanced",
+                toolIds: [],
+                maxTurns: 1,
+                future: true,
+              },
+            }
+          : node,
+      ),
+    };
+    expect(
+      assessNativeWorkflow(unknownExecutableConfiguration).issues,
+    ).toContainEqual(
+      expect.objectContaining({ code: "native_node_configuration" }),
+    );
+    const wrongTier = {
+      ...exact,
+      nodes: exact.nodes.map((node) =>
+        node.id === "agent.1"
+          ? { ...node, configuration: { modelTierId: "tier:fast" } }
+          : node,
+      ),
+    };
+    expect(assessNativeWorkflow(wrongTier).issues).toContainEqual(
+      expect.objectContaining({ code: "native_model_tier" }),
+    );
+    const toolBound = {
+      ...exact,
+      nodes: exact.nodes.map((node) =>
+        node.id === "agent.1"
+          ? {
+              ...node,
+              configuration: {
+                modelTierId: "tier:balanced",
+                toolIds: ["tool.files.read"],
+                maxTurns: 2,
+              },
+            }
+          : node,
+      ),
+    };
+    expect(assessNativeWorkflow(toolBound)).toEqual({
+      executable: true,
+      issues: [],
+    });
+    expect(simpleChatBindsProjectTools(exact)).toBe(false);
+    expect(simpleChatBindsProjectTools(toolBound)).toBe(true);
+    expect(
+      assessNativeWorkflow(toolBound, { projectScoped: false }).issues,
+    ).toContainEqual(
+      expect.objectContaining({ code: "native_project_scope" }),
+    );
+    const future = { ...exact, schemaVersion: 2 };
+    expect(validateWorkflow(future)).toContainEqual(
+      expect.objectContaining({ code: "unsupported_schema" }),
+    );
+    expect(assessNativeWorkflow(future).issues).toContainEqual(
+      expect.objectContaining({ code: "native_schema" }),
     );
   });
 });

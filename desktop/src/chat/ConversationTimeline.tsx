@@ -45,7 +45,14 @@ export function ConversationTimeline({
           target.scrollHeight - target.scrollTop - target.clientHeight < 48;
       }}
     >
-      <div className="timeline-date">TODAY · 12:41</div>
+      {items.length === 0 ? (
+        <p className="empty-state timeline-empty">
+          No messages yet. Configure a provider in Settings, then send the
+          first Simple Chat message.
+        </p>
+      ) : (
+        <div className="timeline-date">TODAY</div>
+      )}
       <div
         className="virtual-timeline"
         style={{ height: virtualizer.getTotalSize() }}

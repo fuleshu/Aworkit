@@ -17,22 +17,24 @@ import type { JsonObject, WorkflowEditorState } from "./workflow";
 import { workflowEdgeId, workflowNodeId } from "./workflow";
 
 export interface WorkflowGraphCallbacks {
+  readonly structureLocked?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onClearSelection: () => void;
   readonly onMove: (
     id: string,
     position: { readonly x: number; readonly y: number },
   ) => void;
-  readonly onConnect: (
+  readonly onConnect?: (
     source: string,
     target: string,
     sourceHandle?: string | null,
     targetHandle?: string | null,
   ) => void;
-  readonly onAdd: (
+  readonly onAdd?: (
     type: string,
     position: { readonly x: number; readonly y: number },
   ) => void;
+  readonly onDelete?: (ids: readonly string[]) => void;
 }
 export interface WorkflowGraphSurfacePort {
   render(
@@ -94,7 +96,7 @@ function toNode(
     },
   } as Node<WorkflowNodeData>;
 }
-function toEdge(edge: JsonObject, index: number): Edge {
+function toEdge(edge: JsonObject, index: number, selected: boolean): Edge {
   const source =
     typeof edge.source === "string" ? edge.source : "missing-source";
   const target =
@@ -110,6 +112,7 @@ function toEdge(edge: JsonObject, index: number): Edge {
     label: typeof edge.label === "string" ? edge.label : undefined,
     type: source === target ? "smoothstep" : "default",
     animated: edge.active === true,
+    selected,
   };
 }
 function asObject(value: unknown): JsonObject | null {
@@ -140,6 +143,7 @@ function WorkflowCanvas({
 }): JSX.Element {
   const { screenToFlowPosition } = useReactFlow();
   const { nodes, edges } = projectWorkflowSurface(state);
+  const structureLocked = callbacks.structureLocked === true;
   return (
     <ReactFlow
       colorMode="system"
@@ -149,32 +153,57 @@ function WorkflowCanvas({
       maxZoom={2}
       nodes={nodes}
       nodeTypes={{ aworkit: WorkflowNode }}
+      nodesConnectable={!structureLocked}
+      nodesDraggable={!structureLocked}
+      edgesReconnectable={false}
+      deleteKeyCode={structureLocked ? null : "Backspace"}
       onlyRenderVisibleElements
-      onDragOver={(event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        const type = event.dataTransfer.getData("application/x-aworkit-node");
-        if (type !== "")
-          callbacks.onAdd(
-            type,
-            screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-          );
-      }}
+      onDragOver={
+        structureLocked || callbacks.onAdd === undefined
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }
+      }
+      onDrop={
+        structureLocked || callbacks.onAdd === undefined
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              const type = event.dataTransfer.getData(
+                "application/x-aworkit-node",
+              );
+              if (type !== "")
+                callbacks.onAdd?.(
+                  type,
+                  screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+                );
+            }
+      }
       onPaneClick={callbacks.onClearSelection}
       onNodeClick={(_, node) => callbacks.onSelect(node.id)}
+      onEdgeClick={(_, edge) => callbacks.onSelect(edge.id)}
       onNodeDragStop={(_, node) => callbacks.onMove(node.id, node.position)}
-      onConnect={(connection: Connection) => {
-        if (connection.source !== null && connection.target !== null)
-          callbacks.onConnect(
-            connection.source,
-            connection.target,
-            connection.sourceHandle,
-            connection.targetHandle,
-          );
-      }}
+      onDelete={({ nodes: deletedNodes, edges: deletedEdges }) =>
+        callbacks.onDelete?.([
+          ...deletedNodes.map((node) => node.id),
+          ...deletedEdges.map((edge) => edge.id),
+        ])
+      }
+      onConnect={
+        structureLocked || callbacks.onConnect === undefined
+          ? undefined
+          : (connection: Connection) => {
+              if (connection.source !== null && connection.target !== null)
+                callbacks.onConnect?.(
+                  connection.source,
+                  connection.target,
+                  connection.sourceHandle,
+                  connection.targetHandle,
+                );
+            }
+      }
     >
       <Background color="var(--aw-divider)" gap={16} size={1} />
       <MiniMap
@@ -198,12 +227,16 @@ export function projectWorkflowSurface(state: WorkflowEditorState): {
     nodes: state.document.nodes.map((node, index) =>
       toNode(node, index, state.selectedIds.has(workflowNodeId(node, index))),
     ),
-    edges: state.document.edges.map(toEdge),
+    edges: state.document.edges.map((edge, index) => {
+      const id = workflowEdgeId(edge, index);
+      return toEdge(edge, index, state.selectedIds.has(id));
+    }),
   };
 }
 
 function WorkflowNode({
   data,
+  isConnectable,
   selected,
 }: NodeProps<Node<WorkflowNodeData>>): JSX.Element {
   return (
@@ -214,6 +247,7 @@ function WorkflowNode({
         <Handle
           key={port}
           id={port}
+          isConnectable={isConnectable}
           position={Position.Left}
           style={{
             top: `${((index + 1) / (data.inputPorts.length + 1)) * 100}%`,
@@ -233,6 +267,7 @@ function WorkflowNode({
         <Handle
           key={port}
           id={port}
+          isConnectable={isConnectable}
           position={Position.Right}
           style={{
             top: `${((index + 1) / (data.outputPorts.length + 1)) * 100}%`,

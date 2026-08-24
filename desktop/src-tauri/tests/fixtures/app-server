@@ -1,0 +1,54 @@
+import json
+import sys
+import time
+
+
+def receive():
+    return json.loads(sys.stdin.readline())
+
+
+def send(message):
+    sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+initialize = receive()
+assert initialize["method"] == "initialize"
+send(
+    {
+        "id": initialize["id"],
+        "result": {
+            "userAgent": "codex-desktop-fixture/1.0",
+            "platformFamily": "fixture",
+            "platformOs": "fixture-os",
+        },
+    }
+)
+
+assert receive()["method"] == "initialized"
+send({"method": "account/updated", "params": {"authMode": "apiKey"}})
+
+for _ in range(2):
+    request = receive()
+    if request["method"] == "account/read":
+        send(
+            {
+                "id": request["id"],
+                "result": {
+                    "account": {"type": "apiKey", "email": "must-not-cross@example.invalid"},
+                    "requiresOpenaiAuth": False,
+                },
+            }
+        )
+    elif request["method"] == "model/list":
+        send(
+            {
+                "id": request["id"],
+                "result": {
+                    "data": [{"id": "model.desktop.fixture"}],
+                    "nextCursor": None,
+                },
+            }
+        )
+
+time.sleep(30)

@@ -6,6 +6,7 @@ use std::{
 };
 
 use aworkit_protocol::StableId;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -50,7 +51,7 @@ impl InvocationBroker {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkerInvocationProposalV1 {
     pub proposal_id: StableId,
     pub run_id: StableId,
@@ -60,7 +61,7 @@ pub struct WorkerInvocationProposalV1 {
     pub payload_hash: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalChallengeV1 {
     pub invocation_id: StableId,
     pub nonce: StableId,
@@ -68,7 +69,7 @@ pub struct ApprovalChallengeV1 {
     pub capability_id: StableId,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalResponseV1 {
     pub invocation_id: StableId,
     pub nonce: StableId,
@@ -76,7 +77,7 @@ pub struct ApprovalResponseV1 {
     pub now_epoch_millis: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApprovedDispatchV1 {
     pub invocation_id: StableId,
     pub proposal_id: StableId,
@@ -86,7 +87,7 @@ pub struct ApprovedDispatchV1 {
     pub lease_ids: Vec<StableId>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum BrokerDecisionV1 {
     Denied,
     AwaitingApproval(ApprovalChallengeV1),
@@ -94,7 +95,7 @@ pub enum BrokerDecisionV1 {
     AlreadySettled(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum InvocationLedgerEventV1 {
     Proposed {
         invocation_id: StableId,
@@ -125,13 +126,13 @@ pub enum InvocationLedgerEventV1 {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DispatchOutboxV1 {
     pub outbox_id: StableId,
     pub dispatch: ApprovedDispatchV1,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkerResultOutboxV1 {
     pub outbox_id: StableId,
     pub invocation_id: StableId,

@@ -5,20 +5,6 @@ repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 desktop_root="$repository_root/desktop"
 binary_path="$desktop_root/src-tauri/target/debug/aworkit-desktop"
 
-(
-  cd "$desktop_root"
-  ./node_modules/.bin/tsc --noEmit
-  ./node_modules/.bin/vite build
-  ./node_modules/.bin/tauri build --debug --no-bundle --ci \
-    --config '{"build":{"beforeBuildCommand":""}}'
-)
-
-test -x "$binary_path"
-if find "$desktop_root/src" "$desktop_root/dist" -type f -newer "$binary_path" -print -quit | grep -q .; then
-  echo "native binary is older than desktop source or bundled frontend assets" >&2
-  exit 1
-fi
-
 temporary_directory=$(mktemp -d)
 application_pid=""
 broadway_pid=""
@@ -38,6 +24,32 @@ cleanup_native_smoke() {
   rm -r -- "$temporary_directory"
 }
 trap cleanup_native_smoke EXIT
+
+(
+  cd "$desktop_root"
+  ./node_modules/.bin/tsc --noEmit
+  ./node_modules/.bin/vite build
+  ./node_modules/.bin/tauri build --debug --no-bundle --ci \
+    --config '{"build":{"beforeBuildCommand":""}}' \
+    2>&1 | tee "$temporary_directory/tauri-build.log"
+)
+
+if ! grep -Fq "Built application at: $binary_path" \
+  "$temporary_directory/tauri-build.log"; then
+  echo "Tauri did not select the aworkit-desktop binary" >&2
+  grep -F "Built application at:" "$temporary_directory/tauri-build.log" >&2 || true
+  exit 1
+fi
+if grep -F "Built application at:" "$temporary_directory/tauri-build.log" \
+  | grep -Fq "aworkit-rescue-e2e"; then
+  echo "Tauri selected the rescue test runner instead of aworkit-desktop" >&2
+  exit 1
+fi
+test -x "$binary_path"
+if find "$desktop_root/src" "$desktop_root/dist" -type f -newer "$binary_path" -print -quit | grep -q .; then
+  echo "native binary is older than desktop source or bundled frontend assets" >&2
+  exit 1
+fi
 
 validate_native_screenshot() {
   local screenshot_path=$1
@@ -105,6 +117,8 @@ PY
 
   GDK_BACKEND=broadway \
     BROADWAY_DISPLAY=":$broadway_display" \
+    XDG_DATA_HOME="$temporary_directory/xdg-data" \
+    XDG_CONFIG_HOME="$temporary_directory/xdg-config" \
     WEBKIT_DISABLE_COMPOSITING_MODE=1 \
     "$binary_path" >"$temporary_directory/aworkit.log" 2>&1 &
   application_pid=$!

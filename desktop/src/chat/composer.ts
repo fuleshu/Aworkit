@@ -4,13 +4,20 @@ export interface ComposerState {
   readonly draft: string;
   readonly attachments: readonly string[];
   readonly workflowId: string;
+  readonly projectId: string | null;
   readonly imeComposing: boolean;
+}
+
+export interface ComposerReadiness {
+  readonly workflowRequiresProject?: boolean | null;
+  readonly workflowReadinessError?: string | null;
 }
 
 export const emptyComposer: ComposerState = {
   draft: "",
   attachments: [],
-  workflowId: "workflow.repository-engineer",
+  workflowId: "workflow.simple-chat",
+  projectId: null,
   imeComposing: false,
 };
 
@@ -25,12 +32,26 @@ export function updateComposer(
 export function canSubmit(
   state: ComposerState,
   chat: ChatProjection,
+  readiness: ComposerReadiness = {},
 ): string | null {
+  if (chat.recoveryPending)
+    return "Resume the interrupted command before composing another input.";
   if (state.imeComposing) return "Finish IME composition before sending.";
   if (state.draft.trim() === "") return "Enter a message before sending.";
   if (chat.disabledReason !== undefined) return chat.disabledReason;
   if (["cancelled", "completed", "failed"].includes(chat.phase))
-    return "This Chat is terminal; fork or continue in a new Chat.";
+    return "This Chat is terminal. Start a new Chat to send another message.";
+  if (!chat.lockedWorkflow) {
+    if (readiness.workflowReadinessError !== null && readiness.workflowReadinessError !== undefined)
+      return readiness.workflowReadinessError;
+    if (readiness.workflowRequiresProject === null)
+      return "Checking the saved Simple Chat workflow before sending.";
+    if (
+      readiness.workflowRequiresProject === true &&
+      state.projectId === null
+    )
+      return "Select a saved project before sending because Simple Chat binds project file read/search.";
+  }
   return null;
 }
 
@@ -38,8 +59,9 @@ export function submitIntent(
   state: ComposerState,
   chat: ChatProjection,
   commandId: string,
+  readiness: ComposerReadiness = {},
 ): ChatIntent {
-  const reason = canSubmit(state, chat);
+  const reason = canSubmit(state, chat, readiness);
   if (reason !== null) throw new Error(reason);
   return chat.lockedWorkflow
     ? { type: "enqueue", commandId, input: state.draft }
@@ -47,19 +69,20 @@ export function submitIntent(
         type: "start",
         commandId,
         workflowId: state.workflowId,
+        projectId: state.projectId,
         input: state.draft,
-        attachments: state.attachments,
+        attachments: [],
       };
 }
 
 export function controlsFor(
   chat: ChatProjection,
 ): readonly ChatIntent["type"][] {
-  if (chat.phase === "running") return ["pause", "cancel"];
-  if (chat.phase === "paused") return ["resume", "cancel"];
-  if (chat.phase === "awaiting_approval") return ["cancel"];
-  if (chat.phase === "failed") return ["retry", "fork", "continue"];
-  if (chat.phase === "cancelled" || chat.phase === "completed")
-    return ["fork", "continue"];
+  if (
+    chat.phase === "running" ||
+    chat.phase === "paused" ||
+    chat.phase === "awaiting_approval"
+  )
+    return ["cancel"];
   return [];
 }

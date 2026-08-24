@@ -8,11 +8,23 @@ import { EvidenceInspector } from "./EvidenceInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
 import type { ChatIntent, TimelineItem } from "./types";
+import {
+  TauriWorkflowCorePort,
+  type WorkflowCorePort,
+} from "../workbench/corePort";
+import { simpleChatBindsProjectTools } from "../workbench/workflowExecution";
 
 interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;
   readonly pollIntervalMs?: number;
   readonly newChatRequest?: number;
+  readonly active?: boolean;
+  readonly workflowPort?: Pick<WorkflowCorePort, "snapshot">;
+  readonly onRecoveryPendingChange?: (pending: boolean) => void;
+  readonly confirmRecoveryAbandon?: (
+    title: string,
+    body: string,
+  ) => Promise<boolean>;
 }
 
 /** Complete projected Chat surface connected to the native trusted-core adapter. */
@@ -20,16 +32,71 @@ export function ChatWorkspaceScreen({
   corePort,
   pollIntervalMs,
   newChatRequest = 0,
+  active = true,
+  workflowPort,
+  onRecoveryPendingChange,
+  confirmRecoveryAbandon = browserRecoveryConfirmation,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(320);
-  const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(
-    "tool.1",
+  const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
+  const nativeWorkflowPort = useMemo(
+    () =>
+      workflowPort ??
+      ("__TAURI_INTERNALS__" in window ? new TauriWorkflowCorePort() : null),
+    [workflowPort],
   );
+  const [workflowRequiresProject, setWorkflowRequiresProject] = useState<
+    boolean | null
+  >(nativeWorkflowPort === null ? false : null);
+  const [workflowReadinessError, setWorkflowReadinessError] = useState<
+    string | null
+  >(null);
+  const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
+    useState(false);
   const handledNewChatRequest = useRef(0);
+  const wasActive = useRef(active);
   const snapshot = runtime.snapshot;
+  const projectedRecoveryPending = snapshot?.chat.recoveryPending;
+  useEffect(() => {
+    const reentered = active && !wasActive.current;
+    wasActive.current = active;
+    if (reentered) void runtime.resynchronize();
+  }, [active, runtime.resynchronize]);
+  useEffect(() => {
+    if (!active) return;
+    if (nativeWorkflowPort === null) {
+      setWorkflowRequiresProject(false);
+      setWorkflowReadinessError(null);
+      return;
+    }
+    let current = true;
+    setWorkflowRequiresProject(null);
+    setWorkflowReadinessError(null);
+    void nativeWorkflowPort
+      .snapshot()
+      .then(({ document }) => {
+        if (current)
+          setWorkflowRequiresProject(simpleChatBindsProjectTools(document));
+      })
+      .catch(() => {
+        if (current) {
+          setWorkflowRequiresProject(null);
+          setWorkflowReadinessError(
+            "The saved Simple Chat workflow could not be checked; resynchronize before sending.",
+          );
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [active, nativeWorkflowPort]);
+  useEffect(() => {
+    if (projectedRecoveryPending !== undefined)
+      onRecoveryPendingChange?.(projectedRecoveryPending);
+  }, [onRecoveryPendingChange, projectedRecoveryPending]);
   useEffect(() => {
     if (
       newChatRequest <= handledNewChatRequest.current ||
@@ -38,6 +105,7 @@ export function ChatWorkspaceScreen({
     )
       return;
     handledNewChatRequest.current = newChatRequest;
+    if (runtime.snapshot.chat.recoveryPending) return;
     setSelectedTimelineId(null);
     void runtime.dispatch(commandIds.createIntent("new_chat"));
   }, [commandIds, newChatRequest, runtime]);
@@ -62,9 +130,7 @@ export function ChatWorkspaceScreen({
       </section>
     );
   const chat = snapshot.chat;
-  const control = (
-    type: "pause" | "resume" | "cancel" | "retry" | "fork" | "continue",
-  ) => {
+  const control = (type: "cancel") => {
     void runtime.dispatch(commandIds.createIntent(type));
   };
   const cardAction = (
@@ -80,15 +146,20 @@ export function ChatWorkspaceScreen({
     );
     void runtime.dispatch(intent);
   };
+  const expectedEvidenceId =
+    selectedTimelineId === null ? null : `evidence.${selectedTimelineId}`;
   const selectedEvidence =
-    snapshot.evidence.find((record) =>
-      record.id.includes(selectedTimelineId?.split(".")[0] ?? ""),
-    )?.id ??
+    (expectedEvidenceId !== null &&
+    snapshot.evidence.some(({ id }) => id === expectedEvidenceId)
+      ? expectedEvidenceId
+      : null) ??
     snapshot.evidence[0]?.id ??
     null;
-  const secondaryControls = controlsFor(chat).filter((item) =>
-    ["retry", "fork", "continue"].includes(item),
-  );
+  const chatContext = [
+    chat.workflowName,
+    chat.branch,
+    chat.runId === "run.draft" ? null : chat.runId,
+  ].filter((item): item is string => item !== null);
   return (
     <section
       className={`chat-layout ${inspectorOpen ? "with-inspector" : ""}`}
@@ -106,9 +177,7 @@ export function ChatWorkspaceScreen({
             <p className="eyebrow">{chat.scope.toUpperCase()}</p>
             <div className="chat-title-line">
               <h1>{chat.title}</h1>
-              <span>
-                {chat.workflowName} · {chat.branch} · {chat.runId}
-              </span>
+              {chatContext.length > 0 && <span>{chatContext.join(" · ")}</span>}
             </div>
           </div>
           <div className="run-actions">
@@ -116,52 +185,20 @@ export function ChatWorkspaceScreen({
               <i />
               {label(chat.phase)}
             </span>
-            {chat.phase === "running" && (
-              <button
-                title="Pause the active Run after its current safe boundary"
-                type="button"
-                onClick={() => control("pause")}
-              >
-                Ⅱ&nbsp; Pause
-              </button>
-            )}
-            {chat.phase === "paused" && (
-              <button
-                title="Resume the paused Run"
-                type="button"
-                onClick={() => control("resume")}
-              >
-                ▶&nbsp; Resume
-              </button>
-            )}
             {controlsFor(chat).includes("cancel") && (
               <button
                 className="danger-action"
-                title="Cancel the Run; completed workspace effects are not undone"
+                disabled={chat.recoveryPending}
+                title={
+                  chat.recoveryPending
+                    ? "Resume the interrupted command before cancelling the Run"
+                    : "Cancel the Run; completed workspace effects are not undone"
+                }
                 type="button"
                 onClick={() => control("cancel")}
               >
                 ■&nbsp; Cancel
               </button>
-            )}
-            {secondaryControls.length > 0 && (
-              <details className="run-more">
-                <summary title="Show additional Run actions">More</summary>
-                <div>
-                  {secondaryControls.map((item) => (
-                    <button
-                      key={item}
-                      title={`${label(item)} this Run through the trusted core`}
-                      type="button"
-                      onClick={() =>
-                        control(item as "retry" | "fork" | "continue")
-                      }
-                    >
-                      {label(item)}
-                    </button>
-                  ))}
-                </div>
-              </details>
             )}
             <button
               aria-pressed={inspectorOpen}
@@ -173,7 +210,90 @@ export function ChatWorkspaceScreen({
             </button>
           </div>
         </header>
-        {runtime.stale && (
+        {chat.recoveryPending ? (
+          <div className="recovery-banner" role="status">
+            <div>
+              <strong>Interrupted command requires an explicit decision.</strong>
+              <p>
+                Aworkit preserved the exact staged command. Resume replays that
+                command; normal input, New Chat, and Cancel remain locked.
+              </p>
+              {runtime.error !== null && (
+                <p className="field-error" role="alert">
+                  Recovery command failed: {runtime.error} You can retry Resume
+                  or explicitly abandon the staged command as outcome-uncertain.
+                </p>
+              )}
+            </div>
+            <div className="recovery-actions">
+              {runtime.stale && (
+                <button
+                  title="Request a fresh trusted-core snapshot before recovery"
+                  type="button"
+                  onClick={() => void runtime.resynchronize()}
+                >
+                  Resync
+                </button>
+              )}
+              <button
+                className="primary-action"
+                disabled={
+                  runtime.stale ||
+                  runtime.pendingCommandIds.size > 0 ||
+                  confirmingRecoveryAbandon
+                }
+                title={
+                  runtime.stale
+                    ? "Resynchronize before resuming the interrupted command"
+                    : runtime.pendingCommandIds.size > 0
+                      ? "A recovery command is awaiting a committed core event"
+                      : confirmingRecoveryAbandon
+                        ? "Finish the recovery-abandonment confirmation first"
+                      : "Replay the exact staged interrupted command with a fresh idempotent resume command ID"
+                }
+                type="button"
+                onClick={() =>
+                  void runtime.dispatch(commandIds.createIntent("resume"))
+                }
+              >
+                Resume interrupted command
+              </button>
+              <button
+                className="danger-action"
+                disabled={
+                  runtime.stale ||
+                  runtime.pendingCommandIds.size > 0 ||
+                  confirmingRecoveryAbandon
+                }
+                title={
+                  runtime.stale
+                    ? "Resynchronize before abandoning the interrupted command"
+                    : runtime.pendingCommandIds.size > 0
+                      ? "A recovery command is awaiting a committed core event"
+                      : "Record the interrupted command as outcome-uncertain without replaying its provider or tool effects"
+                }
+                type="button"
+                onClick={() => {
+                  setConfirmingRecoveryAbandon(true);
+                  void confirmRecoveryAbandon(
+                    "Abandon interrupted command as uncertain?",
+                    "Aworkit will record an explicit outcome-uncertain failure and evidence for the original staged command without calling its provider or tools. This cannot determine whether effects occurred before the interruption.",
+                  )
+                    .then((confirmed) => {
+                      if (confirmed)
+                        return runtime.dispatch(
+                          commandIds.createIntent("abandon_recovery"),
+                        );
+                      return false;
+                    })
+                    .finally(() => setConfirmingRecoveryAbandon(false));
+                }}
+              >
+                Abandon as uncertain
+              </button>
+            </div>
+          </div>
+        ) : runtime.stale ? (
           <div className="stale-banner" role="status">
             <strong>Projection disconnected.</strong> Last contiguous state is
             frozen; changes are disabled.
@@ -185,12 +305,11 @@ export function ChatWorkspaceScreen({
               Resync
             </button>
           </div>
-        )}
-        {runtime.error !== null && !runtime.stale && (
+        ) : runtime.error !== null ? (
           <div className="command-banner" role="status">
             {runtime.error}
           </div>
-        )}
+        ) : null}
         <ConversationTimeline
           items={snapshot.timeline}
           selectedId={selectedTimelineId}
@@ -198,9 +317,13 @@ export function ChatWorkspaceScreen({
           onAction={cardAction}
         />
         <ChatComposer
+          key={chat.chatId}
           chat={chat}
+          projects={snapshot.projects}
           stale={runtime.stale}
           pending={runtime.pendingCommandIds.size > 0}
+          workflowRequiresProject={workflowRequiresProject}
+          workflowReadinessError={workflowReadinessError}
           nextCommandId={() => commandIds.createIntent("enqueue").commandId}
           onSubmit={runtime.dispatch}
         />
@@ -243,7 +366,15 @@ export function timelineActionIntent(
 }
 
 function label(phase: string): string {
+  if (phase === "waiting_input") return "Waiting for input";
   return phase
     .replaceAll("_", " ")
     .replace(/^./, (value) => value.toUpperCase());
+}
+
+async function browserRecoveryConfirmation(
+  _title: string,
+  body: string,
+): Promise<boolean> {
+  return window.confirm(body);
 }
