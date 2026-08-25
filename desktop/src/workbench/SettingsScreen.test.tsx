@@ -407,7 +407,7 @@ describe("Settings v2 workbench", () => {
       await user.click(screen.getByRole("button", { name: "Probe adapter only" }));
       expect(await screen.findByText(/Tool adapter ready/)).toBeVisible();
       await user.click(
-        screen.getByRole("checkbox", { name: "Workflow binding enabled" }),
+        screen.getByRole("checkbox", { name: "Available to workflows" }),
       );
       expect(screen.queryByText(/Tool adapter ready/)).toBeNull();
     },
@@ -1171,7 +1171,7 @@ describe("Settings v2 workbench", () => {
     expect(screen.queryByRole("option", { name: "Remote project" })).toBeNull();
     expect(screen.getByText(/Remote prepared workspaces are omitted/)).toBeVisible();
     expect(
-      screen.getByText("repair required: unsupported credential bindings"),
+      screen.getByText(/This saved draft contains unsupported credential bindings/),
     ).toBeVisible();
     expect(screen.queryByText("bindable in Simple Chat")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Probe adapter only" }));
@@ -1197,7 +1197,7 @@ describe("Settings v2 workbench", () => {
     expect(screen.queryByText("Exact project probe failed.")).toBeNull();
   });
 
-  it("exposes only read and search as Simple Chat workflow-bindable tools", () => {
+  it("lists every built-in tool as an enableable workflow plugin", () => {
     const base = configuration().tools[0]!;
     const tools = [
       { ...base, id: "tool.files.read", name: "Project file read", enabled: false },
@@ -1222,25 +1222,23 @@ describe("Settings v2 workbench", () => {
       />,
     );
 
-    for (const name of ["Project file read", "Project file search"]) {
+    for (const name of [
+      "Project file read",
+      "Project file search",
+      "Project file edit",
+      "Host shell",
+      "Host Python",
+    ]) {
       const card = screen.getByRole("heading", { name }).closest("section");
       expect(card).not.toBeNull();
+      // Every built-in tool is enableable; the workflow decides usage.
       expect(
         within(card!).getByRole("checkbox", {
-          name: "Workflow binding enabled",
+          name: "Available to workflows",
         }),
       ).toBeEnabled();
     }
-    for (const name of ["Project file edit", "Host shell", "Host Python"]) {
-      const card = screen.getByRole("heading", { name }).closest("section");
-      expect(card).not.toBeNull();
-      expect(
-        within(card!).getByRole("checkbox", {
-          name: "Simple Chat execution not available",
-        }),
-      ).toBeDisabled();
-      expect(within(card!).getByText(/cannot be bound to an executable Simple Chat workflow/)).toBeVisible();
-    }
+    expect(screen.queryByText(/Simple Chat/)).toBeNull();
   });
 
   it("keeps implemented domains editable, disables inactive policies, and routes MCP probing through the native port", async () => {
@@ -1260,7 +1258,7 @@ describe("Settings v2 workbench", () => {
 
     await user.click(screen.getByRole("button", { name: /Tools/ }));
     const readBinding = screen.getByRole("checkbox", {
-      name: "Workflow binding enabled",
+      name: "Available to workflows",
     });
     expect(readBinding).toBeEnabled();
     await user.click(readBinding);
@@ -1275,7 +1273,7 @@ describe("Settings v2 workbench", () => {
     ).toBeNull();
     expect(
       screen.queryByRole("checkbox", {
-        name: "Simple Chat execution not available",
+        name: "Workflow execution not available",
       }),
     ).toBeNull();
     expect(screen.queryByText(/Diagnostic only/)).toBeNull();
@@ -1289,7 +1287,7 @@ describe("Settings v2 workbench", () => {
     await user.click(screen.getByRole("button", { name: "Add agent" }));
     expect(
       screen.getByRole("checkbox", {
-        name: "Simple Chat execution not available",
+        name: "Workflow execution not available",
       }),
     ).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Start handshake" }));
@@ -1543,7 +1541,7 @@ describe("Settings v2 workbench", () => {
     ).toBeDisabled();
   });
 
-  it("registers a saved extension without claiming Simple Chat execution readiness", async () => {
+  it("registers a saved extension without claiming workflow execution readiness", async () => {
     const port = new RecordingSettingsV2Port();
     const user = userEvent.setup();
     render(
@@ -1586,14 +1584,14 @@ describe("Settings v2 workbench", () => {
     expect(screen.getByRole("checkbox", { name: "I trust this code" })).toBeEnabled();
     expect(
       screen.getByRole("checkbox", {
-        name: "Simple Chat execution not available",
+        name: "Workflow execution not available",
       }),
     ).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox", { name: "I trust this code" }));
     expect(
       screen.getByRole("checkbox", {
-        name: "Simple Chat execution not available",
+        name: "Workflow execution not available",
       }),
     ).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save configuration" }));

@@ -48,7 +48,7 @@ export function ConversationTimeline({
       {items.length === 0 ? (
         <p className="empty-state timeline-empty">
           No messages yet. Configure a provider in Settings, then send the
-          first Simple Chat message.
+          first message.
         </p>
       ) : (
         <div className="timeline-date">TODAY</div>

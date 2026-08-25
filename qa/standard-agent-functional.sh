@@ -43,6 +43,9 @@ printf '== Standard Agent gate: boundary and process smoke ==\n'
 bash qa/check-boundaries.sh
 bash qa/smoke-processes.sh
 
+printf '== Standard Agent gate: desktop startup probe ==\n'
+bash qa/desktop-native-launch-probe.sh
+
 printf '== Standard Agent gate: native application smoke ==\n'
 bash qa/desktop-native-smoke.sh
 

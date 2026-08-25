@@ -304,6 +304,40 @@ impl SettingsConfigurationV2 {
         Ok(())
     }
 
+    /// Appends built-in tool entries that newer builds introduced after the
+    /// stored document was written, preserving every existing entry exactly
+    /// (including its enabled state). New entries start disabled with the
+    /// current default contract and the list is reordered to the canonical
+    /// implemented-id order. Returns whether the document changed.
+    pub(crate) fn reconcile_builtin_tools(&mut self) -> bool {
+        let existing = self
+            .tools
+            .iter()
+            .map(|tool| tool.id.clone())
+            .collect::<BTreeSet<String>>();
+        let mut changed = false;
+        for id in BUILTIN_TOOL_IDS {
+            if !existing.contains(id) {
+                let default = default_builtin_tools()
+                    .into_iter()
+                    .find(|tool| tool.id == id)
+                    .expect("built-in tool default exists");
+                self.tools.push(default);
+                changed = true;
+            }
+        }
+        if changed {
+            let order = BUILTIN_TOOL_IDS
+                .iter()
+                .enumerate()
+                .map(|(index, id)| (*id, index))
+                .collect::<BTreeMap<_, _>>();
+            self.tools
+                .sort_by_key(|tool| order.get(tool.id.as_str()).copied().unwrap_or(usize::MAX));
+        }
+        changed
+    }
+
     /// Clears controls that older rescue builds persisted without composing
     /// the corresponding runtime behavior. The caller persists this one-way
     /// compatibility repair before exposing the canonical Settings snapshot.

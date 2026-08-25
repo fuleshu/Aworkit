@@ -461,17 +461,17 @@ function WorkflowProperties({
       )}
       <h3>Native execution</h3>
       {compatibility.executable ? (
-        <p className="success-copy">✓ Executable as Simple Chat</p>
+        <p className="success-copy">✓ Executable workflow</p>
       ) : (
         <ul className="workflow-validation-list runtime-limit-list">
-          {compatibility.issues.map((issue) => (
-            <li key={issue.code}>{issue.message}</li>
+          {compatibility.issues.map((issue, index) => (
+            <li key={`${issue.code}-${index}`}>{issue.message}</li>
           ))}
         </ul>
       )}
       <p className="workflow-help-copy">
         {editable
-          ? "Unknown nodes and fields remain inspectable, editable, undoable, savable, and exportable. Native Run stays gated by the current exact Simple Chat contract."
+          ? "Unknown nodes and fields remain inspectable, editable, undoable, savable, and exportable. Native Run stays gated by the v1 executable catalog contract."
           : "This unsupported or inert schema remains inspectable and losslessly exportable, but this build will not edit or overwrite it."}
       </p>
       <details className="raw-workflow-fields">

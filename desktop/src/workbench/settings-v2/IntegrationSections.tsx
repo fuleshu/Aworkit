@@ -97,7 +97,7 @@ export function McpServersSection({
                 <TextField
                   id={`${server.id}-name`}
                   label="Server name"
-                  title="Name shown for this diagnostic MCP transport record; this build cannot bind it to Simple Chat"
+                  title="Name shown for this MCP transport record; enable the server to make its tools bindable in workflows"
                   value={server.name}
                   onChange={(name) =>
                     updateServer({ ...server, name })
@@ -205,8 +205,8 @@ export function ExternalAgentsSection({
         <p className="section-intro">
           Handshake reports capabilities for the exact current transport draft.
           The result is ephemeral diagnostic evidence, not saved configuration.
-          This Simple Chat build cannot start an external-agent workflow node or
-          continue its session lifecycle.
+          This build cannot start an external-agent workflow node or continue
+          its session lifecycle.
         </p>
         <button
           title="Add an external-agent transport draft for diagnostic handshake only"
@@ -514,8 +514,8 @@ export function ExtensionsSection({
         <p className="section-intro">
           Discovery reads and validates a manifest without executing it. Save the
           discovery before registering the local package. Registration verifies
-          identity and integrity only; this Simple Chat build does not load,
-          enable, or execute extension workflow code.
+          identity and integrity only; this build does not load, enable, or
+          execute extension workflow code.
         </p>
         <button
           title="Choose and inspect an Aworkit extension manifest without executing its code"
@@ -847,7 +847,7 @@ function localId(scope: string): string {
 function unavailableExecutionLabel(enabled: boolean): string {
   return enabled
     ? "Disable non-executable legacy flag"
-    : "Simple Chat execution not available";
+    : "Workflow execution not available";
 }
 
 function unavailableExecutionTitle(kind: string, enabled: boolean): string {

@@ -4132,6 +4132,83 @@ mod tests {
     }
 
     #[test]
+    fn standard_agent_start_stages_and_exposes_the_list_files_binding() {
+        let root = TempDir::new().unwrap();
+        let workspace = root.path().join("standard-agent-project");
+        fs::create_dir(&workspace).unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+
+        let mut settings = runtime.settings_v2_snapshot().settings;
+        let model = settings
+            .providers
+            .iter_mut()
+            .flat_map(|provider| provider.models.iter_mut())
+            .find(|model| model.remote_id == "fixture-model")
+            .expect("fixture model");
+        model.capabilities.push("tools".into());
+        for tool in &mut settings.tools {
+            if matches!(
+                tool.id.as_str(),
+                "tool.files.read"
+                    | "tool.files.search"
+                    | "tool.files.list"
+                    | "tool.files.grep"
+                    | "tool.todo"
+                    | "tool.web_search"
+                    | "tool.web_fetch"
+            ) {
+                tool.enabled = true;
+            }
+        }
+        settings.projects.push(ProjectConfigurationV2 {
+            id: "project.standard-agent".into(),
+            name: "Standard Agent Project".into(),
+            workspace: WorkspaceConfigurationV2 {
+                kind: WorkspaceKindV2::LocalDirectory,
+                location: workspace.to_string_lossy().into_owned(),
+            },
+            default_workflow_id: Some("workflow.standard-agent".into()),
+            portable_history_enabled: false,
+        });
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.standard-agent".into(),
+                expected_version: runtime.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+
+        let receipt = runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.standard-agent-start".into(),
+                expected_version: 0,
+                action: "start".into(),
+                target_id: None,
+                payload: json!({
+                    "workflowId": "workflow.standard-agent",
+                    "projectId": "project.standard-agent",
+                    "input": "Can you see my project?",
+                    "attachments": [],
+                }),
+            })
+            .expect("Standard Agent start must pass durable command staging");
+
+        assert_eq!(receipt.current_version, 3);
+        assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
+        let requests = provider.execution_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .tools
+                .iter()
+                .any(|tool| tool.capability_id == "tool.files.list")
+        );
+    }
+
+    #[test]
     fn simple_chat_commits_real_assistant_output_and_replays_without_second_effect() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());

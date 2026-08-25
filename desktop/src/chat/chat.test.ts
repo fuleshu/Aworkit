@@ -115,7 +115,7 @@ describe("Milestone 08 Chat and evidence experience", () => {
         { workflowRequiresProject: true },
       ),
     ).toBe(
-      "Select a saved project before sending because Simple Chat binds project file read/search.",
+      "Select a saved project before sending because the selected workflow binds project file tools.",
     );
     expect(
       canSubmit(

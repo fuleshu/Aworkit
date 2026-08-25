@@ -871,8 +871,11 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
     };
     let action_shape_is_valid = match command.action.as_str() {
         "start" => {
-            command.payload.get("workflowId").and_then(Value::as_str)
-                == Some("workflow.simple-chat")
+            command
+                .payload
+                .get("workflowId")
+                .and_then(Value::as_str)
+                .is_some_and(|workflow_id| StableId::parse(workflow_id.to_owned()).is_ok())
                 && matches!(
                     command.payload.get("projectId"),
                     None | Some(Value::Null) | Some(Value::String(_))
@@ -932,6 +935,61 @@ fn message_from_event(event: Event, role: &str) -> Option<ConversationMessage> {
             role: role.into(),
             content: body.into(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_start_accepts_the_standard_agent_workflow() {
+        let record = PendingChatCommandV1 {
+            schema_version: 1,
+            frozen_context_hash: format!("sha256:{}", "a".repeat(64)),
+            command_hash: format!("sha256:{}", "b".repeat(64)),
+            command: UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.standard-agent-start".into(),
+                expected_version: 0,
+                action: "start".into(),
+                target_id: None,
+                payload: json!({
+                    "workflowId": "workflow.standard-agent",
+                    "projectId": "project.aworkit",
+                    "input": "Can you see my project?",
+                    "attachments": [],
+                }),
+            },
+        };
+
+        validate_pending_command_record(&record).expect("valid Standard Agent start command");
+    }
+
+    #[test]
+    fn pending_start_rejects_an_invalid_workflow_identifier() {
+        let record = PendingChatCommandV1 {
+            schema_version: 1,
+            frozen_context_hash: format!("sha256:{}", "a".repeat(64)),
+            command_hash: format!("sha256:{}", "b".repeat(64)),
+            command: UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.invalid-workflow-start".into(),
+                expected_version: 0,
+                action: "start".into(),
+                target_id: None,
+                payload: json!({
+                    "workflowId": "workflow with spaces",
+                    "input": "hello",
+                    "attachments": [],
+                }),
+            },
+        };
+
+        assert_eq!(
+            validate_pending_command_record(&record).unwrap_err(),
+            "stored pending Chat command failed integrity validation"
+        );
+    }
 }
 
 fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {

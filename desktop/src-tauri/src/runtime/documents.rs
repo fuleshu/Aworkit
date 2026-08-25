@@ -507,7 +507,8 @@ fn load_or_migrate_settings(
         version if version == u64::from(SETTINGS_SCHEMA_VERSION_V2) => {
             let mut settings: SettingsDocument = decode_ref(&stored, "settings")?;
             let repaired = settings.disable_inactive_runtime_controls()
-                | settings.normalize_legacy_project_tool_limits();
+                | settings.normalize_legacy_project_tool_limits()
+                | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {
                 let saved = repository
@@ -1994,6 +1995,42 @@ mod tests {
         assert_eq!(reopened.settings_version, 2);
         assert!(!reopened.settings.mcp_servers[0].auto_connect);
         assert!(!reopened.settings.projects[0].portable_history_enabled);
+    }
+
+    #[test]
+    fn persisted_v2_settings_gain_new_builtin_tools_disabled_on_open() {
+        let root = TempDir::new().unwrap();
+        let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        let mut settings = SettingsConfigurationV2::default();
+        // Simulate a document written before tool.subagent existed: drop the
+        // newest built-in entry while preserving one user-enabled entry.
+        settings.tools.retain(|tool| tool.id != "tool.subagent");
+        assert_eq!(settings.tools.len(), 11);
+        settings.tools[3].enabled = true;
+        repository
+            .save(
+                DocumentKind::Configuration,
+                SETTINGS_ID,
+                None,
+                &json_document(&settings).unwrap(),
+            )
+            .unwrap();
+
+        let repaired = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(repaired.settings_version, 2);
+        assert_eq!(repaired.settings.tools.len(), 12);
+        assert!(
+            repaired
+                .settings
+                .tools
+                .iter()
+                .any(|tool| tool.id == "tool.subagent" && !tool.enabled)
+        );
+        assert!(repaired.settings.tools.iter().any(|tool| tool.enabled));
+        drop(repaired);
+
+        let reopened = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(reopened.settings.tools.len(), 12);
     }
 
     #[test]

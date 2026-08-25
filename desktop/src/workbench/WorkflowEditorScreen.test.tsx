@@ -34,12 +34,19 @@ describe("lossless workflow editor", () => {
     expect(screen.getByRole("button", { name: "Delete node" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Delete node" }));
-    expect(screen.getByText("Simple Chat executable")).toBeVisible();
+    expect(screen.getByText("Executable workflow")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Add transition" }));
     expect(screen.getByRole("button", { name: "Delete transition" })).toBeEnabled();
-    expect(screen.getByText("Editable · Not runnable")).toBeVisible();
+    // Extra edges stay executable under the v1 catalog contract as long as
+    // the graph remains acyclic and fully reachable, but Run opens a Chat
+    // with the saved document, so the dirty graph must be saved first.
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
+      "title",
+      "Save this workflow before starting a Run",
+    );
     await user.click(screen.getByRole("button", { name: "Delete transition" }));
     expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
   });
@@ -69,7 +76,7 @@ describe("lossless workflow editor", () => {
     );
     expect(screen.getByText("Editable · Not runnable")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Undo/ }));
-    expect(screen.getByText("Simple Chat executable")).toBeVisible();
+    expect(screen.getByText("Executable workflow")).toBeVisible();
   });
 
   it("does not let Run bypass interrupted-command recovery", async () => {
@@ -202,7 +209,7 @@ describe("lossless workflow editor", () => {
     expect(screen.getByText("Editable · Not runnable")).toBeVisible();
     expect(
       screen.getAllByText(
-        /Every Simple Chat transition ID must be a StableId/,
+        /Every transition ID must be a StableId/,
       ),
     ).not.toHaveLength(0);
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();

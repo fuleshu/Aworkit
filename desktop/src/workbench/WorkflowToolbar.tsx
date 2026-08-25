@@ -58,7 +58,7 @@ export function WorkflowToolbar({
           {!editable
             ? "Read-only schema"
             : executable
-              ? "Simple Chat executable"
+              ? "Executable workflow"
               : "Editable · Not runnable"}
         </span>
         <input

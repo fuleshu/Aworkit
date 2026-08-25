@@ -291,7 +291,7 @@ export function WorkflowEditorScreen({
         `Document is valid and savable, but not executable in this runtime. ${compatibility.issues[0]?.message ?? ""}`,
       );
     } else {
-      setNotice("Validation passed: this document is executable as Simple Chat.");
+      setNotice("Validation passed: this workflow document is executable.");
     }
   };
 
@@ -648,7 +648,7 @@ function runTitleFor(
   if (!editable)
     return "This stored or future workflow schema is inspectable and exportable but read-only";
   if (!executable)
-    return "Native Run currently supports only the exact Simple Chat graph";
+    return "Native Run requires the workflow to satisfy the v1 executable catalog contract";
   if (issueCount > 0)
     return "Resolve every dependency and document validation issue before running";
   if (pendingPropertyDraft)

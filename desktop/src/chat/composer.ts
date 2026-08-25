@@ -45,12 +45,12 @@ export function canSubmit(
     if (readiness.workflowReadinessError !== null && readiness.workflowReadinessError !== undefined)
       return readiness.workflowReadinessError;
     if (readiness.workflowRequiresProject === null)
-      return "Checking the saved Simple Chat workflow before sending.";
+      return "Checking the saved workflow before sending.";
     if (
       readiness.workflowRequiresProject === true &&
       state.projectId === null
     )
-      return "Select a saved project before sending because Simple Chat binds project file read/search.";
+      return "Select a saved project before sending because the selected workflow binds project file tools.";
   }
   return null;
 }

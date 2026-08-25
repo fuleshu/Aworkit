@@ -4,15 +4,18 @@ import type { JsonObject, WorkflowDocument } from "./workflow";
 export interface WorkflowExecutionIssue {
   readonly code:
     | "native_schema"
-    | "native_identity"
     | "native_persistence_bound"
     | "native_node_set"
-    | "native_transition_set"
     | "native_transition_identity"
     | "native_node_configuration"
     | "native_model_tier"
     | "native_agent_tools"
     | "native_agent_turns"
+    | "native_tool_node"
+    | "native_condition"
+    | "native_condition_routes"
+    | "native_approval"
+    | "native_structure"
     | "native_project_scope";
   readonly message: string;
 }
@@ -22,36 +25,51 @@ export interface WorkflowExecutionCompatibility {
   readonly issues: readonly WorkflowExecutionIssue[];
 }
 
-const REQUIRED_NODES = [
-  ["input.1", "input"],
-  ["agent.1", "agent"],
-  ["output.1", "output"],
-  ["wait.1", "wait"],
-] as const;
-
-const REQUIRED_TRANSITIONS = [
-  ["input.1", "agent.1"],
-  ["agent.1", "output.1"],
-  ["output.1", "wait.1"],
-] as const;
-
 /** Must remain equal to the native frozen-workflow persistence contract. */
 export const MAXIMUM_EXECUTABLE_WORKFLOW_BYTES = 128 * 1024;
 
-/** Reports whether the saved Simple Chat Agent binds either implemented
- * project-scoped tool. Invalid/unsupported bindings remain a separate native
- * compatibility error; this predicate exists for selection-aware composer UX. */
-export function simpleChatBindsProjectTools(
-  document: WorkflowDocument,
-): boolean {
-  const agent = document.nodes.find((node) => node.id === "agent.1");
-  return nodeBindsProjectTools(agent);
-}
+const CATALOG_NODE_TYPES = new Set([
+  "input",
+  "agent",
+  "model_call",
+  "tool",
+  "condition",
+  "parallel",
+  "approval",
+  "output",
+  "wait",
+  "completion",
+]);
 
-/** Reports whether any node in the document binds a project-scoped file tool. */
-export function bindsProjectTools(document: WorkflowDocument): boolean {
-  return document.nodes.some((node) => nodeBindsProjectTools(node));
-}
+/** Must remain equal to the native builtin_tool_binding_ids contract. */
+const BUILTIN_TOOL_BINDING_IDS = new Set([
+  "tool.files.read",
+  "tool.files.search",
+  "tool.files.list",
+  "tool.files.grep",
+  "tool.files.edit",
+  "tool.files.write",
+  "tool.shell.host",
+  "tool.python.host",
+  "tool.todo",
+  "tool.web_search",
+  "tool.web_fetch",
+  "tool.subagent",
+]);
+
+const MINIMUM_AGENT_TURNS = 1;
+const MAXIMUM_AGENT_TURNS = 12;
+const MAXIMUM_MODEL_CALL_TOKENS = 8192;
+const MAXIMUM_INSTRUCTIONS_BYTES = 64 * 1024;
+const PREDICATE_KINDS = new Set([
+  "always",
+  "exists",
+  "eq",
+  "neq",
+  "and",
+  "or",
+  "not",
+]);
 
 const PROJECT_SCOPED_TOOL_IDS = [
   "tool.files.read",
@@ -80,8 +98,27 @@ function nodeBindsProjectTools(node: JsonObject | undefined): boolean {
   );
 }
 
-/** Mirrors the deliberately narrow native runtime validator without claiming
- * that arbitrary visual-editor nodes have an executor. */
+/** Reports whether any node in the document binds a project-scoped file tool. */
+export function bindsProjectTools(document: WorkflowDocument): boolean {
+  return document.nodes.some((node) => nodeBindsProjectTools(node));
+}
+
+/** Reports whether the seeded Simple Chat Agent binds a project-scoped tool.
+ * The seeded document is an ordinary configured workflow; this predicate only
+ * exists for selection-aware composer UX. */
+export function simpleChatBindsProjectTools(
+  document: WorkflowDocument,
+): boolean {
+  const agent = document.nodes.find((node) => node.id === "agent.1");
+  return nodeBindsProjectTools(agent);
+}
+
+/**
+ * Mirrors the native v1 executable-catalog validator without claiming
+ * authority: any saved workflow document is executable when it passes the
+ * closed node catalog, per-type configuration contracts, and structural
+ * rules. Workflows are plain JSON documents; none is hardwired.
+ */
 export function assessNativeWorkflow(
   document: WorkflowDocument,
   context?: { readonly projectScoped?: boolean },
@@ -93,12 +130,6 @@ export function assessNativeWorkflow(
       message:
         "Native execution supports workflow schemaVersion 1 only; this document remains losslessly inspectable and exportable.",
     });
-  if (document.id !== "workflow.simple-chat")
-    issues.push({
-      code: "native_identity",
-      message:
-        "Native Simple Chat execution requires the canonical workflow.simple-chat document identity.",
-    });
   if (
     new TextEncoder().encode(JSON.stringify(document)).length >
     MAXIMUM_EXECUTABLE_WORKFLOW_BYTES
@@ -108,34 +139,249 @@ export function assessNativeWorkflow(
       message:
         "This workflow exceeds the 128 KiB frozen execution bound. Remove oversized preserved metadata before running it; the complete document remains editable and exportable.",
     });
-  const exactNodes =
-    document.nodes.length === REQUIRED_NODES.length &&
-    REQUIRED_NODES.every(
-      ([id, type]) =>
-        document.nodes.filter(
-          (node) => node.id === id && node.type === type,
-        ).length === 1,
-    );
-  if (!exactNodes)
-    issues.push({
-      code: "native_node_set",
-      message:
-        "Native execution currently requires exactly Input → Agent → Output → Wait for Input with the built-in node IDs.",
-    });
 
-  const exactTransitions =
-    document.edges.length === REQUIRED_TRANSITIONS.length &&
-    REQUIRED_TRANSITIONS.every(
-      ([source, target]) =>
-        document.edges.filter(
-          (edge) => edge.source === source && edge.target === target,
-        ).length === 1,
-    );
-  if (!exactTransitions)
+  // Closed node catalog plus per-type configuration contracts.
+  const nodes = document.nodes;
+  for (const node of nodes) {
+    const id = nodeId(node);
+    const type = nodeType(node);
+    if (!CATALOG_NODE_TYPES.has(type))
+      issues.push({
+        code: "native_node_set",
+        message: `Workflow node '${id}' has node type '${type}' with no installed executor in this build.`,
+      });
+    if (
+      type === "input" ||
+      type === "output" ||
+      type === "wait" ||
+      type === "completion" ||
+      type === "parallel"
+    ) {
+      const configuration = node.configuration;
+      if (
+        configuration !== undefined &&
+        (typeof configuration !== "object" ||
+          configuration === null ||
+          Array.isArray(configuration) ||
+          Object.keys(configuration).length > 0)
+      )
+        issues.push({
+          code: "native_node_configuration",
+          message: `Workflow node '${id}' of type ${type} accepts no configuration.`,
+        });
+    }
+    if (type === "agent") {
+      const configuration = objectConfiguration(node);
+      if (configuration === null) {
+        issues.push({
+          code: "native_node_configuration",
+          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions.`,
+        });
+      } else {
+        const keys = new Set(Object.keys(configuration));
+        const required = new Set(["maxTurns", "modelTierId", "toolIds"]);
+        const allowed = new Set([
+          "instructions",
+          "maxTurns",
+          "modelTierId",
+          "toolIds",
+        ]);
+        if (
+          ![...required].every((key) => keys.has(key)) ||
+          [...keys].some((key) => !allowed.has(key))
+        )
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions.`,
+          });
+        if (!validTierReference(configuration.modelTierId))
+          issues.push({
+            code: "native_model_tier",
+            message: `Workflow node '${id}' agent modelTierId must reference a tier:<name> model tier.`,
+          });
+        const toolIds = configuration.toolIds;
+        if (!Array.isArray(toolIds))
+          issues.push({
+            code: "native_agent_tools",
+            message: `Workflow node '${id}' agent toolIds must be an array.`,
+          });
+        else {
+          const unique = new Set(toolIds);
+          for (const toolId of toolIds) {
+            if (typeof toolId !== "string" || !isToolBindingId(toolId))
+              issues.push({
+                code: "native_agent_tools",
+                message: `Workflow node '${id}' agent toolIds must reference tool.<name> or mcp:<server> bindings.`,
+              });
+            else if (
+              !BUILTIN_TOOL_BINDING_IDS.has(toolId) &&
+              !toolId.startsWith("mcp:")
+            )
+              issues.push({
+                code: "native_agent_tools",
+                message: `Workflow node '${id}' agent binds tool '${toolId}' with no installed executor in this build.`,
+              });
+          }
+          if (unique.size !== toolIds.length)
+            issues.push({
+              code: "native_agent_tools",
+              message: `Workflow node '${id}' agent toolIds must be unique.`,
+            });
+        }
+        const maximumTurns = configuration.maxTurns;
+        if (
+          typeof maximumTurns !== "number" ||
+          !Number.isInteger(maximumTurns) ||
+          maximumTurns < MINIMUM_AGENT_TURNS ||
+          maximumTurns > MAXIMUM_AGENT_TURNS
+        )
+          issues.push({
+            code: "native_agent_turns",
+            message: `Workflow node '${id}' agent maxTurns must be ${MINIMUM_AGENT_TURNS}..=${MAXIMUM_AGENT_TURNS}.`,
+          });
+        instructionsIssue(id, configuration.instructions, issues);
+      }
+    }
+    if (node.type === "model_call") {
+      const configuration = objectConfiguration(node);
+      if (configuration === null)
+        issues.push({
+          code: "native_node_configuration",
+          message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens.`,
+        });
+      else {
+        const keys = new Set(Object.keys(configuration));
+        const allowed = new Set(["instructions", "maximumTokens", "modelTierId"]);
+        if (!keys.has("modelTierId") || [...keys].some((key) => !allowed.has(key)))
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens.`,
+          });
+        if (!validTierReference(configuration.modelTierId))
+          issues.push({
+            code: "native_model_tier",
+            message: `Workflow node '${id}' model_call modelTierId must reference a tier:<name> model tier.`,
+          });
+        const maximumTokens = configuration.maximumTokens;
+        if (maximumTokens !== undefined) {
+          if (
+            typeof maximumTokens !== "number" ||
+            !Number.isInteger(maximumTokens) ||
+            maximumTokens < 1 ||
+            maximumTokens > MAXIMUM_MODEL_CALL_TOKENS
+          )
+            issues.push({
+              code: "native_node_configuration",
+              message: `Workflow node '${id}' maximumTokens must be 1..=${MAXIMUM_MODEL_CALL_TOKENS}.`,
+            });
+        }
+        instructionsIssue(id, configuration.instructions, issues);
+      }
+    }
+    if (node.type === "tool") {
+      const configuration = objectConfiguration(node);
+      if (configuration === null)
+        issues.push({
+          code: "native_tool_node",
+          message: `Workflow node '${id}' tool configuration accepts exactly toolId plus optional parameters.`,
+        });
+      else {
+        const keys = new Set(Object.keys(configuration));
+        const allowed = new Set(["parameters", "toolId"]);
+        if (!keys.has("toolId") || [...keys].some((key) => !allowed.has(key)))
+          issues.push({
+            code: "native_tool_node",
+            message: `Workflow node '${id}' tool configuration accepts exactly toolId plus optional parameters.`,
+          });
+        const toolId = configuration.toolId;
+        if (typeof toolId !== "string" || !isToolBindingId(toolId))
+          issues.push({
+            code: "native_tool_node",
+            message: `Workflow node '${id}' tool toolId must reference a tool.<name> or mcp:<server> binding.`,
+          });
+        else if (
+          !BUILTIN_TOOL_BINDING_IDS.has(toolId) &&
+          !toolId.startsWith("mcp:")
+        )
+          issues.push({
+            code: "native_tool_node",
+            message: `Workflow node '${id}' tool binds '${toolId}' with no installed executor in this build.`,
+          });
+        const parameters = configuration.parameters;
+        if (
+          parameters !== undefined &&
+          (typeof parameters !== "object" ||
+            parameters === null ||
+            Array.isArray(parameters))
+        )
+          issues.push({
+            code: "native_tool_node",
+            message: `Workflow node '${id}' tool parameters must be a JSON object.`,
+          });
+      }
+    }
+    if (node.type === "condition") {
+      const configuration = objectConfiguration(node);
+      if (configuration === null || !("predicate" in configuration))
+        issues.push({
+          code: "native_condition",
+          message: `Workflow node '${id}' condition configuration accepts exactly a predicate object.`,
+        });
+      else if (!validPredicate(id, configuration.predicate, 0, issues)) {
+        // The specific predicate issue was already recorded.
+      }
+    }
+    if (node.type === "approval") {
+      const configuration = objectConfiguration(node);
+      if (configuration !== null) {
+        const keys = Object.keys(configuration);
+        const allowed = new Set(["message", "title"]);
+        if (keys.some((key) => !allowed.has(key)))
+          issues.push({
+            code: "native_approval",
+            message: `Workflow node '${id}' approval configuration accepts only title and message.`,
+          });
+        for (const [key, maximum] of [
+          ["title", 4 * 1024],
+          ["message", 16 * 1024],
+        ] as const) {
+          const value = configuration[key];
+          if (
+            value !== undefined &&
+            (typeof value !== "string" ||
+              value.length > maximum ||
+              value.includes("\0"))
+          )
+            issues.push({
+              code: "native_approval",
+              message: `Workflow node '${id}' approval ${key} exceeds its bound.`,
+            });
+        }
+      }
+    }
+    validateDeclaredPorts(id, node, issues);
+  }
+
+  const nodeIds = new Set(nodes.map(nodeId));
+  const inputIds = nodes
+    .filter((node) => nodeType(node) === "input")
+    .map(nodeId);
+  if (inputIds.length !== 1)
     issues.push({
-      code: "native_transition_set",
-      message:
-        "Native execution currently requires the three Simple Chat transitions with no additional transitions.",
+      code: "native_structure",
+      message: "An executable v1 workflow requires exactly one input node.",
+    });
+  const terminalIds = new Set(
+    nodes
+      .filter(
+        (node) => nodeType(node) === "wait" || nodeType(node) === "completion",
+      )
+      .map(nodeId),
+  );
+  if (terminalIds.size === 0)
+    issues.push({
+      code: "native_structure",
+      message: "An executable v1 workflow requires a wait or completion node.",
     });
   if (
     document.edges.some(
@@ -145,136 +391,259 @@ export function assessNativeWorkflow(
     issues.push({
       code: "native_transition_identity",
       message:
-        "Every Simple Chat transition ID must be a StableId of 1–128 ASCII letters, digits, periods, underscores, or hyphens.",
+        "Every transition ID must be a StableId of 1–128 ASCII letters, digits, periods, underscores, or hyphens.",
     });
 
-  const agent = document.nodes.find((node) => node.id === "agent.1");
-  if (!hasExactExecutableNodeConfiguration(document, agent))
+  const successors = new Map<string, string[]>();
+  for (const node of nodes) successors.set(nodeId(node), []);
+  for (const edge of document.edges) {
+    const existing = successors.get(edgeSource(edge)) ?? [];
+    existing.push(edgeTarget(edge));
+    successors.set(edgeSource(edge), existing);
+  }
+  if (hasCycle(successors))
     issues.push({
-      code: "native_node_configuration",
-      message:
-        "Input, Output, and Wait configuration must be empty; Agent accepts only modelTierId, toolIds, maxTurns, and optional non-empty instructions up to 64 KiB.",
+      code: "native_structure",
+      message: "An executable v1 workflow graph must be acyclic.",
     });
-  if (modelTierId(agent) !== "tier:balanced")
-    issues.push({
-      code: "native_model_tier",
-      message:
-        "The Simple Chat Agent must reference the portable tier:balanced model tier.",
-    });
-  const toolIds = nativeToolBindings(agent);
-  if (toolIds === null)
-    issues.push({
-      code: "native_agent_tools",
-      message:
-        "Native Simple Chat accepts only unique tool.files.read/tool.files.search bindings; edit, shell, and Python require an approval path.",
-    });
-  const maximumTurns = nativeMaximumTurns(agent);
+  if (inputIds.length === 1) {
+    const entry = inputIds[0];
+    const reachable = new Set<string>([entry]);
+    const frontier = [entry];
+    while (frontier.length > 0) {
+      const id = frontier.pop();
+      if (id === undefined) break;
+      for (const next of successors.get(id) ?? []) {
+        if (!reachable.has(next)) {
+          reachable.add(next);
+          frontier.push(next);
+        }
+      }
+    }
+    if (reachable.size !== nodeIds.size)
+      issues.push({
+        code: "native_structure",
+        message:
+          "An executable v1 workflow requires every node to be reachable from the input node.",
+      });
+  }
+  for (const node of nodes) {
+    if (node.type !== "condition") continue;
+    const routes = new Set<string>();
+    let invalidRoute = false;
+    for (const edge of document.edges) {
+      if (edge.source !== node.id) continue;
+      const route =
+        typeof edge.configuration === "object" &&
+        edge.configuration !== null &&
+        !Array.isArray(edge.configuration) &&
+        typeof (edge.configuration as JsonObject).route === "string"
+          ? ((edge.configuration as JsonObject).route as string)
+          : null;
+      if (route === null || !["true", "false", "fallback"].includes(route)) {
+        invalidRoute = true;
+        continue;
+      }
+      routes.add(route);
+    }
+    if (invalidRoute)
+      issues.push({
+        code: "native_condition_routes",
+        message: `Transition leaving condition node '${node.id}' requires configuration.route of true, false, or fallback.`,
+      });
+    if (!routes.has("true") || !routes.has("false"))
+      issues.push({
+        code: "native_condition_routes",
+        message: `Condition node '${node.id}' requires one true route and one false or fallback route.`,
+      });
+  }
+
   if (
-    toolIds !== null &&
-    ((toolIds.length === 0 && maximumTurns !== 1) ||
-      (toolIds.length > 0 &&
-        (maximumTurns === null || maximumTurns < 2 || maximumTurns > 8)))
-  )
-    issues.push({
-      code: "native_agent_turns",
-      message:
-        "Use maxTurns=1 without tools or maxTurns=2..8 with project file read/search.",
-    });
-  if (
-    toolIds !== null &&
-    toolIds.length > 0 &&
-    context?.projectScoped === false
+    context?.projectScoped === false &&
+    bindsProjectTools(document)
   )
     issues.push({
       code: "native_project_scope",
       message:
-        "Project file read/search requires a saved project selection when the Chat starts.",
+        "This workflow binds project file tools and requires a saved project selection when the Chat starts.",
     });
 
   return { executable: issues.length === 0, issues };
 }
 
-function hasExactExecutableNodeConfiguration(
-  document: WorkflowDocument,
-  agent: JsonObject | undefined,
+function objectConfiguration(node: JsonObject): JsonObject | null {
+  const configuration = node.configuration;
+  if (
+    typeof configuration !== "object" ||
+    configuration === null ||
+    Array.isArray(configuration)
+  )
+    return null;
+  return configuration as JsonObject;
+}
+
+function validTierReference(value: unknown): boolean {
+  return typeof value === "string" && value.startsWith("tier:");
+}
+
+function isToolBindingId(value: string): boolean {
+  return value.startsWith("tool.") || value.startsWith("mcp:");
+}
+
+function instructionsIssue(
+  id: string,
+  instructions: unknown,
+  issues: WorkflowExecutionIssue[],
+): void {
+  if (instructions === undefined) return;
+  if (
+    typeof instructions !== "string" ||
+    instructions.trim().length === 0 ||
+    instructions.includes("\0") ||
+    new TextEncoder().encode(instructions).length > MAXIMUM_INSTRUCTIONS_BYTES
+  )
+    issues.push({
+      code: "native_node_configuration",
+      message: `Workflow node '${id}' instructions must be a non-empty string of at most ${MAXIMUM_INSTRUCTIONS_BYTES / 1024} KiB.`,
+    });
+}
+
+function validPredicate(
+  id: string,
+  value: unknown,
+  depth: number,
+  issues: WorkflowExecutionIssue[],
 ): boolean {
-  for (const id of ["input.1", "output.1", "wait.1"]) {
-    const configuration = document.nodes.find((node) => node.id === id)
-      ?.configuration;
-    if (configuration !== undefined) {
-      if (
-        typeof configuration !== "object" ||
-        configuration === null ||
-        Array.isArray(configuration) ||
-        Object.keys(configuration).length > 0
-      )
-        return false;
+  if (depth > 4) {
+    issues.push({
+      code: "native_condition",
+      message: `Workflow node '${id}' predicate nesting exceeds 4 levels.`,
+    });
+    return false;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    issues.push({
+      code: "native_condition",
+      message: `Workflow node '${id}' predicate must be an object.`,
+    });
+    return false;
+  }
+  const object = value as JsonObject;
+  const kind = object.kind;
+  if (typeof kind !== "string" || !PREDICATE_KINDS.has(kind)) {
+    issues.push({
+      code: "native_condition",
+      message: `Workflow node '${id}' predicate requires a supported kind.`,
+    });
+    return false;
+  }
+  if ((kind === "eq" || kind === "neq") && !("value" in object)) {
+    issues.push({
+      code: "native_condition",
+      message: `Workflow node '${id}' predicate kind ${kind} requires a comparison value.`,
+    });
+    return false;
+  }
+  if (kind === "exists" && !("path" in object)) {
+    issues.push({
+      code: "native_condition",
+      message: `Workflow node '${id}' predicate kind exists requires a path.`,
+    });
+    return false;
+  }
+  if (kind === "and" || kind === "or") {
+    const operands = object.operands;
+    if (
+      !Array.isArray(operands) ||
+      operands.length === 0 ||
+      operands.length > 8
+    ) {
+      issues.push({
+        code: "native_condition",
+        message: `Workflow node '${id}' predicate operands must contain 1..=8 items.`,
+      });
+      return false;
+    }
+    for (const operand of operands) {
+      if (!validPredicate(id, operand, depth + 1, issues)) return false;
     }
   }
-  const configuration = agent?.configuration;
-  if (
-    typeof configuration !== "object" ||
-    configuration === null ||
-    Array.isArray(configuration)
-  )
+  if (kind === "not") {
+    if (!("operand" in object)) {
+      issues.push({
+        code: "native_condition",
+        message: `Workflow node '${id}' predicate kind not requires operand.`,
+      });
+      return false;
+    }
+    if (!validPredicate(id, object.operand, depth + 1, issues)) return false;
+  }
+  return true;
+}
+
+function validateDeclaredPorts(
+  id: string,
+  node: JsonObject,
+  issues: WorkflowExecutionIssue[],
+): void {
+  for (const portKey of ["inputPorts", "outputPorts"]) {
+    const ports = node[portKey];
+    if (ports === undefined) continue;
+    if (!Array.isArray(ports)) {
+      issues.push({
+        code: "native_node_configuration",
+        message: `Workflow node '${id}' ${portKey} must be an array.`,
+      });
+      continue;
+    }
+    for (const port of ports) {
+      if (
+        typeof port !== "object" ||
+        port === null ||
+        Array.isArray(port) ||
+        typeof (port as JsonObject).name !== "string" ||
+        ((port as JsonObject).name as string).trim().length === 0
+      )
+        issues.push({
+          code: "native_node_configuration",
+          message: `Workflow node '${id}' ${portKey} entries require a non-empty name.`,
+        });
+    }
+  }
+}
+
+function hasCycle(successors: Map<string, string[]>): boolean {
+  const visited = new Set<string>();
+  const active = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (active.has(id)) return true;
+    if (visited.has(id)) return false;
+    active.add(id);
+    for (const next of successors.get(id) ?? []) {
+      if (visit(next)) return true;
+    }
+    active.delete(id);
+    visited.add(id);
     return false;
-  const keys = Object.keys(configuration).sort();
-  const allowed = ["instructions", "maxTurns", "modelTierId", "toolIds"];
-  const required = ["maxTurns", "modelTierId", "toolIds"];
-  if (
-    !required.every((key) => keys.includes(key)) ||
-    keys.some((key) => !allowed.includes(key))
-  )
-    return false;
-  const instructions = (configuration as JsonObject).instructions;
-  return (
-    instructions === undefined ||
-    (typeof instructions === "string" &&
-      instructions.trim().length > 0 &&
-      !instructions.includes("\0") &&
-      new TextEncoder().encode(instructions).length <= 64 * 1024)
-  );
+  };
+  for (const id of successors.keys()) {
+    if (visit(id)) return true;
+  }
+  return false;
 }
 
-function nativeToolBindings(
-  node: JsonObject | undefined,
-): readonly string[] | null {
-  const configuration = node?.configuration;
-  if (
-    typeof configuration !== "object" ||
-    configuration === null ||
-    Array.isArray(configuration)
-  )
-    return null;
-  const toolIds = (configuration as JsonObject).toolIds;
-  if (!Array.isArray(toolIds) || !toolIds.every((id) => typeof id === "string"))
-    return null;
-  const supported = new Set(["tool.files.read", "tool.files.search"]);
-  const unique = new Set(toolIds);
-  return unique.size === toolIds.length && toolIds.every((id) => supported.has(id))
-    ? toolIds
-    : null;
+function nodeId(node: JsonObject): string {
+  return typeof node.id === "string" ? node.id : "";
 }
 
-function nativeMaximumTurns(node: JsonObject | undefined): number | null {
-  const configuration = node?.configuration;
-  if (
-    typeof configuration !== "object" ||
-    configuration === null ||
-    Array.isArray(configuration)
-  )
-    return null;
-  const value = (configuration as JsonObject).maxTurns;
-  return typeof value === "number" && Number.isInteger(value) ? value : null;
+function nodeType(node: JsonObject): string {
+  return typeof node.type === "string" ? node.type : "";
 }
 
-function modelTierId(node: JsonObject | undefined): unknown {
-  const configuration = node?.configuration;
-  if (
-    typeof configuration !== "object" ||
-    configuration === null ||
-    Array.isArray(configuration)
-  )
-    return undefined;
-  return (configuration as JsonObject).modelTierId;
+function edgeSource(edge: JsonObject): string {
+  return typeof edge.source === "string" ? edge.source : "";
+}
+
+function edgeTarget(edge: JsonObject): string {
+  return typeof edge.target === "string" ? edge.target : "";
 }

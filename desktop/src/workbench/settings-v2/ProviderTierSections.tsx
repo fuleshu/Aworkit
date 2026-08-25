@@ -284,14 +284,13 @@ export function ProvidersModelsSection({
             <JsonObjectField
               id={`${provider.id}-configuration`}
               label="Provider configuration"
-              title="Reserved non-secret provider JSON; current Test, Discover, and Simple Chat operations require this object to be empty"
+              title="Reserved non-secret provider JSON; current Test and Discover operations require this object to be empty"
               value={provider.configuration}
               onChange={(configuration) => updateProvider({ ...provider, configuration })}
             />
             <p className="field-warning">
               Provider-specific JSON is preserved for future adapters. Current
-              Test, Discover, and Simple Chat operations fail explicitly unless
-              it is empty.
+              Test and Discover operations fail explicitly unless it is empty.
             </p>
             <div className="section-heading-row model-heading">
               <div>
@@ -550,14 +549,14 @@ function ModelEditor({
       <JsonObjectField
         id={`${provider.id}-${model.id}-parameters`}
         label="Provider parameters"
-        title="Reserved non-secret model JSON; current Test and Simple Chat operations require this object to be empty"
+        title="Reserved non-secret model JSON; current Test operations require this object to be empty"
         value={model.parameters}
         onChange={(parameters) => onChange({ ...model, parameters })}
       />
       <p className="field-warning">
         Provider parameters are preserved for future adapters but are not
-        silently ignored: current Test and Simple Chat operations require an
-        empty object. Maximum output above is discovery metadata only.
+        silently ignored: current Test operations require an empty object.
+        Maximum output above is discovery metadata only.
       </p>
     </section>
   );
@@ -589,8 +588,8 @@ export function ModelTiersSection({
         <p className="section-intro">
           Workflows use portable tier IDs. Each tier resolves to exact models,
           an ordered fallback list, or an explicit subordinate policy. Current
-          Simple Chat executes only Exact mappings; fallback and policy mappings
-          remain editable but fail with an actionable runtime error.
+          workflow execution resolves only Exact mappings; fallback and policy
+          mappings remain editable but fail with an actionable runtime error.
         </p>
         <button
           title="Create a custom portable model tier"
@@ -728,8 +727,8 @@ function TierEditor({
           >
             <option value="unconfigured">Unconfigured</option>
             <option value="exact">Exact model</option>
-            <option value="fallback">Ordered fallback · not executable in Simple Chat</option>
-            <option value="policy">Selection policy · not executable in Simple Chat</option>
+            <option value="fallback">Ordered fallback · not executable in workflows</option>
+            <option value="policy">Selection policy · not executable in workflows</option>
           </select>
         </label>
       </div>

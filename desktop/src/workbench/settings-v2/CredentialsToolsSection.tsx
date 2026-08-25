@@ -353,9 +353,10 @@ export function ToolsSection({
   return (
     <div className="settings-section-stack">
       <p className="section-intro">
-        Project file read and search are the only built-ins this Simple Chat
-        runtime can bind and execute. Edit, shell, and Python adapter probes are
-        diagnostics only; their workflow execution and approval path are not installed.
+        Built-in tools are plugins available to workflows. Enable a tool to
+        make it bindable in workflow agent and tool nodes; the workflow
+        definition decides which tools it uses. Workflows never reference
+        specific tools here.
       </p>
       {tools.length === 0 ? (
         <p className="settings-empty">
@@ -364,7 +365,6 @@ export function ToolsSection({
       ) : (
         <div className="settings-record-list">
           {tools.map((tool, index) => {
-            const workflowExecutable = SIMPLE_CHAT_TOOL_IDS.has(tool.id);
             const bindingCompatible = tool.credentialBindings.length === 0;
             const selectedProjectId =
               selectedProjects[tool.id] ?? probeableProjects[0]?.id ?? "";
@@ -396,29 +396,16 @@ export function ToolsSection({
                   <code>{tool.id}</code>
                 </div>
                 <span
-                  className={`status ${workflowExecutable && bindingCompatible && tool.enabled ? "configured" : "disabled"}`}
+                  className={`status ${tool.enabled ? "configured" : "disabled"}`}
                 >
-                  {workflowExecutable
-                    ? !bindingCompatible
-                      ? "repair required: unsupported credential bindings"
-                      : tool.enabled
-                      ? "bindable in Simple Chat"
-                      : "disabled"
-                    : "not executable in Simple Chat"}
+                  {tool.enabled ? "enabled" : "disabled"}
                 </span>
               </div>
               <label className="switch-label" htmlFor={`${tool.id}-enabled`}>
                 <input
                   checked={tool.enabled}
-                  disabled={!workflowExecutable && !tool.enabled}
                   id={`${tool.id}-enabled`}
-                  title={
-                    workflowExecutable
-                      ? "Make this implemented built-in available for explicit Simple Chat workflow authority binding"
-                      : tool.enabled
-                        ? "Turn off this legacy enabled flag; this build cannot execute the tool from Simple Chat"
-                        : "Unavailable: Simple Chat has no approval-capable executor for this tool"
-                  }
+                  title="Make this built-in tool available for workflow binding"
                   type="checkbox"
                   onChange={(event) =>
                     updateTool({
@@ -427,18 +414,12 @@ export function ToolsSection({
                     })
                   }
                 />
-                {workflowExecutable
-                  ? bindingCompatible
-                    ? "Workflow binding enabled"
-                    : "Repair unsupported bindings before workflow use"
-                  : tool.enabled
-                    ? "Disable non-executable legacy flag"
-                    : "Simple Chat execution not available"}
+                Available to workflows
               </label>
-              <p className={workflowExecutable ? undefined : "field-warning"}>
-                {workflowExecutable
-                  ? "Requires one selected saved project workspace when the Chat starts."
-                  : `${tool.name} can be configured and probed, but cannot be bound to an executable Simple Chat workflow in this build.`}
+              <p>
+                {toolDescription(tool.id)} {tool.requiresProject
+                  ? "Project-scoped: workflows binding this tool require a saved project selection when the Chat starts."
+                  : ""}
               </p>
               <div className="provider-actions">
                 {tool.requiresProject && (
@@ -530,7 +511,7 @@ export function ToolsSection({
                   </p>
                 )}
               </div>
-              {tool.credentialBindings.length === 0 ? (
+              {bindingCompatible ? (
                 <p className="field-warning">
                   Built-in adapters do not accept credential injection. No
                   secret will be leased to this tool.
@@ -570,10 +551,36 @@ export function ToolsSection({
   );
 }
 
-const SIMPLE_CHAT_TOOL_IDS = new Set([
-  "tool.files.read",
-  "tool.files.search",
-]);
+const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  "tool.files.read":
+    "Reads one project file (≤ 64 KiB) beneath the frozen workspace root.",
+  "tool.files.search":
+    "Finds bounded text occurrences in one project file.",
+  "tool.files.list": "Lists project files matching a bounded glob.",
+  "tool.files.grep": "Regex-searches text files beneath the project root.",
+  "tool.files.edit":
+    "Replaces one exact text range in a project file; approval required per call.",
+  "tool.files.write":
+    "Creates or replaces a project file with exact content; approval required per call.",
+  "tool.shell.host":
+    "Runs one bounded host shell command; approval required per call.",
+  "tool.python.host":
+    "Runs one bounded host Python script; approval required per call.",
+  "tool.todo": "Replaces the Run task list; rendered as a live plan card.",
+  "tool.web_search":
+    "Searches the web and returns bounded title/snippet/url results.",
+  "tool.web_fetch":
+    "Fetches one HTTPS page and extracts bounded plain text.",
+  "tool.subagent":
+    "Delegates a bounded read-only subtask to a fresh child agent; approval required per call.",
+};
+
+function toolDescription(toolId: string): string {
+  return (
+    TOOL_DESCRIPTIONS[toolId] ??
+    "Available to workflows that bind this tool."
+  );
+}
 
 function replaceAt<T>(values: readonly T[], index: number, value: T): T[] {
   return values.map((item, itemIndex) => (itemIndex === index ? value : item));

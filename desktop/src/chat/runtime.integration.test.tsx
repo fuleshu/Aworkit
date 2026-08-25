@@ -115,7 +115,7 @@ describe("Chat native-port recovery contracts", () => {
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "read it");
     const send = screen.getByRole("button", { name: "Send" });
     const reason =
-      "Select a saved project before sending because Simple Chat binds project file read/search.";
+      "Select a saved project before sending because the selected workflow binds project file tools.";
     expect(send).toBeDisabled();
     expect(send).toHaveAttribute("title", reason);
     expect(screen.getByText(reason)).toBeVisible();
@@ -357,7 +357,7 @@ describe("Chat native-port recovery contracts", () => {
     await waitFor(() =>
       expect(send).toHaveAttribute(
         "title",
-        "Select a saved project before sending because Simple Chat binds project file read/search.",
+        "Select a saved project before sending because the selected workflow binds project file tools.",
       ),
     );
     expect(workflowSnapshots).toBeGreaterThanOrEqual(3);

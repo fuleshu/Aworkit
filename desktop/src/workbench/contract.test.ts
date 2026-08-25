@@ -240,7 +240,7 @@ describe("desktop design and workflow contracts", () => {
     expect(restored.document.edges[0]?.futureEdge).toEqual({ retained: true });
   });
 
-  it("mirrors the native exact Simple Chat execution boundary", () => {
+  it("mirrors the native v1 executable catalog boundary", () => {
     const exact = parseWorkflow(
       JSON.stringify({
         schemaVersion: 1,
@@ -302,10 +302,11 @@ describe("desktop design and workflow contracts", () => {
         ]),
       }),
     );
-    const wrongIdentity = { ...exact, id: "workflow.other" };
-    expect(assessNativeWorkflow(wrongIdentity).issues).toContainEqual(
-      expect.objectContaining({ code: "native_identity" }),
-    );
+    const differentIdentity = { ...exact, id: "workflow.other" };
+    expect(assessNativeWorkflow(differentIdentity)).toEqual({
+      executable: true,
+      issues: [],
+    });
     const extraNode = {
       ...exact,
       nodes: [...exact.nodes, { id: "tool.5", type: "tool" }],
@@ -362,7 +363,14 @@ describe("desktop design and workflow contracts", () => {
       ...exact,
       nodes: exact.nodes.map((node) =>
         node.id === "agent.1"
-          ? { ...node, configuration: { modelTierId: "tier:fast" } }
+          ? {
+              ...node,
+              configuration: {
+                modelTierId: "balanced",
+                toolIds: [],
+                maxTurns: 1,
+              },
+            }
           : node,
       ),
     };

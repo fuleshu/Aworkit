@@ -226,7 +226,7 @@ export class PreviewChatCorePort implements ChatCorePort {
         accepted: false,
         currentVersion: this.version,
         reason:
-          "Simple Chat execution requires the native desktop runtime; browser Preview did not contact a provider.",
+          "Workflow execution requires the native desktop runtime; browser Preview did not contact a provider.",
       };
       this.seen.set(intent.commandId, { fingerprint, receipt });
       return receipt;
