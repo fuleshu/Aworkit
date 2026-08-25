@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
-import { deriveActivityCards, mergeTimeline } from "./activityProjection";
+import {
+  deriveActivityCards,
+  deriveLiveActivityCards,
+  mergeTimeline,
+} from "./activityProjection";
 import type { ChatCorePort } from "./corePort";
 import {
   ChatComposer,
@@ -79,9 +83,12 @@ export function ChatWorkspaceScreen({
         ? []
         : mergeTimeline(
             snapshot.timeline,
-            deriveActivityCards(runtime.events),
+            [
+              ...deriveActivityCards(runtime.events),
+              ...deriveLiveActivityCards(runtime.liveActivities),
+            ],
           ),
-    [snapshot, runtime.events],
+    [snapshot, runtime.events, runtime.liveActivities],
   );
 
   // Load the saved-workflow library once so the composer can list and default

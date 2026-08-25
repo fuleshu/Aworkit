@@ -37,6 +37,7 @@ export interface ChatProjectChoice {
 
 export type TimelineKind =
   | "message"
+  | "thinking"
   | "plan"
   | "model"
   | "tool"
@@ -64,6 +65,19 @@ export interface TimelineItem {
   readonly action?: "approve" | "reject" | "retry" | "fork" | "continue";
   readonly raw?: unknown;
   readonly metadata?: unknown;
+}
+
+/** Transient native activity update; canonical history replaces it at settle. */
+export interface LiveChatActivity {
+  readonly requestId: string;
+  readonly runId: string;
+  readonly activityId: string;
+  readonly kind: "thinking" | "reasoning" | "response" | "step" | "tool";
+  readonly title: string;
+  readonly body: string;
+  readonly status: string;
+  readonly reasoningCategory?: "summary" | "progress" | "source_provided";
+  readonly capabilityId?: string;
 }
 
 export interface EvidenceRecord {

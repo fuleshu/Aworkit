@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,13 +16,19 @@ import {
   timelineActionIntent,
 } from "./ChatWorkspaceScreen";
 import { toConversationCard } from "./conversation";
-import { TimelineCard } from "./ConversationTimeline";
+import { ConversationTimeline, TimelineCard } from "./ConversationTimeline";
 import { NavigationPane } from "../shell/NavigationPane";
 import type { ChatCorePort, RuntimeSnapshot } from "./corePort";
 import type { ChatIntent, ChatProjection } from "./types";
+import type { LiveChatActivity } from "./types";
 import type { WorkflowCorePort } from "../workbench/corePort";
 import type { WorkflowDocument } from "../workbench/workflow";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
+
+const { virtualizerMeasure, virtualizerResizeItem } = vi.hoisted(() => ({
+  virtualizerMeasure: vi.fn(),
+  virtualizerResizeItem: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { readonly count: number }) => ({
@@ -27,6 +40,8 @@ vi.mock("@tanstack/react-virtual", () => ({
         start: index * 100,
       })),
     measureElement: () => undefined,
+    measure: virtualizerMeasure,
+    resizeItem: virtualizerResizeItem,
     scrollToIndex: () => undefined,
   }),
 }));
@@ -49,6 +64,67 @@ const runningChat: ChatProjection = {
 };
 
 describe("Chat native-port recovery contracts", () => {
+  it("remeasures every expanded evidence row together after layout", () => {
+    virtualizerMeasure.mockClear();
+    virtualizerResizeItem.mockClear();
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const requestAnimationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+    render(
+      <ConversationTimeline
+        items={[
+          {
+            id: "event.chat.1",
+            kind: "tool",
+            title: "Project file tool",
+            body: "Listed files",
+            createdAt: "now",
+            status: "completed",
+            raw: { body: "Listed files" },
+          },
+          {
+            id: "event.chat.2",
+            kind: "model",
+            title: "Agent",
+            body: "Settled",
+            createdAt: "now",
+            status: "completed",
+            raw: { body: "Settled" },
+          },
+        ]}
+        selectedId={null}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    const details = screen
+      .getAllByText("Inspect source record")
+      .map((summary) => summary.closest("details"));
+    expect(details).not.toContain(null);
+    const rows = details.map((detail) => detail!.closest(".virtual-row")!);
+    const firstBounds = vi
+      .spyOn(rows[0], "getBoundingClientRect")
+      .mockReturnValue({ height: 240 } as DOMRect);
+    const secondBounds = vi
+      .spyOn(rows[1], "getBoundingClientRect")
+      .mockReturnValue({ height: 320 } as DOMRect);
+    fireEvent(details[0]!, new Event("toggle"));
+    fireEvent(details[1]!, new Event("toggle"));
+    expect(virtualizerMeasure).not.toHaveBeenCalled();
+    expect(virtualizerResizeItem).not.toHaveBeenCalled();
+    frameCallbacks.shift()?.(0);
+    expect(virtualizerResizeItem).toHaveBeenCalledTimes(2);
+    expect(virtualizerResizeItem).toHaveBeenCalledWith(0, 240);
+    expect(virtualizerResizeItem).toHaveBeenCalledWith(1, 320);
+    firstBounds.mockRestore();
+    secondBounds.mockRestore();
+    requestAnimationFrame.mockRestore();
+  });
+
   it("includes the selected saved project only in the first-send intent", async () => {
     const user = userEvent.setup();
     const intents: ChatIntent[] = [];
@@ -813,6 +889,86 @@ describe("Chat native-port recovery contracts", () => {
     await user.type(input, "follow up");
     await user.click(screen.getByRole("button", { name: "Queue" }));
     await waitFor(() => expect(commands[0]?.type).toBe("enqueue"));
+  });
+
+  it("shows a busy card immediately and native tool activity before command settlement", async () => {
+    const user = userEvent.setup();
+    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let settle!: (receipt: Awaited<ReturnType<ChatCorePort["command"]>>) => void;
+    let commandId = "";
+    const port: ChatCorePort = {
+      async snapshot() {
+        return snapshot(1, "Live Chat", [{ sequence: 1 }]);
+      },
+      command(intent) {
+        commandId = intent.commandId;
+        return new Promise((resolve) => {
+          settle = resolve;
+        });
+      },
+      async subscribeActivity(listener) {
+        activityListener = listener;
+        return () => undefined;
+      },
+    };
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+    await screen.findByRole("heading", { name: "Live Chat" });
+    const input = screen.getByRole("textbox", { name: "Chat input" });
+    await user.type(input, "inspect the project");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("Aworkit is working…")).toBeVisible();
+    await waitFor(() => expect(commandId).not.toBe(""));
+    activityListener?.({
+      requestId: commandId,
+      runId: "run.test",
+      activityId: `node.${commandId}.agent.1`,
+      kind: "step",
+      title: "Agent",
+      body: "agent: running",
+      status: "started",
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("Aworkit is working…")).toBeNull(),
+    );
+    activityListener?.({
+      requestId: commandId,
+      runId: "run.test",
+      activityId: `model.reasoning.${commandId}`,
+      kind: "reasoning",
+      title: "Thinking",
+      body: "Inspecting the project",
+      status: "running",
+      reasoningCategory: "source_provided",
+    });
+    activityListener?.({
+      requestId: commandId,
+      runId: "run.test",
+      activityId: `model.response.${commandId}`,
+      kind: "response",
+      title: "Response",
+      body: "I found",
+      status: "running",
+    });
+    activityListener?.({
+      requestId: commandId,
+      runId: "run.test",
+      activityId: "tool.call.live",
+      kind: "tool",
+      title: "tool.files.list",
+      body: '{"path":"."}',
+      status: "running",
+      capabilityId: "tool.files.list",
+    });
+    expect(await screen.findByText("tool.files.list")).toBeVisible();
+    expect(screen.getByText("Inspecting the project")).toBeVisible();
+    expect(screen.getByText("I found")).toBeVisible();
+    expect(screen.getAllByText("running").length).toBeGreaterThan(0);
+    settle({
+      commandId,
+      accepted: true,
+      currentVersion: 1,
+      reason: null,
+    });
   });
 
   it("does not expose unsupported terminal controls", async () => {

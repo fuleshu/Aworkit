@@ -11,6 +11,7 @@ export interface ConversationCard {
 
 const labels: Record<TimelineItem["kind"], string> = {
   message: "Message",
+  thinking: "Thinking",
   plan: "Plan",
   model: "Model",
   tool: "Tool",

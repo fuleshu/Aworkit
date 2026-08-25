@@ -91,9 +91,9 @@ pub use materialize::{
 };
 pub use mcp::*;
 pub use model::{
-    FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1, ModelEventV1, ModelGateway,
-    ModelProvider, ModelRequest, ModelRequestV1, ModelResolutionPlanV1, ModelResponse,
-    ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
+    FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1, ModelEventObserverV1,
+    ModelEventV1, ModelGateway, ModelProvider, ModelRequest, ModelRequestV1, ModelResolutionPlanV1,
+    ModelResponse, ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
 };
 pub use model_tools::{
     ModelAssistantContentV1, ModelProviderContextV1, ModelToolCallV1, ModelToolDefinitionV1,

@@ -12,6 +12,7 @@ mod extension_registration;
 mod external_agent;
 mod graph_pass;
 mod history;
+mod live_activity;
 mod mcp;
 mod mcp_tools;
 mod model_tool_loop;
@@ -38,6 +39,7 @@ pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};
 pub use graph_pass::{GraphApprovalRequestV1, GraphNodeActivityV1};
+pub use live_activity::{LiveChatActivityPort, LiveChatActivityV1};
 pub use pipeline::{
     WorkflowExecutionPipeline, WorkflowExecutionRequestV1, WorkflowExecutionResultV1,
     WorkflowExecutionStatusV1, WorkflowMessageV1, WorkflowPipelineError, WorkflowProviderBindingV1,

@@ -1,5 +1,5 @@
 import type { RuntimeEvent } from "./corePort";
-import type { TimelineItem } from "./types";
+import type { LiveChatActivity, TimelineItem } from "./types";
 
 type FactPayload = Record<string, unknown>;
 
@@ -47,6 +47,34 @@ export function mergeTimeline(
   return [...native, ...derived].sort(
     (left, right) => sequenceKey(left) - sequenceKey(right),
   );
+}
+
+/** Maps noncanonical in-flight updates to cards that disappear at settle. */
+export function deriveLiveActivityCards(
+  activities: readonly LiveChatActivity[],
+): TimelineItem[] {
+  return activities.map((activity) => ({
+    id: `live.${activity.activityId}`,
+    kind:
+      activity.kind === "reasoning"
+        ? "thinking"
+        : activity.kind === "response"
+          ? "model"
+          : activity.kind === "step"
+            ? "plan"
+            : activity.kind,
+    title: activity.title,
+    body: activity.body,
+    createdAt: "now",
+    status: activity.status,
+    reasoningCategory: activity.reasoningCategory,
+    metadata: {
+      live: true,
+      requestId: activity.requestId,
+      runId: activity.runId,
+      capabilityId: activity.capabilityId,
+    },
+  }));
 }
 
 function sequenceKey(item: TimelineItem): number {

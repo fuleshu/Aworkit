@@ -385,6 +385,7 @@ struct PassMachine<'a> {
     final_text: Option<String>,
     pending_tool_approval: Option<(GraphApprovalRequestV1, AgentLoopSuspensionV1)>,
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
+    activity_observer: Option<&'a dyn Fn(&GraphNodeActivityV1)>,
 }
 
 impl<'a> PassMachine<'a> {
@@ -638,13 +639,17 @@ impl<'a> PassMachine<'a> {
     }
 
     fn push_activity(&mut self, node: &CompiledGraphNodeV1, status: &str, summary: &str) {
-        self.activity.push(GraphNodeActivityV1 {
+        let activity = GraphNodeActivityV1 {
             node_id: node.id.clone(),
             node_type: node.node_type.clone(),
             label: node.label.clone(),
             status: status.to_owned(),
             summary: summary.to_owned(),
-        });
+        };
+        if let Some(observer) = self.activity_observer {
+            observer(&activity);
+        }
+        self.activity.push(activity);
     }
 
     fn enforce_node_output_bound(
@@ -1150,11 +1155,12 @@ impl<'a> PassMachine<'a> {
     }
 }
 
-/// Executes one graph pass. Approval gates and PerInvocation tool approvals
-/// suspend with a durable prefix; callers persist `pending_state`, then resume
-/// with `pending` plus `approval_decision`.
+/// Executes one graph pass while projecting each node transition as it occurs.
+/// Approval gates and PerInvocation tool approvals suspend with a durable
+/// prefix; callers persist `pending_state`, then resume with `pending` plus
+/// `approval_decision`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn execute_graph_pass(
+pub(crate) fn execute_graph_pass_observed(
     compiled: &CompiledGraphPassV1,
     conversation: &[WorkflowMessageV1],
     budget: GraphPassBudgetV1,
@@ -1170,6 +1176,7 @@ pub(crate) fn execute_graph_pass(
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
     cancellation: &CancellationToken,
+    activity_observer: Option<&dyn Fn(&GraphNodeActivityV1)>,
 ) -> GraphPassOutcomeV1 {
     let machine = PassMachine {
         compiled,
@@ -1198,6 +1205,7 @@ pub(crate) fn execute_graph_pass(
         final_text: None,
         pending_tool_approval: None,
         resume_agent_suspension: None,
+        activity_observer,
     };
     machine.run(pending, approval_decision, cancellation)
 }

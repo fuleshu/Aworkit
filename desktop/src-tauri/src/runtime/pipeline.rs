@@ -59,9 +59,13 @@ use super::{
     documents::validate_v1_executable_catalog,
     graph_pass::{
         GraphApprovalRequestV1, GraphNodeActivityV1, GraphPassBudgetV1, GraphPassStatusV1,
-        PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass,
+        PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass_observed,
     },
     mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
+    live_activity::{
+        LiveChatActivityPort, ModelLiveActivityObserver, noop_live_activity,
+        publish_graph_activity,
+    },
     project_scope::revalidate_git_branch,
     tool_loop::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
@@ -311,6 +315,7 @@ pub struct WorkflowExecutionPipeline {
     core_key: Arc<CoreAuthenticationKey>,
     credential_store: Arc<dyn PlatformCredentialStorePort>,
     provider_factory: Arc<dyn ProviderFactoryV1>,
+    live_activity: Arc<dyn LiveChatActivityPort>,
 }
 
 impl WorkflowExecutionPipeline {
@@ -322,17 +327,45 @@ impl WorkflowExecutionPipeline {
         data_root: impl AsRef<Path>,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
     ) -> Result<Self, WorkflowPipelineError> {
-        Self::compose(
-            data_root.as_ref(),
+        Self::open_with_credential_store_and_live_activity(
+            data_root,
             credential_store,
-            Arc::new(BuiltInProviderFactory),
+            noop_live_activity(),
         )
     }
 
+    pub fn open_with_credential_store_and_live_activity(
+        data_root: impl AsRef<Path>,
+        credential_store: Arc<dyn PlatformCredentialStorePort>,
+        live_activity: Arc<dyn LiveChatActivityPort>,
+    ) -> Result<Self, WorkflowPipelineError> {
+        Self::compose_with_live_activity(
+            data_root.as_ref(),
+            credential_store,
+            Arc::new(BuiltInProviderFactory),
+            live_activity,
+        )
+    }
+
+    #[cfg(test)]
     fn compose(
         data_root: &Path,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
         provider_factory: Arc<dyn ProviderFactoryV1>,
+    ) -> Result<Self, WorkflowPipelineError> {
+        Self::compose_with_live_activity(
+            data_root,
+            credential_store,
+            provider_factory,
+            noop_live_activity(),
+        )
+    }
+
+    fn compose_with_live_activity(
+        data_root: &Path,
+        credential_store: Arc<dyn PlatformCredentialStorePort>,
+        provider_factory: Arc<dyn ProviderFactoryV1>,
+        live_activity: Arc<dyn LiveChatActivityPort>,
     ) -> Result<Self, WorkflowPipelineError> {
         fs::create_dir_all(data_root).map_err(store_error)?;
         let root = fs::canonicalize(data_root).map_err(store_error)?;
@@ -376,13 +409,14 @@ impl WorkflowExecutionPipeline {
             CapabilityHost::from_attested_registry(frozen, core_key.copy(), 8)
                 .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?,
         );
-        let file_tool_authority = FileToolAuthorityRuntimeV1::open(
+        let file_tool_authority = FileToolAuthorityRuntimeV1::open_with_live_activity(
             &database,
             projects.clone(),
             host.clone(),
             file_tool_descriptors.clone(),
             generation,
             core_key.clone(),
+            live_activity.clone(),
         )?;
         Ok(Self {
             root,
@@ -397,6 +431,7 @@ impl WorkflowExecutionPipeline {
             core_key,
             credential_store,
             provider_factory,
+            live_activity,
         })
     }
 
@@ -629,6 +664,7 @@ impl WorkflowExecutionPipeline {
                 lease_authority,
                 provider_factory: self.provider_factory.clone(),
                 file_tool_authority: self.file_tool_authority.clone(),
+                live_activity: self.live_activity.clone(),
             };
             // The broker commits DispatchAttempted before this call. A transport
             // error or an old attempted dispatch is conservatively settled by
@@ -847,7 +883,13 @@ impl WorkflowExecutionPipeline {
             .provider_factory
             .create(descriptor, &prepared.provider, api_key)
             .map_err(|error| WorkflowPipelineError::Store(redact_error(&materialized, &error)))?;
-        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
+        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(Arc::new(
+            ModelLiveActivityObserver::new(
+                prepared.request_id.to_string(),
+                prepared.snapshot.run_id.to_string(),
+                self.live_activity.clone(),
+            ),
+        )));
         let workflow = prepared
             .worker_proposal
             .payload
@@ -863,6 +905,7 @@ impl WorkflowExecutionPipeline {
             .bind(FrozenFileToolAuthorityContextV1 {
                 manifest: prepared.manifest.clone(),
                 run_id: prepared.snapshot.run_id.clone(),
+                request_id: prepared.request_id.clone(),
                 node_id: prepared.worker_proposal.node_id.clone(),
                 workspace: workspace.clone(),
                 project_branch: prepared.project_branch.clone(),
@@ -874,7 +917,15 @@ impl WorkflowExecutionPipeline {
                 mcp_manifests: prepared.mcp_manifests.clone(),
                 cancellation: cancellation.clone(),
             });
-        let pass = execute_graph_pass(
+        let graph_observer = |activity: &GraphNodeActivityV1| {
+            publish_graph_activity(
+                &self.live_activity,
+                prepared.request_id.as_str(),
+                prepared.snapshot.run_id.as_str(),
+                activity,
+            );
+        };
+        let pass = execute_graph_pass_observed(
             &compiled,
             &pending.conversation,
             GraphPassBudgetV1 {
@@ -895,6 +946,7 @@ impl WorkflowExecutionPipeline {
             Some(&pending),
             Some(approved),
             &cancellation,
+            Some(&graph_observer),
         );
         match pass.status {
             GraphPassStatusV1::AwaitingApproval => {
@@ -1722,6 +1774,7 @@ struct PipelineHostPort {
     lease_authority: Arc<PipelineLeaseAuthority>,
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
+    live_activity: Arc<dyn LiveChatActivityPort>,
 }
 
 impl ApprovedHostDispatchPortV1 for PipelineHostPort {
@@ -1819,6 +1872,7 @@ impl ApprovedHostDispatchPortV1 for PipelineHostPort {
             },
             provider_factory: self.provider_factory.clone(),
             file_tool_authority: self.file_tool_authority.clone(),
+            live_activity: self.live_activity.clone(),
         };
         match self
             .host
@@ -1859,6 +1913,7 @@ struct ModelInvocationDispatcher {
     secret_client: CoreSecretLeaseClient,
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
+    live_activity: Arc<dyn LiveChatActivityPort>,
 }
 
 impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
@@ -2038,7 +2093,13 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 scheduler_trace: Vec::new(),
             });
         };
-        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
+        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(Arc::new(
+            ModelLiveActivityObserver::new(
+                self.prepared.request_id.to_string(),
+                self.prepared.snapshot.run_id.to_string(),
+                self.live_activity.clone(),
+            ),
+        )));
         let workflow = envelope
             .payload
             .get("config")
@@ -2067,6 +2128,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .bind(FrozenFileToolAuthorityContextV1 {
                     manifest: self.prepared.manifest.clone(),
                     run_id: self.prepared.snapshot.run_id.clone(),
+                    request_id: self.prepared.request_id.clone(),
                     node_id: self.prepared.worker_proposal.node_id.clone(),
                     workspace,
                     project_branch: self.prepared.project_branch.clone(),
@@ -2080,7 +2142,15 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 });
             let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
                 .map_err(|error| WorkflowPipelineError::InvalidInput(error))?;
-            let pass = execute_graph_pass(
+            let graph_observer = |activity: &GraphNodeActivityV1| {
+                publish_graph_activity(
+                    &self.live_activity,
+                    self.prepared.request_id.as_str(),
+                    self.prepared.snapshot.run_id.as_str(),
+                    activity,
+                );
+            };
+            let pass = execute_graph_pass_observed(
                 &compiled,
                 &conversation,
                 GraphPassBudgetV1 {
@@ -2101,6 +2171,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 None,
                 None,
                 cancellation,
+                Some(&graph_observer),
             );
             let base = ProviderOutcomeRecordV1 {
                 schema_version: 1,
@@ -3199,7 +3270,7 @@ fn model_descriptor(
     )
     .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     descriptor.guarantees_same_id_deduplication = false;
-    descriptor.supports_streaming = false;
+    descriptor.supports_streaming = matches!(protocol, ProviderProtocolV1::OpenAiCompatible);
     descriptor.supports_cancellation = false;
     descriptor.allowed_scopes = vec![MODEL_SCOPE.to_owned()];
     descriptor.secret_slots = vec![API_KEY_FIELD.to_owned()];

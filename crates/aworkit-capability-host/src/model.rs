@@ -1,6 +1,6 @@
 //! Provider-neutral model execution with frozen, conservative fallback.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -88,6 +88,15 @@ pub enum ModelEventV1 {
     },
 }
 
+/// Optional presentation-neutral observer for already redacted provider
+/// events. Observation is best-effort and never participates in execution
+/// authority, persistence, or provider success.
+pub trait ModelEventObserverV1: Send + Sync {
+    fn model_event(&self, _event: &ModelEventV1) {}
+
+    fn model_tool_event(&self, _event: &ModelToolEventV1) {}
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderAcceptanceV1 {
     /// The provider positively proved that it never accepted the request.
@@ -164,12 +173,24 @@ pub struct ModelDispatchEvidenceV1 {
 /// Executes exactly the ordered candidates frozen by the trusted core.
 pub struct FrozenModelGateway {
     providers: Vec<Box<dyn ProviderEnginePortV1>>,
+    observer: Option<Arc<dyn ModelEventObserverV1>>,
 }
 
 impl FrozenModelGateway {
     #[must_use]
     pub fn new(providers: Vec<Box<dyn ProviderEnginePortV1>>) -> Self {
-        Self { providers }
+        Self {
+            providers,
+            observer: None,
+        }
+    }
+
+    /// Adds a non-authoritative live observer while preserving the exact
+    /// frozen provider candidate set.
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn ModelEventObserverV1>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     pub fn execute(
@@ -222,6 +243,9 @@ impl FrozenModelGateway {
                 output_bytes = output_bytes.saturating_add(event_text_bytes(&event));
                 if output_bytes > plan.maximum_output_bytes {
                     return Err(ProviderError::OutputBound);
+                }
+                if let Some(observer) = &self.observer {
+                    observer.model_event(&event);
                 }
                 events.push(event);
                 Ok(())
@@ -294,6 +318,9 @@ impl FrozenModelGateway {
                 output_bytes = output_bytes.saturating_add(tool_event_bytes(&event));
                 if output_bytes > plan.maximum_output_bytes {
                     return Err(ProviderError::OutputBound);
+                }
+                if let Some(observer) = &self.observer {
+                    observer.model_tool_event(&event);
                 }
                 events.push(event);
                 Ok(())

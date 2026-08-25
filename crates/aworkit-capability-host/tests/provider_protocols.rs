@@ -116,6 +116,22 @@ fn response(status: u16, body: Value) -> FixtureResponse {
     }
 }
 
+fn sse_response(events: Vec<Value>) -> FixtureResponse {
+    let mut body = String::new();
+    for event in events {
+        body.push_str("data: ");
+        body.push_str(&serde_json::to_string(&event).expect("fixture SSE JSON"));
+        body.push_str("\n\n");
+    }
+    body.push_str("data: [DONE]\n\n");
+    FixtureResponse {
+        status: 200,
+        headers: vec![("Content-Type".to_owned(), "text/event-stream".to_owned())],
+        body: body.into_bytes(),
+        delay: Duration::ZERO,
+    }
+}
+
 fn execute(
     provider: Box<dyn ProviderEnginePortV1>,
     binding_id: &str,
@@ -154,16 +170,20 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/v1/models") => response(200, json!({"data":[{"id":"gpt-fixture"}]})),
             ("POST", "/v1/chat/completions") => {
+                assert_eq!(
+                    request.headers.get("accept").map(String::as_str),
+                    Some("text/event-stream")
+                );
                 let body: Value = serde_json::from_slice(&request.body).expect("OpenAI body");
                 assert_eq!(body["model"], "gpt-fixture");
-                assert_eq!(body["stream"], false);
-                response(
-                    200,
-                    json!({
-                        "choices":[{"message":{"content":"hello openai"}}],
-                        "usage":{"prompt_tokens":7,"completion_tokens":3}
-                    }),
-                )
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["stream_options"]["include_usage"], true);
+                sse_response(vec![
+                    json!({"choices":[{"index":0,"delta":{"content":"hello "},"finish_reason":null}]}),
+                    json!({"choices":[{"index":0,"delta":{"content":"openai"},"finish_reason":null}]}),
+                    json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+                    json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}),
+                ])
             }
             other => panic!("unexpected OpenAI request: {other:?}"),
         }
@@ -187,7 +207,8 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
     assert_eq!(
         execute(Box::new(openai), "binding.openai", "version.openai"),
         vec![
-            ModelEventV1::AssistantOutput("hello openai".to_owned()),
+            ModelEventV1::AssistantOutput("hello ".to_owned()),
+            ModelEventV1::AssistantOutput("openai".to_owned()),
             ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3

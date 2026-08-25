@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { deriveActivityCards, mergeTimeline } from "./activityProjection";
+import {
+  deriveActivityCards,
+  deriveLiveActivityCards,
+  mergeTimeline,
+} from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
 import type { TimelineItem } from "./types";
 
@@ -94,6 +98,71 @@ describe("frontend activity projection", () => {
       "event.chat.3",
       "event.chat.5",
       "event.chat.6",
+    ]);
+  });
+
+  it("projects transient reasoning and running tools as live cards", () => {
+    const cards = deriveLiveActivityCards([
+      {
+        requestId: "command.1",
+        runId: "run.1",
+        activityId: "model.reasoning.command.1",
+        kind: "reasoning",
+        title: "Thinking",
+        body: "Checking the project structure",
+        status: "running",
+        reasoningCategory: "source_provided",
+      },
+      {
+        requestId: "command.1",
+        runId: "run.1",
+        activityId: "model.response.command.1",
+        kind: "response",
+        title: "Response",
+        body: "The answer is streaming",
+        status: "running",
+      },
+      {
+        requestId: "command.1",
+        runId: "run.1",
+        activityId: "node.command.1.agent.1",
+        kind: "step",
+        title: "Agent",
+        body: "agent: running",
+        status: "started",
+      },
+      {
+        requestId: "command.1",
+        runId: "run.1",
+        activityId: "tool.call.1",
+        kind: "tool",
+        title: "tool.files.list",
+        body: "{}",
+        status: "running",
+        capabilityId: "tool.files.list",
+      },
+    ]);
+    expect(cards).toEqual([
+      expect.objectContaining({
+        id: "live.model.reasoning.command.1",
+        kind: "thinking",
+        reasoningCategory: "source_provided",
+      }),
+      expect.objectContaining({
+        id: "live.model.response.command.1",
+        kind: "model",
+        status: "running",
+      }),
+      expect.objectContaining({
+        id: "live.node.command.1.agent.1",
+        kind: "plan",
+        status: "started",
+      }),
+      expect.objectContaining({
+        id: "live.tool.call.1",
+        kind: "tool",
+        status: "running",
+      }),
     ]);
   });
 });

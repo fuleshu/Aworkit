@@ -1,7 +1,7 @@
 //! Blocking OpenAI-compatible provider transport with explicit resource bounds.
 
 use std::fmt;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::time::Duration;
 
 use reqwest::Url;
@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 use crate::{
     CancellationToken, ModelEventV1, ModelRequestV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
-    model_tools::{validate_tool_events, validate_tool_request},
-    provider_tools::{normalize_openai_tool_response, openai_tool_request},
+    model_tools::validate_tool_request,
+    provider_tools::{consume_openai_stream, openai_tool_request},
 };
 
 const MAX_IDENTITY_BYTES: usize = 256;
@@ -161,7 +161,7 @@ pub struct OpenAiConnectionTestV1 {
     pub configured_model_available: bool,
 }
 
-/// Production adapter for non-streaming OpenAI-compatible chat completions.
+/// Production adapter for streaming OpenAI-compatible chat completions.
 pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleProviderConfig,
     client: Client,
@@ -202,7 +202,7 @@ impl OpenAiCompatibleProvider {
 
     /// Tests connectivity and returns the provider's bounded model catalog.
     pub fn test_connection(&self) -> Result<OpenAiConnectionTestV1, OpenAiCompatibleProviderError> {
-        let response = self.send(self.client.get(self.models_url.clone()))?;
+        let response = self.send(self.client.get(self.models_url.clone()), "application/json")?;
         let catalog: ModelsResponse = self.decode_success(response)?;
         let mut models = catalog
             .data
@@ -219,47 +219,47 @@ impl OpenAiCompatibleProvider {
         })
     }
 
-    fn complete(
+    fn streaming_completion_response(
         &self,
         request: &ModelRequestV1,
-    ) -> Result<NormalizedCompletion, OpenAiCompatibleProviderError> {
+    ) -> Result<Response, OpenAiCompatibleProviderError> {
         let messages = normalize_messages(&request.input)?;
         let body = ChatCompletionRequest {
             model: &self.config.model,
             messages: &messages,
-            stream: false,
+            stream: true,
+            stream_options: ChatStreamOptions {
+                include_usage: true,
+            },
         };
-        let response = self.send(self.client.post(self.completions_url.clone()).json(&body))?;
-        let completion: ChatCompletionResponse = self.decode_success(response)?;
-        let choice = completion
-            .choices
-            .into_iter()
-            .next()
-            .ok_or(OpenAiCompatibleProviderError::InvalidCompletionResponse)?;
-        let text = normalize_assistant_content(choice.message.content)?;
-        Ok(NormalizedCompletion {
-            text,
-            input_tokens: completion.usage.prompt_tokens,
-            output_tokens: completion.usage.completion_tokens,
-        })
+        self.successful_stream(self.send(
+            self.client.post(self.completions_url.clone()).json(&body),
+            "text/event-stream",
+        )?)
     }
 
-    fn complete_tool_turn(
+    fn streaming_tool_response(
         &self,
         request: &ModelToolRequestV1,
-    ) -> Result<Vec<ModelToolEventV1>, ProviderError> {
+    ) -> Result<Response, ProviderError> {
         validate_tool_request(request)?;
         let body = openai_tool_request(&self.config.model, request)?;
-        let response = self.send(self.client.post(self.completions_url.clone()).json(&body))?;
-        let completion: Value = self.decode_success(response)?;
-        let events =
-            normalize_openai_tool_response(completion, &request.tools, &self.config.binding_id)?;
-        validate_tool_events(request, &events)?;
-        Ok(events)
+        let response = self
+            .send(
+                self.client.post(self.completions_url.clone()).json(&body),
+                "text/event-stream",
+            )
+            .map_err(ProviderError::from)?;
+        self.successful_stream(response)
+            .map_err(ProviderError::from)
     }
 
-    fn send(&self, request: RequestBuilder) -> Result<Response, OpenAiCompatibleProviderError> {
-        let request = request.header(ACCEPT, "application/json");
+    fn send(
+        &self,
+        request: RequestBuilder,
+        accept: &'static str,
+    ) -> Result<Response, OpenAiCompatibleProviderError> {
+        let request = request.header(ACCEPT, accept);
         let request = if let Some(api_key) = &self.config.api_key {
             let mut authorization = HeaderValue::from_str(
                 Zeroizing::new(format!("Bearer {}", api_key.as_str())).as_str(),
@@ -277,6 +277,24 @@ impl OpenAiCompatibleProvider {
                 OpenAiCompatibleProviderError::Transport
             }
         })
+    }
+
+    fn successful_stream(
+        &self,
+        response: Response,
+    ) -> Result<Response, OpenAiCompatibleProviderError> {
+        if !response.status().is_success() {
+            return Err(OpenAiCompatibleProviderError::HttpStatus(
+                response.status().as_u16(),
+            ));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > self.config.limits.maximum_response_bytes as u64)
+        {
+            return Err(OpenAiCompatibleProviderError::ResponseTooLarge);
+        }
+        Ok(response)
     }
 
     fn decode_success<T: for<'de> Deserialize<'de>>(
@@ -343,15 +361,36 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let completion = self.complete(request).map_err(ProviderError::from)?;
-        if cancellation.is_cancelled() {
-            return Err(ProviderError::Cancelled);
-        }
-        emit(ModelEventV1::AssistantOutput(completion.text))?;
-        emit(ModelEventV1::Usage {
-            input_tokens: completion.input_tokens,
-            output_tokens: completion.output_tokens,
-        })?;
+        let response = self
+            .streaming_completion_response(request)
+            .map_err(ProviderError::from)?;
+        let limit = self.config.limits.maximum_response_bytes;
+        let mut bridge = |event| match event {
+            ModelToolEventV1::AssistantOutput { text } => emit(ModelEventV1::AssistantOutput(text)),
+            ModelToolEventV1::ReasoningRaw { text } => emit(ModelEventV1::ReasoningRaw(text)),
+            ModelToolEventV1::ReasoningSummary { text } => {
+                emit(ModelEventV1::ReasoningSummary(text))
+            }
+            ModelToolEventV1::Progress { text } => emit(ModelEventV1::Progress(text)),
+            ModelToolEventV1::Usage {
+                input_tokens,
+                output_tokens,
+            } => emit(ModelEventV1::Usage {
+                input_tokens,
+                output_tokens,
+            }),
+            ModelToolEventV1::ToolCall { .. } => Err(ProviderError::Failed(
+                "OpenAI text completion unexpectedly requested a tool".to_owned(),
+            )),
+        };
+        consume_openai_stream(
+            BufReader::new(response.take(limit as u64 + 1)),
+            limit,
+            &[],
+            &self.config.binding_id,
+            cancellation,
+            &mut bridge,
+        )?;
         Ok(ProviderAcceptanceV1::Accepted)
     }
 
@@ -364,13 +403,16 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let events = self.complete_tool_turn(request)?;
-        if cancellation.is_cancelled() {
-            return Err(ProviderError::Cancelled);
-        }
-        for event in events {
-            emit(event)?;
-        }
+        let response = self.streaming_tool_response(request)?;
+        let limit = self.config.limits.maximum_response_bytes;
+        consume_openai_stream(
+            BufReader::new(response.take(limit as u64 + 1)),
+            limit,
+            &request.tools,
+            &self.config.binding_id,
+            cancellation,
+            emit,
+        )?;
         Ok(ProviderAcceptanceV1::Accepted)
     }
 }
@@ -432,34 +474,12 @@ struct ChatCompletionRequest<'a> {
     model: &'a str,
     messages: &'a Value,
     stream: bool,
+    stream_options: ChatStreamOptions,
 }
 
-#[derive(Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatChoice>,
-    usage: ChatUsage,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatMessage {
-    content: Value,
-}
-
-#[derive(Deserialize)]
-struct ChatUsage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
-}
-
-struct NormalizedCompletion {
-    text: String,
-    input_tokens: u64,
-    output_tokens: u64,
+#[derive(Serialize)]
+struct ChatStreamOptions {
+    include_usage: bool,
 }
 
 fn validate_base_url(value: &str) -> Result<Url, OpenAiCompatibleProviderError> {
@@ -535,29 +555,6 @@ fn normalize_messages(input: &Value) -> Result<Value, OpenAiCompatibleProviderEr
         return Err(OpenAiCompatibleProviderError::InvalidRequest);
     }
     Ok(messages)
-}
-
-fn normalize_assistant_content(content: Value) -> Result<String, OpenAiCompatibleProviderError> {
-    match content {
-        Value::String(text) => Ok(text),
-        Value::Array(parts) => {
-            let text = parts
-                .into_iter()
-                .filter_map(|part| {
-                    part.as_object()
-                        .and_then(|part| part.get("text"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                .collect::<String>();
-            if text.is_empty() {
-                Err(OpenAiCompatibleProviderError::InvalidCompletionResponse)
-            } else {
-                Ok(text)
-            }
-        }
-        _ => Err(OpenAiCompatibleProviderError::InvalidCompletionResponse),
-    }
 }
 
 #[cfg(test)]
@@ -771,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_posts_non_streaming_chat_and_normalizes_output_and_usage() {
+    fn completion_posts_streaming_chat_and_emits_chunks_and_usage() {
         let (base_url, server) = start_fixture(|request| {
             assert_eq!(request.method, "POST");
             assert_eq!(request.path, "/v1/chat/completions");
@@ -781,25 +778,22 @@ mod tests {
             );
             let body: Value = serde_json::from_slice(&request.body).expect("request JSON");
             assert_eq!(body["model"], "local/model:latest");
-            assert_eq!(body["stream"], false);
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["stream_options"]["include_usage"], true);
             assert_eq!(body["messages"][0]["role"], "user");
             assert_eq!(body["messages"][0]["content"], "hello");
+            let body = [
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning_content":"Checking "},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning_content":"the request."},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"Hello from "},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"fixture"},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),
+                format!("data: {}\n\n", json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}})),
+                "data: [DONE]\n\n".to_owned(),
+            ].concat();
             FixtureResponse {
                 status: 200,
-                body: serde_json::to_vec(&json!({
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": "Hello from fixture"
-                        }
-                    }],
-                    "usage": {
-                        "prompt_tokens": 7,
-                        "completion_tokens": 3,
-                        "total_tokens": 10
-                    }
-                }))
-                .expect("completion JSON"),
+                body: body.into_bytes(),
                 delay: Duration::ZERO,
             }
         });
@@ -827,7 +821,10 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                ModelEventV1::AssistantOutput("Hello from fixture".into()),
+                ModelEventV1::ReasoningRaw("Checking ".into()),
+                ModelEventV1::ReasoningRaw("the request.".into()),
+                ModelEventV1::AssistantOutput("Hello from ".into()),
+                ModelEventV1::AssistantOutput("fixture".into()),
                 ModelEventV1::Usage {
                     input_tokens: 7,
                     output_tokens: 3,
@@ -902,7 +899,7 @@ mod tests {
                 }
             ),
             Err(ProviderError::Failed(
-                OpenAiCompatibleProviderError::InvalidJson.to_string()
+                "OpenAI stream contained an unsupported SSE field".to_owned()
             ))
         );
         assert!(events.is_empty());

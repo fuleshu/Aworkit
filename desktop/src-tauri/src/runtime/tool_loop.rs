@@ -36,6 +36,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
+    live_activity::{LiveChatActivityPort, LiveChatActivityV1, bounded_json},
     PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
     mcp_tools::{
         MCP_ADAPTER_ID, MCP_ADAPTER_VERSION, MCP_CAPABILITY_PREFIX, MCP_SCOPE, McpToolRuntimeV1,
@@ -872,9 +873,11 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
     generation: ProcessGeneration,
     core_key: Arc<CoreAuthenticationKey>,
+    live_activity: Arc<dyn LiveChatActivityPort>,
 }
 
 impl FileToolAuthorityRuntimeV1 {
+    #[cfg(test)]
     pub(crate) fn open(
         database: &Path,
         projects: ProjectCoordinator,
@@ -882,6 +885,26 @@ impl FileToolAuthorityRuntimeV1 {
         descriptors: BTreeMap<String, CapabilityDescriptor>,
         generation: ProcessGeneration,
         core_key: Arc<CoreAuthenticationKey>,
+    ) -> Result<Self, WorkflowPipelineError> {
+        Self::open_with_live_activity(
+            database,
+            projects,
+            host,
+            descriptors,
+            generation,
+            core_key,
+            super::live_activity::noop_live_activity(),
+        )
+    }
+
+    pub(crate) fn open_with_live_activity(
+        database: &Path,
+        projects: ProjectCoordinator,
+        host: Arc<CapabilityHost>,
+        descriptors: BTreeMap<String, CapabilityDescriptor>,
+        generation: ProcessGeneration,
+        core_key: Arc<CoreAuthenticationKey>,
+        live_activity: Arc<dyn LiveChatActivityPort>,
     ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             projects,
@@ -898,6 +921,7 @@ impl FileToolAuthorityRuntimeV1 {
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
             generation,
             core_key,
+            live_activity,
         })
     }
 
@@ -924,6 +948,7 @@ impl FileToolAuthorityRuntimeV1 {
 pub(crate) struct FrozenFileToolAuthorityContextV1 {
     pub manifest: AuthorityManifestV1,
     pub run_id: StableId,
+    pub request_id: StableId,
     pub node_id: StableId,
     pub workspace: WorkspaceBindingV1,
     pub project_branch: Option<String>,
@@ -1008,7 +1033,11 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false)
+        self.publish_tool(call, "running", &bounded_json(&call.arguments));
+        let result =
+            self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false);
+        self.publish_tool_outcome(call, &result);
+        result
     }
 
     /// Same broker flow with delivery scoped to exactly this invocation's
@@ -1058,6 +1087,26 @@ impl BoundFileToolAuthorityV1 {
     }
 
     fn resolve_invoke_v1(
+        &self,
+        outer_invocation_id: &StableId,
+        turn: u32,
+        call: &ModelToolCallV1,
+        response: &ApprovalResponseV1,
+        cancellation: &CancellationToken,
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
+        self.publish_tool(call, "running", &bounded_json(&call.arguments));
+        let result = self.resolve_invoke_v1_inner(
+            outer_invocation_id,
+            turn,
+            call,
+            response,
+            cancellation,
+        );
+        self.publish_tool_outcome(call, &result);
+        result
+    }
+
+    fn resolve_invoke_v1_inner(
         &self,
         outer_invocation_id: &StableId,
         turn: u32,
@@ -1120,6 +1169,34 @@ impl BoundFileToolAuthorityV1 {
                 cancellation,
                 false,
             ),
+        }
+    }
+
+    fn publish_tool(&self, call: &ModelToolCallV1, status: &str, body: &str) {
+        self.runtime.live_activity.publish(LiveChatActivityV1 {
+            request_id: self.context.request_id.to_string(),
+            run_id: self.context.run_id.to_string(),
+            activity_id: format!("tool.{}", call.call_id),
+            kind: "tool".into(),
+            title: call.capability_id.clone(),
+            body: body.to_owned(),
+            status: status.into(),
+            reasoning_category: None,
+            capability_id: Some(call.capability_id.clone()),
+        });
+    }
+
+    fn publish_tool_outcome(
+        &self,
+        call: &ModelToolCallV1,
+        result: &Result<SettledModelToolCallV1, WorkflowPipelineError>,
+    ) {
+        match result {
+            Ok(settled) => self.publish_tool(call, &settled.activity.status, &settled.activity.summary),
+            Err(WorkflowPipelineError::ToolApproval(challenge)) => {
+                self.publish_tool(call, "awaiting_approval", &challenge.summary);
+            }
+            Err(error) => self.publish_tool(call, "failed", &error.to_string()),
         }
     }
 
@@ -3216,6 +3293,7 @@ mod tests {
             manifest: manifest("manifest.tool-run-a", capability_binding.clone())
                 .expect("manifest A"),
             run_id: stable("run.tool-run-a").expect("run A"),
+            request_id: stable("command.tool-run-a").expect("request A"),
             node_id: stable("agent.1").expect("node"),
             workspace: projects
                 .resolve_workspace_v1(&workspace_a)
@@ -3233,6 +3311,7 @@ mod tests {
             manifest: manifest("manifest.tool-run-b", capability_binding.clone())
                 .expect("manifest B"),
             run_id: stable("run.tool-run-b").expect("run B"),
+            request_id: stable("command.tool-run-b").expect("request B"),
             node_id: stable("agent.1").expect("node"),
             workspace: projects
                 .resolve_workspace_v1(&workspace_b)
@@ -3290,6 +3369,7 @@ mod tests {
         let authority_c = runtime.bind(FrozenFileToolAuthorityContextV1 {
             manifest: manifest("manifest.tool-run-c", capability_binding).expect("manifest C"),
             run_id: stable("run.tool-run-c").expect("run C"),
+            request_id: stable("command.tool-run-c").expect("request C"),
             node_id: stable("agent.1").expect("node"),
             workspace: projects
                 .resolve_workspace_v1(&workspace_c)

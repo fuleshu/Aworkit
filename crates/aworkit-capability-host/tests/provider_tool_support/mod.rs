@@ -18,20 +18,50 @@ pub struct FixtureRequest {
 
 pub struct FixtureResponse {
     status: u16,
-    body: Vec<u8>,
+    content_type: &'static str,
+    chunks: Vec<Vec<u8>>,
+    inter_chunk_delay: Duration,
 }
 
+#[allow(dead_code)]
 impl FixtureResponse {
     pub fn json(value: Value) -> Self {
         Self {
             status: 200,
-            body: serde_json::to_vec(&value).expect("fixture response JSON"),
+            content_type: "application/json",
+            chunks: vec![serde_json::to_vec(&value).expect("fixture response JSON")],
+            inter_chunk_delay: Duration::ZERO,
         }
     }
 
     #[allow(dead_code)]
     pub fn raw(body: Vec<u8>) -> Self {
-        Self { status: 200, body }
+        Self {
+            status: 200,
+            content_type: "application/json",
+            chunks: vec![body],
+            inter_chunk_delay: Duration::ZERO,
+        }
+    }
+
+    pub fn sse(events: Vec<Value>) -> Self {
+        let mut body = String::new();
+        for event in events {
+            body.push_str("data: ");
+            body.push_str(&serde_json::to_string(&event).expect("fixture SSE JSON"));
+            body.push_str("\n\n");
+        }
+        body.push_str("data: [DONE]\n\n");
+        Self::sse_chunks(vec![body.into_bytes()], Duration::ZERO)
+    }
+
+    pub fn sse_chunks(chunks: Vec<Vec<u8>>, inter_chunk_delay: Duration) -> Self {
+        Self {
+            status: 200,
+            content_type: "text/event-stream",
+            chunks,
+            inter_chunk_delay,
+        }
     }
 }
 
@@ -52,14 +82,20 @@ pub fn start_fixture(
             } else {
                 "Response"
             };
+            let content_length = response.chunks.iter().map(Vec::len).sum::<usize>();
             let header = format!(
-                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response.status,
-                reason,
-                response.body.len()
+                "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.status, reason, response.content_type, content_length
             );
             let _ = stream.write_all(header.as_bytes());
-            let _ = stream.write_all(&response.body);
+            for (chunk_index, chunk) in response.chunks.iter().enumerate() {
+                let _ = stream.write_all(chunk);
+                let _ = stream.flush();
+                if chunk_index + 1 < response.chunks.len() && !response.inter_chunk_delay.is_zero()
+                {
+                    thread::sleep(response.inter_chunk_delay);
+                }
+            }
         }
     });
     (format!("http://{address}"), handle)

@@ -18,7 +18,8 @@ use aworkit_desktop::runtime::{
     CredentialDeleteInputV2, CredentialStoreInputV2, DesktopRuntime, ExtensionConfigurationV2,
     ExtensionRegisterInputV2, ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
     McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
-    ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
+    LiveChatActivityPort, LiveChatActivityV1, ProjectProbeRequestV2, ProjectProbeResultV2,
+    ProviderProbeRequestV2, ProviderProbeResultV2,
     ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
     SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
     UiCommandInput, UiCommandReceipt, WorkflowCommitInput, WorkflowCreateInput,
@@ -26,9 +27,19 @@ use aworkit_desktop::runtime::{
     WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
+
+struct TauriLiveChatActivity {
+    app: tauri::AppHandle,
+}
+
+impl LiveChatActivityPort for TauriLiveChatActivity {
+    fn publish(&self, activity: LiveChatActivityV1) {
+        let _ = self.app.emit("aworkit:chat-activity", activity);
+    }
+}
 
 #[tauri::command]
 fn native_presentation_capabilities() -> NativePresentationCapabilitiesV1 {
@@ -522,9 +533,16 @@ fn main() {
                     .map_err(|error| std::io::Error::other(error.to_string()))?,
             );
             let management = ManagementRepairGateway::with_durable_ledger(ledger);
-            let runtime = DesktopRuntime::open(app_data_root.join("runtime"))
-                .map_err(std::io::Error::other)?
-                .with_management_repair(management);
+            let live_activity: Arc<dyn LiveChatActivityPort> =
+                Arc::new(TauriLiveChatActivity {
+                    app: app.handle().clone(),
+                });
+            let runtime = DesktopRuntime::open_with_live_activity(
+                app_data_root.join("runtime"),
+                live_activity,
+            )
+            .map_err(std::io::Error::other)?
+            .with_management_repair(management);
             app.manage(Arc::new(Mutex::new(runtime)));
             Ok(())
         })

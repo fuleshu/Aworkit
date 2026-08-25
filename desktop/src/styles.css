@@ -450,8 +450,10 @@ pre {
 .chat-main {
   display: grid;
   grid-template-rows: 48px auto minmax(0, 1fr) auto;
+  height: 100%;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 .chat-main > .chat-view-header {
   grid-row: 1;
@@ -553,6 +555,7 @@ pre {
   min-height: 0;
   overflow: auto;
   padding: 14px 16px 18px;
+  scroll-padding-block-end: 18px;
   scrollbar-gutter: stable;
 }
 .timeline-date {
@@ -610,6 +613,29 @@ pre {
 .activity-card.selected {
   border: 2px solid var(--aw-accent);
 }
+.thinking-card {
+  border-color: color-mix(in srgb, var(--aw-accent) 38%, var(--aw-divider));
+}
+.thinking-card .activity-icon::before {
+  animation: aworkit-busy-spin 0.8s linear infinite;
+  border: 2px solid var(--aw-control);
+  border-radius: 50%;
+  border-top-color: var(--aw-accent);
+  content: "";
+  display: block;
+  height: 14px;
+  width: 14px;
+}
+@keyframes aworkit-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-card .activity-icon::before {
+    animation-duration: 1.8s;
+  }
+}
 .activity-main {
   align-items: center;
   background: transparent;
@@ -620,6 +646,9 @@ pre {
   min-height: 70px;
   text-align: left;
   width: 100%;
+}
+.live-activity-card .activity-main {
+  padding: 4px 9px;
 }
 .activity-main code {
   background: var(--aw-inset);

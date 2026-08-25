@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatIntent } from "./types";
+import type { ChatIntent, LiveChatActivity } from "./types";
 import {
   createChatCorePort,
   type ChatCorePort,
@@ -10,6 +10,7 @@ import {
 export interface ChatRuntimeState {
   readonly snapshot: RuntimeSnapshot | null;
   readonly events: readonly RuntimeEvent[];
+  readonly liveActivities: readonly LiveChatActivity[];
   readonly stale: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -31,6 +32,10 @@ export function useChatRuntime(
   const snapshotRef = useRef<RuntimeSnapshot | null>(null);
   const eventsRef = useRef<RuntimeEvent[]>([]);
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
+  const [liveActivities, setLiveActivities] = useState<
+    readonly LiveChatActivity[]
+  >([]);
+  const pendingRef = useRef<Set<string>>(new Set());
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,10 +117,47 @@ export function useChatRuntime(
     return () => window.clearInterval(timer);
   }, [pollIntervalMs, refresh, resynchronize]);
 
+  useEffect(() => {
+    if (port.subscribeActivity === undefined) return;
+    let dispose: (() => void) | undefined;
+    let current = true;
+    void port
+      .subscribeActivity((activity) => {
+        if (!pendingRef.current.has(activity.requestId)) return;
+        setLiveActivities((activities) =>
+          upsertLiveActivity(activities, activity),
+        );
+      })
+      .then((unsubscribe) => {
+        if (current) dispose = unsubscribe;
+        else unsubscribe();
+      })
+      .catch(() => {
+        // Polling and the immediate local busy card remain available if native
+        // transient event delivery is unsupported.
+      });
+    return () => {
+      current = false;
+      dispose?.();
+    };
+  }, [port]);
+
   const dispatch = useCallback(
     async (intent: ChatIntent): Promise<boolean> => {
       if (snapshot === null || stale) return false;
+      pendingRef.current.add(intent.commandId);
       setPending((current) => new Set([...current, intent.commandId]));
+      setLiveActivities((activities) =>
+        upsertLiveActivity(activities, {
+          requestId: intent.commandId,
+          runId: snapshot.chat.runId,
+          activityId: `busy.${intent.commandId}`,
+          kind: "thinking",
+          title: "Thinking",
+          body: "Aworkit is working…",
+          status: "running",
+        }),
+      );
       try {
         const receipt = await port.command(intent, snapshot.version);
         if (!receipt.accepted) {
@@ -132,6 +174,12 @@ export function useChatRuntime(
         setError(failureMessage);
         return false;
       } finally {
+        pendingRef.current.delete(intent.commandId);
+        setLiveActivities((activities) =>
+          activities.filter(
+            (activity) => activity.requestId !== intent.commandId,
+          ),
+        );
         setPending((current) => {
           const next = new Set(current);
           next.delete(intent.commandId);
@@ -145,6 +193,7 @@ export function useChatRuntime(
   return {
     snapshot,
     events,
+    liveActivities,
     stale,
     loading,
     error,
@@ -152,6 +201,26 @@ export function useChatRuntime(
     dispatch,
     resynchronize,
   };
+}
+
+function upsertLiveActivity(
+  activities: readonly LiveChatActivity[],
+  incoming: LiveChatActivity,
+): LiveChatActivity[] {
+  const current = incoming.activityId.startsWith("busy.")
+    ? [...activities]
+    : activities.filter(
+        (activity) =>
+          activity.requestId !== incoming.requestId ||
+          !activity.activityId.startsWith("busy."),
+      );
+  const index = current.findIndex(
+    (activity) => activity.activityId === incoming.activityId,
+  );
+  if (index < 0) return [...current, incoming];
+  const next = [...current];
+  next[index] = incoming;
+  return next;
 }
 
 function message(error: unknown): string {

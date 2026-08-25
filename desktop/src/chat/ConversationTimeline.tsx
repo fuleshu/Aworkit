@@ -25,12 +25,59 @@ export function ConversationTimeline({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => items[index]?.id ?? index,
     estimateSize: (index) => estimate(items[index]),
     overscan: 6,
   });
   useEffect(() => {
     if (pinnedToEnd.current && items.length > 0)
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+  }, [items.length, virtualizer]);
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (scroll === null) return;
+    const pendingRows = new Set<HTMLElement>();
+    let measurementFrame: number | null = null;
+    let scrollFrame: number | null = null;
+    const remeasureExpandedEvidence = (event: Event) => {
+      if (!(event.target instanceof HTMLDetailsElement)) return;
+      const row = event.target.closest<HTMLElement>(".virtual-row");
+      if (row === null || !scroll.contains(row)) return;
+      pendingRows.add(row);
+      if (measurementFrame !== null) return;
+      // The toggle event follows the `open` state change, but its layout can
+      // still be pending. Measure on the next frame, then preserve bottom pin
+      // only after the virtual extent has incorporated the exact new height.
+      measurementFrame = window.requestAnimationFrame(() => {
+        measurementFrame = null;
+        for (const pendingRow of pendingRows) {
+          const index = Number.parseInt(pendingRow.dataset.index ?? "", 10);
+          if (pendingRow.isConnected && Number.isInteger(index)) {
+            // resizeItem bypasses the normal measurement cache and the
+            // virtualizer's active-scroll deferral. Both expansion and
+            // collapse therefore move every following row in this frame.
+            virtualizer.resizeItem(
+              index,
+              pendingRow.getBoundingClientRect().height,
+            );
+          }
+        }
+        pendingRows.clear();
+        if (pinnedToEnd.current && items.length > 0) {
+          scrollFrame = window.requestAnimationFrame(() => {
+            scrollFrame = null;
+            virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+          });
+        }
+      });
+    };
+    scroll.addEventListener("toggle", remeasureExpandedEvidence, true);
+    return () => {
+      scroll.removeEventListener("toggle", remeasureExpandedEvidence, true);
+      if (measurementFrame !== null)
+        window.cancelAnimationFrame(measurementFrame);
+      if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
+    };
   }, [items.length, virtualizer]);
   return (
     <div
@@ -220,9 +267,32 @@ export function TimelineCard({
         </details>
       </article>
     );
+  if (metadataOf(item).live === true)
+    return (
+      <article
+        aria-busy={item.status === "running" || undefined}
+        className={`activity-card live-activity-card ${item.kind === "thinking" ? "thinking-card" : ""}`}
+        aria-label={`${card.label}: ${item.title}`}
+      >
+        <div className="activity-main">
+          <span className="activity-icon">{icon(item.kind)}</span>
+          <span>
+            <strong>{item.title}</strong>
+            {card.reasoningLabel !== undefined && (
+              <small className="reasoning-label">{card.reasoningLabel}</small>
+            )}
+            <code>{card.content}</code>
+          </span>
+          <span className={`status ${item.status ?? ""}`}>
+            {item.status ?? card.label}
+          </span>
+        </div>
+      </article>
+    );
   return (
     <article
-      className={`activity-card ${selected ? "selected" : ""}`}
+      aria-busy={item.status === "running" || undefined}
+      className={`activity-card ${item.kind === "thinking" ? "thinking-card" : ""} ${selected ? "selected" : ""}`}
       aria-label={`${card.label}: ${item.title}`}
     >
       <button
@@ -294,7 +364,9 @@ function safeJson(value: unknown): string {
   }
 }
 function icon(kind: TimelineItem["kind"]): string {
-  return kind === "tool"
+  return kind === "thinking"
+    ? ""
+    : kind === "tool"
     ? ">_"
     : kind === "approval"
       ? "!"

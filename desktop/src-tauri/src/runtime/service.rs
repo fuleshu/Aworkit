@@ -54,6 +54,7 @@ use super::{
     mcp_tools::{
         MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
     },
+    live_activity::{LiveChatActivityPort, noop_live_activity},
     pipeline::{
         WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowExecutionPipeline, WorkflowExecutionRequestV1,
         WorkflowExecutionResultV1, WorkflowExecutionStatusV1, WorkflowMessageV1,
@@ -186,6 +187,21 @@ impl DesktopRuntime {
         Self::open_with_store(data_root.as_ref(), store, production_provider())
     }
 
+    /// Opens the desktop runtime with a best-effort transient Chat activity
+    /// sink. Canonical history remains independent of presentation delivery.
+    pub fn open_with_live_activity(
+        data_root: impl AsRef<Path>,
+        live_activity: Arc<dyn LiveChatActivityPort>,
+    ) -> Result<Self, String> {
+        let store: Arc<dyn PlatformCredentialStorePort> = Arc::new(NativeCredentialStore::new());
+        Self::open_with_store_and_live_activity(
+            data_root.as_ref(),
+            store,
+            production_provider(),
+            live_activity,
+        )
+    }
+
     /// Explicit composition seam used by hermetic native tests and the rescue QA runner.
     pub fn open_with_credential_store(
         data_root: impl AsRef<Path>,
@@ -199,13 +215,31 @@ impl DesktopRuntime {
         store: Arc<dyn PlatformCredentialStorePort>,
         provider: Arc<dyn ProviderPort>,
     ) -> Result<Self, String> {
+        Self::open_with_store_and_live_activity(
+            data_root,
+            store,
+            provider,
+            noop_live_activity(),
+        )
+    }
+
+    fn open_with_store_and_live_activity(
+        data_root: &Path,
+        store: Arc<dyn PlatformCredentialStorePort>,
+        provider: Arc<dyn ProviderPort>,
+        live_activity: Arc<dyn LiveChatActivityPort>,
+    ) -> Result<Self, String> {
         let data_root = prepare_root(data_root)?;
         let documents = CanonicalDocuments::open(&data_root)?;
         let credentials =
             CredentialVault::with_store(store.clone(), &documents.settings().credentials)?;
         let credential_journal = CredentialOperationJournal::open(&data_root);
-        let pipeline = WorkflowExecutionPipeline::open_with_credential_store(&data_root, store)
-            .map_err(|error| error.to_string())?;
+        let pipeline = WorkflowExecutionPipeline::open_with_credential_store_and_live_activity(
+            &data_root,
+            store,
+            live_activity,
+        )
+        .map_err(|error| error.to_string())?;
         Self::compose(
             data_root,
             documents,

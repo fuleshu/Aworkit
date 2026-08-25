@@ -5,6 +5,7 @@ import type {
   ChatProjectChoice,
   ChatProjection,
   EvidenceRecord,
+  LiveChatActivity,
   TimelineItem,
 } from "./types";
 
@@ -77,6 +78,19 @@ const receiptSchema = z.object({
   currentVersion: z.number().int().nonnegative(),
   reason: z.string().nullable(),
 });
+const liveActivitySchema = z.object({
+  requestId: z.string(),
+  runId: z.string(),
+  activityId: z.string(),
+  kind: z.enum(["thinking", "reasoning", "response", "step", "tool"]),
+  title: z.string(),
+  body: z.string(),
+  status: z.string(),
+  reasoningCategory: z
+    .enum(["summary", "progress", "source_provided"])
+    .optional(),
+  capabilityId: z.string().optional(),
+});
 
 export interface RuntimeSnapshot {
   readonly version: number;
@@ -100,6 +114,9 @@ export interface RuntimeReceipt {
 export interface ChatCorePort {
   snapshot(afterSequence: number): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
+  subscribeActivity?(
+    listener: (activity: LiveChatActivity) => void,
+  ): Promise<() => void>;
 }
 
 export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
@@ -167,6 +184,16 @@ export class TauriChatCorePort implements ChatCorePort {
         },
       }),
     );
+  }
+
+  public async subscribeActivity(
+    listener: (activity: LiveChatActivity) => void,
+  ): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<unknown>("aworkit:chat-activity", ({ payload }) => {
+      const parsed = liveActivitySchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    });
   }
 }
 
@@ -296,6 +323,7 @@ function knownKind(value: string): TimelineItem["kind"] {
   return (
     [
       "message",
+      "thinking",
       "plan",
       "model",
       "tool",

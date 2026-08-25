@@ -1,5 +1,7 @@
 mod provider_tool_support;
 
+use std::{sync::mpsc, thread, time::Duration};
+
 use aworkit_capability_host::{
     ModelAssistantContentV1, ModelToolDefinitionV1, ModelToolEventV1, ModelToolExchangeV1,
     ModelToolRequestV1, ModelToolResultV1, OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider,
@@ -103,30 +105,29 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             request.headers.get("authorization").map(String::as_str),
             Some("Bearer openai-tool-secret")
         );
+        assert_eq!(
+            request.headers.get("accept").map(String::as_str),
+            Some("text/event-stream")
+        );
         let body: Value = serde_json::from_slice(&request.body).expect("OpenAI request JSON");
         assert_eq!(body["model"], "gpt-fixture");
-        assert_eq!(body["stream"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "files_read");
         assert_eq!(body["tools"][0]["function"]["parameters"]["type"], "object");
         if index == 0 {
             assert_eq!(body["messages"].as_array().expect("messages").len(), 2);
-            return FixtureResponse::json(json!({
-                "choices":[{
-                    "finish_reason":"tool_calls",
-                    "message":{
-                        "role":"assistant",
-                        "content":"I will inspect it.",
-                        "tool_calls":[{
-                            "id":"call_read_1",
-                            "type":"function",
-                            "function":{"name":"files_read","arguments":"{\"path\":\"README.md\"}"}
-                        }]
-                    }
-                }],
-                "usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}
-            }));
+            return FixtureResponse::sse(vec![
+                json!({"choices":[{"index":0,"delta":{"reasoning_content":"I should inspect "},"finish_reason":null}]}),
+                json!({"choices":[{"index":0,"delta":{"reasoning_content":"the requested file first."},"finish_reason":null}]}),
+                json!({"choices":[{"index":0,"delta":{"content":"I will inspect it."},"finish_reason":null}]}),
+                json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_read_1","type":"function","function":{"name":"files_read","arguments":"{\"path\":"}}]},"finish_reason":null}]}),
+                json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"README.md\"}"}}]},"finish_reason":null}]}),
+                json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+                json!({"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}),
+            ]);
         }
         assert_eq!(body["messages"].as_array().expect("messages").len(), 4);
         assert_eq!(body["messages"][2]["role"], "assistant");
@@ -137,17 +138,12 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             body["messages"][3]["content"],
             "{\"text\":\"Aworkit README\"}"
         );
-        FixtureResponse::json(json!({
-            "choices":[{
-                "finish_reason":"stop",
-                "message":{
-                    "role":"assistant",
-                    "content":"The README describes Aworkit.",
-                    "tool_calls":null
-                }
-            }],
-            "usage":{"prompt_tokens":24,"completion_tokens":6,"total_tokens":30}
-        }))
+        FixtureResponse::sse(vec![
+            json!({"choices":[{"index":0,"delta":{"content":"The README describes "},"finish_reason":null}]}),
+            json!({"choices":[{"index":0,"delta":{"content":"Aworkit."},"finish_reason":null}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":24,"completion_tokens":6,"total_tokens":30}}),
+        ])
     });
     let provider = provider(&origin, 1024 * 1024);
 
@@ -155,11 +151,24 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
     assert_eq!(
         first,
         vec![
+            ModelToolEventV1::ReasoningRaw {
+                text: "I should inspect ".to_owned()
+            },
+            ModelToolEventV1::ReasoningRaw {
+                text: "the requested file first.".to_owned()
+            },
             ModelToolEventV1::AssistantOutput {
                 text: "I will inspect it.".to_owned()
             },
+            ModelToolEventV1::Progress {
+                text: "Model is preparing a tool call…".to_owned()
+            },
+            ModelToolEventV1::Usage {
+                input_tokens: 12,
+                output_tokens: 7
+            },
             ModelToolEventV1::ToolCall {
-                call: match &first[1] {
+                call: match &first[5] {
                     ModelToolEventV1::ToolCall { call } => {
                         assert_eq!(call.call_id, "call_read_1");
                         assert_eq!(call.provider_call_id.as_deref(), Some("call_read_1"));
@@ -169,10 +178,6 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
                     }
                     _ => panic!("expected OpenAI tool call"),
                 }
-            },
-            ModelToolEventV1::Usage {
-                input_tokens: 12,
-                output_tokens: 7
             }
         ]
     );
@@ -181,7 +186,10 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
         second,
         vec![
             ModelToolEventV1::AssistantOutput {
-                text: "The README describes Aworkit.".to_owned()
+                text: "The README describes ".to_owned()
+            },
+            ModelToolEventV1::AssistantOutput {
+                text: "Aworkit.".to_owned()
             },
             ModelToolEventV1::Usage {
                 input_tokens: 24,
@@ -193,19 +201,13 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
 }
 
 #[test]
-fn openai_rejects_malformed_calls_and_oversized_tool_responses_without_events() {
+fn openai_rejects_malformed_calls_and_oversized_tool_responses() {
     let (origin, malformed_server) = start_fixture(1, |_index, _request| {
-        FixtureResponse::json(json!({
-            "choices":[{
-                "finish_reason":"tool_calls",
-                "message":{"content":null,"tool_calls":[{
-                    "id":"call_bad",
-                    "type":"function",
-                    "function":{"name":"files_read","arguments":"not-json"}
-                }]}
-            }],
-            "usage":{"prompt_tokens":1,"completion_tokens":1}
-        }))
+        FixtureResponse::sse(vec![
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"files_read","arguments":"not-json"}}]},"finish_reason":null}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}),
+        ])
     });
     let malformed_provider = provider(&origin, 1024 * 1024);
     let mut events = Vec::new();
@@ -215,8 +217,19 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses_without_events() 
             Ok(())
         })
         .expect_err("malformed tool call");
-    assert!(error.to_string().contains("OpenAI tool response"));
-    assert!(events.is_empty());
+    assert!(error.to_string().contains("invalid tool arguments"));
+    assert_eq!(
+        events,
+        vec![
+            ModelToolEventV1::Progress {
+                text: "Model is preparing a tool call…".to_owned()
+            },
+            ModelToolEventV1::Usage {
+                input_tokens: 1,
+                output_tokens: 1
+            }
+        ]
+    );
     malformed_server.join().expect("malformed fixture");
 
     let (origin, oversized_server) =
@@ -225,4 +238,69 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses_without_events() 
     let error = execute(&oversized_provider, &request(Vec::new())).expect_err("oversized response");
     assert!(error.to_string().contains("size bound"));
     oversized_server.join().expect("oversized fixture");
+}
+
+#[test]
+fn openai_reasoning_is_observed_before_the_stream_finishes() {
+    let reasoning = format!(
+        "data: {}\n\n",
+        json!({"choices":[{"index":0,"delta":{"reasoning_content":"live reasoning"},"finish_reason":null}]})
+    );
+    let answer = [
+        format!(
+            "data: {}\n\n",
+            json!({"choices":[{"index":0,"delta":{"content":"final answer"},"finish_reason":null}]})
+        ),
+        format!(
+            "data: {}\n\n",
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})
+        ),
+    ]
+    .concat();
+    let terminal = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3}})
+    );
+    let (origin, server) = start_fixture(1, move |_index, _request| {
+        FixtureResponse::sse_chunks(
+            vec![
+                reasoning.clone().into_bytes(),
+                answer.clone().into_bytes(),
+                terminal.clone().into_bytes(),
+            ],
+            Duration::from_millis(200),
+        )
+    });
+    let provider = provider(&origin, 1024 * 1024);
+    let request = request(Vec::new());
+    let (event_tx, event_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = provider.execute_tool_turn(&request, &mut |event| {
+            event_tx.send(event).expect("send streamed event");
+            Ok(())
+        });
+        done_tx.send(result).expect("send completion result");
+    });
+
+    assert_eq!(
+        event_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reasoning event before timeout"),
+        ModelToolEventV1::ReasoningRaw {
+            text: "live reasoning".to_owned()
+        }
+    );
+    assert!(
+        matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "provider completed before the delayed terminal stream arrived"
+    );
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stream completion"),
+        Ok(ProviderAcceptanceV1::Accepted)
+    );
+    worker.join().expect("provider worker");
+    server.join().expect("stream fixture");
 }
