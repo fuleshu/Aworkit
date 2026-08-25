@@ -499,6 +499,13 @@ fn prepare_graphical_backend() {
 fn prepare_graphical_backend() {}
 
 fn main() {
+    if let Some(result) = aworkit_desktop::live_qa::run_from_arguments(std::env::args().skip(1)) {
+        if let Err(error) = result {
+            eprintln!("Aworkit live-model QA failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     prepare_graphical_backend();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

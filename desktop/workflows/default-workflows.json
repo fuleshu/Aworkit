@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "defaultWorkflowId": "workflow.standard-agent",
+  "creationDefaultTemplateId": "blank",
+  "workflows": [
+    {
+      "templateId": "simple-chat",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.simple-chat",
+        "name": "Simple Chat",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 205 } },
+          {
+            "id": "agent.1",
+            "label": "Agent",
+            "type": "agent",
+            "position": { "x": 245, "y": 205 },
+            "configuration": { "modelTierId": "tier:balanced", "toolIds": [], "maxTurns": 1 }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 470, "y": 205 } },
+          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 695, "y": 205 } }
+        ],
+        "edges": [
+          { "id": "input-agent", "source": "input.1", "target": "agent.1" },
+          { "id": "agent-output", "source": "agent.1", "target": "output.1" },
+          { "id": "output-wait", "source": "output.1", "target": "wait.1" }
+        ],
+        "comments": "Simple Chat: Chat Input → Agent → Chat Output → Wait for Input."
+      }
+    },
+    {
+      "templateId": "standard-agent",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.standard-agent",
+        "name": "Standard Agent",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 205 } },
+          {
+            "id": "plan.1",
+            "label": "Plan",
+            "type": "model_call",
+            "position": { "x": 245, "y": 205 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "instructions": "Analyze the user request and produce a concise plan before acting. Note open questions, needed evidence, and the intended tool order.",
+              "maximumTokens": 1024
+            }
+          },
+          {
+            "id": "agent.1",
+            "label": "Agent",
+            "type": "agent",
+            "position": { "x": 470, "y": 205 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "toolIds": [
+                "tool.files.read",
+                "tool.files.search",
+                "tool.files.list",
+                "tool.files.grep",
+                "tool.todo",
+                "tool.web_search",
+                "tool.web_fetch"
+              ],
+              "maxTurns": 8,
+              "instructions": "You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
+            }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 695, "y": 205 } },
+          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 904, "y": 205 } }
+        ],
+        "edges": [
+          { "id": "input-plan", "source": "input.1", "target": "plan.1" },
+          { "id": "plan-agent", "source": "plan.1", "target": "agent.1" },
+          { "id": "agent-output", "source": "agent.1", "target": "output.1" },
+          { "id": "output-wait", "source": "output.1", "target": "wait.1" }
+        ],
+        "comments": "Standard Agent: Chat Input → Plan → Agent (full tool set) → Chat Output → Wait for Input."
+      }
+    },
+    {
+      "templateId": "blank",
+      "seedOnFreshProfile": false,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.template.blank",
+        "name": "Blank",
+        "nodes": [],
+        "edges": []
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
+import { bundledDefaultWorkflow } from "./workbench/bundledWorkflows";
 import { createWorkflowLibraryPort } from "./workbench/corePort";
 const SettingsScreen = lazy(() =>
   import("./workbench/SettingsScreen").then((module) => ({
@@ -34,47 +35,7 @@ interface AppProps {
   /** Explicit test/story seam; production resolves the native core adapter. */
   readonly managementRepairCorePort?: ManagementRepairCorePort;
 }
-const starterWorkflow = {
-  schemaVersion: 1,
-  id: "workflow.simple-chat",
-  name: "Simple Chat",
-  nodes: [
-    {
-      id: "input.1",
-      label: "Input",
-      type: "input",
-      position: { x: 36, y: 205 },
-    },
-    {
-      id: "agent.1",
-      label: "Agent",
-      type: "agent",
-      position: { x: 245, y: 205 },
-      configuration: {
-        modelTierId: "tier:balanced",
-        maxTurns: 1,
-        toolIds: [],
-      },
-    },
-    {
-      id: "output.1",
-      label: "Output",
-      type: "output",
-      position: { x: 470, y: 205 },
-    },
-    {
-      id: "wait.1",
-      label: "Wait for input",
-      type: "wait",
-      position: { x: 695, y: 205 },
-    },
-  ],
-  edges: [
-    { id: "input-agent", source: "input.1", target: "agent.1" },
-    { id: "agent-output", source: "agent.1", target: "output.1" },
-    { id: "output-wait", source: "output.1", target: "wait.1" },
-  ],
-} as const;
+const starterWorkflow = bundledDefaultWorkflow;
 
 /** Persistent compact desktop workbench. Feature views own no canonical state. */
 export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX.Element {

@@ -131,12 +131,14 @@ pub(crate) fn normalize_openai_tool_response(
         }
     }
 
-    let calls = message
-        .get("tool_calls")
-        .map(|calls| calls.as_array().ok_or_else(invalid_response))
-        .transpose()?
-        .cloned()
-        .unwrap_or_default();
+    // OpenAI-compatible servers commonly serialize the optional final-turn
+    // field as `"tool_calls": null` instead of omitting it. Both shapes mean
+    // that the assistant returned no calls.
+    let calls = match message.get("tool_calls") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(calls)) => calls.clone(),
+        Some(_) => return Err(invalid_response()),
+    };
     for (ordinal, call) in calls.iter().enumerate() {
         let call = call.as_object().ok_or_else(invalid_response)?;
         if call.get("type").and_then(Value::as_str) != Some("function") {

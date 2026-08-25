@@ -1,4 +1,5 @@
 import type { ChatIntent, ChatProjection } from "./types";
+import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 export interface ComposerState {
   readonly draft: string;
@@ -16,7 +17,7 @@ export interface ComposerReadiness {
 export const emptyComposer: ComposerState = {
   draft: "",
   attachments: [],
-  workflowId: "workflow.simple-chat",
+  workflowId: bundledDefaultWorkflowId,
   projectId: null,
   imeComposing: false,
 };
@@ -42,6 +43,8 @@ export function canSubmit(
   if (["cancelled", "completed", "failed"].includes(chat.phase))
     return "This Chat is terminal. Start a new Chat to send another message.";
   if (!chat.lockedWorkflow) {
+    if (state.workflowId === "")
+      return "Select a saved workflow before sending.";
     if (readiness.workflowReadinessError !== null && readiness.workflowReadinessError !== undefined)
       return readiness.workflowReadinessError;
     if (readiness.workflowRequiresProject === null)

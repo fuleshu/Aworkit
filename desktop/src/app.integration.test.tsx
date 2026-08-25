@@ -22,7 +22,7 @@ afterEach(() => {
   projectAppearancePreference("system");
 });
 
-describe("honest Simple Chat desktop slice", () => {
+describe("honest JSON-workflow desktop slice", () => {
   it("renders a clean draft Chat without fabricated projects, history, or evidence", async () => {
     const { container } = render(<App adapters={defaultDesktopAdapters} />);
     expect(
@@ -32,7 +32,7 @@ describe("honest Simple Chat desktop slice", () => {
       name: "Primary navigation",
     });
     expect(navigation).toHaveTextContent("New Chat");
-    expect(navigation).toHaveTextContent("Simple Chat");
+    expect(navigation).toHaveTextContent("Chat");
     expect(navigation).toHaveTextContent("Settings");
     expect(navigation).not.toHaveTextContent("Project Atlas");
     expect(
@@ -43,7 +43,7 @@ describe("honest Simple Chat desktop slice", () => {
       screen.getByRole("combobox", {
         name: "Workflow for the first Chat input",
       }),
-    ).toHaveValue("workflow.simple-chat");
+    ).toHaveValue("workflow.standard-agent");
     expect(
       screen.getByRole("button", { name: "Add attachment references" }),
     ).toBeDisabled();
@@ -72,7 +72,7 @@ describe("honest Simple Chat desktop slice", () => {
     expect(composer).toHaveValue("Hello from Preview");
   });
 
-  it("supports focus-safe navigation, Simple Chat editing, settings, and splitters", async () => {
+  it("supports focus-safe navigation, workflow editing, settings, and splitters", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     const splitter = screen.getByRole("separator", {
@@ -84,7 +84,7 @@ describe("honest Simple Chat desktop slice", () => {
 
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
     expect(
-      await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait),
+      await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait),
     ).toBeVisible();
     expect(screen.getByLabelText("Workflow graph")).toBeVisible();
     expect(
@@ -125,16 +125,17 @@ describe("honest Simple Chat desktop slice", () => {
     expect(document.documentElement.dataset.appearance).toBe("dark");
 
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
+    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   }, 10_000);
 
-  it("ships only the exact input-to-agent-to-output-to-wait starter graph", async () => {
+  it("opens the starter graph declared as default in the JSON bundle", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
+    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
     expect(screen.getByRole("button", { name: "Input" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Plan" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Agent" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Output" })).toBeVisible();
     expect(
@@ -160,8 +161,8 @@ describe("honest Simple Chat desktop slice", () => {
     fireEvent.keyDown(splitter, { key: "ArrowLeft" });
     expect(splitter).toHaveAttribute("aria-valuenow", "328");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Simple Chat" }, lazyRouteWait);
-    await user.click(screen.getByRole("button", { name: /Simple Chat/ }));
+    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
+    await user.click(screen.getByRole("button", { name: /^○?Chat$/ }));
     expect(
       await screen.findByRole("textbox", { name: "Chat input" }),
     ).toHaveValue("keep this local draft");
@@ -187,7 +188,7 @@ describe("honest Simple Chat desktop slice", () => {
     expect(
       screen.getByRole("button", { name: "Save configuration" }),
     ).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /Simple Chat/ }));
+    await user.click(screen.getByRole("button", { name: /^○?Chat$/ }));
     await screen.findByRole("heading", { name: "New Chat" });
     await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(screen.getByLabelText("Base URL")).toHaveValue(

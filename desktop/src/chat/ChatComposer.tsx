@@ -7,6 +7,10 @@ import {
   type ComposerState,
 } from "./composer";
 import type { ChatProjectChoice, ChatProjection } from "./types";
+import {
+  bundledDefaultWorkflowId,
+  bundledWorkflowTemplates,
+} from "../workbench/bundledWorkflows";
 
 export interface WorkflowOption {
   readonly id: string;
@@ -44,12 +48,16 @@ export function ChatComposer({
   onSubmit,
 }: ChatComposerProps): React.JSX.Element {
   const workflowOptions: readonly WorkflowOption[] =
-    workflows !== undefined && workflows.length > 0
-      ? workflows
-      : [{ id: "workflow.simple-chat", name: "Simple Chat" }];
+    workflows ??
+    bundledWorkflowTemplates
+      .filter(({ seedOnFreshProfile }) => seedOnFreshProfile)
+      .map(({ workflowId, name }) => ({ id: workflowId, name }));
   const [state, setState] = useState<ComposerState>(() => ({
     ...emptyComposer,
-    workflowId: defaultWorkflowId ?? "workflow.simple-chat",
+    workflowId:
+      defaultWorkflowId ??
+      (workflows === undefined ? bundledDefaultWorkflowId : workflowOptions[0]?.id) ??
+      "",
   }));
   useEffect(() => {
     onWorkflowChange?.(state.workflowId);
@@ -115,19 +123,25 @@ export function ChatComposer({
             title="The first submitted input freezes this workflow for the Chat"
             value={state.workflowId}
             disabled={
-              chat.lockedWorkflow || chat.recoveryPending || commandPending
+              chat.lockedWorkflow ||
+              chat.recoveryPending ||
+              commandPending ||
+              workflowOptions.length === 0
             }
             onChange={(event) => {
               edit({ workflowId: event.target.value });
               onWorkflowChange?.(event.target.value);
             }}
           >
+            {workflowOptions.length === 0 && (
+              <option value="">No workflows available</option>
+            )}
             {workflowOptions.map((workflow) => (
               <option key={workflow.id} value={workflow.id}>
                 {workflow.name}
               </option>
             ))}
-            {!workflowOptions.some(
+            {state.workflowId !== "" && !workflowOptions.some(
               (workflow) => workflow.id === state.workflowId,
             ) && (
               <option value={state.workflowId}>{state.workflowId}</option>

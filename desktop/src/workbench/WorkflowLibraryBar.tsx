@@ -1,4 +1,8 @@
 import { useState } from "react";
+import {
+  bundledCreationDefaultTemplateId,
+  bundledWorkflowTemplates,
+} from "./bundledWorkflows";
 import type {
   WorkflowLibrarySnapshot,
 } from "./corePort";
@@ -15,11 +19,14 @@ interface WorkflowLibraryBarProps {
   readonly onSetDefault: (workflowId: string) => void;
 }
 
-const TEMPLATES = [
-  { value: "simple-chat", label: "Simple Chat" },
-  { value: "standard-agent", label: "Standard Agent" },
-  { value: "blank", label: "Blank" },
-] as const;
+const TEMPLATES = bundledWorkflowTemplates.map(({ templateId, name }) => ({
+  value: templateId,
+  label: name,
+}));
+const DEFAULT_TEMPLATE =
+  bundledWorkflowTemplates.find(
+    ({ templateId }) => templateId === bundledCreationDefaultTemplateId,
+  )?.templateId ?? TEMPLATES[0]?.value ?? "";
 
 /**
  * Compact saved-workflow library strip. All mutations cross the versioned
@@ -38,7 +45,7 @@ export function WorkflowLibraryBar({
   onSetDefault,
 }: WorkflowLibraryBarProps): React.JSX.Element {
   const active = library.entries.find((entry) => entry.id === activeWorkflowId);
-  const [template, setTemplate] = useState<string>("standard-agent");
+  const [template, setTemplate] = useState<string>(DEFAULT_TEMPLATE);
   const [name, setName] = useState("");
   return (
     <section className="workflow-library-bar" aria-label="Workflow library">

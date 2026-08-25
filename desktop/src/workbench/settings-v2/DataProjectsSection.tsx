@@ -115,7 +115,7 @@ export function ProjectsSection({
           id,
           name: leaf?.trim() === "" || leaf === undefined ? "Project" : leaf,
           workspace: { kind: "local_directory", location },
-          defaultWorkflowId: "workflow.simple-chat",
+          defaultWorkflowId: null,
           portableHistoryEnabled: false,
         },
       ]);

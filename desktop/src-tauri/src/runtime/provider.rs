@@ -41,6 +41,22 @@ pub(crate) struct DiscoveredProviderModel {
     pub capabilities: Vec<String>,
 }
 
+/// Returns the model-facing features implemented by an installed provider
+/// adapter. Provider catalog APIs generally do not expose per-model tool-call
+/// metadata, so discovery reports the transport contract Aworkit can actually
+/// offer instead of incorrectly labelling every discovered model text-only.
+pub(crate) fn installed_model_capabilities(kind: &str) -> Vec<String> {
+    let mut capabilities = vec!["text".to_owned()];
+    if provider_supports_tool_calls(kind) {
+        capabilities.push("tools".to_owned());
+    }
+    capabilities
+}
+
+pub(crate) fn provider_supports_tool_calls(kind: &str) -> bool {
+    matches!(kind, "openai_compatible" | "anthropic" | "gemini")
+}
+
 pub(crate) trait ProviderPort: Send + Sync {
     fn validate(&self, kind: &str, base_url: &str, model: &str) -> Result<(), String>;
 
@@ -161,7 +177,7 @@ impl ProviderPort for BuiltInProviderPort {
         messages: &[ConversationMessage],
     ) -> Result<ProviderCompletion, String> {
         if messages.is_empty() {
-            return Err("Simple Chat requires at least one message".into());
+            return Err("Chat requires at least one message".into());
         }
         let provider = openai_provider(base_url, model, api_key)?;
         let gateway = FrozenModelGateway::new(vec![Box::new(provider)]);
@@ -230,7 +246,7 @@ impl ProviderPort for BuiltInProviderPort {
                         remote_id,
                         context_window: None,
                         max_output_tokens: None,
-                        capabilities: vec!["text".into()],
+                        capabilities: installed_model_capabilities(kind),
                     })
                     .collect())
             }
@@ -246,7 +262,7 @@ impl ProviderPort for BuiltInProviderPort {
                         name: model.name,
                         context_window: None,
                         max_output_tokens: None,
-                        capabilities: vec!["text".into()],
+                        capabilities: installed_model_capabilities(kind),
                     })
                     .collect())
             }
@@ -262,7 +278,7 @@ impl ProviderPort for BuiltInProviderPort {
                         name: model.name,
                         context_window: model.input_token_limit,
                         max_output_tokens: model.output_token_limit,
-                        capabilities: vec!["text".into()],
+                        capabilities: installed_model_capabilities(kind),
                     })
                     .collect())
             }
@@ -443,11 +459,13 @@ mod tests {
             assert_eq!(discovered.len(), 1);
             assert_eq!(discovered[0].remote_id, "fixture-model");
             assert_eq!(discovered[0].name, expected_name);
+            assert_eq!(discovered[0].capabilities, vec!["text", "tools"]);
             if kind == "gemini" {
                 assert_eq!(discovered[0].context_window, Some(32_768));
                 assert_eq!(discovered[0].max_output_tokens, Some(4_096));
             }
             server.join().expect("provider fixture");
         }
+        assert!(!provider_supports_tool_calls("uninstalled"));
     }
 }

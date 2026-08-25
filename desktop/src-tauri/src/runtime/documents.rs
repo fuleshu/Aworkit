@@ -27,13 +27,11 @@ use super::{
 };
 
 const SETTINGS_ID: &str = "settings.desktop";
-const WORKFLOW_ID: &str = "workflow.simple-chat";
-pub(crate) const SIMPLE_CHAT_WORKFLOW_ID: &str = "workflow.simple-chat";
-pub(crate) const STANDARD_AGENT_WORKFLOW_ID: &str = "workflow.standard-agent";
 const WORKFLOW_LIBRARY_ID: &str = "workflow-library.desktop";
 const WORKFLOW_LIBRARY_SCHEMA_VERSION: u64 = 1;
 const SUPPORTED_WORKFLOW_SCHEMA_VERSION: u64 = 1;
-const MAXIMUM_AGENT_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const BUNDLED_WORKFLOW_LIBRARY_JSON: &str =
+    include_str!("../../../workflows/default-workflows.json");
 const MAXIMUM_WORKFLOW_NAME_BYTES: usize = 128;
 const MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 const MAXIMUM_MODEL_CALL_TOKENS: u64 = 8192;
@@ -95,18 +93,43 @@ struct StoredWorkflowState {
     editable: bool,
 }
 
+/// Build-time workflow assets. The runtime treats these exactly like imported
+/// JSON documents; neither identity, graph shape, nor default selection is
+/// duplicated in Rust.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundledWorkflowLibrary {
+    schema_version: u64,
+    default_workflow_id: String,
+    creation_default_template_id: String,
+    workflows: Vec<BundledWorkflowTemplate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundledWorkflowTemplate {
+    template_id: String,
+    seed_on_fresh_profile: bool,
+    document: Value,
+}
+
 impl CanonicalDocuments {
     pub(crate) fn open(data_root: &Path) -> Result<Self, String> {
         let repository = RepositoryRoot::open(data_root.join("documents"))
             .map_err(|error| format!("cannot open desktop document store: {error}"))?;
+        let bundled = bundled_workflow_library()?;
         let (settings_version, settings) = load_or_create_settings(&repository)?;
-        let (workflows, simple_chat_fresh) = load_or_create_workflows(&repository)?;
+        let (workflows, fresh_profile) = load_or_create_workflows(&repository, &bundled)?;
         let (library_version, default_workflow_id) =
-            load_or_create_workflow_library(&repository, simple_chat_fresh)?;
+            load_or_create_workflow_library(&repository, &workflows, &bundled, fresh_profile)?;
         let default_workflow_id = if workflows.contains_key(default_workflow_id.as_str()) {
             default_workflow_id
         } else {
-            SIMPLE_CHAT_WORKFLOW_ID.to_owned()
+            workflows
+                .keys()
+                .next()
+                .ok_or_else(|| "workflow library contains no workflow documents".to_owned())?
+                .clone()
         };
         Ok(Self {
             repository,
@@ -172,7 +195,7 @@ impl CanonicalDocuments {
     }
 
     pub(crate) fn workflow_snapshot(&self) -> WorkflowSnapshot {
-        self.workflow_snapshot_for(SIMPLE_CHAT_WORKFLOW_ID)
+        self.workflow_snapshot_for(&self.default_workflow_id)
     }
 
     pub(crate) fn workflow_snapshot_for(&self, workflow_id: &str) -> WorkflowSnapshot {
@@ -213,7 +236,8 @@ impl CanonicalDocuments {
         expected_version: u64,
         workflow: Value,
     ) -> Result<u64, String> {
-        self.save_workflow_document(SIMPLE_CHAT_WORKFLOW_ID, expected_version, workflow)
+        let workflow_id = self.default_workflow_id.clone();
+        self.save_workflow_document(&workflow_id, expected_version, workflow)
     }
 
     pub(crate) fn save_workflow_document(
@@ -238,10 +262,18 @@ impl CanonicalDocuments {
             );
         }
         validate_editable_workflow_graph(&workflow)?;
-        if workflow_id == SIMPLE_CHAT_WORKFLOW_ID
-            && exact_simple_chat_graph(&workflow, "agent.1", "agent")
+        if workflow.get("id").and_then(Value::as_str) != Some(workflow_id) {
+            return Err(format!(
+                "workflow document id must remain '{workflow_id}' when saving this library entry"
+            ));
+        }
+        if validate_v1_executable_catalog(&workflow).is_ok()
+            && serde_json::to_vec(&workflow)
+                .map_err(|error| format!("cannot encode workflow: {error}"))?
+                .len()
+                > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES
         {
-            validate_simple_chat_executable_configuration(&workflow)?;
+            return Err("workflow exceeds the executable 128 KiB persistence bound".into());
         }
         let document = json_document(&workflow)?;
         let saved = self
@@ -271,22 +303,14 @@ impl CanonicalDocuments {
     ) -> Result<(String, u64), String> {
         validate_workflow_name(name)?;
         let workflow_id = self.next_custom_workflow_id()?;
-        let mut document = match template {
-            None | Some("blank") => json!({
-                "schemaVersion": SUPPORTED_WORKFLOW_SCHEMA_VERSION,
-                "id": workflow_id,
-                "name": name,
-                "nodes": [],
-                "edges": []
-            }),
-            Some("simple-chat") => default_simple_chat_workflow(),
-            Some("standard-agent") => default_standard_agent_workflow(),
-            Some(other) => {
-                return Err(format!(
-                    "unknown workflow template '{other}'; expected blank, simple-chat, or standard-agent"
-                ));
-            }
-        };
+        let bundled = bundled_workflow_library()?;
+        let template_id = template.unwrap_or(&bundled.creation_default_template_id);
+        let mut document = bundled
+            .workflows
+            .iter()
+            .find(|candidate| candidate.template_id == template_id)
+            .map(|candidate| candidate.document.clone())
+            .ok_or_else(|| format!("unknown bundled workflow template '{template_id}'"))?;
         document["id"] = Value::String(workflow_id.clone());
         document["name"] = Value::String(name.to_owned());
         let saved = self
@@ -387,15 +411,12 @@ impl CanonicalDocuments {
             .map_err(|error| format!("cannot delete workflow: {error}"))?;
         self.workflows.remove(workflow_id);
         if self.default_workflow_id == workflow_id {
-            let fallback = if self.workflows.contains_key(SIMPLE_CHAT_WORKFLOW_ID) {
-                SIMPLE_CHAT_WORKFLOW_ID.to_owned()
-            } else {
-                self.workflows
-                    .keys()
-                    .next()
-                    .expect("at least one workflow remains")
-                    .clone()
-            };
+            let fallback = self
+                .workflows
+                .keys()
+                .next()
+                .expect("at least one workflow remains")
+                .clone();
             self.persist_default_workflow(&fallback)?;
         }
         Ok(())
@@ -444,13 +465,21 @@ impl CanonicalDocuments {
         Err("workflow library id space is exhausted".into())
     }
 
-    pub(crate) fn require_supported_simple_chat(&self) -> Result<(), String> {
+    pub(crate) fn require_executable_workflow(&self, workflow_id: &str) -> Result<(), String> {
         let workflow = self
             .workflows
-            .get(SIMPLE_CHAT_WORKFLOW_ID)
+            .get(workflow_id)
             .map(|state| state.document.clone())
             .unwrap_or(Value::Null);
-        validate_simple_chat_graph(&workflow)
+        validate_v1_executable_catalog(&workflow)?;
+        if serde_json::to_vec(&workflow)
+            .map_err(|error| format!("cannot encode workflow: {error}"))?
+            .len()
+            > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES
+        {
+            return Err("workflow exceeds the executable 128 KiB persistence bound".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn legacy_provider(&self) -> ProviderDocument {
@@ -613,7 +642,7 @@ fn migrate_v1(legacy: LegacySettingsDocumentV1) -> Result<SettingsDocument, Stri
             enabled: true,
             context_window: None,
             max_output_tokens: None,
-            capabilities: vec!["text".into()],
+            capabilities: vec!["text".into(), "tools".into()],
             parameters: BTreeMap::new(),
         }],
         configuration: BTreeMap::new(),
@@ -680,6 +709,7 @@ fn parse_legacy_appearance(value: &str) -> Result<AppearanceModeV2, String> {
 
 fn load_or_create_workflows(
     repository: &RepositoryRoot,
+    bundled: &BundledWorkflowLibrary,
 ) -> Result<(BTreeMap<String, StoredWorkflowState>, bool), String> {
     let mut workflows = BTreeMap::new();
     for (id, version, _schema) in repository
@@ -694,7 +724,7 @@ fn load_or_create_workflows(
         };
         let editable = stored.access == DocumentAccessMode::Editable;
         let mut document = stored_value(stored, "workflow")?;
-        if editable && id == SIMPLE_CHAT_WORKFLOW_ID && migrate_rescue_model_node(&mut document) {
+        if editable && migrate_rescue_model_node(&mut document) {
             let saved = repository
                 .save(
                     DocumentKind::Workflow,
@@ -702,7 +732,7 @@ fn load_or_create_workflows(
                     Some(version),
                     &json_document(&document)?,
                 )
-                .map_err(|error| format!("cannot migrate Simple Chat Agent node: {error}"))?;
+                .map_err(|error| format!("cannot migrate legacy workflow Agent node: {error}"))?;
             workflows.insert(
                 id,
                 StoredWorkflowState {
@@ -722,55 +752,51 @@ fn load_or_create_workflows(
             );
         }
     }
-    let simple_chat_fresh = !workflows.contains_key(SIMPLE_CHAT_WORKFLOW_ID);
-    if simple_chat_fresh {
-        let document = default_simple_chat_workflow();
-        let saved = repository
-            .save(
-                DocumentKind::Workflow,
-                SIMPLE_CHAT_WORKFLOW_ID,
-                None,
-                &json_document(&document)?,
-            )
-            .map_err(|error| format!("cannot create Simple Chat workflow: {error}"))?;
-        workflows.insert(
-            SIMPLE_CHAT_WORKFLOW_ID.to_owned(),
-            StoredWorkflowState {
-                version: saved.version,
-                document,
-                editable: true,
-            },
-        );
+    let fresh_profile = workflows.is_empty();
+    if fresh_profile {
+        for template in bundled
+            .workflows
+            .iter()
+            .filter(|template| template.seed_on_fresh_profile)
+        {
+            let document = template.document.clone();
+            let workflow_id = document
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("validated bundled workflow id");
+            let workflow_name = workflow_display_name(&document, workflow_id);
+            let saved = repository
+                .save(
+                    DocumentKind::Workflow,
+                    workflow_id,
+                    None,
+                    &json_document(&document)?,
+                )
+                .map_err(|error| {
+                    format!("cannot create bundled workflow '{workflow_name}': {error}")
+                })?;
+            workflows.insert(
+                workflow_id.to_owned(),
+                StoredWorkflowState {
+                    version: saved.version,
+                    document,
+                    editable: true,
+                },
+            );
+        }
     }
-    if !workflows.contains_key(STANDARD_AGENT_WORKFLOW_ID) {
-        let document = default_standard_agent_workflow();
-        let saved = repository
-            .save(
-                DocumentKind::Workflow,
-                STANDARD_AGENT_WORKFLOW_ID,
-                None,
-                &json_document(&document)?,
-            )
-            .map_err(|error| format!("cannot create Standard Agent workflow: {error}"))?;
-        workflows.insert(
-            STANDARD_AGENT_WORKFLOW_ID.to_owned(),
-            StoredWorkflowState {
-                version: saved.version,
-                document,
-                editable: true,
-            },
-        );
-    }
-    Ok((workflows, simple_chat_fresh))
+    Ok((workflows, fresh_profile))
 }
 
 /// Loads or creates the small secret-free workflow-library configuration
-/// document holding the per-profile default workflow selection. Fresh
-/// profiles default to the Standard Agent; upgraded profiles keep Simple Chat
-/// so the composer behavior does not change under the user's feet.
+/// document holding the per-profile default workflow selection. A fresh
+/// profile takes its initial selection from the checked-in JSON bundle; an
+/// existing profile without a library document keeps its first stored entry.
 fn load_or_create_workflow_library(
     repository: &RepositoryRoot,
-    simple_chat_fresh: bool,
+    workflows: &BTreeMap<String, StoredWorkflowState>,
+    bundled: &BundledWorkflowLibrary,
+    fresh_profile: bool,
 ) -> Result<(u64, String), String> {
     match repository
         .load(DocumentKind::Configuration, WORKFLOW_LIBRARY_ID)
@@ -788,14 +814,20 @@ fn load_or_create_workflow_library(
             Ok((1, default_workflow_id.to_owned()))
         }
         None => {
-            let default_workflow_id = if simple_chat_fresh {
-                STANDARD_AGENT_WORKFLOW_ID
+            let default_workflow_id = if fresh_profile
+                && workflows.contains_key(&bundled.default_workflow_id)
+            {
+                bundled.default_workflow_id.clone()
             } else {
-                SIMPLE_CHAT_WORKFLOW_ID
+                workflows
+                    .keys()
+                    .next()
+                    .ok_or_else(|| "workflow library contains no workflow documents".to_owned())?
+                    .clone()
             };
             let library = json!({
                 "schemaVersion": WORKFLOW_LIBRARY_SCHEMA_VERSION,
-                "defaultWorkflowId": default_workflow_id,
+                "defaultWorkflowId": &default_workflow_id,
             });
             let saved = repository
                 .save(
@@ -805,9 +837,75 @@ fn load_or_create_workflow_library(
                     &json_document(&library)?,
                 )
                 .map_err(|error| format!("cannot create workflow library: {error}"))?;
-            Ok((saved.version, default_workflow_id.to_owned()))
+            Ok((saved.version, default_workflow_id))
         }
     }
+}
+
+fn bundled_workflow_library() -> Result<BundledWorkflowLibrary, String> {
+    let bundled: BundledWorkflowLibrary = serde_json::from_str(BUNDLED_WORKFLOW_LIBRARY_JSON)
+        .map_err(|error| format!("bundled workflow JSON is invalid: {error}"))?;
+    if bundled.schema_version != WORKFLOW_LIBRARY_SCHEMA_VERSION {
+        return Err(format!(
+            "bundled workflow library schema {} is unsupported",
+            bundled.schema_version
+        ));
+    }
+    let mut template_ids = BTreeSet::new();
+    let mut workflow_ids = BTreeSet::new();
+    for template in &bundled.workflows {
+        if StableId::parse(template.template_id.clone()).is_err()
+            || !template_ids.insert(template.template_id.clone())
+        {
+            return Err("bundled workflow template IDs must be unique StableIds".into());
+        }
+        validate_editable_workflow_graph(&template.document)
+            .map_err(|error| format!("bundled workflow '{}': {error}", template.template_id))?;
+        let workflow_id = template
+            .document
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "bundled workflow '{}' has no document id",
+                    template.template_id
+                )
+            })?;
+        if !workflow_ids.insert(workflow_id.to_owned()) {
+            return Err(format!(
+                "bundled workflow document id '{workflow_id}' is duplicated"
+            ));
+        }
+        if template.seed_on_fresh_profile {
+            validate_v1_executable_catalog(&template.document)
+                .map_err(|error| format!("bundled workflow '{}': {error}", template.template_id))?;
+        }
+    }
+    if !bundled.workflows.iter().any(|template| {
+        template.seed_on_fresh_profile
+            && template.document.get("id").and_then(Value::as_str)
+                == Some(bundled.default_workflow_id.as_str())
+    }) {
+        return Err("bundled defaultWorkflowId must reference a seeded workflow document".into());
+    }
+    if !bundled
+        .workflows
+        .iter()
+        .any(|template| template.template_id == bundled.creation_default_template_id)
+    {
+        return Err("bundled creationDefaultTemplateId must reference a workflow template".into());
+    }
+    Ok(bundled)
+}
+
+#[cfg(test)]
+pub(crate) fn bundled_workflow_template(template_id: &str) -> Result<Value, String> {
+    bundled_workflow_library()?
+        .workflows
+        .into_iter()
+        .find(|template| template.template_id == template_id)
+        .map(|template| template.document)
+        .ok_or_else(|| format!("unknown bundled workflow template '{template_id}'"))
 }
 
 fn validate_workflow_name(name: &str) -> Result<(), String> {
@@ -966,135 +1064,7 @@ fn validate_editable_workflow_graph(document: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_simple_chat_graph(document: &Value) -> Result<(), String> {
-    validate_editable_workflow_graph(document)?;
-    if exact_simple_chat_graph(document, "agent.1", "agent") {
-        validate_simple_chat_executable_configuration(document)?;
-        return validate_v1_executable_catalog(document);
-    }
-    Err(
-        "this build can run only the Simple Chat graph: Input → Agent → Output → Wait for Input"
-            .into(),
-    )
-}
-
-fn validate_simple_chat_executable_configuration(document: &Value) -> Result<(), String> {
-    if document.get("id").and_then(Value::as_str) != Some(WORKFLOW_ID) {
-        return Err("Simple Chat executable document id must be workflow.simple-chat".into());
-    }
-    let serialized_size = serde_json::to_vec(document)
-        .map_err(|error| format!("cannot encode Simple Chat workflow: {error}"))?
-        .len();
-    if serialized_size > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES {
-        return Err(format!(
-            "Simple Chat workflow exceeds the executable {} KiB persistence bound; remove oversized preserved metadata before running it",
-            MAXIMUM_WORKFLOW_SNAPSHOT_BYTES / 1024
-        ));
-    }
-    let nodes = document["nodes"]
-        .as_array()
-        .expect("validated exact Simple Chat nodes");
-    for id in ["input.1", "output.1", "wait.1"] {
-        let node = nodes
-            .iter()
-            .find(|node| node.get("id").and_then(Value::as_str) == Some(id))
-            .expect("exact graph contains required node");
-        if let Some(configuration) = node.get("configuration")
-            && configuration
-                .as_object()
-                .is_none_or(|object| !object.is_empty())
-        {
-            return Err(format!(
-                "Simple Chat node '{id}' configuration must be omitted or an empty object"
-            ));
-        }
-    }
-
-    let agent = nodes
-        .iter()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some("agent.1"))
-        .expect("exact graph contains the Agent node");
-    let configuration = agent
-        .get("configuration")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Simple Chat Agent configuration must be an object".to_owned())?;
-    let keys = configuration
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let required = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
-    let allowed = BTreeSet::from(["instructions", "maxTurns", "modelTierId", "toolIds"]);
-    if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
-        return Err(
-            "Simple Chat Agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions"
-                .into(),
-        );
-    }
-    if configuration.get("modelTierId").and_then(Value::as_str) != Some("tier:balanced") {
-        return Err(
-            "Simple Chat Agent must reference the portable tier:balanced model tier".into(),
-        );
-    }
-    let tool_ids = configuration
-        .get("toolIds")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Simple Chat Agent toolIds must be an array".to_owned())?;
-    let mut seen = BTreeSet::new();
-    for tool_id in tool_ids {
-        let tool_id = tool_id
-            .as_str()
-            .ok_or_else(|| "Simple Chat Agent toolIds must contain strings".to_owned())?;
-        if !matches!(tool_id, "tool.files.read" | "tool.files.search") {
-            return Err(
-                "Simple Chat can bind only project file read/search; edit, shell, and Python require an approval path"
-                    .into(),
-            );
-        }
-        if !seen.insert(tool_id) {
-            return Err("Simple Chat Agent toolIds must be unique".into());
-        }
-    }
-    let maximum_turns = configuration
-        .get("maxTurns")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "Simple Chat Agent maxTurns must be an integer".to_owned())?;
-    if (tool_ids.is_empty() && maximum_turns != 1)
-        || (!tool_ids.is_empty() && !(2..=8).contains(&maximum_turns))
-    {
-        return Err(
-            "Simple Chat requires maxTurns=1 without tools or maxTurns=2..8 with project read/search"
-                .into(),
-        );
-    }
-    if let Some(instructions) = configuration.get("instructions") {
-        let instructions = instructions
-            .as_str()
-            .filter(|value| {
-                !value.trim().is_empty()
-                    && value.len() <= MAXIMUM_AGENT_INSTRUCTIONS_BYTES
-                    && !value.contains('\0')
-            })
-            .ok_or_else(|| {
-                "Simple Chat Agent instructions must be a non-empty string of at most 64 KiB"
-                    .to_owned()
-            })?;
-        debug_assert!(!instructions.is_empty());
-    }
-
-    let edges = document["edges"]
-        .as_array()
-        .expect("validated exact Simple Chat edges");
-    if edges.iter().any(|edge| {
-        edge.get("id")
-            .and_then(Value::as_str)
-            .is_none_or(|id| StableId::parse(id.to_owned()).is_err())
-    }) {
-        return Err("Simple Chat transition IDs must be stable identifiers".into());
-    }
-    Ok(())
-}
-
-fn exact_simple_chat_graph(document: &Value, middle_id: &str, middle_type: &str) -> bool {
+fn exact_legacy_rescue_graph(document: &Value, middle_id: &str, middle_type: &str) -> bool {
     let nodes = document["nodes"]
         .as_array()
         .expect("validated workflow nodes");
@@ -1139,7 +1109,7 @@ fn exact_simple_chat_graph(document: &Value, middle_id: &str, middle_type: &str)
 
 fn migrate_rescue_model_node(document: &mut Value) -> bool {
     if validate_workflow_document(document).is_err()
-        || !exact_simple_chat_graph(document, "model.1", "model")
+        || !exact_legacy_rescue_graph(document, "model.1", "model")
     {
         return false;
     }
@@ -1179,73 +1149,10 @@ fn migrate_rescue_model_node(document: &mut Value) -> bool {
     if let Some(object) = document.as_object_mut() {
         object.insert(
             "comments".into(),
-            Value::String("Simple Chat: Chat Input → Agent → Chat Output → Wait for Input.".into()),
+            Value::String("Migrated legacy Chat graph.".into()),
         );
     }
     true
-}
-
-pub(crate) fn default_simple_chat_workflow() -> Value {
-    json!({
-        "schemaVersion": 1,
-        "id": "workflow.simple-chat",
-        "name": "Simple Chat",
-        "nodes": [
-            {"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}},
-            {"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":1}},
-            {"id":"output.1","label":"Output","type":"output","position":{"x":470,"y":205}},
-            {"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":695,"y":205}}
-        ],
-        "edges": [
-            {"id":"input-agent","source":"input.1","target":"agent.1"},
-            {"id":"agent-output","source":"agent.1","target":"output.1"},
-            {"id":"output-wait","source":"output.1","target":"wait.1"}
-        ],
-        "comments": "Simple Chat: Chat Input → Agent → Chat Output → Wait for Input."
-    })
-}
-
-/// The seeded standard agent workflow: Chat Input → Plan (model_call) → Agent
-/// (full built-in tool set) → Chat Output → Wait for Input. It is the
-/// user-editable v1 graph whose agent node runs the standard model/tool loop.
-pub(crate) fn default_standard_agent_workflow() -> Value {
-    json!({
-        "schemaVersion": 1,
-        "id": "workflow.standard-agent",
-        "name": "Standard Agent",
-        "nodes": [
-            {"id":"input.1","label":"Input","type":"input","position":{"x":36,"y":205}},
-            {
-                "id":"plan.1","label":"Plan","type":"model_call","position":{"x":245,"y":205},
-                "configuration":{
-                    "modelTierId":"tier:balanced",
-                    "instructions":"Analyze the user request and produce a concise plan before acting. Note open questions, needed evidence, and the intended tool order.",
-                    "maximumTokens":1024
-                }
-            },
-            {
-                "id":"agent.1","label":"Agent","type":"agent","position":{"x":470,"y":205},
-                "configuration":{
-                    "modelTierId":"tier:balanced",
-                    "toolIds":[
-                        "tool.files.read","tool.files.search","tool.files.list","tool.files.grep",
-                        "tool.todo","tool.web_search","tool.web_fetch"
-                    ],
-                    "maxTurns":8,
-                    "instructions":"You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
-                }
-            },
-            {"id":"output.1","label":"Output","type":"output","position":{"x":695,"y":205}},
-            {"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":904,"y":205}}
-        ],
-        "edges": [
-            {"id":"input-plan","source":"input.1","target":"plan.1"},
-            {"id":"plan-agent","source":"plan.1","target":"agent.1"},
-            {"id":"agent-output","source":"agent.1","target":"output.1"},
-            {"id":"output-wait","source":"output.1","target":"wait.1"}
-        ],
-        "comments": "Standard Agent: Chat Input → Plan → Agent (full tool set) → Chat Output → Wait for Input."
-    })
 }
 
 /// The closed v1 executable catalog: known node types, per-type configuration
@@ -1759,71 +1666,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_simple_chat_graph_is_supported() {
-        validate_simple_chat_graph(&default_simple_chat_workflow()).unwrap();
+    fn every_seeded_json_workflow_is_executable() {
+        let bundled = bundled_workflow_library().unwrap();
+        for template in bundled
+            .workflows
+            .iter()
+            .filter(|template| template.seed_on_fresh_profile)
+        {
+            validate_v1_executable_catalog(&template.document).unwrap();
+        }
     }
 
     #[test]
-    fn simple_chat_accepts_bounded_project_read_search_and_rejects_approval_tools() {
-        let mut workflow = default_simple_chat_workflow();
-        workflow["nodes"][1]["configuration"]["toolIds"] =
-            json!(["tool.files.read", "tool.files.search"]);
-        workflow["nodes"][1]["configuration"]["maxTurns"] = json!(4);
-        validate_simple_chat_graph(&workflow).unwrap();
-        workflow["nodes"][1]["configuration"]["toolIds"] = json!(["tool.files.edit"]);
-        assert!(
-            validate_simple_chat_graph(&workflow)
-                .unwrap_err()
-                .contains("approval path")
-        );
-    }
-
-    #[test]
-    fn simple_chat_rejects_unknown_or_inert_node_configuration_before_execution() {
-        let mut workflow = default_simple_chat_workflow();
-        workflow["nodes"][1]["configuration"]["ignoredAtRuntime"] = json!(true);
-        assert!(
-            validate_simple_chat_graph(&workflow)
-                .unwrap_err()
-                .contains("accepts exactly")
-        );
-
+    fn oversized_workflow_is_preserved_as_a_draft_but_never_saved_as_executable() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        assert!(documents.save_workflow(1, workflow).is_err());
-        assert_eq!(documents.workflow_snapshot().version, 1);
-
-        let mut workflow = default_simple_chat_workflow();
-        workflow["nodes"][0]["configuration"] = json!({"unused": true});
-        assert!(
-            validate_simple_chat_graph(&workflow)
-                .unwrap_err()
-                .contains("omitted or an empty object")
-        );
-    }
-
-    #[test]
-    fn simple_chat_accepts_bounded_agent_instructions() {
-        let mut workflow = default_simple_chat_workflow();
-        workflow["nodes"][1]["configuration"]["instructions"] =
-            json!("Use project evidence and cite the path.");
-        validate_simple_chat_graph(&workflow).unwrap();
-
-        workflow["nodes"][1]["configuration"]["instructions"] = json!("   ");
-        assert!(validate_simple_chat_graph(&workflow).is_err());
-    }
-
-    #[test]
-    fn oversized_exact_simple_chat_is_preserved_as_a_draft_but_never_saved_as_executable() {
-        let root = TempDir::new().unwrap();
-        let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let mut oversized = default_simple_chat_workflow();
+        let mut oversized = documents.workflow_snapshot().document;
         oversized["preservedMetadata"] = Value::String("x".repeat(MAXIMUM_WORKFLOW_SNAPSHOT_BYTES));
 
         let error = documents.save_workflow(1, oversized).unwrap_err();
         assert!(error.contains("executable 128 KiB persistence bound"));
         assert_eq!(documents.workflow_snapshot().version, 1);
-        assert!(documents.require_supported_simple_chat().is_ok());
+        let default_id = documents.workflow_library().default_workflow_id;
+        assert!(documents.require_executable_workflow(&default_id).is_ok());
     }
 
     #[test]
@@ -1850,7 +1715,7 @@ mod tests {
         repository
             .save(
                 DocumentKind::Workflow,
-                WORKFLOW_ID,
+                legacy["id"].as_str().unwrap(),
                 None,
                 &json_document(&legacy).unwrap(),
             )
@@ -1878,7 +1743,7 @@ mod tests {
                 .iter()
                 .all(|edge| { edge["source"] != "model.1" && edge["target"] != "model.1" })
         );
-        validate_simple_chat_graph(&workflow.document).unwrap();
+        validate_v1_executable_catalog(&workflow.document).unwrap();
     }
 
     #[test]
@@ -1918,6 +1783,10 @@ mod tests {
         assert_eq!(
             migrated.settings.providers[0].models[0].remote_id,
             "fixture-model"
+        );
+        assert_eq!(
+            migrated.settings.providers[0].models[0].capabilities,
+            vec!["text", "tools"]
         );
         assert_eq!(migrated.settings.credentials[0].revision, 3);
         assert_eq!(
@@ -2100,8 +1969,11 @@ mod tests {
     fn unsupported_future_workflow_remains_lossless_and_read_only() {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        let workflow_id = "workflow.future";
         let raw = br#"{
             "schemaVersion": 2,
+            "id": "workflow.future",
+            "name": "Future workflow",
             "nodes": [{"id":"future.1","type":"future@2","configuration":{"new":true}}],
             "edges": [],
             "futureRoot": {"retained": true}
@@ -2109,27 +1981,27 @@ mod tests {
         repository
             .import_inert(
                 DocumentKind::Workflow,
-                WORKFLOW_ID,
+                workflow_id,
                 None,
                 &JsonDocument::parse(raw.to_vec()).unwrap(),
             )
             .unwrap();
 
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let snapshot = documents.workflow_snapshot();
+        let snapshot = documents.workflow_snapshot_for(workflow_id);
         assert_eq!(snapshot.version, 1);
         assert!(!snapshot.editable);
         assert_eq!(snapshot.document["futureRoot"]["retained"], json!(true));
-        assert!(documents.require_supported_simple_chat().is_err());
+        assert!(documents.require_executable_workflow(workflow_id).is_err());
         let error = documents
-            .save_workflow(snapshot.version, snapshot.document)
+            .save_workflow_document(workflow_id, snapshot.version, snapshot.document)
             .unwrap_err();
         assert!(error.contains("inspectable read-only"));
         drop(documents);
 
         assert_eq!(
             repository
-                .export_lossless(DocumentKind::Workflow, WORKFLOW_ID)
+                .export_lossless(DocumentKind::Workflow, workflow_id)
                 .unwrap()
                 .unwrap(),
             raw
@@ -2140,162 +2012,141 @@ mod tests {
     fn arbitrary_structurally_valid_v1_workflow_saves_reloads_and_stays_non_runnable() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let arbitrary = json!({
-            "schemaVersion": 1,
-            "id": "workflow.advanced",
-            "name": "Advanced future harness",
-            "nodes": [
-                {
-                    "id": "future.1",
-                    "type": "plugin.future@2",
-                    "position": {"x": 17, "y": 29, "futureLayout": [1, 2]},
-                    "configuration": {"futureOption": {"retained": true}},
-                    "capabilityStatus": "missing",
-                    "futureNode": {"retained": true}
-                },
-                {"id": "output.custom", "type": "output"}
-            ],
-            "edges": [{
-                "id": "future-edge",
-                "source": "future.1",
-                "target": "output.custom",
-                "sourcePort": "future.out",
-                "targetPort": "future.in",
-                "futureEdge": {"retained": true}
-            }],
-            "futureRoot": {"retained": true}
-        });
+        let workflow_id = documents.workflow_library().default_workflow_id;
+        let mut arbitrary = documents.workflow_snapshot_for(&workflow_id).document;
+        arbitrary["name"] = json!("Advanced future harness");
+        arbitrary["nodes"] = json!([
+            {
+                "id": "future.1",
+                "type": "plugin.future@2",
+                "position": {"x": 17, "y": 29, "futureLayout": [1, 2]},
+                "configuration": {"futureOption": {"retained": true}},
+                "capabilityStatus": "missing",
+                "futureNode": {"retained": true}
+            },
+            {"id": "output.custom", "type": "output"}
+        ]);
+        arbitrary["edges"] = json!([{
+            "id": "future-edge",
+            "source": "future.1",
+            "target": "output.custom",
+            "sourcePort": "future.out",
+            "targetPort": "future.in",
+            "futureEdge": {"retained": true}
+        }]);
+        arbitrary["futureRoot"] = json!({"retained": true});
         assert_eq!(documents.save_workflow(1, arbitrary.clone()).unwrap(), 2);
-        assert_eq!(documents.workflow_snapshot().document, arbitrary);
-        assert!(documents.workflow_snapshot().editable);
-        assert!(documents.require_supported_simple_chat().is_err());
+        assert_eq!(
+            documents.workflow_snapshot_for(&workflow_id).document,
+            arbitrary
+        );
+        assert!(documents.workflow_snapshot_for(&workflow_id).editable);
+        assert!(documents.require_executable_workflow(&workflow_id).is_err());
 
         drop(documents);
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.workflow_snapshot().version, 2);
-        assert_eq!(reopened.workflow_snapshot().document, arbitrary);
-        assert!(reopened.workflow_snapshot().editable);
-        assert!(reopened.require_supported_simple_chat().is_err());
+        assert_eq!(reopened.workflow_snapshot_for(&workflow_id).version, 2);
+        assert_eq!(
+            reopened.workflow_snapshot_for(&workflow_id).document,
+            arbitrary
+        );
+        assert!(reopened.workflow_snapshot_for(&workflow_id).editable);
+        assert!(reopened.require_executable_workflow(&workflow_id).is_err());
     }
 
     #[test]
     fn workflow_save_rejects_broken_references_without_replacing_the_document() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let broken = json!({
-            "schemaVersion": 1,
-            "nodes": [{"id": "input", "type": "input"}],
-            "edges": [{"id": "broken", "source": "input", "target": "missing"}]
-        });
+        let workflow_id = documents.workflow_library().default_workflow_id;
+        let mut broken = documents.workflow_snapshot_for(&workflow_id).document;
+        broken["nodes"] = json!([{"id": "input", "type": "input"}]);
+        broken["edges"] = json!([{"id": "broken", "source": "input", "target": "missing"}]);
         let error = documents.save_workflow(1, broken).unwrap_err();
         assert!(error.contains("target 'missing' does not exist"));
         assert_eq!(documents.workflow_snapshot().version, 1);
-        assert!(documents.require_supported_simple_chat().is_ok());
+        assert!(documents.require_executable_workflow(&workflow_id).is_ok());
     }
 
     #[test]
-    fn extra_or_duplicate_nodes_are_rejected() {
-        let mut extra = default_simple_chat_workflow();
-        extra["nodes"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":"tool.1","type":"tool"}));
-        assert!(validate_simple_chat_graph(&extra).is_err());
-
-        let mut duplicate = default_simple_chat_workflow();
+    fn duplicate_nodes_are_rejected_for_every_workflow_shape() {
+        let mut duplicate = bundled_workflow_template("simple-chat").unwrap();
         duplicate["nodes"] = json!([
             {"id":"input.1","type":"input"},
             {"id":"input.1","type":"input"},
             {"id":"output.1","type":"output"},
             {"id":"wait.1","type":"wait"}
         ]);
-        assert!(validate_simple_chat_graph(&duplicate).is_err());
+        assert!(validate_editable_workflow_graph(&duplicate).is_err());
     }
 
     #[test]
-    fn extra_or_duplicate_edges_are_rejected() {
-        let mut extra = default_simple_chat_workflow();
-        extra["edges"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"source":"wait.1","target":"input.1"}));
-        assert!(validate_simple_chat_graph(&extra).is_err());
-
-        let mut duplicate = default_simple_chat_workflow();
+    fn duplicate_edges_are_rejected_for_every_workflow_shape() {
+        let mut duplicate = bundled_workflow_template("simple-chat").unwrap();
         duplicate["edges"] = json!([
-            {"source":"input.1","target":"model.1"},
-            {"source":"input.1","target":"model.1"},
+            {"id":"duplicate","source":"input.1","target":"agent.1"},
+            {"id":"duplicate","source":"input.1","target":"agent.1"},
             {"source":"output.1","target":"wait.1"}
         ]);
-        assert!(validate_simple_chat_graph(&duplicate).is_err());
+        assert!(validate_editable_workflow_graph(&duplicate).is_err());
     }
 
     #[test]
-    fn library_seeds_simple_chat_and_standard_agent_with_a_fresh_default() {
+    fn library_seeds_exactly_the_json_bundle_with_its_declared_default() {
         let root = TempDir::new().unwrap();
         let documents = CanonicalDocuments::open(root.path()).unwrap();
+        let bundled = bundled_workflow_library().unwrap();
+        let seeded = bundled
+            .workflows
+            .iter()
+            .filter(|template| template.seed_on_fresh_profile)
+            .collect::<Vec<_>>();
         let library = documents.workflow_library();
-        assert_eq!(library.entries.len(), 2);
-        assert!(
-            library
-                .entries
-                .iter()
-                .any(|entry| entry.id == SIMPLE_CHAT_WORKFLOW_ID && !entry.is_default)
-        );
-        assert!(
-            library
-                .entries
-                .iter()
-                .any(|entry| entry.id == STANDARD_AGENT_WORKFLOW_ID && entry.is_default)
-        );
-        assert_eq!(library.default_workflow_id, STANDARD_AGENT_WORKFLOW_ID);
-        let standard = documents.workflow_snapshot_for(STANDARD_AGENT_WORKFLOW_ID);
-        assert!(standard.editable);
-        validate_v1_executable_catalog(&standard.document).unwrap();
-        assert_eq!(
-            standard.document["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|node| node.get("type").and_then(Value::as_str) == Some("model_call"))
-                .count(),
-            1
-        );
-        assert!(documents.require_supported_simple_chat().is_ok());
+        assert_eq!(library.entries.len(), seeded.len());
+        assert_eq!(library.default_workflow_id, bundled.default_workflow_id);
+        for template in seeded {
+            let id = template.document["id"].as_str().unwrap();
+            assert!(library.entries.iter().any(|entry| entry.id == id));
+            assert_eq!(
+                documents.workflow_snapshot_for(id).document,
+                template.document
+            );
+            assert!(documents.require_executable_workflow(id).is_ok());
+        }
 
         drop(documents);
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.workflow_library().entries.len(), 2);
+        assert_eq!(
+            reopened.workflow_library().entries.len(),
+            library.entries.len()
+        );
         assert_eq!(
             reopened.workflow_library().default_workflow_id,
-            STANDARD_AGENT_WORKFLOW_ID
+            library.default_workflow_id
         );
     }
 
     #[test]
-    fn upgraded_profiles_keep_simple_chat_as_the_library_default() {
+    fn an_existing_profile_is_not_backfilled_with_bundled_workflows() {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        let workflow_id = "workflow.existing";
+        let mut existing = bundled_workflow_template("blank").unwrap();
+        existing["id"] = json!(workflow_id);
+        existing["name"] = json!("Existing workflow");
         repository
             .save(
                 DocumentKind::Workflow,
-                SIMPLE_CHAT_WORKFLOW_ID,
+                workflow_id,
                 None,
-                &json_document(&default_simple_chat_workflow()).unwrap(),
+                &json_document(&existing).unwrap(),
             )
             .unwrap();
         let documents = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(
-            documents.workflow_library().default_workflow_id,
-            SIMPLE_CHAT_WORKFLOW_ID
-        );
-        assert!(
-            documents
-                .workflow_library()
-                .entries
-                .iter()
-                .any(|entry| entry.id == STANDARD_AGENT_WORKFLOW_ID)
-        );
+        let library = documents.workflow_library();
+        assert_eq!(library.default_workflow_id, workflow_id);
+        assert_eq!(library.entries.len(), 1);
+        assert_eq!(library.entries[0].id, workflow_id);
     }
 
     #[test]
@@ -2347,6 +2198,15 @@ mod tests {
             duplicate_id
         );
 
+        let expected_fallback = documents
+            .workflow_library()
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .filter(|id| *id != duplicate_id)
+            .min()
+            .unwrap()
+            .to_owned();
         documents.delete_workflow(&duplicate_id).unwrap();
         assert!(
             !documents
@@ -2355,10 +2215,9 @@ mod tests {
                 .iter()
                 .any(|entry| entry.id == duplicate_id)
         );
-        // Deleting the default reassigns it to Simple Chat.
         assert_eq!(
             documents.workflow_library().default_workflow_id,
-            SIMPLE_CHAT_WORKFLOW_ID
+            expected_fallback
         );
         assert_eq!(documents.workflow_library().version, library_version + 1);
 
@@ -2378,16 +2237,14 @@ mod tests {
     fn library_refuses_deleting_the_last_workflow_and_unknown_targets() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let library = documents.workflow_library();
-        for entry in &library.entries {
-            if entry.id == SIMPLE_CHAT_WORKFLOW_ID {
-                documents.delete_workflow(&entry.id).unwrap();
-                break;
-            }
+        while documents.workflow_library().entries.len() > 1 {
+            let id = documents.workflow_library().entries[0].id.clone();
+            documents.delete_workflow(&id).unwrap();
         }
+        let last_id = documents.workflow_library().entries[0].id.clone();
         assert!(
             documents
-                .delete_workflow(STANDARD_AGENT_WORKFLOW_ID)
+                .delete_workflow(&last_id)
                 .unwrap_err()
                 .contains("at least one workflow")
         );
@@ -2509,7 +2366,8 @@ mod tests {
 
     #[test]
     fn catalog_accepts_the_standard_agent_graph_with_conditions_and_parallelism() {
-        validate_v1_executable_catalog(&default_standard_agent_workflow()).unwrap();
+        validate_v1_executable_catalog(&bundled_workflow_template("standard-agent").unwrap())
+            .unwrap();
         let branched = json!({
             "schemaVersion": 1,
             "nodes": [

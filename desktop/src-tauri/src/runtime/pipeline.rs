@@ -1,4 +1,4 @@
-//! Authority-first execution pipeline for the production Simple Chat slice.
+//! Authority-first execution pipeline for frozen JSON workflow graphs.
 //!
 //! This module deliberately does not depend on desktop settings DTOs. Callers
 //! pass an opaque credential reference and provider metadata, then receive a
@@ -19,9 +19,8 @@ use aworkit_capability_host::{
     CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind, FrozenModelGateway,
     GoogleGeminiLimitsV1, GoogleGeminiProvider, GoogleGeminiProviderConfig, InjectionTargetV1,
     McpCapabilitySnapshotV1, McpPeerPort, McpPeerTransportConfigV1, McpServerManifestV1,
-    ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1, ModelToolExchangeV1,
-    OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
-    ProductionMcpPeer, ProviderEnginePortV1, ProviderError,
+    ModelToolExchangeV1, OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider,
+    OpenAiCompatibleProviderConfig, ProductionMcpPeer, ProviderEnginePortV1,
     RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1, SecretDeliveryV1 as HostSecretDeliveryV1,
     SecretFieldPlanV1, SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
     SecretMaterializationPlanV1, SecretMaterializer, SideEffectClass,
@@ -30,9 +29,8 @@ use aworkit_local_store::{
     CommitBatch, Deduplication, Event, LocalHistoryStore, OutboxEntry, StoreError,
 };
 use aworkit_protocol::{
-    AttestedExtensionSetV1, CapabilityOutcomeClassV1,
-    CapabilityOutcomeV1 as WorkerCapabilityOutcomeV1, HistoryBackendV1, ProcessGeneration,
-    SchemaVersion, StableId, WorkerBudgetV1, WorkerExecutorKindV1,
+    AttestedExtensionSetV1, HistoryBackendV1, ProcessGeneration, SchemaVersion, StableId,
+    WorkerBudgetV1, WorkerExecutorKindV1,
     WorkerInvocationProposalV1 as WorkerInvocationProposalContractV1, WorkerNodeV1, WorkerPortV1,
     WorkerTransitionV1, attested_extension_set_hash_v1,
 };
@@ -49,8 +47,7 @@ use aworkit_trusted_core::{
 use aworkit_workflow_worker::{
     agent::{AgentLoopCheckpointV1, AgentLoopConfigV1, AgentLoopV1},
     limits::{BudgetEnvelope, LimitCheckpoint, LimitLedger, Usage},
-    plan::ExecutionPlanV1,
-    scheduler::{SchedulerCheckpointV1, SchedulerV1, TokenStateV1},
+    scheduler::SchedulerCheckpointV1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -65,24 +62,22 @@ use super::{
         PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass,
     },
     mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
-    model_tool_loop::{ModelToolLoopErrorV1, ModelToolLoopRequestV1, execute_model_tool_loop_v1},
     project_scope::revalidate_git_branch,
     tool_loop::{
-        FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, SimpleChatToolActivityV1,
-        SimpleChatToolBindingV1, StoredFileToolBindingV1, ToolApprovalChallengeV1,
-        file_tool_capability_binding, file_tool_capability_binding_with_nodes,
-        file_tool_descriptors, freeze_file_tool_bindings, mcp_tool_descriptor,
+        FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
+        ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
+        file_tool_capability_binding_with_nodes, file_tool_descriptors, freeze_file_tool_bindings,
+        mcp_tool_descriptor,
     },
 };
 
 const MODEL_ADAPTER_VERSION: &str = "1.0.0";
-const MODEL_NODE_TYPE: &str = "agent";
 const API_KEY_FIELD: &str = "api_key";
 const MODEL_SCOPE: &str = "model.invoke";
-pub(crate) const SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES: usize = 256 * 1024;
-pub(crate) const SIMPLE_CHAT_MAX_ASSISTANT_TEXT_BYTES: usize = 16 * 1024;
+pub(crate) const WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES: usize = 256 * 1024;
+pub(crate) const WORKFLOW_MAX_ASSISTANT_TEXT_BYTES: usize = 16 * 1024;
 const MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
-const MAXIMUM_OUTPUT_BYTES: usize = SIMPLE_CHAT_MAX_ASSISTANT_TEXT_BYTES;
+const MAXIMUM_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
 pub(crate) const MAXIMUM_WORKFLOW_SNAPSHOT_BYTES: usize = 128 * 1024;
 const MAXIMUM_PREPARED_RECORD_BYTES: usize = 768 * 1024;
 const MAXIMUM_PROVIDER_OUTCOME_BYTES: usize = 896 * 1024;
@@ -107,12 +102,12 @@ enum ProviderProtocolV1 {
 impl ProviderProtocolV1 {
     const ALL: [Self; 3] = [Self::OpenAiCompatible, Self::Anthropic, Self::Gemini];
 
-    fn parse(kind: &str) -> Result<Self, SimpleChatPipelineError> {
+    fn parse(kind: &str) -> Result<Self, WorkflowPipelineError> {
         match kind {
             "openai_compatible" => Ok(Self::OpenAiCompatible),
             "anthropic" => Ok(Self::Anthropic),
             "gemini" => Ok(Self::Gemini),
-            _ => Err(SimpleChatPipelineError::InvalidInput(format!(
+            _ => Err(WorkflowPipelineError::InvalidInput(format!(
                 "provider protocol '{kind}' has no installed authority adapter"
             ))),
         }
@@ -153,14 +148,14 @@ impl ProviderProtocolV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SimpleChatMessageV1 {
+pub struct WorkflowMessageV1 {
     pub role: String,
     pub content: String,
 }
 
 /// Frozen binding for an installed native provider protocol.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SimpleChatProviderBindingV1 {
+pub struct WorkflowProviderBindingV1 {
     /// Exact protocol kind: `openai_compatible`, `anthropic`, or `gemini`.
     pub kind: String,
     pub base_url: String,
@@ -170,11 +165,11 @@ pub struct SimpleChatProviderBindingV1 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SimpleChatExecutionRequestV1 {
+pub struct WorkflowExecutionRequestV1 {
     pub request_id: StableId,
     pub chat_id: StableId,
     pub run_id: StableId,
-    pub provider: SimpleChatProviderBindingV1,
+    pub provider: WorkflowProviderBindingV1,
     /// Hash of the complete secret-free Chat/Run context frozen at first send.
     /// It binds saved-workflow and resolution provenance into the authority
     /// snapshot without copying editable Settings into the provider payload.
@@ -187,12 +182,12 @@ pub struct SimpleChatExecutionRequestV1 {
     pub project_branch: Option<String>,
     /// Exact enabled read/search bindings frozen from Settings and the Agent
     /// node. A non-project Chat must leave this empty.
-    pub tools: Vec<SimpleChatToolBindingV1>,
+    pub tools: Vec<WorkflowToolBindingV1>,
     /// Maximum provider turns frozen from the Agent node.
     pub maximum_turns: u32,
-    /// Exact saved Simple Chat document frozen at the first input.
+    /// Exact saved workflow JSON document frozen at the first input.
     pub workflow_snapshot: Value,
-    pub messages: Vec<SimpleChatMessageV1>,
+    pub messages: Vec<WorkflowMessageV1>,
     pub now_epoch_millis: u64,
     pub deadline_epoch_millis: u64,
     pub budget: WorkerBudgetV1,
@@ -201,14 +196,14 @@ pub struct SimpleChatExecutionRequestV1 {
     pub mcp_servers: Vec<McpServerManifestV1>,
 }
 
-impl SimpleChatExecutionRequestV1 {
+impl WorkflowExecutionRequestV1 {
     #[must_use]
     pub fn bounded(
         request_id: StableId,
         chat_id: StableId,
         run_id: StableId,
-        provider: SimpleChatProviderBindingV1,
-        messages: Vec<SimpleChatMessageV1>,
+        provider: WorkflowProviderBindingV1,
+        messages: Vec<WorkflowMessageV1>,
         now_epoch_millis: u64,
     ) -> Self {
         Self {
@@ -221,7 +216,7 @@ impl SimpleChatExecutionRequestV1 {
             project_branch: None,
             tools: Vec::new(),
             maximum_turns: 1,
-            workflow_snapshot: default_simple_chat_workflow_snapshot(),
+            workflow_snapshot: Value::Null,
             messages,
             now_epoch_millis,
             deadline_epoch_millis: now_epoch_millis.saturating_add(60_000),
@@ -244,7 +239,7 @@ impl SimpleChatExecutionRequestV1 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SimpleChatExecutionStatusV1 {
+pub enum WorkflowExecutionStatusV1 {
     Succeeded,
     FailedDefinitelyNotStarted,
     FailedKnownStarted,
@@ -254,7 +249,7 @@ pub enum SimpleChatExecutionStatusV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SimpleChatExecutionResultV1 {
+pub struct WorkflowExecutionResultV1 {
     pub request_id: StableId,
     pub chat_id: StableId,
     pub run_id: StableId,
@@ -264,7 +259,7 @@ pub struct SimpleChatExecutionResultV1 {
     pub worker_invocation_id: StableId,
     pub broker_invocation_id: StableId,
     pub outcome_hash: String,
-    pub status: SimpleChatExecutionStatusV1,
+    pub status: WorkflowExecutionStatusV1,
     pub assistant_text: Option<String>,
     pub error: Option<String>,
     pub model: String,
@@ -272,38 +267,38 @@ pub struct SimpleChatExecutionResultV1 {
     pub output_units: u64,
     pub model_turns: u64,
     pub tool_calls: u64,
-    pub tool_activity: Vec<SimpleChatToolActivityV1>,
+    pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub node_activity: Vec<GraphNodeActivityV1>,
     pub approval: Option<GraphApprovalRequestV1>,
     pub replayed: bool,
 }
 
 #[derive(Debug, Error)]
-pub enum SimpleChatPipelineError {
-    #[error("Simple Chat pipeline input is invalid: {0}")]
+pub enum WorkflowPipelineError {
+    #[error("workflow pipeline input is invalid: {0}")]
     InvalidInput(String),
-    #[error("Simple Chat authority freezing failed: {0}")]
+    #[error("workflow authority freezing failed: {0}")]
     Authority(String),
-    #[error("Simple Chat durable execution store failed: {0}")]
+    #[error("workflow durable execution store failed: {0}")]
     Store(String),
-    #[error("Simple Chat invocation broker failed: {0}")]
+    #[error("workflow invocation broker failed: {0}")]
     Broker(String),
-    #[error("Simple Chat invocation requires an approval flow that is not supplied by this API")]
+    #[error("workflow invocation requires an approval flow that is not supplied by this API")]
     ApprovalRequired,
     #[error("tool invocation requires a user approval decision")]
     ToolApproval(ToolApprovalChallengeV1),
-    #[error("Simple Chat invocation was denied by its frozen authority")]
+    #[error("workflow invocation was denied by its frozen authority")]
     AuthorityDenied,
-    #[error("Simple Chat worker contract failed: {0}")]
+    #[error("workflow worker contract failed: {0}")]
     Worker(String),
-    #[error("Simple Chat host composition failed: {0}")]
+    #[error("workflow host composition failed: {0}")]
     Host(String),
-    #[error("Simple Chat durable evidence is incomplete or internally inconsistent")]
+    #[error("workflow durable evidence is incomplete or internally inconsistent")]
     IncompleteEvidence,
 }
 
 /// Long-lived service seam. It owns no editable settings representation.
-pub struct SimpleChatExecutionPipeline {
+pub struct WorkflowExecutionPipeline {
     root: PathBuf,
     projects: ProjectCoordinator,
     records: Arc<PipelineRecordStore>,
@@ -318,15 +313,15 @@ pub struct SimpleChatExecutionPipeline {
     provider_factory: Arc<dyn ProviderFactoryV1>,
 }
 
-impl SimpleChatExecutionPipeline {
-    pub fn open(data_root: impl AsRef<Path>) -> Result<Self, SimpleChatPipelineError> {
+impl WorkflowExecutionPipeline {
+    pub fn open(data_root: impl AsRef<Path>) -> Result<Self, WorkflowPipelineError> {
         Self::open_with_credential_store(data_root, Arc::new(NativeCredentialStore::new()))
     }
 
     pub fn open_with_credential_store(
         data_root: impl AsRef<Path>,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
-    ) -> Result<Self, SimpleChatPipelineError> {
+    ) -> Result<Self, WorkflowPipelineError> {
         Self::compose(
             data_root.as_ref(),
             credential_store,
@@ -338,11 +333,11 @@ impl SimpleChatExecutionPipeline {
         data_root: &Path,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
         provider_factory: Arc<dyn ProviderFactoryV1>,
-    ) -> Result<Self, SimpleChatPipelineError> {
+    ) -> Result<Self, WorkflowPipelineError> {
         fs::create_dir_all(data_root).map_err(store_error)?;
         let root = fs::canonicalize(data_root).map_err(store_error)?;
-        let projects = ProjectCoordinator::open(root.join("core").join("simple-chat"))
-            .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
+        let projects = ProjectCoordinator::open(root.join("core").join("workflow-execution"))
+            .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
         fs::create_dir_all(root.join("core").join("unscoped-workspace")).map_err(store_error)?;
         let database = root.join("history").join("aworkit-invocations.sqlite3");
         let records = Arc::new(PipelineRecordStore::open(&database)?);
@@ -358,28 +353,28 @@ impl SimpleChatExecutionPipeline {
         for descriptor in descriptors.values() {
             registry
                 .register_capability(descriptor.clone())
-                .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+                .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         }
         for descriptor in file_tool_descriptors.values() {
             registry
                 .register_capability(descriptor.clone())
-                .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+                .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         }
         let mut attested = AttestedExtensionSetV1 {
-            host_id: stable("host.simple-chat")?,
+            host_id: stable("host.workflow-execution")?,
             host_generation: generation,
             host_protocol: 1,
             extensions: Vec::new(),
             set_hash: String::new(),
         };
         attested.set_hash = attested_extension_set_hash_v1(&attested)
-            .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         let frozen = registry
             .materialize_attested_set(&attested)
-            .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         let host = Arc::new(
             CapabilityHost::from_attested_registry(frozen, core_key.copy(), 8)
-                .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?,
+                .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?,
         );
         let file_tool_authority = FileToolAuthorityRuntimeV1::open(
             &database,
@@ -410,8 +405,8 @@ impl SimpleChatExecutionPipeline {
     /// the broker, materializing a secret, or invoking a provider/tool.
     pub fn preflight(
         &self,
-        request: &SimpleChatExecutionRequestV1,
-    ) -> Result<(), SimpleChatPipelineError> {
+        request: &WorkflowExecutionRequestV1,
+    ) -> Result<(), WorkflowPipelineError> {
         self.validated_prepared(request).map(|_| ())
     }
 
@@ -420,19 +415,19 @@ impl SimpleChatExecutionPipeline {
     pub(crate) fn run_todo_state(
         &self,
         run_id: &StableId,
-    ) -> Result<Option<Value>, SimpleChatPipelineError> {
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
         self.file_tool_authority.todo_state(run_id)
     }
 
     fn validated_prepared(
         &self,
-        request: &SimpleChatExecutionRequestV1,
-    ) -> Result<(PreparedExecutionRecordV1, bool), SimpleChatPipelineError> {
+        request: &WorkflowExecutionRequestV1,
+    ) -> Result<(PreparedExecutionRecordV1, bool), WorkflowPipelineError> {
         let protocol = ProviderProtocolV1::parse(&request.provider.kind)?;
         let descriptor = self
             .descriptors
             .get(&protocol)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         validate_request(request, protocol, descriptor)?;
         if let Some(existing) = self.records.execution(&request.request_id)? {
             self.validate_existing_request_semantics(request, &existing)?;
@@ -440,10 +435,10 @@ impl SimpleChatExecutionPipeline {
                 let workspace = existing
                     .workspace
                     .as_ref()
-                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 self.projects
                     .revalidate_workspace_v1(workspace)
-                    .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
+                    .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
                 revalidate_optional_project_branch(workspace, existing.project_branch.as_deref())?;
             }
             return Ok((existing, true));
@@ -454,7 +449,7 @@ impl SimpleChatExecutionPipeline {
             .execution_for_chat_or_run(&request.chat_id, &request.run_id)?
             && !prepared.same_frozen_run(&existing_run)
         {
-            return Err(SimpleChatPipelineError::Store(
+            return Err(WorkflowPipelineError::Store(
                 "Chat/Run identity was reused with changed frozen authority".to_owned(),
             ));
         }
@@ -463,9 +458,9 @@ impl SimpleChatExecutionPipeline {
 
     fn validate_existing_request_semantics(
         &self,
-        request: &SimpleChatExecutionRequestV1,
+        request: &WorkflowExecutionRequestV1,
         existing: &PreparedExecutionRecordV1,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let provider = StoredProviderBindingV1 {
             kind: request.provider.kind.clone(),
             base_url: request.provider.base_url.clone(),
@@ -484,7 +479,7 @@ impl SimpleChatExecutionPipeline {
             .get("context")
             .and_then(|context| context.get("messages"))
             .cloned()
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let request_messages = serde_json::to_value(&request.messages).map_err(json_error)?;
         let workspace_matches = match &request.workspace {
             Some(workspace) => existing.workspace.as_ref() == Some(workspace),
@@ -549,7 +544,7 @@ impl SimpleChatExecutionPipeline {
             || !saved_edges_match
             || !frozen_context_matches
         {
-            return Err(SimpleChatPipelineError::Store(
+            return Err(WorkflowPipelineError::Store(
                 "request ID was reused with changed frozen execution semantics".to_owned(),
             ));
         }
@@ -559,7 +554,7 @@ impl SimpleChatExecutionPipeline {
     fn existing_request_can_still_start_effect(
         &self,
         existing: &PreparedExecutionRecordV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         let Some(invocation_id) = self
             .ledger
             .invocation_for_proposal(&existing.broker_proposal.proposal_id)?
@@ -581,13 +576,13 @@ impl SimpleChatExecutionPipeline {
         Ok(!effect_fenced)
     }
 
-    /// Executes one exact Simple Chat model turn through every authority and
+    /// Executes one exact workflow pass through every authority and
     /// settlement boundary. Reusing `request_id` with changed semantics fails;
     /// an exact retry returns durable evidence without calling the provider.
     pub fn execute(
         &self,
-        request: SimpleChatExecutionRequestV1,
-    ) -> Result<SimpleChatExecutionResultV1, SimpleChatPipelineError> {
+        request: WorkflowExecutionRequestV1,
+    ) -> Result<WorkflowExecutionResultV1, WorkflowPipelineError> {
         let (prepared, record_existing) = self.validated_prepared(&request)?;
         if !record_existing {
             self.records.record_execution(&prepared)?;
@@ -610,15 +605,15 @@ impl SimpleChatExecutionPipeline {
             )
             .map_err(broker_error)?;
         let broker_invocation_id = match decision {
-            BrokerDecisionV1::Denied => return Err(SimpleChatPipelineError::AuthorityDenied),
+            BrokerDecisionV1::Denied => return Err(WorkflowPipelineError::AuthorityDenied),
             BrokerDecisionV1::AwaitingApproval(_) => {
-                return Err(SimpleChatPipelineError::ApprovalRequired);
+                return Err(WorkflowPipelineError::ApprovalRequired);
             }
             BrokerDecisionV1::DispatchReady(dispatch) => dispatch.invocation_id,
             BrokerDecisionV1::AlreadySettled(_) => self
                 .ledger
                 .invocation_for_proposal(&prepared.broker_proposal.proposal_id)?
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?,
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?,
         };
 
         self.reconcile_persisted_outcomes(&broker)?;
@@ -648,7 +643,7 @@ impl SimpleChatExecutionPipeline {
                 .pending_approval_for_invocation(&broker_invocation_id)?
         {
             // The graph pass is durably suspended at an approval gate.
-            return Ok(SimpleChatExecutionResultV1 {
+            return Ok(WorkflowExecutionResultV1 {
                 request_id: prepared.request_id,
                 chat_id: prepared.snapshot.chat_id.clone(),
                 run_id: prepared.snapshot.run_id.clone(),
@@ -658,7 +653,7 @@ impl SimpleChatExecutionPipeline {
                 worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
                 broker_invocation_id,
                 outcome_hash: String::new(),
-                status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                status: WorkflowExecutionStatusV1::AwaitingApproval,
                 assistant_text: None,
                 error: None,
                 model: prepared.provider.model.clone(),
@@ -681,7 +676,7 @@ impl SimpleChatExecutionPipeline {
         let (outcome_hash, uncertain) = self
             .ledger
             .settlement(&broker_invocation_id)?
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let durable_outcome = self
             .records
             .outcome(&broker_invocation_id)?
@@ -689,13 +684,13 @@ impl SimpleChatExecutionPipeline {
         let outcome = if let Some(outcome) = durable_outcome {
             outcome
         } else {
-            let mut outcome = ProviderOutcomeRecordV1 {
+            let outcome = ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: broker_invocation_id.clone(),
                 status: if uncertain {
-                    SimpleChatExecutionStatusV1::OutcomeUncertain
+                    WorkflowExecutionStatusV1::OutcomeUncertain
                 } else {
-                    SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
+                    WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
                 },
                 assistant_text: None,
                 error: Some(if uncertain {
@@ -716,14 +711,10 @@ impl SimpleChatExecutionPipeline {
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             };
-            if prepared.scheduler_checkpoint.is_some() {
-                finalize_scheduler_evidence(&prepared, &mut outcome)?;
-            }
             outcome
         };
-        settle_worker_contract(&prepared, &outcome, &outcome_hash)?;
         let _ = broker.deliver_worker_results(&CommittedWorkerAck);
-        Ok(SimpleChatExecutionResultV1 {
+        Ok(WorkflowExecutionResultV1 {
             request_id: prepared.request_id,
             chat_id: prepared.snapshot.chat_id.clone(),
             run_id: prepared.snapshot.run_id.clone(),
@@ -757,9 +748,9 @@ impl SimpleChatExecutionPipeline {
         &self,
         decision_id: &str,
         approved: bool,
-    ) -> Result<SimpleChatExecutionResultV1, SimpleChatPipelineError> {
+    ) -> Result<WorkflowExecutionResultV1, WorkflowPipelineError> {
         if self.records.approval_resolved(decision_id)? {
-            return Err(SimpleChatPipelineError::Store(
+            return Err(WorkflowPipelineError::Store(
                 "approval decision was already applied".to_owned(),
             ));
         }
@@ -767,34 +758,34 @@ impl SimpleChatExecutionPipeline {
         let pending =
             self.records
                 .pending_approval(decision_id)?
-                .ok_or(SimpleChatPipelineError::Store(
+                .ok_or(WorkflowPipelineError::Store(
                     "unknown approval decision".to_owned(),
                 ))?;
         let request_id = stable(&pending.request_id)?;
         let prepared = self
             .records
             .execution(&request_id)?
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let broker_invocation_id = stable(&pending.invocation_id)?;
         let recorded_invocation = self
             .ledger
             .invocation_for_proposal(&prepared.broker_proposal.proposal_id)?
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         if recorded_invocation != broker_invocation_id
             || prepared.snapshot.chat_id.as_str() != pending.chat_id
             || prepared.snapshot.run_id.as_str() != pending.run_id
         {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
+            return Err(WorkflowPipelineError::IncompleteEvidence);
         }
         let workspace = prepared
             .workspace
             .as_ref()
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         if self.projects.revalidate_workspace_v1(workspace).is_err()
             || revalidate_optional_project_branch(workspace, prepared.project_branch.as_deref())
                 .is_err()
         {
-            return Err(SimpleChatPipelineError::Authority(
+            return Err(WorkflowPipelineError::Authority(
                 "frozen project workspace or Git branch drifted before approval resume".into(),
             ));
         }
@@ -802,7 +793,7 @@ impl SimpleChatExecutionPipeline {
         let descriptor = self
             .descriptors
             .get(&protocol)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let lease_authority = Arc::new(PipelineLeaseAuthority::new(
             self.generation,
             self.credential_store.clone(),
@@ -830,7 +821,7 @@ impl SimpleChatExecutionPipeline {
             }) {
                 Ok(materialized) => Some(materialized),
                 Err(error) => {
-                    return Err(SimpleChatPipelineError::Store(format!(
+                    return Err(WorkflowPipelineError::Store(format!(
                         "credential lease materialization failed: {error}"
                     )));
                 }
@@ -845,7 +836,7 @@ impl SimpleChatExecutionPipeline {
             Some(bytes) => match String::from_utf8(bytes.to_vec()) {
                 Ok(value) => Some(Zeroizing::new(value)),
                 Err(_) => {
-                    return Err(SimpleChatPipelineError::Store(
+                    return Err(WorkflowPipelineError::Store(
                         "credential API-key field is not valid UTF-8".to_owned(),
                     ));
                 }
@@ -855,7 +846,7 @@ impl SimpleChatExecutionPipeline {
         let provider = self
             .provider_factory
             .create(descriptor, &prepared.provider, api_key)
-            .map_err(|error| SimpleChatPipelineError::Store(redact_error(&materialized, &error)))?;
+            .map_err(|error| WorkflowPipelineError::Store(redact_error(&materialized, &error)))?;
         let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
         let workflow = prepared
             .worker_proposal
@@ -863,9 +854,9 @@ impl SimpleChatExecutionPipeline {
             .get("config")
             .and_then(|config| config.get("workflow"))
             .cloned()
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let compiled = compile_graph_pass(&workflow, &prepared.tool_bindings)
-            .map_err(SimpleChatPipelineError::InvalidInput)?;
+            .map_err(WorkflowPipelineError::InvalidInput)?;
         let cancellation = CancellationToken::default();
         let authority = self
             .file_tool_authority
@@ -910,10 +901,10 @@ impl SimpleChatExecutionPipeline {
                 let next = pass
                     .pending_state
                     .clone()
-                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 self.records.mark_approval_resolved(&decision)?;
                 self.records.store_pending_approval(&next)?;
-                Ok(SimpleChatExecutionResultV1 {
+                Ok(WorkflowExecutionResultV1 {
                     request_id: prepared.request_id,
                     chat_id: prepared.snapshot.chat_id.clone(),
                     run_id: prepared.snapshot.run_id.clone(),
@@ -923,7 +914,7 @@ impl SimpleChatExecutionPipeline {
                     worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
                     broker_invocation_id,
                     outcome_hash: String::new(),
-                    status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                    status: WorkflowExecutionStatusV1::AwaitingApproval,
                     assistant_text: None,
                     error: None,
                     model: prepared.provider.model.clone(),
@@ -939,9 +930,9 @@ impl SimpleChatExecutionPipeline {
             }
             GraphPassStatusV1::Succeeded | GraphPassStatusV1::Failed => {
                 let status = if matches!(pass.status, GraphPassStatusV1::Succeeded) {
-                    SimpleChatExecutionStatusV1::Succeeded
+                    WorkflowExecutionStatusV1::Succeeded
                 } else {
-                    SimpleChatExecutionStatusV1::FailedKnownStarted
+                    WorkflowExecutionStatusV1::FailedKnownStarted
                 };
                 let mut record = ProviderOutcomeRecordV1 {
                     schema_version: 1,
@@ -974,11 +965,10 @@ impl SimpleChatExecutionPipeline {
                 let (outcome_hash, _uncertain) = self
                     .ledger
                     .settlement(&broker_invocation_id)?
-                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-                settle_worker_contract(&prepared, &record, &outcome_hash)?;
+                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 let _ = broker.deliver_worker_results(&CommittedWorkerAck);
                 self.records.mark_approval_resolved(&decision)?;
-                Ok(SimpleChatExecutionResultV1 {
+                Ok(WorkflowExecutionResultV1 {
                     request_id: prepared.request_id,
                     chat_id: prepared.snapshot.chat_id.clone(),
                     run_id: prepared.snapshot.run_id.clone(),
@@ -1057,12 +1047,12 @@ impl SimpleChatExecutionPipeline {
         &self,
         broker: &DurableInvocationBroker,
         authority: &PipelineLeaseAuthority,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         for outbox in broker.pending_dispatches().map_err(broker_error)? {
             let record = self
                 .records
                 .execution_for_dispatch(&outbox.dispatch)?
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
             authority.prepare(
                 record.secret.as_ref(),
                 &outbox.dispatch.invocation_id,
@@ -1075,11 +1065,10 @@ impl SimpleChatExecutionPipeline {
 
     fn prepare(
         &self,
-        request: &SimpleChatExecutionRequestV1,
+        request: &WorkflowExecutionRequestV1,
         protocol: ProviderProtocolV1,
         descriptor: &CapabilityDescriptor,
-    ) -> Result<PreparedExecutionRecordV1, SimpleChatPipelineError> {
-        let scheduler_basis = self.scheduler_continuation_basis(request)?;
+    ) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
         let capability_id = stable(protocol.capability_id())?;
         let secret = request
             .provider
@@ -1093,38 +1082,21 @@ impl SimpleChatExecutionPipeline {
             model: request.provider.model.clone(),
         };
         let tool_bindings = freeze_file_tool_bindings(&request.tools)?;
-        let graph_mode = !is_simple_chat_document(&request.workflow_snapshot);
-        let (nodes, transitions, entry_nodes, model_node_id) = if graph_mode {
-            compile_graph_snapshot(
-                request,
-                descriptor,
-                &provider,
-                secret.as_ref(),
-                &tool_bindings,
-            )?
-        } else {
-            let CompiledSimpleChatGraphV1 {
-                nodes,
-                transitions,
-                entry_nodes,
-                model_node_id,
-            } = compile_simple_chat_graph(
-                request,
-                descriptor,
-                &provider,
-                secret.as_ref(),
-                &tool_bindings,
-            )?;
-            (nodes, transitions, entry_nodes, model_node_id)
-        };
+        let (nodes, transitions, entry_nodes, model_node_id) = compile_graph_snapshot(
+            request,
+            descriptor,
+            &provider,
+            secret.as_ref(),
+            &tool_bindings,
+        )?;
         let workflow_hash =
             workflow_graph_hash_v1(&nodes, &transitions, &entry_nodes, &[], &[], &[])
-                .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
+                .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
         let workspace = request.workspace.clone().map_or_else(
             || {
                 self.projects
                     .resolve_workspace_v1(self.root.join("core").join("unscoped-workspace"))
-                    .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))
+                    .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))
             },
             Ok,
         )?;
@@ -1139,11 +1111,7 @@ impl SimpleChatExecutionPipeline {
             enabled: true,
             compatible: true,
             approval: ApprovalRequirement::Never,
-            allowed_node_types: if graph_mode {
-                vec!["agent".to_owned(), "model_call".to_owned()]
-            } else {
-                vec![MODEL_NODE_TYPE.to_owned()]
-            },
+            allowed_node_types: vec!["agent".to_owned(), "model_call".to_owned()],
         };
         let mut dynamic_descriptors = BTreeMap::new();
         for tool in &tool_bindings {
@@ -1165,16 +1133,12 @@ impl SimpleChatExecutionPipeline {
                 .file_tool_descriptors
                 .get(descriptor_key)
                 .or_else(|| dynamic_descriptors.get(descriptor_key))
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            let binding = if graph_mode {
-                file_tool_capability_binding_with_nodes(
-                    tool,
-                    descriptor,
-                    vec!["agent".to_owned(), "tool".to_owned()],
-                )
-            } else {
-                file_tool_capability_binding(tool, descriptor)
-            }?;
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            let binding = file_tool_capability_binding_with_nodes(
+                tool,
+                descriptor,
+                vec!["agent".to_owned(), "tool".to_owned()],
+            )?;
             capability_bindings.push(binding);
         }
         let entry_node_id = entry_nodes.first().cloned();
@@ -1197,20 +1161,16 @@ impl SimpleChatExecutionPipeline {
                 history_mode: HistoryBackendV1::LocalSqlite,
             },
         )
-        .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
+        .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
 
-        let (scheduler_checkpoint, scheduler_trace, scheduler_continuation, agent_token_id) =
-            if graph_mode {
-                (None, Vec::new(), 0, None)
-            } else {
-                let (checkpoint, trace, continuation, token_id) =
-                    prepare_scheduler_for_agent(&snapshot, scheduler_basis.as_ref())?;
-                (Some(checkpoint), trace, continuation, Some(token_id))
-            };
+        let scheduler_checkpoint = None;
+        let scheduler_trace = Vec::new();
+        let scheduler_continuation = 0;
+        let agent_token_id = None;
 
         let budget_ref = digest_id("budget", request.request_id.as_str())?;
         let scope_id = format!("run.{}", &digest_hex(request.run_id.as_str())[..24]);
-        let mut limits = LimitLedger::new(
+        let limits = LimitLedger::new(
             scope_id.clone(),
             BudgetEnvelope {
                 turns: request.budget.turns,
@@ -1225,8 +1185,8 @@ impl SimpleChatExecutionPipeline {
                 deadline_tick: request.budget.deadline_ms,
             },
         )
-        .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-        let mut agent = AgentLoopV1::new(AgentLoopConfigV1 {
+        .map_err(|error| WorkflowPipelineError::Worker(error.to_string()))?;
+        let agent = AgentLoopV1::new(AgentLoopConfigV1 {
             loop_id: digest_id("agent.loop", request.request_id.as_str())?,
             node_id: model_node_id,
             model_capability_ref: capability_id.clone(),
@@ -1256,34 +1216,22 @@ impl SimpleChatExecutionPipeline {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         })
-        .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
+        .map_err(|error| WorkflowPipelineError::Worker(error.to_string()))?;
         let context = json!({"messages": request.messages});
-        let worker_proposal = if graph_mode {
-            let invocation_id = digest_id("pass", request.request_id.as_str())?;
-            let node_id = entry_node_id.ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            let payload = json!({
-                "context": context,
-                "config": {"workflow": request.workflow_snapshot},
-            });
-            WorkerInvocationProposalContractV1 {
-                invocation_id: invocation_id.clone(),
-                node_id,
-                attempt_id: digest_id("pass.attempt", request.request_id.as_str())?,
-                capability_ref: capability_id.clone(),
-                authority_manifest_ref: manifest.manifest_id.clone(),
-                budget_ref: budget_ref.clone(),
-                payload,
-            }
-        } else {
-            let proposal = agent
-                .propose_model_turn(&context, &mut limits)
-                .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-            if proposal.authority_manifest_ref != manifest.manifest_id
-                || proposal.capability_ref != capability_id
-            {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            proposal
+        let invocation_id = digest_id("pass", request.request_id.as_str())?;
+        let node_id = entry_node_id.ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+        let payload = json!({
+            "context": context,
+            "config": {"workflow": request.workflow_snapshot},
+        });
+        let worker_proposal = WorkerInvocationProposalContractV1 {
+            invocation_id: invocation_id.clone(),
+            node_id,
+            attempt_id: digest_id("pass.attempt", request.request_id.as_str())?,
+            capability_ref: capability_id.clone(),
+            authority_manifest_ref: manifest.manifest_id.clone(),
+            budget_ref: budget_ref.clone(),
+            payload,
         };
         let payload_hash = canonical_hash(&worker_proposal.payload)?;
         let broker_proposal = BrokerInvocationProposalV1 {
@@ -1328,108 +1276,10 @@ impl SimpleChatExecutionPipeline {
         Ok(prepared)
     }
 
-    fn scheduler_continuation_basis(
-        &self,
-        request: &SimpleChatExecutionRequestV1,
-    ) -> Result<Option<SchedulerContinuationBasisV1>, SimpleChatPipelineError> {
-        let executions = self.records.executions()?;
-        if let Some(existing) = executions
-            .iter()
-            .find(|record| record.request_id == request.request_id)
-            && (existing.snapshot.chat_id != request.chat_id
-                || existing.snapshot.run_id != request.run_id)
-        {
-            return Err(SimpleChatPipelineError::Store(
-                "request ID is already bound to a different Chat/Run".to_owned(),
-            ));
-        }
-        if executions.iter().any(|record| {
-            (record.snapshot.chat_id == request.chat_id)
-                != (record.snapshot.run_id == request.run_id)
-        }) {
-            return Err(SimpleChatPipelineError::Store(
-                "Chat and Run identities no longer refer to the same frozen session".to_owned(),
-            ));
-        }
-        if !is_simple_chat_document(&request.workflow_snapshot) {
-            // Graph passes are one fresh pass per input; there is no
-            // Wait-token scheduler continuation to reconstruct.
-            return Ok(None);
-        }
-        let session = executions
-            .iter()
-            .filter(|record| {
-                record.snapshot.chat_id == request.chat_id
-                    && record.snapshot.run_id == request.run_id
-            })
-            .collect::<Vec<_>>();
-        let position = session
-            .iter()
-            .position(|record| record.request_id == request.request_id)
-            .unwrap_or(session.len());
-        for (ordinal, record) in session.iter().take(position).enumerate() {
-            let ordinal =
-                u64::try_from(ordinal).map_err(|_| SimpleChatPipelineError::IncompleteEvidence)?;
-            if record.scheduler_continuation != ordinal {
-                return Err(SimpleChatPipelineError::Store(
-                    "this legacy Run contains independently seeded Scheduler records and cannot be continued safely; start a New Chat"
-                        .to_owned(),
-                ));
-            }
-        }
-        let Some(previous) = position.checked_sub(1).and_then(|index| session.get(index)) else {
-            return Ok(None);
-        };
-        let next_continuation = previous
-            .scheduler_continuation
-            .checked_add(1)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        let invocation_id = self
-            .ledger
-            .invocation_for_proposal(&previous.broker_proposal.proposal_id)?
-            .ok_or_else(|| {
-                SimpleChatPipelineError::Store(
-                    "the previous Input has no durable invocation identity; recover it before continuing"
-                        .to_owned(),
-                )
-            })?;
-        let (settled_hash, uncertain) =
-            self.ledger.settlement(&invocation_id)?.ok_or_else(|| {
-                SimpleChatPipelineError::Store(
-                    "the previous Input is not durably settled; recover it before continuing"
-                        .to_owned(),
-                )
-            })?;
-        let outcome = self.records.outcome(&invocation_id)?.ok_or_else(|| {
-            SimpleChatPipelineError::Store(
-                "the previous Input has no terminal Scheduler evidence; recover it before continuing"
-                    .to_owned(),
-            )
-        })?;
-        if uncertain
-            || outcome.status != SimpleChatExecutionStatusV1::Succeeded
-            || outcome_hash_v1(&outcome)? != settled_hash
-        {
-            return Err(SimpleChatPipelineError::Store(
-                "the previous Input did not reach a conclusive suspended Wait; start a New Chat"
-                    .to_owned(),
-            ));
-        }
-        validate_final_scheduler_evidence(previous, &outcome)?;
-        validate_follow_up_context(previous, &outcome, request)?;
-        Ok(Some(SchedulerContinuationBasisV1 {
-            checkpoint: outcome
-                .scheduler_checkpoint
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?,
-            trace: outcome.scheduler_trace,
-            continuation: next_continuation,
-        }))
-    }
-
     fn reconcile_persisted_outcomes(
         &self,
         broker: &DurableInvocationBroker,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         for outcome in self.records.outcomes()? {
             let events = self
                 .ledger
@@ -1471,7 +1321,7 @@ impl SimpleChatExecutionPipeline {
                 .settle(
                     &outcome.invocation_id,
                     outcome_hash_v1(&outcome)?,
-                    outcome.status == SimpleChatExecutionStatusV1::OutcomeUncertain,
+                    outcome.status == WorkflowExecutionStatusV1::OutcomeUncertain,
                 )
                 .map_err(broker_error)?;
         }
@@ -1496,9 +1346,9 @@ struct StoredSecretBindingV1 {
 }
 
 impl StoredSecretBindingV1 {
-    fn from_metadata(metadata: &CredentialMetadataV1) -> Result<Self, SimpleChatPipelineError> {
+    fn from_metadata(metadata: &CredentialMetadataV1) -> Result<Self, WorkflowPipelineError> {
         if metadata.revision == 0 || !metadata.field_names.contains(API_KEY_FIELD) {
-            return Err(SimpleChatPipelineError::InvalidInput(
+            return Err(WorkflowPipelineError::InvalidInput(
                 "credential metadata must expose a non-zero revision and the api_key field"
                     .to_owned(),
             ));
@@ -1595,7 +1445,7 @@ impl PreparedExecutionRecordV1 {
 struct ProviderOutcomeRecordV1 {
     schema_version: u16,
     invocation_id: StableId,
-    status: SimpleChatExecutionStatusV1,
+    status: WorkflowExecutionStatusV1,
     assistant_text: Option<String>,
     error: Option<String>,
     model: String,
@@ -1608,7 +1458,7 @@ struct ProviderOutcomeRecordV1 {
     #[serde(default)]
     tool_exchanges: Vec<ModelToolExchangeV1>,
     #[serde(default)]
-    tool_activity: Vec<SimpleChatToolActivityV1>,
+    tool_activity: Vec<WorkflowToolActivityV1>,
     #[serde(default)]
     node_activity: Vec<GraphNodeActivityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1632,21 +1482,13 @@ struct SchedulerTraceEntryV1 {
     target_node_id: Option<StableId>,
 }
 
-#[derive(Clone, Debug)]
-struct SchedulerContinuationBasisV1 {
-    checkpoint: SchedulerCheckpointV1,
-    trace: Vec<SchedulerTraceEntryV1>,
-    /// Zero-based number to assign to the Input that is about to be accepted.
-    continuation: u64,
-}
-
 pub(super) struct CoreAuthenticationKey(Zeroizing<Vec<u8>>);
 
 impl CoreAuthenticationKey {
-    pub(super) fn random() -> Result<Self, SimpleChatPipelineError> {
+    pub(super) fn random() -> Result<Self, WorkflowPipelineError> {
         let mut bytes = vec![0_u8; 32];
         getrandom::fill(&mut bytes)
-            .map_err(|_| SimpleChatPipelineError::Host("random key generation failed".into()))?;
+            .map_err(|_| WorkflowPipelineError::Host("random key generation failed".into()))?;
         Ok(Self(Zeroizing::new(bytes)))
     }
 
@@ -1756,26 +1598,26 @@ impl PipelineLeaseAuthority {
         invocation_id: &StableId,
         run_id: &StableId,
         lease_ids: &[StableId],
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let Some(secret) = secret else {
             return if lease_ids.is_empty() {
                 Ok(())
             } else {
-                Err(SimpleChatPipelineError::IncompleteEvidence)
+                Err(WorkflowPipelineError::IncompleteEvidence)
             };
         };
         if lease_ids.len() != 1 {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
+            return Err(WorkflowPipelineError::IncompleteEvidence);
         }
         let expected = lease_id(invocation_id, secret)?;
         if lease_ids[0] != expected {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
+            return Err(WorkflowPipelineError::IncompleteEvidence);
         }
 
         let mut broker = SecretBroker::with_store(self.store.clone());
         broker
             .restore_credential_metadata(secret.metadata())
-            .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         broker
             .issue_scoped(ScopedLeaseRequestV1 {
                 lease_id: expected.clone(),
@@ -1788,10 +1630,10 @@ impl PipelineLeaseAuthority {
                 ttl: LEASE_TTL,
                 maximum_uses: 1,
             })
-            .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         self.brokers
             .lock()
-            .map_err(|_| SimpleChatPipelineError::Host("credential lease lock poisoned".into()))?
+            .map_err(|_| WorkflowPipelineError::Host("credential lease lock poisoned".into()))?
             .insert(expected.as_str().to_owned(), broker);
         Ok(())
     }
@@ -2020,7 +1862,7 @@ struct ModelInvocationDispatcher {
 }
 
 impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
-    type Output = Result<ProviderOutcomeRecordV1, SimpleChatPipelineError>;
+    type Output = Result<ProviderOutcomeRecordV1, WorkflowPipelineError>;
 
     fn dispatch(
         &self,
@@ -2040,7 +1882,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             return self.persist(ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: envelope.invocation_id.clone(),
-                status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                 assistant_text: None,
                 error: Some(
                     "frozen project workspace or Git branch drifted before provider dispatch"
@@ -2065,7 +1907,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 return self.persist(ProviderOutcomeRecordV1 {
                     schema_version: 1,
                     invocation_id: envelope.invocation_id.clone(),
-                    status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                    status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                     assistant_text: None,
                     error: Some(error.to_string()),
                     model: self.provider.model.clone(),
@@ -2101,7 +1943,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     return self.persist(ProviderOutcomeRecordV1 {
                         schema_version: 1,
                         invocation_id: envelope.invocation_id.clone(),
-                        status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                        status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                         assistant_text: None,
                         error: Some(format!("credential lease materialization failed: {error}")),
                         model: self.provider.model.clone(),
@@ -2131,7 +1973,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     return self.persist(ProviderOutcomeRecordV1 {
                         schema_version: 1,
                         invocation_id: envelope.invocation_id.clone(),
-                        status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                        status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                         assistant_text: None,
                         error: Some("credential API-key field is not valid UTF-8".to_owned()),
                         model: self.provider.model.clone(),
@@ -2159,7 +2001,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 return self.persist(ProviderOutcomeRecordV1 {
                     schema_version: 1,
                     invocation_id: envelope.invocation_id.clone(),
-                    status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                    status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                     assistant_text: None,
                     error: Some(redact_error(&materialized, &error)),
                     model: self.provider.model.clone(),
@@ -2180,7 +2022,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             return self.persist(ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: envelope.invocation_id.clone(),
-                status: SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted,
+                status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                 assistant_text: None,
                 error: Some("worker proposal did not contain a model context".to_owned()),
                 model: self.provider.model.clone(),
@@ -2197,14 +2039,18 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             });
         };
         let gateway = Arc::new(FrozenModelGateway::new(vec![provider]));
-        let graph_workflow = envelope
+        let workflow = envelope
             .payload
             .get("config")
             .and_then(|config| config.get("workflow"))
             .cloned()
-            .filter(|workflow| !is_simple_chat_document(workflow));
-        let outcome = if let Some(workflow) = graph_workflow {
-            let conversation: Vec<SimpleChatMessageV1> = serde_json::from_value(
+            .ok_or_else(|| {
+                WorkflowPipelineError::InvalidInput(
+                    "worker proposal did not contain a frozen workflow JSON document".to_owned(),
+                )
+            })?;
+        let outcome = {
+            let conversation: Vec<WorkflowMessageV1> = serde_json::from_value(
                 context
                     .get("messages")
                     .cloned()
@@ -2215,7 +2061,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .prepared
                 .workspace
                 .clone()
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
             let authority = self
                 .file_tool_authority
                 .bind(FrozenFileToolAuthorityContextV1 {
@@ -2233,7 +2079,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     cancellation: cancellation.clone(),
                 });
             let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
-                .map_err(|error| SimpleChatPipelineError::InvalidInput(error))?;
+                .map_err(|error| WorkflowPipelineError::InvalidInput(error))?;
             let pass = execute_graph_pass(
                 &compiled,
                 &conversation,
@@ -2259,7 +2105,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             let base = ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: envelope.invocation_id.clone(),
-                status: SimpleChatExecutionStatusV1::FailedKnownStarted,
+                status: WorkflowExecutionStatusV1::FailedKnownStarted,
                 assistant_text: None,
                 error: None,
                 model: self.provider.model.clone(),
@@ -2276,13 +2122,13 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             };
             match pass.status {
                 GraphPassStatusV1::Succeeded => ProviderOutcomeRecordV1 {
-                    status: SimpleChatExecutionStatusV1::Succeeded,
+                    status: WorkflowExecutionStatusV1::Succeeded,
                     assistant_text: pass.assistant_text,
                     error: None,
                     ..base
                 },
                 GraphPassStatusV1::Failed => ProviderOutcomeRecordV1 {
-                    status: SimpleChatExecutionStatusV1::FailedKnownStarted,
+                    status: graph_failure_status(pass.error.as_deref()),
                     assistant_text: None,
                     error: pass.error,
                     ..base
@@ -2291,120 +2137,18 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     let pending = pass
                         .pending_state
                         .clone()
-                        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+                        .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                     self.records.store_pending_approval(&pending)?;
                     ProviderOutcomeRecordV1 {
-                        status: SimpleChatExecutionStatusV1::AwaitingApproval,
+                        status: WorkflowExecutionStatusV1::AwaitingApproval,
                         assistant_text: None,
                         error: None,
                         ..base
                     }
                 }
             }
-        } else if self.prepared.tool_bindings.is_empty() {
-            text_only_outcome(
-                &gateway,
-                &self.descriptor,
-                context,
-                envelope,
-                cancellation,
-                &self.provider.model,
-                &materialized,
-            )
-        } else {
-            let workspace = self
-                .prepared
-                .workspace
-                .clone()
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            let authority = self
-                .file_tool_authority
-                .bind(FrozenFileToolAuthorityContextV1 {
-                    manifest: self.prepared.manifest.clone(),
-                    run_id: self.prepared.snapshot.run_id.clone(),
-                    node_id: self.prepared.worker_proposal.node_id.clone(),
-                    workspace,
-                    project_branch: self.prepared.project_branch.clone(),
-                    bindings: self.prepared.tool_bindings.clone(),
-                    deadline_epoch_millis: self.prepared.deadline_epoch_millis,
-                    model_gateway: Some(gateway.clone()),
-                    model_binding_id: Some(self.descriptor.capability_id.clone()),
-                    model_version_hash: Some(self.descriptor.version_hash.clone()),
-                    mcp_manifests: self.prepared.mcp_manifests.clone(),
-                    cancellation: cancellation.clone(),
-                });
-            match execute_model_tool_loop_v1(
-                &gateway,
-                ModelToolLoopRequestV1 {
-                    outer_invocation_id: &envelope.invocation_id,
-                    input: context.clone(),
-                    definitions: self
-                        .prepared
-                        .tool_bindings
-                        .iter()
-                        .map(StoredFileToolBindingV1::definition)
-                        .collect(),
-                    binding_id: self.descriptor.capability_id.clone(),
-                    binding_version_hash: self.descriptor.version_hash.clone(),
-                    maximum_input_bytes: MAXIMUM_INPUT_BYTES,
-                    maximum_output_bytes: MAXIMUM_OUTPUT_BYTES,
-                    maximum_turns: self.prepared.maximum_turns,
-                    maximum_tool_calls: u32::try_from(self.prepared.snapshot.budget.tool_calls)
-                        .unwrap_or(u32::MAX),
-                    maximum_tokens: self.prepared.snapshot.budget.tokens,
-                },
-                &authority,
-                cancellation,
-            ) {
-                Ok(completed) => ProviderOutcomeRecordV1 {
-                    schema_version: 1,
-                    invocation_id: envelope.invocation_id.clone(),
-                    status: SimpleChatExecutionStatusV1::Succeeded,
-                    assistant_text: Some(completed.assistant_text),
-                    error: None,
-                    model: self.provider.model.clone(),
-                    input_units: completed.input_tokens,
-                    output_units: completed.output_tokens,
-                    attempted_model_turns: completed.attempted_model_turns,
-                    settled_tool_calls: completed.settled_tool_calls,
-                    tool_exchanges: completed.exchanges,
-                    tool_activity: completed.activities,
-                    node_activity: Vec::new(),
-                    approval: None,
-                    scheduler_checkpoint: None,
-                    scheduler_trace: Vec::new(),
-                },
-                Err(failure) => {
-                    let status = match &failure.error {
-                        ModelToolLoopErrorV1::Provider(error) => provider_error_status(error),
-                        ModelToolLoopErrorV1::ToolAuthority(_)
-                        | ModelToolLoopErrorV1::Budget(_)
-                        | ModelToolLoopErrorV1::MissingAssistantOutput => {
-                            SimpleChatExecutionStatusV1::FailedKnownStarted
-                        }
-                    };
-                    ProviderOutcomeRecordV1 {
-                        schema_version: 1,
-                        invocation_id: envelope.invocation_id.clone(),
-                        status,
-                        assistant_text: None,
-                        error: Some(redact_error(&materialized, &failure.error.to_string())),
-                        model: self.provider.model.clone(),
-                        input_units: failure.input_tokens,
-                        output_units: failure.output_tokens,
-                        attempted_model_turns: failure.attempted_model_turns,
-                        settled_tool_calls: failure.settled_tool_calls,
-                        tool_exchanges: failure.exchanges,
-                        tool_activity: failure.activities,
-                        node_activity: Vec::new(),
-                        approval: None,
-                        scheduler_checkpoint: None,
-                        scheduler_trace: Vec::new(),
-                    }
-                }
-            }
         };
-        if outcome.status == SimpleChatExecutionStatusV1::AwaitingApproval {
+        if outcome.status == WorkflowExecutionStatusV1::AwaitingApproval {
             // The pending approval record is the durable suspension point; the
             // invocation stays unsettled until a decision resumes the pass.
             return Ok(outcome);
@@ -2417,12 +2161,9 @@ impl ModelInvocationDispatcher {
     fn persist(
         &self,
         mut outcome: ProviderOutcomeRecordV1,
-    ) -> Result<ProviderOutcomeRecordV1, SimpleChatPipelineError> {
+    ) -> Result<ProviderOutcomeRecordV1, WorkflowPipelineError> {
         validate_provider_outcome_accounting(&self.prepared, &outcome)?;
         compact_provider_outcome_if_needed(&mut outcome)?;
-        if self.prepared.scheduler_checkpoint.is_some() {
-            finalize_scheduler_evidence(&self.prepared, &mut outcome)?;
-        }
         enforce_serialized_bound(
             &outcome,
             MAXIMUM_PROVIDER_OUTCOME_BYTES,
@@ -2430,109 +2171,6 @@ impl ModelInvocationDispatcher {
         )?;
         self.records.record_outcome(&outcome)?;
         Ok(outcome)
-    }
-}
-
-fn text_only_outcome(
-    gateway: &FrozenModelGateway,
-    descriptor: &CapabilityDescriptor,
-    context: &Value,
-    envelope: &ApprovedInvocationEnvelopeV1,
-    cancellation: &CancellationToken,
-    model: &str,
-    materialized: &Option<aworkit_capability_host::SecretMaterializationV1>,
-) -> ProviderOutcomeRecordV1 {
-    let execution = gateway.execute_cancellable(
-        &ModelResolutionPlanV1 {
-            candidates: vec![ModelCandidateV1 {
-                binding_id: descriptor.capability_id.clone(),
-                version_hash: descriptor.version_hash.clone(),
-            }],
-            maximum_input_bytes: MAXIMUM_INPUT_BYTES,
-            maximum_output_bytes: MAXIMUM_OUTPUT_BYTES,
-        },
-        &ModelRequestV1 {
-            input: context.clone(),
-        },
-        cancellation,
-    );
-    match execution {
-        Ok(evidence) => {
-            let mut assistant_text = String::new();
-            let mut usage = None;
-            for event in evidence.events {
-                match event {
-                    ModelEventV1::AssistantOutput(text) => assistant_text.push_str(&text),
-                    ModelEventV1::Usage {
-                        input_tokens,
-                        output_tokens,
-                    } => usage = Some((input_tokens, output_tokens)),
-                    ModelEventV1::ReasoningRaw(_)
-                    | ModelEventV1::ReasoningSummary(_)
-                    | ModelEventV1::Progress(_) => {}
-                }
-            }
-            let (input_units, output_units) = usage.unwrap_or_default();
-            if assistant_text.trim().is_empty() {
-                ProviderOutcomeRecordV1 {
-                    schema_version: 1,
-                    invocation_id: envelope.invocation_id.clone(),
-                    status: SimpleChatExecutionStatusV1::FailedKnownStarted,
-                    assistant_text: None,
-                    error: Some(
-                        "provider accepted the request but returned no assistant text".to_owned(),
-                    ),
-                    model: model.to_owned(),
-                    input_units,
-                    output_units,
-                    attempted_model_turns: 1,
-                    settled_tool_calls: 0,
-                    tool_exchanges: Vec::new(),
-                    tool_activity: Vec::new(),
-                    node_activity: Vec::new(),
-                    approval: None,
-                    scheduler_checkpoint: None,
-                    scheduler_trace: Vec::new(),
-                }
-            } else {
-                ProviderOutcomeRecordV1 {
-                    schema_version: 1,
-                    invocation_id: envelope.invocation_id.clone(),
-                    status: SimpleChatExecutionStatusV1::Succeeded,
-                    assistant_text: Some(assistant_text),
-                    error: None,
-                    model: model.to_owned(),
-                    input_units,
-                    output_units,
-                    attempted_model_turns: 1,
-                    settled_tool_calls: 0,
-                    tool_exchanges: Vec::new(),
-                    tool_activity: Vec::new(),
-                    node_activity: Vec::new(),
-                    approval: None,
-                    scheduler_checkpoint: None,
-                    scheduler_trace: Vec::new(),
-                }
-            }
-        }
-        Err(error) => ProviderOutcomeRecordV1 {
-            schema_version: 1,
-            invocation_id: envelope.invocation_id.clone(),
-            status: provider_error_status(&error),
-            assistant_text: None,
-            error: Some(redact_error(materialized, &error.to_string())),
-            model: model.to_owned(),
-            input_units: 0,
-            output_units: 0,
-            attempted_model_turns: 1,
-            settled_tool_calls: 0,
-            tool_exchanges: Vec::new(),
-            tool_activity: Vec::new(),
-            node_activity: Vec::new(),
-            approval: None,
-            scheduler_checkpoint: None,
-            scheduler_trace: Vec::new(),
-        },
     }
 }
 
@@ -2569,7 +2207,7 @@ struct PipelineRecordStore {
 }
 
 impl PipelineRecordStore {
-    fn open(path: &Path) -> Result<Self, SimpleChatPipelineError> {
+    fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             write_lock: Arc::new(Mutex::new(())),
@@ -2579,11 +2217,11 @@ impl PipelineRecordStore {
     fn record_execution(
         &self,
         record: &PreparedExecutionRecordV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         let _guard = self
             .write_lock
             .lock()
-            .map_err(|_| SimpleChatPipelineError::Store("record lock poisoned".into()))?;
+            .map_err(|_| WorkflowPipelineError::Store("record lock poisoned".into()))?;
         let executions = self.executions()?;
         if let Some(existing) = executions
             .iter()
@@ -2592,7 +2230,7 @@ impl PipelineRecordStore {
             return if existing == record {
                 Ok(true)
             } else {
-                Err(SimpleChatPipelineError::Store(
+                Err(WorkflowPipelineError::Store(
                     "request ID was reused with changed frozen execution semantics".to_owned(),
                 ))
             };
@@ -2603,7 +2241,7 @@ impl PipelineRecordStore {
                 && existing.scheduler_checkpoint.is_some()
                 && existing.scheduler_continuation == record.scheduler_continuation
         }) {
-            return Err(SimpleChatPipelineError::Store(
+            return Err(WorkflowPipelineError::Store(
                 "this frozen Run continuation already has a different durable request".to_owned(),
             ));
         }
@@ -2618,12 +2256,12 @@ impl PipelineRecordStore {
     fn record_outcome(
         &self,
         outcome: &ProviderOutcomeRecordV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         if let Some(existing) = self.outcome(&outcome.invocation_id)? {
             return if existing == *outcome {
                 Ok(true)
             } else {
-                Err(SimpleChatPipelineError::Store(
+                Err(WorkflowPipelineError::Store(
                     "provider outcome identity was reused with changed evidence".to_owned(),
                 ))
             };
@@ -2641,11 +2279,11 @@ impl PipelineRecordStore {
         kind: &str,
         dedup_key: &StableId,
         record: Value,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let _guard = self
             .write_lock
             .lock()
-            .map_err(|_| SimpleChatPipelineError::Store("record lock poisoned".into()))?;
+            .map_err(|_| WorkflowPipelineError::Store("record lock poisoned".into()))?;
         self.append_record_without_lock(kind, dedup_key, record)
     }
 
@@ -2654,7 +2292,7 @@ impl PipelineRecordStore {
         kind: &str,
         dedup_key: &StableId,
         record: Value,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let expected_head = self
             .store
             .events(PIPELINE_CHAT_ID, STORE_BRANCH_ID)
@@ -2690,7 +2328,7 @@ impl PipelineRecordStore {
     fn execution(
         &self,
         request_id: &StableId,
-    ) -> Result<Option<PreparedExecutionRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
         for record in self.executions()? {
             if &record.request_id == request_id {
                 return Ok(Some(record));
@@ -2699,7 +2337,7 @@ impl PipelineRecordStore {
         Ok(None)
     }
 
-    fn executions(&self) -> Result<Vec<PreparedExecutionRecordV1>, SimpleChatPipelineError> {
+    fn executions(&self) -> Result<Vec<PreparedExecutionRecordV1>, WorkflowPipelineError> {
         self.events_of_kind("pipeline.execution-prepared")?
             .into_iter()
             .map(|event| serde_json::from_value(event).map_err(json_error))
@@ -2709,7 +2347,7 @@ impl PipelineRecordStore {
     fn execution_for_dispatch(
         &self,
         dispatch: &ApprovedDispatchV1,
-    ) -> Result<Option<PreparedExecutionRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
         for record in self.executions()? {
             if record.broker_proposal.proposal_id == dispatch.proposal_id {
                 return Ok(Some(record));
@@ -2722,11 +2360,11 @@ impl PipelineRecordStore {
         &self,
         chat_id: &StableId,
         run_id: &StableId,
-    ) -> Result<Option<PreparedExecutionRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
         for record in self.executions()? {
             if record.snapshot.chat_id == *chat_id || record.snapshot.run_id == *run_id {
                 if record.snapshot.chat_id != *chat_id || record.snapshot.run_id != *run_id {
-                    return Err(SimpleChatPipelineError::Store(
+                    return Err(WorkflowPipelineError::Store(
                         "Chat and Run identities no longer refer to the same frozen session"
                             .to_owned(),
                     ));
@@ -2740,21 +2378,21 @@ impl PipelineRecordStore {
     fn outcome(
         &self,
         invocation_id: &StableId,
-    ) -> Result<Option<ProviderOutcomeRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<ProviderOutcomeRecordV1>, WorkflowPipelineError> {
         Ok(self
             .outcomes()?
             .into_iter()
             .find(|outcome| &outcome.invocation_id == invocation_id))
     }
 
-    fn outcomes(&self) -> Result<Vec<ProviderOutcomeRecordV1>, SimpleChatPipelineError> {
+    fn outcomes(&self) -> Result<Vec<ProviderOutcomeRecordV1>, WorkflowPipelineError> {
         self.events_of_kind("pipeline.provider-outcome")?
             .into_iter()
             .map(|event| serde_json::from_value(event).map_err(json_error))
             .collect()
     }
 
-    fn events_of_kind(&self, kind: &str) -> Result<Vec<Value>, SimpleChatPipelineError> {
+    fn events_of_kind(&self, kind: &str) -> Result<Vec<Value>, WorkflowPipelineError> {
         Ok(self
             .store
             .events(PIPELINE_CHAT_ID, STORE_BRANCH_ID)
@@ -2768,7 +2406,7 @@ impl PipelineRecordStore {
     fn store_pending_approval(
         &self,
         pending: &PendingGraphPassStateV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         let decision_id = stable(&pending.decision_id)?;
         self.append_record(
             "pipeline.pending-approval",
@@ -2778,7 +2416,7 @@ impl PipelineRecordStore {
         Ok(false)
     }
 
-    fn pending_approvals(&self) -> Result<Vec<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+    fn pending_approvals(&self) -> Result<Vec<PendingGraphPassStateV1>, WorkflowPipelineError> {
         self.events_of_kind("pipeline.pending-approval")?
             .into_iter()
             .map(|event| serde_json::from_value(event).map_err(json_error))
@@ -2788,7 +2426,7 @@ impl PipelineRecordStore {
     fn pending_approval(
         &self,
         decision_id: &str,
-    ) -> Result<Option<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<PendingGraphPassStateV1>, WorkflowPipelineError> {
         Ok(self
             .pending_approvals()?
             .into_iter()
@@ -2798,7 +2436,7 @@ impl PipelineRecordStore {
     fn pending_approval_for_invocation(
         &self,
         invocation_id: &StableId,
-    ) -> Result<Option<PendingGraphPassStateV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<PendingGraphPassStateV1>, WorkflowPipelineError> {
         Ok(self
             .pending_approvals()?
             .into_iter()
@@ -2808,7 +2446,7 @@ impl PipelineRecordStore {
     fn mark_approval_resolved(
         &self,
         decision_id: &StableId,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         if self
             .events_of_kind("pipeline.approval-resolved")?
             .iter()
@@ -2826,7 +2464,7 @@ impl PipelineRecordStore {
         Ok(false)
     }
 
-    fn approval_resolved(&self, decision_id: &str) -> Result<bool, SimpleChatPipelineError> {
+    fn approval_resolved(&self, decision_id: &str) -> Result<bool, WorkflowPipelineError> {
         Ok(self
             .events_of_kind("pipeline.approval-resolved")?
             .iter()
@@ -2844,7 +2482,7 @@ pub(super) struct LocalInvocationLedger {
 }
 
 impl LocalInvocationLedger {
-    fn open(path: &Path) -> Result<Self, SimpleChatPipelineError> {
+    fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Self::open_scoped(path, BROKER_CHAT_ID, HOST_DESTINATION, WORKER_DESTINATION)
     }
 
@@ -2853,7 +2491,7 @@ impl LocalInvocationLedger {
         aggregate_id: &str,
         host_destination: &str,
         worker_destination: &str,
-    ) -> Result<Self, SimpleChatPipelineError> {
+    ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             write_lock: Arc::new(Mutex::new(())),
@@ -2972,7 +2610,7 @@ impl LocalInvocationLedger {
     pub(super) fn settlement(
         &self,
         invocation_id: &StableId,
-    ) -> Result<Option<(String, bool)>, SimpleChatPipelineError> {
+    ) -> Result<Option<(String, bool)>, WorkflowPipelineError> {
         Ok(self
             .events(invocation_id)
             .map_err(broker_error)?
@@ -2990,7 +2628,7 @@ impl LocalInvocationLedger {
     pub(super) fn invocation_for_proposal(
         &self,
         proposal_id: &StableId,
-    ) -> Result<Option<StableId>, SimpleChatPipelineError> {
+    ) -> Result<Option<StableId>, WorkflowPipelineError> {
         Ok(self
             .broker_events()
             .map_err(broker_error)?
@@ -3077,430 +2715,31 @@ impl InvocationLedgerPortV1 for LocalInvocationLedger {
     }
 }
 
-fn validate_follow_up_context(
-    previous: &PreparedExecutionRecordV1,
-    outcome: &ProviderOutcomeRecordV1,
-    request: &SimpleChatExecutionRequestV1,
-) -> Result<(), SimpleChatPipelineError> {
-    let previous_messages: Vec<SimpleChatMessageV1> = serde_json::from_value(
-        previous
-            .worker_proposal
-            .payload
-            .get("context")
-            .and_then(|context| context.get("messages"))
-            .cloned()
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?,
-    )
-    .map_err(|_| SimpleChatPipelineError::IncompleteEvidence)?;
-    let assistant_text = outcome
-        .assistant_text
-        .as_deref()
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let expected_len = previous_messages
-        .len()
-        .checked_add(2)
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let extends_exact_context = request.messages.len() == expected_len
-        && request.messages.starts_with(&previous_messages)
-        && request
-            .messages
-            .get(previous_messages.len())
-            .is_some_and(|message| {
-                message.role == "assistant" && message.content == assistant_text
-            })
-        && request
-            .messages
-            .last()
-            .is_some_and(|message| message.role == "user");
-    if !extends_exact_context {
-        return Err(SimpleChatPipelineError::Store(
-            "follow-up Input must extend the settled frozen conversation by its exact assistant output and one new user message"
-                .to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn prepare_scheduler_for_agent(
-    snapshot: &aworkit_protocol::WorkerFrozenRunSnapshotV1,
-    continuation: Option<&SchedulerContinuationBasisV1>,
-) -> Result<
-    (
-        SchedulerCheckpointV1,
-        Vec<SchedulerTraceEntryV1>,
-        u64,
-        StableId,
-    ),
-    SimpleChatPipelineError,
-> {
-    let plan = ExecutionPlanV1::compile(snapshot.clone(), &snapshot.snapshot_hash)
-        .map_err(worker_error)?;
-    let (mut scheduler, mut trace, scheduler_continuation, input) =
-        if let Some(continuation) = continuation {
-            if continuation.continuation == 0 {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            validate_scheduler_trace_sequence(&continuation.trace)?;
-            let mut scheduler = SchedulerV1::restore(plan, continuation.checkpoint.clone())
-                .map_err(worker_error)?;
-            if !scheduler.is_quiescent() {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            let suspended_waits = scheduler
-                .checkpoint()
-                .tokens
-                .into_iter()
-                .filter(|token| {
-                    token.node_id.as_str() == "wait.1" && token.state == TokenStateV1::Suspended
-                })
-                .collect::<Vec<_>>();
-            if suspended_waits.len() != 1 {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            let suspended_wait = suspended_waits
-                .into_iter()
-                .next()
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            if continuation.trace.last().is_none_or(|entry| {
-                entry.action != "suspended"
-                    || entry.node_id.as_str() != "wait.1"
-                    || entry.token_id != suspended_wait.token_id
-            }) {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            let mut trace = continuation.trace.clone();
-            scheduler
-                .resume(&suspended_wait.token_id)
-                .map_err(worker_error)?;
-            push_scheduler_trace(&mut trace, "resumed", &suspended_wait, None, None)?;
-            let resumed_wait = scheduler
-                .claim_next()
-                .filter(|token| {
-                    token.token_id == suspended_wait.token_id
-                        && token.node_id.as_str() == "wait.1"
-                        && token.state == TokenStateV1::InFlight
-                })
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            push_scheduler_trace(&mut trace, "claimed", &resumed_wait, None, None)?;
-            let input_node_id = snapshot
-                .entry_nodes
-                .first()
-                .filter(|node_id| node_id.as_str() == "input.1")
-                .cloned()
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            let input_revision = continuation
-                .checkpoint
-                .committed_cursor
-                .checked_add(1)
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            let input_received = scheduler
-                .propose_wait_input(
-                    &resumed_wait.token_id,
-                    json!({
-                        "inputReceived":true,
-                        "schedulerContinuation":continuation.continuation,
-                    }),
-                )
-                .map_err(worker_error)?;
-            let acknowledgement = scheduler
-                .acknowledge_wait_input(&input_received.proposal_id, input_revision)
-                .map_err(worker_error)?;
-            if acknowledgement.duplicate || acknowledgement.admitted_token.is_some() {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            push_scheduler_trace(
-                &mut trace,
-                "input_received_acknowledged",
-                &resumed_wait,
-                None,
-                Some(input_node_id.clone()),
-            )?;
-            let admitted_input = scheduler
-                .enqueue(
-                    input_node_id.clone(),
-                    input_revision,
-                    resumed_wait.branch_lineage.clone(),
-                )
-                .map_err(worker_error)?;
-            let input = scheduler
-                .claim_next()
-                .filter(|token| token.token_id == admitted_input.token_id)
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            (scheduler, trace, continuation.continuation, input)
-        } else {
-            let mut scheduler = SchedulerV1::new(plan);
-            let seeded = scheduler.seed_entries(0).map_err(worker_error)?;
-            if seeded.len() != 1 || seeded[0].node_id.as_str() != "input.1" {
-                return Err(SimpleChatPipelineError::IncompleteEvidence);
-            }
-            let input = scheduler
-                .claim_next()
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-            (scheduler, Vec::new(), 0, input)
-        };
-    let input = scheduler
-        .checkpoint()
-        .tokens
-        .into_iter()
-        .find(|token| token.token_id == input.token_id)
-        .filter(|token| {
-            token.node_id.as_str() == "input.1" && token.state == TokenStateV1::InFlight
-        })
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    if input.context_revision != scheduler.checkpoint().committed_cursor {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
-    }
-    push_scheduler_trace(&mut trace, "claimed", &input, None, None)?;
-    let proposal = scheduler
-        .propose_transition(
-            &input.token_id,
-            json!({
-                "inputCommitted":true,
-                "schedulerContinuation":scheduler_continuation,
-            }),
-        )
-        .map_err(worker_error)?;
-    let target = transition_target(snapshot, &proposal.transition_id)?;
-    if target.as_str() != "agent.1" {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
-    }
-    let input_cursor = scheduler
-        .checkpoint()
-        .committed_cursor
-        .checked_add(1)
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let admission = scheduler
-        .acknowledge_transition(&proposal.proposal_id, input_cursor, input_cursor)
-        .map_err(worker_error)?;
-    let admitted = admission
-        .admitted_token
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    if admission.duplicate || admitted.node_id != target {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
-    }
-    push_scheduler_trace(
-        &mut trace,
-        "transition_acknowledged",
-        &input,
-        Some(proposal.transition_id),
-        Some(target),
-    )?;
-    let agent = scheduler
-        .claim_next()
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    if agent.token_id != admitted.token_id
-        || agent.node_id.as_str() != "agent.1"
-        || agent.state != TokenStateV1::InFlight
-    {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
-    }
-    push_scheduler_trace(&mut trace, "claimed", &agent, None, None)?;
-    Ok((
-        scheduler.checkpoint(),
-        trace,
-        scheduler_continuation,
-        agent.token_id,
-    ))
-}
-
-fn finalize_scheduler_evidence(
-    prepared: &PreparedExecutionRecordV1,
-    outcome: &mut ProviderOutcomeRecordV1,
-) -> Result<(), SimpleChatPipelineError> {
-    let checkpoint = prepared
-        .scheduler_checkpoint
-        .clone()
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let agent_token_id = prepared
-        .agent_token_id
-        .as_ref()
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let plan =
-        ExecutionPlanV1::compile(prepared.snapshot.clone(), &prepared.snapshot.snapshot_hash)
-            .map_err(worker_error)?;
-    let mut scheduler = SchedulerV1::restore(plan, checkpoint).map_err(worker_error)?;
-    let agent = scheduler
-        .checkpoint()
-        .tokens
-        .into_iter()
-        .find(|token| &token.token_id == agent_token_id)
-        .filter(|token| {
-            token.node_id.as_str() == "agent.1" && token.state == TokenStateV1::InFlight
-        })
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let mut trace = prepared.scheduler_trace.clone();
-
-    if outcome.status == SimpleChatExecutionStatusV1::Succeeded {
-        let output_cursor = scheduler
-            .checkpoint()
-            .committed_cursor
-            .checked_add(1)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        let proposal = scheduler
-            .propose_transition(
-                agent_token_id,
-                json!({
-                    "status":"succeeded",
-                    "inputUnits":outcome.input_units,
-                    "outputUnits":outcome.output_units,
-                }),
-            )
-            .map_err(worker_error)?;
-        let output_id = transition_target(&prepared.snapshot, &proposal.transition_id)?;
-        if output_id.as_str() != "output.1" {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-        let admission = scheduler
-            .acknowledge_transition(&proposal.proposal_id, output_cursor, output_cursor)
-            .map_err(worker_error)?;
-        let admitted_output = admission
-            .admitted_token
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        if admission.duplicate || admitted_output.node_id != output_id {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-        push_scheduler_trace(
-            &mut trace,
-            "transition_acknowledged",
-            &agent,
-            Some(proposal.transition_id),
-            Some(output_id),
-        )?;
-        let output = scheduler
-            .claim_next()
-            .filter(|token| token.token_id == admitted_output.token_id)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        push_scheduler_trace(&mut trace, "claimed", &output, None, None)?;
-
-        let proposal = scheduler
-            .propose_transition(&output.token_id, json!({"outputCommitted":true}))
-            .map_err(worker_error)?;
-        let wait_id = transition_target(&prepared.snapshot, &proposal.transition_id)?;
-        if wait_id.as_str() != "wait.1" {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-        let wait_cursor = scheduler
-            .checkpoint()
-            .committed_cursor
-            .checked_add(1)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        let admission = scheduler
-            .acknowledge_transition(&proposal.proposal_id, wait_cursor, wait_cursor)
-            .map_err(worker_error)?;
-        let admitted_wait = admission
-            .admitted_token
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        if admission.duplicate || admitted_wait.node_id != wait_id {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-        push_scheduler_trace(
-            &mut trace,
-            "transition_acknowledged",
-            &output,
-            Some(proposal.transition_id),
-            Some(wait_id),
-        )?;
-        let wait = scheduler
-            .claim_next()
-            .filter(|token| token.token_id == admitted_wait.token_id)
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-        push_scheduler_trace(&mut trace, "claimed", &wait, None, None)?;
-        scheduler.suspend(&wait.token_id).map_err(worker_error)?;
-        push_scheduler_trace(&mut trace, "suspended", &wait, None, None)?;
-        if !scheduler.is_quiescent() {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-    } else {
-        if scheduler.cancel_lineage("root") != 1 {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
-        }
-        push_scheduler_trace(&mut trace, "failed", &agent, None, None)?;
-    }
-    outcome.scheduler_checkpoint = Some(scheduler.checkpoint());
-    outcome.scheduler_trace = trace;
-    Ok(())
-}
-
-fn push_scheduler_trace(
-    trace: &mut Vec<SchedulerTraceEntryV1>,
-    action: &str,
-    token: &aworkit_workflow_worker::scheduler::TokenV1,
-    transition_id: Option<StableId>,
-    target_node_id: Option<StableId>,
-) -> Result<(), SimpleChatPipelineError> {
-    let sequence = u64::try_from(trace.len())
-        .map_err(|_| SimpleChatPipelineError::IncompleteEvidence)?
-        .checked_add(1)
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    trace.push(SchedulerTraceEntryV1 {
-        sequence,
-        action: action.to_owned(),
-        node_id: token.node_id.clone(),
-        token_id: token.token_id.clone(),
-        transition_id,
-        target_node_id,
-    });
-    Ok(())
-}
-
-fn validate_scheduler_trace_sequence(
-    trace: &[SchedulerTraceEntryV1],
-) -> Result<(), SimpleChatPipelineError> {
-    let valid = trace.iter().enumerate().all(|(index, entry)| {
-        u64::try_from(index)
-            .ok()
-            .and_then(|index| index.checked_add(1))
-            == Some(entry.sequence)
-    });
-    valid
-        .then_some(())
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)
-}
-
-fn transition_target(
-    snapshot: &aworkit_protocol::WorkerFrozenRunSnapshotV1,
-    transition_id: &StableId,
-) -> Result<StableId, SimpleChatPipelineError> {
-    snapshot
-        .transitions
-        .iter()
-        .find(|transition| &transition.transition_id == transition_id)
-        .map(|transition| transition.to_node.clone())
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)
-}
-
 fn validate_provider_outcome_accounting(
     prepared: &PreparedExecutionRecordV1,
     outcome: &ProviderOutcomeRecordV1,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     let turns = u64::from(outcome.attempted_model_turns);
     let tool_calls = u64::from(outcome.settled_tool_calls);
-    let requires_attempt = !matches!(
-        outcome.status,
-        SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
-    );
-    let graph_mode = prepared.scheduler_checkpoint.is_none();
     if turns > prepared.snapshot.budget.turns
         || tool_calls > prepared.snapshot.budget.tool_calls
-        || (turns == 0 && requires_attempt && !graph_mode)
-        || (tool_calls > 0 && turns == 0 && !graph_mode)
         || turns.saturating_add(tool_calls) > prepared.snapshot.budget.actions
     {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
+        return Err(WorkflowPipelineError::IncompleteEvidence);
     }
     Ok(())
 }
 
 fn compact_provider_outcome_if_needed(
     outcome: &mut ProviderOutcomeRecordV1,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     if serialized_len(outcome)? <= MAXIMUM_PROVIDER_OUTCOME_BYTES {
         return Ok(());
     }
     outcome.status = if outcome.attempted_model_turns == 0 {
-        SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
+        WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
     } else {
-        SimpleChatExecutionStatusV1::FailedKnownStarted
+        WorkflowExecutionStatusV1::FailedKnownStarted
     };
     outcome.assistant_text = None;
     outcome.error = Some(
@@ -3509,12 +2748,12 @@ fn compact_provider_outcome_if_needed(
     );
     outcome.tool_exchanges.clear();
     if serialized_len(outcome)? > MAXIMUM_PROVIDER_OUTCOME_BYTES {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
+        return Err(WorkflowPipelineError::IncompleteEvidence);
     }
     Ok(())
 }
 
-fn serialized_len<T: Serialize>(value: &T) -> Result<usize, SimpleChatPipelineError> {
+fn serialized_len<T: Serialize>(value: &T) -> Result<usize, WorkflowPipelineError> {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .map_err(json_error)
@@ -3524,323 +2763,14 @@ fn enforce_serialized_bound<T: Serialize>(
     value: &T,
     maximum: usize,
     label: &str,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     if serialized_len(value)? <= maximum {
         Ok(())
     } else {
-        Err(SimpleChatPipelineError::InvalidInput(format!(
+        Err(WorkflowPipelineError::InvalidInput(format!(
             "{label} exceeds its persistence-safe byte bound"
         )))
     }
-}
-
-fn worker_error(error: impl std::fmt::Display) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Worker(error.to_string())
-}
-
-fn settle_worker_contract(
-    prepared: &PreparedExecutionRecordV1,
-    outcome: &ProviderOutcomeRecordV1,
-    outcome_hash: &str,
-) -> Result<(), SimpleChatPipelineError> {
-    if prepared.scheduler_checkpoint.is_none() {
-        // Graph-pass records settle without the simple-chat token walk.
-        return Ok(());
-    }
-    validate_final_scheduler_evidence(prepared, outcome)?;
-    let observed_tokens = outcome.input_units.saturating_add(outcome.output_units);
-    // Provider usage can arrive above the frozen allowance only after the
-    // provider has started. Preserve the exact observation in the outcome,
-    // while the non-minting ledger charges the complete reserved allowance.
-    let charged_tokens = observed_tokens.min(prepared.snapshot.budget.tokens);
-    let mut agent = AgentLoopV1::restore(prepared.agent_checkpoint.clone())
-        .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-    let mut limits = LimitLedger::restore(
-        prepared.limit_checkpoint.clone(),
-        prepared.limit_checkpoint.current_tick,
-    )
-    .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-    let class = match outcome.status {
-        SimpleChatExecutionStatusV1::Succeeded => CapabilityOutcomeClassV1::Success,
-        SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted => {
-            CapabilityOutcomeClassV1::DefiniteNotStarted
-        }
-        SimpleChatExecutionStatusV1::FailedKnownStarted => {
-            CapabilityOutcomeClassV1::FailedKnownStarted
-        }
-        SimpleChatExecutionStatusV1::OutcomeUncertain => CapabilityOutcomeClassV1::Uncertain,
-        SimpleChatExecutionStatusV1::AwaitingApproval => {
-            CapabilityOutcomeClassV1::FailedKnownStarted
-        }
-    };
-    let worker_outcome = WorkerCapabilityOutcomeV1 {
-        outcome_id: digest_id("worker.outcome", outcome_hash)?,
-        invocation_id: prepared.worker_proposal.invocation_id.clone(),
-        class,
-        retry_safe_proof: matches!(
-            outcome.status,
-            SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
-        ),
-        payload: serde_json::to_value(outcome).map_err(json_error)?,
-        usage: Some(json!({
-            "turns": outcome.attempted_model_turns,
-            "attempts": outcome.attempted_model_turns,
-            "toolCalls": outcome.settled_tool_calls,
-            "observedTokens": observed_tokens,
-            "chargedTokens": charged_tokens,
-            "actions": u64::from(outcome.attempted_model_turns)
-                .saturating_add(u64::from(outcome.settled_tool_calls)),
-        })),
-    };
-    agent
-        .settle_committed_run_outcome(
-            &worker_outcome,
-            &mut limits,
-            Usage {
-                turns: u64::from(outcome.attempted_model_turns),
-                attempts: u64::from(outcome.attempted_model_turns),
-                tool_calls: u64::from(outcome.settled_tool_calls),
-                tokens: charged_tokens,
-                cost_micros: 0,
-                actions: u64::from(outcome.attempted_model_turns)
-                    .saturating_add(u64::from(outcome.settled_tool_calls)),
-            },
-        )
-        .map_err(|error| SimpleChatPipelineError::Worker(error.to_string()))?;
-    Ok(())
-}
-
-fn validate_final_scheduler_evidence(
-    prepared: &PreparedExecutionRecordV1,
-    outcome: &ProviderOutcomeRecordV1,
-) -> Result<(), SimpleChatPipelineError> {
-    validate_scheduler_trace_sequence(&outcome.scheduler_trace)?;
-    if outcome.scheduler_trace.len() < prepared.scheduler_trace.len()
-        || outcome.scheduler_trace[..prepared.scheduler_trace.len()] != prepared.scheduler_trace
-    {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
-    }
-    let checkpoint = outcome
-        .scheduler_checkpoint
-        .clone()
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let plan =
-        ExecutionPlanV1::compile(prepared.snapshot.clone(), &prepared.snapshot.snapshot_hash)
-            .map_err(worker_error)?;
-    let scheduler = SchedulerV1::restore(plan, checkpoint).map_err(worker_error)?;
-    let checkpoint = scheduler.checkpoint();
-    let tokens = &checkpoint.tokens;
-    let continuation = usize::try_from(prepared.scheduler_continuation)
-        .map_err(|_| SimpleChatPipelineError::IncompleteEvidence)?;
-    let turns = continuation
-        .checked_add(1)
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
-    let count = |node_id: &str, state: TokenStateV1| {
-        tokens
-            .iter()
-            .filter(|token| token.node_id.as_str() == node_id && token.state == state)
-            .count()
-    };
-    let completed_waits_are_input_events = tokens.iter().all(|token| {
-        if token.node_id.as_str() == "wait.1" && token.state == TokenStateV1::Completed {
-            token.external_completion
-                == Some(aworkit_workflow_worker::scheduler::ExternalCompletionV1::WaitInputReceived)
-        } else if token.node_id.as_str() != "wait.1" && token.state == TokenStateV1::Completed {
-            token.external_completion.is_none()
-        } else {
-            true
-        }
-    });
-    let valid = if outcome.status == SimpleChatExecutionStatusV1::Succeeded {
-        tokens.len() == turns.saturating_mul(4)
-            && count("input.1", TokenStateV1::Completed) == turns
-            && count("agent.1", TokenStateV1::Completed) == turns
-            && count("output.1", TokenStateV1::Completed) == turns
-            && count("wait.1", TokenStateV1::Completed) == continuation
-            && count("wait.1", TokenStateV1::Suspended) == 1
-            && checkpoint.committed_cursor
-                == prepared
-                    .scheduler_continuation
-                    .checked_mul(4)
-                    .and_then(|cursor| cursor.checked_add(3))
-                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?
-            && outcome.scheduler_trace.last().is_some_and(|entry| {
-                entry.action == "suspended" && entry.node_id.as_str() == "wait.1"
-            })
-            && completed_waits_are_input_events
-            && scheduler.is_quiescent()
-    } else {
-        tokens.len() == continuation.saturating_mul(4).saturating_add(2)
-            && count("input.1", TokenStateV1::Completed) == turns
-            && count("agent.1", TokenStateV1::Completed) == continuation
-            && count("agent.1", TokenStateV1::Cancelled) == 1
-            && count("output.1", TokenStateV1::Completed) == continuation
-            && count("wait.1", TokenStateV1::Completed) == continuation
-            && count("wait.1", TokenStateV1::Suspended) == 0
-            && checkpoint.committed_cursor
-                == prepared
-                    .scheduler_continuation
-                    .checked_mul(4)
-                    .and_then(|cursor| cursor.checked_add(1))
-                    .ok_or(SimpleChatPipelineError::IncompleteEvidence)?
-            && outcome.scheduler_trace.last().is_some_and(|entry| {
-                entry.action == "failed" && entry.node_id.as_str() == "agent.1"
-            })
-            && completed_waits_are_input_events
-            && scheduler.is_quiescent()
-    };
-    valid
-        .then_some(())
-        .ok_or(SimpleChatPipelineError::IncompleteEvidence)
-}
-
-struct CompiledSimpleChatGraphV1 {
-    nodes: Vec<WorkerNodeV1>,
-    transitions: Vec<WorkerTransitionV1>,
-    entry_nodes: Vec<StableId>,
-    model_node_id: StableId,
-}
-
-fn compile_simple_chat_graph(
-    request: &SimpleChatExecutionRequestV1,
-    descriptor: &CapabilityDescriptor,
-    provider: &StoredProviderBindingV1,
-    secret: Option<&StoredSecretBindingV1>,
-    tool_bindings: &[StoredFileToolBindingV1],
-) -> Result<CompiledSimpleChatGraphV1, SimpleChatPipelineError> {
-    validate_simple_chat_workflow_request(request)?;
-    let input_id = stable("input.1")?;
-    let agent_id = stable("agent.1")?;
-    let output_id = stable("output.1")?;
-    let wait_id = stable("wait.1")?;
-    let model_capability = stable(descriptor.capability_id.as_str())?;
-    let source_nodes = request
-        .workflow_snapshot
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_workflow("nodes are missing"))?;
-    let source = |id: &str| {
-        source_nodes
-            .iter()
-            .find(|node| node.get("id").and_then(Value::as_str) == Some(id))
-            .cloned()
-            .ok_or_else(|| invalid_workflow("required node is missing"))
-    };
-    let port = || WorkerPortV1 {
-        name: "value".to_owned(),
-        schema_ref: None,
-        required: true,
-    };
-    let input_source = source("input.1")?;
-    let agent_source = source("agent.1")?;
-    let output_source = source("output.1")?;
-    let wait_source = source("wait.1")?;
-    let nodes = vec![
-        WorkerNodeV1 {
-            node_id: input_id.clone(),
-            node_type: "input".into(),
-            node_version: 1,
-            contribution_hash: canonical_digest(&input_source)?,
-            inputs: Vec::new(),
-            outputs: vec![port()],
-            executor: WorkerExecutorKindV1::Pure,
-            config: json!({"savedNode": input_source}),
-            capability_ref: None,
-            result_schema_ref: None,
-        },
-        WorkerNodeV1 {
-            node_id: agent_id.clone(),
-            node_type: MODEL_NODE_TYPE.into(),
-            node_version: 1,
-            contribution_hash: canonical_digest(&json!({
-                "savedNode": agent_source,
-                "modelDescriptor": descriptor.version_hash,
-                "tools": tool_bindings,
-            }))?,
-            inputs: vec![port()],
-            outputs: vec![port()],
-            executor: WorkerExecutorKindV1::Agent,
-            config: json!({
-                "savedNode": agent_source,
-                "provider": provider,
-                "frozenContextHash": request.frozen_context_hash,
-                "opaqueSecretRef": secret.map(|binding| binding.opaque_ref.as_str()),
-                "secretRevision": secret.map(|binding| binding.revision),
-                "tools": tool_bindings,
-                "maximumTurns": request.maximum_turns,
-            }),
-            capability_ref: Some(model_capability),
-            result_schema_ref: None,
-        },
-        WorkerNodeV1 {
-            node_id: output_id.clone(),
-            node_type: "output".into(),
-            node_version: 1,
-            contribution_hash: canonical_digest(&output_source)?,
-            inputs: vec![port()],
-            outputs: vec![port()],
-            executor: WorkerExecutorKindV1::Pure,
-            config: json!({"savedNode": output_source}),
-            capability_ref: None,
-            result_schema_ref: None,
-        },
-        WorkerNodeV1 {
-            node_id: wait_id.clone(),
-            node_type: "wait".into(),
-            node_version: 1,
-            contribution_hash: canonical_digest(&wait_source)?,
-            inputs: vec![port()],
-            outputs: Vec::new(),
-            executor: WorkerExecutorKindV1::Wait,
-            config: json!({"savedNode": wait_source}),
-            capability_ref: None,
-            result_schema_ref: None,
-        },
-    ];
-    let transitions = [
-        ("input.1", "agent.1", input_id.clone(), agent_id.clone()),
-        ("agent.1", "output.1", agent_id.clone(), output_id.clone()),
-        ("output.1", "wait.1", output_id, wait_id),
-    ]
-    .into_iter()
-    .map(|(source, target, from_node, to_node)| {
-        let edge = request
-            .workflow_snapshot
-            .get("edges")
-            .and_then(Value::as_array)
-            .and_then(|edges| {
-                edges.iter().find(|edge| {
-                    edge.get("source").and_then(Value::as_str) == Some(source)
-                        && edge.get("target").and_then(Value::as_str) == Some(target)
-                })
-            })
-            .ok_or_else(|| invalid_workflow("required transition is missing"))?;
-        Ok(WorkerTransitionV1 {
-            transition_id: stable(
-                edge.get("id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| invalid_workflow("transition ID is missing"))?,
-            )?,
-            from_node,
-            from_port: "value".into(),
-            to_node,
-            to_port: "value".into(),
-            priority: 0,
-            predicate: Some(json!({"always":true})),
-            declared_loop_id: None,
-        })
-    })
-    .collect::<Result<Vec<_>, SimpleChatPipelineError>>()?;
-    Ok(CompiledSimpleChatGraphV1 {
-        nodes,
-        transitions,
-        entry_nodes: vec![input_id],
-        model_node_id: agent_id,
-    })
-}
-
-fn is_simple_chat_document(workflow: &Value) -> bool {
-    workflow.get("id").and_then(Value::as_str) == Some("workflow.simple-chat")
 }
 
 /// Compiles any catalog-valid v1 workflow document into a frozen worker graph.
@@ -3849,7 +2779,7 @@ fn is_simple_chat_document(workflow: &Value) -> bool {
 /// route predicates.
 #[allow(clippy::too_many_lines)]
 fn compile_graph_snapshot(
-    request: &SimpleChatExecutionRequestV1,
+    request: &WorkflowExecutionRequestV1,
     descriptor: &CapabilityDescriptor,
     provider: &StoredProviderBindingV1,
     secret: Option<&StoredSecretBindingV1>,
@@ -3861,7 +2791,7 @@ fn compile_graph_snapshot(
         Vec<StableId>,
         StableId,
     ),
-    SimpleChatPipelineError,
+    WorkflowPipelineError,
 > {
     let model_capability = stable(descriptor.capability_id.as_str())?;
     let source_nodes = request
@@ -4118,239 +3048,34 @@ fn compile_graph_snapshot(
     ))
 }
 
-fn validate_simple_chat_workflow_request(
-    request: &SimpleChatExecutionRequestV1,
-) -> Result<(), SimpleChatPipelineError> {
-    let document = request
-        .workflow_snapshot
-        .as_object()
-        .ok_or_else(|| invalid_workflow("document must be an object"))?;
-    if document.get("schemaVersion").and_then(Value::as_u64) != Some(1)
-        || document.get("id").and_then(Value::as_str) != Some("workflow.simple-chat")
-    {
-        return Err(invalid_workflow(
-            "schemaVersion 1 and workflow.simple-chat are required",
-        ));
-    }
-    let nodes = document
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_workflow("nodes are missing"))?;
-    let edges = document
-        .get("edges")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_workflow("edges are missing"))?;
-    let required_nodes = [
-        ("input.1", "input"),
-        ("agent.1", "agent"),
-        ("output.1", "output"),
-        ("wait.1", "wait"),
-    ];
-    if nodes.len() != required_nodes.len()
-        || required_nodes.iter().any(|(id, kind)| {
-            nodes
-                .iter()
-                .filter(|node| {
-                    node.get("id").and_then(Value::as_str) == Some(*id)
-                        && node.get("type").and_then(Value::as_str) == Some(*kind)
-                })
-                .count()
-                != 1
-        })
-    {
-        return Err(invalid_workflow(
-            "exact Input → Agent → Output → Wait node set is required",
-        ));
-    }
-    let required_edges = [
-        ("input.1", "agent.1"),
-        ("agent.1", "output.1"),
-        ("output.1", "wait.1"),
-    ];
-    if edges.len() != required_edges.len()
-        || required_edges.iter().any(|(source, target)| {
-            edges
-                .iter()
-                .filter(|edge| {
-                    edge.get("source").and_then(Value::as_str) == Some(*source)
-                        && edge.get("target").and_then(Value::as_str) == Some(*target)
-                        && edge
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .is_some_and(|id| StableId::parse(id.to_owned()).is_ok())
-                })
-                .count()
-                != 1
-        })
-    {
-        return Err(invalid_workflow(
-            "exact Input → Agent → Output → Wait transitions are required",
-        ));
-    }
-    for node_id in ["input.1", "output.1", "wait.1"] {
-        let node = nodes
-            .iter()
-            .find(|node| node.get("id").and_then(Value::as_str) == Some(node_id))
-            .ok_or_else(|| invalid_workflow("required node is missing"))?;
-        if let Some(configuration) = node.get("configuration")
-            && configuration
-                .as_object()
-                .is_none_or(|object| !object.is_empty())
-        {
-            return Err(invalid_workflow(
-                "Input, Output, and Wait configuration must be omitted or an empty object",
-            ));
-        }
-    }
-    let configuration = nodes
-        .iter()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some("agent.1"))
-        .and_then(|node| node.get("configuration"))
-        .and_then(Value::as_object)
-        .ok_or_else(|| invalid_workflow("Agent configuration is missing"))?;
-    let keys = configuration
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let required_keys = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
-    let allowed_keys = BTreeSet::from(["instructions", "maxTurns", "modelTierId", "toolIds"]);
-    if !required_keys.is_subset(&keys) || !keys.is_subset(&allowed_keys) {
-        return Err(invalid_workflow(
-            "Agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions",
-        ));
-    }
-    if configuration.get("modelTierId").and_then(Value::as_str) != Some("tier:balanced")
-        || configuration.get("maxTurns").and_then(Value::as_u64)
-            != Some(u64::from(request.maximum_turns))
-    {
-        return Err(invalid_workflow(
-            "Agent modelTierId/maxTurns do not match the frozen execution request",
-        ));
-    }
-    let workflow_tools = configuration
-        .get("toolIds")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_workflow("Agent toolIds must be an array"))?
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| invalid_workflow("Agent toolIds must contain only strings"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let request_tools = request
-        .tools
-        .iter()
-        .map(|binding| binding.capability_id.clone())
-        .collect::<Vec<_>>();
-    if workflow_tools != request_tools {
-        return Err(invalid_workflow(
-            "Agent toolIds do not match the frozen Settings bindings",
-        ));
-    }
-    let instructions = configuration.get("instructions");
-    if instructions.is_some_and(|value| {
-        value.as_str().is_none_or(|instructions| {
-            instructions.trim().is_empty()
-                || instructions.len() > 64 * 1024
-                || instructions.contains('\0')
-        })
-    }) {
-        return Err(invalid_workflow(
-            "Agent instructions must be a non-empty string of at most 64 KiB",
-        ));
-    }
-    Ok(())
-}
-
-fn default_simple_chat_workflow_snapshot() -> Value {
-    json!({
-        "schemaVersion":1,
-        "id":"workflow.simple-chat",
-        "name":"Simple Chat",
-        "nodes":[
-            {"id":"input.1","type":"input"},
-            {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":1}},
-            {"id":"output.1","type":"output"},
-            {"id":"wait.1","type":"wait"}
-        ],
-        "edges":[
-            {"id":"input-agent","source":"input.1","target":"agent.1"},
-            {"id":"agent-output","source":"agent.1","target":"output.1"},
-            {"id":"output-wait","source":"output.1","target":"wait.1"}
-        ]
-    })
-}
-
 const fn default_maximum_turns() -> u32 {
     1
 }
 
-fn invalid_workflow(message: &str) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::InvalidInput(format!("frozen Simple Chat workflow: {message}"))
+fn invalid_workflow(message: &str) -> WorkflowPipelineError {
+    WorkflowPipelineError::InvalidInput(format!("frozen workflow JSON: {message}"))
 }
 
 fn validate_request(
-    request: &SimpleChatExecutionRequestV1,
+    request: &WorkflowExecutionRequestV1,
     protocol: ProviderProtocolV1,
     descriptor: &CapabilityDescriptor,
-) -> Result<(), SimpleChatPipelineError> {
-    let graph_mode = !is_simple_chat_document(&request.workflow_snapshot);
-    let agent_instructions = workflow_agent_instructions(&request.workflow_snapshot);
+) -> Result<(), WorkflowPipelineError> {
+    validate_v1_executable_catalog(&request.workflow_snapshot).map_err(|error| {
+        WorkflowPipelineError::InvalidInput(format!("workflow graph is not executable: {error}"))
+    })?;
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
-    if graph_mode {
-        if let Err(error) = validate_v1_executable_catalog(&request.workflow_snapshot) {
-            return Err(SimpleChatPipelineError::InvalidInput(format!(
-                "workflow graph is not executable: {error}"
-            )));
-        }
-        if request.maximum_turns == 0 || request.budget.turns == 0 {
-            return Err(SimpleChatPipelineError::InvalidInput(
-                "graph workflows require at least one agent turn in the budget".to_owned(),
-            ));
-        }
-        if request.budget.tool_calls > 64 {
-            return Err(SimpleChatPipelineError::InvalidInput(
-                "graph workflows cap tool calls at 64 per pass".to_owned(),
-            ));
-        }
-        if request.tools.is_empty() && request.budget.tool_calls != 0 {
-            return Err(SimpleChatPipelineError::InvalidInput(
-                "graph workflow budgets must not reserve tool calls without frozen tool bindings"
-                    .to_owned(),
-            ));
-        }
-    } else {
-        validate_simple_chat_workflow_request(request)?;
-        if request.tools.is_empty() {
-            if request.maximum_turns != 1
-                || request.budget.turns != 1
-                || request.budget.tool_calls != 0
-            {
-                return Err(SimpleChatPipelineError::InvalidInput(
-                    "tool-free Simple Chat requires exactly one model turn and zero tool calls"
-                        .into(),
-                ));
-            }
-        } else if request.workspace.is_none()
-            || !(2..=8).contains(&request.maximum_turns)
-            || request.budget.turns != u64::from(request.maximum_turns)
-            || request.budget.attempts < u64::from(request.maximum_turns)
-            || request.budget.tool_calls == 0
-            || request.budget.tool_calls > 32
-            || request.budget.actions
-                < request
-                    .budget
-                    .turns
-                    .saturating_add(request.budget.tool_calls)
-            || frozen_tools.len() != request.tools.len()
-        {
-            return Err(SimpleChatPipelineError::InvalidInput(
-                "tool-bound Simple Chat requires a frozen project, 2-8 model turns, and matching bounded turn/tool/action budgets"
-                    .into(),
-            ));
-        }
+    if request.maximum_turns == 0
+        || u64::from(request.maximum_turns) > request.budget.turns
+        || request.budget.attempts < request.budget.turns
+        || request.budget.tool_calls > 64
+        || frozen_tools.len() != request.tools.len()
+        || (request.tools.is_empty() && request.budget.tool_calls != 0)
+    {
+        return Err(WorkflowPipelineError::InvalidInput(
+            "workflow turn, tool, attempt, and action budgets do not match the frozen JSON bindings"
+                .to_owned(),
+        ));
     }
     if request.messages.is_empty()
         || request.deadline_epoch_millis <= request.now_epoch_millis
@@ -4360,12 +3085,12 @@ fn validate_request(
         || request.budget.actions == 0
         || request.budget.deadline_ms == 0
     {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "messages, deadline, and model budget must be non-empty".to_owned(),
         ));
     }
     if !is_sha256(&request.frozen_context_hash) {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "frozen Chat context hash must be a canonical sha256 identity".to_owned(),
         ));
     }
@@ -4375,7 +3100,7 @@ fn validate_request(
             || branch.len() > 1024
             || branch.chars().any(char::is_control)
     }) {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "a frozen Git branch requires a project workspace and a bounded non-empty HEAD label"
                 .to_owned(),
         ));
@@ -4389,56 +3114,38 @@ fn validate_request(
         .last()
         .is_none_or(|message| message.role != "user")
     {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "messages require supported roles, non-empty content, and a final user turn".to_owned(),
         ));
     }
-    let system_messages = request
+    // Node instructions belong to the frozen workflow JSON. Conversation
+    // history cannot inject a competing provider system layer.
+    if request
         .messages
         .iter()
-        .enumerate()
-        .filter(|(_, message)| message.role == "system")
-        .collect::<Vec<_>>();
-    let system_layer_matches = if graph_mode {
-        // The graph pass executor composes per-node system layers; the frozen
-        // conversation must not carry a competing leading system message.
-        system_messages.is_empty()
-    } else {
-        match agent_instructions {
-            Some(instructions) => {
-                system_messages.len() == 1
-                    && system_messages[0].0 == 0
-                    && system_messages[0].1.content == instructions
-            }
-            None => system_messages.is_empty(),
-        }
-    };
-    if !system_layer_matches {
-        return Err(SimpleChatPipelineError::InvalidInput(
-            if graph_mode {
-                "graph workflow conversations must not embed a leading system message; instructions belong to the workflow nodes"
-            } else {
-                "the provider context must contain exactly the saved Agent instructions as its sole leading system message"
-            }
-            .to_owned(),
+        .any(|message| message.role == "system")
+    {
+        return Err(WorkflowPipelineError::InvalidInput(
+            "workflow conversations must not embed a system message; instructions belong to the frozen JSON nodes"
+                .to_owned(),
         ));
     }
     if serde_json::to_vec(&request.messages)
         .map_err(json_error)?
         .len()
-        > SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES
+        > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
     {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "message context exceeds the frozen input bound".to_owned(),
         ));
     }
     if serialized_len(&request.workflow_snapshot)? > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES {
-        return Err(SimpleChatPipelineError::InvalidInput(
+        return Err(WorkflowPipelineError::InvalidInput(
             "saved workflow snapshot exceeds the executable persistence bound".to_owned(),
         ));
     }
     if descriptor.capability_id != protocol.capability_id() {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
+        return Err(WorkflowPipelineError::IncompleteEvidence);
     }
     match protocol {
         ProviderProtocolV1::OpenAiCompatible => {
@@ -4450,7 +3157,7 @@ fn validate_request(
                 None,
                 OpenAiCompatibleLimitsV1::default(),
             )
-            .map_err(|error| SimpleChatPipelineError::InvalidInput(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
         }
         ProviderProtocolV1::Anthropic => {
             AnthropicMessagesProviderConfig::new(
@@ -4461,7 +3168,7 @@ fn validate_request(
                 None,
                 AnthropicMessagesLimitsV1::default(),
             )
-            .map_err(|error| SimpleChatPipelineError::InvalidInput(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
         }
         ProviderProtocolV1::Gemini => {
             GoogleGeminiProviderConfig::new(
@@ -4472,7 +3179,7 @@ fn validate_request(
                 None,
                 GoogleGeminiLimitsV1::default(),
             )
-            .map_err(|error| SimpleChatPipelineError::InvalidInput(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
         }
     }
     if let Some(metadata) = &request.provider.credential {
@@ -4481,30 +3188,16 @@ fn validate_request(
     Ok(())
 }
 
-fn workflow_agent_instructions(workflow: &Value) -> Option<&str> {
-    workflow
-        .get("nodes")
-        .and_then(Value::as_array)
-        .and_then(|nodes| {
-            nodes
-                .iter()
-                .find(|node| node.get("id").and_then(Value::as_str) == Some("agent.1"))
-        })
-        .and_then(|agent| agent.get("configuration"))
-        .and_then(|configuration| configuration.get("instructions"))
-        .and_then(Value::as_str)
-}
-
 fn model_descriptor(
     protocol: ProviderProtocolV1,
-) -> Result<CapabilityDescriptor, SimpleChatPipelineError> {
+) -> Result<CapabilityDescriptor, WorkflowPipelineError> {
     let mut descriptor = CapabilityDescriptor::build(
         protocol.capability_id(),
         MODEL_ADAPTER_VERSION,
         CapabilityKind::Model,
         SideEffectClass::NonIdempotent,
     )
-    .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+    .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     descriptor.guarantees_same_id_deduplication = false;
     descriptor.supports_streaming = false;
     descriptor.supports_cancellation = false;
@@ -4515,32 +3208,28 @@ fn model_descriptor(
     descriptor.max_output_bytes = MAXIMUM_OUTPUT_BYTES;
     descriptor
         .rehash()
-        .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+        .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     Ok(descriptor)
 }
 
-fn provider_error_status(error: &ProviderError) -> SimpleChatExecutionStatusV1 {
-    match error {
-        ProviderError::BindingDrift
-        | ProviderError::InvalidPlan
-        | ProviderError::NoCandidateAccepted => {
-            SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
-        }
-        ProviderError::OutputBound
-        | ProviderError::ConflictingAcceptanceEvidence
-        | ProviderError::MissingOrDuplicateUsage => SimpleChatExecutionStatusV1::FailedKnownStarted,
-        ProviderError::AcceptanceAmbiguous
-        | ProviderError::Failed(_)
-        | ProviderError::Cancelled => SimpleChatExecutionStatusV1::OutcomeUncertain,
+fn graph_failure_status(error: Option<&str>) -> WorkflowExecutionStatusV1 {
+    let error = error.unwrap_or_default().to_ascii_lowercase();
+    if error.contains("acceptance") && error.contains("ambiguous")
+        || error.contains("provider failed")
+        || error.contains("cancelled")
+    {
+        WorkflowExecutionStatusV1::OutcomeUncertain
+    } else {
+        WorkflowExecutionStatusV1::FailedKnownStarted
     }
 }
 
 fn revalidate_optional_project_branch(
     workspace: &WorkspaceBindingV1,
     expected_branch: Option<&str>,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     expected_branch.map_or(Ok(()), |expected| {
-        revalidate_git_branch(&workspace.root, expected).map_err(SimpleChatPipelineError::Authority)
+        revalidate_git_branch(&workspace.root, expected).map_err(WorkflowPipelineError::Authority)
     })
 }
 
@@ -4594,16 +3283,16 @@ fn broker_event_invocation_id(event: &InvocationLedgerEventV1) -> &StableId {
     }
 }
 
-fn outcome_hash_v1(outcome: &ProviderOutcomeRecordV1) -> Result<String, SimpleChatPipelineError> {
+fn outcome_hash_v1(outcome: &ProviderOutcomeRecordV1) -> Result<String, WorkflowPipelineError> {
     canonical_hash(outcome)
 }
 
-fn canonical_hash<T: Serialize>(value: &T) -> Result<String, SimpleChatPipelineError> {
+fn canonical_hash<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
     let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
-fn canonical_digest<T: Serialize>(value: &T) -> Result<String, SimpleChatPipelineError> {
+fn canonical_digest<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
     let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
@@ -4618,14 +3307,14 @@ fn digest_hex(material: &str) -> String {
     format!("{:x}", Sha256::digest(material.as_bytes()))
 }
 
-fn digest_id(prefix: &str, material: &str) -> Result<StableId, SimpleChatPipelineError> {
+fn digest_id(prefix: &str, material: &str) -> Result<StableId, WorkflowPipelineError> {
     stable(&format!("{prefix}.{}", &digest_hex(material)[..40]))
 }
 
 fn lease_id(
     invocation_id: &StableId,
     secret: &StoredSecretBindingV1,
-) -> Result<StableId, SimpleChatPipelineError> {
+) -> Result<StableId, WorkflowPipelineError> {
     digest_id(
         "lease.model",
         &format!(
@@ -4637,15 +3326,15 @@ fn lease_id(
     )
 }
 
-fn stable(value: &str) -> Result<StableId, SimpleChatPipelineError> {
+fn stable(value: &str) -> Result<StableId, WorkflowPipelineError> {
     StableId::parse(value.to_owned())
-        .map_err(|error| SimpleChatPipelineError::InvalidInput(error.to_string()))
+        .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))
 }
 
-fn random_generation() -> Result<ProcessGeneration, SimpleChatPipelineError> {
+fn random_generation() -> Result<ProcessGeneration, WorkflowPipelineError> {
     let mut bytes = [0_u8; 8];
     getrandom::fill(&mut bytes)
-        .map_err(|_| SimpleChatPipelineError::Host("generation randomness failed".into()))?;
+        .map_err(|_| WorkflowPipelineError::Host("generation randomness failed".into()))?;
     // Protocol identities are JCS encoded; stay inside JSON's exact integer
     // range while retaining a process-unique generation fence.
     let generation = u64::from_le_bytes(bytes) & ((1_u64 << 53) - 1);
@@ -4672,24 +3361,25 @@ fn map_store_to_broker(error: StoreError) -> BrokerError {
     }
 }
 
-fn local_store_error(error: StoreError) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Store(error.to_string())
+fn local_store_error(error: StoreError) -> WorkflowPipelineError {
+    WorkflowPipelineError::Store(error.to_string())
 }
 
-fn store_error(error: std::io::Error) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Store(error.to_string())
+fn store_error(error: std::io::Error) -> WorkflowPipelineError {
+    WorkflowPipelineError::Store(error.to_string())
 }
 
-fn json_error(error: impl std::fmt::Display) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Store(error.to_string())
+fn json_error(error: impl std::fmt::Display) -> WorkflowPipelineError {
+    WorkflowPipelineError::Store(error.to_string())
 }
 
-fn broker_error(error: BrokerError) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Broker(error.to_string())
+fn broker_error(error: BrokerError) -> WorkflowPipelineError {
+    WorkflowPipelineError::Broker(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
         PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
@@ -4709,8 +3399,9 @@ mod tests {
     use aworkit_capability_host::{
         McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
         McpInitializeRequestV1, McpInitializeResponseV1, McpPeerCallResultV1, McpPeerErrorV1,
-        McpPeerPort, McpServerManifestV1, McpToolDescriptorV1, ModelToolCallV1,
-        ModelToolDefinitionV1, ModelToolEventV1, ModelToolRequestV1, ProviderAcceptanceV1,
+        McpPeerPort, McpServerManifestV1, McpToolDescriptorV1, ModelEventV1, ModelRequestV1,
+        ModelToolCallV1, ModelToolDefinitionV1, ModelToolEventV1, ModelToolRequestV1,
+        ProviderAcceptanceV1, ProviderError,
     };
     use aworkit_trusted_core::{MemoryCredentialStore, SecretBroker};
     use tempfile::TempDir;
@@ -4718,7 +3409,7 @@ mod tests {
     use super::*;
 
     type ToolPipelineSetupV1 = (
-        SimpleChatExecutionPipeline,
+        WorkflowExecutionPipeline,
         Arc<MemoryCredentialStore>,
         CredentialMetadataV1,
         Arc<AtomicUsize>,
@@ -4801,7 +3492,7 @@ mod tests {
                 }
                 ScriptedBehavior::OversizedOutput => {
                     emit(ModelEventV1::AssistantOutput(
-                        "x".repeat(SIMPLE_CHAT_MAX_ASSISTANT_TEXT_BYTES + 1),
+                        "x".repeat(WORKFLOW_MAX_ASSISTANT_TEXT_BYTES + 1),
                     ))?;
                     emit(ModelEventV1::Usage {
                         input_tokens: 7,
@@ -5107,7 +3798,7 @@ mod tests {
         root: &TempDir,
         behavior: ScriptedBehavior,
     ) -> (
-        SimpleChatExecutionPipeline,
+        WorkflowExecutionPipeline,
         Arc<MemoryCredentialStore>,
         CredentialMetadataV1,
         Arc<AtomicUsize>,
@@ -5123,7 +3814,7 @@ mod tests {
             .expect("credential");
         let calls = Arc::new(AtomicUsize::new(0));
         let saw_secret = Arc::new(Mutex::new(false));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store.clone(),
             Arc::new(ScriptedProviderFactory {
@@ -5137,23 +3828,26 @@ mod tests {
         (pipeline, credential_store, metadata, calls, saw_secret)
     }
 
-    fn request(metadata: CredentialMetadataV1) -> SimpleChatExecutionRequestV1 {
-        SimpleChatExecutionRequestV1::bounded(
+    fn request(metadata: CredentialMetadataV1) -> WorkflowExecutionRequestV1 {
+        let mut request = WorkflowExecutionRequestV1::bounded(
             stable("command.pipeline-test").expect("request"),
             stable("chat.pipeline-test").expect("chat"),
             stable("run.pipeline-test").expect("run"),
-            SimpleChatProviderBindingV1 {
+            WorkflowProviderBindingV1 {
                 kind: "openai_compatible".to_owned(),
                 base_url: "http://127.0.0.1:9876/v1".to_owned(),
                 model: "test-model".to_owned(),
                 credential: Some(metadata),
             },
-            vec![SimpleChatMessageV1 {
+            vec![WorkflowMessageV1 {
                 role: "user".to_owned(),
                 content: "Please prove the pipeline works.".to_owned(),
             }],
             current_epoch_millis(),
-        )
+        );
+        request.workflow_snapshot =
+            bundled_workflow_template("simple-chat").expect("bundled test workflow");
+        request
     }
 
     fn setup_tool_pipeline(root: &TempDir, script: ToolScriptV1) -> ToolPipelineSetupV1 {
@@ -5167,7 +3861,7 @@ mod tests {
             .expect("credential");
         let calls = Arc::new(AtomicUsize::new(0));
         let observed_results = Arc::new(Mutex::new(Vec::new()));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store.clone(),
             Arc::new(ToolProviderFactoryV1 {
@@ -5187,11 +3881,11 @@ mod tests {
     }
 
     fn tool_bound_request(
-        pipeline: &SimpleChatExecutionPipeline,
+        pipeline: &WorkflowExecutionPipeline,
         metadata: CredentialMetadataV1,
         project: &Path,
         tool_ids: &[&str],
-    ) -> SimpleChatExecutionRequestV1 {
+    ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.request_id = stable("command.pipeline-tool-test").expect("request");
         request.chat_id = stable("chat.pipeline-tool-test").expect("chat");
@@ -5209,7 +3903,7 @@ mod tests {
         request.budget.actions = 10;
         request.tools = tool_ids
             .iter()
-            .map(|tool_id| SimpleChatToolBindingV1 {
+            .map(|tool_id| WorkflowToolBindingV1 {
                 capability_id: (*tool_id).into(),
                 configuration: match *tool_id {
                     FILE_READ_CAPABILITY_ID => json!({
@@ -5245,7 +3939,6 @@ mod tests {
                 definition: None,
             })
             .collect();
-        request.workflow_snapshot = default_simple_chat_workflow_snapshot();
         request.workflow_snapshot["nodes"][1]["configuration"]["toolIds"] = json!(tool_ids);
         request.workflow_snapshot["nodes"][1]["configuration"]["maxTurns"] = json!(2);
         request
@@ -5274,7 +3967,7 @@ mod tests {
             .expect("tool execution");
         assert_eq!(
             first.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             first.error
         );
@@ -5317,47 +4010,23 @@ mod tests {
         assert_eq!(prepared.snapshot.transitions.len(), 3);
         assert_eq!(prepared.manifest.capability_bindings.len(), 3);
         assert_eq!(prepared.tool_bindings.len(), 2);
-        let prepared_scheduler = prepared
-            .scheduler_checkpoint
-            .as_ref()
-            .expect("prepared scheduler checkpoint");
-        assert_eq!(prepared_scheduler.committed_cursor, 1);
-        assert_eq!(
-            prepared
-                .scheduler_trace
-                .iter()
-                .map(|entry| (entry.action.as_str(), entry.node_id.as_str()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("claimed", "input.1"),
-                ("transition_acknowledged", "input.1"),
-                ("claimed", "agent.1"),
-            ]
-        );
+        assert!(prepared.scheduler_checkpoint.is_none());
+        assert!(prepared.scheduler_trace.is_empty());
         let durable = pipeline
             .records
             .outcomes()
             .expect("durable outcomes")
             .into_iter()
-            .find(|outcome| outcome.status == SimpleChatExecutionStatusV1::Succeeded)
+            .find(|outcome| outcome.status == WorkflowExecutionStatusV1::Succeeded)
             .expect("successful outcome");
-        let final_scheduler = durable
-            .scheduler_checkpoint
-            .as_ref()
-            .expect("final scheduler checkpoint");
-        assert_eq!(final_scheduler.committed_cursor, 3);
-        assert_eq!(durable.scheduler_trace.len(), 8);
-        assert_eq!(
+        assert!(durable.scheduler_checkpoint.is_none());
+        assert!(durable.scheduler_trace.is_empty());
+        assert!(
             durable
-                .scheduler_trace
+                .node_activity
                 .iter()
-                .filter_map(|entry| entry.transition_id.as_ref().map(StableId::as_str))
-                .collect::<Vec<_>>(),
-            vec!["input-agent", "agent-output", "output-wait"]
+                .any(|activity| { activity.node_id == "wait.1" && activity.status == "completed" })
         );
-        assert!(final_scheduler.tokens.iter().any(|token| {
-            token.node_id.as_str() == "wait.1" && token.state == TokenStateV1::Suspended
-        }));
 
         fs::write(project.join("notes.txt"), b"changed after settlement").expect("change");
         fs::write(
@@ -5370,7 +4039,7 @@ mod tests {
         drop(pipeline);
         let restarted_calls = Arc::new(AtomicUsize::new(0));
         let restarted_results = Arc::new(Mutex::new(Vec::new()));
-        let restarted = SimpleChatExecutionPipeline::compose(
+        let restarted = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(ToolProviderFactoryV1 {
@@ -5394,18 +4063,18 @@ mod tests {
         let mut follow_up = execution_request;
         follow_up.request_id = stable("command.pipeline-tool-follow-up").expect("follow-up");
         follow_up.messages.extend([
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "assistant".into(),
                 content: "tool loop complete".into(),
             },
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "user".into(),
                 content: "read it again".into(),
             },
         ]);
         assert!(matches!(
             restarted.preflight(&follow_up),
-            Err(SimpleChatPipelineError::Authority(_))
+            Err(WorkflowPipelineError::Authority(_))
         ));
         assert_eq!(restarted_calls.load(Ordering::SeqCst), 0);
         assert!(
@@ -5435,7 +4104,7 @@ mod tests {
         let result = pipeline.execute(escaped).expect("settled denied read");
         assert_eq!(
             result.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             result.error
         );
@@ -5447,7 +4116,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
         let malformed_calls = Arc::new(AtomicUsize::new(0));
-        let malformed = SimpleChatExecutionPipeline::compose(
+        let malformed = WorkflowExecutionPipeline::compose(
             &root.path().join("malformed-profile"),
             Arc::new(MemoryCredentialStore::default()),
             Arc::new(ToolProviderFactoryV1 {
@@ -5467,10 +4136,7 @@ mod tests {
         let denied = malformed
             .execute(malformed_request)
             .expect("malformed call is a durable provider outcome");
-        assert_eq!(
-            denied.status,
-            SimpleChatExecutionStatusV1::FailedKnownStarted
-        );
+        assert_eq!(denied.status, WorkflowExecutionStatusV1::FailedKnownStarted);
         assert!(denied.tool_activity.is_empty());
         assert_eq!(malformed_calls.load(Ordering::SeqCst), 1);
 
@@ -5480,11 +4146,13 @@ mod tests {
         missing_scope.chat_id = stable("chat.pipeline-tool-no-project").expect("chat");
         missing_scope.run_id = stable("run.pipeline-tool-no-project").expect("run");
         missing_scope.workspace = None;
-        assert!(matches!(
-            pipeline.execute(missing_scope),
-            Err(SimpleChatPipelineError::InvalidInput(_))
-        ));
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let missing_scope = pipeline
+            .execute(missing_scope)
+            .expect("missing project scope is a settled denied tool result");
+        assert_eq!(missing_scope.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(missing_scope.tool_activity.len(), 1);
+        assert_eq!(missing_scope.tool_activity[0].status, "failed");
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[test]
@@ -5503,7 +4171,7 @@ mod tests {
                 &[FILE_READ_CAPABILITY_ID],
             ))
             .expect("later provider failure");
-        assert_eq!(result.status, SimpleChatExecutionStatusV1::OutcomeUncertain);
+        assert_eq!(result.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert_eq!(result.tool_activity.len(), 1, "{:?}", result.error);
         assert_eq!(result.tool_activity[0].status, "completed");
         assert_eq!((result.model_turns, result.tool_calls), (2, 1));
@@ -5515,26 +4183,23 @@ mod tests {
             .into_iter()
             .next()
             .expect("failure outcome");
+        assert!(durable.scheduler_checkpoint.is_none());
         assert!(
             durable
-                .scheduler_checkpoint
-                .as_ref()
-                .expect("failure scheduler")
-                .tokens
+                .node_activity
                 .iter()
-                .any(|token| token.node_id.as_str() == "agent.1"
-                    && token.state == TokenStateV1::Cancelled)
+                .any(|activity| { activity.node_id == "agent.1" && activity.status == "failed" })
         );
     }
 
     #[test]
-    fn aggregate_tool_history_bound_fails_explicitly_without_journal_failure() {
+    fn aggregate_tool_context_bound_fails_explicitly_without_journal_failure() {
         let root = TempDir::new().expect("root");
         let project = root.path().join("project");
         fs::create_dir(&project).expect("project");
         // Each byte is valid UTF-8 but expands to a six-byte JSON escape. One
-        // canonical 60 KiB read fits; two exchanges exceed the 512 KiB run
-        // aggregate and must fail explicitly before journal commit.
+        // canonical 60 KiB read fits; adding another turn exceeds the frozen
+        // provider context bound and must fail explicitly before journal commit.
         fs::write(project.join("large.txt"), "\u{1}".repeat(60 * 1024)).expect("large file");
         let (pipeline, _store, metadata, calls, _results) =
             setup_tool_pipeline(&root, ToolScriptV1::LargeAggregate);
@@ -5549,19 +4214,18 @@ mod tests {
         let result = pipeline
             .execute(execution_request)
             .expect("bounded failure remains durably representable");
-        assert_eq!(
-            result.status,
-            SimpleChatExecutionStatusV1::FailedKnownStarted
-        );
+        assert_eq!(result.status, WorkflowExecutionStatusV1::FailedKnownStarted);
         assert!(
-            result
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("history byte limit"))
+            result.error.as_deref().is_some_and(|error| {
+                error.contains("history byte limit")
+                    || error.contains("frozen provider plan is invalid")
+            }),
+            "{:?}",
+            result.error
         );
-        assert_eq!((result.model_turns, result.tool_calls), (2, 2));
-        assert_eq!(result.tool_activity.len(), 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!((result.model_turns, result.tool_calls), (2, 1));
+        assert_eq!(result.tool_activity.len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
         let outcome = pipeline
             .records
             .outcomes()
@@ -5581,10 +4245,7 @@ mod tests {
         let output = pipeline
             .execute(request(metadata.clone()))
             .expect("oversized provider output is a bounded durable outcome");
-        assert_eq!(
-            output.status,
-            SimpleChatExecutionStatusV1::FailedKnownStarted
-        );
+        assert_eq!(output.status, WorkflowExecutionStatusV1::FailedKnownStarted);
         assert_eq!((output.model_turns, output.tool_calls), (1, 0));
         assert!(output.assistant_text.is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -5596,24 +4257,24 @@ mod tests {
         oversized_input.messages = (0..5)
             .flat_map(|ordinal| {
                 [
-                    SimpleChatMessageV1 {
+                    WorkflowMessageV1 {
                         role: "user".into(),
                         content: format!("{ordinal}:{}", "u".repeat(31 * 1024)),
                     },
-                    SimpleChatMessageV1 {
+                    WorkflowMessageV1 {
                         role: "assistant".into(),
                         content: "a".repeat(31 * 1024),
                     },
                 ]
             })
-            .chain(std::iter::once(SimpleChatMessageV1 {
+            .chain(std::iter::once(WorkflowMessageV1 {
                 role: "user".into(),
                 content: "final".into(),
             }))
             .collect();
         assert!(matches!(
             pipeline.execute(oversized_input.clone()),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(
@@ -5655,7 +4316,7 @@ mod tests {
 
         assert!(matches!(
             pipeline.execute(execution_request.clone()),
-            Err(SimpleChatPipelineError::Authority(_))
+            Err(WorkflowPipelineError::Authority(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(
@@ -5675,7 +4336,7 @@ mod tests {
         let first = pipeline
             .execute(request(metadata.clone()))
             .expect("execute");
-        assert_eq!(first.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(first.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(first.assistant_text.as_deref(), Some("working answer"));
         assert_eq!((first.input_units, first.output_units), (7, 3));
         assert_eq!((first.model_turns, first.tool_calls), (1, 0));
@@ -5719,12 +4380,12 @@ mod tests {
         }
 
         let replay = pipeline.execute(request(metadata.clone())).expect("replay");
-        assert_eq!(replay.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(replay.status, WorkflowExecutionStatusV1::Succeeded);
         assert!(replay.replayed);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let reopened_calls = Arc::new(AtomicUsize::new(0));
-        let reopened = SimpleChatExecutionPipeline::compose(
+        let reopened = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(ScriptedProviderFactory {
@@ -5736,7 +4397,7 @@ mod tests {
         )
         .expect("reopen");
         let after_restart = reopened.execute(request(metadata)).expect("restart replay");
-        assert_eq!(after_restart.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(after_restart.status, WorkflowExecutionStatusV1::Succeeded);
         assert!(after_restart.replayed);
         assert_eq!(reopened_calls.load(Ordering::SeqCst), 0);
     }
@@ -5782,7 +4443,7 @@ mod tests {
             let result = pipeline
                 .execute(execution_request.clone())
                 .expect("protocol execution");
-            assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+            assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
 
             let record = pipeline
                 .records
@@ -5818,7 +4479,7 @@ mod tests {
         changed_protocol.provider.base_url = "http://127.0.0.1:9876".to_owned();
         assert!(matches!(
             pipeline.execute(changed_protocol),
-            Err(SimpleChatPipelineError::Store(_))
+            Err(WorkflowPipelineError::Store(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
@@ -5838,21 +4499,21 @@ mod tests {
         follow_up.request_id = stable("command.pipeline-follow-up").expect("follow-up request");
         follow_up.frozen_context_hash = first_request.frozen_context_hash.clone();
         follow_up.messages = vec![
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "user".into(),
                 content: "Please prove the pipeline works.".into(),
             },
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "assistant".into(),
                 content: "working answer".into(),
             },
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "user".into(),
                 content: "follow up".into(),
             },
         ];
         let continuation_calls = Arc::new(AtomicUsize::new(0));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store.clone(),
             Arc::new(ScriptedProviderFactory {
@@ -5888,68 +4549,21 @@ mod tests {
             .execution(&follow_up.request_id)
             .expect("follow-up record")
             .expect("prepared follow-up");
-        assert_eq!(prepared.scheduler_continuation, 1);
-        let prepared_checkpoint = prepared
-            .scheduler_checkpoint
-            .as_ref()
-            .expect("prepared continuation checkpoint");
-        assert_eq!(prepared_checkpoint.committed_cursor, 5);
-        assert_eq!(prepared_checkpoint.next_token_ordinal, 7);
-        assert_eq!(prepared.scheduler_trace.len(), 14);
-        assert_eq!(
-            prepared
-                .scheduler_trace
-                .iter()
-                .skip(8)
-                .map(|entry| (entry.action.as_str(), entry.node_id.as_str()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("resumed", "wait.1"),
-                ("claimed", "wait.1"),
-                ("input_received_acknowledged", "wait.1"),
-                ("claimed", "input.1"),
-                ("transition_acknowledged", "input.1"),
-                ("claimed", "agent.1"),
-            ]
-        );
+        assert_eq!(prepared.scheduler_continuation, 0);
+        assert!(prepared.scheduler_checkpoint.is_none());
+        assert!(prepared.scheduler_trace.is_empty());
         let outcome = pipeline
             .records
             .outcome(&second.broker_invocation_id)
             .expect("follow-up outcome")
             .expect("durable follow-up outcome");
-        let checkpoint = outcome
-            .scheduler_checkpoint
-            .as_ref()
-            .expect("terminal continuation checkpoint");
-        assert_eq!(checkpoint.committed_cursor, 7);
-        assert_eq!(checkpoint.next_token_ordinal, 9);
-        assert_eq!(outcome.scheduler_trace.len(), 19);
-        assert_eq!(
-            checkpoint
-                .tokens
+        assert!(outcome.scheduler_checkpoint.is_none());
+        assert!(outcome.scheduler_trace.is_empty());
+        assert!(
+            outcome
+                .node_activity
                 .iter()
-                .filter(|token| token.node_id.as_str() == "wait.1"
-                    && token.state == TokenStateV1::Completed)
-                .count(),
-            1
-        );
-        assert_eq!(
-            checkpoint
-                .tokens
-                .iter()
-                .filter(|token| token.node_id.as_str() == "wait.1"
-                    && token.state == TokenStateV1::Suspended)
-                .count(),
-            1
-        );
-        assert_eq!(
-            checkpoint
-                .tokens
-                .iter()
-                .filter(|token| token.node_id.as_str() == "input.1")
-                .count(),
-            2,
-            "continuation must append one Input token rather than reseed a Run"
+                .any(|activity| { activity.node_id == "wait.1" && activity.status == "completed" })
         );
 
         let exact_retry = pipeline
@@ -5959,7 +4573,7 @@ mod tests {
         assert_eq!(continuation_calls.load(Ordering::SeqCst), 1);
         drop(pipeline);
         let restart_calls = Arc::new(AtomicUsize::new(0));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(ScriptedProviderFactory {
@@ -5981,7 +4595,7 @@ mod tests {
         drifted.frozen_context_hash = format!("sha256:{}", "b".repeat(64));
         assert!(matches!(
             pipeline.execute(drifted),
-            Err(SimpleChatPipelineError::Store(_))
+            Err(WorkflowPipelineError::Store(_))
         ));
         assert_eq!(restart_calls.load(Ordering::SeqCst), 0);
     }
@@ -6000,7 +4614,7 @@ mod tests {
             .expect("materialization failure is a settled outcome");
         assert_eq!(
             first.status,
-            SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
+            WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
         );
         assert!(
             first
@@ -6017,7 +4631,7 @@ mod tests {
             .expect("settled failure replay");
         assert_eq!(
             replay.status,
-            SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted
+            WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
         );
         assert!(replay.replayed);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -6031,10 +4645,7 @@ mod tests {
         let result = pipeline
             .execute(request(metadata))
             .expect("accepted empty outcome is durably classified");
-        assert_eq!(
-            result.status,
-            SimpleChatExecutionStatusV1::FailedKnownStarted
-        );
+        assert_eq!(result.status, WorkflowExecutionStatusV1::FailedKnownStarted);
         assert!(result.assistant_text.is_none());
         assert_eq!((result.input_units, result.output_units), (7, 0));
         assert_eq!((result.model_turns, result.tool_calls), (1, 0));
@@ -6049,13 +4660,13 @@ mod tests {
         let first = pipeline
             .execute(request(metadata.clone()))
             .expect("ambiguous");
-        assert_eq!(first.status, SimpleChatExecutionStatusV1::OutcomeUncertain);
+        assert_eq!(first.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert_eq!((first.model_turns, first.tool_calls), (1, 0));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let replay = pipeline
             .execute(request(metadata))
             .expect("ambiguous replay");
-        assert_eq!(replay.status, SimpleChatExecutionStatusV1::OutcomeUncertain);
+        assert_eq!(replay.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -6069,7 +4680,7 @@ mod tests {
         changed.messages[0].content = "different semantics".to_owned();
         assert!(matches!(
             pipeline.execute(changed),
-            Err(SimpleChatPipelineError::Store(_))
+            Err(WorkflowPipelineError::Store(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -6087,7 +4698,7 @@ mod tests {
             .expect("credential");
         let calls = Arc::new(AtomicUsize::new(0));
         let observed_inputs = Arc::new(Mutex::new(Vec::new()));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(ScriptedProviderFactory {
@@ -6102,13 +4713,6 @@ mod tests {
         let mut execution_request = request(metadata.clone());
         execution_request.workflow_snapshot["nodes"][1]["configuration"]["instructions"] =
             json!(instructions);
-        execution_request.messages.insert(
-            0,
-            SimpleChatMessageV1 {
-                role: "system".into(),
-                content: instructions.into(),
-            },
-        );
         pipeline
             .execute(execution_request)
             .expect("instruction-bound execution");
@@ -6126,14 +4730,14 @@ mod tests {
             json!(instructions);
         mismatched.messages.insert(
             0,
-            SimpleChatMessageV1 {
+            WorkflowMessageV1 {
                 role: "system".into(),
                 content: "different system layer".into(),
             },
         );
         assert!(matches!(
             pipeline.execute(mismatched.clone()),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(
@@ -6151,7 +4755,7 @@ mod tests {
         unknown_config.workflow_snapshot["nodes"][1]["configuration"]["future"] = json!(true);
         assert!(matches!(
             pipeline.execute(unknown_config.clone()),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(
@@ -6215,7 +4819,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
 
         let reopened_calls = Arc::new(AtomicUsize::new(0));
-        let reopened = SimpleChatExecutionPipeline::compose(
+        let reopened = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(ScriptedProviderFactory {
@@ -6227,7 +4831,7 @@ mod tests {
         )
         .expect("reopen");
         let result = reopened.execute(request(metadata)).expect("recover");
-        assert_eq!(result.status, SimpleChatExecutionStatusV1::OutcomeUncertain);
+        assert_eq!(result.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert!(result.replayed);
         assert_eq!(reopened_calls.load(Ordering::SeqCst), 0);
     }
@@ -6265,7 +4869,7 @@ mod tests {
         })
     }
 
-    fn graph_request(metadata: CredentialMetadataV1) -> SimpleChatExecutionRequestV1 {
+    fn graph_request(metadata: CredentialMetadataV1) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.workflow_snapshot = graph_workflow(false);
         request.frozen_context_hash = format!("sha256:{}", "b".repeat(64));
@@ -6284,7 +4888,7 @@ mod tests {
         let result = pipeline
             .execute(graph_request(metadata))
             .expect("graph pass");
-        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(result.assistant_text.as_deref(), Some("working answer"));
         assert_eq!(result.model_turns, 2, "plan + agent completions");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -6310,7 +4914,7 @@ mod tests {
         let suspended = pipeline.execute(request).expect("suspend");
         assert_eq!(
             suspended.status,
-            SimpleChatExecutionStatusV1::AwaitingApproval
+            WorkflowExecutionStatusV1::AwaitingApproval
         );
         let approval = suspended.approval.expect("approval evidence");
         assert_eq!(approval.node_id, "gate.1");
@@ -6323,7 +4927,7 @@ mod tests {
         let resumed = pipeline
             .resume_approval(&approval.decision_id, true)
             .expect("resume approve");
-        assert_eq!(resumed.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(resumed.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(resumed.assistant_text.as_deref(), Some("working answer"));
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -6364,7 +4968,7 @@ mod tests {
             .expect("resume reject");
         assert_eq!(
             rejected.status,
-            SimpleChatExecutionStatusV1::FailedKnownStarted
+            WorkflowExecutionStatusV1::FailedKnownStarted
         );
         assert!(rejected.error.unwrap_or_default().contains("rejected"));
         assert_eq!(
@@ -6415,10 +5019,10 @@ mod tests {
     /// Graph-mode execution request binding the edit tool against the frozen
     /// project workspace with per-invocation approval.
     fn edit_approval_request(
-        pipeline: &SimpleChatExecutionPipeline,
+        pipeline: &WorkflowExecutionPipeline,
         metadata: CredentialMetadataV1,
         project: &Path,
-    ) -> SimpleChatExecutionRequestV1 {
+    ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.request_id = stable("command.pipeline-edit-approval-test").expect("request");
         request.chat_id = stable("chat.pipeline-edit-approval-test").expect("chat");
@@ -6434,7 +5038,7 @@ mod tests {
         request.budget.attempts = 4;
         request.budget.tool_calls = 8;
         request.budget.actions = 8;
-        request.tools = vec![SimpleChatToolBindingV1 {
+        request.tools = vec![WorkflowToolBindingV1 {
             capability_id: FILE_EDIT_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode": "project_files",
@@ -6463,7 +5067,7 @@ mod tests {
             .expect("suspend on edit tool approval");
         assert_eq!(
             suspended.status,
-            SimpleChatExecutionStatusV1::AwaitingApproval,
+            WorkflowExecutionStatusV1::AwaitingApproval,
             "{:?}",
             suspended.error
         );
@@ -6497,7 +5101,7 @@ mod tests {
             .expect("resume approve");
         assert_eq!(
             resumed.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             resumed.error
         );
@@ -6552,7 +5156,7 @@ mod tests {
         // continues instead of failing the whole pass.
         assert_eq!(
             resumed.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             resumed.error
         );
@@ -6597,7 +5201,7 @@ mod tests {
             .expect("todo execution");
         assert_eq!(
             first.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             first.error
         );
@@ -6652,18 +5256,21 @@ mod tests {
         );
         // The seeded production workflow: Input -> Plan -> Agent -> Output -> Wait.
         execution_request.workflow_snapshot =
-            crate::runtime::documents::default_standard_agent_workflow();
+            bundled_workflow_template("standard-agent").expect("bundled Standard Agent");
         execution_request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
         execution_request.project_branch = Some("main".into());
-        execution_request.budget.turns = 4;
-        execution_request.budget.attempts = 4;
+        execution_request.maximum_turns = 9;
+        execution_request.budget.turns = 9;
+        execution_request.budget.attempts = 9;
+        execution_request.budget.tool_calls = 64;
+        execution_request.budget.actions = 73;
 
         let result = pipeline
             .execute(execution_request)
             .expect("standard agent pass");
         assert_eq!(
             result.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             result.error
         );
@@ -6728,12 +5335,12 @@ mod tests {
     /// Graph-mode request delegating through the subagent tool with the given
     /// frozen bindings; `subagent_maximum_turns` sets the child turn budget.
     fn subagent_request(
-        pipeline: &SimpleChatExecutionPipeline,
+        pipeline: &WorkflowExecutionPipeline,
         metadata: CredentialMetadataV1,
         project: &Path,
         tool_ids: &[&str],
         subagent_maximum_turns: u64,
-    ) -> SimpleChatExecutionRequestV1 {
+    ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.request_id = stable("command.pipeline-subagent-test").expect("request");
         request.chat_id = stable("chat.pipeline-subagent-test").expect("chat");
@@ -6751,7 +5358,7 @@ mod tests {
         request.budget.actions = 16;
         request.tools = tool_ids
             .iter()
-            .map(|tool_id| SimpleChatToolBindingV1 {
+            .map(|tool_id| WorkflowToolBindingV1 {
                 capability_id: (*tool_id).into(),
                 configuration: match *tool_id {
                     FILE_READ_CAPABILITY_ID => json!({
@@ -6805,7 +5412,7 @@ mod tests {
             .expect("suspend on subagent approval");
         assert_eq!(
             suspended.status,
-            SimpleChatExecutionStatusV1::AwaitingApproval,
+            WorkflowExecutionStatusV1::AwaitingApproval,
             "{:?}",
             suspended.error
         );
@@ -6818,7 +5425,7 @@ mod tests {
             .expect("resume approve");
         assert_eq!(
             resumed.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             resumed.error
         );
@@ -6887,7 +5494,7 @@ mod tests {
         // and the denied result flowed back without failing the parent pass.
         assert_eq!(
             resumed.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             resumed.error
         );
@@ -6945,7 +5552,7 @@ mod tests {
             .expect("resume approve");
         assert_eq!(
             resumed.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             resumed.error
         );
@@ -7212,9 +5819,9 @@ mod tests {
     }
 
     fn mcp_graph_request(
-        pipeline: &SimpleChatExecutionPipeline,
+        pipeline: &WorkflowExecutionPipeline,
         metadata: CredentialMetadataV1,
-    ) -> SimpleChatExecutionRequestV1 {
+    ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.request_id = stable("command.pipeline-mcp-test").expect("request");
         request.chat_id = stable("chat.pipeline-mcp-test").expect("chat");
@@ -7224,7 +5831,7 @@ mod tests {
         request.budget.attempts = 4;
         request.budget.tool_calls = 4;
         request.budget.actions = 8;
-        request.tools = vec![SimpleChatToolBindingV1 {
+        request.tools = vec![WorkflowToolBindingV1 {
             capability_id: MCP_FIXTURE_CAPABILITY.into(),
             configuration: json!({"serverId": MCP_FIXTURE_SERVER, "tool": MCP_FIXTURE_TOOL}),
             definition: Some(mcp_echo_definition()),
@@ -7243,7 +5850,7 @@ mod tests {
         root: &TempDir,
         behavior: ScriptedMcpBehavior,
     ) -> (
-        SimpleChatExecutionPipeline,
+        WorkflowExecutionPipeline,
         CredentialMetadataV1,
         Arc<AtomicUsize>,
         Arc<Mutex<Vec<Value>>>,
@@ -7259,7 +5866,7 @@ mod tests {
             .expect("credential");
         let calls = Arc::new(AtomicUsize::new(0));
         let observed_results = Arc::new(Mutex::new(Vec::new()));
-        let pipeline = SimpleChatExecutionPipeline::compose(
+        let pipeline = WorkflowExecutionPipeline::compose(
             root.path(),
             credential_store,
             Arc::new(McpToolProviderFactoryV1 {
@@ -7296,7 +5903,7 @@ mod tests {
             .expect("mcp graph pass");
         assert_eq!(
             result.status,
-            SimpleChatExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             result.error
         );
@@ -7324,7 +5931,7 @@ mod tests {
         let result = pipeline
             .execute(mcp_graph_request(&pipeline, metadata))
             .expect("mcp failure pass");
-        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
         let results = observed_results.lock().expect("results");
         assert_eq!(results.len(), 1);
@@ -7343,7 +5950,7 @@ mod tests {
         let result = pipeline
             .execute(mcp_graph_request(&pipeline, metadata))
             .expect("mcp oversize pass");
-        assert_eq!(result.status, SimpleChatExecutionStatusV1::Succeeded);
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
         let results = observed_results.lock().expect("results");
         assert_eq!(results.len(), 1);

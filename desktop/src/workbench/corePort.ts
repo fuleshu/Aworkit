@@ -3,6 +3,10 @@ import { z } from "zod";
 import { createDurableCommandId } from "../commandId";
 import type { AppearancePreference } from "./appearance";
 import {
+  bundledDefaultWorkflowId,
+  bundledWorkflowTemplates,
+} from "./bundledWorkflows";
+import {
   parseWorkflow,
   validateWorkflow,
   type WorkflowDocument,
@@ -108,7 +112,7 @@ export interface WorkflowCommit {
   readonly commandId: string;
   readonly expectedVersion: number;
   readonly document: WorkflowDocument;
-  /** Optional library target; defaults to the legacy Simple Chat document. */
+  /** Optional library target; defaults to the saved library default. */
   readonly workflowId?: string;
 }
 export interface WorkflowCorePort {
@@ -427,24 +431,23 @@ export class TauriWorkflowLibraryPort implements WorkflowLibraryPort {
   }
 }
 
-/** Deterministic browser preview seeded with the two built-in workflows. */
+/** Deterministic browser preview seeded from the checked-in workflow bundle. */
 export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
-  private version = 2;
-  private entries: WorkflowLibraryEntry[] = [
-    { id: "workflow.simple-chat", name: "Simple Chat", version: 1, editable: true, default: true },
-    {
-      id: "workflow.standard-agent",
-      name: "Standard Agent",
+  private version = 1;
+  private entries: WorkflowLibraryEntry[] = bundledWorkflowTemplates
+    .filter(({ seedOnFreshProfile }) => seedOnFreshProfile)
+    .map(({ document, workflowId, name }) => ({
+      id: workflowId,
+      name,
       version: 1,
-      editable: true,
-      default: false,
-    },
-  ];
+      editable: document.schemaVersion === 1,
+      default: workflowId === bundledDefaultWorkflowId,
+    }));
   private readonly receipts = new Map<
     string,
     { readonly fingerprint: string; readonly receipt: WorkbenchReceipt | WorkflowCreateReceipt }
   >();
-  private defaultWorkflowId = "workflow.simple-chat";
+  private defaultWorkflowId = bundledDefaultWorkflowId;
 
   public async snapshot(): Promise<WorkflowLibrarySnapshot> {
     return {

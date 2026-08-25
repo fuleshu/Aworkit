@@ -23,6 +23,7 @@ import {
 } from "./corePort";
 import type { ChatProjection, EvidenceRecord } from "./types";
 import { ChatWorkspaceController } from "./workspace";
+import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 const draftChat: ChatProjection = {
   chatId: "chat-1",
@@ -49,7 +50,7 @@ describe("Milestone 08 Chat and evidence experience", () => {
     expect(submitIntent(draft, draftChat, "chat.1")).toEqual({
       type: "start",
       commandId: "chat.1",
-      workflowId: "workflow.simple-chat",
+      workflowId: bundledDefaultWorkflowId,
       projectId: "project.atlas",
       input: "hello",
       attachments: [],

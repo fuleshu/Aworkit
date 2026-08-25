@@ -15,6 +15,7 @@ import type { ChatCorePort, RuntimeSnapshot } from "./corePort";
 import type { ChatIntent, ChatProjection } from "./types";
 import type { WorkflowCorePort } from "../workbench/corePort";
 import type { WorkflowDocument } from "../workbench/workflow";
+import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { readonly count: number }) => ({
@@ -80,7 +81,7 @@ describe("Chat native-port recovery contracts", () => {
       {
         type: "start",
         commandId: "command.project.start",
-        workflowId: "workflow.simple-chat",
+        workflowId: bundledDefaultWorkflowId,
         projectId: "project.atlas",
         input: "inspect it",
         attachments: [],

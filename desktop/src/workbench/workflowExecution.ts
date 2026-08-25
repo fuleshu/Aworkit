@@ -103,7 +103,7 @@ export function bindsProjectTools(document: WorkflowDocument): boolean {
   return document.nodes.some((node) => nodeBindsProjectTools(node));
 }
 
-/** Reports whether the seeded Simple Chat Agent binds a project-scoped tool.
+/** Reports whether the selected workflow binds a project-scoped tool.
  * The seeded document is an ordinary configured workflow; this predicate only
  * exists for selection-aware composer UX. */
 export function simpleChatBindsProjectTools(

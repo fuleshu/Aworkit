@@ -38,7 +38,7 @@ pub(crate) struct FrozenProjectScopeV1 {
     pub branch: Option<String>,
 }
 
-/// Projects that the current native Simple Chat slice can select. Remote
+/// Projects that the current native workflow runtime can select. Remote
 /// records stay configurable in Settings but require a future remote adapter.
 pub(crate) fn selectable_projects(projects: &[ProjectConfigurationV2]) -> Vec<ProjectChoiceDto> {
     projects

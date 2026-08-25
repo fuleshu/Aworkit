@@ -45,7 +45,7 @@ use super::{
         ModelToolInvocationPortV1, ModelToolLoopRequestV1, SettledModelToolCallV1, ToolInvokeV1,
         execute_model_tool_loop_v1,
     },
-    pipeline::{CoreAuthenticationKey, LocalInvocationLedger, SimpleChatPipelineError},
+    pipeline::{CoreAuthenticationKey, LocalInvocationLedger, WorkflowPipelineError},
     project_scope::revalidate_git_branch,
 };
 
@@ -99,6 +99,7 @@ const TOOL_BROKER_CHAT_ID: &str = "broker.tool-invocations";
 const TOOL_HOST_DESTINATION: &str = "aworkit.capability-host.tools";
 const TOOL_WORKER_DESTINATION: &str = "aworkit.workflow-worker.tools";
 const STORE_BRANCH_ID: &str = "main";
+#[cfg(test)]
 const TOOL_NODE_TYPE: &str = "agent";
 const TOOL_APPROVAL_TTL_MILLIS: u64 = 60_000;
 const MAXIMUM_TOOL_PAYLOAD_BYTES: usize = 256 * 1024;
@@ -150,7 +151,7 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
 /// Secret-free tool Settings frozen for one Chat/Run.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SimpleChatToolBindingV1 {
+pub struct WorkflowToolBindingV1 {
     pub capability_id: String,
     pub configuration: Value,
     /// Exact model-facing definition discovered at freeze for dynamic tools
@@ -195,7 +196,7 @@ fn tool_approval_challenge(
 /// Durable, UI-safe evidence for one authority-settled provider tool call.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SimpleChatToolActivityV1 {
+pub struct WorkflowToolActivityV1 {
     pub call_id: String,
     pub invocation_id: StableId,
     pub capability_id: String,
@@ -288,7 +289,7 @@ impl StoredFileToolBindingV1 {
 /// generation. Approval classes live in the frozen manifest bindings; the
 /// descriptor declares only capability semantics and side-effect classes.
 pub(crate) fn file_tool_descriptors()
--> Result<BTreeMap<String, CapabilityDescriptor>, SimpleChatPipelineError> {
+-> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
         (
@@ -394,7 +395,7 @@ pub(crate) fn file_tool_descriptors()
             kind,
             side_effect,
         )
-        .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+        .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         descriptor.guarantees_same_id_deduplication = false;
         descriptor.supports_cancellation = true;
         descriptor.allowed_scopes = vec![scope.to_owned()];
@@ -405,7 +406,7 @@ pub(crate) fn file_tool_descriptors()
         descriptor.input_schema_hash = Some(canonical_hash(&schema)?);
         descriptor
             .rehash()
-            .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
         descriptors.insert(capability_id.to_owned(), descriptor);
     }
     Ok(descriptors)
@@ -419,14 +420,14 @@ pub(crate) fn file_tool_descriptors()
 /// because `mcp://…` ids violate the capability-host name grammar.
 pub(crate) fn mcp_tool_descriptor(
     internal_id: &str,
-) -> Result<CapabilityDescriptor, SimpleChatPipelineError> {
+) -> Result<CapabilityDescriptor, WorkflowPipelineError> {
     let mut descriptor = CapabilityDescriptor::build(
         internal_id,
         MCP_ADAPTER_VERSION,
         CapabilityKind::Mcp,
         SideEffectClass::Unknown,
     )
-    .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+    .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     descriptor.guarantees_same_id_deduplication = false;
     descriptor.supports_cancellation = true;
     descriptor.allowed_scopes = vec![MCP_SCOPE.to_owned()];
@@ -436,7 +437,7 @@ pub(crate) fn mcp_tool_descriptor(
     descriptor.max_output_bytes = MAXIMUM_TOOL_RESULT_BYTES;
     descriptor
         .rehash()
-        .map_err(|error| SimpleChatPipelineError::Host(error.to_string()))?;
+        .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     Ok(descriptor)
 }
 
@@ -444,8 +445,8 @@ pub(crate) fn mcp_tool_descriptor(
 /// for every built-in tool in the v1 matrix. Approval classes come from the
 /// tool id, not from model output.
 pub(crate) fn freeze_file_tool_bindings(
-    requested: &[SimpleChatToolBindingV1],
-) -> Result<Vec<StoredFileToolBindingV1>, SimpleChatPipelineError> {
+    requested: &[WorkflowToolBindingV1],
+) -> Result<Vec<StoredFileToolBindingV1>, WorkflowPipelineError> {
     let mut seen = BTreeSet::new();
     let mut bindings = Vec::with_capacity(requested.len());
     for requested in requested {
@@ -730,8 +731,8 @@ pub(crate) fn freeze_file_tool_bindings(
 /// permissive fallback for callers without discovery). The session layer
 /// enforces the exact discovered schema hash on every call.
 fn freeze_mcp_binding(
-    requested: &SimpleChatToolBindingV1,
-) -> Result<(String, String, Value, StoredFileToolLimitV1), SimpleChatPipelineError> {
+    requested: &WorkflowToolBindingV1,
+) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
     let (server_id, tool) =
         split_mcp_capability(&requested.capability_id).map_err(|error| invalid_tool(&error))?;
     let object = requested
@@ -801,10 +802,11 @@ fn mcp_schema_hash(schema: &Value) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 pub(crate) fn file_tool_capability_binding(
     tool: &StoredFileToolBindingV1,
     descriptor: &CapabilityDescriptor,
-) -> Result<CapabilityBindingV1, SimpleChatPipelineError> {
+) -> Result<CapabilityBindingV1, WorkflowPipelineError> {
     file_tool_capability_binding_with_nodes(tool, descriptor, vec![TOOL_NODE_TYPE.to_owned()])
 }
 
@@ -812,14 +814,14 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
     tool: &StoredFileToolBindingV1,
     descriptor: &CapabilityDescriptor,
     allowed_node_types: Vec<String>,
-) -> Result<CapabilityBindingV1, SimpleChatPipelineError> {
+) -> Result<CapabilityBindingV1, WorkflowPipelineError> {
     let descriptor_capability_id = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
         &tool.internal_id
     } else {
         &tool.capability_id
     };
     if descriptor.capability_id != *descriptor_capability_id {
-        return Err(SimpleChatPipelineError::IncompleteEvidence);
+        return Err(WorkflowPipelineError::IncompleteEvidence);
     }
     let binding_capability_id = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
         stable(&tool.internal_id)?
@@ -842,7 +844,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             WEB_FETCH_CAPABILITY_ID => WEB_FETCH_ADAPTER_ID,
             SUBAGENT_CAPABILITY_ID => SUBAGENT_ADAPTER_ID,
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_ADAPTER_ID,
-            _ => return Err(SimpleChatPipelineError::IncompleteEvidence),
+            _ => return Err(WorkflowPipelineError::IncompleteEvidence),
         })?,
         adapter_version: descriptor.version.clone(),
         descriptor_hash: descriptor.version_hash.clone(),
@@ -880,7 +882,7 @@ impl FileToolAuthorityRuntimeV1 {
         descriptors: BTreeMap<String, CapabilityDescriptor>,
         generation: ProcessGeneration,
         core_key: Arc<CoreAuthenticationKey>,
-    ) -> Result<Self, SimpleChatPipelineError> {
+    ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             projects,
             records: Arc::new(ToolRecordStore::open(database)?),
@@ -913,7 +915,7 @@ impl FileToolAuthorityRuntimeV1 {
     pub(crate) fn todo_state(
         &self,
         run_id: &StableId,
-    ) -> Result<Option<Value>, SimpleChatPipelineError> {
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
         self.records.todo_state(run_id)
     }
 }
@@ -966,7 +968,7 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
     ) -> Result<ToolInvokeV1, String> {
         match self.invoke_v1(outer_invocation_id, turn, call, cancellation) {
             Ok(settled) => Ok(ToolInvokeV1::Settled(settled)),
-            Err(SimpleChatPipelineError::ToolApproval(challenge)) => {
+            Err(WorkflowPipelineError::ToolApproval(challenge)) => {
                 Ok(ToolInvokeV1::Approval(challenge))
             }
             Err(error) => Err(error.to_string()),
@@ -1005,7 +1007,7 @@ impl BoundFileToolAuthorityV1 {
         turn: u32,
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
-    ) -> Result<SettledModelToolCallV1, SimpleChatPipelineError> {
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false)
     }
 
@@ -1018,7 +1020,7 @@ impl BoundFileToolAuthorityV1 {
         turn: u32,
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
-    ) -> Result<SettledModelToolCallV1, SimpleChatPipelineError> {
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true)
     }
 
@@ -1029,7 +1031,7 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
         scoped_delivery: bool,
-    ) -> Result<SettledModelToolCallV1, SimpleChatPipelineError> {
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         let (broker, proposal, replayed) = self.prepare_broker(outer_invocation_id, turn, call)?;
         let proposal_id = proposal.proposal_id.clone();
         let decision = broker
@@ -1041,7 +1043,7 @@ impl BoundFileToolAuthorityV1 {
             .map_err(broker_error)?;
         match decision {
             BrokerDecisionV1::AwaitingApproval(challenge) => Err(
-                SimpleChatPipelineError::ToolApproval(tool_approval_challenge(&challenge, call)),
+                WorkflowPipelineError::ToolApproval(tool_approval_challenge(&challenge, call)),
             ),
             _ => self.complete_broker_decision(
                 broker,
@@ -1062,7 +1064,7 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         response: &ApprovalResponseV1,
         cancellation: &CancellationToken,
-    ) -> Result<SettledModelToolCallV1, SimpleChatPipelineError> {
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         let (broker, proposal, replayed) = self.prepare_broker(outer_invocation_id, turn, call)?;
         let proposal_id = proposal.proposal_id.clone();
         let decision = broker
@@ -1095,7 +1097,7 @@ impl BoundFileToolAuthorityV1 {
                         }),
                         is_error: true,
                     },
-                    activity: SimpleChatToolActivityV1 {
+                    activity: WorkflowToolActivityV1 {
                         call_id: call.call_id.clone(),
                         invocation_id: response.invocation_id.clone(),
                         capability_id: call.capability_id.clone(),
@@ -1125,7 +1127,7 @@ impl BoundFileToolAuthorityV1 {
         &self,
         invocation_id: &StableId,
         call: &ModelToolCallV1,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         if self.runtime.records.outcome(invocation_id)?.is_some() {
             return Ok(());
         }
@@ -1149,12 +1151,12 @@ impl BoundFileToolAuthorityV1 {
         outer_invocation_id: &StableId,
         turn: u32,
         call: &ModelToolCallV1,
-    ) -> Result<(DurableInvocationBroker, WorkerInvocationProposalV1, bool), SimpleChatPipelineError>
+    ) -> Result<(DurableInvocationBroker, WorkerInvocationProposalV1, bool), WorkflowPipelineError>
     {
         self.runtime
             .projects
             .revalidate_workspace_v1(&self.context.workspace)
-            .map_err(|error| SimpleChatPipelineError::Authority(error.to_string()))?;
+            .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
         revalidate_optional_branch(
             &self.context.workspace,
             self.context.project_branch.as_deref(),
@@ -1180,9 +1182,9 @@ impl BoundFileToolAuthorityV1 {
             .iter()
             .find(|candidate| candidate.capability_id.as_str() == expected_manifest_ref)
             .cloned()
-            .ok_or(SimpleChatPipelineError::AuthorityDenied)?;
+            .ok_or(WorkflowPipelineError::AuthorityDenied)?;
         if !manifest_binding.enabled || !manifest_binding.compatible {
-            return Err(SimpleChatPipelineError::AuthorityDenied);
+            return Err(WorkflowPipelineError::AuthorityDenied);
         }
         let record = self.prepare_invocation_record(
             outer_invocation_id,
@@ -1209,9 +1211,9 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
         scoped_delivery: bool,
-    ) -> Result<SettledModelToolCallV1, SimpleChatPipelineError> {
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         if cancellation.is_cancelled() {
-            return Err(SimpleChatPipelineError::Host(
+            return Err(WorkflowPipelineError::Host(
                 "Agent tool loop was cancelled".into(),
             ));
         }
@@ -1221,10 +1223,10 @@ impl BoundFileToolAuthorityV1 {
                 .runtime
                 .ledger
                 .invocation_for_proposal(proposal_id)?
-                .ok_or(SimpleChatPipelineError::IncompleteEvidence)?,
-            BrokerDecisionV1::Denied => return Err(SimpleChatPipelineError::AuthorityDenied),
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?,
+            BrokerDecisionV1::Denied => return Err(WorkflowPipelineError::AuthorityDenied),
             BrokerDecisionV1::AwaitingApproval(_) => {
-                return Err(SimpleChatPipelineError::ApprovalRequired);
+                return Err(WorkflowPipelineError::ApprovalRequired);
             }
         };
         self.reconcile_outcome(&broker, &invocation_id)?;
@@ -1254,9 +1256,9 @@ impl BoundFileToolAuthorityV1 {
             .runtime
             .ledger
             .settlement(&invocation_id)?
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         if uncertain {
-            return Err(SimpleChatPipelineError::Host(
+            return Err(WorkflowPipelineError::Host(
                 "project-file tool outcome is uncertain; automatic replay is forbidden".into(),
             ));
         }
@@ -1265,7 +1267,7 @@ impl BoundFileToolAuthorityV1 {
             .records
             .outcome(&invocation_id)?
             .filter(|outcome| canonical_hash(outcome).ok().as_deref() == Some(&outcome_hash))
-            .ok_or(SimpleChatPipelineError::IncompleteEvidence)?;
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let _ = broker.deliver_worker_results(&CommittedToolResultAckV1);
         Ok(SettledModelToolCallV1 {
             result: ModelToolResultV1 {
@@ -1273,7 +1275,7 @@ impl BoundFileToolAuthorityV1 {
                 content: outcome.result.clone(),
                 is_error: outcome.is_error,
             },
-            activity: SimpleChatToolActivityV1 {
+            activity: WorkflowToolActivityV1 {
                 call_id: call.call_id.clone(),
                 invocation_id,
                 capability_id: call.capability_id.clone(),
@@ -1298,7 +1300,7 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         binding: &StoredFileToolBindingV1,
         manifest_binding: CapabilityBindingV1,
-    ) -> Result<ToolInvocationRecordV1, SimpleChatPipelineError> {
+    ) -> Result<ToolInvocationRecordV1, WorkflowPipelineError> {
         let payload = json!({
             "arguments": call.arguments,
             "configurationHash": binding.configuration_hash,
@@ -1345,7 +1347,7 @@ impl BoundFileToolAuthorityV1 {
         &self,
         broker: &DurableInvocationBroker,
         invocation_id: &StableId,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let Some(outcome) = self.runtime.records.outcome(invocation_id)? else {
             return Ok(());
         };
@@ -1364,7 +1366,7 @@ impl BoundFileToolAuthorityV1 {
             .iter()
             .any(|event| matches!(event, InvocationLedgerEventV1::DispatchAttempted { .. }));
         if !attempted {
-            return Err(SimpleChatPipelineError::IncompleteEvidence);
+            return Err(WorkflowPipelineError::IncompleteEvidence);
         }
         if !events
             .iter()
@@ -1507,7 +1509,7 @@ struct FileToolDispatcherV1 {
 }
 
 impl AdmittedInvocationDispatcherV1 for FileToolDispatcherV1 {
-    type Output = Result<ToolOutcomeRecordV1, SimpleChatPipelineError>;
+    type Output = Result<ToolOutcomeRecordV1, WorkflowPipelineError>;
 
     fn dispatch(
         &self,
@@ -1868,7 +1870,7 @@ impl FileToolDispatcherV1 {
                         .execute_shell(
                             &ShellInvocationV1 {
                                 mode: ToolAuthorityModeV1::HostShell,
-                                shell_program: PathBuf::from(shell_program()),
+                                shell_program: shell_program()?,
                                 command_text: command.to_owned(),
                                 working_directory: Some(self.record.workspace.root.clone()),
                                 environment: BTreeMap::new(),
@@ -1903,7 +1905,7 @@ impl FileToolDispatcherV1 {
                         .execute_python(
                             &PythonInvocationV1 {
                                 mode: ToolAuthorityModeV1::HostPython,
-                                interpreter: PathBuf::from(python_program()),
+                                interpreter: python_program()?,
                                 script: script.to_owned(),
                                 arguments: Vec::new(),
                                 working_directory: Some(self.record.workspace.root.clone()),
@@ -2207,7 +2209,7 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
             .invoke_v1_scoped(outer_invocation_id, turn, call, cancellation)
         {
             Ok(settled) => Ok(ToolInvokeV1::Settled(settled)),
-            Err(SimpleChatPipelineError::ToolApproval(challenge)) => {
+            Err(WorkflowPipelineError::ToolApproval(challenge)) => {
                 Ok(ToolInvokeV1::Approval(challenge))
             }
             Err(error) => Err(error.to_string()),
@@ -2242,12 +2244,51 @@ impl SubagentToolPortV1<'_> {
     }
 }
 
-fn shell_program() -> &'static str {
-    if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }
+fn shell_program() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    let candidate = std::env::var_os("ComSpec")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("SystemRoot")
+                .map(PathBuf::from)
+                .map(|root| root.join("System32").join("cmd.exe"))
+        })
+        .ok_or_else(|| "host shell executable is unavailable".to_owned())?;
+    #[cfg(not(windows))]
+    let candidate = PathBuf::from("/bin/sh");
+    stable_executable(candidate, "host shell")
 }
 
-fn python_program() -> &'static str {
-    if cfg!(windows) { "python" } else { "python3" }
+fn python_program() -> Result<PathBuf, String> {
+    if let Some(configured) = std::env::var_os("AWORKIT_PYTHON_EXECUTABLE") {
+        return stable_executable(PathBuf::from(configured), "host Python");
+    }
+    let names: &[&str] = if cfg!(windows) {
+        &["python.exe", "python3.exe"]
+    } else {
+        &["python3", "python"]
+    };
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| "host Python executable is unavailable: PATH is empty".to_owned())?;
+    for directory in std::env::split_paths(&path) {
+        for name in names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return stable_executable(candidate, "host Python");
+            }
+        }
+    }
+    Err("host Python executable is unavailable; set AWORKIT_PYTHON_EXECUTABLE to an absolute interpreter path".into())
+}
+
+/// Converts one trusted host-tool executable choice into the exact absolute
+/// filesystem identity required by the process authority boundary.
+fn stable_executable(candidate: PathBuf, label: &str) -> Result<PathBuf, String> {
+    if !candidate.is_absolute() {
+        return Err(format!("{label} executable is not an absolute path"));
+    }
+    std::fs::canonicalize(&candidate)
+        .map_err(|error| format!("cannot resolve {label} executable '{}': {error}", candidate.display()))
 }
 
 fn content_hash_local(bytes: &[u8]) -> String {
@@ -2292,7 +2333,7 @@ struct ToolRecordStore {
 }
 
 impl ToolRecordStore {
-    fn open(path: &Path) -> Result<Self, SimpleChatPipelineError> {
+    fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             write_lock: Arc::new(Mutex::new(())),
@@ -2302,12 +2343,12 @@ impl ToolRecordStore {
     fn record_invocation(
         &self,
         record: &ToolInvocationRecordV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    ) -> Result<bool, WorkflowPipelineError> {
         if let Some(existing) = self.invocation(&record.proposal.proposal_id)? {
             return if existing == *record {
                 Ok(true)
             } else {
-                Err(SimpleChatPipelineError::Store(
+                Err(WorkflowPipelineError::Store(
                     "tool proposal identity was reused with changed frozen authority".into(),
                 ))
             };
@@ -2320,15 +2361,12 @@ impl ToolRecordStore {
         Ok(false)
     }
 
-    fn record_outcome(
-        &self,
-        outcome: &ToolOutcomeRecordV1,
-    ) -> Result<bool, SimpleChatPipelineError> {
+    fn record_outcome(&self, outcome: &ToolOutcomeRecordV1) -> Result<bool, WorkflowPipelineError> {
         if let Some(existing) = self.outcome(&outcome.invocation_id)? {
             return if existing == *outcome {
                 Ok(true)
             } else {
-                Err(SimpleChatPipelineError::Store(
+                Err(WorkflowPipelineError::Store(
                     "tool outcome identity was reused with changed evidence".into(),
                 ))
             };
@@ -2346,7 +2384,7 @@ impl ToolRecordStore {
         outer_invocation_id: &StableId,
         turn: u32,
         exchange: &ModelToolExchangeV1,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let key = digest_id(
             "record.model-tool-exchange",
             &format!("{}:{turn}", outer_invocation_id.as_str()),
@@ -2369,7 +2407,7 @@ impl ToolRecordStore {
             return if existing == value {
                 Ok(())
             } else {
-                Err(SimpleChatPipelineError::Store(
+                Err(WorkflowPipelineError::Store(
                     "model/tool exchange identity was reused with changed provider context".into(),
                 ))
             };
@@ -2383,7 +2421,7 @@ impl ToolRecordStore {
         &self,
         run_id: &StableId,
         todos: &Value,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let key = digest_id(
             "record.todo-state",
             &format!("{}:{}", run_id.as_str(), canonical_hash(todos)?),
@@ -2400,7 +2438,7 @@ impl ToolRecordStore {
     pub(crate) fn todo_state(
         &self,
         run_id: &StableId,
-    ) -> Result<Option<Value>, SimpleChatPipelineError> {
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
         Ok(self
             .events("pipeline.todo-state")?
             .into_iter()
@@ -2412,7 +2450,7 @@ impl ToolRecordStore {
     fn invocation(
         &self,
         proposal_id: &StableId,
-    ) -> Result<Option<ToolInvocationRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<ToolInvocationRecordV1>, WorkflowPipelineError> {
         self.events("pipeline.tool-invocation-prepared")?
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(json_error))
@@ -2427,14 +2465,14 @@ impl ToolRecordStore {
     fn invocation_for_dispatch(
         &self,
         dispatch: &ApprovedDispatchV1,
-    ) -> Result<Option<ToolInvocationRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<ToolInvocationRecordV1>, WorkflowPipelineError> {
         self.invocation(&dispatch.proposal_id)
     }
 
     fn outcome(
         &self,
         invocation_id: &StableId,
-    ) -> Result<Option<ToolOutcomeRecordV1>, SimpleChatPipelineError> {
+    ) -> Result<Option<ToolOutcomeRecordV1>, WorkflowPipelineError> {
         self.events("pipeline.tool-outcome")?
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(json_error))
@@ -2446,7 +2484,7 @@ impl ToolRecordStore {
             })
     }
 
-    fn events(&self, kind: &str) -> Result<Vec<Value>, SimpleChatPipelineError> {
+    fn events(&self, kind: &str) -> Result<Vec<Value>, WorkflowPipelineError> {
         Ok(self
             .store
             .events(TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID)
@@ -2462,18 +2500,18 @@ impl ToolRecordStore {
         kind: &str,
         key: &StableId,
         record: Value,
-    ) -> Result<(), SimpleChatPipelineError> {
+    ) -> Result<(), WorkflowPipelineError> {
         let _guard = self
             .write_lock
             .lock()
-            .map_err(|_| SimpleChatPipelineError::Store("tool record lock poisoned".into()))?;
+            .map_err(|_| WorkflowPipelineError::Store("tool record lock poisoned".into()))?;
         let head = self
             .store
             .events(TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID)
             .map_err(local_store_error)?
             .len();
         let expected_head = u64::try_from(head)
-            .map_err(|_| SimpleChatPipelineError::Store("tool record sequence exhausted".into()))?;
+            .map_err(|_| WorkflowPipelineError::Store("tool record sequence exhausted".into()))?;
         self.store
             .commit(&CommitBatch {
                 chat_id: TOOL_RECORD_CHAT_ID.into(),
@@ -2531,7 +2569,7 @@ fn legacy_manifest(manifest: &AuthorityManifestV1) -> AuthorityManifest {
 fn validate_call_arguments(
     binding: &StoredFileToolBindingV1,
     arguments: &Value,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     let object = arguments
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
@@ -2713,7 +2751,7 @@ fn validate_call_arguments(
 
 /// Bounds an MCP call's arguments without imposing the server schema, which
 /// the session layer enforces through the pinned discovery hash.
-fn validate_mcp_arguments(arguments: &Value) -> Result<(), SimpleChatPipelineError> {
+fn validate_mcp_arguments(arguments: &Value) -> Result<(), WorkflowPipelineError> {
     let object = arguments
         .as_object()
         .ok_or_else(|| invalid_tool("MCP tool arguments must be an object"))?;
@@ -2734,7 +2772,7 @@ fn exact_unsigned_configuration(
     numeric_name: &str,
     minimum: u64,
     maximum: u64,
-) -> Result<usize, SimpleChatPipelineError> {
+) -> Result<usize, WorkflowPipelineError> {
     Ok(
         *freeze_configuration(configuration, fixed, &[(numeric_name, minimum, maximum)])?
             .get(numeric_name)
@@ -2749,7 +2787,7 @@ fn freeze_configuration(
     configuration: &Value,
     fixed: &[(&str, Value)],
     numerics: &[(&str, u64, u64)],
-) -> Result<BTreeMap<String, usize>, SimpleChatPipelineError> {
+) -> Result<BTreeMap<String, usize>, WorkflowPipelineError> {
     let object = configuration
         .as_object()
         .ok_or_else(|| invalid_tool("tool configuration must be an object"))?;
@@ -2951,9 +2989,9 @@ fn bounded_activity_text(mut value: String) -> String {
 fn revalidate_optional_branch(
     workspace: &WorkspaceBindingV1,
     expected_branch: Option<&str>,
-) -> Result<(), SimpleChatPipelineError> {
+) -> Result<(), WorkflowPipelineError> {
     expected_branch.map_or(Ok(()), |expected| {
-        revalidate_git_branch(&workspace.root, expected).map_err(SimpleChatPipelineError::Authority)
+        revalidate_git_branch(&workspace.root, expected).map_err(WorkflowPipelineError::Authority)
     })
 }
 
@@ -3009,35 +3047,35 @@ fn subagent_deadline_expired(deadline_epoch_millis: u64) -> bool {
     current_epoch_millis() >= deadline_epoch_millis
 }
 
-fn canonical_hash<T: Serialize>(value: &T) -> Result<String, SimpleChatPipelineError> {
+fn canonical_hash<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
     let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
-fn digest_id(prefix: &str, material: &str) -> Result<StableId, SimpleChatPipelineError> {
+fn digest_id(prefix: &str, material: &str) -> Result<StableId, WorkflowPipelineError> {
     let digest = format!("{:x}", Sha256::digest(material.as_bytes()));
     stable(&format!("{prefix}.{}", &digest[..40]))
 }
 
-fn stable(value: &str) -> Result<StableId, SimpleChatPipelineError> {
+fn stable(value: &str) -> Result<StableId, WorkflowPipelineError> {
     StableId::parse(value.to_owned())
-        .map_err(|error| SimpleChatPipelineError::InvalidInput(error.to_string()))
+        .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))
 }
 
-fn invalid_tool(message: &str) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::InvalidInput(message.to_owned())
+fn invalid_tool(message: &str) -> WorkflowPipelineError {
+    WorkflowPipelineError::InvalidInput(message.to_owned())
 }
 
-fn broker_error(error: BrokerError) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Broker(error.to_string())
+fn broker_error(error: BrokerError) -> WorkflowPipelineError {
+    WorkflowPipelineError::Broker(error.to_string())
 }
 
-fn local_store_error(error: StoreError) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Store(error.to_string())
+fn local_store_error(error: StoreError) -> WorkflowPipelineError {
+    WorkflowPipelineError::Store(error.to_string())
 }
 
-fn json_error(error: impl std::fmt::Display) -> SimpleChatPipelineError {
-    SimpleChatPipelineError::Store(error.to_string())
+fn json_error(error: impl std::fmt::Display) -> WorkflowPipelineError {
+    WorkflowPipelineError::Store(error.to_string())
 }
 
 #[cfg(test)]
@@ -3053,7 +3091,7 @@ mod tests {
     fn manifest(
         id: &str,
         binding: CapabilityBindingV1,
-    ) -> Result<AuthorityManifestV1, SimpleChatPipelineError> {
+    ) -> Result<AuthorityManifestV1, WorkflowPipelineError> {
         Ok(AuthorityManifestV1 {
             manifest_id: stable(id)?,
             manifest_hash: format!("sha256:{}", "1".repeat(64)),
@@ -3156,7 +3194,7 @@ mod tests {
             core_key,
         )
         .expect("tool authority");
-        let tool = freeze_file_tool_bindings(&[SimpleChatToolBindingV1 {
+        let tool = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
             capability_id: FILE_READ_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"project_files",
@@ -3309,7 +3347,7 @@ mod tests {
 
     #[test]
     fn search_contract_keeps_one_worst_case_exchange_persistence_safe() {
-        let binding = freeze_file_tool_bindings(&[SimpleChatToolBindingV1 {
+        let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
             capability_id: FILE_SEARCH_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"project_files",
@@ -3367,7 +3405,7 @@ mod tests {
 
     #[test]
     fn subagent_binding_freezes_the_exact_approval_contract() {
-        let binding = freeze_file_tool_bindings(&[SimpleChatToolBindingV1 {
+        let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
             capability_id: SUBAGENT_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"run_subagent",
@@ -3384,7 +3422,7 @@ mod tests {
         );
         assert!(binding.requires_approval);
         assert!(matches!(
-            freeze_file_tool_bindings(&[SimpleChatToolBindingV1 {
+            freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
                 capability_id: SUBAGENT_CAPABILITY_ID.into(),
                 configuration: json!({
                     "authorityMode":"run_subagent",
@@ -3392,12 +3430,12 @@ mod tests {
                 }),
                 definition: None,
             }]),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
     }
 
-    fn mcp_binding_request(definition: Option<ModelToolDefinitionV1>) -> SimpleChatToolBindingV1 {
-        SimpleChatToolBindingV1 {
+    fn mcp_binding_request(definition: Option<ModelToolDefinitionV1>) -> WorkflowToolBindingV1 {
+        WorkflowToolBindingV1 {
             capability_id: "mcp://serv.fixture/echo".into(),
             configuration: json!({"serverId":"serv.fixture","tool":"echo"}),
             definition,
@@ -3477,7 +3515,7 @@ mod tests {
         request.configuration = json!({"serverId":"serv.fixture","tool":"echo","extra":true});
         assert!(matches!(
             freeze_file_tool_bindings(&[request]),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
     }
 
@@ -3487,13 +3525,13 @@ mod tests {
         request.configuration = json!({"serverId":"serv.other","tool":"echo"});
         assert!(matches!(
             freeze_file_tool_bindings(&[request]),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
         let mut request = mcp_binding_request(None);
         request.configuration = json!({"serverId":"serv.fixture","tool":"other"});
         assert!(matches!(
             freeze_file_tool_bindings(&[request]),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
     }
 
@@ -3504,7 +3542,7 @@ mod tests {
         let request = mcp_binding_request(Some(definition));
         assert!(matches!(
             freeze_file_tool_bindings(&[request]),
-            Err(SimpleChatPipelineError::InvalidInput(_))
+            Err(WorkflowPipelineError::InvalidInput(_))
         ));
     }
 }

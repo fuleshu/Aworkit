@@ -64,7 +64,7 @@ pub struct ChatProjectionDto {
     pub recovery_pending: bool,
 }
 
-/// One saved project that the supported native Simple Chat slice can select
+/// One saved project that the native workflow runtime can select
 /// before its first input. Paths stay behind the trusted native boundary.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -328,7 +328,7 @@ pub struct WorkflowCommitInput {
     pub command_id: String,
     pub expected_version: u64,
     pub document: Value,
-    /// Optional library target; defaults to the legacy Simple Chat document.
+    /// Optional library target; defaults to the saved library default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_id: Option<String>,
 }

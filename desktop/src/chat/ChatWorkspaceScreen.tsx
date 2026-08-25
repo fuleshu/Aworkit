@@ -104,12 +104,15 @@ export function ChatWorkspaceScreen({
           currentId ?? library.defaultWorkflowId,
         );
       })
-      .catch(() => {
+      .catch((failure: unknown) => {
         if (current) {
-          setWorkflows([{ id: "workflow.simple-chat", name: "Simple Chat" }]);
-          setDefaultWorkflowId("workflow.simple-chat");
-          setSelectedWorkflowId((currentId) =>
-            currentId ?? "workflow.simple-chat",
+          setWorkflows([]);
+          setDefaultWorkflowId(null);
+          setSelectedWorkflowId(null);
+          setWorkflowReadinessError(
+            failure instanceof Error
+              ? `Could not load the workflow library: ${failure.message}`
+              : "Could not load the workflow library.",
           );
         }
       });

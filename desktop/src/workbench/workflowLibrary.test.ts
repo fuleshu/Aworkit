@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { PreviewWorkflowLibraryPort } from "./corePort";
+import {
+  bundledDefaultWorkflowId,
+  bundledWorkflowTemplates,
+} from "./bundledWorkflows";
 
 describe("preview workflow library", () => {
-  it("seeds the two built-in workflows with Simple Chat as default", async () => {
+  it("seeds exactly the JSON-declared workflows and default", async () => {
     const port = new PreviewWorkflowLibraryPort();
     const snapshot = await port.snapshot();
-    expect(snapshot.defaultWorkflowId).toBe("workflow.simple-chat");
-    expect(snapshot.entries.map(({ id }) => id)).toEqual([
-      "workflow.simple-chat",
-      "workflow.standard-agent",
-    ]);
-    expect(snapshot.entries[0]?.default).toBe(true);
+    expect(snapshot.defaultWorkflowId).toBe(bundledDefaultWorkflowId);
+    expect(snapshot.entries.map(({ id }) => id)).toEqual(
+      bundledWorkflowTemplates
+        .filter(({ seedOnFreshProfile }) => seedOnFreshProfile)
+        .map(({ workflowId }) => workflowId),
+    );
+    expect(
+      snapshot.entries.find(({ id }) => id === bundledDefaultWorkflowId)?.default,
+    ).toBe(true);
   });
 
   it("creates, renames, duplicates, defaults, and deletes workflows", async () => {

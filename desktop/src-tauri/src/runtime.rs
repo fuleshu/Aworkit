@@ -1,7 +1,7 @@
 //! Durable native runtime for the first supported Aworkit vertical slice.
 //!
 //! The desktop no longer boots a sample projection. It opens canonical local
-//! configuration, the editable Simple Chat workflow, and semantic Chat history.
+//! configuration, editable JSON workflows, and semantic Chat history.
 
 mod credential_journal;
 mod credentials;
@@ -39,13 +39,12 @@ pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};
 pub use graph_pass::{GraphApprovalRequestV1, GraphNodeActivityV1};
 pub use pipeline::{
-    SimpleChatExecutionPipeline, SimpleChatExecutionRequestV1, SimpleChatExecutionResultV1,
-    SimpleChatExecutionStatusV1, SimpleChatMessageV1, SimpleChatPipelineError,
-    SimpleChatProviderBindingV1,
+    WorkflowExecutionPipeline, WorkflowExecutionRequestV1, WorkflowExecutionResultV1,
+    WorkflowExecutionStatusV1, WorkflowMessageV1, WorkflowPipelineError, WorkflowProviderBindingV1,
 };
 pub use service::DesktopRuntime;
 pub use settings_diagnostics::{
     ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
 };
 pub use settings_v2::*;
-pub use tool_loop::{SimpleChatToolActivityV1, SimpleChatToolBindingV1};
+pub use tool_loop::{WorkflowToolActivityV1, WorkflowToolBindingV1};

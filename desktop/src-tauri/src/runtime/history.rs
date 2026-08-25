@@ -606,7 +606,7 @@ impl ChatHistory {
                 workflow_name: frozen
                     .as_ref()
                     .map(|record| record.context.workflow_name.clone())
-                    .or_else(|| started.then(|| "Simple Chat".into())),
+                    .or_else(|| started.then(|| "Legacy workflow".into())),
                 branch: frozen
                     .as_ref()
                     .and_then(|record| record.context.project.as_ref())

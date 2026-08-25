@@ -27,12 +27,14 @@ use super::{
         ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
         ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, resume_model_tool_loop_v1,
     },
-    pipeline::{SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES, SimpleChatMessageV1},
-    tool_loop::{SimpleChatToolActivityV1, StoredFileToolBindingV1, ToolApprovalChallengeV1},
+    pipeline::{
+        WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
+    },
+    tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
 pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
-const MAXIMUM_NODE_OUTPUT_BYTES: usize = 64 * 1024;
+const MAXIMUM_NODE_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
 const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
 const MAXIMUM_AGENT_TURNS_WITH_TOOLS: u32 = 12;
@@ -84,9 +86,9 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_loop: Option<AgentLoopSuspensionV1>,
-    pub conversation: Vec<SimpleChatMessageV1>,
+    pub conversation: Vec<WorkflowMessageV1>,
     pub activity: Vec<GraphNodeActivityV1>,
-    pub tool_activity: Vec<SimpleChatToolActivityV1>,
+    pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
@@ -118,7 +120,7 @@ pub(crate) struct GraphPassOutcomeV1 {
     pub approval: Option<GraphApprovalRequestV1>,
     pub pending_state: Option<PendingGraphPassStateV1>,
     pub activity: Vec<GraphNodeActivityV1>,
-    pub tool_activity: Vec<SimpleChatToolActivityV1>,
+    pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
@@ -368,13 +370,13 @@ struct PassMachine<'a> {
     model_version_hash: &'a str,
     budget: GraphPassBudgetV1,
     now_epoch_millis: u64,
-    conversation: Vec<SimpleChatMessageV1>,
+    conversation: Vec<WorkflowMessageV1>,
     values: BTreeMap<String, Value>,
     completed: Vec<String>,
     executed: BTreeSet<String>,
     active_edges: BTreeSet<usize>,
     activity: Vec<GraphNodeActivityV1>,
-    tool_activity: Vec<SimpleChatToolActivityV1>,
+    tool_activity: Vec<WorkflowToolActivityV1>,
     exchanges: Vec<ModelToolExchangeV1>,
     input_units: u64,
     output_units: u64,
@@ -676,6 +678,34 @@ impl<'a> PassMachine<'a> {
         Value::Null
     }
 
+    /// Direct input-node text is already present in the frozen conversation.
+    /// Only outputs from intervening graph steps become additional Agent
+    /// context, preventing the user message from being duplicated.
+    fn incoming_agent_context(&self, node_id: &str) -> Value {
+        for (index, edge) in self.compiled.edges.iter().enumerate() {
+            if edge.target != node_id
+                || !self.active_edges.contains(&index)
+                || !self.executed.contains(&edge.source)
+            {
+                continue;
+            }
+            let source_is_input = self
+                .compiled
+                .nodes
+                .iter()
+                .any(|node| node.id == edge.source && node.node_type == "input");
+            if source_is_input {
+                return Value::Null;
+            }
+            return self
+                .values
+                .get(&edge.source)
+                .cloned()
+                .unwrap_or(Value::Null);
+        }
+        Value::Null
+    }
+
     fn run_model_call(
         &mut self,
         node: &CompiledGraphNodeV1,
@@ -689,12 +719,12 @@ impl<'a> PassMachine<'a> {
         let context_text = value_text(&self.incoming_value(&node.id));
         let mut messages = Vec::new();
         if !instructions.trim().is_empty() {
-            messages.push(SimpleChatMessageV1 {
+            messages.push(WorkflowMessageV1 {
                 role: "system".into(),
                 content: instructions.to_owned(),
             });
         }
-        messages.push(SimpleChatMessageV1 {
+        messages.push(WorkflowMessageV1 {
             role: "user".into(),
             content: context_text,
         });
@@ -707,6 +737,7 @@ impl<'a> PassMachine<'a> {
             maximum_input_bytes: MAXIMUM_MODEL_CALL_INPUT_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
         };
+        self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
         match self
             .gateway
             .execute_cancellable(&plan, &ModelRequestV1 { input }, cancellation)
@@ -719,7 +750,6 @@ impl<'a> PassMachine<'a> {
                         node.id
                     ));
                 }
-                self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
                 self.input_units = self.input_units.saturating_add(units.0);
                 self.output_units = self.output_units.saturating_add(units.1);
                 Ok(Value::String(text))
@@ -738,7 +768,7 @@ impl<'a> PassMachine<'a> {
             .get("instructions")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let upstream = value_text(&self.incoming_value(&node.id));
+        let upstream = value_text(&self.incoming_agent_context(&node.id));
         let mut messages = Vec::new();
         if !instructions.trim().is_empty() || !upstream.trim().is_empty() {
             let mut system = String::new();
@@ -751,7 +781,7 @@ impl<'a> PassMachine<'a> {
                 }
                 system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
             }
-            messages.push(SimpleChatMessageV1 {
+            messages.push(WorkflowMessageV1 {
                 role: "system".into(),
                 content: system,
             });
@@ -764,13 +794,14 @@ impl<'a> PassMachine<'a> {
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
         if definitions.is_empty() {
+            self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
             return match self.gateway.execute_cancellable(
                 &ModelResolutionPlanV1 {
                     candidates: vec![ModelCandidateV1 {
                         binding_id: self.model_binding_id.to_owned(),
                         version_hash: self.model_version_hash.to_owned(),
                     }],
-                    maximum_input_bytes: SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES,
+                    maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                     maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 },
                 &ModelRequestV1 { input: context },
@@ -778,7 +809,6 @@ impl<'a> PassMachine<'a> {
             ) {
                 Ok(evidence) => {
                     let (text, units) = evidence_text(evidence);
-                    self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
                     self.input_units = self.input_units.saturating_add(units.0);
                     self.output_units = self.output_units.saturating_add(units.1);
                     if text.trim().is_empty() {
@@ -811,7 +841,7 @@ impl<'a> PassMachine<'a> {
                 definitions,
                 binding_id: self.model_binding_id.to_owned(),
                 binding_version_hash: self.model_version_hash.to_owned(),
-                maximum_input_bytes: SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES,
+                maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                 maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 maximum_turns,
                 maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
@@ -879,7 +909,7 @@ impl<'a> PassMachine<'a> {
             .get("instructions")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let upstream = value_text(&self.incoming_value(&node.id));
+        let upstream = value_text(&self.incoming_agent_context(&node.id));
         let mut messages = Vec::new();
         if !instructions.trim().is_empty() || !upstream.trim().is_empty() {
             let mut system = String::new();
@@ -892,7 +922,7 @@ impl<'a> PassMachine<'a> {
                 }
                 system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
             }
-            messages.push(SimpleChatMessageV1 {
+            messages.push(WorkflowMessageV1 {
                 role: "system".into(),
                 content: system,
             });
@@ -920,7 +950,7 @@ impl<'a> PassMachine<'a> {
             definitions,
             binding_id: self.model_binding_id.to_owned(),
             binding_version_hash: self.model_version_hash.to_owned(),
-            maximum_input_bytes: SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES,
+            maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
             maximum_turns,
             maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
@@ -1126,7 +1156,7 @@ impl<'a> PassMachine<'a> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_graph_pass(
     compiled: &CompiledGraphPassV1,
-    conversation: &[SimpleChatMessageV1],
+    conversation: &[WorkflowMessageV1],
     budget: GraphPassBudgetV1,
     gateway: &FrozenModelGateway,
     tool_authority: &dyn ModelToolInvocationPortV1,

@@ -906,7 +906,7 @@ function newModel(): ModelConfiguration {
     enabled: false,
     contextWindow: null,
     maxOutputTokens: null,
-    capabilities: ["text"],
+    capabilities: ["text", "tools"],
     parameters: {},
   };
 }

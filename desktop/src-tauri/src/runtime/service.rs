@@ -28,10 +28,7 @@ use super::{
         random_credential_ref,
     },
     credentials::CredentialVault,
-    documents::{
-        CanonicalDocuments, ProviderDocument, SIMPLE_CHAT_WORKFLOW_ID, SettingsDocument,
-        validate_v1_executable_catalog,
-    },
+    documents::{CanonicalDocuments, ProviderDocument, SettingsDocument},
     dto::{
         CredentialDeleteInputV2, CredentialMutationOperationV2, CredentialMutationOutcomeV2,
         CredentialStoreInputV2, DiscoveredModelV2, ExtensionRegisterInputV2, McpProbeRequestV2,
@@ -58,12 +55,12 @@ use super::{
         MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
     },
     pipeline::{
-        SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES, SimpleChatExecutionPipeline,
-        SimpleChatExecutionRequestV1, SimpleChatExecutionResultV1, SimpleChatExecutionStatusV1,
-        SimpleChatMessageV1, SimpleChatProviderBindingV1,
+        WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowExecutionPipeline, WorkflowExecutionRequestV1,
+        WorkflowExecutionResultV1, WorkflowExecutionStatusV1, WorkflowMessageV1,
+        WorkflowProviderBindingV1,
     },
     project_scope::{resolve_project_scope, selectable_projects},
-    provider::{ProviderPort, production_provider},
+    provider::{ProviderPort, production_provider, provider_supports_tool_calls},
     provider_health::{ProviderHealth, ProviderHealthRegistry},
     settings_diagnostics::{
         ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
@@ -76,7 +73,10 @@ use super::{
         SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, validate_extension_lifecycle_update,
         validate_http_url, validate_unavailable_executor_enablement_update,
     },
-    tool_loop::{SimpleChatToolActivityV1, SimpleChatToolBindingV1},
+    tool_loop::{
+        SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolActivityV1,
+        WorkflowToolBindingV1,
+    },
 };
 
 struct ProcessedCommand {
@@ -87,23 +87,23 @@ struct ProcessedCommand {
 // A first command is also embedded in the frozen context. Keeping the user
 // body at half the full message-context budget leaves deterministic room for
 // Agent instructions and durable envelopes before that first context commit.
-const SIMPLE_CHAT_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
+const WORKFLOW_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
 
-trait SimpleChatPipelinePort: Send + Sync {
-    fn preflight(&self, _request: &SimpleChatExecutionRequestV1) -> Result<(), String> {
+trait WorkflowPipelinePort: Send + Sync {
+    fn preflight(&self, _request: &WorkflowExecutionRequestV1) -> Result<(), String> {
         Ok(())
     }
 
     fn execute(
         &self,
-        request: SimpleChatExecutionRequestV1,
-    ) -> Result<SimpleChatExecutionResultV1, String>;
+        request: WorkflowExecutionRequestV1,
+    ) -> Result<WorkflowExecutionResultV1, String>;
 
     fn resume_approval(
         &self,
         _decision_id: &str,
         _approved: bool,
-    ) -> Result<SimpleChatExecutionResultV1, String> {
+    ) -> Result<WorkflowExecutionResultV1, String> {
         Err("approval resume is not available from this pipeline".into())
     }
 
@@ -125,15 +125,15 @@ trait SimpleChatPipelinePort: Send + Sync {
     }
 }
 
-impl SimpleChatPipelinePort for SimpleChatExecutionPipeline {
-    fn preflight(&self, request: &SimpleChatExecutionRequestV1) -> Result<(), String> {
-        SimpleChatExecutionPipeline::preflight(self, request).map_err(|error| error.to_string())
+impl WorkflowPipelinePort for WorkflowExecutionPipeline {
+    fn preflight(&self, request: &WorkflowExecutionRequestV1) -> Result<(), String> {
+        WorkflowExecutionPipeline::preflight(self, request).map_err(|error| error.to_string())
     }
 
     fn execute(
         &self,
-        request: SimpleChatExecutionRequestV1,
-    ) -> Result<SimpleChatExecutionResultV1, String> {
+        request: WorkflowExecutionRequestV1,
+    ) -> Result<WorkflowExecutionResultV1, String> {
         self.execute(request).map_err(|error| error.to_string())
     }
 
@@ -141,18 +141,18 @@ impl SimpleChatPipelinePort for SimpleChatExecutionPipeline {
         &self,
         decision_id: &str,
         approved: bool,
-    ) -> Result<SimpleChatExecutionResultV1, String> {
-        SimpleChatExecutionPipeline::resume_approval(self, decision_id, approved)
+    ) -> Result<WorkflowExecutionResultV1, String> {
+        WorkflowExecutionPipeline::resume_approval(self, decision_id, approved)
             .map_err(|error| error.to_string())
     }
 
     fn run_todo_state(&self, run_id: &StableId) -> Result<Option<Value>, String> {
-        SimpleChatExecutionPipeline::run_todo_state(self, run_id).map_err(|error| error.to_string())
+        WorkflowExecutionPipeline::run_todo_state(self, run_id).map_err(|error| error.to_string())
     }
 
     #[allow(dead_code)] // exercised by pipeline tests through the concrete type
     fn install_mcp_peer(&self, peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
-        SimpleChatExecutionPipeline::install_mcp_peer(self, peer)
+        WorkflowExecutionPipeline::install_mcp_peer(self, peer)
     }
 
     fn prepare_mcp_sessions(
@@ -160,7 +160,7 @@ impl SimpleChatPipelinePort for SimpleChatExecutionPipeline {
         run_id: &StableId,
         servers: &mut [McpRunServerPreparationV1],
     ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
-        SimpleChatExecutionPipeline::prepare_mcp_sessions(self, run_id, servers)
+        WorkflowExecutionPipeline::prepare_mcp_sessions(self, run_id, servers)
     }
 }
 
@@ -171,7 +171,7 @@ pub struct DesktopRuntime {
     credentials: CredentialVault,
     credential_journal: CredentialOperationJournal,
     provider: Arc<dyn ProviderPort>,
-    pipeline: Arc<dyn SimpleChatPipelinePort>,
+    pipeline: Arc<dyn WorkflowPipelinePort>,
     project_coordinator: ProjectCoordinator,
     provider_health: ProviderHealthRegistry,
     legacy_provider_warning: Option<String>,
@@ -204,7 +204,7 @@ impl DesktopRuntime {
         let credentials =
             CredentialVault::with_store(store.clone(), &documents.settings().credentials)?;
         let credential_journal = CredentialOperationJournal::open(&data_root);
-        let pipeline = SimpleChatExecutionPipeline::open_with_credential_store(&data_root, store)
+        let pipeline = WorkflowExecutionPipeline::open_with_credential_store(&data_root, store)
             .map_err(|error| error.to_string())?;
         Self::compose(
             data_root,
@@ -222,7 +222,7 @@ impl DesktopRuntime {
         credentials: CredentialVault,
         credential_journal: CredentialOperationJournal,
         provider: Arc<dyn ProviderPort>,
-        pipeline: Arc<dyn SimpleChatPipelinePort>,
+        pipeline: Arc<dyn WorkflowPipelinePort>,
     ) -> Result<Self, String> {
         let provider_health =
             ProviderHealthRegistry::open(&data_root, &documents.settings().providers)?;
@@ -411,25 +411,45 @@ impl DesktopRuntime {
                     .into(),
             );
         } else if snapshot.chat.phase == "draft" && !snapshot.chat.locked_workflow {
-            snapshot.chat.disabled_reason = self.simple_chat_start_disabled_reason();
+            snapshot.chat.disabled_reason = self.workflow_start_disabled_reason();
         }
         Ok(snapshot)
     }
 
-    fn simple_chat_start_disabled_reason(&self) -> Option<String> {
+    fn workflow_start_disabled_reason(&self) -> Option<String> {
         let readiness = (|| -> Result<(), String> {
-            self.documents.require_supported_simple_chat()?;
-            let resolved = resolve_simple_chat_model(self.documents.settings(), "tier:balanced")?;
+            let library = self.documents.workflow_library();
+            self.documents
+                .require_executable_workflow(&library.default_workflow_id)?;
             let workflow = self.documents.workflow_snapshot();
-            let agent = freeze_simple_chat_agent(
+            let mut resolved: Option<ResolvedWorkflowModel> = None;
+            for tier_id in graph_model_tier_ids(&workflow.document) {
+                let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)?;
+                match &resolved {
+                    None => resolved = Some(candidate),
+                    Some(previous)
+                        if previous.provider.id == candidate.provider.id
+                            && previous.model.id == candidate.model.id => {}
+                    Some(_) => {
+                        return Err(
+                            "workflow model tiers resolve to different provider/model bindings"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            let has_project = !selectable_projects(&self.documents.settings().projects).is_empty();
+            let agent = freeze_graph_bindings(
                 &workflow.document,
                 self.documents.settings(),
-                true,
-                &resolved.model,
+                has_project,
+                &BTreeMap::new(),
             )?;
-            if !agent.tools.is_empty()
-                && selectable_projects(&self.documents.settings().projects).is_empty()
-            {
+            let model = resolved
+                .as_ref()
+                .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
+            validate_model_capabilities(&model.provider, &model.model, !agent.tools.is_empty())?;
+            if !agent.tools.is_empty() && !has_project {
                 return Err(
                     "the saved Agent uses project tools, but Settings has no eligible local project"
                         .into(),
@@ -439,7 +459,7 @@ impl DesktopRuntime {
         })();
         readiness
             .err()
-            .map(|reason| format!("Simple Chat is unavailable: {reason}"))
+            .map(|reason| format!("Default workflow is unavailable: {reason}"))
     }
 
     pub fn command(&mut self, input: UiCommandInput) -> Result<UiCommandReceipt, String> {
@@ -501,7 +521,7 @@ impl DesktopRuntime {
                     )],
                 )
             }
-            "start" | "enqueue" => self.complete_simple_chat(input, fingerprint),
+            "start" | "enqueue" => self.complete_workflow_input(input, fingerprint),
             "approval" => self.complete_approval(input, fingerprint),
             "resume" => {
                 self.recover_pending_effect(&input.command_id, &fingerprint, input.expected_version)
@@ -520,12 +540,12 @@ impl DesktopRuntime {
                 )
             }
             other => Err(format!(
-                "desktop action '{other}' is not implemented in the Simple Chat rescue slice"
+                "desktop action '{other}' is not implemented in the Chat runtime"
             )),
         }
     }
 
-    fn complete_simple_chat(
+    fn complete_workflow_input(
         &mut self,
         input: UiCommandInput,
         fingerprint: String,
@@ -549,10 +569,10 @@ impl DesktopRuntime {
         }
         validate_attachments(&input.payload)?;
         let user_input = string_field(&input.payload, "input")?;
-        if user_input.len() > SIMPLE_CHAT_MAX_USER_INPUT_BYTES || user_input.contains('\0') {
+        if user_input.len() > WORKFLOW_MAX_USER_INPUT_BYTES || user_input.contains('\0') {
             return Err(format!(
                 "Chat input is empty, exceeds the durable {} KiB bound, or contains NUL",
-                SIMPLE_CHAT_MAX_USER_INPUT_BYTES / 1024
+                WORKFLOW_MAX_USER_INPUT_BYTES / 1024
             ));
         }
         let mut conversation = self.history.conversation()?;
@@ -577,7 +597,7 @@ impl DesktopRuntime {
                     (pending, false)
                 } else {
                     (
-                        self.prepare_simple_chat_context(
+                        self.prepare_workflow_context(
                             &input,
                             &input.command_id,
                             &fingerprint,
@@ -590,7 +610,7 @@ impl DesktopRuntime {
             }
             "enqueue" => {
                 if conversation.is_empty() {
-                    return Err("cannot enqueue before the first Simple Chat message".into());
+                    return Err("cannot enqueue before the first Chat message".into());
                 }
                 self.history.ensure_accepts_follow_up()?;
                 (
@@ -601,7 +621,7 @@ impl DesktopRuntime {
                     false,
                 )
             }
-            _ => return Err("Simple Chat accepts only start or enqueue actions".into()),
+            _ => return Err("Chat accepts only start or enqueue actions".into()),
         };
         conversation.push(ConversationMessage {
             role: "user".into(),
@@ -610,25 +630,18 @@ impl DesktopRuntime {
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
-        let graph_mode = context.workflow_id != SIMPLE_CHAT_WORKFLOW_ID;
-        let mut provider_messages = Vec::with_capacity(conversation.len().saturating_add(1));
-        if !graph_mode
-            && let Some(instructions) = simple_chat_agent_instructions(&context.workflow_snapshot)?
-        {
-            provider_messages.push(SimpleChatMessageV1 {
-                role: "system".into(),
-                content: instructions,
-            });
-        }
-        provider_messages.extend(conversation.iter().map(|message| SimpleChatMessageV1 {
-            role: message.role.clone(),
-            content: message.content.clone(),
-        }));
-        let mut execution_request = SimpleChatExecutionRequestV1::bounded(
+        let provider_messages = conversation
+            .iter()
+            .map(|message| WorkflowMessageV1 {
+                role: message.role.clone(),
+                content: message.content.clone(),
+            })
+            .collect();
+        let mut execution_request = WorkflowExecutionRequestV1::bounded(
             request_id,
             context.identity.chat_id.clone(),
             context.identity.run_id.clone(),
-            SimpleChatProviderBindingV1 {
+            WorkflowProviderBindingV1 {
                 kind: context.provider_kind.clone(),
                 base_url: context.provider_base_url.clone(),
                 model: context.remote_model_id.clone(),
@@ -657,7 +670,7 @@ impl DesktopRuntime {
             .tools
             .iter()
             .map(|tool| {
-                Ok(SimpleChatToolBindingV1 {
+                Ok(WorkflowToolBindingV1 {
                     capability_id: tool.tool_id.clone(),
                     configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
                         .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
@@ -674,13 +687,13 @@ impl DesktopRuntime {
         execution_request.budget.actions =
             u64::from(context.agent_maximum_turns).saturating_add(context.maximum_tool_calls);
         if serde_json::to_vec(&execution_request.messages)
-            .map_err(|error| format!("cannot encode Simple Chat message context: {error}"))?
+            .map_err(|error| format!("cannot encode Chat message context: {error}"))?
             .len()
-            > SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES
+            > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
         {
             return Err(format!(
-                "the accumulated Simple Chat message context exceeds the durable {} KiB bound; start a New Chat or reduce the input",
-                SIMPLE_CHAT_MAX_MESSAGE_CONTEXT_BYTES / 1024
+                "the accumulated Chat message context exceeds the durable {} KiB bound; start a New Chat or reduce the input",
+                WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES / 1024
             ));
         }
         self.pipeline.preflight(&execution_request)?;
@@ -688,7 +701,7 @@ impl DesktopRuntime {
             let persisted = self.history.freeze_context(frozen.context.clone())?;
             if persisted != frozen {
                 return Err(
-                    "the preflighted Simple Chat context changed before its durable freeze".into(),
+                    "the preflighted Chat context changed before its durable freeze".into(),
                 );
             }
         }
@@ -721,7 +734,7 @@ impl DesktopRuntime {
             message_fact(&user_input, &created_at, None, None, None),
         ));
         match result.status {
-            SimpleChatExecutionStatusV1::Succeeded => {
+            WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
                     self.pipeline.as_ref(),
                     &result,
@@ -789,7 +802,7 @@ impl DesktopRuntime {
                 facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push(("message.assistant", fact));
             }
-            SimpleChatExecutionStatusV1::AwaitingApproval => {
+            WorkflowExecutionStatusV1::AwaitingApproval => {
                 facts.extend(todo_state_fact(
                     self.pipeline.as_ref(),
                     &result,
@@ -922,7 +935,7 @@ impl DesktopRuntime {
             }),
         )];
         match result.status {
-            SimpleChatExecutionStatusV1::Succeeded => {
+            WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
                     self.pipeline.as_ref(),
                     &result,
@@ -990,7 +1003,7 @@ impl DesktopRuntime {
                 facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push(("message.assistant", fact));
             }
-            SimpleChatExecutionStatusV1::AwaitingApproval => {
+            WorkflowExecutionStatusV1::AwaitingApproval => {
                 facts.extend(todo_state_fact(
                     self.pipeline.as_ref(),
                     &result,
@@ -1074,7 +1087,7 @@ impl DesktopRuntime {
         )
     }
 
-    fn prepare_simple_chat_context(
+    fn prepare_workflow_context(
         &mut self,
         command: &UiCommandInput,
         command_id: &str,
@@ -1082,7 +1095,6 @@ impl DesktopRuntime {
         history_base_head: u64,
         selected_project_id: Option<&str>,
     ) -> Result<FrozenChatExecutionRecordV1, String> {
-        self.documents.require_supported_simple_chat()?;
         let identity = self
             .history
             .current_chat_identity()?
@@ -1098,7 +1110,6 @@ impl DesktopRuntime {
             };
         }
         let workflow_id = string_field(&command.payload, "workflowId")?;
-        let graph_mode = workflow_id != SIMPLE_CHAT_WORKFLOW_ID;
         let workflow = self.documents.workflow_snapshot_for(&workflow_id);
         if workflow.document.is_null() {
             return Err(format!(
@@ -1110,10 +1121,9 @@ impl DesktopRuntime {
                 "workflow '{workflow_id}' uses a read-only schema and cannot run"
             ));
         }
-        if graph_mode {
-            validate_v1_executable_catalog(&workflow.document)
-                .map_err(|error| format!("workflow '{workflow_id}' is not executable: {error}"))?;
-        }
+        self.documents
+            .require_executable_workflow(&workflow_id)
+            .map_err(|error| format!("workflow '{workflow_id}' is not executable: {error}"))?;
         let project = resolve_project_scope(
             &self.project_coordinator,
             &self.documents.settings().projects,
@@ -1125,17 +1135,16 @@ impl DesktopRuntime {
         // model-facing definition; sessions then open on demand per Run.
         let mut mcp_definitions = BTreeMap::new();
         let mut mcp_manifests = BTreeMap::new();
-        if graph_mode {
-            let mcp_ids = graph_mcp_tool_ids(&workflow.document);
-            if !mcp_ids.is_empty() {
-                let settings = self.documents.settings().clone();
-                let credentials = settings.credentials.clone();
-                let mut preparations = Vec::new();
-                let mut resolved_servers = BTreeSet::new();
-                for capability_id in mcp_ids {
-                    let (server_id, _tool) =
-                        split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
-                    let server = settings
+        let mcp_ids = graph_mcp_tool_ids(&workflow.document);
+        if !mcp_ids.is_empty() {
+            let settings = self.documents.settings().clone();
+            let credentials = settings.credentials.clone();
+            let mut preparations = Vec::new();
+            let mut resolved_servers = BTreeSet::new();
+            for capability_id in mcp_ids {
+                let (server_id, _tool) =
+                    split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
+                let server = settings
                         .mcp_servers
                         .iter()
                         .find(|server| server.id == server_id)
@@ -1144,75 +1153,68 @@ impl DesktopRuntime {
                                 "workflow binds MCP server '{server_id}' which is not installed in saved Settings"
                             )
                         })?;
-                    if !server.enabled {
-                        return Err(format!(
-                            "workflow binds MCP server '{server_id}' which is disabled in saved Settings"
-                        ));
-                    }
-                    if !resolved_servers.contains(server_id) {
-                        let prepared = prepare_mcp_server(server, &credentials)?;
-                        let materialization =
-                            materialize_bindings(&mut self.credentials, &prepared.secret_bindings)?;
-                        preparations.push(McpRunServerPreparationV1 {
-                            manifest: prepared.manifest.clone(),
-                            endpoint: prepared.endpoint.clone(),
-                            materialization,
-                        });
-                        resolved_servers.insert(server_id.to_owned());
-                    }
+                if !server.enabled {
+                    return Err(format!(
+                        "workflow binds MCP server '{server_id}' which is disabled in saved Settings"
+                    ));
                 }
-                let snapshots = self
-                    .pipeline
-                    .prepare_mcp_sessions(&identity.run_id, &mut preparations)?;
-                for preparation in &preparations {
-                    mcp_manifests.insert(
-                        preparation.manifest.server_id.to_string(),
-                        preparation.manifest.clone(),
-                    );
+                if !resolved_servers.contains(server_id) {
+                    let prepared = prepare_mcp_server(server, &credentials)?;
+                    let materialization =
+                        materialize_bindings(&mut self.credentials, &prepared.secret_bindings)?;
+                    preparations.push(McpRunServerPreparationV1 {
+                        manifest: prepared.manifest.clone(),
+                        endpoint: prepared.endpoint.clone(),
+                        materialization,
+                    });
+                    resolved_servers.insert(server_id.to_owned());
                 }
-                for capability_id in graph_mcp_tool_ids(&workflow.document) {
-                    let (server_id, tool) =
-                        split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
-                    let snapshot = snapshots
-                        .iter()
-                        .find(|snapshot| snapshot.server_id.as_str() == server_id)
-                        .ok_or_else(|| {
-                            format!("MCP server '{server_id}' has no discovery snapshot")
-                        })?;
-                    let descriptor = snapshot
-                        .catalog
-                        .tools
-                        .iter()
-                        .find(|descriptor| descriptor.name == tool)
-                        .ok_or_else(|| {
-                            format!("MCP server '{server_id}' did not discover tool '{tool}'")
-                        })?;
-                    mcp_definitions.insert(
-                        capability_id.clone(),
-                        ModelToolDefinitionV1 {
-                            capability_id: capability_id.clone(),
-                            name: mcp_provider_name(server_id, tool),
-                            description: if descriptor.description.is_empty() {
-                                format!("Call MCP tool '{tool}' on server '{server_id}'.")
-                            } else {
-                                descriptor.description.clone()
-                            },
-                            input_schema: descriptor.input_schema.clone(),
+            }
+            let snapshots = self
+                .pipeline
+                .prepare_mcp_sessions(&identity.run_id, &mut preparations)?;
+            for preparation in &preparations {
+                mcp_manifests.insert(
+                    preparation.manifest.server_id.to_string(),
+                    preparation.manifest.clone(),
+                );
+            }
+            for capability_id in graph_mcp_tool_ids(&workflow.document) {
+                let (server_id, tool) =
+                    split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
+                let snapshot = snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.server_id.as_str() == server_id)
+                    .ok_or_else(|| format!("MCP server '{server_id}' has no discovery snapshot"))?;
+                let descriptor = snapshot
+                    .catalog
+                    .tools
+                    .iter()
+                    .find(|descriptor| descriptor.name == tool)
+                    .ok_or_else(|| {
+                        format!("MCP server '{server_id}' did not discover tool '{tool}'")
+                    })?;
+                mcp_definitions.insert(
+                    capability_id.clone(),
+                    ModelToolDefinitionV1 {
+                        capability_id: capability_id.clone(),
+                        name: mcp_provider_name(server_id, tool),
+                        description: if descriptor.description.is_empty() {
+                            format!("Call MCP tool '{tool}' on server '{server_id}'.")
+                        } else {
+                            descriptor.description.clone()
                         },
-                    );
-                }
+                        input_schema: descriptor.input_schema.clone(),
+                    },
+                );
             }
         }
         // v1 model resolution: every referenced tier must resolve to the same
         // provider/model binding so the single frozen secret lease covers the
         // whole pass.
-        let mut resolved: Option<ResolvedSimpleChatModel> = None;
-        for tier_id in if graph_mode {
-            graph_model_tier_ids(&workflow.document)
-        } else {
-            vec!["tier:balanced".to_owned()]
-        } {
-            let candidate = resolve_simple_chat_model(self.documents.settings(), &tier_id)?;
+        let mut resolved: Option<ResolvedWorkflowModel> = None;
+        for tier_id in graph_model_tier_ids(&workflow.document) {
+            let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)?;
             match &resolved {
                 None => resolved = Some(candidate),
                 Some(previous)
@@ -1236,21 +1238,13 @@ impl DesktopRuntime {
             .and_then(Value::as_str)
             .unwrap_or(&workflow_id)
             .to_owned();
-        let agent = if graph_mode {
-            freeze_graph_bindings(
-                &workflow.document,
-                self.documents.settings(),
-                project.is_some(),
-                &mcp_definitions,
-            )?
-        } else {
-            freeze_simple_chat_agent(
-                &workflow.document,
-                self.documents.settings(),
-                project.is_some(),
-                &resolved.model,
-            )?
-        };
+        let agent = freeze_graph_bindings(
+            &workflow.document,
+            self.documents.settings(),
+            project.is_some(),
+            &mcp_definitions,
+        )?;
+        validate_model_capabilities(&resolved.provider, &resolved.model, !agent.tools.is_empty())?;
         let credential = resolved
             .credential
             .as_ref()
@@ -1301,7 +1295,7 @@ impl DesktopRuntime {
     }
 
     #[cfg(test)]
-    fn freeze_simple_chat_context(
+    fn freeze_workflow_context(
         &mut self,
         command: &UiCommandInput,
         command_id: &str,
@@ -1309,7 +1303,7 @@ impl DesktopRuntime {
         history_base_head: u64,
         selected_project_id: Option<&str>,
     ) -> Result<FrozenChatExecutionRecordV1, String> {
-        let prepared = self.prepare_simple_chat_context(
+        let prepared = self.prepare_workflow_context(
             command,
             command_id,
             command_hash,
@@ -1320,7 +1314,7 @@ impl DesktopRuntime {
         if persisted == prepared {
             Ok(persisted)
         } else {
-            Err("the prepared Simple Chat context changed before its durable freeze".into())
+            Err("the prepared Chat context changed before its durable freeze".into())
         }
     }
 
@@ -2693,7 +2687,7 @@ fn legacy_model(legacy: &ProviderDocument) -> ModelConfigurationV2 {
         enabled: true,
         context_window: None,
         max_output_tokens: None,
-        capabilities: vec!["text".into()],
+        capabilities: vec!["text".into(), "tools".into()],
         parameters: BTreeMap::new(),
     }
 }
@@ -2756,123 +2750,10 @@ fn validate_credential_metadata_update(
     Ok(())
 }
 
-struct FrozenSimpleChatAgentV1 {
+struct FrozenWorkflowAgentV1 {
     maximum_turns: u32,
     maximum_tool_calls: u64,
     tools: Vec<FrozenToolBindingV1>,
-}
-
-/// Resolves Agent tool IDs only against saved enabled Settings records. The
-/// renderer never supplies a path, tool body, or authority limit.
-fn freeze_simple_chat_agent(
-    workflow: &Value,
-    settings: &SettingsConfigurationV2,
-    has_project: bool,
-    model: &ModelConfigurationV2,
-) -> Result<FrozenSimpleChatAgentV1, String> {
-    if !model
-        .capabilities
-        .iter()
-        .any(|capability| capability == "text")
-    {
-        return Err(format!(
-            "model '{}' does not declare the text capability required by Simple Chat",
-            model.name
-        ));
-    }
-    let agent = workflow
-        .get("nodes")
-        .and_then(Value::as_array)
-        .and_then(|nodes| {
-            nodes
-                .iter()
-                .find(|node| node.get("id").and_then(Value::as_str) == Some("agent.1"))
-        })
-        .and_then(|node| node.get("configuration"))
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Simple Chat Agent configuration is missing".to_owned())?;
-    let _instructions = simple_chat_agent_instructions(workflow)?;
-    if let Some(unsupported) = agent.keys().find(|key| {
-        !matches!(
-            key.as_str(),
-            "modelTierId" | "toolIds" | "maxTurns" | "instructions"
-        )
-    }) {
-        return Err(format!(
-            "Simple Chat Agent configuration field '{unsupported}' has no installed execution semantics"
-        ));
-    }
-    let maximum_turns = agent
-        .get("maxTurns")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| "Simple Chat Agent maxTurns must be an integer".to_owned())?;
-    let tool_ids = agent
-        .get("toolIds")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Simple Chat Agent toolIds must be an array".to_owned())?;
-    let mut seen = BTreeSet::new();
-    let mut tools = Vec::with_capacity(tool_ids.len());
-    for tool_id in tool_ids {
-        let tool_id = tool_id
-            .as_str()
-            .ok_or_else(|| "Simple Chat Agent toolIds must contain only strings".to_owned())?;
-        if !seen.insert(tool_id) {
-            return Err("Simple Chat Agent toolIds must be unique".into());
-        }
-        if !matches!(tool_id, "tool.files.read" | "tool.files.search") {
-            return Err(format!(
-                "Simple Chat tool '{tool_id}' is blocked until its approval-capable executor is installed"
-            ));
-        }
-        if !has_project {
-            return Err(format!(
-                "Simple Chat tool '{tool_id}' requires selecting a saved project before the first input"
-            ));
-        }
-        let configured = settings
-            .tools
-            .iter()
-            .find(|tool| tool.id == tool_id)
-            .ok_or_else(|| format!("Simple Chat tool '{tool_id}' is not installed"))?;
-        validate_enabled_project_file_tool(configured)?;
-        tools.push(FrozenToolBindingV1 {
-            tool_id: tool_id.to_owned(),
-            tool_hash: canonical_hash(configured)?,
-            tool_snapshot: configured.clone(),
-            definition: None,
-        });
-    }
-    if tools.is_empty() {
-        if maximum_turns != 1 {
-            return Err("tool-free Simple Chat requires Agent maxTurns=1".into());
-        }
-        return Ok(FrozenSimpleChatAgentV1 {
-            maximum_turns,
-            maximum_tool_calls: 0,
-            tools,
-        });
-    }
-    if !(2..=8).contains(&maximum_turns) {
-        return Err("tool-bound Simple Chat requires Agent maxTurns between 2 and 8".into());
-    }
-    if !model
-        .capabilities
-        .iter()
-        .any(|capability| capability == "tools")
-    {
-        return Err(format!(
-            "model '{}' does not declare the tools capability required by the Agent",
-            model.name
-        ));
-    }
-    Ok(FrozenSimpleChatAgentV1 {
-        maximum_turns,
-        maximum_tool_calls: u64::from(maximum_turns.saturating_sub(1))
-            .saturating_mul(8)
-            .min(32),
-        tools,
-    })
 }
 
 /// Freezes the tool subset and turn budget for a catalog-valid graph workflow:
@@ -2920,12 +2801,12 @@ fn freeze_graph_bindings(
     settings: &SettingsConfigurationV2,
     has_project: bool,
     mcp_definitions: &BTreeMap<String, ModelToolDefinitionV1>,
-) -> Result<FrozenSimpleChatAgentV1, String> {
+) -> Result<FrozenWorkflowAgentV1, String> {
     let nodes = workflow
         .get("nodes")
         .and_then(Value::as_array)
         .ok_or_else(|| "workflow nodes are missing".to_owned())?;
-    let mut maximum_turns = 1_u32;
+    let mut maximum_turns = 0_u32;
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
     for node in nodes {
@@ -2953,15 +2834,17 @@ fn freeze_graph_bindings(
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        if node_type == "agent"
-            && let Some(turns) = configuration
+        if node_type == "agent" {
+            let turns = configuration
                 .and_then(|config| config.get("maxTurns"))
                 .and_then(Value::as_u64)
-        {
-            maximum_turns = maximum_turns.max(
+                .ok_or_else(|| format!("workflow node '{node_id}' maxTurns is missing"))?;
+            maximum_turns = maximum_turns.saturating_add(
                 u32::try_from(turns)
                     .map_err(|_| format!("workflow node '{node_id}' maxTurns is out of range"))?,
             );
+        } else if node_type == "model_call" {
+            maximum_turns = maximum_turns.saturating_add(1);
         }
         for tool_id in tool_ids {
             if !seen.insert(tool_id.clone()) {
@@ -3015,6 +2898,32 @@ fn freeze_graph_bindings(
             });
         }
     }
+    // `tool.subagent` owns a fresh child loop whose declared contract includes
+    // the enabled read-only child subset. Freeze those bindings with the Run
+    // even though they are not exposed to the parent agent node. The generic
+    // graph compiler still exposes only the toolIds written in that node's JSON.
+    if seen.contains(SUBAGENT_CAPABILITY_ID) {
+        for child_id in SUBAGENT_CHILD_TOOL_IDS {
+            if seen.contains(child_id) {
+                continue;
+            }
+            let configured = settings
+                .tools
+                .iter()
+                .find(|tool| tool.id == child_id)
+                .ok_or_else(|| format!("subagent child tool '{child_id}' is not installed"))?;
+            if !configured.enabled || (configured.requires_project && !has_project) {
+                continue;
+            }
+            seen.insert(child_id.to_owned());
+            tools.push(FrozenToolBindingV1 {
+                tool_id: child_id.to_owned(),
+                tool_hash: canonical_hash(configured)?,
+                tool_snapshot: configured.clone(),
+                definition: None,
+            });
+        }
+    }
     let maximum_tool_calls = if tools.is_empty() {
         0
     } else {
@@ -3022,7 +2931,7 @@ fn freeze_graph_bindings(
             .saturating_mul(8)
             .min(64)
     };
-    Ok(FrozenSimpleChatAgentV1 {
+    Ok(FrozenWorkflowAgentV1 {
         maximum_turns: maximum_turns.max(1),
         maximum_tool_calls,
         tools,
@@ -3052,58 +2961,47 @@ fn graph_model_tier_ids(workflow: &Value) -> Vec<String> {
     tiers.into_iter().collect()
 }
 
-fn simple_chat_agent_instructions(workflow: &Value) -> Result<Option<String>, String> {
-    let configuration = workflow
-        .get("nodes")
-        .and_then(Value::as_array)
-        .and_then(|nodes| {
-            nodes
-                .iter()
-                .find(|node| node.get("id").and_then(Value::as_str) == Some("agent.1"))
-        })
-        .and_then(|node| node.get("configuration"))
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Simple Chat Agent configuration is missing".to_owned())?;
-    match configuration.get("instructions") {
-        None => Ok(None),
-        Some(Value::String(value))
-            if !value.trim().is_empty() && value.len() <= 64 * 1024 && !value.contains('\0') =>
-        {
-            Ok(Some(value.clone()))
-        }
-        Some(_) => Err(
-            "Simple Chat Agent instructions must be a non-empty string of at most 64 KiB".into(),
-        ),
-    }
-}
-
-fn validate_enabled_project_file_tool(tool: &BuiltInToolConfigurationV2) -> Result<(), String> {
-    if !tool.enabled {
+fn validate_model_capabilities(
+    provider: &ProviderConfigurationV2,
+    model: &ModelConfigurationV2,
+    requires_tools: bool,
+) -> Result<(), String> {
+    if !model
+        .capabilities
+        .iter()
+        .any(|capability| capability == "text")
+    {
         return Err(format!(
-            "Simple Chat tool '{}' is disabled in saved Settings",
-            tool.id
+            "model '{}' does not declare the text capability required by the workflow",
+            model.name
         ));
     }
-    if !tool.requires_project || !tool.credential_bindings.is_empty() {
+    if requires_tools
+        && !model
+            .capabilities
+            .iter()
+            .any(|capability| capability == "tools")
+        && !provider_supports_tool_calls(&provider.kind)
+    {
         return Err(format!(
-            "Simple Chat tool '{}' does not match the credential-free project authority contract",
-            tool.id
+            "provider protocol '{}' cannot transport the tool calls required by model '{}' and the selected workflow",
+            provider.kind, model.name
         ));
     }
     Ok(())
 }
 
-struct ResolvedSimpleChatModel {
+struct ResolvedWorkflowModel {
     tier: ModelTierConfigurationV2,
     provider: ProviderConfigurationV2,
     model: ModelConfigurationV2,
     credential: Option<CredentialMetadataV1>,
 }
 
-fn resolve_simple_chat_model(
+fn resolve_workflow_model(
     settings: &SettingsDocument,
     tier_id: &str,
-) -> Result<ResolvedSimpleChatModel, String> {
+) -> Result<ResolvedWorkflowModel, String> {
     let tier = settings
         .model_tiers
         .iter()
@@ -3112,18 +3010,18 @@ fn resolve_simple_chat_model(
     let target = match &tier.resolution {
         ModelTierResolutionV2::Unconfigured => {
             return Err(format!(
-                "model tier '{tier_id}' is Unconfigured; map it in Settings before running Simple Chat"
+                "model tier '{tier_id}' is Unconfigured; map it in Settings before running the workflow"
             ));
         }
         ModelTierResolutionV2::Exact { target } => target,
         ModelTierResolutionV2::Fallback { .. } => {
             return Err(format!(
-                "model tier '{tier_id}' uses Ordered fallback, but current Simple Chat executes only an Exact provider/model mapping; change this tier to Exact in Settings"
+                "model tier '{tier_id}' uses Ordered fallback, but the current workflow runtime executes only an Exact provider/model mapping; change this tier to Exact in Settings"
             ));
         }
         ModelTierResolutionV2::Policy { .. } => {
             return Err(format!(
-                "model tier '{tier_id}' uses a Selection policy, but current Simple Chat executes only an Exact provider/model mapping; change this tier to Exact in Settings"
+                "model tier '{tier_id}' uses a Selection policy, but the current workflow runtime executes only an Exact provider/model mapping; change this tier to Exact in Settings"
             ));
         }
     };
@@ -3142,7 +3040,7 @@ fn resolve_simple_chat_model(
         "openai_compatible" | "anthropic" | "gemini"
     ) {
         return Err(format!(
-            "provider '{}' uses protocol '{}', but no native adapter is installed for Simple Chat",
+            "provider '{}' uses protocol '{}', but no native workflow adapter is installed",
             provider.id, provider.kind
         ));
     }
@@ -3165,7 +3063,7 @@ fn resolved_model(
     tier: &ModelTierConfigurationV2,
     provider: &ProviderConfigurationV2,
     model: &ModelConfigurationV2,
-) -> Result<ResolvedSimpleChatModel, String> {
+) -> Result<ResolvedWorkflowModel, String> {
     let credential = provider
         .credential_ref
         .as_deref()
@@ -3191,7 +3089,7 @@ fn resolved_model(
             })
         })
         .transpose()?;
-    Ok(ResolvedSimpleChatModel {
+    Ok(ResolvedWorkflowModel {
         tier: tier.clone(),
         provider: provider.clone(),
         model: model.clone(),
@@ -3199,13 +3097,13 @@ fn resolved_model(
     })
 }
 
-const fn execution_status_name(status: SimpleChatExecutionStatusV1) -> &'static str {
+const fn execution_status_name(status: WorkflowExecutionStatusV1) -> &'static str {
     match status {
-        SimpleChatExecutionStatusV1::Succeeded => "succeeded",
-        SimpleChatExecutionStatusV1::FailedDefinitelyNotStarted => "failed_definitely_not_started",
-        SimpleChatExecutionStatusV1::FailedKnownStarted => "failed_known_started",
-        SimpleChatExecutionStatusV1::OutcomeUncertain => "outcome_uncertain",
-        SimpleChatExecutionStatusV1::AwaitingApproval => "awaiting_approval",
+        WorkflowExecutionStatusV1::Succeeded => "succeeded",
+        WorkflowExecutionStatusV1::FailedDefinitelyNotStarted => "failed_definitely_not_started",
+        WorkflowExecutionStatusV1::FailedKnownStarted => "failed_known_started",
+        WorkflowExecutionStatusV1::OutcomeUncertain => "outcome_uncertain",
+        WorkflowExecutionStatusV1::AwaitingApproval => "awaiting_approval",
     }
 }
 
@@ -3329,7 +3227,7 @@ fn require_consumed_provider_options(
 ) -> Result<(), String> {
     if !provider.configuration.is_empty() {
         return Err(format!(
-            "provider '{}' has nonempty Provider configuration, but the installed native adapter has no consumer for those fields; clear Provider configuration before Test, Discover, or Simple Chat",
+            "provider '{}' has nonempty Provider configuration, but the installed native adapter has no consumer for those fields; clear Provider configuration before Test, Discover, or workflow execution",
             provider.id
         ));
     }
@@ -3338,7 +3236,7 @@ fn require_consumed_provider_options(
         .unwrap_or(provider.models.as_slice());
     if let Some(model) = models.iter().find(|model| !model.parameters.is_empty()) {
         return Err(format!(
-            "model '{}:{}' has nonempty Provider parameters, but the installed native adapter has no consumer for those fields; clear Provider parameters before Test, Discover, or Simple Chat",
+            "model '{}:{}' has nonempty Provider parameters, but the installed native adapter has no consumer for those fields; clear Provider parameters before Test, Discover, or workflow execution",
             provider.id, model.id
         ));
     }
@@ -3374,9 +3272,7 @@ fn validate_attachments(payload: &Value) -> Result<(), String> {
     match payload.get("attachments") {
         None => Ok(()),
         Some(Value::Array(values)) if values.is_empty() => Ok(()),
-        Some(Value::Array(_)) => {
-            Err("attachments are not implemented in the Simple Chat rescue slice".into())
-        }
+        Some(Value::Array(_)) => Err("attachments are not implemented in the Chat runtime".into()),
         Some(_) => Err("attachments must be an array of references".into()),
     }
 }
@@ -3399,7 +3295,7 @@ fn optional_project_id(payload: &Value) -> Result<Option<String>, String> {
 }
 
 fn tool_activity_facts(
-    activities: &[SimpleChatToolActivityV1],
+    activities: &[WorkflowToolActivityV1],
     context: &FrozenChatExecutionContextV1,
     frozen_context_hash: &str,
     created_at: &str,
@@ -3485,8 +3381,8 @@ fn node_activity_facts(
 /// Run-local task-list fact: when the pass settled a completed todo call,
 /// the newest durable snapshot becomes a timeline event for the editor.
 fn todo_state_fact(
-    pipeline: &dyn SimpleChatPipelinePort,
-    result: &SimpleChatExecutionResultV1,
+    pipeline: &dyn WorkflowPipelinePort,
+    result: &WorkflowExecutionResultV1,
     run_id: &StableId,
     created_at: &str,
 ) -> Result<Vec<(&'static str, Value)>, String> {
@@ -3610,7 +3506,7 @@ mod tests {
         calls: AtomicUsize,
         connection_tests: AtomicUsize,
         conversations: Mutex<Vec<Vec<ConversationMessage>>>,
-        execution_requests: Mutex<Vec<SimpleChatExecutionRequestV1>>,
+        execution_requests: Mutex<Vec<WorkflowExecutionRequestV1>>,
     }
 
     impl FixtureProvider {
@@ -3681,15 +3577,15 @@ mod tests {
         }
     }
 
-    struct FixtureSimpleChatPipeline {
+    struct FixtureWorkflowPipeline {
         provider: Arc<FixtureProvider>,
     }
 
-    impl SimpleChatPipelinePort for FixtureSimpleChatPipeline {
+    impl WorkflowPipelinePort for FixtureWorkflowPipeline {
         fn execute(
             &self,
-            request: SimpleChatExecutionRequestV1,
-        ) -> Result<SimpleChatExecutionResultV1, String> {
+            request: WorkflowExecutionRequestV1,
+        ) -> Result<WorkflowExecutionResultV1, String> {
             self.provider
                 .execution_requests
                 .lock()
@@ -3709,7 +3605,7 @@ mod tests {
                 None,
                 &messages,
             )?;
-            Ok(SimpleChatExecutionResultV1 {
+            Ok(WorkflowExecutionResultV1 {
                 request_id: request.request_id,
                 chat_id: request.chat_id,
                 run_id: request.run_id,
@@ -3719,7 +3615,7 @@ mod tests {
                 worker_invocation_id: fixture_id("invocation.worker.fixture")?,
                 broker_invocation_id: fixture_id("invocation.broker.fixture")?,
                 outcome_hash: format!("sha256:{}", "2".repeat(64)),
-                status: SimpleChatExecutionStatusV1::Succeeded,
+                status: WorkflowExecutionStatusV1::Succeeded,
                 assistant_text: Some(completion.text),
                 error: None,
                 model: completion.model,
@@ -3737,7 +3633,7 @@ mod tests {
 
     struct DurableRecoveryPipeline {
         provider: Arc<FixtureProvider>,
-        settled: Mutex<Option<SimpleChatExecutionResultV1>>,
+        settled: Mutex<Option<WorkflowExecutionResultV1>>,
         fail_after_first_settlement: AtomicBool,
     }
 
@@ -3751,11 +3647,11 @@ mod tests {
         }
     }
 
-    impl SimpleChatPipelinePort for DurableRecoveryPipeline {
+    impl WorkflowPipelinePort for DurableRecoveryPipeline {
         fn execute(
             &self,
-            request: SimpleChatExecutionRequestV1,
-        ) -> Result<SimpleChatExecutionResultV1, String> {
+            request: WorkflowExecutionRequestV1,
+        ) -> Result<WorkflowExecutionResultV1, String> {
             self.provider
                 .execution_requests
                 .lock()
@@ -3779,7 +3675,7 @@ mod tests {
                 None,
                 &messages,
             )?;
-            let result = SimpleChatExecutionResultV1 {
+            let result = WorkflowExecutionResultV1 {
                 request_id: request.request_id,
                 chat_id: request.chat_id,
                 run_id: request.run_id,
@@ -3789,7 +3685,7 @@ mod tests {
                 worker_invocation_id: fixture_id("invocation.worker.durable-recovery")?,
                 broker_invocation_id: fixture_id("invocation.broker.durable-recovery")?,
                 outcome_hash: format!("sha256:{}", "7".repeat(64)),
-                status: SimpleChatExecutionStatusV1::Succeeded,
+                status: WorkflowExecutionStatusV1::Succeeded,
                 assistant_text: Some(completion.text),
                 error: None,
                 model: completion.model,
@@ -3819,17 +3715,17 @@ mod tests {
         FailedAfterTool,
     }
 
-    struct ActivitySimpleChatPipelineV1 {
+    struct ActivityWorkflowPipelineV1 {
         outcome: ActivityPipelineOutcomeV1,
     }
 
-    impl SimpleChatPipelinePort for ActivitySimpleChatPipelineV1 {
+    impl WorkflowPipelinePort for ActivityWorkflowPipelineV1 {
         fn execute(
             &self,
-            request: SimpleChatExecutionRequestV1,
-        ) -> Result<SimpleChatExecutionResultV1, String> {
+            request: WorkflowExecutionRequestV1,
+        ) -> Result<WorkflowExecutionResultV1, String> {
             let succeeded = matches!(self.outcome, ActivityPipelineOutcomeV1::Succeeded);
-            Ok(SimpleChatExecutionResultV1 {
+            Ok(WorkflowExecutionResultV1 {
                 request_id: request.request_id,
                 chat_id: request.chat_id,
                 run_id: request.run_id,
@@ -3840,9 +3736,9 @@ mod tests {
                 broker_invocation_id: fixture_id("invocation.broker.activity-fixture")?,
                 outcome_hash: format!("sha256:{}", "4".repeat(64)),
                 status: if succeeded {
-                    SimpleChatExecutionStatusV1::Succeeded
+                    WorkflowExecutionStatusV1::Succeeded
                 } else {
-                    SimpleChatExecutionStatusV1::OutcomeUncertain
+                    WorkflowExecutionStatusV1::OutcomeUncertain
                 },
                 assistant_text: succeeded.then(|| "activity fixture answer".into()),
                 error: (!succeeded).then(|| "provider failed after settled tool use".into()),
@@ -3851,7 +3747,7 @@ mod tests {
                 output_units: 2,
                 model_turns: 2,
                 tool_calls: 1,
-                tool_activity: vec![SimpleChatToolActivityV1 {
+                tool_activity: vec![WorkflowToolActivityV1 {
                     call_id: "call.activity-fixture".into(),
                     invocation_id: fixture_id("invocation.tool.activity-fixture")?,
                     capability_id: "tool.files.read".into(),
@@ -3870,15 +3766,15 @@ mod tests {
 
     struct PreflightRejectingPipelineV1;
 
-    impl SimpleChatPipelinePort for PreflightRejectingPipelineV1 {
-        fn preflight(&self, _request: &SimpleChatExecutionRequestV1) -> Result<(), String> {
+    impl WorkflowPipelinePort for PreflightRejectingPipelineV1 {
+        fn preflight(&self, _request: &WorkflowExecutionRequestV1) -> Result<(), String> {
             Err("deterministic pipeline preflight rejection".into())
         }
 
         fn execute(
             &self,
-            _request: SimpleChatExecutionRequestV1,
-        ) -> Result<SimpleChatExecutionResultV1, String> {
+            _request: WorkflowExecutionRequestV1,
+        ) -> Result<WorkflowExecutionResultV1, String> {
             panic!("execute must not run after a deterministic preflight rejection")
         }
     }
@@ -3941,7 +3837,7 @@ mod tests {
     ) -> DesktopRuntime {
         let mut runtime = DesktopRuntime::open_with_credential_store(root.path(), store).unwrap();
         runtime.provider = provider.clone();
-        runtime.pipeline = Arc::new(FixtureSimpleChatPipeline { provider });
+        runtime.pipeline = Arc::new(FixtureWorkflowPipeline { provider });
         runtime
     }
 
@@ -4112,7 +4008,7 @@ mod tests {
             })
             .expect("tool Settings");
 
-        let mut workflow = runtime.workflow_snapshot();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["nodes"][1]["configuration"]["toolIds"] = json!(["tool.files.read"]);
         workflow.document["nodes"][1]["configuration"]["maxTurns"] = json!(2);
         runtime
@@ -4120,7 +4016,7 @@ mod tests {
                 command_id: "workflow.tool-test".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
-                workflow_id: None,
+                workflow_id: Some("workflow.simple-chat".into()),
             })
             .expect("tool workflow");
     }
@@ -4147,7 +4043,8 @@ mod tests {
             .flat_map(|provider| provider.models.iter_mut())
             .find(|model| model.remote_id == "fixture-model")
             .expect("fixture model");
-        model.capabilities.push("tools".into());
+        model.capabilities = vec!["text".into()];
+        assert_eq!(model.capabilities, vec!["text"]);
         for tool in &mut settings.tools {
             if matches!(
                 tool.id.as_str(),
@@ -4209,6 +4106,44 @@ mod tests {
     }
 
     #[test]
+    fn subagent_freeze_includes_enabled_child_tools_without_adding_parent_tool_ids() {
+        let mut settings = SettingsConfigurationV2::default();
+        for tool_id in [
+            SUBAGENT_CAPABILITY_ID,
+            "tool.files.read",
+            "tool.todo",
+        ] {
+            settings
+                .tools
+                .iter_mut()
+                .find(|tool| tool.id == tool_id)
+                .expect("built-in tool")
+                .enabled = true;
+        }
+        let mut workflow = crate::runtime::documents::bundled_workflow_template("simple-chat")
+            .expect("bundled workflow");
+        workflow["nodes"][1]["configuration"]["toolIds"] =
+            json!([SUBAGENT_CAPABILITY_ID]);
+        workflow["nodes"][1]["configuration"]["maxTurns"] = json!(2);
+
+        let frozen = freeze_graph_bindings(&workflow, &settings, true, &BTreeMap::new())
+            .expect("subagent freeze");
+        assert_eq!(
+            frozen
+                .tools
+                .iter()
+                .map(|tool| tool.tool_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![SUBAGENT_CAPABILITY_ID, "tool.files.read", "tool.todo"]
+        );
+        assert_eq!(
+            workflow["nodes"][1]["configuration"]["toolIds"],
+            json!([SUBAGENT_CAPABILITY_ID]),
+            "child bindings belong to subagent semantics, not the parent JSON tool list"
+        );
+    }
+
+    #[test]
     fn simple_chat_commits_real_assistant_output_and_replays_without_second_effect() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
@@ -4234,7 +4169,8 @@ mod tests {
         drop(initial);
 
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
-        let mut oversized = super::super::documents::default_simple_chat_workflow();
+        let mut oversized =
+            super::super::documents::bundled_workflow_template("simple-chat").unwrap();
         oversized["preservedMetadata"] =
             Value::String("x".repeat(super::super::pipeline::MAXIMUM_WORKFLOW_SNAPSHOT_BYTES));
         let encoded = JsonDocument::parse(serde_json::to_vec(&oversized).unwrap()).unwrap();
@@ -4272,13 +4208,6 @@ mod tests {
         let snapshot = reopened.snapshot(0).unwrap();
         assert_eq!(snapshot.chat.phase, "draft");
         assert!(!snapshot.chat.recovery_pending);
-        assert!(
-            snapshot
-                .chat
-                .disabled_reason
-                .as_deref()
-                .is_some_and(|reason| { reason.contains("executable 128 KiB persistence bound") })
-        );
     }
 
     #[test]
@@ -4446,7 +4375,7 @@ mod tests {
             let provider = Arc::new(FixtureProvider::new());
             let mut runtime = runtime(&root, provider);
             configure_project_read_workflow(&mut runtime, Some(workspace.path()), true);
-            runtime.pipeline = Arc::new(ActivitySimpleChatPipelineV1 { outcome });
+            runtime.pipeline = Arc::new(ActivityWorkflowPipelineV1 { outcome });
             runtime
                 .command(project_tool_start(
                     match outcome {
@@ -4489,7 +4418,7 @@ mod tests {
         let command = send("chat.pending-freeze", 0, "original input");
         let fingerprint = command_fingerprint(&command).unwrap();
         let frozen = runtime
-            .freeze_simple_chat_context(&command, &command.command_id, &fingerprint, 0, None)
+            .freeze_workflow_context(&command, &command.command_id, &fingerprint, 0, None)
             .unwrap();
         let interrupted = runtime.snapshot(0).unwrap();
         assert_eq!(interrupted.version, 0);
@@ -4718,7 +4647,7 @@ mod tests {
                 &oversized_follow_up,
             ))
             .unwrap_err();
-        assert!(error.contains("accumulated Simple Chat message context"));
+        assert!(error.contains("accumulated Chat message context"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
         drop(runtime);
@@ -4846,6 +4775,10 @@ mod tests {
     fn draft_projection_exposes_exact_native_simple_chat_readiness() {
         let root = TempDir::new().unwrap();
         let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));
+        runtime
+            .documents
+            .set_default_workflow("workflow.simple-chat")
+            .unwrap();
         let blocked = runtime.snapshot(0).unwrap();
         assert!(
             blocked
@@ -4889,6 +4822,10 @@ mod tests {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
+        runtime
+            .documents
+            .set_default_workflow("workflow.simple-chat")
+            .unwrap();
         configure(&mut runtime);
         let mut settings = runtime.settings_v2_snapshot().settings;
         settings.providers[0].models[0].capabilities.clear();
@@ -4928,7 +4865,7 @@ mod tests {
                 bound_provider_id: Some(incompatible.providers[0].id.clone()),
                 bound_endpoint: Some(incompatible.providers[0].base_url.clone()),
             });
-        let error = resolve_simple_chat_model(&incompatible, "tier:balanced")
+        let error = resolve_workflow_model(&incompatible, "tier:balanced")
             .err()
             .expect("incompatible credential must fail preflight");
         assert!(error.contains("has no api_key field"), "{error}");
@@ -4940,7 +4877,7 @@ mod tests {
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
         configure(&mut runtime);
-        let mut workflow = runtime.workflow_snapshot();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["nodes"][1]["configuration"]["instructions"] =
             Value::String("Answer in exactly one short sentence.".into());
         runtime
@@ -4948,19 +4885,18 @@ mod tests {
                 command_id: "workflow.agent-instructions".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
-                workflow_id: None,
+                workflow_id: Some("workflow.simple-chat".into()),
             })
             .unwrap();
         runtime
             .command(send("chat.agent-instructions", 0, "hello"))
             .unwrap();
         let requests = provider.execution_requests.lock().unwrap();
-        assert_eq!(requests[0].messages[0].role, "system");
+        assert_eq!(requests[0].messages[0].role, "user");
         assert_eq!(
-            requests[0].messages[0].content,
+            requests[0].workflow_snapshot["nodes"][1]["configuration"]["instructions"],
             "Answer in exactly one short sentence."
         );
-        assert_eq!(requests[0].messages.last().unwrap().role, "user");
     }
 
     #[test]
@@ -4969,17 +4905,20 @@ mod tests {
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
         configure(&mut runtime);
-        let mut workflow = runtime.workflow_snapshot();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["nodes"][1]["configuration"]["silentIgnoredField"] = Value::Bool(true);
-        let error = runtime
+        runtime
             .workflow_commit(WorkflowCommitInput {
                 command_id: "workflow.unsupported-agent-field".into(),
                 expected_version: workflow.version,
                 document: workflow.document,
-                workflow_id: None,
+                workflow_id: Some("workflow.simple-chat".into()),
             })
+            .unwrap();
+        let error = runtime
+            .command(send("chat.unsupported-agent-field", 0, "must not run"))
             .unwrap_err();
-        assert!(error.contains("accepts exactly"));
+        assert!(error.contains("accepts exactly"), "{error}");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
         assert!(
             runtime
@@ -6605,14 +6544,14 @@ mod tests {
         )
         .unwrap();
 
-        let mut workflow = runtime.workflow_snapshot();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["name"] = Value::String("Future Simple Chat".into());
         runtime
             .workflow_commit(WorkflowCommitInput {
                 command_id: "workflow.future".into(),
                 expected_version: workflow.version,
                 document: workflow.document.clone(),
-                workflow_id: None,
+                workflow_id: Some("workflow.simple-chat".into()),
             })
             .unwrap();
         drop(runtime);
@@ -7095,10 +7034,10 @@ mod tests {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider);
-        let snapshot = runtime.workflow_snapshot();
+        let snapshot = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         let advanced = json!({
             "schemaVersion": 1,
-            "id": "workflow.advanced",
+            "id": "workflow.simple-chat",
             "name": "Advanced harness",
             "nodes": [
                 {
@@ -7120,16 +7059,21 @@ mod tests {
                 command_id: "workflow.advanced.save".into(),
                 expected_version: snapshot.version,
                 document: advanced.clone(),
-                workflow_id: None,
+                workflow_id: Some("workflow.simple-chat".into()),
             })
             .unwrap();
         assert!(receipt.accepted);
-        assert_eq!(runtime.workflow_snapshot().document, advanced);
+        assert_eq!(
+            runtime
+                .workflow_snapshot_for("workflow.simple-chat".into())
+                .document,
+            advanced
+        );
 
         let error = runtime
             .command(send("chat.advanced", 0, "hello"))
             .unwrap_err();
-        assert!(error.contains("this build can run only the Simple Chat graph"));
+        assert!(error.contains("not executable"), "{error}");
         assert_eq!(runtime.snapshot(0).unwrap().chat.phase, "draft");
     }
 }

@@ -75,7 +75,7 @@ export function NavigationPane({
         <NavigationButton
           active={route === "chat"}
           icon="○"
-          label="Simple Chat"
+          label="Chat"
           collapsed={collapsed}
           onClick={() => onNavigate("chat")}
         />

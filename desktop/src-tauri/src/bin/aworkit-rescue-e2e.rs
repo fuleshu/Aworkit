@@ -43,7 +43,7 @@ struct ReopenResult {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("rescue Simple Chat runner failed: {error}");
+        eprintln!("rescue workflow runner failed: {error}");
         std::process::exit(1);
     }
 }
@@ -98,11 +98,13 @@ fn run() -> Result<(), String> {
     match phase.as_str() {
         "first" => {
             let expected = runtime.snapshot(0)?.version;
+            let workflow_id = tool_free_workflow_id(&runtime)?;
             runtime.command(chat_command(
                 "rescue.chat.first",
                 expected,
                 "start",
                 "hello",
+                Some(&workflow_id),
             ))?;
             let snapshot = runtime.snapshot(0)?;
             print_json(&FirstResult {
@@ -124,6 +126,7 @@ fn run() -> Result<(), String> {
                 expected,
                 "enqueue",
                 "again",
+                None,
             ))?;
             let snapshot = runtime.snapshot(0)?;
             print_json(&ReopenResult {
@@ -218,19 +221,46 @@ fn chat_command(
     expected_version: u64,
     action: &str,
     input: &str,
+    workflow_id: Option<&str>,
 ) -> UiCommandInput {
+    let mut payload = json!({
+        "input": input,
+        "attachments": [],
+    });
+    if let Some(workflow_id) = workflow_id {
+        payload["workflowId"] = workflow_id.into();
+    }
     UiCommandInput {
         schema_version: 1,
         command_id: command_id.into(),
         expected_version,
         action: action.into(),
         target_id: Some("chat.local".into()),
-        payload: json!({
-            "workflowId": "workflow.simple-chat",
-            "input": input,
-            "attachments": [],
-        }),
+        payload,
     }
+}
+
+fn tool_free_workflow_id(runtime: &DesktopRuntime) -> Result<String, String> {
+    for entry in runtime.workflow_library().entries {
+        let document = runtime.workflow_snapshot_for(entry.id.clone()).document;
+        let tool_free = document
+            .get("nodes")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|nodes| {
+                nodes.iter().all(|node| {
+                    node.get("type").and_then(serde_json::Value::as_str) != Some("agent")
+                        || node
+                            .get("configuration")
+                            .and_then(|configuration| configuration.get("toolIds"))
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(Vec::is_empty)
+                })
+            });
+        if tool_free {
+            return Ok(entry.id);
+        }
+    }
+    Err("workflow library has no tool-free workflow for the hermetic runner".into())
 }
 
 fn last_assistant(

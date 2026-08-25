@@ -15,10 +15,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::tool_loop::{SimpleChatToolActivityV1, ToolApprovalChallengeV1};
+use super::tool_loop::{ToolApprovalChallengeV1, WorkflowToolActivityV1};
 
-const MAXIMUM_MODEL_TURNS: u32 = 8;
-const MAXIMUM_TOOL_CALLS: u32 = 32;
+// These ceilings must accept every budget that the frozen workflow contract
+// can produce. Agent nodes allow up to 12 turns and the run freezer caps the
+// aggregate tool-call budget at 64.
+const MAXIMUM_MODEL_TURNS: u32 = 12;
+const MAXIMUM_TOOL_CALLS: u32 = 64;
 const MAXIMUM_TOOL_CALLS_PER_TURN: usize = 8;
 const MAXIMUM_DURABLE_EXCHANGE_BYTES: usize = 512 * 1024;
 
@@ -84,7 +87,7 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub call: ModelToolCallV1,
     pub challenge: ToolApprovalChallengeV1,
     pub exchanges: Vec<ModelToolExchangeV1>,
-    pub activities: Vec<SimpleChatToolActivityV1>,
+    pub activities: Vec<WorkflowToolActivityV1>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub attempted_model_turns: u32,
@@ -104,7 +107,7 @@ pub(crate) enum ModelToolLoopRunV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SettledModelToolCallV1 {
     pub result: ModelToolResultV1,
-    pub activity: SimpleChatToolActivityV1,
+    pub activity: WorkflowToolActivityV1,
 }
 
 pub(crate) struct ModelToolLoopRequestV1<'a> {
@@ -128,7 +131,7 @@ pub(crate) struct ModelToolLoopOutcomeV1 {
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     pub exchanges: Vec<ModelToolExchangeV1>,
-    pub activities: Vec<SimpleChatToolActivityV1>,
+    pub activities: Vec<WorkflowToolActivityV1>,
 }
 
 #[derive(Debug, Error)]
@@ -152,7 +155,7 @@ pub(crate) struct ModelToolLoopFailureV1 {
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     pub exchanges: Vec<ModelToolExchangeV1>,
-    pub activities: Vec<SimpleChatToolActivityV1>,
+    pub activities: Vec<WorkflowToolActivityV1>,
 }
 
 /// Runs the exact frozen model/tool loop until a final assistant message or a
@@ -348,7 +351,7 @@ fn failure(
     attempted_model_turns: u32,
     settled_tool_calls: u32,
     exchanges: &[ModelToolExchangeV1],
-    activities: &[SimpleChatToolActivityV1],
+    activities: &[WorkflowToolActivityV1],
 ) -> ModelToolLoopFailureV1 {
     ModelToolLoopFailureV1 {
         error,

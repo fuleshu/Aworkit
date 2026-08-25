@@ -140,7 +140,11 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
         FixtureResponse::json(json!({
             "choices":[{
                 "finish_reason":"stop",
-                "message":{"role":"assistant","content":"The README describes Aworkit."}
+                "message":{
+                    "role":"assistant",
+                    "content":"The README describes Aworkit.",
+                    "tool_calls":null
+                }
             }],
             "usage":{"prompt_tokens":24,"completion_tokens":6,"total_tokens":30}
         }))
