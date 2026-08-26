@@ -61,10 +61,10 @@ use super::{
         GraphApprovalRequestV1, GraphNodeActivityV1, GraphPassBudgetV1, GraphPassStatusV1,
         PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass_observed,
     },
-    live_activity::{LiveChatActivityPort, noop_live_activity},
     mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
     project_scope::revalidate_git_branch,
-    run_events::{ModelRunEventObserverV1, RunActivitySnapshotV1, RunEventStreamV1},
+    run_events::{ModelRunEventObserver, RunEventStream},
+    semantic_events::{SemanticEventCommitter, ephemeral_semantic_event_committer},
     tool_loop::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
         ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
@@ -278,8 +278,6 @@ pub struct WorkflowExecutionResultV1 {
     pub output_units: u64,
     pub model_turns: u64,
     pub tool_calls: u64,
-    /// Ordered semantic activities reduced from the exact live Run stream.
-    pub run_activity: Vec<RunActivitySnapshotV1>,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub node_activity: Vec<GraphNodeActivityV1>,
     pub approval: Option<GraphApprovalRequestV1>,
@@ -324,7 +322,7 @@ pub struct WorkflowExecutionPipeline {
     core_key: Arc<CoreAuthenticationKey>,
     credential_store: Arc<dyn PlatformCredentialStorePort>,
     provider_factory: Arc<dyn ProviderFactoryV1>,
-    live_activity: Arc<dyn LiveChatActivityPort>,
+    event_committer: Arc<dyn SemanticEventCommitter>,
 }
 
 impl WorkflowExecutionPipeline {
@@ -336,23 +334,23 @@ impl WorkflowExecutionPipeline {
         data_root: impl AsRef<Path>,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
     ) -> Result<Self, WorkflowPipelineError> {
-        Self::open_with_credential_store_and_live_activity(
+        Self::open_with_credential_store_and_event_committer(
             data_root,
             credential_store,
-            noop_live_activity(),
+            ephemeral_semantic_event_committer(),
         )
     }
 
-    pub fn open_with_credential_store_and_live_activity(
+    pub(crate) fn open_with_credential_store_and_event_committer(
         data_root: impl AsRef<Path>,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
-        live_activity: Arc<dyn LiveChatActivityPort>,
+        event_committer: Arc<dyn SemanticEventCommitter>,
     ) -> Result<Self, WorkflowPipelineError> {
-        Self::compose_with_live_activity(
+        Self::compose_with_event_committer(
             data_root.as_ref(),
             credential_store,
             Arc::new(BuiltInProviderFactory),
-            live_activity,
+            event_committer,
         )
     }
 
@@ -362,19 +360,19 @@ impl WorkflowExecutionPipeline {
         credential_store: Arc<dyn PlatformCredentialStorePort>,
         provider_factory: Arc<dyn ProviderFactoryV1>,
     ) -> Result<Self, WorkflowPipelineError> {
-        Self::compose_with_live_activity(
+        Self::compose_with_event_committer(
             data_root,
             credential_store,
             provider_factory,
-            noop_live_activity(),
+            ephemeral_semantic_event_committer(),
         )
     }
 
-    fn compose_with_live_activity(
+    fn compose_with_event_committer(
         data_root: &Path,
         credential_store: Arc<dyn PlatformCredentialStorePort>,
         provider_factory: Arc<dyn ProviderFactoryV1>,
-        live_activity: Arc<dyn LiveChatActivityPort>,
+        event_committer: Arc<dyn SemanticEventCommitter>,
     ) -> Result<Self, WorkflowPipelineError> {
         fs::create_dir_all(data_root).map_err(store_error)?;
         let root = fs::canonicalize(data_root).map_err(store_error)?;
@@ -439,7 +437,7 @@ impl WorkflowExecutionPipeline {
             core_key,
             credential_store,
             provider_factory,
-            live_activity,
+            event_committer,
         })
     }
 
@@ -672,7 +670,7 @@ impl WorkflowExecutionPipeline {
                 lease_authority,
                 provider_factory: self.provider_factory.clone(),
                 file_tool_authority: self.file_tool_authority.clone(),
-                live_activity: self.live_activity.clone(),
+                event_committer: self.event_committer.clone(),
             };
             // The broker commits DispatchAttempted before this call. A transport
             // error or an old attempted dispatch is conservatively settled by
@@ -715,7 +713,6 @@ impl WorkflowExecutionPipeline {
                 output_units: pending.output_units,
                 model_turns: u64::from(pending.attempted_model_turns),
                 tool_calls: u64::from(pending.settled_tool_calls),
-                run_activity: pending.run_activity.clone(),
                 tool_activity: pending.tool_activity.clone(),
                 node_activity: pending.activity.clone(),
                 approval: Some(GraphApprovalRequestV1 {
@@ -762,7 +759,7 @@ impl WorkflowExecutionPipeline {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
-                run_activity: Vec::new(),
+                legacy_run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
@@ -790,7 +787,6 @@ impl WorkflowExecutionPipeline {
             output_units: outcome.output_units,
             model_turns: u64::from(outcome.attempted_model_turns),
             tool_calls: u64::from(outcome.settled_tool_calls),
-            run_activity: outcome.run_activity,
             tool_activity: outcome.tool_activity,
             node_activity: outcome.node_activity,
             approval: outcome.approval,
@@ -906,19 +902,17 @@ impl WorkflowExecutionPipeline {
             .provider_factory
             .create(descriptor, &prepared.provider, api_key)
             .map_err(|error| WorkflowPipelineError::Store(redact_error(&materialized, &error)))?;
-        let previous_run_sequence = pending
-            .run_activity
-            .iter()
-            .map(|activity| activity.last_sequence)
-            .max()
-            .unwrap_or(0);
-        let run_events = Arc::new(RunEventStreamV1::resume(
+        let cancellation = CancellationToken::default();
+        let run_events = Arc::new(RunEventStream::new(
             prepared.request_id.to_string(),
             prepared.snapshot.run_id.to_string(),
-            self.live_activity.clone(),
-            pending.run_activity.clone(),
+            self.event_committer.clone(),
+            cancellation.clone(),
         ));
-        let model_observer = Arc::new(ModelRunEventObserverV1::new(run_events.clone()));
+        run_events
+            .ensure_healthy()
+            .map_err(WorkflowPipelineError::Store)?;
+        let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway =
             Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
         let workflow = prepared
@@ -930,7 +924,6 @@ impl WorkflowExecutionPipeline {
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let compiled = compile_graph_pass(&workflow, &prepared.tool_bindings)
             .map_err(WorkflowPipelineError::InvalidInput)?;
-        let cancellation = CancellationToken::default();
         let authority = self.file_tool_authority.bind_with_run_events(
             FrozenFileToolAuthorityContextV1 {
                 manifest: prepared.manifest.clone(),
@@ -950,6 +943,9 @@ impl WorkflowExecutionPipeline {
             run_events.clone(),
         );
         let graph_observer = |activity: &GraphNodeActivityV1| {
+            if !matches!(activity.status.as_str(), "started" | "waiting") {
+                model_observer.settle(&activity.status);
+            }
             run_events.publish_graph_activity(activity);
         };
         let pass = execute_graph_pass_observed(
@@ -976,12 +972,12 @@ impl WorkflowExecutionPipeline {
             Some(&graph_observer),
         );
         model_observer.settle(graph_pass_live_status(pass.status));
-        run_events.flush();
+        run_events
+            .ensure_healthy()
+            .map_err(WorkflowPipelineError::Store)?;
         let reasoning = model_observer
             .reasoning_snapshot()
             .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
-        let run_activity_all = run_events.activity_snapshots();
-        let run_activity = run_events.activity_snapshots_after(previous_run_sequence);
         match pass.status {
             GraphPassStatusV1::AwaitingApproval => {
                 let mut next = pass
@@ -990,7 +986,6 @@ impl WorkflowExecutionPipeline {
                     .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 next.reasoning_body = reasoning.as_ref().map(|item| item.body.clone());
                 next.reasoning_category = reasoning.as_ref().map(|item| item.category.clone());
-                next.run_activity = run_activity_all.clone();
                 self.records.mark_approval_resolved(&decision)?;
                 self.records.store_pending_approval(&next)?;
                 Ok(WorkflowExecutionResultV1 {
@@ -1012,7 +1007,6 @@ impl WorkflowExecutionPipeline {
                     output_units: next.output_units,
                     model_turns: u64::from(next.attempted_model_turns),
                     tool_calls: u64::from(next.settled_tool_calls),
-                    run_activity,
                     tool_activity: next.tool_activity.clone(),
                     node_activity: next.activity.clone(),
                     approval: pass.approval,
@@ -1039,7 +1033,7 @@ impl WorkflowExecutionPipeline {
                     settled_tool_calls: pass.settled_tool_calls,
                     tool_exchanges: pass.exchanges.clone(),
                     tool_activity: pass.tool_activity.clone(),
-                    run_activity: run_activity_all,
+                    legacy_run_activity: Vec::new(),
                     node_activity: pass.activity.clone(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -1080,7 +1074,6 @@ impl WorkflowExecutionPipeline {
                     output_units: record.output_units,
                     model_turns: u64::from(record.attempted_model_turns),
                     tool_calls: u64::from(record.settled_tool_calls),
-                    run_activity,
                     tool_activity: record.tool_activity,
                     node_activity: record.node_activity,
                     approval: None,
@@ -1556,8 +1549,10 @@ struct ProviderOutcomeRecordV1 {
     tool_exchanges: Vec<ModelToolExchangeV1>,
     #[serde(default)]
     tool_activity: Vec<WorkflowToolActivityV1>,
-    #[serde(default)]
-    run_activity: Vec<RunActivitySnapshotV1>,
+    /// Read-only migration sink for provider outcomes stored before semantic
+    /// events became canonical. New records never serialize this field.
+    #[serde(default, rename = "runActivity", skip_serializing)]
+    legacy_run_activity: Vec<Value>,
     #[serde(default)]
     node_activity: Vec<GraphNodeActivityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1821,7 +1816,7 @@ struct PipelineHostPort {
     lease_authority: Arc<PipelineLeaseAuthority>,
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
-    live_activity: Arc<dyn LiveChatActivityPort>,
+    event_committer: Arc<dyn SemanticEventCommitter>,
 }
 
 impl ApprovedHostDispatchPortV1 for PipelineHostPort {
@@ -1919,7 +1914,7 @@ impl ApprovedHostDispatchPortV1 for PipelineHostPort {
             },
             provider_factory: self.provider_factory.clone(),
             file_tool_authority: self.file_tool_authority.clone(),
-            live_activity: self.live_activity.clone(),
+            event_committer: self.event_committer.clone(),
         };
         match self
             .host
@@ -1960,7 +1955,7 @@ struct ModelInvocationDispatcher {
     secret_client: CoreSecretLeaseClient,
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
-    live_activity: Arc<dyn LiveChatActivityPort>,
+    event_committer: Arc<dyn SemanticEventCommitter>,
 }
 
 impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
@@ -1998,7 +1993,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
-                run_activity: Vec::new(),
+                legacy_run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
@@ -2022,7 +2017,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
-                    run_activity: Vec::new(),
+                    legacy_run_activity: Vec::new(),
                     node_activity: Vec::new(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -2060,7 +2055,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
-                        run_activity: Vec::new(),
+                        legacy_run_activity: Vec::new(),
                         node_activity: Vec::new(),
                         approval: None,
                         scheduler_checkpoint: None,
@@ -2092,7 +2087,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
-                        run_activity: Vec::new(),
+                        legacy_run_activity: Vec::new(),
                         node_activity: Vec::new(),
                         approval: None,
                         scheduler_checkpoint: None,
@@ -2122,7 +2117,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
-                    run_activity: Vec::new(),
+                    legacy_run_activity: Vec::new(),
                     node_activity: Vec::new(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -2145,19 +2140,23 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
-                run_activity: Vec::new(),
+                legacy_run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             });
         };
-        let run_events = Arc::new(RunEventStreamV1::new(
+        let run_events = Arc::new(RunEventStream::new(
             self.prepared.request_id.to_string(),
             self.prepared.snapshot.run_id.to_string(),
-            self.live_activity.clone(),
+            self.event_committer.clone(),
+            cancellation.clone(),
         ));
-        let model_observer = Arc::new(ModelRunEventObserverV1::new(run_events.clone()));
+        run_events
+            .ensure_healthy()
+            .map_err(WorkflowPipelineError::Store)?;
+        let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway =
             Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
         let workflow = envelope
@@ -2204,6 +2203,9 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
                 .map_err(|error| WorkflowPipelineError::InvalidInput(error))?;
             let graph_observer = |activity: &GraphNodeActivityV1| {
+                if !matches!(activity.status.as_str(), "started" | "waiting") {
+                    model_observer.settle(&activity.status);
+                }
                 run_events.publish_graph_activity(activity);
             };
             let pass = execute_graph_pass_observed(
@@ -2230,11 +2232,12 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 Some(&graph_observer),
             );
             model_observer.settle(graph_pass_live_status(pass.status));
-            run_events.flush();
+            run_events
+                .ensure_healthy()
+                .map_err(WorkflowPipelineError::Store)?;
             let reasoning = model_observer
                 .reasoning_snapshot()
                 .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
-            let run_activity = run_events.activity_snapshots();
             let base = ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: envelope.invocation_id.clone(),
@@ -2249,7 +2252,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: pass.settled_tool_calls,
                 tool_exchanges: pass.exchanges.clone(),
                 tool_activity: pass.tool_activity.clone(),
-                run_activity: run_activity.clone(),
+                legacy_run_activity: Vec::new(),
                 node_activity: pass.activity.clone(),
                 approval: pass.approval.clone(),
                 scheduler_checkpoint: None,
@@ -2276,7 +2279,6 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     pending.reasoning_body = reasoning.as_ref().map(|item| item.body.clone());
                     pending.reasoning_category =
                         reasoning.as_ref().map(|item| item.category.clone());
-                    pending.run_activity = run_activity;
                     self.records.store_pending_approval(&pending)?;
                     ProviderOutcomeRecordV1 {
                         status: WorkflowExecutionStatusV1::AwaitingApproval,
@@ -4141,39 +4143,6 @@ mod tests {
                 .iter()
                 .all(|activity| activity.status == "completed")
         );
-        assert!(
-            first
-                .run_activity
-                .windows(2)
-                .all(|pair| pair[0].first_sequence < pair[1].first_sequence),
-            "semantic Run activities must retain their first live appearance order"
-        );
-        let first_tool = first
-            .run_activity
-            .iter()
-            .find(|activity| activity.call_id.as_deref() == Some("call.read"))
-            .or_else(|| {
-                first.run_activity.iter().find(|activity| {
-                    activity.capability_id.as_deref() == Some(FILE_READ_CAPABILITY_ID)
-                })
-            })
-            .expect("read tool Run activity");
-        assert_eq!(
-            first_tool
-                .input
-                .as_ref()
-                .and_then(|input| input.get("arguments"))
-                .and_then(|arguments| arguments.get("path")),
-            Some(&json!("notes.txt"))
-        );
-        assert_eq!(
-            first_tool
-                .output
-                .as_ref()
-                .and_then(|output| output.get("content"))
-                .and_then(|content| content.get("content")),
-            Some(&json!("alpha beta alpha"))
-        );
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed[0]["content"], "alpha beta alpha");
         assert_eq!(observed[1]["offsets"], json!([0, 11]));
@@ -5088,23 +5057,17 @@ mod tests {
             vec!["input.1", "plan.1", "agent.1", "output.1", "wait.1"]
         );
         let input = result
-            .run_activity
+            .node_activity
             .iter()
-            .find(|activity| activity.node_id.as_deref() == Some("input.1"))
-            .expect("input activity");
-        assert_eq!(input.input, input.output);
+            .find(|activity| activity.node_id == "input.1" && activity.status == "started")
+            .expect("input start activity");
+        let output = result
+            .node_activity
+            .iter()
+            .find(|activity| activity.node_id == "input.1" && activity.status == "completed")
+            .expect("input completion activity");
+        assert_eq!(input.input, output.output);
         assert!(input.input.as_ref().is_some_and(Value::is_string));
-        let model_turns = result
-            .run_activity
-            .iter()
-            .filter(|activity| activity.kind == "model_turn")
-            .collect::<Vec<_>>();
-        assert_eq!(model_turns.len(), 2);
-        assert!(
-            model_turns
-                .iter()
-                .all(|turn| turn.input.is_some() && turn.output.is_some())
-        );
     }
 
     #[test]

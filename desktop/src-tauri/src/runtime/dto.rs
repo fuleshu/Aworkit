@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
+use super::semantic_events::CoreEventEnvelope;
 use super::settings_v2::{
     McpServerConfigurationV2, ProviderConfigurationV2, SettingsConfigurationV2, WorkspaceKindV2,
 };
@@ -76,21 +77,6 @@ pub struct ProjectChoiceDto {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TimelineItemDto {
-    pub id: String,
-    pub kind: String,
-    pub title: String,
-    pub body: String,
-    pub created_at: String,
-    pub status: Option<String>,
-    pub action: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_category: Option<String>,
-    pub metadata: Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct EvidenceRecordDto {
     pub id: String,
     pub category: String,
@@ -103,12 +89,13 @@ pub struct EvidenceRecordDto {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
     pub version: u64,
-    pub last_sequence: u64,
+    pub through_sequence: u64,
+    pub reducer_version: String,
+    pub state_hash: String,
     pub chat: ChatProjectionDto,
     pub projects: Vec<ProjectChoiceDto>,
-    pub timeline: Vec<TimelineItemDto>,
     pub evidence: Vec<EvidenceRecordDto>,
-    pub events: Vec<Value>,
+    pub events: Vec<CoreEventEnvelope>,
 }
 
 #[derive(Deserialize, Serialize)]

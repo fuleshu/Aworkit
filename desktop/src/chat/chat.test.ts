@@ -22,7 +22,6 @@ import {
   PreviewChatCorePort,
 } from "./corePort";
 import type { ChatProjection, EvidenceRecord } from "./types";
-import { ChatWorkspaceController } from "./workspace";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 const draftChat: ChatProjection = {
@@ -138,35 +137,6 @@ describe("Milestone 08 Chat and evidence experience", () => {
     expect(controlsFor({ ...draftChat, phase: "completed" })).toEqual([]);
   });
 
-  it("freezes the last contiguous projection after a disconnect gap and resyncs explicitly", () => {
-    const controller = new ChatWorkspaceController();
-    controller.receive({
-      sequence: 1,
-      kind: "timeline.append",
-      payload: {
-        item: { id: "one", kind: "message", title: "one", createdAt: "now" },
-      },
-    });
-    controller.receive({
-      sequence: 3,
-      kind: "timeline.append",
-      payload: {
-        item: {
-          id: "three",
-          kind: "message",
-          title: "three",
-          createdAt: "now",
-        },
-      },
-    });
-    expect(controller.isStale()).toBe(true);
-    expect(controller.snapshot().timeline.map((item) => item.id)).toEqual([
-      "one",
-    ]);
-    controller.resynchronize(3, { ...controller.snapshot(), timeline: [] });
-    expect(controller.isStale()).toBe(false);
-  });
-
   it("leaves React to escape rich text, labels reasoning honestly, and keeps unknown records inspectable", () => {
     const card = toConversationCard({
       id: "unknown",
@@ -263,31 +233,21 @@ describe("Milestone 08 Chat and evidence experience", () => {
     ).rejects.toThrow("reused with different content");
   });
 
-  it("rejects malformed runtime snapshots and keeps future card/evidence values explicit", () => {
+  it("rejects malformed runtime snapshots and keeps future evidence values explicit", () => {
     expect(() =>
-      normalizeRuntimeSnapshot({ version: 1, lastSequence: 1 }),
+      normalizeRuntimeSnapshot({ version: 1, throughSequence: 1 }),
     ).toThrow();
     const normalized = normalizeRuntimeSnapshot({
       version: 1,
-      lastSequence: 1,
+      throughSequence: 1,
+      reducerVersion: "chat.semantic.reducer.v1",
+      stateHash: `sha256:${"0".repeat(64)}`,
       chat: {
         ...draftChat,
         workflowName: null,
         phase: "waiting_input",
       },
       projects: [],
-      timeline: [
-        {
-          id: "future",
-          kind: "future-card",
-          title: "Future",
-          body: "<script>unsafe()</script>",
-          createdAt: "now",
-          status: null,
-          action: null,
-          metadata: { retained: true },
-        },
-      ],
       evidence: [
         {
           id: "future-evidence",
@@ -297,11 +257,21 @@ describe("Milestone 08 Chat and evidence experience", () => {
           value: { mustNotInfer: true },
         },
       ],
-      events: [{ sequence: 1 }],
+      events: [
+        {
+          schemaVersion: 1,
+          streamId: "chat.test",
+          branchId: "main",
+          sequence: 1,
+          eventId: "event.chat.1",
+          kind: "future.event",
+          payload: { retained: true },
+        },
+      ],
     });
-    expect(normalized.timeline[0]).toMatchObject({
-      kind: "unknown",
-      raw: { retained: true },
+    expect(normalized.events[0]).toMatchObject({
+      kind: "future.event",
+      payload: { retained: true },
     });
     expect(normalized.evidence[0]).toMatchObject({
       category: "unknown",

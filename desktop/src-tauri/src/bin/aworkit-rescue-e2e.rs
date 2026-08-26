@@ -81,7 +81,7 @@ fn run() -> Result<(), String> {
     // the read-only provider health request. This is the restart gate: loading
     // history must never replay or precede itself with an external effect.
     let reopened_prior = if phase == "reopen" {
-        Some(last_assistant(&runtime.snapshot(0)?.timeline)?)
+        Some(last_assistant(&runtime.snapshot(0)?)?)
     } else {
         None
     };
@@ -110,10 +110,10 @@ fn run() -> Result<(), String> {
             print_json(&FirstResult {
                 schema_version: 1,
                 phase: "first",
-                chat_id: snapshot.chat.chat_id,
+                chat_id: snapshot.chat.chat_id.clone(),
                 settings_version: runtime.settings_snapshot().version,
                 provider_tested: true,
-                assistant_reply: last_assistant(&snapshot.timeline)?,
+                assistant_reply: last_assistant(&snapshot)?,
             })
         }
         "reopen" => {
@@ -132,11 +132,11 @@ fn run() -> Result<(), String> {
             print_json(&ReopenResult {
                 schema_version: 1,
                 phase: "reopen",
-                chat_id: snapshot.chat.chat_id,
+                chat_id: snapshot.chat.chat_id.clone(),
                 settings_version: runtime.settings_snapshot().version,
                 provider_tested: true,
                 prior_assistant_reply,
-                assistant_reply: last_assistant(&snapshot.timeline)?,
+                assistant_reply: last_assistant(&snapshot)?,
             })
         }
         _ => Err("phase must be first or reopen".into()),
@@ -263,14 +263,15 @@ fn tool_free_workflow_id(runtime: &DesktopRuntime) -> Result<String, String> {
     Err("workflow library has no tool-free workflow for the hermetic runner".into())
 }
 
-fn last_assistant(
-    timeline: &[aworkit_desktop::runtime::TimelineItemDto],
-) -> Result<String, String> {
-    timeline
+fn last_assistant(snapshot: &aworkit_desktop::runtime::RuntimeSnapshot) -> Result<String, String> {
+    snapshot
+        .events
         .iter()
         .rev()
-        .find(|item| item.title == "Aworkit")
-        .map(|item| item.body.clone())
+        .find(|event| event.kind == "message.assistant")
+        .and_then(|event| event.payload.get("body"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
         .ok_or_else(|| "runtime snapshot has no assistant reply".into())
 }
 

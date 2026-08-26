@@ -18,9 +18,8 @@ import {
 import { toConversationCard } from "./conversation";
 import { ConversationTimeline, TimelineCard } from "./ConversationTimeline";
 import { NavigationPane } from "../shell/NavigationPane";
-import type { ChatCorePort, RuntimeSnapshot } from "./corePort";
-import type { ChatIntent, ChatProjection } from "./types";
-import type { LiveChatActivity } from "./types";
+import type { ChatCorePort, RuntimeEvent, RuntimeSnapshot } from "./corePort";
+import type { ChatIntent, ChatProjection, CoreEventEnvelope } from "./types";
 import type { WorkflowCorePort } from "../workbench/corePort";
 import type { WorkflowDocument } from "../workbench/workflow";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
@@ -311,7 +310,7 @@ describe("Chat native-port recovery contracts", () => {
     ).toBeNull();
   });
 
-  it("projects auxiliary recovery changes even when semantic lastSequence is unchanged", async () => {
+  it("projects auxiliary recovery changes even when throughSequence is unchanged", async () => {
     let snapshots = 0;
     const port: ChatCorePort = {
       async snapshot(): Promise<RuntimeSnapshot> {
@@ -757,35 +756,28 @@ describe("Chat native-port recovery contracts", () => {
   it("maps selected tool and error cards to their distinct exact evidence records", async () => {
     const user = userEvent.setup();
     const projected = {
-      ...snapshot(2, "Evidence Chat", [{ sequence: 1 }, { sequence: 2 }]),
-      timeline: [
-        {
-          id: "event.tool.1",
-          kind: "tool" as const,
+      ...snapshot(2, "Evidence Chat", [
+        canonicalEvent(1, "tool.completed", {
           title: "Read notes",
           body: "notes.txt",
-          createdAt: "now",
           status: "completed",
-        },
-        {
-          id: "event.error.2",
-          kind: "error" as const,
+        }),
+        canonicalEvent(2, "execution.failed", {
           title: "Provider failure",
           body: "network unavailable",
-          createdAt: "now",
           status: "failed",
-        },
-      ],
+        }),
+      ]),
       evidence: [
         {
-          id: "evidence.event.tool.1",
+          id: "evidence.event.chat.1",
           category: "artifact" as const,
           label: "Tool evidence",
           value: { path: "notes.txt" },
           state: "available" as const,
         },
         {
-          id: "evidence.event.error.2",
+          id: "evidence.event.chat.2",
           category: "debug" as const,
           label: "Error evidence",
           value: { reason: "network unavailable" },
@@ -893,12 +885,11 @@ describe("Chat native-port recovery contracts", () => {
     await waitFor(() => expect(commands[0]?.type).toBe("enqueue"));
   });
 
-  it("shows a busy card immediately and native tool activity before command settlement", async () => {
+  it("streams exact committed model and tool spans before command settlement", async () => {
     const user = userEvent.setup();
-    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let eventListener: ((event: CoreEventEnvelope) => void) | undefined;
     let settle!: (receipt: Awaited<ReturnType<ChatCorePort["command"]>>) => void;
     let commandId = "";
-    const runtimeRequestId = "original.execution.request";
     let projectedSnapshot = snapshot(1, "Live Chat", [{ sequence: 1 }]);
     const port: ChatCorePort = {
       async snapshot() {
@@ -910,8 +901,8 @@ describe("Chat native-port recovery contracts", () => {
           settle = resolve;
         });
       },
-      async subscribeActivity(listener) {
-        activityListener = listener;
+      async subscribeEvents(listener) {
+        eventListener = listener;
         return () => undefined;
       },
     };
@@ -920,137 +911,83 @@ describe("Chat native-port recovery contracts", () => {
     const input = screen.getByRole("textbox", { name: "Chat input" });
     await user.type(input, "inspect the project");
     await user.click(screen.getByRole("button", { name: "Queue" }));
-    expect(await screen.findByText("Aworkit is working…")).toBeVisible();
     await waitFor(() => expect(commandId).not.toBe(""));
-    activityListener?.({
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      activityId: `node.${commandId}.agent.1`,
-      kind: "step",
-      title: "Agent",
-      body: "agent: running",
-      status: "started",
-    });
-    await waitFor(() =>
-      expect(screen.queryByText("Aworkit is working…")).toBeNull(),
-    );
-    activityListener?.({
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      activityId: `model.reasoning.${commandId}`,
-      kind: "reasoning",
-      title: "Thinking",
-      body: "Inspecting the project",
-      status: "running",
-      reasoningCategory: "source_provided",
-    });
-    activityListener?.({
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      activityId: `model.reasoning.${commandId}`,
-      kind: "reasoning",
-      title: "Thinking",
-      body: "Inspecting the project\nReading its files\nComparing the results",
-      status: "running",
-      reasoningCategory: "source_provided",
-    });
-    activityListener?.({
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      activityId: `model.response.${commandId}`,
-      kind: "response",
-      title: "Response",
-      body: "I found",
-      status: "running",
-    });
-    activityListener?.({
-      schemaVersion: 1,
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      sequence: 5,
-      eventId: "run.event.live.5",
-      activityId: "tool.call.live",
-      kind: "tool",
-      title: "tool.files.list",
-      body: "Tool invocation started.",
-      status: "running",
-      dataMode: "replace",
-      input: {
-        callId: "call.live",
+    const streamed = [
+      canonicalEvent(2, "span.started", {
+        spanId: "span.agent.test",
+        spanKind: "agent_loop",
+        semanticRole: "agent_loop",
+        title: "Agent",
+        status: "running",
+      }),
+      canonicalEvent(3, "span.started", {
+        spanId: "span.model.test",
+        parentSpanId: "span.agent.test",
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+        status: "running",
+      }),
+      canonicalEvent(4, "span.content_delta", {
+        spanId: "span.model.test",
+        channel: "reasoning",
+        sourceClassification: "source_provided",
+        append: "Inspecting the project",
+        status: "running",
+      }),
+      canonicalEvent(5, "span.started", {
+        spanId: "span.tool.test",
+        parentSpanId: "span.agent.test",
+        spanKind: "tool_call",
+        semanticRole: "tool",
+        title: "tool.files.list",
         capabilityId: "tool.files.list",
-        arguments: { path: "." },
-      },
-      capabilityId: "tool.files.list",
-    });
+        status: "running",
+        hasInput: true,
+        input: { path: "." },
+      }),
+      canonicalEvent(6, "span.completed", {
+        spanId: "span.tool.test",
+        status: "completed",
+        hasOutput: true,
+        output: { files: ["notes.txt"] },
+      }),
+    ];
+    for (const event of streamed) eventListener?.(event);
     expect(await screen.findByText("tool.files.list")).toBeVisible();
-    activityListener?.({
-      schemaVersion: 1,
-      requestId: runtimeRequestId,
-      runId: "run.test",
-      sequence: 6,
-      eventId: "run.event.live.6",
-      activityId: "tool.call.live",
-      kind: "tool",
-      title: "tool.files.list",
-      body: "Listed 1 file.",
-      status: "completed",
-      dataMode: "replace",
-      output: {
-        callId: "call.live",
-        content: { files: ["notes.txt"] },
-        isError: false,
-      },
-      capabilityId: "tool.files.list",
-    });
     const toolCard = await screen.findByRole("article", {
       name: "Tool: tool.files.list",
     });
     expect(within(toolCard).getByText("Input")).toBeVisible();
     expect(within(toolCard).getByText("Output")).toBeVisible();
-    expect(within(toolCard).getByText(/"path": "\."/)).toBeVisible();
-    expect(within(toolCard).getByText(/"notes.txt"/)).toBeVisible();
-    expect(
-      screen.getByText(
-        (_content, element) =>
-          element?.tagName === "CODE" &&
-          element.textContent ===
-            "Inspecting the project\nReading its files\nComparing the results",
-      ),
-    ).toBeVisible();
-    expect(screen.getByText("I found")).toBeVisible();
-    expect(screen.getAllByText("running").length).toBeGreaterThan(0);
-    projectedSnapshot = {
-      ...snapshot(4, "Live Chat", [
-        { sequence: 1 },
-        { sequence: 2 },
-        { sequence: 3 },
-        { sequence: 4 },
-      ]),
-      timeline: [
-        {
-          id: "event.chat.2",
-          kind: "thinking",
-          title: "Thinking",
-          body: "Inspecting the project\nReading its files\nComparing the results",
-          createdAt: "now",
-          status: "completed",
-          reasoningCategory: "source_provided",
-          metadata: { requestId: runtimeRequestId },
-        },
-        {
-          id: "event.chat.3",
-          kind: "model",
-          title: "Agent",
-          body: "Agent finished",
-          createdAt: "now",
-          status: "completed",
-        },
-      ],
-    };
+    expect(within(toolCard).getAllByText(/"path": "\."/)[0]).toBeVisible();
+    expect(within(toolCard).getAllByText(/"notes.txt"/)[0]).toBeVisible();
+    expect(screen.getByText("Inspecting the project")).toBeVisible();
+    const terminal = [
+      canonicalEvent(7, "span.completed", {
+        spanId: "span.model.test",
+        status: "completed",
+        hasOutput: true,
+        output: "I found the project",
+      }),
+      canonicalEvent(8, "span.completed", {
+        spanId: "span.agent.test",
+        status: "completed",
+      }),
+      canonicalEvent(9, "message.assistant", {
+        body: "Agent finished",
+        createdAt: "now",
+      }),
+    ];
+    projectedSnapshot = snapshot(9, "Live Chat", [
+      { sequence: 1 },
+      ...streamed,
+      ...terminal,
+    ]);
     settle({
       commandId,
       accepted: true,
-      currentVersion: 4,
+      currentVersion: 9,
       reason: null,
     });
     expect(await screen.findByText("Agent finished")).toBeVisible();
@@ -1058,8 +995,7 @@ describe("Chat native-port recovery contracts", () => {
       screen.getByText(
         (_content, element) =>
           element?.tagName === "CODE" &&
-          element.textContent ===
-            "Inspecting the project\nReading its files\nComparing the results",
+          element.textContent === "Inspecting the project",
       ),
     ).toBeVisible();
     expect(screen.getByText("Provider-supplied reasoning")).toBeVisible();
@@ -1067,7 +1003,7 @@ describe("Chat native-port recovery contracts", () => {
 
   it("subscribes before dispatch so immediate provider states cannot be lost", async () => {
     const user = userEvent.setup();
-    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let eventListener: ((event: CoreEventEnvelope) => void) | undefined;
     let releaseSubscription!: () => void;
     let settleCommand!: (
       receipt: Awaited<ReturnType<ChatCorePort["command"]>>,
@@ -1079,22 +1015,24 @@ describe("Chat native-port recovery contracts", () => {
       },
       command(intent) {
         commandStarted = true;
-        activityListener?.({
-          requestId: intent.commandId,
-          runId: "run.test",
-          activityId: `model.reasoning.${intent.commandId}`,
-          kind: "reasoning",
-          title: "Thinking",
-          body: "First synchronous chunk",
-          status: "running",
-          reasoningCategory: "source_provided",
-        });
+        eventListener?.(
+          canonicalEvent(2, "span.started", {
+            requestId: intent.commandId,
+            runId: "run.test",
+            spanId: `span.model.${intent.commandId}`,
+            spanKind: "model_call",
+            semanticRole: "model_call",
+            title: "Model call 1",
+            body: "First synchronous chunk",
+            status: "running",
+          }),
+        );
         return new Promise((resolve) => {
           settleCommand = resolve;
         });
       },
-      subscribeActivity(listener) {
-        activityListener = listener;
+      subscribeEvents(listener) {
+        eventListener = listener;
         return new Promise((resolve) => {
           releaseSubscription = () => resolve(() => undefined);
         });
@@ -1104,7 +1042,6 @@ describe("Chat native-port recovery contracts", () => {
     await screen.findByRole("heading", { name: "Fast provider" });
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
     await user.click(screen.getByRole("button", { name: "Queue" }));
-    expect(await screen.findByText("Aworkit is working…")).toBeVisible();
     expect(commandStarted).toBe(false);
 
     releaseSubscription();
@@ -1118,10 +1055,10 @@ describe("Chat native-port recovery contracts", () => {
     });
   });
 
-  it("keeps rendering live activity while one poll and the command are both unsettled", async () => {
+  it("renders pushed events while snapshot polling is paused for a running command", async () => {
     const user = userEvent.setup();
     let snapshotCalls = 0;
-    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let eventListener: ((event: CoreEventEnvelope) => void) | undefined;
     let commandId = "";
     const port: ChatCorePort = {
       snapshot() {
@@ -1134,8 +1071,8 @@ describe("Chat native-port recovery contracts", () => {
         commandId = intent.commandId;
         return new Promise(() => undefined);
       },
-      async subscribeActivity(listener) {
-        activityListener = listener;
+      async subscribeEvents(listener) {
+        eventListener = listener;
         return () => undefined;
       },
     };
@@ -1143,19 +1080,20 @@ describe("Chat native-port recovery contracts", () => {
     await screen.findByRole("heading", { name: "Reactive Chat" });
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
     await user.click(screen.getByRole("button", { name: "Queue" }));
-    await waitFor(() => expect(snapshotCalls).toBe(2));
     await waitFor(() => expect(commandId).not.toBe(""));
 
-    activityListener?.({
-      requestId: commandId,
-      runId: "run.test",
-      activityId: `model.reasoning.${commandId}`,
-      kind: "reasoning",
-      title: "Thinking",
-      body: "Arrived while snapshot ownership is unavailable",
-      status: "running",
-      reasoningCategory: "source_provided",
-    });
+    eventListener?.(
+      canonicalEvent(2, "span.started", {
+        requestId: commandId,
+        runId: "run.test",
+        spanId: `span.model.${commandId}`,
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+        body: "Arrived while snapshot ownership is unavailable",
+        status: "running",
+      }),
+    );
     expect(
       await screen.findByText("Arrived while snapshot ownership is unavailable"),
     ).toBeVisible();
@@ -1290,16 +1228,61 @@ describe("Chat native-port recovery contracts", () => {
 function snapshot(
   sequence: number,
   title: string,
-  events: RuntimeSnapshot["events"],
+  events: readonly (TestEvent | RuntimeEvent)[],
 ): RuntimeSnapshot {
   return {
     version: sequence,
-    lastSequence: sequence,
+    throughSequence: sequence,
+    reducerVersion: "chat.semantic.reducer.v1",
+    stateHash: `sha256:${"0".repeat(64)}`,
     chat: { ...runningChat, title, expectedVersion: sequence },
     projects: [],
-    timeline: [],
     evidence: [],
-    events,
+    events: events.map(canonicalTestEvent),
+  };
+}
+
+type TestEvent = {
+  readonly sequence: number;
+  readonly [key: string]: unknown;
+};
+
+function canonicalTestEvent(event: TestEvent | RuntimeEvent): RuntimeEvent {
+  if (
+    typeof event.schemaVersion === "number" &&
+    typeof event.streamId === "string" &&
+    typeof event.branchId === "string" &&
+    typeof event.eventId === "string" &&
+    typeof event.kind === "string" &&
+    Object.hasOwn(event, "payload")
+  )
+    return event as unknown as CoreEventEnvelope;
+  return {
+    schemaVersion: 1,
+    streamId: "chat.test",
+    branchId: "main",
+    sequence: event.sequence,
+    eventId: `event.chat.${event.sequence}`,
+    kind: typeof event.kind === "string" ? event.kind : "test.event",
+    payload: Object.hasOwn(event, "payload") ? event.payload : {},
+  };
+}
+
+function canonicalEvent(
+  sequence: number,
+  kind: string,
+  payload: Record<string, unknown>,
+): CoreEventEnvelope {
+  return {
+    schemaVersion: 1,
+    streamId: "chat.test",
+    branchId: "main",
+    sequence,
+    eventId: `event.chat.${sequence}`,
+    kind,
+    spanId:
+      typeof payload.spanId === "string" ? payload.spanId : undefined,
+    payload,
   };
 }
 

@@ -25,7 +25,7 @@ export function ConversationTimeline({
   const layoutRevision = items
     .map(
       (item) =>
-        `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}`,
+        `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}\u0000${item.depth ?? 0}`,
     )
     .join("\u0001");
   const virtualizer = useVirtualizer({
@@ -137,7 +137,10 @@ export function ConversationTimeline({
               data-index={row.index}
               key={item.id}
               ref={virtualizer.measureElement}
-              style={{ transform: `translateY(${row.start}px)` }}
+              style={{
+                transform: `translateY(${row.start}px)`,
+                paddingInlineStart: `${Math.min(item.depth ?? 0, 5) * 14}px`,
+              }}
             >
               <TimelineCard
                 card={card}

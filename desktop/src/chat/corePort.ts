@@ -4,9 +4,8 @@ import type {
   ChatIntent,
   ChatProjectChoice,
   ChatProjection,
+  CoreEventEnvelope,
   EvidenceRecord,
-  LiveChatActivity,
-  TimelineItem,
 } from "./types";
 
 const chatProjectionSchema = z.object({
@@ -43,19 +42,6 @@ const chatProjectChoiceSchema = z.object({
     "container_mount",
   ]),
 });
-const timelineItemSchema = z.object({
-  id: z.string(),
-  kind: z.string(),
-  title: z.string(),
-  body: z.string(),
-  createdAt: z.string(),
-  status: z.string().nullable(),
-  action: z.string().nullable(),
-  reasoningCategory: z
-    .enum(["summary", "progress", "source_provided"])
-    .optional(),
-  metadata: z.unknown(),
-});
 const evidenceRecordSchema = z.object({
   id: z.string(),
   category: z.string(),
@@ -64,14 +50,25 @@ const evidenceRecordSchema = z.object({
   value: z.unknown(),
 });
 const runtimeEventSchema = z
-  .object({ sequence: z.number().int().positive() })
-  .passthrough();
+  .object({
+    schemaVersion: z.number().int().positive(),
+    streamId: z.string().min(1),
+    branchId: z.string().min(1),
+    sequence: z.number().int().positive(),
+    eventId: z.string().min(1),
+    kind: z.string().min(1),
+    spanId: z.string().min(1).optional(),
+    causationEventId: z.string().min(1).optional(),
+    payload: z.unknown(),
+  })
+  .strict();
 const runtimeSnapshotSchema = z.object({
   version: z.number().int().nonnegative(),
-  lastSequence: z.number().int().nonnegative(),
+  throughSequence: z.number().int().nonnegative(),
+  reducerVersion: z.string().min(1),
+  stateHash: z.string().startsWith("sha256:"),
   chat: chatProjectionSchema,
   projects: z.array(chatProjectChoiceSchema),
-  timeline: z.array(timelineItemSchema),
   evidence: z.array(evidenceRecordSchema),
   events: z.array(runtimeEventSchema),
 });
@@ -81,51 +78,17 @@ const receiptSchema = z.object({
   currentVersion: z.number().int().nonnegative(),
   reason: z.string().nullable(),
 });
-const liveActivitySchema = z.object({
-  schemaVersion: z.number().int().positive(),
-  requestId: z.string(),
-  runId: z.string(),
-  sequence: z.number().int().positive(),
-  eventId: z.string(),
-  activityId: z.string(),
-  kind: z.enum([
-    "thinking",
-    "reasoning",
-    "progress",
-    "response",
-    "model_turn",
-    "step",
-    "tool",
-  ]),
-  title: z.string(),
-  body: z.string(),
-  status: z.string(),
-  dataMode: z.enum(["append", "replace", "retain"]),
-  input: z.unknown().optional(),
-  output: z.unknown().optional(),
-  turn: z.number().int().positive().optional(),
-  nodeId: z.string().optional(),
-  nodeType: z.string().optional(),
-  callId: z.string().optional(),
-  reasoningCategory: z
-    .enum(["summary", "progress", "source_provided"])
-    .optional(),
-  capabilityId: z.string().optional(),
-});
-
 export interface RuntimeSnapshot {
   readonly version: number;
-  readonly lastSequence: number;
+  readonly throughSequence: number;
+  readonly reducerVersion: string;
+  readonly stateHash: string;
   readonly chat: ChatProjection;
   readonly projects: readonly ChatProjectChoice[];
-  readonly timeline: readonly TimelineItem[];
   readonly evidence: readonly EvidenceRecord[];
   readonly events: readonly RuntimeEvent[];
 }
-export interface RuntimeEvent {
-  readonly sequence: number;
-  readonly [key: string]: unknown;
-}
+export type RuntimeEvent = CoreEventEnvelope;
 export interface RuntimeReceipt {
   readonly commandId: string;
   readonly accepted: boolean;
@@ -135,8 +98,8 @@ export interface RuntimeReceipt {
 export interface ChatCorePort {
   snapshot(afterSequence: number): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
-  subscribeActivity?(
-    listener: (activity: LiveChatActivity) => void,
+  subscribeEvents?(
+    listener: (event: CoreEventEnvelope) => void,
   ): Promise<() => void>;
 }
 
@@ -144,21 +107,15 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
   const parsed = runtimeSnapshotSchema.parse(input);
   return {
     version: parsed.version,
-    lastSequence: parsed.lastSequence,
+    throughSequence: parsed.throughSequence,
+    reducerVersion: parsed.reducerVersion,
+    stateHash: parsed.stateHash,
     chat: {
       ...parsed.chat,
       phase: parsed.chat.phase,
       disabledReason: parsed.chat.disabledReason ?? undefined,
     },
     projects: parsed.projects,
-    timeline: parsed.timeline.map((item) => ({
-      ...item,
-      kind: knownKind(item.kind),
-      status: item.status ?? undefined,
-      action: knownAction(item.action),
-      raw: item.metadata,
-      metadata: item.metadata,
-    })),
     evidence: parsed.evidence.map((item) => ({
       ...item,
       category: knownCategory(item.category),
@@ -207,13 +164,17 @@ export class TauriChatCorePort implements ChatCorePort {
     );
   }
 
-  public async subscribeActivity(
-    listener: (activity: LiveChatActivity) => void,
+  public async subscribeEvents(
+    listener: (event: CoreEventEnvelope) => void,
   ): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<unknown>("aworkit:chat-activity", ({ payload }) => {
-      const parsed = liveActivitySchema.safeParse(payload);
-      if (parsed.success) listener(parsed.data);
+    return listen<unknown>("aworkit:chat-event", ({ payload }) => {
+      const parsed = runtimeEventSchema.safeParse(payload);
+      if (parsed.success) {
+        listener(parsed.data);
+      } else {
+        console.error("Rejected invalid canonical chat event envelope", parsed.error);
+      }
     });
   }
 }
@@ -239,16 +200,16 @@ export class PreviewChatCorePort implements ChatCorePort {
     queuedInputs: [],
     expectedVersion: 0,
   };
-  private timeline: TimelineItem[] = [];
   private readonly evidence: EvidenceRecord[] = [];
   private readonly events: RuntimeEvent[] = [];
   public async snapshot(afterSequence = 0): Promise<RuntimeSnapshot> {
     return {
       version: this.version,
-      lastSequence: this.version,
+      throughSequence: this.version,
+      reducerVersion: "chat.semantic.reducer.v1",
+      stateHash: `sha256:${"0".repeat(64)}`,
       chat: this.chat,
       projects: [],
-      timeline: this.timeline,
       evidence: this.evidence,
       events: this.events.filter((event) => event.sequence > afterSequence),
     };
@@ -294,7 +255,6 @@ export class PreviewChatCorePort implements ChatCorePort {
         queuedInputs: [],
         expectedVersion: this.version,
       };
-      this.timeline = [];
     }
     if (intent.type === "pause") this.chat = { ...this.chat, phase: "paused" };
     if (intent.type === "resume")
@@ -304,24 +264,20 @@ export class PreviewChatCorePort implements ChatCorePort {
     if (intent.type === "cancel")
       this.chat = { ...this.chat, phase: "cancelled" };
     if (intent.type === "enqueue")
-      this.timeline = [
-        ...this.timeline,
-        {
-          id: intent.commandId,
-          kind: "message",
-          title: "You",
-          body: intent.input,
-          createdAt: "now",
-          status: "queued",
-        },
-      ];
-    if (intent.type === "enqueue")
       this.chat = {
         ...this.chat,
         queuedInputs: [...this.chat.queuedInputs, intent.input],
       };
     this.version += 1;
-    this.events.push({ sequence: this.version, kind: `chat.${intent.type}` });
+    this.events.push({
+      schemaVersion: 1,
+      streamId: this.chat.chatId,
+      branchId: "main",
+      sequence: this.version,
+      eventId: `event.chat.${this.version}`,
+      kind: `chat.${intent.type}`,
+      payload: {},
+    });
     this.chat = { ...this.chat, expectedVersion: this.version };
     const receipt = {
       commandId: intent.commandId,
@@ -340,38 +296,6 @@ export function createChatCorePort(): ChatCorePort {
     : new PreviewChatCorePort();
 }
 
-function knownKind(value: string): TimelineItem["kind"] {
-  return (
-    [
-      "message",
-      "thinking",
-      "plan",
-      "model",
-      "tool",
-      "mcp",
-      "plugin",
-      "subagent",
-      "external_agent",
-      "artifact",
-      "approval",
-      "route",
-      "todo",
-      "error",
-      "verification",
-      "repair",
-    ] as const
-  ).includes(value as never)
-    ? (value as TimelineItem["kind"])
-    : "unknown";
-}
-function knownAction(value: string | null): TimelineItem["action"] {
-  return value !== null &&
-    (["approve", "reject", "retry", "fork", "continue"] as const).includes(
-      value as never,
-    )
-    ? (value as TimelineItem["action"])
-    : undefined;
-}
 function knownCategory(value: string): EvidenceRecord["category"] {
   return (
     [

@@ -15,9 +15,9 @@ use aworkit_desktop::presentation::{
     NativeAppearanceV1, NativePresentationCapabilitiesV1, NativeWindowActionV1,
 };
 use aworkit_desktop::runtime::{
-    CredentialDeleteInputV2, CredentialStoreInputV2, DesktopRuntime, ExtensionConfigurationV2,
-    ExtensionRegisterInputV2, ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
-    LiveChatActivityPort, LiveChatActivityV1, McpProbeRequestV2, McpProbeResultV2,
+    CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
+    DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
+    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, McpProbeRequestV2, McpProbeResultV2,
     ModelDiscoveryRequestV2, ModelDiscoveryResultV2, ProjectProbeRequestV2, ProjectProbeResultV2,
     ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput, ProviderTestResult,
     RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, SettingsV2CommitInput,
@@ -53,13 +53,15 @@ where
     .map_err(|error| format!("{operation} worker failed: {error}"))?
 }
 
-struct TauriLiveChatActivity {
+struct TauriCommittedChatEvents {
     app: tauri::AppHandle,
 }
 
-impl LiveChatActivityPort for TauriLiveChatActivity {
-    fn publish(&self, activity: LiveChatActivityV1) {
-        let _ = self.app.emit("aworkit:chat-activity", activity);
+impl CommittedChatEventPort for TauriCommittedChatEvents {
+    fn publish(&self, event: CoreEventEnvelope) -> Result<(), String> {
+        self.app
+            .emit("aworkit:chat-event", event)
+            .map_err(|error| format!("cannot publish committed Chat event: {error}"))
     }
 }
 
@@ -573,12 +575,13 @@ fn main() {
                     .map_err(|error| std::io::Error::other(error.to_string()))?,
             );
             let management = ManagementRepairGateway::with_durable_ledger(ledger);
-            let live_activity: Arc<dyn LiveChatActivityPort> = Arc::new(TauriLiveChatActivity {
-                app: app.handle().clone(),
-            });
-            let runtime = DesktopRuntime::open_with_live_activity(
+            let committed_events: Arc<dyn CommittedChatEventPort> =
+                Arc::new(TauriCommittedChatEvents {
+                    app: app.handle().clone(),
+                });
+            let runtime = DesktopRuntime::open_with_committed_events(
                 app_data_root.join("runtime"),
-                live_activity,
+                committed_events,
             )
             .map_err(std::io::Error::other)?
             .with_management_repair(management);

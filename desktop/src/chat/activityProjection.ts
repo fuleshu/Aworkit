@@ -1,289 +1,421 @@
 import type { RuntimeEvent } from "./corePort";
-import type { LiveChatActivity, TimelineItem } from "./types";
+import type { TimelineItem, TimelineKind } from "./types";
 
 type FactPayload = Record<string, unknown>;
 
+interface SpanProjection {
+  readonly spanId: string;
+  parentSpanId?: string;
+  spanKind: string;
+  semanticRole: string;
+  title: string;
+  firstSequence: number;
+  createdAt: string;
+  status: string;
+  input?: unknown;
+  output?: unknown;
+  hasInput: boolean;
+  hasOutput: boolean;
+  body: string;
+  reasoning: string;
+  progress: string;
+  assistantOutput: string;
+  reasoningCategory?: TimelineItem["reasoningCategory"];
+  metadata: FactPayload;
+  sourceEvents: RuntimeEvent[];
+}
+
 /**
- * Frontend timeline projection for runtime facts the native timeline projection
- * does not yet surface. The native `timeline` covers messages, approvals,
- * node/route/model cards, and generic tool cards; this module derives the
- * remaining cards (todo lists, subagent runs, MCP calls) from the raw committed
- * fact stream so the Chat timeline stays complete without touching Rust.
+ * The sole Chat timeline reducer. It consumes the exact canonical envelopes
+ * for both live operation and replay, folds span deltas in place, and orders
+ * cards by the first committed event they represent.
  */
-export function deriveActivityCards(
+export function projectSemanticTimeline(
   events: readonly RuntimeEvent[],
 ): TimelineItem[] {
-  const cards: TimelineItem[] = [];
-  let lastTodo: TimelineItem | undefined;
-  for (const event of events) {
-    if (event.kind === "tool.todo") {
-      lastTodo = todoCard(event);
-    } else if (
-      event.kind === "subagent.completed" ||
-      event.kind === "subagent.failed"
-    ) {
-      cards.push(subagentCard(event));
-    } else if (
-      event.kind === "mcp.completed" ||
-      event.kind === "mcp.failed"
-    ) {
-      cards.push(mcpCard(event));
+  const ordered = [...events].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const spans = new Map<string, SpanProjection>();
+  const facts: TimelineItem[] = [];
+
+  for (const event of ordered) {
+    const fact = payload(event);
+    if (event.kind.startsWith("span.")) {
+      reduceSpan(spans, event, fact);
+      continue;
+    }
+    const item = projectFact(event, fact);
+    if (item !== undefined) facts.push(item);
+  }
+
+  const visibleSpanIds = new Set(
+    [...spans.values()].filter(shouldRenderSpan).map((span) => span.spanId),
+  );
+  const spanItems = [...spans.values()]
+    .filter(shouldRenderSpan)
+    .map((span) =>
+      spanItem(
+        span,
+        visibleDepth(span, spans, visibleSpanIds),
+        hasFollowingAssistantMessage(span, ordered),
+      ),
+    );
+  return [...facts, ...spanItems].sort(
+    (left, right) =>
+      (left.sequence ?? Number.MAX_SAFE_INTEGER) -
+      (right.sequence ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+function reduceSpan(
+  spans: Map<string, SpanProjection>,
+  event: RuntimeEvent,
+  fact: FactPayload,
+): void {
+  const spanId = event.spanId ?? string(fact.spanId);
+  if (spanId === undefined) return;
+  let span = spans.get(spanId);
+  if (span === undefined) {
+    span = {
+      spanId,
+      parentSpanId: string(fact.parentSpanId),
+      spanKind: string(fact.spanKind) ?? "unknown",
+      semanticRole: string(fact.semanticRole) ?? "unknown",
+      title: string(fact.title) ?? "Activity",
+      firstSequence: event.sequence,
+      createdAt: string(fact.createdAt) ?? "",
+      status: string(fact.status) ?? "running",
+      input: fact.input,
+      output: fact.output,
+      hasInput: fact.hasInput === true,
+      hasOutput: fact.hasOutput === true,
+      body: string(fact.body) ?? "",
+      reasoning: "",
+      progress: "",
+      assistantOutput: "",
+      metadata: { ...fact },
+      sourceEvents: [],
+    };
+    spans.set(spanId, span);
+  }
+  span.sourceEvents.push(event);
+  span.parentSpanId = string(fact.parentSpanId) ?? span.parentSpanId;
+  span.spanKind = string(fact.spanKind) ?? span.spanKind;
+  span.semanticRole = string(fact.semanticRole) ?? span.semanticRole;
+  span.title = string(fact.title) ?? span.title;
+  span.createdAt = string(fact.createdAt) ?? span.createdAt;
+  span.status = string(fact.status) ?? span.status;
+  span.hasInput = fact.hasInput === true || span.hasInput;
+  span.hasOutput = fact.hasOutput === true || span.hasOutput;
+  if (Object.hasOwn(fact, "input") && fact.input !== null)
+    span.input = fact.input;
+  if (Object.hasOwn(fact, "output") && fact.output !== null)
+    span.output = fact.output;
+  if (typeof fact.body === "string" && event.kind !== "span.content_delta")
+    span.body = fact.body;
+  Object.assign(span.metadata, fact);
+
+  if (event.kind === "span.content_delta") {
+    const append = string(fact.append) ?? string(fact.body) ?? "";
+    const channel = string(fact.channel);
+    if (channel === "reasoning") {
+      span.reasoning += append;
+      span.reasoningCategory = reasoningCategory(fact.sourceClassification);
+    } else if (channel === "progress") {
+      span.progress += append;
+      span.reasoningCategory ??= "progress";
+    } else if (channel === "assistant_output") {
+      span.assistantOutput += append;
     }
   }
-  // "Newest wins": the live task list renders only the most recent todo fact.
-  if (lastTodo !== undefined) cards.push(lastTodo);
-  return cards;
 }
 
-/**
- * Merges native-projected cards with derived cards in committed event order.
- * Both kinds of card use the native `event.chat.{sequence}` event id, so a
- * stable numeric sort reconstructs the exact fact order.
- */
-export function mergeTimeline(
-  native: readonly TimelineItem[],
-  derived: readonly TimelineItem[],
-): TimelineItem[] {
-  return [...native, ...derived].sort(
-    (left, right) => sequenceKey(left) - sequenceKey(right),
+function shouldRenderSpan(span: SpanProjection): boolean {
+  if (span.spanKind === "run") return false;
+  if (span.spanKind !== "graph_node") return true;
+  return !["input", "output", "wait", "completion"].includes(
+    span.semanticRole,
   );
 }
 
-/** Maps noncanonical in-flight updates to cards that disappear at settle. */
-export function deriveLiveActivityCards(
-  activities: readonly LiveChatActivity[],
-): TimelineItem[] {
-  return activities
-    .filter(shouldRenderLiveActivity)
-    .map((activity) => ({
-    id: `live.${activity.activityId}`,
-    kind:
-      activity.kind === "reasoning"
-        ? "thinking"
-        : activity.kind === "progress"
-          ? "thinking"
-        : activity.kind === "response"
-          ? "model"
-          : activity.kind === "model_turn"
-            ? "model"
-          : activity.kind === "step"
-            ? "step"
-            : activity.kind,
-    title: activity.title,
-    body: activity.body,
-    createdAt: "now",
-    status: activity.status,
-    reasoningCategory: activity.reasoningCategory,
-    input: activity.input,
-    output: activity.output,
-    metadata: {
-      live: true,
-      sequence: activity.sequence,
-      firstSequence: activity.firstSequence,
-      eventId: activity.eventId,
-      activityId: activity.activityId,
-      requestId: activity.requestId,
-      runId: activity.runId,
-      input: activity.input,
-      output: activity.output,
-      turn: activity.turn,
-      nodeId: activity.nodeId,
-      nodeType: activity.nodeType,
-      callId: activity.callId,
-      capabilityId: activity.capabilityId,
-    },
-    }));
-}
-
-/**
- * A successful output node only transfers the already-streamed assistant
- * response into the graph result. Failures remain visible as useful evidence.
- */
-function shouldRenderLiveActivity(activity: LiveChatActivity): boolean {
-  return activity.nodeType !== "output" || activity.status === "failed";
-}
-
-/**
- * Pure Run-event reducer. It removes the optimistic busy placeholder on the
- * first native event, ignores stale transitions, folds streamed deltas into
- * one activity, and preserves the activity's first-observed sequence order.
- */
-export function reduceRunEventProjection(
-  activities: readonly LiveChatActivity[],
-  incoming: LiveChatActivity,
-): LiveChatActivity[] {
-  const current = incoming.activityId.startsWith("busy.")
-    ? [...activities]
-    : activities.filter(
-        (activity) =>
-          !activity.activityId.startsWith("busy.") ||
-          (activity.requestId !== incoming.requestId &&
-            activity.runId !== incoming.runId),
-      );
-  if (incoming.sequence !== undefined) {
-    const priorSequences = current
-      .filter(
-        (activity) =>
-          activity.requestId === incoming.requestId &&
-          activity.runId === incoming.runId &&
-          activity.sequence !== undefined,
-      )
-      .map((activity) => activity.sequence!);
-    const latestSequence =
-      priorSequences.length === 0 ? undefined : Math.max(...priorSequences);
-    if (
-      latestSequence !== undefined &&
-      incoming.sequence > latestSequence + 1
-    )
-      throw new Error(
-        `Run-event gap: expected sequence ${latestSequence + 1}, received ${incoming.sequence}`,
-      );
-    if (
-      latestSequence !== undefined &&
-      incoming.sequence <= latestSequence &&
-      !current.some(
-        (activity) =>
-          activity.activityId === incoming.activityId &&
-          activity.sequence !== undefined &&
-          incoming.sequence! > activity.sequence,
-      )
-    )
-      return current;
-  }
-  const index = current.findIndex(
-    (activity) => activity.activityId === incoming.activityId,
-  );
-  if (index < 0) {
-    return [...current, { ...incoming, firstSequence: incoming.sequence }].sort(
-      compareLiveActivityOrder,
-    );
-  }
-  const previous = current[index];
-  if (
-    incoming.sequence !== undefined &&
-    previous.sequence !== undefined &&
-    incoming.sequence <= previous.sequence
-  )
-    return current;
-  const next = [...current];
-  next[index] = {
-    ...previous,
-    ...incoming,
-    firstSequence: previous.firstSequence ?? previous.sequence ?? incoming.sequence,
-    body:
-      incoming.dataMode === "append"
-        ? `${previous.body}${incoming.body}`
-        : incoming.dataMode === "retain"
-          ? previous.body
-          : incoming.body,
-    input: incoming.input ?? previous.input,
-    output: reduceLiveOutput(previous.output, incoming),
-  };
-  return next.sort(compareLiveActivityOrder);
-}
-
-function reduceLiveOutput(
-  previous: unknown,
-  incoming: LiveChatActivity,
-): unknown {
-  if (incoming.dataMode === "retain") return previous;
-  if (
-    incoming.dataMode === "append" &&
-    typeof previous === "string" &&
-    typeof incoming.output === "string"
-  )
-    return previous + incoming.output;
-  return incoming.output ?? previous;
-}
-
-function compareLiveActivityOrder(
-  left: LiveChatActivity,
-  right: LiveChatActivity,
+function visibleDepth(
+  span: SpanProjection,
+  spans: ReadonlyMap<string, SpanProjection>,
+  visible: ReadonlySet<string>,
 ): number {
-  return (
-    (left.firstSequence ?? left.sequence ?? Number.MAX_SAFE_INTEGER) -
-    (right.firstSequence ?? right.sequence ?? Number.MAX_SAFE_INTEGER)
-  );
+  let depth = 0;
+  let parent = span.parentSpanId;
+  const visited = new Set<string>();
+  while (parent !== undefined && !visited.has(parent)) {
+    visited.add(parent);
+    if (visible.has(parent)) depth += 1;
+    parent = spans.get(parent)?.parentSpanId;
+  }
+  return depth;
 }
 
-function sequenceKey(item: TimelineItem): number {
-  const match = /^event\.chat\.(\d+)$/u.exec(item.id);
-  return match === null ? Number.MAX_SAFE_INTEGER : Number(match[1]);
+function spanItem(
+  span: SpanProjection,
+  depth: number,
+  hasFinalAssistant: boolean,
+): TimelineItem {
+  const includeAssistantOutput =
+    span.spanKind === "model_call" && !hasFinalAssistant;
+  const streamedBody = [
+    span.reasoning,
+    span.progress,
+    includeAssistantOutput ? span.assistantOutput : "",
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n");
+  const body = streamedBody || span.body;
+  const suppressRedundantOutput =
+    hasFinalAssistant &&
+    (span.spanKind === "agent_loop" ||
+      (span.spanKind === "graph_node" &&
+        ["agent", "model_call"].includes(span.semanticRole)));
+  const metadata = {
+    ...span.metadata,
+    spanId: span.spanId,
+    parentSpanId: span.parentSpanId,
+    spanKind: span.spanKind,
+    semanticRole: span.semanticRole,
+    hasInput: span.hasInput,
+    hasOutput: span.hasOutput && !suppressRedundantOutput,
+    input: span.input,
+    output: suppressRedundantOutput ? undefined : span.output,
+    channels: {
+      reasoning: span.reasoning,
+      progress: span.progress,
+      assistantOutput: span.assistantOutput,
+    },
+    live: isBusy(span.status),
+  };
+  return {
+    id: span.spanId,
+    sequence: span.firstSequence,
+    spanId: span.spanId,
+    parentSpanId: span.parentSpanId,
+    depth,
+    kind: spanTimelineKind(span),
+    title: span.title,
+    body,
+    reasoningCategory: span.reasoningCategory,
+    createdAt: span.createdAt,
+    status: normalizeStatus(span.status),
+    input: span.hasInput ? span.input : undefined,
+    output:
+      span.hasOutput && !suppressRedundantOutput ? span.output : undefined,
+    raw: span.sourceEvents,
+    metadata,
+  };
+}
+
+function spanTimelineKind(span: SpanProjection): TimelineKind {
+  if (span.spanKind === "model_call")
+    return span.reasoning.length > 0 ? "thinking" : "model";
+  if (span.spanKind === "agent_loop") return "step";
+  if (span.spanKind === "external_agent") return "subagent";
+  if (span.spanKind === "tool_call") {
+    const capability = string(span.metadata.capabilityId) ?? "";
+    if (capability === "tool.subagent") return "subagent";
+    if (capability.startsWith("mcp.")) return "mcp";
+    return "tool";
+  }
+  if (span.spanKind === "graph_node") {
+    if (span.semanticRole === "plan") return "step";
+    if (["agent", "model_call"].includes(span.semanticRole)) return "model";
+    if (span.semanticRole === "tool") return "tool";
+    if (span.semanticRole === "condition") return "route";
+    if (span.status === "failed") return "error";
+    return "step";
+  }
+  return span.status === "failed" ? "error" : "unknown";
+}
+
+function hasFollowingAssistantMessage(
+  span: SpanProjection,
+  events: readonly RuntimeEvent[],
+): boolean {
+  for (const event of events) {
+    if (event.sequence <= span.firstSequence) continue;
+    if (event.kind === "message.user") return false;
+    if (event.kind === "message.assistant") return true;
+  }
+  return false;
+}
+
+function projectFact(
+  event: RuntimeEvent,
+  fact: FactPayload,
+): TimelineItem | undefined {
+  if (event.kind === "message.user" || event.kind === "message.assistant") {
+    return baseItem(event, fact, {
+      kind: "message",
+      title: event.kind === "message.user" ? "You" : "Aworkit",
+      status: "completed",
+    });
+  }
+  if (event.kind === "approval.requested") {
+    return {
+      ...baseItem(event, fact, {
+        kind: "approval",
+        title: "Approval required",
+        status: "pending",
+      }),
+      id: string(fact.decisionId) ?? event.eventId,
+      action: "approve",
+    };
+  }
+  if (event.kind === "approval.resolved") {
+    return baseItem(event, fact, {
+      kind: "approval",
+      title: "Approval resolved",
+      status: "completed",
+    });
+  }
+  if (event.kind === "execution.failed") {
+    return baseItem(event, fact, {
+      kind: "error",
+      title: string(fact.title) ?? "Execution failed",
+      status: "failed",
+    });
+  }
+  if (event.kind === "tool.todo") return todoCard(event, fact);
+  return projectLegacyActivity(event, fact);
+}
+
+function projectLegacyActivity(
+  event: RuntimeEvent,
+  fact: FactPayload,
+): TimelineItem | undefined {
+  if (event.kind === "model.reasoning" || event.kind === "model.progress") {
+    return baseItem(event, fact, {
+      kind: "thinking",
+      title: event.kind === "model.reasoning" ? "Thinking" : "Working",
+      status: string(fact.status) ?? "completed",
+    });
+  }
+  if (event.kind === "model.turn")
+    return baseItem(event, fact, {
+      kind: "model",
+      title: string(fact.title) ?? "Model turn",
+      status: string(fact.status) ?? "completed",
+    });
+  if (
+    ["tool.completed", "tool.failed", "tool.waiting"].includes(event.kind)
+  ) {
+    return baseItem(event, fact, {
+      kind: "tool",
+      title: string(fact.title) ?? string(fact.capabilityId) ?? "Tool call",
+      status: string(fact.status) ?? terminalStatus(event.kind),
+    });
+  }
+  if (event.kind.startsWith("mcp."))
+    return baseItem(event, fact, {
+      kind: "mcp",
+      title: string(fact.capabilityId) ?? "MCP call",
+      status: terminalStatus(event.kind),
+    });
+  if (event.kind.startsWith("subagent."))
+    return baseItem(event, fact, {
+      kind: "subagent",
+      title: "Subagent run",
+      status: terminalStatus(event.kind),
+    });
+  if (event.kind.startsWith("node.")) {
+    const role = string(fact.nodeType) ?? "unknown";
+    if (["input", "output", "wait", "completion"].includes(role))
+      return undefined;
+    return baseItem(event, fact, {
+      kind: role === "condition" ? "route" : role === "tool" ? "tool" : "step",
+      title: string(fact.label) ?? "Workflow node",
+      status: string(fact.status) ?? terminalStatus(event.kind),
+    });
+  }
+  return undefined;
+}
+
+function baseItem(
+  event: RuntimeEvent,
+  fact: FactPayload,
+  display: {
+    readonly kind: TimelineKind;
+    readonly title: string;
+    readonly status: string;
+  },
+): TimelineItem {
+  return {
+    id: event.eventId,
+    sequence: event.sequence,
+    kind: display.kind,
+    title: display.title,
+    body: string(fact.body) ?? "",
+    createdAt: string(fact.createdAt) ?? "",
+    status: display.status,
+    reasoningCategory: reasoningCategory(fact.reasoningCategory),
+    input: fact.hasInput === true ? fact.input : undefined,
+    output: fact.hasOutput === true ? fact.output : undefined,
+    raw: event,
+    metadata: fact,
+  };
+}
+
+function todoCard(event: RuntimeEvent, fact: FactPayload): TimelineItem {
+  const todos = Array.isArray(fact.todos) ? fact.todos : [];
+  return {
+    ...baseItem(event, fact, {
+      kind: "todo",
+      title: "Task list",
+      status: "completed",
+    }),
+    body: todos
+      .map((todo) => {
+        const item = record(todo);
+        const content = string(item.content) ?? String(item.content ?? "");
+        const status = string(item.status) ?? "";
+        return status.length === 0 ? content : `[${status}] ${content}`;
+      })
+      .join("\n"),
+  };
 }
 
 function payload(event: RuntimeEvent): FactPayload {
-  const value = event.payload;
+  return record(event.payload);
+}
+
+function record(value: unknown): FactPayload {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as FactPayload)
     : {};
 }
 
-function eventId(event: RuntimeEvent): string {
-  return typeof event.eventId === "string"
-    ? event.eventId
-    : `event.chat.${event.sequence}`;
+function string(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
-function createdAt(event: RuntimeEvent): string {
-  const value = payload(event).createdAt;
-  return typeof value === "string" ? value : "";
+function reasoningCategory(
+  value: unknown,
+): TimelineItem["reasoningCategory"] {
+  if (value === "summary") return "summary";
+  if (value === "progress") return "progress";
+  if (value === "source_provided" || value === "source-provided")
+    return "source_provided";
+  return undefined;
 }
 
-function todoCard(event: RuntimeEvent): TimelineItem {
-  const fact = payload(event);
-  const todos = Array.isArray(fact.todos) ? fact.todos : [];
-  return {
-    id: eventId(event),
-    kind: "todo",
-    title: "Task list",
-    body: todoSummary(todos),
-    createdAt: createdAt(event),
-    status: "completed",
-    raw: fact,
-    metadata: fact,
-  };
+function terminalStatus(kind: string): string {
+  if (kind.endsWith("failed")) return "failed";
+  if (kind.endsWith("waiting") || kind.endsWith("started")) return "running";
+  if (kind.endsWith("skipped")) return "skipped";
+  return "completed";
 }
 
-function todoSummary(todos: readonly unknown[]): string {
-  return todos
-    .map((todo) => {
-      if (typeof todo !== "object" || todo === null || Array.isArray(todo))
-        return String(todo);
-      const record = todo as Record<string, unknown>;
-      const content =
-        typeof record.content === "string" ? record.content : String(record.content ?? "");
-      const status = typeof record.status === "string" ? record.status : "";
-      return status === "" ? content : `[${status}] ${content}`;
-    })
-    .join("\n");
+function normalizeStatus(status: string): string {
+  return status === "started" ? "running" : status;
 }
 
-function subagentCard(event: RuntimeEvent): TimelineItem {
-  const fact = payload(event);
-  const capability = typeof fact.capabilityId === "string" ? fact.capabilityId : "";
-  return {
-    id: eventId(event),
-    kind: "subagent",
-    title: capability === "" ? "Subagent" : "Subagent run",
-    body: typeof fact.body === "string" ? fact.body : "",
-    createdAt: createdAt(event),
-    status: event.kind === "subagent.completed" ? "completed" : "failed",
-    raw: fact,
-    metadata: fact,
-  };
-}
-
-function mcpCard(event: RuntimeEvent): TimelineItem {
-  const fact = payload(event);
-  const capability = typeof fact.capabilityId === "string" ? fact.capabilityId : "mcp";
-  return {
-    id: eventId(event),
-    kind: "mcp",
-    title: capability,
-    body: typeof fact.body === "string" ? fact.body : "",
-    createdAt: createdAt(event),
-    status: event.kind === "mcp.completed" ? "completed" : "failed",
-    raw: fact,
-    metadata: fact,
-  };
+function isBusy(status: string): boolean {
+  return status === "running" || status === "started" || status === "waiting";
 }

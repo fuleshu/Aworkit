@@ -573,6 +573,7 @@ pre {
   position: relative;
 }
 .virtual-row {
+  box-sizing: border-box;
   left: 0;
   padding-bottom: 10px;
   position: absolute;

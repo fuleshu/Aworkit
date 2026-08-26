@@ -1,283 +1,138 @@
-//! Ordered Run activity events shared by live Chat and durable replay.
+//! Span-aware producers for the canonical semantic Chat event stream.
 //!
-//! Producers publish one typed transition through this stream. The stream
-//! assigns the only Run-local sequence, retains the event for settlement, and
-//! forwards the same envelope to the presentation callback. Repeated deltas
-//! share an `activity_id`; each transition still has its own `event_id`.
+//! This module owns no sequence and no presentation callback. Every producer
+//! submits a semantic draft through the injected committer; only the exact
+//! durably committed envelope is retained for execution bookkeeping.
 
 use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Sender, SyncSender},
-    },
-    thread,
-    time::Duration,
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use aworkit_capability_host::{ModelEventObserverV1, ModelEventV1, ModelToolEventV1};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use aworkit_capability_host::{
+    CancellationToken, ModelEventObserverV1, ModelEventV1, ModelToolEventV1,
+};
+use serde_json::{Value, json};
 
-use super::graph_pass::GraphNodeActivityV1;
-
-/// One immutable transition in a Run's ordered activity stream.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RunEventEnvelopeV1 {
-    pub schema_version: u16,
-    pub request_id: String,
-    pub run_id: String,
-    pub sequence: u64,
-    pub event_id: String,
-    pub activity_id: String,
-    pub kind: String,
-    pub title: String,
-    pub body: String,
-    pub status: String,
-    /// `append` adds streamed text, `replace` replaces data, and `retain`
-    /// changes lifecycle metadata without touching existing data.
-    pub data_mode: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_category: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capability_id: Option<String>,
-}
-
-/// Durable semantic activity reduced from one or more ordered transitions.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RunActivitySnapshotV1 {
-    pub first_sequence: u64,
-    pub last_sequence: u64,
-    pub activity_id: String,
-    pub kind: String,
-    pub title: String,
-    pub body: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_category: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capability_id: Option<String>,
-}
-
-/// Best-effort subscriber. It observes sequenced stream order but owns no
-/// authority and cannot affect execution if presentation delivery fails.
-pub trait RunEventPort: Send + Sync {
-    fn publish(&self, event: RunEventEnvelopeV1);
-}
+use super::{
+    graph_pass::GraphNodeActivityV1,
+    semantic_events::{CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft},
+};
 
 #[derive(Default)]
-struct NoopRunEventPort;
-
-impl RunEventPort for NoopRunEventPort {
-    fn publish(&self, _event: RunEventEnvelopeV1) {}
+struct RunEventState {
+    events: Vec<CoreEventEnvelope>,
+    started_spans: BTreeSet<String>,
+    terminal_spans: BTreeSet<String>,
+    parent_spans: BTreeMap<String, String>,
+    active_model_node: Option<String>,
+    agent_loop_span: Option<String>,
+    tool_requests: BTreeMap<String, String>,
+    commit_error: Option<String>,
 }
 
-pub(crate) fn noop_run_event_port() -> Arc<dyn RunEventPort> {
-    Arc::new(NoopRunEventPort)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct RunEventDraftV1 {
-    pub activity_id: String,
-    pub kind: String,
-    pub title: String,
-    pub body: String,
-    pub status: String,
-    pub data_mode: String,
-    pub input: Option<Value>,
-    pub output: Option<Value>,
-    pub turn: Option<u32>,
-    pub node_id: Option<String>,
-    pub node_type: Option<String>,
-    pub call_id: Option<String>,
-    pub reasoning_category: Option<String>,
-    pub capability_id: Option<String>,
-}
-
-impl RunEventDraftV1 {
-    fn lifecycle(activity_id: String, kind: &str, title: String, status: &str) -> Self {
-        Self {
-            activity_id,
-            kind: kind.to_owned(),
-            title,
-            body: String::new(),
-            status: status.to_owned(),
-            data_mode: "retain".to_owned(),
-            input: None,
-            output: None,
-            turn: None,
-            node_id: None,
-            node_type: None,
-            call_id: None,
-            reasoning_category: None,
-            capability_id: None,
-        }
-    }
-}
-
-#[derive(Default)]
-struct RunEventStateV1 {
-    next_sequence: u64,
-    prefix: Vec<RunActivitySnapshotV1>,
-    events: Vec<RunEventEnvelopeV1>,
-}
-
-enum RunEventDeliveryV1 {
-    Event(RunEventEnvelopeV1),
-    Flush(SyncSender<()>),
-}
-
-/// Per-execution event sequencer and callback fan-out.
-///
-/// The delivery mutex covers sequence allocation and callback publication, so
-/// concurrent node producers cannot expose event N+1 before event N. The
-/// callback itself is expected to enqueue/emit and return immediately.
-pub(crate) struct RunEventStreamV1 {
+/// Serializes all semantic proposals for one command execution.
+pub(crate) struct RunEventStream {
     request_id: String,
     run_id: String,
-    delivery_sender: Sender<RunEventDeliveryV1>,
-    delivery: Mutex<()>,
-    state: Mutex<RunEventStateV1>,
+    committer: Arc<dyn SemanticEventCommitter>,
+    cancellation: CancellationToken,
+    publish_lock: Mutex<()>,
+    state: Mutex<RunEventState>,
 }
 
-impl RunEventStreamV1 {
+impl RunEventStream {
     pub(crate) fn new(
         request_id: String,
         run_id: String,
-        subscriber: Arc<dyn RunEventPort>,
+        committer: Arc<dyn SemanticEventCommitter>,
+        cancellation: CancellationToken,
     ) -> Self {
-        Self {
+        let state = match committer.committed_events() {
+            Ok(events) => rehydrate_state(&request_id, &run_id, events),
+            Err(error) => RunEventState {
+                commit_error: Some(error),
+                ..RunEventState::default()
+            },
+        };
+        let stream = Self {
             request_id,
             run_id,
-            delivery_sender: spawn_delivery_worker(subscriber),
-            delivery: Mutex::new(()),
-            state: Mutex::new(RunEventStateV1::default()),
-        }
+            committer,
+            cancellation,
+            publish_lock: Mutex::new(()),
+            state: Mutex::new(state),
+        };
+        stream.ensure_root_span();
+        stream
     }
 
     pub(crate) fn belongs_to(&self, request_id: &str, run_id: &str) -> bool {
         self.request_id == request_id && self.run_id == run_id
     }
 
-    pub(crate) fn resume(
-        request_id: String,
-        run_id: String,
-        subscriber: Arc<dyn RunEventPort>,
-        prefix: Vec<RunActivitySnapshotV1>,
-    ) -> Self {
-        let next_sequence = prefix
-            .iter()
-            .map(|activity| activity.last_sequence)
-            .max()
-            .unwrap_or(0);
-        Self {
-            request_id,
-            run_id,
-            delivery_sender: spawn_delivery_worker(subscriber),
-            delivery: Mutex::new(()),
-            state: Mutex::new(RunEventStateV1 {
-                next_sequence,
-                prefix,
-                events: Vec::new(),
-            }),
-        }
+    fn run_span_id(&self) -> String {
+        format!("span.run.{}.{}", self.run_id, self.request_id)
     }
 
-    pub(crate) fn publish(&self, draft: RunEventDraftV1) -> RunEventEnvelopeV1 {
-        let _delivery = self
-            .delivery
+    fn ensure_root_span(&self) {
+        self.start_span(
+            self.run_span_id(),
+            None,
+            "run",
+            "run",
+            "Run".to_owned(),
+            None,
+            Value::Null,
+        );
+    }
+
+    fn publish(&self, draft: SemanticEventDraft) -> Option<CoreEventEnvelope> {
+        let _publish = self
+            .publish_lock
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let envelope = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            state.next_sequence = state.next_sequence.saturating_add(1);
-            let sequence = state.next_sequence;
-            let envelope = RunEventEnvelopeV1 {
-                schema_version: 1,
-                request_id: self.request_id.clone(),
-                run_id: self.run_id.clone(),
-                sequence,
-                event_id: format!("run.event.{}.{}", self.request_id, sequence),
-                activity_id: draft.activity_id,
-                kind: draft.kind,
-                title: draft.title,
-                body: draft.body,
-                status: draft.status,
-                data_mode: draft.data_mode,
-                input: draft.input,
-                output: draft.output,
-                turn: draft.turn,
-                node_id: draft.node_id,
-                node_type: draft.node_type,
-                call_id: draft.call_id,
-                reasoning_category: draft.reasoning_category,
-                capability_id: draft.capability_id,
-            };
-            state.events.push(envelope.clone());
-            envelope
-        };
-        // An unbounded std channel only enqueues here; the Run never waits for
-        // a WebView subscriber or any other presentation callback.
-        let _ = self
-            .delivery_sender
-            .send(RunEventDeliveryV1::Event(envelope.clone()));
-        envelope
-    }
-
-    /// Waits until all events published before this barrier have reached the
-    /// callback. Pipelines use it immediately before returning a terminal or
-    /// suspended result, preventing a late busy update from racing settlement.
-    pub(crate) fn flush(&self) {
-        let (acknowledge, acknowledged) = mpsc::sync_channel(0);
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .commit_error
+            .is_some()
         {
-            let _delivery = self
-                .delivery
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            if self
-                .delivery_sender
-                .send(RunEventDeliveryV1::Flush(acknowledge))
-                .is_err()
-            {
-                return;
+            return None;
+        }
+        match self.committer.commit(vec![draft]) {
+            Ok(mut committed) => {
+                let event = committed.pop()?;
+                self.state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .events
+                    .push(event.clone());
+                Some(event)
+            }
+            Err(error) => {
+                self.cancellation.cancel();
+                self.state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .commit_error = Some(error);
+                None
             }
         }
-        // Presentation remains non-authoritative: a broken subscriber cannot
-        // block durable settlement indefinitely.
-        let _ = acknowledged.recv_timeout(Duration::from_millis(250));
     }
 
-    #[cfg(test)]
-    pub(crate) fn events(&self) -> Vec<RunEventEnvelopeV1> {
+    pub(crate) fn ensure_healthy(&self) -> Result<(), String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .commit_error
+            .clone()
+            .map_or(Ok(()), Err)
+    }
+
+    pub(crate) fn events(&self) -> Vec<CoreEventEnvelope> {
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -285,53 +140,247 @@ impl RunEventStreamV1 {
             .clone()
     }
 
-    /// Reduces streamed deltas into durable semantic activities while retaining
-    /// the first-observed order and source sequence range of each activity.
-    pub(crate) fn activity_snapshots(&self) -> Vec<RunActivitySnapshotV1> {
-        let state = self
+    fn start_span(
+        &self,
+        span_id: String,
+        parent_span_id: Option<String>,
+        span_kind: &str,
+        semantic_role: &str,
+        title: String,
+        input: Option<Value>,
+        details: Value,
+    ) {
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if state.started_spans.contains(&span_id) {
+                return;
+            }
+            if let Some(parent) = parent_span_id.as_ref() {
+                if !state.started_spans.contains(parent) || state.terminal_spans.contains(parent) {
+                    self.cancellation.cancel();
+                    state.commit_error = Some(format!(
+                        "span '{span_id}' cannot start under missing or terminal parent '{parent}'"
+                    ));
+                    return;
+                }
+                state.parent_spans.insert(span_id.clone(), parent.clone());
+            }
+            state.started_spans.insert(span_id.clone());
+        }
+        let mut payload = json!({
+            "schemaVersion": 1,
+            "requestId": self.request_id,
+            "runId": self.run_id,
+            "spanId": span_id,
+            "parentSpanId": parent_span_id,
+            "spanKind": span_kind,
+            "semanticRole": semantic_role,
+            "title": title,
+            "status": "running",
+            "createdAt": now_label(),
+            "hasInput": input.is_some(),
+            "input": input,
+        });
+        merge_details(&mut payload, details);
+        self.publish(SemanticEventDraft::new("span.started", payload));
+    }
+
+    fn update_span(&self, span_id: &str, status: &str, body: String, details: Value) {
+        let mut payload = json!({
+            "schemaVersion": 1,
+            "requestId": self.request_id,
+            "runId": self.run_id,
+            "spanId": span_id,
+            "status": status,
+            "body": body,
+            "createdAt": now_label(),
+        });
+        merge_details(&mut payload, details);
+        self.publish(SemanticEventDraft::new("span.updated", payload));
+    }
+
+    fn terminal_span(
+        &self,
+        span_id: &str,
+        status: &str,
+        body: String,
+        output: Option<Value>,
+        details: Value,
+    ) {
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if state.terminal_spans.contains(span_id) {
+                return;
+            }
+            if !state.started_spans.contains(span_id) {
+                self.cancellation.cancel();
+                state.commit_error = Some(format!(
+                    "span '{span_id}' cannot terminate before it starts"
+                ));
+                return;
+            }
+            if let Some(open_child) = state.parent_spans.iter().find_map(|(child, parent)| {
+                (parent == span_id && !state.terminal_spans.contains(child)).then_some(child)
+            }) {
+                self.cancellation.cancel();
+                state.commit_error = Some(format!(
+                    "span '{span_id}' cannot terminate while child '{open_child}' is open"
+                ));
+                return;
+            }
+            state.terminal_spans.insert(span_id.to_owned());
+        }
+        let kind = match status {
+            "cancelled" | "skipped" => "span.cancelled",
+            "completed" | "succeeded" => "span.completed",
+            _ => "span.failed",
+        };
+        let mut payload = json!({
+            "schemaVersion": 1,
+            "requestId": self.request_id,
+            "runId": self.run_id,
+            "spanId": span_id,
+            "status": status,
+            "body": body,
+            "createdAt": now_label(),
+            "hasOutput": output.is_some(),
+            "output": output,
+        });
+        merge_details(&mut payload, details);
+        self.publish(SemanticEventDraft::new(kind, payload));
+    }
+
+    fn agent_loop_span(&self) -> String {
+        let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        reduce_run_events(&state.prefix, &state.events)
-    }
-
-    /// Returns activities created or changed after a durable suspension point.
-    pub(crate) fn activity_snapshots_after(&self, sequence: u64) -> Vec<RunActivitySnapshotV1> {
-        self.activity_snapshots()
-            .into_iter()
-            .filter(|activity| activity.last_sequence > sequence)
-            .collect()
+        let parent = state
+            .active_model_node
+            .clone()
+            .unwrap_or_else(|| self.run_span_id());
+        if let Some(span_id) = &state.agent_loop_span
+            && !state.terminal_spans.contains(span_id)
+            && state.parent_spans.get(span_id) == Some(&parent)
+        {
+            return span_id.clone();
+        }
+        let span_id = format!("span.agent-loop.{}.{}", self.request_id, parent);
+        state.agent_loop_span = Some(span_id.clone());
+        drop(state);
+        self.start_span(
+            span_id.clone(),
+            Some(parent),
+            "agent_loop",
+            "agent_loop",
+            "Agent".to_owned(),
+            None,
+            Value::Null,
+        );
+        span_id
     }
 
     pub(crate) fn publish_graph_activity(&self, activity: &GraphNodeActivityV1) {
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("node.{}.{}", self.request_id, activity.node_id),
-            "step",
-            activity.label.clone(),
-            &activity.status,
+        let span_id = format!(
+            "span.node.{}.{}.{}",
+            self.run_id, self.request_id, activity.node_id
         );
-        draft.body = activity.summary.clone();
-        draft.data_mode = "replace".to_owned();
-        draft.input = activity.input.clone();
-        draft.output = activity.output.clone();
-        draft.node_id = Some(activity.node_id.clone());
-        draft.node_type = Some(activity.node_type.clone());
-        self.publish(draft);
+        let details = json!({
+            "nodeId": activity.node_id,
+            "nodeType": activity.node_type,
+            "label": activity.label,
+        });
+        if activity.status == "started" {
+            self.start_span(
+                span_id.clone(),
+                Some(self.run_span_id()),
+                "graph_node",
+                &activity.node_type,
+                activity.label.clone(),
+                activity.input.clone(),
+                details,
+            );
+            if matches!(activity.node_type.as_str(), "agent" | "model_call") {
+                self.state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .active_model_node = Some(span_id);
+            }
+            return;
+        }
+        self.start_span(
+            span_id.clone(),
+            Some(self.run_span_id()),
+            "graph_node",
+            &activity.node_type,
+            activity.label.clone(),
+            activity.input.clone(),
+            details.clone(),
+        );
+        if activity.status == "waiting" {
+            self.update_span(&span_id, "waiting", activity.summary.clone(), details);
+            return;
+        }
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .active_model_node
+            .as_deref()
+            == Some(span_id.as_str())
+        {
+            self.settle_agent_loop(&activity.status, activity.output.clone());
+        }
+        self.terminal_span(
+            &span_id,
+            &activity.status,
+            activity.summary.clone(),
+            activity.output.clone(),
+            details,
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.active_model_node.as_deref() == Some(span_id.as_str()) {
+            state.active_model_node = None;
+            state.agent_loop_span = None;
+        }
     }
 
     pub(crate) fn publish_tool_started(&self, call: &aworkit_capability_host::ModelToolCallV1) {
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("tool.{}", call.call_id),
+        let span_id = format!("span.tool.{}", call.call_id);
+        let span_kind = if call.capability_id == "tool.subagent" {
+            "external_agent"
+        } else {
+            "tool_call"
+        };
+        let causation = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .tool_requests
+            .get(&call.call_id)
+            .cloned();
+        self.start_span(
+            span_id,
+            Some(self.agent_loop_span()),
+            span_kind,
             "tool",
             call.capability_id.clone(),
-            "running",
+            Some(tool_call_input(call)),
+            json!({
+                "callId": call.call_id,
+                "capabilityId": call.capability_id,
+                "causationEventId": causation,
+            }),
         );
-        draft.body = "Tool invocation started.".to_owned();
-        draft.data_mode = "replace".to_owned();
-        draft.input = serde_json::to_value(call).ok();
-        draft.call_id = Some(call.call_id.clone());
-        draft.capability_id = Some(call.capability_id.clone());
-        self.publish(draft);
     }
 
     pub(crate) fn publish_tool_terminal(
@@ -341,293 +390,177 @@ impl RunEventStreamV1 {
         body: String,
         output: Value,
     ) {
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("tool.{}", call.call_id),
-            "tool",
-            call.capability_id.clone(),
+        let span_id = format!("span.tool.{}", call.call_id);
+        self.publish_tool_started(call);
+        self.terminal_span(
+            &span_id,
             status,
+            body,
+            Some(output),
+            json!({
+                "callId": call.call_id,
+                "capabilityId": call.capability_id,
+            }),
         );
-        draft.body = body;
-        draft.data_mode = "replace".to_owned();
-        draft.output = Some(output);
-        draft.call_id = Some(call.call_id.clone());
-        draft.capability_id = Some(call.capability_id.clone());
-        self.publish(draft);
     }
-}
 
-fn spawn_delivery_worker(subscriber: Arc<dyn RunEventPort>) -> Sender<RunEventDeliveryV1> {
-    let (sender, receiver) = mpsc::channel();
-    let _ = thread::Builder::new()
-        .name("aworkit-run-event-delivery".to_owned())
-        .spawn(move || {
-            while let Ok(delivery) = receiver.recv() {
-                match delivery {
-                    RunEventDeliveryV1::Event(event) => subscriber.publish(event),
-                    RunEventDeliveryV1::Flush(acknowledge) => {
-                        let _ = acknowledge.send(());
-                    }
-                }
+    fn settle_agent_loop(&self, status: &str, output: Option<Value>) {
+        let span_id = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .agent_loop_span
+            .clone();
+        if let Some(span_id) = span_id {
+            if status == "waiting" || status == "awaiting_approval" {
+                self.update_span(
+                    &span_id,
+                    "waiting",
+                    "Agent is waiting.".to_owned(),
+                    Value::Null,
+                );
+            } else {
+                self.terminal_span(
+                    &span_id,
+                    status,
+                    "Agent loop settled.".to_owned(),
+                    output,
+                    Value::Null,
+                );
             }
-        });
-    sender
-}
-
-fn reduce_run_events(
-    prefix: &[RunActivitySnapshotV1],
-    events: &[RunEventEnvelopeV1],
-) -> Vec<RunActivitySnapshotV1> {
-    let mut positions = BTreeMap::<String, usize>::new();
-    let mut activities = prefix.to_vec();
-    for (index, activity) in activities.iter().enumerate() {
-        positions.insert(activity.activity_id.clone(), index);
-    }
-    for event in events {
-        let index = if let Some(index) = positions.get(&event.activity_id) {
-            *index
-        } else {
-            let index = activities.len();
-            positions.insert(event.activity_id.clone(), index);
-            activities.push(RunActivitySnapshotV1 {
-                first_sequence: event.sequence,
-                last_sequence: event.sequence,
-                activity_id: event.activity_id.clone(),
-                kind: event.kind.clone(),
-                title: event.title.clone(),
-                body: String::new(),
-                status: event.status.clone(),
-                input: None,
-                output: None,
-                turn: event.turn,
-                node_id: event.node_id.clone(),
-                node_type: event.node_type.clone(),
-                call_id: event.call_id.clone(),
-                reasoning_category: event.reasoning_category.clone(),
-                capability_id: event.capability_id.clone(),
-            });
-            index
-        };
-        let activity = &mut activities[index];
-        activity.last_sequence = event.sequence;
-        activity.kind = event.kind.clone();
-        activity.title = event.title.clone();
-        activity.status = event.status.clone();
-        activity.turn = event.turn.or(activity.turn);
-        activity.node_id = event.node_id.clone().or_else(|| activity.node_id.clone());
-        activity.node_type = event
-            .node_type
-            .clone()
-            .or_else(|| activity.node_type.clone());
-        activity.call_id = event.call_id.clone().or_else(|| activity.call_id.clone());
-        activity.reasoning_category = event
-            .reasoning_category
-            .clone()
-            .or_else(|| activity.reasoning_category.clone());
-        activity.capability_id = event
-            .capability_id
-            .clone()
-            .or_else(|| activity.capability_id.clone());
-        if let Some(input) = &event.input {
-            activity.input = Some(input.clone());
         }
-        match event.data_mode.as_str() {
-            "append" => {
-                append_value(&mut activity.output, event.output.as_ref());
-                activity.body.push_str(&event.body);
-            }
-            "replace" => {
-                if let Some(output) = &event.output {
-                    activity.output = Some(output.clone());
-                }
-                if !event.body.is_empty() {
-                    activity.body.clone_from(&event.body);
-                }
-            }
-            _ => {}
-        }
-    }
-    activities
-}
-
-fn append_value(target: &mut Option<Value>, incoming: Option<&Value>) {
-    let Some(incoming) = incoming else { return };
-    match (target.as_mut(), incoming) {
-        (Some(Value::String(current)), Value::String(chunk)) => current.push_str(chunk),
-        _ => *target = Some(incoming.clone()),
     }
 }
 
 #[derive(Default)]
-struct ModelObserverStateV1 {
+struct ModelObserverState {
     turn: u32,
-    turn_open: bool,
-    reasoning_seen: bool,
-    response_seen: bool,
-    progress_seen: bool,
-    reasoning_category: Option<String>,
+    current_model_span: Option<String>,
 }
 
-/// Converts provider callbacks into turn-scoped Run events.
-pub(crate) struct ModelRunEventObserverV1 {
-    stream: Arc<RunEventStreamV1>,
-    state: Mutex<ModelObserverStateV1>,
+/// Converts provider callbacks into ModelCall-scoped semantic events.
+pub(crate) struct ModelRunEventObserver {
+    stream: Arc<RunEventStream>,
+    state: Mutex<ModelObserverState>,
 }
 
-impl ModelRunEventObserverV1 {
-    pub(crate) fn new(stream: Arc<RunEventStreamV1>) -> Self {
+impl ModelRunEventObserver {
+    pub(crate) fn new(stream: Arc<RunEventStream>) -> Self {
         Self {
             stream,
-            state: Mutex::new(ModelObserverStateV1::default()),
+            state: Mutex::new(ModelObserverState::default()),
         }
     }
 
-    fn current_turn(&self) -> u32 {
+    fn current_model_span(&self) -> Option<String> {
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .turn
+            .current_model_span
+            .clone()
     }
 
-    fn text_delta(&self, kind: &str, title: &str, text: &str, category: Option<&str>) {
-        let turn = self.current_turn();
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("model.{kind}.{}.turn.{turn}", self.stream.request_id),
-            kind,
-            title.to_owned(),
-            "running",
-        );
-        draft.body = text.to_owned();
-        draft.data_mode = "append".to_owned();
-        draft.output = Some(Value::String(text.to_owned()));
-        draft.turn = Some(turn);
-        draft.reasoning_category = category.map(str::to_owned);
-        self.stream.publish(draft);
-    }
-
-    fn reasoning(&self, text: &str, category: &str) {
-        {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            state.reasoning_seen = true;
-            state.reasoning_category = Some(category.to_owned());
-        }
-        self.text_delta("reasoning", "Thinking", text, Some(category));
-    }
-
-    fn response(&self, text: &str) {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .response_seen = true;
-        self.text_delta("response", "Response", text, None);
-    }
-
-    fn progress(&self, text: &str) {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .progress_seen = true;
-        self.text_delta("progress", "Working", text, Some("progress"));
-    }
-
-    fn tool_call(&self, call: &aworkit_capability_host::ModelToolCallV1) {
-        let turn = self.current_turn();
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("tool.{}", call.call_id),
-            "tool",
-            call.capability_id.clone(),
-            "requested",
-        );
-        draft.body = "The model requested this tool invocation.".to_owned();
-        draft.data_mode = "replace".to_owned();
-        draft.input = serde_json::to_value(call).ok();
-        draft.turn = Some(turn);
-        draft.call_id = Some(call.call_id.clone());
-        draft.capability_id = Some(call.capability_id.clone());
-        self.stream.publish(draft);
-    }
-
-    fn finish_open_activities(&self, status: &str) {
-        let (turn, reasoning_seen, response_seen, progress_seen, category) = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            let snapshot = (
-                state.turn,
-                state.reasoning_seen,
-                state.response_seen,
-                state.progress_seen,
-                state.reasoning_category.take(),
-            );
-            state.reasoning_seen = false;
-            state.response_seen = false;
-            state.progress_seen = false;
-            snapshot
+    fn content_delta(&self, channel: &str, text: &str, classification: &str) {
+        let Some(span_id) = self.current_model_span() else {
+            return;
         };
-        for (kind, title, seen, reasoning_category) in [
-            ("reasoning", "Thinking", reasoning_seen, category),
-            (
-                "progress",
-                "Working",
-                progress_seen,
-                Some("progress".to_owned()),
-            ),
-            ("response", "Response", response_seen, None),
-        ] {
-            if !seen {
-                continue;
-            }
-            let mut draft = RunEventDraftV1::lifecycle(
-                format!("model.{kind}.{}.turn.{turn}", self.stream.request_id),
-                kind,
-                title.to_owned(),
-                status,
-            );
-            draft.turn = Some(turn);
-            draft.reasoning_category = reasoning_category;
-            self.stream.publish(draft);
+        self.stream.publish(SemanticEventDraft::new(
+            "span.content_delta",
+            json!({
+                "schemaVersion": 1,
+                "requestId": self.stream.request_id,
+                "runId": self.stream.run_id,
+                "spanId": span_id,
+                "channel": channel,
+                "sourceClassification": classification,
+                "append": text,
+                "body": text,
+                "status": "running",
+                "createdAt": now_label(),
+            }),
+        ));
+    }
+
+    fn usage(&self, input_tokens: u64, output_tokens: u64) {
+        let Some(span_id) = self.current_model_span() else {
+            return;
+        };
+        self.stream.publish(SemanticEventDraft::new(
+            "span.usage",
+            json!({
+                "schemaVersion": 1,
+                "requestId": self.stream.request_id,
+                "runId": self.stream.run_id,
+                "spanId": span_id,
+                "inputTokens": input_tokens,
+                "outputTokens": output_tokens,
+                "createdAt": now_label(),
+            }),
+        ));
+    }
+
+    fn tool_requested(&self, call: &aworkit_capability_host::ModelToolCallV1) {
+        let Some(span_id) = self.current_model_span() else {
+            return;
+        };
+        if let Some(event) = self.stream.publish(SemanticEventDraft::new(
+            "tool.requested",
+            json!({
+                "schemaVersion": 1,
+                "requestId": self.stream.request_id,
+                "runId": self.stream.run_id,
+                "spanId": span_id,
+                "callId": call.call_id,
+                "capabilityId": call.capability_id,
+                "input": tool_call_input(call),
+                "createdAt": now_label(),
+            }),
+        )) {
+            self.stream
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .tool_requests
+                .insert(call.call_id.clone(), event.event_id);
         }
     }
 
-    /// Closes any provider activity left open by an error outside the normal
-    /// model-turn completion callback.
     pub(crate) fn settle(&self, status: &str) {
-        self.finish_open_activities(status);
-        let turn = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            if !state.turn_open {
-                return;
-            }
-            state.turn_open = false;
-            state.turn
-        };
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("model.turn.{}.{}", self.stream.request_id, turn),
-            "model_turn",
-            format!("Model turn {turn}"),
-            status,
-        );
-        draft.body = "Model turn ended without a normal provider completion.".to_owned();
-        draft.data_mode = "replace".to_owned();
-        draft.turn = Some(turn);
-        self.stream.publish(draft);
+        let current = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .current_model_span
+            .take();
+        if let Some(span_id) = current {
+            self.stream.terminal_span(
+                &span_id,
+                status,
+                "Model call ended without a normal provider completion.".to_owned(),
+                None,
+                Value::Null,
+            );
+        }
     }
 
     pub(crate) fn reasoning_snapshot(&self) -> Option<(String, String)> {
         let mut body = String::new();
         let mut category = None;
-        for activity in self.stream.activity_snapshots() {
-            if activity.kind != "reasoning" || activity.body.is_empty() {
+        for event in self.stream.events() {
+            if event.kind != "span.content_delta"
+                || event.payload.get("channel").and_then(Value::as_str) != Some("reasoning")
+            {
                 continue;
             }
-            body.push_str(&activity.body);
-            category = activity.reasoning_category.or(category);
+            if let Some(text) = event.payload.get("append").and_then(Value::as_str) {
+                body.push_str(text);
+            }
+            category = event
+                .payload
+                .get("sourceClassification")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or(category);
         }
         (!body.is_empty()).then(|| {
             (
@@ -638,7 +571,7 @@ impl ModelRunEventObserverV1 {
     }
 }
 
-impl ModelEventObserverV1 for ModelRunEventObserverV1 {
+impl ModelEventObserverV1 for ModelRunEventObserver {
     fn model_turn_started(&self, input: &Value) {
         let turn = {
             let mut state = self
@@ -646,178 +579,307 @@ impl ModelEventObserverV1 for ModelRunEventObserverV1 {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             state.turn = state.turn.saturating_add(1);
-            state.turn_open = true;
-            state.reasoning_seen = false;
-            state.response_seen = false;
-            state.progress_seen = false;
-            state.reasoning_category = None;
             state.turn
         };
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("model.turn.{}.{}", self.stream.request_id, turn),
-            "model_turn",
-            format!("Model turn {turn}"),
-            "running",
+        let span_id = format!("span.model.{}.turn.{turn}", self.stream.request_id);
+        self.stream.start_span(
+            span_id.clone(),
+            Some(self.stream.agent_loop_span()),
+            "model_call",
+            "model_call",
+            format!("Model call {turn}"),
+            Some(input.clone()),
+            json!({"turn": turn}),
         );
-        draft.body = "Normalized model request accepted for dispatch.".to_owned();
-        draft.data_mode = "replace".to_owned();
-        draft.input = Some(input.clone());
-        draft.turn = Some(turn);
-        self.stream.publish(draft);
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .current_model_span = Some(span_id);
     }
 
     fn model_event(&self, event: &ModelEventV1) {
         match event {
-            ModelEventV1::ReasoningRaw(text) => self.reasoning(text, "source_provided"),
-            ModelEventV1::ReasoningSummary(text) => self.reasoning(text, "summary"),
-            ModelEventV1::Progress(text) => self.progress(text),
-            ModelEventV1::AssistantOutput(text) => self.response(text),
-            ModelEventV1::Usage { .. } => {}
+            ModelEventV1::ReasoningRaw(text) => {
+                self.content_delta("reasoning", text, "source_provided")
+            }
+            ModelEventV1::ReasoningSummary(text) => {
+                self.content_delta("reasoning", text, "summary")
+            }
+            ModelEventV1::Progress(text) => self.content_delta("progress", text, "progress"),
+            ModelEventV1::AssistantOutput(text) => {
+                self.content_delta("assistant_output", text, "assistant_output")
+            }
+            ModelEventV1::Usage {
+                input_tokens,
+                output_tokens,
+            } => self.usage(*input_tokens, *output_tokens),
         }
     }
 
     fn model_tool_event(&self, event: &ModelToolEventV1) {
         match event {
-            ModelToolEventV1::ReasoningRaw { text } => self.reasoning(text, "source_provided"),
-            ModelToolEventV1::ReasoningSummary { text } => self.reasoning(text, "summary"),
-            ModelToolEventV1::Progress { text } => self.progress(text),
-            ModelToolEventV1::ToolCall { call } => self.tool_call(call),
-            ModelToolEventV1::AssistantOutput { text } => self.response(text),
-            ModelToolEventV1::Usage { .. } => {}
+            ModelToolEventV1::ReasoningRaw { text } => {
+                self.content_delta("reasoning", text, "source_provided")
+            }
+            ModelToolEventV1::ReasoningSummary { text } => {
+                self.content_delta("reasoning", text, "summary")
+            }
+            ModelToolEventV1::Progress { text } => self.content_delta("progress", text, "progress"),
+            ModelToolEventV1::ToolCall { call } => self.tool_requested(call),
+            ModelToolEventV1::AssistantOutput { text } => {
+                self.content_delta("assistant_output", text, "assistant_output")
+            }
+            ModelToolEventV1::Usage {
+                input_tokens,
+                output_tokens,
+            } => self.usage(*input_tokens, *output_tokens),
         }
     }
 
     fn model_turn_completed(&self, output: &Value, status: &str) {
-        self.finish_open_activities(status);
-        let turn = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            state.turn_open = false;
-            state.turn
-        };
-        let mut draft = RunEventDraftV1::lifecycle(
-            format!("model.turn.{}.{}", self.stream.request_id, turn),
-            "model_turn",
-            format!("Model turn {turn}"),
-            status,
-        );
-        draft.body = "Normalized model event stream settled.".to_owned();
-        draft.data_mode = "replace".to_owned();
-        draft.output = Some(output.clone());
-        draft.turn = Some(turn);
-        self.stream.publish(draft);
+        let current = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .current_model_span
+            .take();
+        if let Some(span_id) = current {
+            self.stream.terminal_span(
+                &span_id,
+                status,
+                "Normalized model event stream settled.".to_owned(),
+                Some(output.clone()),
+                Value::Null,
+            );
+        }
     }
+}
+
+fn rehydrate_state(
+    request_id: &str,
+    run_id: &str,
+    events: Vec<CoreEventEnvelope>,
+) -> RunEventState {
+    let mut state = RunEventState::default();
+    let mut model_nodes = Vec::new();
+    let mut agent_loops = Vec::new();
+    for event in events {
+        if event.payload.get("requestId").and_then(Value::as_str) != Some(request_id)
+            || event.payload.get("runId").and_then(Value::as_str) != Some(run_id)
+        {
+            continue;
+        }
+        if event.kind == "span.started" {
+            if let Some(span_id) = event.span_id.clone() {
+                state.started_spans.insert(span_id.clone());
+                if let Some(parent) = event.payload.get("parentSpanId").and_then(Value::as_str) {
+                    state
+                        .parent_spans
+                        .insert(span_id.clone(), parent.to_owned());
+                }
+                match event.payload.get("spanKind").and_then(Value::as_str) {
+                    Some("agent_loop") => agent_loops.push(span_id.clone()),
+                    Some("graph_node")
+                        if matches!(
+                            event.payload.get("semanticRole").and_then(Value::as_str),
+                            Some("agent" | "model_call")
+                        ) =>
+                    {
+                        model_nodes.push(span_id);
+                    }
+                    _ => {}
+                }
+            }
+        } else if matches!(
+            event.kind.as_str(),
+            "span.completed" | "span.failed" | "span.cancelled"
+        ) {
+            if let Some(span_id) = event.span_id.clone() {
+                state.terminal_spans.insert(span_id);
+            }
+        } else if event.kind == "tool.requested" {
+            if let Some(call_id) = event.payload.get("callId").and_then(Value::as_str) {
+                state
+                    .tool_requests
+                    .insert(call_id.to_owned(), event.event_id.clone());
+            }
+        }
+        state.events.push(event);
+    }
+    state.active_model_node = model_nodes
+        .into_iter()
+        .rev()
+        .find(|span_id| !state.terminal_spans.contains(span_id));
+    state.agent_loop_span = state.active_model_node.as_ref().and_then(|parent| {
+        agent_loops.into_iter().rev().find(|span_id| {
+            !state.terminal_spans.contains(span_id)
+                && state.parent_spans.get(span_id) == Some(parent)
+        })
+    });
+    state
+}
+
+fn merge_details(target: &mut Value, details: Value) {
+    let (Some(target), Value::Object(details)) = (target.as_object_mut(), details) else {
+        return;
+    };
+    target.extend(details);
+}
+
+/// Provider correlation stays available without leaking provider-private
+/// context into the user-visible semantic stream.
+fn tool_call_input(call: &aworkit_capability_host::ModelToolCallV1) -> Value {
+    json!({
+        "callId": call.call_id,
+        "providerCallId": call.provider_call_id,
+        "capabilityId": call.capability_id,
+        "name": call.name,
+        "arguments": call.arguments,
+    })
+}
+
+fn now_label() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[derive(Default)]
-    struct RecordingRunEventPort(Mutex<Vec<RunEventEnvelopeV1>>);
-
-    impl RunEventPort for RecordingRunEventPort {
-        fn publish(&self, event: RunEventEnvelopeV1) {
-            self.0
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .push(event);
-        }
-    }
+    use crate::runtime::semantic_events::ephemeral_semantic_event_committer;
 
     #[test]
-    fn turn_scoped_events_keep_real_order_and_reduce_streamed_text() {
-        let stream = Arc::new(RunEventStreamV1::new(
-            "request.1".to_owned(),
-            "run.1".to_owned(),
-            noop_run_event_port(),
+    fn model_tool_model_sequence_uses_sibling_spans_and_committed_order() {
+        let stream = Arc::new(RunEventStream::new(
+            "request.1".into(),
+            "run.1".into(),
+            ephemeral_semantic_event_committer(),
+            CancellationToken::default(),
         ));
-        let observer = ModelRunEventObserverV1::new(stream.clone());
-        observer.model_turn_started(&json!({"messages":[{"role":"user","content":"list"}]}));
+        let observer = ModelRunEventObserver::new(stream.clone());
+        observer.model_turn_started(&json!({"messages": []}));
         observer.model_tool_event(&ModelToolEventV1::ReasoningRaw {
-            text: "Need ".into(),
+            text: "Need files".into(),
         });
-        observer.model_tool_event(&ModelToolEventV1::ReasoningRaw {
-            text: "files".into(),
+        let call = aworkit_capability_host::ModelToolCallV1 {
+            call_id: "call.1".into(),
+            provider_call_id: Some("call.1".into()),
+            capability_id: "tool.files.list".into(),
+            name: "list_files".into(),
+            arguments: json!({"path":"."}),
+            provider_context: None,
+        };
+        observer.model_tool_event(&ModelToolEventV1::ToolCall { call: call.clone() });
+        observer.model_tool_event(&ModelToolEventV1::Usage {
+            input_tokens: 11,
+            output_tokens: 7,
         });
-        observer.model_turn_completed(&json!([{"kind":"usage"}]), "completed");
-        observer.model_turn_started(&json!({"toolResult":{"files":["a.txt"]}}));
+        observer.model_turn_completed(&json!({"toolCall":"call.1"}), "completed");
+        stream.publish_tool_started(&call);
+        stream.publish_tool_terminal(&call, "completed", "Listed files".into(), json!(["a"]));
+        observer.model_turn_started(&json!({"toolResult":["a"]}));
 
         let events = stream.events();
-        assert_eq!(
+        assert!(
             events
-                .iter()
-                .map(|event| event.sequence)
-                .collect::<Vec<_>>(),
-            (1..=6).collect::<Vec<_>>()
-        );
-        assert_eq!(events[0].kind, "model_turn");
-        assert_eq!(events[1].kind, "reasoning");
-        assert_eq!(events[4].kind, "model_turn");
-        assert_eq!(events[5].turn, Some(2));
-        let thinking = stream
-            .activity_snapshots()
-            .into_iter()
-            .find(|activity| activity.kind == "reasoning")
-            .expect("reasoning snapshot");
-        assert_eq!(thinking.output, Some(Value::String("Need files".into())));
-        assert_eq!(thinking.status, "completed");
-    }
-
-    #[test]
-    fn abnormal_settlement_closes_every_open_model_activity() {
-        let stream = Arc::new(RunEventStreamV1::new(
-            "request.failed".to_owned(),
-            "run.failed".to_owned(),
-            noop_run_event_port(),
-        ));
-        let observer = ModelRunEventObserverV1::new(stream.clone());
-        observer.model_turn_started(&json!({"messages":[]}));
-        observer.model_event(&ModelEventV1::ReasoningRaw("partial".into()));
-        observer.settle("failed");
-
-        let activities = stream.activity_snapshots();
-        assert_eq!(activities.len(), 2);
-        assert!(
-            activities
-                .iter()
-                .all(|activity| activity.status == "failed")
-        );
-        assert_eq!(activities[0].kind, "model_turn");
-        assert_eq!(activities[1].kind, "reasoning");
-    }
-
-    #[test]
-    fn asynchronous_callback_queue_preserves_sequence_and_flushes() {
-        let subscriber = Arc::new(RecordingRunEventPort::default());
-        let stream = Arc::new(RunEventStreamV1::new(
-            "request.async".to_owned(),
-            "run.async".to_owned(),
-            subscriber.clone(),
-        ));
-        let observer = ModelRunEventObserverV1::new(stream.clone());
-        observer.model_turn_started(&json!({"messages":[]}));
-        observer.model_event(&ModelEventV1::Progress("one".into()));
-        observer.model_event(&ModelEventV1::Progress("two".into()));
-        observer.settle("failed");
-        stream.flush();
-
-        let delivered = subscriber
-            .0
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        assert_eq!(delivered.len(), stream.events().len());
-        assert!(
-            delivered
                 .windows(2)
                 .all(|pair| pair[0].sequence + 1 == pair[1].sequence)
         );
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event.kind == "span.started" && event.span_id.as_deref() == Some("span.tool.call.1")
+            })
+            .expect("tool start");
+        let tool_parent = tool_start
+            .payload
+            .get("parentSpanId")
+            .and_then(Value::as_str)
+            .expect("tool parent");
+        assert!(tool_parent.starts_with("span.agent-loop.request.1."));
+        assert!(tool_start.causation_event_id.is_some());
+        assert!(events.iter().any(|event| {
+            event.kind == "span.usage"
+                && event.payload.get("inputTokens").and_then(Value::as_u64) == Some(11)
+                && event.payload.get("outputTokens").and_then(Value::as_u64) == Some(7)
+        }));
         assert_eq!(
-            delivered.last().map(|event| event.status.as_str()),
-            Some("failed")
+            events
+                .iter()
+                .filter(|event| event.kind == "span.started"
+                    && event.payload.get("spanKind").and_then(Value::as_str) == Some("model_call"))
+                .count(),
+            2
         );
+    }
+
+    #[test]
+    fn suspended_stream_rehydrates_open_spans_without_duplicate_starts() {
+        let committer = ephemeral_semantic_event_committer();
+        let first = RunEventStream::new(
+            "request.resume".into(),
+            "run.resume".into(),
+            committer.clone(),
+            CancellationToken::default(),
+        );
+        first.publish_graph_activity(&GraphNodeActivityV1 {
+            node_id: "gate.1".into(),
+            node_type: "approval".into(),
+            label: "Approval".into(),
+            status: "started".into(),
+            summary: "Approval started".into(),
+            input: Some(json!({"proposal":"review"})),
+            output: None,
+        });
+        first.publish_graph_activity(&GraphNodeActivityV1 {
+            node_id: "gate.1".into(),
+            node_type: "approval".into(),
+            label: "Approval".into(),
+            status: "waiting".into(),
+            summary: "Waiting".into(),
+            input: Some(json!({"proposal":"review"})),
+            output: None,
+        });
+
+        let resumed = RunEventStream::new(
+            "request.resume".into(),
+            "run.resume".into(),
+            committer,
+            CancellationToken::default(),
+        );
+        resumed.publish_graph_activity(&GraphNodeActivityV1 {
+            node_id: "gate.1".into(),
+            node_type: "approval".into(),
+            label: "Approval".into(),
+            status: "completed".into(),
+            summary: "Approved".into(),
+            input: None,
+            output: Some(json!({"approved":true})),
+        });
+        resumed.ensure_healthy().unwrap();
+
+        let events = resumed.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "span.started"
+                    && event.payload.get("spanKind").and_then(Value::as_str) == Some("run"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "span.started"
+                    && event.payload.get("nodeId").and_then(Value::as_str) == Some("gate.1"))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| {
+            event.kind == "span.completed"
+                && event.payload.get("nodeId").and_then(Value::as_str) == Some("gate.1")
+        }));
     }
 }

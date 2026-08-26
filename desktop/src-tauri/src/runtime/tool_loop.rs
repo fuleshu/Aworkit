@@ -47,7 +47,7 @@ use super::{
     },
     pipeline::{CoreAuthenticationKey, LocalInvocationLedger, WorkflowPipelineError},
     project_scope::revalidate_git_branch,
-    run_events::RunEventStreamV1,
+    run_events::RunEventStream,
 };
 
 pub(crate) const FILE_TOOL_ADAPTER_VERSION: &str = "1.0.0";
@@ -907,10 +907,11 @@ impl FileToolAuthorityRuntimeV1 {
         &self,
         context: FrozenFileToolAuthorityContextV1,
     ) -> BoundFileToolAuthorityV1 {
-        let stream = Arc::new(RunEventStreamV1::new(
+        let stream = Arc::new(RunEventStream::new(
             context.request_id.to_string(),
             context.run_id.to_string(),
-            super::run_events::noop_run_event_port(),
+            super::semantic_events::ephemeral_semantic_event_committer(),
+            CancellationToken::default(),
         ));
         self.bind_with_run_events(context, stream)
     }
@@ -918,7 +919,7 @@ impl FileToolAuthorityRuntimeV1 {
     pub(crate) fn bind_with_run_events(
         &self,
         context: FrozenFileToolAuthorityContextV1,
-        run_events: Arc<RunEventStreamV1>,
+        run_events: Arc<RunEventStream>,
     ) -> BoundFileToolAuthorityV1 {
         debug_assert!(run_events.belongs_to(context.request_id.as_str(), context.run_id.as_str()));
         BoundFileToolAuthorityV1 {
@@ -963,7 +964,7 @@ pub(crate) struct FrozenFileToolAuthorityContextV1 {
 pub(crate) struct BoundFileToolAuthorityV1 {
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
-    run_events: Arc<RunEventStreamV1>,
+    run_events: Arc<RunEventStream>,
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
@@ -1469,7 +1470,7 @@ impl BoundFileToolAuthorityV1 {
 struct FileToolHostPortV1 {
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
-    run_events: Arc<RunEventStreamV1>,
+    run_events: Arc<RunEventStream>,
 }
 
 impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
@@ -1579,7 +1580,7 @@ struct FileToolDispatcherV1 {
     web: WebTools,
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
-    run_events: Arc<RunEventStreamV1>,
+    run_events: Arc<RunEventStream>,
     record: ToolInvocationRecordV1,
 }
 

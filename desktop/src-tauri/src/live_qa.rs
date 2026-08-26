@@ -379,7 +379,7 @@ fn run_case(
 
     let mut approvals = 0_u32;
     loop {
-        let snapshot = runtime.snapshot(before.last_sequence)?;
+        let snapshot = runtime.snapshot(before.through_sequence)?;
         if snapshot.chat.phase != "awaiting_approval" {
             break;
         }
@@ -399,7 +399,7 @@ fn run_case(
         approvals = approvals.saturating_add(1);
     }
 
-    let snapshot = runtime.snapshot(before.last_sequence)?;
+    let snapshot = runtime.snapshot(before.through_sequence)?;
     if snapshot.chat.phase == "failed" {
         return Err(case_failure(case, &snapshot));
     }
@@ -502,9 +502,8 @@ fn latest_pending_decision(snapshot: &RuntimeSnapshot) -> Result<String, String>
         .events
         .iter()
         .rev()
-        .find(|event| event.get("kind").and_then(Value::as_str) == Some("approval.requested"))
-        .and_then(|event| event.get("payload"))
-        .and_then(|payload| payload.get("decisionId"))
+        .find(|event| event.kind == "approval.requested")
+        .and_then(|event| event.payload.get("decisionId"))
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| "Chat is awaiting approval without a decision identity".into())
@@ -513,23 +512,21 @@ fn latest_pending_decision(snapshot: &RuntimeSnapshot) -> Result<String, String>
 fn has_completed_tool_event(snapshot: &RuntimeSnapshot, tool: &str) -> bool {
     snapshot.events.iter().any(|event| {
         matches!(
-            event.get("kind").and_then(Value::as_str),
-            Some("tool.completed" | "subagent.completed")
-        ) && event
-            .get("payload")
-            .and_then(|payload| payload.get("capabilityId"))
-            .and_then(Value::as_str)
-            == Some(tool)
+            event.kind.as_str(),
+            "span.completed" | "tool.completed" | "subagent.completed"
+        ) && event.payload.get("capabilityId").and_then(Value::as_str) == Some(tool)
     })
 }
 
 fn last_assistant(snapshot: &RuntimeSnapshot) -> Result<String, String> {
     snapshot
-        .timeline
+        .events
         .iter()
         .rev()
-        .find(|item| item.title == "Aworkit" && item.status.as_deref() == Some("completed"))
-        .map(|item| item.body.clone())
+        .find(|event| event.kind == "message.assistant")
+        .and_then(|event| event.payload.get("body"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
         .ok_or_else(|| "live QA Chat has no final assistant response".into())
 }
 
@@ -552,11 +549,12 @@ fn verify_side_effect(project_root: &Path, check: &SideEffectCheck) -> Result<()
 
 fn case_failure(case: &LiveCase, snapshot: &RuntimeSnapshot) -> String {
     let detail = snapshot
-        .timeline
+        .events
         .iter()
         .rev()
-        .find(|item| item.kind == "error")
-        .map(|item| item.body.as_str())
+        .find(|event| matches!(event.kind.as_str(), "execution.failed" | "span.failed"))
+        .and_then(|event| event.payload.get("body"))
+        .and_then(Value::as_str)
         .unwrap_or("no execution error was projected");
     format!(
         "case '{}' failed in the actual application: {detail}",

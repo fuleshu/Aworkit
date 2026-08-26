@@ -30,7 +30,6 @@ use super::{
     pipeline::{
         WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
     },
-    run_events::RunActivitySnapshotV1,
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
@@ -100,8 +99,11 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub conversation: Vec<WorkflowMessageV1>,
     pub activity: Vec<GraphNodeActivityV1>,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
-    #[serde(default)]
-    pub run_activity: Vec<RunActivitySnapshotV1>,
+    /// Migration sink for suspended records written before semantic events
+    /// became canonical. It is never produced by the current runtime.
+    #[allow(dead_code)]
+    #[serde(default, rename = "runActivity", skip_serializing)]
+    pub legacy_run_activity: Vec<Value>,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
@@ -534,7 +536,7 @@ impl<'a> PassMachine<'a> {
             conversation: self.conversation.clone(),
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
-            run_activity: Vec::new(),
+            legacy_run_activity: Vec::new(),
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
@@ -1137,7 +1139,7 @@ impl<'a> PassMachine<'a> {
             conversation: self.conversation.clone(),
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
-            run_activity: Vec::new(),
+            legacy_run_activity: Vec::new(),
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,

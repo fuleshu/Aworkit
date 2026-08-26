@@ -43,13 +43,11 @@ use super::{
     external_agent::{
         ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, probe_external_agent,
     },
-    graph_pass::GraphNodeActivityV1,
     history::{
         ChatHistory, ConversationMessage, FrozenChatExecutionContextV1,
         FrozenChatExecutionRecordV1, FrozenCredentialBindingV1, FrozenToolBindingV1,
         PendingChatCommandV1, canonical_hash, identity_for_seed, message_fact, now_label,
     },
-    live_activity::{LiveChatActivityPort, noop_live_activity},
     mcp::probe_mcp_server,
     mcp::{materialize_bindings, prepare_mcp_server},
     mcp_tools::{
@@ -63,7 +61,7 @@ use super::{
     project_scope::{resolve_project_scope, selectable_projects},
     provider::{ProviderPort, production_provider, provider_supports_tool_calls},
     provider_health::{ProviderHealth, ProviderHealthRegistry},
-    run_events::RunActivitySnapshotV1,
+    semantic_events::{CommittedChatEventPort, SemanticEventCommitter, noop_committed_event_port},
     settings_diagnostics::{
         ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
         probe_project, probe_tool,
@@ -75,10 +73,7 @@ use super::{
         SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, validate_extension_lifecycle_update,
         validate_http_url, validate_unavailable_executor_enablement_update,
     },
-    tool_loop::{
-        SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolActivityV1,
-        WorkflowToolBindingV1,
-    },
+    tool_loop::{SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolBindingV1},
 };
 
 struct ProcessedCommand {
@@ -188,18 +183,18 @@ impl DesktopRuntime {
         Self::open_with_store(data_root.as_ref(), store, production_provider())
     }
 
-    /// Opens the desktop runtime with a best-effort transient Chat activity
-    /// sink. Canonical history remains independent of presentation delivery.
-    pub fn open_with_live_activity(
+    /// Opens the desktop runtime with a subscriber for already committed Chat
+    /// events. The subscriber never sees a draft or an uncommitted transition.
+    pub fn open_with_committed_events(
         data_root: impl AsRef<Path>,
-        live_activity: Arc<dyn LiveChatActivityPort>,
+        committed_events: Arc<dyn CommittedChatEventPort>,
     ) -> Result<Self, String> {
         let store: Arc<dyn PlatformCredentialStorePort> = Arc::new(NativeCredentialStore::new());
-        Self::open_with_store_and_live_activity(
+        Self::open_with_store_and_committed_events(
             data_root.as_ref(),
             store,
             production_provider(),
-            live_activity,
+            committed_events,
         )
     }
 
@@ -216,29 +211,37 @@ impl DesktopRuntime {
         store: Arc<dyn PlatformCredentialStorePort>,
         provider: Arc<dyn ProviderPort>,
     ) -> Result<Self, String> {
-        Self::open_with_store_and_live_activity(data_root, store, provider, noop_live_activity())
+        Self::open_with_store_and_committed_events(
+            data_root,
+            store,
+            provider,
+            noop_committed_event_port(),
+        )
     }
 
-    fn open_with_store_and_live_activity(
+    fn open_with_store_and_committed_events(
         data_root: &Path,
         store: Arc<dyn PlatformCredentialStorePort>,
         provider: Arc<dyn ProviderPort>,
-        live_activity: Arc<dyn LiveChatActivityPort>,
+        committed_events: Arc<dyn CommittedChatEventPort>,
     ) -> Result<Self, String> {
         let data_root = prepare_root(data_root)?;
         let documents = CanonicalDocuments::open(&data_root)?;
         let credentials =
             CredentialVault::with_store(store.clone(), &documents.settings().credentials)?;
         let credential_journal = CredentialOperationJournal::open(&data_root);
-        let pipeline = WorkflowExecutionPipeline::open_with_credential_store_and_live_activity(
+        let history = ChatHistory::open_with_committed_events(&data_root, committed_events)?;
+        let event_committer: Arc<dyn SemanticEventCommitter> = Arc::new(history.clone());
+        let pipeline = WorkflowExecutionPipeline::open_with_credential_store_and_event_committer(
             &data_root,
             store,
-            live_activity,
+            event_committer,
         )
         .map_err(|error| error.to_string())?;
         Self::compose(
             data_root,
             documents,
+            history,
             credentials,
             credential_journal,
             provider,
@@ -249,6 +252,7 @@ impl DesktopRuntime {
     fn compose(
         data_root: std::path::PathBuf,
         documents: CanonicalDocuments,
+        history: ChatHistory,
         credentials: CredentialVault,
         credential_journal: CredentialOperationJournal,
         provider: Arc<dyn ProviderPort>,
@@ -260,7 +264,7 @@ impl DesktopRuntime {
             .map_err(|error| format!("cannot open project coordination state: {error}"))?;
         let mut runtime = Self {
             documents,
-            history: ChatHistory::open(&data_root)?,
+            history,
             credentials,
             credential_journal,
             provider,
@@ -350,7 +354,8 @@ impl DesktopRuntime {
         let user_input = string_field(&pending.command.payload, "input")?;
         let created_at = now_label();
         let mut facts = Vec::new();
-        if pending.command.action == "start" {
+        let pending_started = self.history.command_started(&pending.command.command_id)?;
+        if pending.command.action == "start" && !pending_started {
             facts.push((
                 "chat.started",
                 json!({
@@ -365,10 +370,23 @@ impl DesktopRuntime {
                 }),
             ));
         }
-        facts.push((
-            "message.user",
-            message_fact(&user_input, &created_at, None, None, None),
-        ));
+        if !pending_started {
+            facts.push((
+                "message.user",
+                message_fact(&user_input, &created_at, None, None, None),
+            ));
+        } else {
+            facts.extend(
+                self.history
+                    .open_span_terminal_facts(
+                        "failed",
+                        "Interrupted execution was explicitly abandoned as outcome-uncertain.",
+                        &created_at,
+                    )?
+                    .into_iter()
+                    .map(|fact| ("span.failed", fact)),
+            );
+        }
         facts.push((
             "execution.failed",
             json!({
@@ -379,6 +397,7 @@ impl DesktopRuntime {
                 "modelId":context.model_id,
                 "modelTierId":context.model_tier_id,
                 "frozenContextHash":frozen.context_hash,
+                "settlesCommandId":pending.command.command_id,
                 "pendingCommandId":pending.command.command_id,
                 "pendingCommandHash":pending.command_hash,
                 "automaticReplayAllowed":false,
@@ -562,11 +581,23 @@ impl DesktopRuntime {
             "cancel" => {
                 self.history.ensure_expected(input.expected_version)?;
                 self.history.ensure_cancellable()?;
+                let created_at = now_label();
+                let mut facts = self
+                    .history
+                    .open_span_terminal_facts(
+                        "cancelled",
+                        "Run cancelled by the user.",
+                        &created_at,
+                    )?
+                    .into_iter()
+                    .map(|fact| ("span.cancelled", fact))
+                    .collect::<Vec<_>>();
+                facts.push(("chat.cancelled", json!({"createdAt":created_at})));
                 self.history.append(
                     &input.command_id,
                     &fingerprint,
                     input.expected_version,
-                    vec![("chat.cancelled", json!({"createdAt":now_label()}))],
+                    facts,
                 )
             }
             other => Err(format!(
@@ -580,7 +611,10 @@ impl DesktopRuntime {
         input: UiCommandInput,
         fingerprint: String,
     ) -> Result<UiCommandReceipt, String> {
-        self.history.ensure_expected(input.expected_version)?;
+        let command_started = self.history.command_started(&input.command_id)?;
+        if !command_started {
+            self.history.ensure_expected(input.expected_version)?;
+        }
         if input.action == "start" {
             let workflow_id = string_field(&input.payload, "workflowId")?;
             let workflow = self.documents.workflow_snapshot_for(&workflow_id);
@@ -609,10 +643,17 @@ impl DesktopRuntime {
         let (frozen, persist_frozen_context) = match input.action.as_str() {
             "start" => {
                 let selected_project_id = optional_project_id(&input.payload)?;
-                if !conversation.is_empty() {
+                if !conversation.is_empty() && !command_started {
                     return Err("the current Chat is already started; enqueue follow-up input or start a New Chat".into());
                 }
-                if let Some(pending) = self
+                if command_started {
+                    (
+                        self.history.current_frozen_context()?.ok_or_else(|| {
+                            "started Chat command has no frozen execution context".to_owned()
+                        })?,
+                        false,
+                    )
+                } else if let Some(pending) = self
                     .history
                     .pending_context_at_head(input.expected_version)?
                 {
@@ -653,10 +694,12 @@ impl DesktopRuntime {
             }
             _ => return Err("Chat accepts only start or enqueue actions".into()),
         };
-        conversation.push(ConversationMessage {
-            role: "user".into(),
-            content: user_input.clone(),
-        });
+        if !command_started {
+            conversation.push(ConversationMessage {
+                role: "user".into(),
+                content: user_input.clone(),
+            });
+        }
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
@@ -741,34 +784,73 @@ impl DesktopRuntime {
             command_hash: fingerprint.clone(),
             command: input.clone(),
         })?;
+        if !command_started {
+            let created_at = now_label();
+            let mut initial_facts = vec![(
+                "command.started",
+                json!({
+                    "schemaVersion": 1,
+                    "requestId": input.command_id,
+                    "runId": context.identity.run_id,
+                    "status": "running",
+                    "createdAt": created_at,
+                }),
+            )];
+            if conversation.len() == 1 {
+                initial_facts.push((
+                    "chat.started",
+                    json!({
+                        "workflowId":context.workflow_id,
+                        "workflowVersion":context.workflow_version,
+                        "frozenContextHash":frozen.context_hash,
+                        "createdAt":created_at,
+                        "chatId":context.identity.chat_id,
+                        "runId":context.identity.run_id,
+                        "projectId":context.project.as_ref().map(|project| project.project_id.as_str()),
+                        "workspaceIdentityHash":context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
+                    }),
+                ));
+            }
+            let mut user_fact = message_fact(&user_input, &created_at, None, None, None);
+            if let Some(object) = user_fact.as_object_mut() {
+                object.insert("requestId".into(), Value::String(input.command_id.clone()));
+                object.insert(
+                    "runId".into(),
+                    Value::String(context.identity.run_id.to_string()),
+                );
+            }
+            initial_facts.push(("message.user", user_fact));
+            initial_facts.push((
+                "span.started",
+                json!({
+                    "schemaVersion": 1,
+                    "requestId": input.command_id,
+                    "runId": context.identity.run_id,
+                    "spanId": format!(
+                        "span.run.{}.{}",
+                        context.identity.run_id,
+                        input.command_id
+                    ),
+                    "parentSpanId": Value::Null,
+                    "spanKind": "run",
+                    "semanticRole": "run",
+                    "title": "Run",
+                    "status": "running",
+                    "createdAt": created_at,
+                    "hasInput": true,
+                    "input": user_input,
+                }),
+            ));
+            self.history.begin_effect_command(
+                &input.command_id,
+                &fingerprint,
+                input.expected_version,
+                initial_facts,
+            )?;
+        }
         let result = self.pipeline.execute(execution_request)?;
         let created_at = now_label();
         let mut facts = Vec::new();
-        if conversation.len() == 1 {
-            facts.push((
-                "chat.started",
-                json!({
-                    "workflowId":context.workflow_id,
-                    "workflowVersion":context.workflow_version,
-                    "frozenContextHash":frozen.context_hash,
-                    "createdAt":created_at,
-                    "chatId":context.identity.chat_id,
-                    "runId":context.identity.run_id,
-                    "projectId":context.project.as_ref().map(|project| project.project_id.as_str()),
-                    "workspaceIdentityHash":context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
-                }),
-            ));
-        }
-        facts.push((
-            "message.user",
-            message_fact(&user_input, &created_at, None, None, None),
-        ));
-        facts.extend(ordered_run_activity_facts(
-            &result,
-            context,
-            &frozen.context_hash,
-            &created_at,
-        ));
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
@@ -788,6 +870,7 @@ impl DesktopRuntime {
                     Some(result.output_units),
                 );
                 if let Some(object) = fact.as_object_mut() {
+                    object.insert("commandId".into(), Value::String(input.command_id.clone()));
                     object.insert(
                         "providerId".into(),
                         Value::String(context.provider_id.clone()),
@@ -829,6 +912,17 @@ impl DesktopRuntime {
                         result.model
                     )),
                 );
+                facts.push((
+                    "span.completed",
+                    run_terminal_fact(
+                        &result.request_id,
+                        &result.run_id,
+                        "completed",
+                        "Run completed.",
+                        Some(Value::String(assistant.to_owned())),
+                        &created_at,
+                    ),
+                ));
                 facts.push(("message.assistant", fact));
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
@@ -843,9 +937,14 @@ impl DesktopRuntime {
                         .to_owned()
                 })?;
                 facts.push((
+                    "span.updated",
+                    run_waiting_fact(&result.request_id, &result.run_id, &created_at),
+                ));
+                facts.push((
                     "approval.requested",
                     json!({
                         "createdAt": created_at,
+                        "commandId": input.command_id,
                         "decisionId": approval.decision_id,
                         "nodeId": approval.node_id,
                         "title": approval.title,
@@ -872,9 +971,21 @@ impl DesktopRuntime {
                     ),
                 );
                 facts.push((
+                    "span.failed",
+                    run_terminal_fact(
+                        &result.request_id,
+                        &result.run_id,
+                        "failed",
+                        &error,
+                        None,
+                        &created_at,
+                    ),
+                ));
+                facts.push((
                     "execution.failed",
                     json!({
                         "createdAt": created_at,
+                        "commandId": input.command_id,
                         "status": execution_status_name(status),
                         "body": error,
                         "providerId": context.provider_id,
@@ -893,12 +1004,8 @@ impl DesktopRuntime {
                 ));
             }
         }
-        self.history.append(
-            &input.command_id,
-            &fingerprint,
-            input.expected_version,
-            facts,
-        )
+        self.history
+            .append(&input.command_id, &fingerprint, self.history.head()?, facts)
     }
 
     /// Applies one committed approval decision to a durably suspended graph
@@ -910,7 +1017,10 @@ impl DesktopRuntime {
         input: UiCommandInput,
         fingerprint: String,
     ) -> Result<UiCommandReceipt, String> {
-        self.history.ensure_expected(input.expected_version)?;
+        let command_started = self.history.command_started(&input.command_id)?;
+        if !command_started {
+            self.history.ensure_expected(input.expected_version)?;
+        }
         let decision_id = string_field(&input.payload, "decisionId")?;
         let approved = match input.payload.get("approved") {
             Some(Value::Bool(approved)) => *approved,
@@ -934,27 +1044,44 @@ impl DesktopRuntime {
                 command: input.clone(),
             })?;
         }
+        if !command_started {
+            let created_at = now_label();
+            self.history.begin_effect_command(
+                &input.command_id,
+                &fingerprint,
+                input.expected_version,
+                vec![
+                    (
+                        "command.started",
+                        json!({
+                            "schemaVersion": 1,
+                            "requestId": input.command_id,
+                            "runId": frozen.context.identity.run_id,
+                            "status": "running",
+                            "createdAt": created_at,
+                        }),
+                    ),
+                    (
+                        "approval.resolved",
+                        json!({
+                            "createdAt": created_at,
+                            "requestId": input.command_id,
+                            "runId": frozen.context.identity.run_id,
+                            "decisionId": decision_id,
+                            "approved": approved,
+                            "frozenContextHash": frozen.context_hash,
+                        }),
+                    ),
+                ],
+            )?;
+        }
         let result = self
             .pipeline
             .resume_approval(&decision_id, approved)
             .map_err(|error| error.to_string())?;
         let created_at = now_label();
         let context = &frozen.context;
-        let mut facts = vec![(
-            "approval.resolved",
-            json!({
-                "createdAt": created_at,
-                "decisionId": decision_id,
-                "approved": approved,
-                "frozenContextHash": frozen.context_hash,
-            }),
-        )];
-        facts.extend(ordered_run_activity_facts(
-            &result,
-            context,
-            &frozen.context_hash,
-            &created_at,
-        ));
+        let mut facts = Vec::new();
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
@@ -975,6 +1102,7 @@ impl DesktopRuntime {
                     Some(result.output_units),
                 );
                 if let Some(object) = fact.as_object_mut() {
+                    object.insert("commandId".into(), Value::String(input.command_id.clone()));
                     object.insert(
                         "providerId".into(),
                         Value::String(context.provider_id.clone()),
@@ -1015,6 +1143,17 @@ impl DesktopRuntime {
                         result.model
                     )),
                 );
+                facts.push((
+                    "span.completed",
+                    run_terminal_fact(
+                        &result.request_id,
+                        &result.run_id,
+                        "completed",
+                        "Run completed.",
+                        Some(Value::String(assistant.to_owned())),
+                        &created_at,
+                    ),
+                ));
                 facts.push(("message.assistant", fact));
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
@@ -1029,9 +1168,14 @@ impl DesktopRuntime {
                         .to_owned()
                 })?;
                 facts.push((
+                    "span.updated",
+                    run_waiting_fact(&result.request_id, &result.run_id, &created_at),
+                ));
+                facts.push((
                     "approval.requested",
                     json!({
                         "createdAt": created_at,
+                        "commandId": input.command_id,
                         "decisionId": approval.decision_id,
                         "nodeId": approval.node_id,
                         "title": approval.title,
@@ -1058,9 +1202,21 @@ impl DesktopRuntime {
                     ),
                 );
                 facts.push((
+                    "span.failed",
+                    run_terminal_fact(
+                        &result.request_id,
+                        &result.run_id,
+                        "failed",
+                        &error,
+                        None,
+                        &created_at,
+                    ),
+                ));
+                facts.push((
                     "execution.failed",
                     json!({
                         "createdAt": created_at,
+                        "commandId": input.command_id,
                         "status": execution_status_name(status),
                         "body": error,
                         "providerId": context.provider_id,
@@ -1079,12 +1235,8 @@ impl DesktopRuntime {
                 ));
             }
         }
-        self.history.append(
-            &input.command_id,
-            &fingerprint,
-            input.expected_version,
-            facts,
-        )
+        self.history
+            .append(&input.command_id, &fingerprint, self.history.head()?, facts)
     }
 
     fn prepare_workflow_context(
@@ -3097,6 +3249,39 @@ fn resolved_model(
     })
 }
 
+fn run_terminal_fact(
+    request_id: &StableId,
+    run_id: &StableId,
+    status: &str,
+    body: &str,
+    output: Option<Value>,
+    created_at: &str,
+) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "requestId": request_id,
+        "runId": run_id,
+        "spanId": format!("span.run.{run_id}.{request_id}"),
+        "status": status,
+        "body": body,
+        "createdAt": created_at,
+        "hasOutput": output.is_some(),
+        "output": output,
+    })
+}
+
+fn run_waiting_fact(request_id: &StableId, run_id: &StableId, created_at: &str) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "requestId": request_id,
+        "runId": run_id,
+        "spanId": format!("span.run.{run_id}.{request_id}"),
+        "status": "waiting",
+        "body": "Run is waiting for approval.",
+        "createdAt": created_at,
+    })
+}
+
 const fn execution_status_name(status: WorkflowExecutionStatusV1) -> &'static str {
     match status {
         WorkflowExecutionStatusV1::Succeeded => "succeeded",
@@ -3294,236 +3479,8 @@ fn optional_project_id(payload: &Value) -> Result<Option<String>, String> {
     }
 }
 
-/// Projects the semantic reduction of the live Run stream into canonical Chat
-/// facts. Fresh executions take this path exclusively; the legacy projections
-/// remain only for replaying outcomes written before Run events existed.
-fn ordered_run_activity_facts(
-    result: &WorkflowExecutionResultV1,
-    context: &FrozenChatExecutionContextV1,
-    frozen_context_hash: &str,
-    created_at: &str,
-) -> Vec<(&'static str, Value)> {
-    if result.run_activity.is_empty() {
-        let mut legacy = model_reasoning_fact(result, created_at);
-        legacy.extend(tool_activity_facts(
-            &result.tool_activity,
-            context,
-            frozen_context_hash,
-            created_at,
-        ));
-        legacy.extend(node_activity_facts(&result.node_activity, created_at));
-        return legacy;
-    }
-
-    result
-        .run_activity
-        .iter()
-        // Streamed response chunks are atomically replaced by the canonical
-        // assistant message at settlement, avoiding duplicate response cards.
-        .filter(|activity| activity.kind != "response")
-        .map(|activity| {
-            let kind = run_activity_fact_kind(activity);
-            let frozen_tool_hash = activity.capability_id.as_deref().and_then(|capability_id| {
-                context
-                    .tools
-                    .iter()
-                    .find(|tool| tool.tool_id == capability_id)
-                    .map(|tool| tool.tool_hash.as_str())
-            });
-            let payload = json!({
-                "body": run_activity_body(activity),
-                "createdAt": created_at,
-                "requestId": result.request_id,
-                "runId": result.run_id,
-                "activityId": activity.activity_id,
-                "sourceFirstSequence": activity.first_sequence,
-                "sourceLastSequence": activity.last_sequence,
-                "activityKind": activity.kind,
-                "title": activity.title,
-                "status": activity.status,
-                "hasInput": activity.input.is_some(),
-                "input": activity.input,
-                "hasOutput": activity.output.is_some(),
-                "output": activity.output,
-                "turn": activity.turn,
-                "nodeId": activity.node_id,
-                "nodeType": activity.node_type,
-                "label": activity.title,
-                "callId": activity.call_id,
-                "capabilityId": activity.capability_id,
-                "reasoningCategory": activity.reasoning_category,
-                "model": result.model,
-                "frozenToolHash": frozen_tool_hash,
-                "frozenContextHash": frozen_context_hash,
-                "workspaceIdentityHash": context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
-            });
-            (kind, payload)
-        })
-        .collect()
-}
-
-fn run_activity_fact_kind(activity: &RunActivitySnapshotV1) -> &'static str {
-    match activity.kind.as_str() {
-        "reasoning" => "model.reasoning",
-        "progress" => "model.progress",
-        "model_turn" => "model.turn",
-        "tool" if activity.capability_id.as_deref() == Some(SUBAGENT_CAPABILITY_ID) => {
-            if activity.status == "completed" {
-                "subagent.completed"
-            } else {
-                "subagent.failed"
-            }
-        }
-        "tool"
-            if activity
-                .capability_id
-                .as_deref()
-                .is_some_and(|id| id.starts_with(MCP_CAPABILITY_PREFIX)) =>
-        {
-            if activity.status == "completed" {
-                "mcp.completed"
-            } else {
-                "mcp.failed"
-            }
-        }
-        "tool" => match activity.status.as_str() {
-            "completed" => "tool.completed",
-            "awaiting_approval" | "requested" | "running" => "tool.waiting",
-            _ => "tool.failed",
-        },
-        "step" => match activity.status.as_str() {
-            "completed" => "node.completed",
-            "waiting" => "node.waiting",
-            "skipped" => "node.skipped",
-            _ => "node.failed",
-        },
-        _ => "run.activity",
-    }
-}
-
-fn run_activity_body(activity: &RunActivitySnapshotV1) -> String {
-    if !activity.body.is_empty() {
-        return activity.body.clone();
-    }
-    activity
-        .output
-        .as_ref()
-        .and_then(|output| serde_json::to_string_pretty(output).ok())
-        .unwrap_or_else(|| activity.status.clone())
-}
-
-/// Provider-supplied reasoning is a durable Chat fact, not a temporary busy
-/// placeholder. This lets settlement replace the live projection atomically
-/// without erasing the thinking the user already watched arrive.
-fn model_reasoning_fact(
-    result: &WorkflowExecutionResultV1,
-    created_at: &str,
-) -> Vec<(&'static str, Value)> {
-    result
-        .reasoning
-        .as_ref()
-        .map(|reasoning| {
-            vec![(
-                "model.reasoning",
-                json!({
-                    "body": reasoning.body,
-                    "createdAt": created_at,
-                    "requestId": result.request_id,
-                    "runId": result.run_id,
-                    "reasoningCategory": reasoning.category,
-                    "model": result.model,
-                }),
-            )]
-        })
-        .unwrap_or_default()
-}
-
-fn tool_activity_facts(
-    activities: &[WorkflowToolActivityV1],
-    context: &FrozenChatExecutionContextV1,
-    frozen_context_hash: &str,
-    created_at: &str,
-) -> Vec<(&'static str, Value)> {
-    let mut facts = Vec::new();
-    for activity in activities {
-        let frozen_tool_hash = context
-            .tools
-            .iter()
-            .find(|tool| tool.tool_id == activity.capability_id)
-            .map(|tool| tool.tool_hash.as_str());
-        let payload = json!({
-            "body": activity.summary,
-            "createdAt": created_at,
-            "callId": activity.call_id,
-            "invocationId": activity.invocation_id,
-            "capabilityId": activity.capability_id,
-            "path": activity.path,
-            "status": activity.status,
-            "outcomeHash": activity.outcome_hash,
-            "replayed": activity.replayed,
-            "frozenToolHash": frozen_tool_hash,
-            "workspaceIdentityHash": context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
-            "frozenContextHash": frozen_context_hash,
-        });
-        if activity.capability_id == "tool.subagent" {
-            // Subagent runs render as a collapsible timeline card with an
-            // explicit start and terminal event pair.
-            facts.push(("subagent.started", payload.clone()));
-            facts.push((
-                if activity.status == "completed" {
-                    "subagent.completed"
-                } else {
-                    "subagent.failed"
-                },
-                payload,
-            ));
-        } else {
-            facts.push((
-                if activity.status == "completed" {
-                    "tool.completed"
-                } else {
-                    "tool.failed"
-                },
-                payload,
-            ));
-        }
-    }
-    facts
-}
-
-/// Committed per-node graph-pass lifecycle facts. The editor and timeline
-/// project node status from these events; skipped nodes stay explicit.
-fn node_activity_facts(
-    activities: &[GraphNodeActivityV1],
-    created_at: &str,
-) -> Vec<(&'static str, Value)> {
-    activities
-        .iter()
-        .filter(|activity| activity.status != "started")
-        .map(|activity| {
-            (
-                match activity.status.as_str() {
-                    "completed" => "node.completed",
-                    "failed" => "node.failed",
-                    "waiting" => "node.waiting",
-                    "skipped" => "node.skipped",
-                    _ => "node.completed",
-                },
-                json!({
-                    "body": activity.summary,
-                    "createdAt": created_at,
-                    "nodeId": activity.node_id,
-                    "nodeType": activity.node_type,
-                    "label": activity.label,
-                    "status": activity.status,
-                }),
-            )
-        })
-        .collect()
-}
-
 /// Run-local task-list fact: when the pass settled a completed todo call,
-/// the newest durable snapshot becomes a timeline event for the editor.
+/// the newest durable snapshot becomes a canonical semantic event for the UI reducer.
 fn todo_state_fact(
     pipeline: &dyn WorkflowPipelinePort,
     result: &WorkflowExecutionResultV1,
@@ -3768,7 +3725,6 @@ mod tests {
                 output_units: completion.output_units,
                 model_turns: 1,
                 tool_calls: 0,
-                run_activity: Vec::new(),
                 tool_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
@@ -3840,7 +3796,6 @@ mod tests {
                 output_units: completion.output_units,
                 model_turns: 1,
                 tool_calls: 0,
-                run_activity: Vec::new(),
                 tool_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
@@ -3854,111 +3809,6 @@ mod tests {
                 return Err("simulated crash after durable provider settlement".into());
             }
             Ok(result)
-        }
-    }
-
-    #[derive(Clone, Copy)]
-    enum ActivityPipelineOutcomeV1 {
-        Succeeded,
-        FailedAfterTool,
-    }
-
-    struct ActivityWorkflowPipelineV1 {
-        outcome: ActivityPipelineOutcomeV1,
-    }
-
-    impl WorkflowPipelinePort for ActivityWorkflowPipelineV1 {
-        fn execute(
-            &self,
-            request: WorkflowExecutionRequestV1,
-        ) -> Result<WorkflowExecutionResultV1, String> {
-            let succeeded = matches!(self.outcome, ActivityPipelineOutcomeV1::Succeeded);
-            Ok(WorkflowExecutionResultV1 {
-                request_id: request.request_id,
-                chat_id: request.chat_id,
-                run_id: request.run_id,
-                snapshot_id: fixture_id("snapshot.activity-fixture")?,
-                snapshot_hash: format!("sha256:{}", "3".repeat(64)),
-                authority_manifest_id: fixture_id("manifest.activity-fixture")?,
-                worker_invocation_id: fixture_id("invocation.worker.activity-fixture")?,
-                broker_invocation_id: fixture_id("invocation.broker.activity-fixture")?,
-                outcome_hash: format!("sha256:{}", "4".repeat(64)),
-                status: if succeeded {
-                    WorkflowExecutionStatusV1::Succeeded
-                } else {
-                    WorkflowExecutionStatusV1::OutcomeUncertain
-                },
-                assistant_text: succeeded.then(|| "activity fixture answer".into()),
-                reasoning: Some(super::super::pipeline::WorkflowReasoningActivityV1 {
-                    body: "I should inspect the requested project evidence.".into(),
-                    category: "source_provided".into(),
-                }),
-                error: (!succeeded).then(|| "provider failed after settled tool use".into()),
-                model: request.provider.model,
-                input_units: 5,
-                output_units: 2,
-                model_turns: 2,
-                tool_calls: 1,
-                run_activity: vec![
-                    RunActivitySnapshotV1 {
-                        first_sequence: 1,
-                        last_sequence: 2,
-                        activity_id: "model.reasoning.activity-fixture.turn.1".into(),
-                        kind: "reasoning".into(),
-                        title: "Thinking".into(),
-                        body: "I should inspect the requested project evidence.".into(),
-                        status: "completed".into(),
-                        input: None,
-                        output: Some(Value::String(
-                            "I should inspect the requested project evidence.".into(),
-                        )),
-                        turn: Some(1),
-                        node_id: None,
-                        node_type: None,
-                        call_id: None,
-                        reasoning_category: Some("source_provided".into()),
-                        capability_id: None,
-                    },
-                    RunActivitySnapshotV1 {
-                        first_sequence: 3,
-                        last_sequence: 4,
-                        activity_id: "tool.call.activity-fixture".into(),
-                        kind: "tool".into(),
-                        title: "tool.files.read".into(),
-                        body: "Read 7 bytes from notes.txt.".into(),
-                        status: "completed".into(),
-                        input: Some(json!({
-                            "callId": "call.activity-fixture",
-                            "capabilityId": "tool.files.read",
-                            "arguments": {"path": "notes.txt"},
-                        })),
-                        output: Some(json!({
-                            "callId": "call.activity-fixture",
-                            "content": {"content": "fixture"},
-                            "isError": false,
-                        })),
-                        turn: Some(1),
-                        node_id: None,
-                        node_type: None,
-                        call_id: Some("call.activity-fixture".into()),
-                        reasoning_category: None,
-                        capability_id: Some("tool.files.read".into()),
-                    },
-                ],
-                tool_activity: vec![WorkflowToolActivityV1 {
-                    call_id: "call.activity-fixture".into(),
-                    invocation_id: fixture_id("invocation.tool.activity-fixture")?,
-                    capability_id: "tool.files.read".into(),
-                    path: "notes.txt".into(),
-                    status: "completed".into(),
-                    summary: "Read 7 bytes from notes.txt.".into(),
-                    outcome_hash: format!("sha256:{}", "5".repeat(64)),
-                    replayed: false,
-                }],
-                node_activity: Vec::new(),
-                approval: None,
-                replayed: false,
-            })
         }
     }
 
@@ -4291,7 +4141,7 @@ mod tests {
             })
             .expect("Standard Agent start must pass durable command staging");
 
-        assert_eq!(receipt.current_version, 3);
+        assert_eq!(receipt.current_version, 6);
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
         let requests = provider.execution_requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
@@ -4345,12 +4195,34 @@ mod tests {
         let command = send("chat.first", 0, "hello");
         let first = runtime.command(command.clone()).unwrap();
         let replay = runtime.command(command).unwrap();
-        assert_eq!(first.current_version, 3);
-        assert_eq!(replay.current_version, 3);
+        assert_eq!(first.current_version, 6);
+        assert_eq!(replay.current_version, 6);
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         let snapshot = runtime.snapshot(0).unwrap();
         assert_eq!(snapshot.chat.phase, "waiting_input");
-        assert_eq!(snapshot.timeline.last().unwrap().body, "fixture: hello");
+        let run_start = snapshot
+            .events
+            .iter()
+            .find(|event| {
+                event.kind == "span.started"
+                    && event.payload.get("spanKind").and_then(Value::as_str) == Some("run")
+            })
+            .expect("run start");
+        assert!(
+            snapshot.events.iter().any(|event| {
+                event.kind == "span.completed" && event.span_id == run_start.span_id
+            })
+        );
+        assert_eq!(
+            snapshot
+                .events
+                .iter()
+                .rev()
+                .find(|event| event.kind == "message.assistant")
+                .and_then(|event| event.payload.get("body"))
+                .and_then(Value::as_str),
+            Some("fixture: hello")
+        );
     }
 
     #[test]
@@ -4522,7 +4394,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.tool.freeze-follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: None,
                 payload: json!({"input":"read it again"}),
@@ -4547,84 +4419,6 @@ mod tests {
             requests[0].workflow_snapshot["nodes"][1]["configuration"]["toolIds"],
             json!(["tool.files.read"])
         );
-    }
-
-    #[test]
-    fn tool_activity_is_projected_before_terminal_assistant_and_failure() {
-        for (outcome, terminal_kind, expected_phase) in [
-            (
-                ActivityPipelineOutcomeV1::Succeeded,
-                "message",
-                "waiting_input",
-            ),
-            (
-                ActivityPipelineOutcomeV1::FailedAfterTool,
-                "error",
-                "failed",
-            ),
-        ] {
-            let root = TempDir::new().unwrap();
-            let workspace = TempDir::new().unwrap();
-            let provider = Arc::new(FixtureProvider::new());
-            let mut runtime = runtime(&root, provider);
-            configure_project_read_workflow(&mut runtime, Some(workspace.path()), true);
-            runtime.pipeline = Arc::new(ActivityWorkflowPipelineV1 { outcome });
-            runtime
-                .command(project_tool_start(
-                    match outcome {
-                        ActivityPipelineOutcomeV1::Succeeded => "chat.tool.activity-success",
-                        ActivityPipelineOutcomeV1::FailedAfterTool => "chat.tool.activity-failure",
-                    },
-                    "use the file tool",
-                ))
-                .unwrap();
-            let snapshot = runtime.snapshot(0).unwrap();
-            assert_eq!(snapshot.chat.phase, expected_phase);
-            assert_eq!(snapshot.timeline.len(), 4);
-            assert_eq!(snapshot.timeline[0].kind, "message");
-            assert_eq!(snapshot.timeline[1].kind, "thinking");
-            assert_eq!(
-                snapshot.timeline[1].body,
-                "I should inspect the requested project evidence."
-            );
-            assert_eq!(
-                snapshot.timeline[1].reasoning_category.as_deref(),
-                Some("source_provided")
-            );
-            assert_eq!(
-                snapshot.timeline[1].metadata["requestId"],
-                match outcome {
-                    ActivityPipelineOutcomeV1::Succeeded => "chat.tool.activity-success",
-                    ActivityPipelineOutcomeV1::FailedAfterTool => "chat.tool.activity-failure",
-                }
-            );
-            assert_eq!(snapshot.timeline[2].kind, "tool");
-            assert_eq!(snapshot.timeline[2].status.as_deref(), Some("completed"));
-            assert_eq!(snapshot.timeline[3].kind, terminal_kind);
-            assert_eq!(
-                snapshot.timeline[2].metadata["capabilityId"],
-                "tool.files.read"
-            );
-            assert_eq!(
-                snapshot.timeline[2].metadata["input"]["arguments"]["path"],
-                "notes.txt"
-            );
-            assert_eq!(
-                snapshot.timeline[2].metadata["output"]["content"]["content"],
-                "fixture"
-            );
-            assert_eq!(snapshot.timeline[2].metadata["sourceFirstSequence"], 3);
-            assert!(
-                snapshot.timeline[2].metadata["frozenToolHash"]
-                    .as_str()
-                    .is_some_and(|hash| hash.starts_with("sha256:"))
-            );
-            assert!(
-                snapshot.timeline[2].metadata["workspaceIdentityHash"]
-                    .as_str()
-                    .is_some_and(|hash| hash.starts_with("sha256:"))
-            );
-        }
     }
 
     #[test]
@@ -4706,7 +4500,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.resume-settled-outcome".into(),
-                expected_version: 0,
+                expected_version: 4,
                 action: "resume".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4716,14 +4510,14 @@ mod tests {
         let recovered = reopened.snapshot(0).unwrap();
         assert_eq!(recovered.chat.phase, "waiting_input");
         assert!(!recovered.chat.recovery_pending);
-        assert_eq!(
-            recovered.timeline.last().unwrap().body,
-            "fixture: recover me"
-        );
-        assert_eq!(
-            recovered.timeline.last().unwrap().metadata["replayed"],
-            true
-        );
+        let assistant = recovered
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "message.assistant")
+            .expect("recovered assistant event");
+        assert_eq!(assistant.payload["body"], "fixture: recover me");
+        assert_eq!(assistant.payload["replayed"], true);
     }
 
     #[test]
@@ -4737,7 +4531,7 @@ mod tests {
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
-        let pending_command = send("chat.recovery-follow-up", 3, "second");
+        let pending_command = send("chat.recovery-follow-up", 6, "second");
         let command_hash = command_fingerprint(&pending_command).unwrap();
         let frozen = runtime.history.current_frozen_context().unwrap().unwrap();
         runtime
@@ -4760,7 +4554,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.recovery-unsafe-new".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "new_chat".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4773,7 +4567,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.resume-follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "resume".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4797,7 +4591,7 @@ mod tests {
         runtime
             .command(send("chat.abandon-start", 0, "first"))
             .unwrap();
-        let pending_command = send("chat.abandon-follow-up", 3, "possibly sent");
+        let pending_command = send("chat.abandon-follow-up", 6, "possibly sent");
         let frozen = runtime.history.current_frozen_context().unwrap().unwrap();
         runtime
             .history
@@ -4815,7 +4609,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.abandon-recovery".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "abandon_recovery".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4825,17 +4619,19 @@ mod tests {
         let failed = reopened.snapshot(0).unwrap();
         assert_eq!(failed.chat.phase, "failed");
         assert!(!failed.chat.recovery_pending);
-        assert_eq!(failed.timeline.last().unwrap().kind, "error");
-        assert_eq!(
-            failed.timeline.last().unwrap().metadata["recoveryAbandoned"],
-            true
-        );
+        let failure = failed
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "execution.failed")
+            .expect("recovery failure event");
+        assert_eq!(failure.payload["recoveryAbandoned"], true);
 
         reopened
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.after-abandon-new".into(),
-                expected_version: 5,
+                expected_version: 8,
                 action: "new_chat".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4861,7 +4657,7 @@ mod tests {
         let error = runtime
             .command(send(
                 "chat.context-bound-follow-up",
-                3,
+                6,
                 &oversized_follow_up,
             ))
             .unwrap_err();
@@ -4873,7 +4669,7 @@ mod tests {
         let mut reopened = self::runtime(&root, provider.clone());
         assert!(!reopened.snapshot(0).unwrap().chat.recovery_pending);
         reopened
-            .command(send("chat.context-bound-small", 3, "small follow-up"))
+            .command(send("chat.context-bound-small", 6, "small follow-up"))
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     }
@@ -4904,7 +4700,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.stale".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: Some("chat.stale-target".into()),
                 payload: json!({"input":"must not run"}),
@@ -4917,7 +4713,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.cancel".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "cancel".into(),
                 target_id: Some(selected_chat),
                 payload: json!({}),
@@ -4927,7 +4723,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.cancel-again".into(),
-                expected_version: 4,
+                expected_version: 7,
                 action: "cancel".into(),
                 target_id: None,
                 payload: json!({}),
@@ -4938,7 +4734,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.after-cancel".into(),
-                expected_version: 4,
+                expected_version: 7,
                 action: "enqueue".into(),
                 target_id: None,
                 payload: json!({"input":"must not run"}),
@@ -4962,8 +4758,17 @@ mod tests {
         let settings = reopened.settings_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.provider.model, "fixture-model");
-        assert_eq!(reopened.snapshot(0).unwrap().timeline.len(), 2);
-        reopened.command(send("chat.second", 3, "again")).unwrap();
+        assert_eq!(
+            reopened
+                .snapshot(0)
+                .unwrap()
+                .events
+                .iter()
+                .filter(|event| matches!(event.kind.as_str(), "message.user" | "message.assistant"))
+                .count(),
+            2
+        );
+        reopened.command(send("chat.second", 6, "again")).unwrap();
         let conversations = provider.conversations.lock().unwrap();
         let continued = conversations.last().unwrap();
         assert!(
@@ -6651,7 +6456,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.credential.follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: None,
                 payload: json!({"input":"again"}),
@@ -6683,7 +6488,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.credential.new".into(),
-                expected_version: 5,
+                expected_version: 11,
                 action: "new_chat".into(),
                 target_id: None,
                 payload: json!({}),
@@ -6702,7 +6507,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.credential.next-start".into(),
-                expected_version: 6,
+                expected_version: 12,
                 action: "start".into(),
                 target_id: None,
                 payload: json!({
@@ -6779,7 +6584,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.frozen.follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: Some(first_projection.chat_id.clone()),
                 payload: json!({"input":"again"}),
@@ -6804,7 +6609,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.future.new".into(),
-                expected_version: 5,
+                expected_version: 11,
                 action: "new_chat".into(),
                 target_id: Some(first_projection.chat_id),
                 payload: json!({}),
@@ -6815,7 +6620,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.future.start".into(),
-                expected_version: 6,
+                expected_version: 12,
                 action: "start".into(),
                 target_id: Some(next_chat_id),
                 payload: json!({
@@ -6919,7 +6724,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.project.follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: Some(first_projection.chat_id.clone()),
                 payload: json!({"input":"again"}),
@@ -6943,7 +6748,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.project.new".into(),
-                expected_version: 5,
+                expected_version: 11,
                 action: "new_chat".into(),
                 target_id: Some(first_projection.chat_id),
                 payload: json!({}),
@@ -6954,7 +6759,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.project.future-start".into(),
-                expected_version: 6,
+                expected_version: 12,
                 action: "start".into(),
                 target_id: Some(next_chat),
                 payload: json!({
@@ -7046,7 +6851,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.project.inject-follow-up".into(),
-                expected_version: 3,
+                expected_version: 6,
                 action: "enqueue".into(),
                 target_id: None,
                 payload: json!({"input":"again","projectId":"project.missing"}),

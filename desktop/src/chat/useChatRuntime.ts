@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatIntent, LiveChatActivity } from "./types";
-import { reduceRunEventProjection } from "./activityProjection";
+import type { ChatIntent } from "./types";
 import {
   createChatCorePort,
   type ChatCorePort,
@@ -11,7 +10,6 @@ import {
 export interface ChatRuntimeState {
   readonly snapshot: RuntimeSnapshot | null;
   readonly events: readonly RuntimeEvent[];
-  readonly liveActivities: readonly LiveChatActivity[];
   readonly stale: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -20,7 +18,11 @@ export interface ChatRuntimeState {
   resynchronize(): Promise<boolean>;
 }
 
-/** Maintains a contiguous, immutable projection over the native trusted-core port. */
+/**
+ * Maintains one contiguous projection of the canonical committed event stream.
+ * Live notifications and snapshots carry the same envelopes; neither source
+ * owns a second reducer or a replace-at-settlement representation.
+ */
 export function useChatRuntime(
   explicitPort?: ChatCorePort,
   pollIntervalMs = 2_000,
@@ -32,14 +34,11 @@ export function useChatRuntime(
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const snapshotRef = useRef<RuntimeSnapshot | null>(null);
   const eventsRef = useRef<RuntimeEvent[]>([]);
+  const bufferedRef = useRef<Map<number, RuntimeEvent>>(new Map());
+  const initializedRef = useRef(false);
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
-  const [liveActivities, setLiveActivities] = useState<
-    readonly LiveChatActivity[]
-  >([]);
-  const liveActivitiesRef = useRef<readonly LiveChatActivity[]>([]);
   const pendingRef = useRef<Set<string>>(new Set());
-  const pendingRunIdsRef = useRef<Map<string, string>>(new Map());
-  const activityReadyRef = useRef<Promise<void>>(Promise.resolve());
+  const eventReadyRef = useRef<Promise<void>>(Promise.resolve());
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,89 +46,133 @@ export function useChatRuntime(
     new Set(),
   );
 
-  const replaceSnapshot = useCallback((next: RuntimeSnapshot) => {
-    snapshotRef.current = next;
-    setSnapshot(next);
-    eventsRef.current = mergeEvents(eventsRef.current, next.events);
-    setEvents(eventsRef.current);
+  const failProjection = useCallback((failure: unknown): void => {
+    setStale(true);
+    setError(message(failure));
   }, []);
+
+  const publishEvents = useCallback((next: RuntimeEvent[]): void => {
+    eventsRef.current = next;
+    setEvents(next);
+  }, []);
+
+  const ingestLiveEvent = useCallback(
+    (event: RuntimeEvent): void => {
+      try {
+        if (!initializedRef.current) {
+          bufferEvent(bufferedRef.current, event);
+          return;
+        }
+        const existing = eventsRef.current[event.sequence - 1];
+        if (existing !== undefined) {
+          assertSameEnvelope(existing, event);
+          return;
+        }
+        bufferEvent(bufferedRef.current, event);
+        const next = [...eventsRef.current];
+        drainContiguous(next, bufferedRef.current);
+        if (next.length !== eventsRef.current.length) publishEvents(next);
+      } catch (failure) {
+        failProjection(failure);
+      }
+    },
+    [failProjection, publishEvents],
+  );
+
+  const replaceSnapshot = useCallback(
+    (next: RuntimeSnapshot, full: boolean): void => {
+      const merged = mergeCanonicalEvents(
+        full ? [] : eventsRef.current,
+        next.events,
+      );
+      if (full && merged.length < next.throughSequence) {
+        throw new Error(
+          `projection gap: snapshot ended at ${merged.length}, head is ${next.throughSequence}`,
+        );
+      }
+      const buffered = [...bufferedRef.current.values()].sort(
+        (left, right) => left.sequence - right.sequence,
+      );
+      for (const event of buffered) mergeOne(merged, event);
+      bufferedRef.current.clear();
+      assertContiguous(merged);
+      initializedRef.current = true;
+      snapshotRef.current = next;
+      setSnapshot(next);
+      publishEvents(merged);
+    },
+    [publishEvents],
+  );
 
   const resynchronize = useCallback(async (): Promise<boolean> => {
     try {
       const next = await port.snapshot(0);
       if (
         snapshotRef.current !== null &&
-        next.lastSequence < snapshotRef.current.lastSequence
+        next.throughSequence < snapshotRef.current.throughSequence
       ) {
         throw new Error(
           "trusted-core snapshot moved behind the last contiguous projection",
         );
       }
-      replaceSnapshot(next);
+      replaceSnapshot(next, true);
       setStale(false);
       setError(null);
       return true;
     } catch (failure) {
-      setStale(true);
-      setError(message(failure));
+      failProjection(failure);
       return false;
     } finally {
       setLoading(false);
     }
-  }, [port, replaceSnapshot]);
-
-  const projectLiveActivity = useCallback(
-    (activity: LiveChatActivity): void => {
-      try {
-        const next = reduceRunEventProjection(
-          liveActivitiesRef.current,
-          activity,
-        );
-        liveActivitiesRef.current = next;
-        setLiveActivities(next);
-      } catch (failure) {
-        setStale(true);
-        setError(message(failure));
-        void resynchronize();
-      }
-    },
-    [resynchronize],
-  );
+  }, [failProjection, port, replaceSnapshot]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    // A running command is driven exclusively by pushed committed events. The
+    // desktop runtime owns the command during execution, so polling here would
+    // only queue a blocked snapshot call behind it.
+    if (pendingRef.current.size > 0) return;
     const current = snapshotRef.current;
     if (current === null) {
       await resynchronize();
       return;
     }
     try {
-      const next = await port.snapshot(current.lastSequence);
-      if (next.lastSequence === current.lastSequence) {
-        if (!sameProjectedSnapshot(current, next)) replaceSnapshot(next);
-        return;
+      const next = await port.snapshot(current.throughSequence);
+      if (next.throughSequence < current.throughSequence) {
+        throw new Error("trusted-core snapshot moved backwards");
       }
-      let expected = current.lastSequence + 1;
-      for (const event of next.events) {
-        if (event.sequence !== expected) {
-          throw new Error(
-            `projection gap: expected sequence ${expected}, received ${event.sequence}`,
-          );
-        }
-        expected += 1;
-      }
-      if (expected - 1 !== next.lastSequence) {
-        throw new Error(
-          `projection gap: delta ended at ${expected - 1}, snapshot is ${next.lastSequence}`,
-        );
-      }
-      replaceSnapshot(next);
+      replaceSnapshot(next, false);
       setStale(false);
       setError(null);
     } catch (failure) {
-      setStale(true);
-      setError(message(failure));
+      failProjection(failure);
     }
-  }, [port, replaceSnapshot, resynchronize]);
+  }, [failProjection, port, replaceSnapshot, resynchronize]);
+
+  // Register the push listener before the initial snapshot. Events committed
+  // during that race are buffered by sequence and deduplicated against replay.
+  useEffect(() => {
+    if (port.subscribeEvents === undefined) return;
+    let dispose: (() => void) | undefined;
+    let current = true;
+    const ready = port
+      .subscribeEvents(ingestLiveEvent)
+      .then((unsubscribe) => {
+        if (current) dispose = unsubscribe;
+        else unsubscribe();
+      })
+      .catch((failure) => {
+        failProjection(failure);
+      });
+    eventReadyRef.current = ready;
+    return () => {
+      current = false;
+      dispose?.();
+      if (eventReadyRef.current === ready)
+        eventReadyRef.current = Promise.resolve();
+    };
+  }, [failProjection, ingestLiveEvent, port]);
 
   useEffect(() => {
     let current = true;
@@ -138,10 +181,6 @@ export function useChatRuntime(
       await refresh();
       if (current) timer = window.setTimeout(() => void poll(), pollIntervalMs);
     };
-    // Schedule the next read only after the preceding read settles. During a
-    // long Run the native snapshot may legitimately wait for runtime ownership;
-    // single-flight polling prevents a queue of stale reads from racing the
-    // canonical terminal projection afterward.
     void poll();
     return () => {
       current = false;
@@ -149,60 +188,15 @@ export function useChatRuntime(
     };
   }, [pollIntervalMs, refresh]);
 
-  useEffect(() => {
-    if (port.subscribeActivity === undefined) return;
-    let dispose: (() => void) | undefined;
-    let current = true;
-    const ready = port
-      .subscribeActivity((activity) => {
-        const belongsToPendingRun = [...pendingRunIdsRef.current.values()].some(
-          (runId) => runId === activity.runId,
-        );
-        if (
-          !pendingRef.current.has(activity.requestId) &&
-          !belongsToPendingRun
-        )
-          return;
-        projectLiveActivity(activity);
-      })
-      .then((unsubscribe) => {
-        if (current) dispose = unsubscribe;
-        else unsubscribe();
-      })
-      .catch(() => {
-        // Polling and the immediate local busy card remain available if native
-        // transient event delivery is unsupported.
-      });
-    activityReadyRef.current = ready;
-    return () => {
-      current = false;
-      dispose?.();
-      if (activityReadyRef.current === ready)
-        activityReadyRef.current = Promise.resolve();
-    };
-  }, [port, projectLiveActivity]);
-
   const dispatch = useCallback(
     async (intent: ChatIntent): Promise<boolean> => {
-      if (snapshot === null || stale) return false;
+      const current = snapshotRef.current;
+      if (current === null || stale) return false;
       pendingRef.current.add(intent.commandId);
-      pendingRunIdsRef.current.set(intent.commandId, snapshot.chat.runId);
-      setPending((current) => new Set([...current, intent.commandId]));
-      projectLiveActivity({
-          requestId: intent.commandId,
-          runId: snapshot.chat.runId,
-          activityId: `busy.${intent.commandId}`,
-          kind: "thinking",
-          title: "Thinking",
-          body: "Aworkit is working…",
-          status: "running",
-      });
+      setPending((value) => new Set([...value, intent.commandId]));
       try {
-        // A fast local provider can emit its first chunks synchronously with
-        // command admission. Do not start it until the native event listener is
-        // confirmed, otherwise those first states are permanently lost.
-        await activityReadyRef.current;
-        const receipt = await port.command(intent, snapshot.version);
+        await eventReadyRef.current;
+        const receipt = await port.command(intent, current.version);
         if (!receipt.accepted) {
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";
@@ -217,30 +211,20 @@ export function useChatRuntime(
         setError(failureMessage);
         return false;
       } finally {
-        const pendingRunId = pendingRunIdsRef.current.get(intent.commandId);
         pendingRef.current.delete(intent.commandId);
-        pendingRunIdsRef.current.delete(intent.commandId);
-        const nextLiveActivities = liveActivitiesRef.current.filter(
-          (activity) =>
-            activity.requestId !== intent.commandId &&
-            activity.runId !== pendingRunId,
-        );
-        liveActivitiesRef.current = nextLiveActivities;
-        setLiveActivities(nextLiveActivities);
-        setPending((current) => {
-          const next = new Set(current);
+        setPending((value) => {
+          const next = new Set(value);
           next.delete(intent.commandId);
           return next;
         });
       }
     },
-    [port, projectLiveActivity, resynchronize, snapshot, stale],
+    [port, resynchronize, stale],
   );
 
   return {
     snapshot,
     events,
-    liveActivities,
     stale,
     loading,
     error,
@@ -254,31 +238,65 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Merges ordered event deltas, deduplicating by sequence for idempotent refresh. */
-function mergeEvents(
+function bufferEvent(
+  buffered: Map<number, RuntimeEvent>,
+  event: RuntimeEvent,
+): void {
+  const existing = buffered.get(event.sequence);
+  if (existing !== undefined) assertSameEnvelope(existing, event);
+  else buffered.set(event.sequence, event);
+}
+
+function drainContiguous(
+  events: RuntimeEvent[],
+  buffered: Map<number, RuntimeEvent>,
+): void {
+  for (;;) {
+    const sequence = events.length + 1;
+    const event = buffered.get(sequence);
+    if (event === undefined) return;
+    buffered.delete(sequence);
+    events.push(event);
+  }
+}
+
+function mergeCanonicalEvents(
   current: readonly RuntimeEvent[],
   incoming: readonly RuntimeEvent[],
 ): RuntimeEvent[] {
-  if (incoming.length === 0) return current as RuntimeEvent[];
-  const bySequence = new Map<number, RuntimeEvent>();
-  for (const event of current) bySequence.set(event.sequence, event);
-  for (const event of incoming) bySequence.set(event.sequence, event);
-  return [...bySequence.values()].sort(
-    (left, right) => left.sequence - right.sequence,
-  );
+  const merged = [...current];
+  for (const event of incoming) mergeOne(merged, event);
+  merged.sort((left, right) => left.sequence - right.sequence);
+  assertContiguous(merged);
+  return merged;
 }
 
-/** Session recovery and other auxiliary projections can change durably before
- * the semantic history head advances, so lastSequence alone is not freshness. */
-function sameProjectedSnapshot(
-  current: RuntimeSnapshot,
-  next: RuntimeSnapshot,
-): boolean {
-  return (
-    current.version === next.version &&
-    JSON.stringify(current.chat) === JSON.stringify(next.chat) &&
-    JSON.stringify(current.projects) === JSON.stringify(next.projects) &&
-    JSON.stringify(current.timeline) === JSON.stringify(next.timeline) &&
-    JSON.stringify(current.evidence) === JSON.stringify(next.evidence)
-  );
+function mergeOne(base: RuntimeEvent[], event: RuntimeEvent): void {
+  const existing = base.find((candidate) => candidate.sequence === event.sequence);
+  if (existing !== undefined) {
+    assertSameEnvelope(existing, event);
+    return;
+  }
+  base.push(event);
+}
+
+function assertContiguous(events: readonly RuntimeEvent[]): void {
+  const sorted = [...events].sort((left, right) => left.sequence - right.sequence);
+  for (let index = 0; index < sorted.length; index += 1) {
+    const expected = index + 1;
+    if (sorted[index]?.sequence !== expected) {
+      throw new Error(
+        `projection gap: expected sequence ${expected}, received ${sorted[index]?.sequence ?? "end"}`,
+      );
+    }
+  }
+}
+
+function assertSameEnvelope(
+  left: RuntimeEvent,
+  right: RuntimeEvent,
+): void {
+  if (JSON.stringify(left) !== JSON.stringify(right)) {
+    throw new Error(`canonical event conflict at sequence ${left.sequence}`);
+  }
 }

@@ -1,21 +1,26 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use aworkit_capability_host::{McpServerManifestV1, ModelToolDefinitionV1};
-use aworkit_local_store::{CommitBatch, CommitOutcome, Deduplication, Event, LocalHistoryStore};
+use aworkit_local_store::{
+    CommitBatch, CommitOutcome, Deduplication, Event, LocalHistoryStore, OutboxEntry,
+};
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::dto::{
-    ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, TimelineItemDto, UiCommandInput,
-    UiCommandReceipt,
+    ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput, UiCommandReceipt,
 };
 use super::project_scope::{FrozenProjectScopeV1, validate_frozen_project_scope};
+use super::semantic_events::{
+    CommittedChatEventPort, CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft, envelope,
+};
 use super::settings_v2::{
     BuiltInToolConfigurationV2, ModelConfigurationV2, ModelTierConfigurationV2,
     ProviderConfigurationV2,
@@ -24,6 +29,7 @@ use super::settings_v2::{
 pub(crate) const CHAT_ID: &str = "chat.local";
 const BRANCH_ID: &str = "main";
 const SESSION_AGGREGATE_ID: &str = "chat.frozen-sessions";
+const COMMITTED_EVENT_DESTINATION: &str = "chat.semantic.committed.v1";
 // The local history adapter caps the entire serialized commit at 1 MiB. Leave
 // ample headroom for the event, deduplication, and backend envelope.
 const MAXIMUM_FROZEN_CONTEXT_BYTES: usize = 512 * 1024;
@@ -135,15 +141,25 @@ pub(crate) struct ConversationMessage {
     pub content: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct ChatHistory {
     store: LocalHistoryStore,
+    committed_events: Arc<dyn CommittedChatEventPort>,
 }
 
 impl ChatHistory {
-    pub(crate) fn open(data_root: &Path) -> Result<Self, String> {
+    pub(crate) fn open_with_committed_events(
+        data_root: &Path,
+        committed_events: Arc<dyn CommittedChatEventPort>,
+    ) -> Result<Self, String> {
         let store = LocalHistoryStore::open(data_root.join("history").join("aworkit.sqlite3"))
             .map_err(|error| format!("cannot open desktop Chat history: {error}"))?;
-        Ok(Self { store })
+        let history = Self {
+            store,
+            committed_events,
+        };
+        history.drain_committed_outbox()?;
+        Ok(history)
     }
 
     pub(crate) fn head(&self) -> Result<u64, String> {
@@ -205,19 +221,18 @@ impl ChatHistory {
         let result_head = expected_head
             .checked_add(event_count)
             .ok_or_else(|| "desktop history sequence is exhausted".to_owned())?;
-        let events = facts
+        let drafts = facts
             .into_iter()
-            .enumerate()
-            .map(|(offset, (kind, payload))| {
-                let sequence =
-                    expected_head + u64::try_from(offset).expect("bounded event batch") + 1;
-                Event {
-                    event_id: format!("event.chat.{sequence}"),
-                    kind: kind.to_owned(),
-                    payload: receipt_payload(payload, command_id, command_hash, result_head),
-                }
+            .map(|(kind, payload)| {
+                SemanticEventDraft::new(
+                    kind,
+                    receipt_payload(payload, command_id, command_hash, result_head),
+                )
             })
-            .collect();
+            .collect::<Vec<_>>();
+        validate_span_drafts(&self.events()?, &drafts)?;
+        let committed = committed_envelopes(expected_head, &drafts);
+        let events = local_events(expected_head, &drafts);
         let outcome = self
             .store
             .commit(&CommitBatch {
@@ -232,14 +247,16 @@ impl ChatHistory {
                     key: command_id.into(),
                     request_hash: command_hash.into(),
                 }),
-                outbox: Vec::new(),
+                outbox: delivery_outbox(&committed)?,
             })
             .map_err(|error| format!("cannot commit desktop Chat history: {error}"))?;
-        let durable_head = match outcome {
-            CommitOutcome::Committed(receipt) | CommitOutcome::Existing(receipt) => {
-                receipt.head_sequence
-            }
+        let (durable_head, committed) = match outcome {
+            CommitOutcome::Committed(receipt) => (receipt.head_sequence, true),
+            CommitOutcome::Existing(receipt) => (receipt.head_sequence, false),
         };
+        if committed {
+            self.drain_committed_outbox()?;
+        }
         Ok(UiCommandReceipt {
             command_id: command_id.to_owned(),
             accepted: true,
@@ -247,6 +264,135 @@ impl ChatHistory {
             reason: None,
             credential_mutation: None,
         })
+    }
+
+    /// Commits the user-visible beginning of an effect-bearing command before
+    /// provider execution starts. The separate deduplication identity makes a
+    /// crash/retry a no-op without pretending the command itself has settled.
+    pub(crate) fn begin_effect_command(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        facts: Vec<(&str, Value)>,
+    ) -> Result<u64, String> {
+        if facts.is_empty() {
+            return Ok(expected_head);
+        }
+        self.ensure_expected(expected_head)?;
+        let drafts = facts
+            .into_iter()
+            .map(|(kind, payload)| SemanticEventDraft::new(kind, payload))
+            .collect::<Vec<_>>();
+        validate_span_drafts(&self.events()?, &drafts)?;
+        let committed = committed_envelopes(expected_head, &drafts);
+        let outcome = self
+            .store
+            .commit(&CommitBatch {
+                chat_id: CHAT_ID.into(),
+                branch_id: BRANCH_ID.into(),
+                expected_head,
+                events: local_events(expected_head, &drafts),
+                attempt: None,
+                checkpoint: None,
+                deduplication: Some(Deduplication {
+                    key_type: "desktop.command.start".into(),
+                    key: command_id.into(),
+                    request_hash: command_hash.into(),
+                }),
+                outbox: delivery_outbox(&committed)?,
+            })
+            .map_err(|error| format!("cannot begin desktop Chat command: {error}"))?;
+        match outcome {
+            CommitOutcome::Committed(receipt) => {
+                self.drain_committed_outbox()?;
+                Ok(receipt.head_sequence)
+            }
+            CommitOutcome::Existing(receipt) => {
+                self.drain_committed_outbox()?;
+                Ok(receipt.head_sequence)
+            }
+        }
+    }
+
+    pub(crate) fn command_started(&self, command_id: &str) -> Result<bool, String> {
+        Ok(self.events()?.iter().any(|event| {
+            event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
+                && event.kind == "command.started"
+        }))
+    }
+
+    /// Produces child-first terminal facts for every span left open in the
+    /// current Chat. Cancellation and explicit uncertain abandonment use this
+    /// instead of leaving durable cards spinning forever.
+    pub(crate) fn open_span_terminal_facts(
+        &self,
+        status: &str,
+        body: &str,
+        created_at: &str,
+    ) -> Result<Vec<Value>, String> {
+        let events = current_chat_events(self.events()?);
+        let mut terminal = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind.as_str(),
+                    "span.completed" | "span.failed" | "span.cancelled"
+                )
+            })
+            .filter_map(|event| {
+                event
+                    .payload
+                    .get("spanId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<BTreeSet<_>>();
+        let mut facts = Vec::new();
+        for event in events
+            .into_iter()
+            .rev()
+            .filter(|event| event.kind == "span.started")
+        {
+            let Some(span_id) = event.payload.get("spanId").and_then(Value::as_str) else {
+                continue;
+            };
+            if terminal.insert(span_id.to_owned()) {
+                facts.push(json!({
+                    "schemaVersion": 1,
+                    "requestId": event.payload.get("requestId").cloned().unwrap_or(Value::Null),
+                    "runId": event.payload.get("runId").cloned().unwrap_or(Value::Null),
+                    "spanId": span_id,
+                    "status": status,
+                    "body": body,
+                    "createdAt": created_at,
+                    "hasOutput": false,
+                    "output": Value::Null,
+                }));
+            }
+        }
+        Ok(facts)
+    }
+
+    fn drain_committed_outbox(&self) -> Result<(), String> {
+        for pending in self
+            .store
+            .pending_outbox(512)
+            .map_err(|error| format!("cannot read committed Chat event outbox: {error}"))?
+        {
+            if pending.destination != COMMITTED_EVENT_DESTINATION {
+                continue;
+            }
+            let event: CoreEventEnvelope = serde_json::from_value(pending.payload)
+                .map_err(|error| format!("committed Chat event outbox is invalid: {error}"))?;
+            if self.committed_events.publish(event).is_err() {
+                break;
+            }
+            self.store
+                .mark_outbox_delivered(&pending.outbox_id)
+                .map_err(|error| format!("cannot acknowledge committed Chat event: {error}"))?;
+        }
+        Ok(())
     }
 
     pub(crate) fn conversation(&self) -> Result<Vec<ConversationMessage>, String> {
@@ -358,6 +504,7 @@ impl ChatHistory {
         &self,
         history_head: u64,
     ) -> Result<Option<PendingChatCommandV1>, String> {
+        let chat_events = self.events()?;
         for event in self.session_events()?.into_iter().rev() {
             if event.kind != "chat.effect-command-staged" {
                 continue;
@@ -368,7 +515,18 @@ impl ChatHistory {
             let record: PendingChatCommandV1 = serde_json::from_value(value)
                 .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
             validate_pending_command_record(&record)?;
-            if record.command.expected_version == history_head {
+            let settled = chat_events.iter().any(|event| {
+                matches!(
+                    event.kind.as_str(),
+                    "message.assistant" | "approval.requested" | "execution.failed"
+                ) && event
+                    .payload
+                    .get("settlesCommandId")
+                    .or_else(|| event.payload.get("commandId"))
+                    .and_then(Value::as_str)
+                    == Some(record.command.command_id.as_str())
+            });
+            if !settled {
                 return Ok(Some(record));
             }
         }
@@ -379,11 +537,24 @@ impl ChatHistory {
             .context
             .pending_start_command
             .clone()
-            .map(|command| PendingChatCommandV1 {
-                schema_version: 1,
-                frozen_context_hash: context.context_hash,
-                command_hash: context.context.start_command_hash,
-                command,
+            .and_then(|command| {
+                let settled = chat_events.iter().any(|event| {
+                    matches!(
+                        event.kind.as_str(),
+                        "message.assistant" | "approval.requested" | "execution.failed"
+                    ) && event
+                        .payload
+                        .get("settlesCommandId")
+                        .or_else(|| event.payload.get("commandId"))
+                        .and_then(Value::as_str)
+                        == Some(command.command_id.as_str())
+                });
+                (!settled).then(|| PendingChatCommandV1 {
+                    schema_version: 1,
+                    frozen_context_hash: context.context_hash,
+                    command_hash: context.context.start_command_hash,
+                    command,
+                })
             }))
     }
 
@@ -395,18 +566,6 @@ impl ChatHistory {
         record: PendingChatCommandV1,
     ) -> Result<PendingChatCommandV1, String> {
         validate_pending_command_record(&record)?;
-        if let Some(existing) =
-            self.pending_effect_command_at_head(record.command.expected_version)?
-        {
-            return if existing == record {
-                Ok(existing)
-            } else {
-                Err(
-                    "another effect-bearing Chat command is already pending at this history fence"
-                        .into(),
-                )
-            };
-        }
         for event in self.session_events()? {
             if event.kind != "chat.effect-command-staged" {
                 continue;
@@ -523,7 +682,6 @@ impl ChatHistory {
             .map(|identity| self.frozen_context(&identity.chat_id))
             .transpose()?
             .flatten();
-        let timeline = timeline(&current);
         let evidence = evidence(&current);
         let has_exchange = current
             .iter()
@@ -547,10 +705,12 @@ impl ChatHistory {
                 })
             })
             .count();
-        let title = timeline
+        let title = current
             .iter()
-            .find(|item| item.title == "You")
-            .map(|item| compact_title(&item.body))
+            .find(|event| event.kind == "message.user")
+            .and_then(|event| event.payload.get("body"))
+            .and_then(Value::as_str)
+            .map(compact_title)
             .unwrap_or_else(|| "New Chat".into());
         let phase = if cancelled {
             "cancelled"
@@ -563,67 +723,75 @@ impl ChatHistory {
         } else {
             "draft"
         };
+        let chat = ChatProjectionDto {
+            chat_id: identity
+                .as_ref()
+                .map_or_else(|| CHAT_ID.into(), |identity| identity.chat_id.to_string()),
+            run_id: identity.as_ref().map_or_else(
+                || {
+                    if started {
+                        "run.legacy".into()
+                    } else {
+                        "run.draft".into()
+                    }
+                },
+                |identity| identity.run_id.to_string(),
+            ),
+            title,
+            scope: frozen
+                .as_ref()
+                .and_then(|record| record.context.project.as_ref())
+                .map_or_else(
+                    || "No project".into(),
+                    |project| project.project_name.clone(),
+                ),
+            workflow_name: frozen
+                .as_ref()
+                .map(|record| record.context.workflow_name.clone())
+                .or_else(|| started.then(|| "Legacy workflow".into())),
+            branch: frozen
+                .as_ref()
+                .and_then(|record| record.context.project.as_ref())
+                .and_then(|project| project.branch.clone()),
+            project_id: frozen
+                .as_ref()
+                .and_then(|record| record.context.project.as_ref())
+                .map(|project| project.project_id.clone()),
+            phase: phase.into(),
+            locked_workflow: frozen.is_some() || started,
+            queued_inputs: Vec::new(),
+            expected_version: head,
+            disabled_reason: None,
+            recovery_pending: false,
+        };
+        let state_hash = canonical_hash(&json!({
+            "throughSequence": head,
+            "reducerVersion": "chat.semantic.reducer.v1",
+            "chat": &chat,
+            "evidence": &evidence,
+        }))?;
         let events = all_events
             .into_iter()
             .enumerate()
             .filter_map(|(offset, event)| {
                 let sequence = u64::try_from(offset).ok()?.checked_add(1)?;
                 (sequence > after_sequence).then(|| {
-                    json!({
-                        "sequence": sequence,
-                        "eventId": event.event_id,
-                        "kind": event.kind,
-                        "payload": event.payload,
-                    })
+                    envelope(
+                        CHAT_ID,
+                        BRANCH_ID,
+                        sequence,
+                        SemanticEventDraft::new(event.kind, event.payload),
+                    )
                 })
             })
             .collect();
         Ok(RuntimeSnapshot {
             version: head,
-            last_sequence: head,
-            chat: ChatProjectionDto {
-                chat_id: identity
-                    .as_ref()
-                    .map_or_else(|| CHAT_ID.into(), |identity| identity.chat_id.to_string()),
-                run_id: identity.as_ref().map_or_else(
-                    || {
-                        if started {
-                            "run.legacy".into()
-                        } else {
-                            "run.draft".into()
-                        }
-                    },
-                    |identity| identity.run_id.to_string(),
-                ),
-                title,
-                scope: frozen
-                    .as_ref()
-                    .and_then(|record| record.context.project.as_ref())
-                    .map_or_else(
-                        || "No project".into(),
-                        |project| project.project_name.clone(),
-                    ),
-                workflow_name: frozen
-                    .as_ref()
-                    .map(|record| record.context.workflow_name.clone())
-                    .or_else(|| started.then(|| "Legacy workflow".into())),
-                branch: frozen
-                    .as_ref()
-                    .and_then(|record| record.context.project.as_ref())
-                    .and_then(|project| project.branch.clone()),
-                project_id: frozen
-                    .as_ref()
-                    .and_then(|record| record.context.project.as_ref())
-                    .map(|project| project.project_id.clone()),
-                phase: phase.into(),
-                locked_workflow: frozen.is_some() || started,
-                queued_inputs: Vec::new(),
-                expected_version: head,
-                disabled_reason: None,
-                recovery_pending: false,
-            },
+            through_sequence: head,
+            reducer_version: "chat.semantic.reducer.v1".into(),
+            state_hash,
+            chat,
             projects: Vec::new(),
-            timeline,
             evidence,
             events,
         })
@@ -640,6 +808,178 @@ impl ChatHistory {
             .events(SESSION_AGGREGATE_ID, BRANCH_ID)
             .map_err(|error| format!("cannot read frozen Chat contexts: {error}"))
     }
+}
+
+impl SemanticEventCommitter for ChatHistory {
+    fn commit(&self, drafts: Vec<SemanticEventDraft>) -> Result<Vec<CoreEventEnvelope>, String> {
+        if drafts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let expected_head = self.head()?;
+        validate_span_drafts(&self.events()?, &drafts)?;
+        let committed = committed_envelopes(expected_head, &drafts);
+        let outcome = self
+            .store
+            .commit(&CommitBatch {
+                chat_id: CHAT_ID.into(),
+                branch_id: BRANCH_ID.into(),
+                expected_head,
+                events: local_events(expected_head, &drafts),
+                attempt: None,
+                checkpoint: None,
+                deduplication: None,
+                outbox: delivery_outbox(&committed)?,
+            })
+            .map_err(|error| format!("cannot commit semantic Chat events: {error}"))?;
+        if matches!(outcome, CommitOutcome::Existing(_)) {
+            return Err("semantic event commit unexpectedly resolved as an existing batch".into());
+        }
+        self.drain_committed_outbox()?;
+        Ok(committed)
+    }
+
+    fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
+        Ok(self
+            .events()?
+            .into_iter()
+            .enumerate()
+            .map(|(offset, event)| {
+                envelope(
+                    CHAT_ID,
+                    BRANCH_ID,
+                    u64::try_from(offset)
+                        .expect("bounded history offset")
+                        .saturating_add(1),
+                    SemanticEventDraft::new(event.kind, event.payload),
+                )
+            })
+            .collect())
+    }
+}
+
+#[derive(Default)]
+struct SpanLedgerState {
+    started: BTreeSet<String>,
+    terminal: BTreeSet<String>,
+    parents: BTreeMap<String, String>,
+}
+
+fn validate_span_drafts(history: &[Event], drafts: &[SemanticEventDraft]) -> Result<(), String> {
+    let mut state = SpanLedgerState::default();
+    for event in history {
+        observe_existing_span(&mut state, &event.kind, &event.payload);
+    }
+    for draft in drafts {
+        let span_id = draft.payload.get("spanId").and_then(Value::as_str);
+        match draft.kind.as_str() {
+            "span.started" => {
+                let span_id = span_id.ok_or_else(|| "span.started requires spanId".to_owned())?;
+                if !state.started.insert(span_id.to_owned()) {
+                    return Err(format!("span '{span_id}' started more than once"));
+                }
+                if let Some(parent) = draft.payload.get("parentSpanId").and_then(Value::as_str) {
+                    if !state.started.contains(parent) || state.terminal.contains(parent) {
+                        return Err(format!(
+                            "span '{span_id}' has missing or terminal parent '{parent}'"
+                        ));
+                    }
+                    state.parents.insert(span_id.to_owned(), parent.to_owned());
+                }
+            }
+            "span.completed" | "span.failed" | "span.cancelled" => {
+                let span_id = span_id.ok_or_else(|| format!("{} requires spanId", draft.kind))?;
+                if !state.started.contains(span_id) {
+                    return Err(format!("span '{span_id}' terminated before it started"));
+                }
+                if state.terminal.contains(span_id) {
+                    return Err(format!("span '{span_id}' terminated more than once"));
+                }
+                if let Some(open_child) = state.parents.iter().find_map(|(child, parent)| {
+                    (parent == span_id && !state.terminal.contains(child)).then_some(child)
+                }) {
+                    return Err(format!(
+                        "span '{span_id}' cannot terminate while child '{open_child}' is open"
+                    ));
+                }
+                state.terminal.insert(span_id.to_owned());
+            }
+            "span.updated" | "span.content_delta" | "span.usage" | "tool.requested" => {
+                let span_id = span_id.ok_or_else(|| format!("{} requires spanId", draft.kind))?;
+                if !state.started.contains(span_id) || state.terminal.contains(span_id) {
+                    return Err(format!(
+                        "{} targets missing or terminal span '{span_id}'",
+                        draft.kind
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn observe_existing_span(state: &mut SpanLedgerState, kind: &str, payload: &Value) {
+    let Some(span_id) = payload.get("spanId").and_then(Value::as_str) else {
+        return;
+    };
+    if kind == "span.started" {
+        state.started.insert(span_id.to_owned());
+        if let Some(parent) = payload.get("parentSpanId").and_then(Value::as_str) {
+            state.parents.insert(span_id.to_owned(), parent.to_owned());
+        }
+    } else if matches!(kind, "span.completed" | "span.failed" | "span.cancelled") {
+        state.terminal.insert(span_id.to_owned());
+    }
+}
+
+fn committed_envelopes(
+    expected_head: u64,
+    drafts: &[SemanticEventDraft],
+) -> Vec<CoreEventEnvelope> {
+    drafts
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(offset, draft)| {
+            let sequence = expected_head
+                .checked_add(u64::try_from(offset).expect("bounded semantic batch"))
+                .and_then(|value| value.checked_add(1))
+                .expect("validated semantic sequence");
+            envelope(CHAT_ID, BRANCH_ID, sequence, draft)
+        })
+        .collect()
+}
+
+fn delivery_outbox(events: &[CoreEventEnvelope]) -> Result<Vec<OutboxEntry>, String> {
+    events
+        .iter()
+        .map(|event| {
+            Ok(OutboxEntry {
+                outbox_id: format!("outbox.chat.event.{}", event.sequence),
+                destination: COMMITTED_EVENT_DESTINATION.into(),
+                payload: serde_json::to_value(event)
+                    .map_err(|error| format!("cannot encode committed Chat event: {error}"))?,
+            })
+        })
+        .collect()
+}
+
+fn local_events(expected_head: u64, drafts: &[SemanticEventDraft]) -> Vec<Event> {
+    drafts
+        .iter()
+        .enumerate()
+        .map(|(offset, draft)| {
+            let sequence = expected_head
+                .checked_add(u64::try_from(offset).expect("bounded semantic batch"))
+                .and_then(|value| value.checked_add(1))
+                .expect("validated semantic sequence");
+            Event {
+                event_id: format!("event.chat.{sequence}"),
+                kind: draft.kind.clone(),
+                payload: draft.payload.clone(),
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn identity_for_seed(seed: &str) -> Result<ChatIdentityV1, String> {
@@ -939,7 +1279,28 @@ fn message_from_event(event: Event, role: &str) -> Option<ConversationMessage> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
     use super::*;
+    use tempfile::TempDir;
+
+    struct SwitchableEventPort {
+        fail: AtomicBool,
+        delivered: Mutex<Vec<CoreEventEnvelope>>,
+    }
+
+    impl CommittedChatEventPort for SwitchableEventPort {
+        fn publish(&self, event: CoreEventEnvelope) -> Result<(), String> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err("listener unavailable".into());
+            }
+            self.delivered.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
 
     #[test]
     fn pending_start_accepts_the_standard_agent_workflow() {
@@ -992,299 +1353,59 @@ mod tests {
     }
 
     #[test]
-    fn replay_updates_a_stable_activity_without_changing_its_first_position() {
-        let events = vec![
-            Event {
-                event_id: "event.chat.1".into(),
-                kind: "tool.waiting".into(),
-                payload: json!({
-                    "activityId": "tool.call.1",
-                    "title": "tool.files.list",
-                    "body": "Awaiting approval",
-                    "status": "awaiting_approval",
-                    "createdAt": "t1",
+    fn committed_delivery_retries_from_the_transactional_outbox() {
+        let root = TempDir::new().unwrap();
+        let port = Arc::new(SwitchableEventPort {
+            fail: AtomicBool::new(true),
+            delivered: Mutex::new(Vec::new()),
+        });
+        let history = ChatHistory::open_with_committed_events(root.path(), port.clone()).unwrap();
+        history
+            .commit(vec![SemanticEventDraft::new(
+                "span.started",
+                json!({
+                    "requestId":"request.outbox",
+                    "runId":"run.outbox",
+                    "spanId":"span.run.outbox",
+                    "parentSpanId":Value::Null,
+                    "spanKind":"run",
+                    "semanticRole":"run",
                 }),
-            },
-            Event {
-                event_id: "event.chat.2".into(),
-                kind: "approval.resolved".into(),
-                payload: json!({"body":"Approved","createdAt":"t2"}),
-            },
-            Event {
-                event_id: "event.chat.3".into(),
-                kind: "tool.completed".into(),
-                payload: json!({
-                    "activityId": "tool.call.1",
-                    "title": "tool.files.list",
-                    "body": "Listed 1 file.",
-                    "status": "completed",
-                    "createdAt": "t3",
-                    "input": {"arguments":{"path":"."}},
-                    "output": {"content":{"files":["a.txt"]}},
-                }),
-            },
-        ];
+            )])
+            .unwrap();
+        assert!(port.delivered.lock().unwrap().is_empty());
+        assert_eq!(history.store.pending_outbox(10).unwrap().len(), 1);
 
-        let replay = timeline(&events);
-        assert_eq!(replay.len(), 2);
-        assert_eq!(replay[0].id, "event.chat.1");
-        assert_eq!(replay[0].status.as_deref(), Some("completed"));
-        assert_eq!(replay[0].metadata["input"]["arguments"]["path"], ".");
-        assert_eq!(replay[1].kind, "approval");
+        port.fail.store(false, Ordering::SeqCst);
+        history.drain_committed_outbox().unwrap();
+        assert_eq!(port.delivered.lock().unwrap().len(), 1);
+        assert!(history.store.pending_outbox(10).unwrap().is_empty());
     }
 
     #[test]
-    fn replay_hides_successful_output_nodes_but_keeps_wait_transitions() {
-        let events = vec![
+    fn span_validation_rejects_parent_termination_with_an_open_child() {
+        let history = vec![
             Event {
                 event_id: "event.chat.1".into(),
-                kind: "node.completed".into(),
-                payload: json!({
-                    "activityId": "node.output.1",
-                    "nodeType": "output",
-                    "label": "Output",
-                    "body": "Response prepared.",
-                    "status": "completed",
-                    "createdAt": "t1",
-                    "input": "answer",
-                    "output": "answer",
-                }),
+                kind: "span.started".into(),
+                payload: json!({"spanId":"span.parent","parentSpanId":Value::Null}),
             },
             Event {
                 event_id: "event.chat.2".into(),
-                kind: "node.completed".into(),
-                payload: json!({
-                    "activityId": "node.wait.1",
-                    "nodeType": "wait",
-                    "label": "Wait for input",
-                    "body": "Ready for another message.",
-                    "status": "completed",
-                    "createdAt": "t2",
-                    "input": "answer",
-                    "output": "answer",
-                }),
+                kind: "span.started".into(),
+                payload: json!({"spanId":"span.child","parentSpanId":"span.parent"}),
             },
         ];
-
-        let replay = timeline(&events);
-        assert_eq!(replay.len(), 1);
-        assert_eq!(replay[0].title, "Wait for input");
-        assert_eq!(replay[0].body, "Ready for another message.");
+        let error = validate_span_drafts(
+            &history,
+            &[SemanticEventDraft::new(
+                "span.completed",
+                json!({"spanId":"span.parent"}),
+            )],
+        )
+        .unwrap_err();
+        assert!(error.contains("child 'span.child' is open"));
     }
-}
-
-fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
-    let projected = events
-        .iter()
-        .filter_map(|event| {
-            let (title, kind, status, action) = match event.kind.as_str() {
-                "message.user" => ("You", "message", "completed", None),
-                "message.assistant" => ("Aworkit", "message", "completed", None),
-                "model.reasoning" => ("Thinking", "thinking", "completed", None),
-                "model.progress" => ("Working", "thinking", "completed", None),
-                "model.turn" => (
-                    event
-                        .payload
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Model turn"),
-                    "model",
-                    event
-                        .payload
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("completed"),
-                    None,
-                ),
-                "tool.completed" | "tool.failed" | "tool.waiting" => (
-                    event
-                        .payload
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Tool invocation"),
-                    "tool",
-                    event
-                        .payload
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or(if event.kind == "tool.completed" {
-                            "completed"
-                        } else if event.kind == "tool.waiting" {
-                            "pending"
-                        } else {
-                            "failed"
-                        }),
-                    None,
-                ),
-                "approval.requested" => ("Approval required", "approval", "pending", Some("approve")),
-                "approval.resolved" => ("Approval resolved", "approval", "completed", None),
-                "node.completed" => {
-                    let node_type = event
-                        .payload
-                        .get("nodeType")
-                        .and_then(Value::as_str)
-                        .unwrap_or("node");
-                    // The assistant message is the user-facing projection of a
-                    // successful output node. Preserve the canonical fact
-                    // without rendering a duplicate timeline card.
-                    if node_type == "output" {
-                        return None;
-                    }
-                    (
-                        event
-                            .payload
-                            .get("label")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Workflow node"),
-                        match node_type {
-                            "agent" | "model_call" => "model",
-                            "tool" => "tool",
-                            "condition" => "route",
-                            "approval" => "approval",
-                            "input" | "output" | "wait" | "completion" | "parallel" => "route",
-                            _ => "unknown",
-                        },
-                        "completed",
-                        None,
-                    )
-                }
-                "node.failed" => (
-                    event
-                        .payload
-                        .get("label")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Workflow node"),
-                    "error",
-                    "failed",
-                    None,
-                ),
-                "node.skipped" => (
-                    event
-                        .payload
-                        .get("label")
-                        .or_else(|| event.payload.get("title"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("Workflow node"),
-                    "route",
-                    "skipped",
-                    None,
-                ),
-                "node.waiting" => (
-                    event
-                        .payload
-                        .get("label")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Workflow node"),
-                    "approval",
-                    "pending",
-                    None,
-                ),
-                "execution.failed" => {
-                    let title = if event.payload.get("status").and_then(Value::as_str)
-                        == Some("outcome_uncertain")
-                    {
-                        "Provider outcome uncertain"
-                    } else {
-                        "Execution failed"
-                    };
-                    (title, "error", "failed", None)
-                }
-                _ => return None,
-            };
-            let body = event.payload.get("body")?.as_str()?.to_owned();
-            let created_at = event
-                .payload
-                .get("createdAt")
-                .and_then(Value::as_str)
-                .unwrap_or("time-unavailable")
-                .to_owned();
-            let metadata = if matches!(
-                event.kind.as_str(),
-                "model.reasoning"
-                    | "model.progress"
-                    | "model.turn"
-                    | "tool.completed"
-                    | "tool.failed"
-                    | "tool.waiting"
-            ) {
-                event.payload.clone()
-            } else if event.kind == "message.assistant" {
-                json!({
-                    "model": event.payload.get("model").cloned().unwrap_or(Value::Null),
-                    "providerId": event.payload.get("providerId").cloned().unwrap_or(Value::Null),
-                    "modelId": event.payload.get("modelId").cloned().unwrap_or(Value::Null),
-                    "modelTierId": event.payload.get("modelTierId").cloned().unwrap_or(Value::Null),
-                    "frozenContextHash": event.payload.get("frozenContextHash").cloned().unwrap_or(Value::Null),
-                    "inputUnits": event.payload.get("inputUnits").cloned().unwrap_or(Value::Null),
-                    "outputUnits": event.payload.get("outputUnits").cloned().unwrap_or(Value::Null),
-                    "snapshotId": event.payload.get("snapshotId").cloned().unwrap_or(Value::Null),
-                    "snapshotHash": event.payload.get("snapshotHash").cloned().unwrap_or(Value::Null),
-                    "authorityManifestId": event.payload.get("authorityManifestId").cloned().unwrap_or(Value::Null),
-                    "invocationId": event.payload.get("invocationId").cloned().unwrap_or(Value::Null),
-                    "outcomeHash": event.payload.get("outcomeHash").cloned().unwrap_or(Value::Null),
-                    "replayed": event.payload.get("replayed").cloned().unwrap_or(Value::Bool(false)),
-                })
-            } else if matches!(
-                event.kind.as_str(),
-                "execution.failed"
-                    | "approval.requested"
-                    | "approval.resolved"
-                    | "node.completed"
-                    | "node.failed"
-                    | "node.waiting"
-                    | "node.skipped"
-            ) {
-                event.payload.clone()
-            } else {
-                json!({"commandId": event.payload.get("commandId").cloned().unwrap_or(Value::Null)})
-            };
-            Some(TimelineItemDto {
-                id: event.event_id.clone(),
-                kind: kind.into(),
-                title: title.into(),
-                body,
-                created_at,
-                status: Some(status.into()),
-                action: action.map(str::to_owned),
-                reasoning_category: event
-                    .payload
-                    .get("reasoningCategory")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                metadata,
-            })
-        })
-        .collect::<Vec<_>>();
-    reduce_timeline_activities(projected)
-}
-
-/// Canonical replay uses the same stable activity identity as the live
-/// reducer. Later lifecycle facts update the original card in place while the
-/// append-only source events remain available for detailed inspection.
-fn reduce_timeline_activities(projected: Vec<TimelineItemDto>) -> Vec<TimelineItemDto> {
-    let mut positions = BTreeMap::<String, usize>::new();
-    let mut reduced: Vec<TimelineItemDto> = Vec::new();
-    for mut item in projected {
-        let activity_id = item
-            .metadata
-            .get("activityId")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let Some(activity_id) = activity_id else {
-            reduced.push(item);
-            continue;
-        };
-        if let Some(index) = positions.get(&activity_id).copied() {
-            // Retain the first event id so its timeline position is stable,
-            // exactly like the firstSequence key in the live reducer.
-            item.id = reduced[index].id.clone();
-            reduced[index] = item;
-        } else {
-            positions.insert(activity_id, reduced.len());
-            reduced.push(item);
-        }
-    }
-    reduced
 }
 
 fn evidence(events: &[Event]) -> Vec<EvidenceRecordDto> {

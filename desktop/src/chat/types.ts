@@ -57,6 +57,11 @@ export type TimelineKind =
 
 export interface TimelineItem {
   readonly id: string;
+  /** First canonical sequence represented by this item. */
+  readonly sequence?: number;
+  readonly spanId?: string;
+  readonly parentSpanId?: string;
+  readonly depth?: number;
   readonly kind: TimelineKind;
   readonly title: string;
   readonly body?: string;
@@ -70,36 +75,17 @@ export interface TimelineItem {
   readonly output?: unknown;
 }
 
-/** One sequenced transition from the native per-Run event stream. */
-export interface LiveChatActivity {
-  readonly schemaVersion?: number;
-  readonly requestId: string;
-  readonly runId: string;
-  readonly sequence?: number;
-  readonly eventId?: string;
-  readonly activityId: string;
-  readonly kind:
-    | "thinking"
-    | "reasoning"
-    | "progress"
-    | "response"
-    | "model_turn"
-    | "step"
-    | "tool";
-  readonly title: string;
-  readonly body: string;
-  readonly status: string;
-  readonly dataMode?: "append" | "replace" | "retain";
-  readonly input?: unknown;
-  readonly output?: unknown;
-  readonly turn?: number;
-  readonly nodeId?: string;
-  readonly nodeType?: string;
-  readonly callId?: string;
-  readonly reasoningCategory?: "summary" | "progress" | "source_provided";
-  readonly capabilityId?: string;
-  /** First transition sequence, retained by the UI reducer. */
-  readonly firstSequence?: number;
+/** Exact durable envelope used for live delivery, reconnect, and replay. */
+export interface CoreEventEnvelope {
+  readonly schemaVersion: number;
+  readonly streamId: string;
+  readonly branchId: string;
+  readonly sequence: number;
+  readonly eventId: string;
+  readonly kind: string;
+  readonly spanId?: string;
+  readonly causationEventId?: string;
+  readonly payload: unknown;
 }
 
 export interface EvidenceRecord {
