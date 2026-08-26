@@ -84,6 +84,8 @@ pub struct TimelineItemDto {
     pub created_at: String,
     pub status: Option<String>,
     pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_category: Option<String>,
     pub metadata: Value,
 }
 

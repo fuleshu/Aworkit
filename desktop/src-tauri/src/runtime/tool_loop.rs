@@ -36,7 +36,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
-    live_activity::{LiveChatActivityPort, LiveChatActivityV1, bounded_json},
     PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
     mcp_tools::{
         MCP_ADAPTER_ID, MCP_ADAPTER_VERSION, MCP_CAPABILITY_PREFIX, MCP_SCOPE, McpToolRuntimeV1,
@@ -48,6 +47,7 @@ use super::{
     },
     pipeline::{CoreAuthenticationKey, LocalInvocationLedger, WorkflowPipelineError},
     project_scope::revalidate_git_branch,
+    run_events::RunEventStreamV1,
 };
 
 pub(crate) const FILE_TOOL_ADAPTER_VERSION: &str = "1.0.0";
@@ -873,11 +873,9 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
     generation: ProcessGeneration,
     core_key: Arc<CoreAuthenticationKey>,
-    live_activity: Arc<dyn LiveChatActivityPort>,
 }
 
 impl FileToolAuthorityRuntimeV1 {
-    #[cfg(test)]
     pub(crate) fn open(
         database: &Path,
         projects: ProjectCoordinator,
@@ -885,26 +883,6 @@ impl FileToolAuthorityRuntimeV1 {
         descriptors: BTreeMap<String, CapabilityDescriptor>,
         generation: ProcessGeneration,
         core_key: Arc<CoreAuthenticationKey>,
-    ) -> Result<Self, WorkflowPipelineError> {
-        Self::open_with_live_activity(
-            database,
-            projects,
-            host,
-            descriptors,
-            generation,
-            core_key,
-            super::live_activity::noop_live_activity(),
-        )
-    }
-
-    pub(crate) fn open_with_live_activity(
-        database: &Path,
-        projects: ProjectCoordinator,
-        host: Arc<CapabilityHost>,
-        descriptors: BTreeMap<String, CapabilityDescriptor>,
-        generation: ProcessGeneration,
-        core_key: Arc<CoreAuthenticationKey>,
-        live_activity: Arc<dyn LiveChatActivityPort>,
     ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             projects,
@@ -921,17 +899,32 @@ impl FileToolAuthorityRuntimeV1 {
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
             generation,
             core_key,
-            live_activity,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn bind(
         &self,
         context: FrozenFileToolAuthorityContextV1,
     ) -> BoundFileToolAuthorityV1 {
+        let stream = Arc::new(RunEventStreamV1::new(
+            context.request_id.to_string(),
+            context.run_id.to_string(),
+            super::run_events::noop_run_event_port(),
+        ));
+        self.bind_with_run_events(context, stream)
+    }
+
+    pub(crate) fn bind_with_run_events(
+        &self,
+        context: FrozenFileToolAuthorityContextV1,
+        run_events: Arc<RunEventStreamV1>,
+    ) -> BoundFileToolAuthorityV1 {
+        debug_assert!(run_events.belongs_to(context.request_id.as_str(), context.run_id.as_str()));
         BoundFileToolAuthorityV1 {
             runtime: self.clone(),
             context,
+            run_events,
         }
     }
 
@@ -970,6 +963,7 @@ pub(crate) struct FrozenFileToolAuthorityContextV1 {
 pub(crate) struct BoundFileToolAuthorityV1 {
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
+    run_events: Arc<RunEventStreamV1>,
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
@@ -1033,7 +1027,7 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.publish_tool(call, "running", &bounded_json(&call.arguments));
+        self.run_events.publish_tool_started(call);
         let result =
             self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false);
         self.publish_tool_outcome(call, &result);
@@ -1050,7 +1044,11 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true)
+        self.run_events.publish_tool_started(call);
+        let result =
+            self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true);
+        self.publish_tool_outcome(call, &result);
+        result
     }
 
     fn invoke_v1_with_delivery(
@@ -1094,14 +1092,9 @@ impl BoundFileToolAuthorityV1 {
         response: &ApprovalResponseV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.publish_tool(call, "running", &bounded_json(&call.arguments));
-        let result = self.resolve_invoke_v1_inner(
-            outer_invocation_id,
-            turn,
-            call,
-            response,
-            cancellation,
-        );
+        self.run_events.publish_tool_started(call);
+        let result =
+            self.resolve_invoke_v1_inner(outer_invocation_id, turn, call, response, cancellation);
         self.publish_tool_outcome(call, &result);
         result
     }
@@ -1172,31 +1165,32 @@ impl BoundFileToolAuthorityV1 {
         }
     }
 
-    fn publish_tool(&self, call: &ModelToolCallV1, status: &str, body: &str) {
-        self.runtime.live_activity.publish(LiveChatActivityV1 {
-            request_id: self.context.request_id.to_string(),
-            run_id: self.context.run_id.to_string(),
-            activity_id: format!("tool.{}", call.call_id),
-            kind: "tool".into(),
-            title: call.capability_id.clone(),
-            body: body.to_owned(),
-            status: status.into(),
-            reasoning_category: None,
-            capability_id: Some(call.capability_id.clone()),
-        });
-    }
-
     fn publish_tool_outcome(
         &self,
         call: &ModelToolCallV1,
         result: &Result<SettledModelToolCallV1, WorkflowPipelineError>,
     ) {
         match result {
-            Ok(settled) => self.publish_tool(call, &settled.activity.status, &settled.activity.summary),
+            Ok(settled) => self.run_events.publish_tool_terminal(
+                call,
+                &settled.activity.status,
+                settled.activity.summary.clone(),
+                serde_json::to_value(&settled.result).unwrap_or(Value::Null),
+            ),
             Err(WorkflowPipelineError::ToolApproval(challenge)) => {
-                self.publish_tool(call, "awaiting_approval", &challenge.summary);
+                self.run_events.publish_tool_terminal(
+                    call,
+                    "awaiting_approval",
+                    challenge.summary.clone(),
+                    serde_json::to_value(challenge).unwrap_or(Value::Null),
+                );
             }
-            Err(error) => self.publish_tool(call, "failed", &error.to_string()),
+            Err(error) => self.run_events.publish_tool_terminal(
+                call,
+                "failed",
+                error.to_string(),
+                json!({"error": error.to_string()}),
+            ),
         }
     }
 
@@ -1311,6 +1305,7 @@ impl BoundFileToolAuthorityV1 {
             let host = FileToolHostPortV1 {
                 runtime: self.runtime.clone(),
                 context: self.context.clone(),
+                run_events: self.run_events.clone(),
             };
             // Top-level deliveries drain every pending outbox; nested
             // deliveries (subagent children) target exactly this invocation
@@ -1474,6 +1469,7 @@ impl BoundFileToolAuthorityV1 {
 struct FileToolHostPortV1 {
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
+    run_events: Arc<RunEventStreamV1>,
 }
 
 impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
@@ -1542,6 +1538,7 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
             web: self.runtime.web.clone(),
             runtime: self.runtime.clone(),
             context: self.context.clone(),
+            run_events: self.run_events.clone(),
             record,
         };
         match self
@@ -1582,6 +1579,7 @@ struct FileToolDispatcherV1 {
     web: WebTools,
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
+    run_events: Arc<RunEventStreamV1>,
     record: ToolInvocationRecordV1,
 }
 
@@ -1675,6 +1673,7 @@ impl FileToolHostPortV1 {
             web: self.runtime.web.clone(),
             runtime: self.runtime.clone(),
             context: self.context.clone(),
+            run_events: self.run_events.clone(),
             record,
         };
         let cancellation = self
@@ -2200,6 +2199,7 @@ impl FileToolDispatcherV1 {
             inner: &BoundFileToolAuthorityV1 {
                 runtime: self.runtime.clone(),
                 context: self.context.clone(),
+                run_events: self.run_events.clone(),
             },
             deadline_epoch_millis: self.record.deadline_epoch_millis,
         };
@@ -2364,8 +2364,12 @@ fn stable_executable(candidate: PathBuf, label: &str) -> Result<PathBuf, String>
     if !candidate.is_absolute() {
         return Err(format!("{label} executable is not an absolute path"));
     }
-    std::fs::canonicalize(&candidate)
-        .map_err(|error| format!("cannot resolve {label} executable '{}': {error}", candidate.display()))
+    std::fs::canonicalize(&candidate).map_err(|error| {
+        format!(
+            "cannot resolve {label} executable '{}': {error}",
+            candidate.display()
+        )
+    })
 }
 
 fn content_hash_local(bytes: &[u8]) -> String {
@@ -3395,6 +3399,7 @@ mod tests {
         let _ = broker.deliver_dispatches(&FileToolHostPortV1 {
             runtime: runtime.clone(),
             context: authority_c.context.clone(),
+            run_events: authority_c.run_events.clone(),
         });
         assert!(
             runtime

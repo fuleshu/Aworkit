@@ -20,6 +20,7 @@ mod pipeline;
 mod project_scope;
 mod provider;
 mod provider_health;
+mod run_events;
 mod service;
 mod settings_diagnostics;
 mod settings_v2;
@@ -43,7 +44,9 @@ pub use live_activity::{LiveChatActivityPort, LiveChatActivityV1};
 pub use pipeline::{
     WorkflowExecutionPipeline, WorkflowExecutionRequestV1, WorkflowExecutionResultV1,
     WorkflowExecutionStatusV1, WorkflowMessageV1, WorkflowPipelineError, WorkflowProviderBindingV1,
+    WorkflowReasoningActivityV1,
 };
+pub use run_events::RunActivitySnapshotV1;
 pub use service::DesktopRuntime;
 pub use settings_diagnostics::{
     ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,

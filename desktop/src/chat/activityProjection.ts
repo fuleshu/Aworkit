@@ -53,28 +53,157 @@ export function mergeTimeline(
 export function deriveLiveActivityCards(
   activities: readonly LiveChatActivity[],
 ): TimelineItem[] {
-  return activities.map((activity) => ({
+  return activities
+    .filter(shouldRenderLiveActivity)
+    .map((activity) => ({
     id: `live.${activity.activityId}`,
     kind:
       activity.kind === "reasoning"
         ? "thinking"
+        : activity.kind === "progress"
+          ? "thinking"
         : activity.kind === "response"
           ? "model"
+          : activity.kind === "model_turn"
+            ? "model"
           : activity.kind === "step"
-            ? "plan"
+            ? "step"
             : activity.kind,
     title: activity.title,
     body: activity.body,
     createdAt: "now",
     status: activity.status,
     reasoningCategory: activity.reasoningCategory,
+    input: activity.input,
+    output: activity.output,
     metadata: {
       live: true,
+      sequence: activity.sequence,
+      firstSequence: activity.firstSequence,
+      eventId: activity.eventId,
+      activityId: activity.activityId,
       requestId: activity.requestId,
       runId: activity.runId,
+      input: activity.input,
+      output: activity.output,
+      turn: activity.turn,
+      nodeId: activity.nodeId,
+      nodeType: activity.nodeType,
+      callId: activity.callId,
       capabilityId: activity.capabilityId,
     },
-  }));
+    }));
+}
+
+/**
+ * A successful output node only transfers the already-streamed assistant
+ * response into the graph result. Failures remain visible as useful evidence.
+ */
+function shouldRenderLiveActivity(activity: LiveChatActivity): boolean {
+  return activity.nodeType !== "output" || activity.status === "failed";
+}
+
+/**
+ * Pure Run-event reducer. It removes the optimistic busy placeholder on the
+ * first native event, ignores stale transitions, folds streamed deltas into
+ * one activity, and preserves the activity's first-observed sequence order.
+ */
+export function reduceRunEventProjection(
+  activities: readonly LiveChatActivity[],
+  incoming: LiveChatActivity,
+): LiveChatActivity[] {
+  const current = incoming.activityId.startsWith("busy.")
+    ? [...activities]
+    : activities.filter(
+        (activity) =>
+          !activity.activityId.startsWith("busy.") ||
+          (activity.requestId !== incoming.requestId &&
+            activity.runId !== incoming.runId),
+      );
+  if (incoming.sequence !== undefined) {
+    const priorSequences = current
+      .filter(
+        (activity) =>
+          activity.requestId === incoming.requestId &&
+          activity.runId === incoming.runId &&
+          activity.sequence !== undefined,
+      )
+      .map((activity) => activity.sequence!);
+    const latestSequence =
+      priorSequences.length === 0 ? undefined : Math.max(...priorSequences);
+    if (
+      latestSequence !== undefined &&
+      incoming.sequence > latestSequence + 1
+    )
+      throw new Error(
+        `Run-event gap: expected sequence ${latestSequence + 1}, received ${incoming.sequence}`,
+      );
+    if (
+      latestSequence !== undefined &&
+      incoming.sequence <= latestSequence &&
+      !current.some(
+        (activity) =>
+          activity.activityId === incoming.activityId &&
+          activity.sequence !== undefined &&
+          incoming.sequence! > activity.sequence,
+      )
+    )
+      return current;
+  }
+  const index = current.findIndex(
+    (activity) => activity.activityId === incoming.activityId,
+  );
+  if (index < 0) {
+    return [...current, { ...incoming, firstSequence: incoming.sequence }].sort(
+      compareLiveActivityOrder,
+    );
+  }
+  const previous = current[index];
+  if (
+    incoming.sequence !== undefined &&
+    previous.sequence !== undefined &&
+    incoming.sequence <= previous.sequence
+  )
+    return current;
+  const next = [...current];
+  next[index] = {
+    ...previous,
+    ...incoming,
+    firstSequence: previous.firstSequence ?? previous.sequence ?? incoming.sequence,
+    body:
+      incoming.dataMode === "append"
+        ? `${previous.body}${incoming.body}`
+        : incoming.dataMode === "retain"
+          ? previous.body
+          : incoming.body,
+    input: incoming.input ?? previous.input,
+    output: reduceLiveOutput(previous.output, incoming),
+  };
+  return next.sort(compareLiveActivityOrder);
+}
+
+function reduceLiveOutput(
+  previous: unknown,
+  incoming: LiveChatActivity,
+): unknown {
+  if (incoming.dataMode === "retain") return previous;
+  if (
+    incoming.dataMode === "append" &&
+    typeof previous === "string" &&
+    typeof incoming.output === "string"
+  )
+    return previous + incoming.output;
+  return incoming.output ?? previous;
+}
+
+function compareLiveActivityOrder(
+  left: LiveChatActivity,
+  right: LiveChatActivity,
+): number {
+  return (
+    (left.firstSequence ?? left.sequence ?? Number.MAX_SAFE_INTEGER) -
+    (right.firstSequence ?? right.sequence ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 function sequenceKey(item: TimelineItem): number {

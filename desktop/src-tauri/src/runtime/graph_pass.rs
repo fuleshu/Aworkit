@@ -30,6 +30,7 @@ use super::{
     pipeline::{
         WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
     },
+    run_events::RunActivitySnapshotV1,
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
@@ -56,6 +57,12 @@ pub struct GraphNodeActivityV1 {
     pub label: String,
     pub status: String,
     pub summary: String,
+    /// Exact normalized value presented to the node when it became active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    /// Exact bounded value produced by the node, or its terminal error data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -86,9 +93,15 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_loop: Option<AgentLoopSuspensionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_category: Option<String>,
     pub conversation: Vec<WorkflowMessageV1>,
     pub activity: Vec<GraphNodeActivityV1>,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
+    #[serde(default)]
+    pub run_activity: Vec<RunActivitySnapshotV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
@@ -490,7 +503,7 @@ impl<'a> PassMachine<'a> {
             self.values.insert(node_id.clone(), value);
             self.executed.insert(node_id.clone());
             self.completed.push(node_id.clone());
-            self.push_activity(node, "completed", "settled");
+            self.push_activity(node, "completed", node_completion_summary(node));
             if matches!(node.node_type.as_str(), "wait" | "completion") {
                 return self.succeeded_outcome();
             }
@@ -516,9 +529,12 @@ impl<'a> PassMachine<'a> {
             title: approval.title.clone(),
             message: approval.message.clone(),
             agent_loop: Some(suspension),
+            reasoning_body: None,
+            reasoning_category: None,
             conversation: self.conversation.clone(),
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
+            run_activity: Vec::new(),
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
@@ -639,17 +655,38 @@ impl<'a> PassMachine<'a> {
     }
 
     fn push_activity(&mut self, node: &CompiledGraphNodeV1, status: &str, summary: &str) {
+        let input = (status == "started").then(|| self.node_input(node));
+        let output = match status {
+            "completed" => self.values.get(&node.id).cloned(),
+            "failed" => Some(Value::String(summary.to_owned())),
+            _ => None,
+        };
         let activity = GraphNodeActivityV1 {
             node_id: node.id.clone(),
             node_type: node.node_type.clone(),
             label: node.label.clone(),
             status: status.to_owned(),
             summary: summary.to_owned(),
+            input,
+            output,
         };
         if let Some(observer) = self.activity_observer {
             observer(&activity);
         }
         self.activity.push(activity);
+    }
+
+    fn node_input(&self, node: &CompiledGraphNodeV1) -> Value {
+        if node.node_type == "input" {
+            return self
+                .conversation
+                .iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .map(|message| Value::String(message.content.clone()))
+                .unwrap_or(Value::Null);
+        }
+        self.incoming_value(&node.id)
     }
 
     fn enforce_node_output_bound(
@@ -1095,9 +1132,12 @@ impl<'a> PassMachine<'a> {
             title,
             message,
             agent_loop: None,
+            reasoning_body: None,
+            reasoning_category: None,
             conversation: self.conversation.clone(),
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
+            run_activity: Vec::new(),
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
@@ -1365,11 +1405,20 @@ fn lookup_path(value: &Value, path: &str) -> Value {
     current.clone()
 }
 
+fn node_completion_summary(node: &CompiledGraphNodeV1) -> &'static str {
+    match node.node_type.as_str() {
+        "output" => "Response prepared.",
+        "wait" => "Ready for another message.",
+        "completion" => "Workflow completed.",
+        _ => "settled",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{evaluate_predicate, topological_order, value_text};
+    use super::{evaluate_predicate, node_completion_summary, topological_order, value_text};
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
 
     fn node(id: &str, node_type: &str) -> CompiledGraphNodeV1 {
@@ -1469,5 +1518,21 @@ mod tests {
         assert_eq!(value_text(&json!("hello")), "hello");
         assert_eq!(value_text(&json!({"a":1})), r#"{"a":1}"#);
         assert_eq!(value_text(&json!(null)), "");
+    }
+
+    #[test]
+    fn terminal_control_nodes_have_user_facing_completion_summaries() {
+        assert_eq!(
+            node_completion_summary(&node("output.1", "output")),
+            "Response prepared."
+        );
+        assert_eq!(
+            node_completion_summary(&node("wait.1", "wait")),
+            "Ready for another message."
+        );
+        assert_eq!(
+            node_completion_summary(&node("completion.1", "completion")),
+            "Workflow completed."
+        );
     }
 }

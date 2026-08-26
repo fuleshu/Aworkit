@@ -182,6 +182,12 @@ fn consume_tool_deltas(
     let Some(value) = delta.get("tool_calls") else {
         return Ok(());
     };
+    // Qwen and other OpenAI-compatible servers serialize the optional delta
+    // field as null on ordinary reasoning/text chunks. This is equivalent to
+    // omitting the field and must not be treated as a malformed tool call.
+    if value.is_null() {
+        return Ok(());
+    }
     let calls = value
         .as_array()
         .ok_or_else(|| invalid_stream("contained invalid tool-call deltas"))?;

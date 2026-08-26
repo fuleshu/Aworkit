@@ -616,7 +616,7 @@ pre {
 .thinking-card {
   border-color: color-mix(in srgb, var(--aw-accent) 38%, var(--aw-divider));
 }
-.thinking-card .activity-icon::before {
+.activity-card[aria-busy="true"] .activity-icon::before {
   animation: aworkit-busy-spin 0.8s linear infinite;
   border: 2px solid var(--aw-control);
   border-radius: 50%;
@@ -632,7 +632,7 @@ pre {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .thinking-card .activity-icon::before {
+  .activity-card[aria-busy="true"] .activity-icon::before {
     animation-duration: 1.8s;
   }
 }
@@ -659,6 +659,13 @@ pre {
   padding: 6px 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.thinking-card .activity-main code,
+.live-activity-card .activity-main code {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
 }
 .reasoning-label {
   color: var(--aw-muted);
@@ -687,6 +694,41 @@ pre {
   max-height: 180px;
   overflow: auto;
   padding: 8px;
+  white-space: pre-wrap;
+}
+.activity-data {
+  border-top: 1px solid var(--aw-divider);
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px 10px;
+}
+.live-activity-card .activity-data {
+  border: 0;
+  padding: 7px 0 0;
+}
+.activity-data div {
+  min-width: 0;
+}
+.activity-data dt {
+  color: var(--aw-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+.activity-data dd {
+  margin: 0;
+}
+.activity-data pre {
+  background: var(--aw-inset);
+  border-radius: 3px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: normal;
+  padding: 7px 8px;
   white-space: pre-wrap;
 }
 .activity-icon {

@@ -22,6 +22,12 @@ export function ConversationTimeline({
 }: ConversationTimelineProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToEnd = useRef(true);
+  const layoutRevision = items
+    .map(
+      (item) =>
+        `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}`,
+    )
+    .join("\u0001");
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
@@ -30,9 +36,27 @@ export function ConversationTimeline({
     overscan: 6,
   });
   useEffect(() => {
-    if (pinnedToEnd.current && items.length > 0)
-      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
-  }, [items.length, virtualizer]);
+    let scrollFrame: number | null = null;
+    const measurementFrame = window.requestAnimationFrame(() => {
+      const scroll = scrollRef.current;
+      if (scroll === null) return;
+      for (const row of scroll.querySelectorAll<HTMLElement>(".virtual-row")) {
+        const index = Number.parseInt(row.dataset.index ?? "", 10);
+        if (Number.isInteger(index)) {
+          virtualizer.resizeItem(index, row.getBoundingClientRect().height);
+        }
+      }
+      if (pinnedToEnd.current && items.length > 0) {
+        scrollFrame = window.requestAnimationFrame(() => {
+          virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+        });
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(measurementFrame);
+      if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
+    };
+  }, [items.length, layoutRevision, virtualizer]);
   useEffect(() => {
     const scroll = scrollRef.current;
     if (scroll === null) return;
@@ -82,7 +106,7 @@ export function ConversationTimeline({
   return (
     <div
       aria-live="polite"
-      aria-relevant="additions"
+      aria-relevant="additions text"
       className="timeline-scroll"
       ref={scrollRef}
       role="log"
@@ -158,6 +182,7 @@ export function TimelineCard({
       </article>
     );
   if (item.kind === "plan") {
+    const busy = isBusy(item.status);
     const progress =
       typeof item.metadata === "object" &&
       item.metadata !== null &&
@@ -171,9 +196,12 @@ export function TimelineCard({
         ? Number(item.metadata.total)
         : 4;
     return (
-      <article className="activity-card plan-card">
+      <article
+        aria-busy={busy || undefined}
+        className="activity-card plan-card"
+      >
         <div className="activity-heading">
-          <span className="activity-icon">✓</span>
+          <span className="activity-icon">{busy ? "" : statusIcon(item)}</span>
           <strong>{item.title}</strong>
           <span>{item.status}</span>
         </div>
@@ -270,18 +298,21 @@ export function TimelineCard({
   if (metadataOf(item).live === true)
     return (
       <article
-        aria-busy={item.status === "running" || undefined}
+        aria-busy={isBusy(item.status) || undefined}
         className={`activity-card live-activity-card ${item.kind === "thinking" ? "thinking-card" : ""}`}
         aria-label={`${card.label}: ${item.title}`}
       >
         <div className="activity-main">
-          <span className="activity-icon">{icon(item.kind)}</span>
+          <span className="activity-icon">
+            {isBusy(item.status) ? "" : icon(item.kind, item.status)}
+          </span>
           <span>
             <strong>{item.title}</strong>
             {card.reasoningLabel !== undefined && (
               <small className="reasoning-label">{card.reasoningLabel}</small>
             )}
             <code>{card.content}</code>
+            <ActivityData item={item} />
           </span>
           <span className={`status ${item.status ?? ""}`}>
             {item.status ?? card.label}
@@ -291,7 +322,7 @@ export function TimelineCard({
     );
   return (
     <article
-      aria-busy={item.status === "running" || undefined}
+      aria-busy={isBusy(item.status) || undefined}
       className={`activity-card ${item.kind === "thinking" ? "thinking-card" : ""} ${selected ? "selected" : ""}`}
       aria-label={`${card.label}: ${item.title}`}
     >
@@ -301,7 +332,9 @@ export function TimelineCard({
         title={`Inspect ${item.title} evidence`}
         onClick={() => onSelect(item.id)}
       >
-        <span className="activity-icon">{icon(item.kind)}</span>
+        <span className="activity-icon">
+          {isBusy(item.status) ? "" : icon(item.kind, item.status)}
+        </span>
         <span>
           <strong>{item.title}</strong>
           {card.reasoningLabel !== undefined && (
@@ -313,6 +346,7 @@ export function TimelineCard({
           {item.status ?? card.label}
         </span>
       </button>
+      <ActivityData item={item} />
       {item.kind === "approval" ? (
         <div className="activity-actions">
           <button
@@ -363,9 +397,51 @@ function safeJson(value: unknown): string {
     return "Source record is not serializable.";
   }
 }
-function icon(kind: TimelineItem["kind"]): string {
+
+function ActivityData({ item }: { readonly item: TimelineItem }): React.JSX.Element | null {
+  const metadata = metadataOf(item);
+  const nodeType = typeof metadata.nodeType === "string" ? metadata.nodeType : undefined;
+  // Pass-through control nodes retain exact data in their source record, but
+  // repeating the same value as both input and output obscures the useful flow.
+  if (nodeType === "output" || nodeType === "wait" || nodeType === "completion")
+    return null;
+  const hasInput =
+    item.input !== undefined ||
+    metadata.hasInput === true ||
+    (metadata.live === true && Object.hasOwn(metadata, "input"));
+  const hasOutput =
+    item.output !== undefined ||
+    metadata.hasOutput === true ||
+    (metadata.live === true && Object.hasOwn(metadata, "output"));
+  if (!hasInput && !hasOutput) return null;
+  const input = item.input !== undefined ? item.input : metadata.input;
+  const output = item.output !== undefined ? item.output : metadata.output;
+  return (
+    <dl className="activity-data" aria-label={`${item.title} data flow`}>
+      {hasInput && (
+        <div>
+          <dt>Input</dt>
+          <dd><pre>{formatActivityData(input)}</pre></dd>
+        </div>
+      )}
+      {hasOutput && (
+        <div>
+          <dt>Output</dt>
+          <dd><pre>{formatActivityData(output)}</pre></dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+function formatActivityData(value: unknown): string {
+  return typeof value === "string" ? value : safeJson(value);
+}
+function icon(kind: TimelineItem["kind"], status?: string): string {
   return kind === "thinking"
-    ? ""
+    ? status === "completed"
+      ? "✓"
+      : ""
     : kind === "tool"
     ? ">_"
     : kind === "approval"
@@ -375,6 +451,16 @@ function icon(kind: TimelineItem["kind"]): string {
         : kind === "verification"
           ? "✓"
           : "◇";
+}
+
+function statusIcon(item: TimelineItem): string {
+  if (item.status === "failed") return "×";
+  if (item.status === "completed") return "✓";
+  return icon(item.kind, item.status);
+}
+
+function isBusy(status: string | undefined): boolean {
+  return status === "running" || status === "started" || status === "queued";
 }
 
 function metadataOf(item: TimelineItem): Record<string, unknown> {

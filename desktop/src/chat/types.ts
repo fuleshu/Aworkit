@@ -39,6 +39,7 @@ export type TimelineKind =
   | "message"
   | "thinking"
   | "plan"
+  | "step"
   | "model"
   | "tool"
   | "mcp"
@@ -65,19 +66,40 @@ export interface TimelineItem {
   readonly action?: "approve" | "reject" | "retry" | "fork" | "continue";
   readonly raw?: unknown;
   readonly metadata?: unknown;
+  readonly input?: unknown;
+  readonly output?: unknown;
 }
 
-/** Transient native activity update; canonical history replaces it at settle. */
+/** One sequenced transition from the native per-Run event stream. */
 export interface LiveChatActivity {
+  readonly schemaVersion?: number;
   readonly requestId: string;
   readonly runId: string;
+  readonly sequence?: number;
+  readonly eventId?: string;
   readonly activityId: string;
-  readonly kind: "thinking" | "reasoning" | "response" | "step" | "tool";
+  readonly kind:
+    | "thinking"
+    | "reasoning"
+    | "progress"
+    | "response"
+    | "model_turn"
+    | "step"
+    | "tool";
   readonly title: string;
   readonly body: string;
   readonly status: string;
+  readonly dataMode?: "append" | "replace" | "retain";
+  readonly input?: unknown;
+  readonly output?: unknown;
+  readonly turn?: number;
+  readonly nodeId?: string;
+  readonly nodeType?: string;
+  readonly callId?: string;
   readonly reasoningCategory?: "summary" | "progress" | "source_provided";
   readonly capabilityId?: string;
+  /** First transition sequence, retained by the UI reducer. */
+  readonly firstSequence?: number;
 }
 
 export interface EvidenceRecord {

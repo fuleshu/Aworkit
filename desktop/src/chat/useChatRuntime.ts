@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatIntent, LiveChatActivity } from "./types";
+import { reduceRunEventProjection } from "./activityProjection";
 import {
   createChatCorePort,
   type ChatCorePort,
@@ -35,7 +36,10 @@ export function useChatRuntime(
   const [liveActivities, setLiveActivities] = useState<
     readonly LiveChatActivity[]
   >([]);
+  const liveActivitiesRef = useRef<readonly LiveChatActivity[]>([]);
   const pendingRef = useRef<Set<string>>(new Set());
+  const pendingRunIdsRef = useRef<Map<string, string>>(new Map());
+  const activityReadyRef = useRef<Promise<void>>(Promise.resolve());
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +78,24 @@ export function useChatRuntime(
     }
   }, [port, replaceSnapshot]);
 
+  const projectLiveActivity = useCallback(
+    (activity: LiveChatActivity): void => {
+      try {
+        const next = reduceRunEventProjection(
+          liveActivitiesRef.current,
+          activity,
+        );
+        liveActivitiesRef.current = next;
+        setLiveActivities(next);
+      } catch (failure) {
+        setStale(true);
+        setError(message(failure));
+        void resynchronize();
+      }
+    },
+    [resynchronize],
+  );
+
   const refresh = useCallback(async (): Promise<void> => {
     const current = snapshotRef.current;
     if (current === null) {
@@ -110,23 +132,38 @@ export function useChatRuntime(
   }, [port, replaceSnapshot, resynchronize]);
 
   useEffect(() => {
-    void resynchronize();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, pollIntervalMs);
-    return () => window.clearInterval(timer);
-  }, [pollIntervalMs, refresh, resynchronize]);
+    let current = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh();
+      if (current) timer = window.setTimeout(() => void poll(), pollIntervalMs);
+    };
+    // Schedule the next read only after the preceding read settles. During a
+    // long Run the native snapshot may legitimately wait for runtime ownership;
+    // single-flight polling prevents a queue of stale reads from racing the
+    // canonical terminal projection afterward.
+    void poll();
+    return () => {
+      current = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [pollIntervalMs, refresh]);
 
   useEffect(() => {
     if (port.subscribeActivity === undefined) return;
     let dispose: (() => void) | undefined;
     let current = true;
-    void port
+    const ready = port
       .subscribeActivity((activity) => {
-        if (!pendingRef.current.has(activity.requestId)) return;
-        setLiveActivities((activities) =>
-          upsertLiveActivity(activities, activity),
+        const belongsToPendingRun = [...pendingRunIdsRef.current.values()].some(
+          (runId) => runId === activity.runId,
         );
+        if (
+          !pendingRef.current.has(activity.requestId) &&
+          !belongsToPendingRun
+        )
+          return;
+        projectLiveActivity(activity);
       })
       .then((unsubscribe) => {
         if (current) dispose = unsubscribe;
@@ -136,19 +173,22 @@ export function useChatRuntime(
         // Polling and the immediate local busy card remain available if native
         // transient event delivery is unsupported.
       });
+    activityReadyRef.current = ready;
     return () => {
       current = false;
       dispose?.();
+      if (activityReadyRef.current === ready)
+        activityReadyRef.current = Promise.resolve();
     };
-  }, [port]);
+  }, [port, projectLiveActivity]);
 
   const dispatch = useCallback(
     async (intent: ChatIntent): Promise<boolean> => {
       if (snapshot === null || stale) return false;
       pendingRef.current.add(intent.commandId);
+      pendingRunIdsRef.current.set(intent.commandId, snapshot.chat.runId);
       setPending((current) => new Set([...current, intent.commandId]));
-      setLiveActivities((activities) =>
-        upsertLiveActivity(activities, {
+      projectLiveActivity({
           requestId: intent.commandId,
           runId: snapshot.chat.runId,
           activityId: `busy.${intent.commandId}`,
@@ -156,9 +196,12 @@ export function useChatRuntime(
           title: "Thinking",
           body: "Aworkit is working…",
           status: "running",
-        }),
-      );
+      });
       try {
+        // A fast local provider can emit its first chunks synchronously with
+        // command admission. Do not start it until the native event listener is
+        // confirmed, otherwise those first states are permanently lost.
+        await activityReadyRef.current;
         const receipt = await port.command(intent, snapshot.version);
         if (!receipt.accepted) {
           const reason =
@@ -174,12 +217,16 @@ export function useChatRuntime(
         setError(failureMessage);
         return false;
       } finally {
+        const pendingRunId = pendingRunIdsRef.current.get(intent.commandId);
         pendingRef.current.delete(intent.commandId);
-        setLiveActivities((activities) =>
-          activities.filter(
-            (activity) => activity.requestId !== intent.commandId,
-          ),
+        pendingRunIdsRef.current.delete(intent.commandId);
+        const nextLiveActivities = liveActivitiesRef.current.filter(
+          (activity) =>
+            activity.requestId !== intent.commandId &&
+            activity.runId !== pendingRunId,
         );
+        liveActivitiesRef.current = nextLiveActivities;
+        setLiveActivities(nextLiveActivities);
         setPending((current) => {
           const next = new Set(current);
           next.delete(intent.commandId);
@@ -187,7 +234,7 @@ export function useChatRuntime(
         });
       }
     },
-    [port, resynchronize, snapshot, stale],
+    [port, projectLiveActivity, resynchronize, snapshot, stale],
   );
 
   return {
@@ -201,26 +248,6 @@ export function useChatRuntime(
     dispatch,
     resynchronize,
   };
-}
-
-function upsertLiveActivity(
-  activities: readonly LiveChatActivity[],
-  incoming: LiveChatActivity,
-): LiveChatActivity[] {
-  const current = incoming.activityId.startsWith("busy.")
-    ? [...activities]
-    : activities.filter(
-        (activity) =>
-          activity.requestId !== incoming.requestId ||
-          !activity.activityId.startsWith("busy."),
-      );
-  const index = current.findIndex(
-    (activity) => activity.activityId === incoming.activityId,
-  );
-  if (index < 0) return [...current, incoming];
-  const next = [...current];
-  next[index] = incoming;
-  return next;
 }
 
 function message(error: unknown): string {

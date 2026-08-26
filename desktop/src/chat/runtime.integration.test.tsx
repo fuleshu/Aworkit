@@ -101,6 +101,8 @@ describe("Chat native-port recovery contracts", () => {
         onAction={() => undefined}
       />,
     );
+    while (frameCallbacks.length > 0) frameCallbacks.shift()?.(0);
+    virtualizerResizeItem.mockClear();
     const details = screen
       .getAllByText("Inspect source record")
       .map((summary) => summary.closest("details"));
@@ -896,9 +898,11 @@ describe("Chat native-port recovery contracts", () => {
     let activityListener: ((activity: LiveChatActivity) => void) | undefined;
     let settle!: (receipt: Awaited<ReturnType<ChatCorePort["command"]>>) => void;
     let commandId = "";
+    const runtimeRequestId = "original.execution.request";
+    let projectedSnapshot = snapshot(1, "Live Chat", [{ sequence: 1 }]);
     const port: ChatCorePort = {
       async snapshot() {
-        return snapshot(1, "Live Chat", [{ sequence: 1 }]);
+        return projectedSnapshot;
       },
       command(intent) {
         commandId = intent.commandId;
@@ -919,7 +923,7 @@ describe("Chat native-port recovery contracts", () => {
     expect(await screen.findByText("Aworkit is working…")).toBeVisible();
     await waitFor(() => expect(commandId).not.toBe(""));
     activityListener?.({
-      requestId: commandId,
+      requestId: runtimeRequestId,
       runId: "run.test",
       activityId: `node.${commandId}.agent.1`,
       kind: "step",
@@ -931,7 +935,7 @@ describe("Chat native-port recovery contracts", () => {
       expect(screen.queryByText("Aworkit is working…")).toBeNull(),
     );
     activityListener?.({
-      requestId: commandId,
+      requestId: runtimeRequestId,
       runId: "run.test",
       activityId: `model.reasoning.${commandId}`,
       kind: "reasoning",
@@ -941,7 +945,17 @@ describe("Chat native-port recovery contracts", () => {
       reasoningCategory: "source_provided",
     });
     activityListener?.({
-      requestId: commandId,
+      requestId: runtimeRequestId,
+      runId: "run.test",
+      activityId: `model.reasoning.${commandId}`,
+      kind: "reasoning",
+      title: "Thinking",
+      body: "Inspecting the project\nReading its files\nComparing the results",
+      status: "running",
+      reasoningCategory: "source_provided",
+    });
+    activityListener?.({
+      requestId: runtimeRequestId,
       runId: "run.test",
       activityId: `model.response.${commandId}`,
       kind: "response",
@@ -950,25 +964,289 @@ describe("Chat native-port recovery contracts", () => {
       status: "running",
     });
     activityListener?.({
-      requestId: commandId,
+      schemaVersion: 1,
+      requestId: runtimeRequestId,
       runId: "run.test",
+      sequence: 5,
+      eventId: "run.event.live.5",
       activityId: "tool.call.live",
       kind: "tool",
       title: "tool.files.list",
-      body: '{"path":"."}',
+      body: "Tool invocation started.",
       status: "running",
+      dataMode: "replace",
+      input: {
+        callId: "call.live",
+        capabilityId: "tool.files.list",
+        arguments: { path: "." },
+      },
       capabilityId: "tool.files.list",
     });
     expect(await screen.findByText("tool.files.list")).toBeVisible();
-    expect(screen.getByText("Inspecting the project")).toBeVisible();
+    activityListener?.({
+      schemaVersion: 1,
+      requestId: runtimeRequestId,
+      runId: "run.test",
+      sequence: 6,
+      eventId: "run.event.live.6",
+      activityId: "tool.call.live",
+      kind: "tool",
+      title: "tool.files.list",
+      body: "Listed 1 file.",
+      status: "completed",
+      dataMode: "replace",
+      output: {
+        callId: "call.live",
+        content: { files: ["notes.txt"] },
+        isError: false,
+      },
+      capabilityId: "tool.files.list",
+    });
+    const toolCard = await screen.findByRole("article", {
+      name: "Tool: tool.files.list",
+    });
+    expect(within(toolCard).getByText("Input")).toBeVisible();
+    expect(within(toolCard).getByText("Output")).toBeVisible();
+    expect(within(toolCard).getByText(/"path": "\."/)).toBeVisible();
+    expect(within(toolCard).getByText(/"notes.txt"/)).toBeVisible();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "CODE" &&
+          element.textContent ===
+            "Inspecting the project\nReading its files\nComparing the results",
+      ),
+    ).toBeVisible();
     expect(screen.getByText("I found")).toBeVisible();
     expect(screen.getAllByText("running").length).toBeGreaterThan(0);
+    projectedSnapshot = {
+      ...snapshot(4, "Live Chat", [
+        { sequence: 1 },
+        { sequence: 2 },
+        { sequence: 3 },
+        { sequence: 4 },
+      ]),
+      timeline: [
+        {
+          id: "event.chat.2",
+          kind: "thinking",
+          title: "Thinking",
+          body: "Inspecting the project\nReading its files\nComparing the results",
+          createdAt: "now",
+          status: "completed",
+          reasoningCategory: "source_provided",
+          metadata: { requestId: runtimeRequestId },
+        },
+        {
+          id: "event.chat.3",
+          kind: "model",
+          title: "Agent",
+          body: "Agent finished",
+          createdAt: "now",
+          status: "completed",
+        },
+      ],
+    };
     settle({
       commandId,
       accepted: true,
-      currentVersion: 1,
+      currentVersion: 4,
       reason: null,
     });
+    expect(await screen.findByText("Agent finished")).toBeVisible();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "CODE" &&
+          element.textContent ===
+            "Inspecting the project\nReading its files\nComparing the results",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Provider-supplied reasoning")).toBeVisible();
+  });
+
+  it("subscribes before dispatch so immediate provider states cannot be lost", async () => {
+    const user = userEvent.setup();
+    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let releaseSubscription!: () => void;
+    let settleCommand!: (
+      receipt: Awaited<ReturnType<ChatCorePort["command"]>>,
+    ) => void;
+    let commandStarted = false;
+    const port: ChatCorePort = {
+      async snapshot() {
+        return snapshot(1, "Fast provider", [{ sequence: 1 }]);
+      },
+      command(intent) {
+        commandStarted = true;
+        activityListener?.({
+          requestId: intent.commandId,
+          runId: "run.test",
+          activityId: `model.reasoning.${intent.commandId}`,
+          kind: "reasoning",
+          title: "Thinking",
+          body: "First synchronous chunk",
+          status: "running",
+          reasoningCategory: "source_provided",
+        });
+        return new Promise((resolve) => {
+          settleCommand = resolve;
+        });
+      },
+      subscribeActivity(listener) {
+        activityListener = listener;
+        return new Promise((resolve) => {
+          releaseSubscription = () => resolve(() => undefined);
+        });
+      },
+    };
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+    await screen.findByRole("heading", { name: "Fast provider" });
+    await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("Aworkit is working…")).toBeVisible();
+    expect(commandStarted).toBe(false);
+
+    releaseSubscription();
+    expect(await screen.findByText("First synchronous chunk")).toBeVisible();
+    expect(commandStarted).toBe(true);
+    settleCommand({
+      commandId: "command.test",
+      accepted: false,
+      currentVersion: 1,
+      reason: "test cleanup",
+    });
+  });
+
+  it("keeps rendering live activity while one poll and the command are both unsettled", async () => {
+    const user = userEvent.setup();
+    let snapshotCalls = 0;
+    let activityListener: ((activity: LiveChatActivity) => void) | undefined;
+    let commandId = "";
+    const port: ChatCorePort = {
+      snapshot() {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1)
+          return Promise.resolve(snapshot(1, "Reactive Chat", [{ sequence: 1 }]));
+        return new Promise(() => undefined);
+      },
+      command(intent) {
+        commandId = intent.commandId;
+        return new Promise(() => undefined);
+      },
+      async subscribeActivity(listener) {
+        activityListener = listener;
+        return () => undefined;
+      },
+    };
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={20} />);
+    await screen.findByRole("heading", { name: "Reactive Chat" });
+    await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(commandId).not.toBe(""));
+
+    activityListener?.({
+      requestId: commandId,
+      runId: "run.test",
+      activityId: `model.reasoning.${commandId}`,
+      kind: "reasoning",
+      title: "Thinking",
+      body: "Arrived while snapshot ownership is unavailable",
+      status: "running",
+      reasoningCategory: "source_provided",
+    });
+    expect(
+      await screen.findByText("Arrived while snapshot ownership is unavailable"),
+    ).toBeVisible();
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    expect(snapshotCalls).toBe(2);
+  });
+
+  it("marks only active cards busy and renders settled thinking as terminal", () => {
+    const { rerender } = render(
+      <TimelineCard
+        card={toConversationCard({
+          id: "thinking.1",
+          kind: "thinking",
+          title: "Thinking",
+          body: "Done",
+          createdAt: "now",
+          status: "completed",
+        })}
+        item={{
+          id: "thinking.1",
+          kind: "thinking",
+          title: "Thinking",
+          body: "Done",
+          createdAt: "now",
+          status: "completed",
+        }}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    const settled = screen.getByLabelText("Thinking: Thinking");
+    expect(settled).not.toHaveAttribute("aria-busy", "true");
+    expect(within(settled).getByText("✓")).toBeVisible();
+
+    const runningItem = {
+      id: "step.1",
+      kind: "step" as const,
+      title: "Plan",
+      body: "model_call: running",
+      createdAt: "now",
+      status: "started",
+      metadata: { live: true },
+    };
+    rerender(
+      <TimelineCard
+        card={toConversationCard(runningItem)}
+        item={runningItem}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    expect(screen.getByLabelText("Step: Plan")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
+  it("renders wait transitions without duplicating their pass-through data", () => {
+    const item = {
+      id: "node.wait.1",
+      kind: "step" as const,
+      title: "Wait for input",
+      body: "Ready for another message.",
+      createdAt: "now",
+      status: "completed",
+      input: "answer",
+      output: "answer",
+      metadata: {
+        live: true,
+        nodeType: "wait",
+        input: "answer",
+        output: "answer",
+      },
+    };
+
+    render(
+      <TimelineCard
+        card={toConversationCard(item)}
+        item={item}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+
+    const card = screen.getByLabelText("Step: Wait for input");
+    expect(within(card).getByText("Ready for another message.")).toBeVisible();
+    expect(within(card).queryByText("Input")).not.toBeInTheDocument();
+    expect(within(card).queryByText("Output")).not.toBeInTheDocument();
   });
 
   it("does not expose unsupported terminal controls", async () => {

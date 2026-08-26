@@ -167,7 +167,7 @@ describe("Milestone 08 Chat and evidence experience", () => {
     expect(controller.isStale()).toBe(false);
   });
 
-  it("escapes rich activity content, preserves source labels, and keeps unknown records inspectable", () => {
+  it("leaves React to escape rich text, labels reasoning honestly, and keeps unknown records inspectable", () => {
     const card = toConversationCard({
       id: "unknown",
       kind: "unknown",
@@ -177,8 +177,8 @@ describe("Milestone 08 Chat and evidence experience", () => {
       createdAt: "now",
       raw: { future: true },
     });
-    expect(card.content).toContain("&lt;b&gt;");
-    expect(card.reasoningLabel).toBe("Source-provided source provided");
+    expect(card.content).toBe("<b>raw</b>");
+    expect(card.reasoningLabel).toBe("Provider-supplied reasoning");
     expect(card.inspectable).toBe(true);
     const items = ["one", "two", "three"].map((id) => ({
       id,
@@ -192,6 +192,7 @@ describe("Milestone 08 Chat and evidence experience", () => {
     expect(escapedText("<>&")).toBe("&lt;&gt;&amp;");
     for (const kind of [
       "plan",
+      "step",
       "model",
       "tool",
       "mcp",

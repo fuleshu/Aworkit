@@ -61,12 +61,10 @@ use super::{
         GraphApprovalRequestV1, GraphNodeActivityV1, GraphPassBudgetV1, GraphPassStatusV1,
         PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass_observed,
     },
+    live_activity::{LiveChatActivityPort, noop_live_activity},
     mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
-    live_activity::{
-        LiveChatActivityPort, ModelLiveActivityObserver, noop_live_activity,
-        publish_graph_activity,
-    },
     project_scope::revalidate_git_branch,
+    run_events::{ModelRunEventObserverV1, RunActivitySnapshotV1, RunEventStreamV1},
     tool_loop::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
         ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
@@ -251,6 +249,14 @@ pub enum WorkflowExecutionStatusV1 {
     AwaitingApproval,
 }
 
+/// Bounded provider-supplied reasoning retained with the canonical Run result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowReasoningActivityV1 {
+    pub body: String,
+    pub category: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowExecutionResultV1 {
@@ -265,12 +271,15 @@ pub struct WorkflowExecutionResultV1 {
     pub outcome_hash: String,
     pub status: WorkflowExecutionStatusV1,
     pub assistant_text: Option<String>,
+    pub reasoning: Option<WorkflowReasoningActivityV1>,
     pub error: Option<String>,
     pub model: String,
     pub input_units: u64,
     pub output_units: u64,
     pub model_turns: u64,
     pub tool_calls: u64,
+    /// Ordered semantic activities reduced from the exact live Run stream.
+    pub run_activity: Vec<RunActivitySnapshotV1>,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub node_activity: Vec<GraphNodeActivityV1>,
     pub approval: Option<GraphApprovalRequestV1>,
@@ -409,14 +418,13 @@ impl WorkflowExecutionPipeline {
             CapabilityHost::from_attested_registry(frozen, core_key.copy(), 8)
                 .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?,
         );
-        let file_tool_authority = FileToolAuthorityRuntimeV1::open_with_live_activity(
+        let file_tool_authority = FileToolAuthorityRuntimeV1::open(
             &database,
             projects.clone(),
             host.clone(),
             file_tool_descriptors.clone(),
             generation,
             core_key.clone(),
-            live_activity.clone(),
         )?;
         Ok(Self {
             root,
@@ -691,12 +699,23 @@ impl WorkflowExecutionPipeline {
                 outcome_hash: String::new(),
                 status: WorkflowExecutionStatusV1::AwaitingApproval,
                 assistant_text: None,
+                reasoning: pending
+                    .reasoning_body
+                    .clone()
+                    .map(|body| WorkflowReasoningActivityV1 {
+                        body,
+                        category: pending
+                            .reasoning_category
+                            .clone()
+                            .unwrap_or_else(|| "source_provided".to_owned()),
+                    }),
                 error: None,
                 model: prepared.provider.model.clone(),
                 input_units: pending.input_units,
                 output_units: pending.output_units,
                 model_turns: u64::from(pending.attempted_model_turns),
                 tool_calls: u64::from(pending.settled_tool_calls),
+                run_activity: pending.run_activity.clone(),
                 tool_activity: pending.tool_activity.clone(),
                 node_activity: pending.activity.clone(),
                 approval: Some(GraphApprovalRequestV1 {
@@ -729,6 +748,7 @@ impl WorkflowExecutionPipeline {
                     WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
                 },
                 assistant_text: None,
+                reasoning: None,
                 error: Some(if uncertain {
                     "The provider may have accepted the request, but no conclusive terminal evidence was durably committed. Automatic replay is forbidden."
                         .to_owned()
@@ -742,6 +762,7 @@ impl WorkflowExecutionPipeline {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
@@ -762,12 +783,14 @@ impl WorkflowExecutionPipeline {
             outcome_hash,
             status: outcome.status,
             assistant_text: outcome.assistant_text,
+            reasoning: outcome.reasoning,
             error: outcome.error,
             model: outcome.model,
             input_units: outcome.input_units,
             output_units: outcome.output_units,
             model_turns: u64::from(outcome.attempted_model_turns),
             tool_calls: u64::from(outcome.settled_tool_calls),
+            run_activity: outcome.run_activity,
             tool_activity: outcome.tool_activity,
             node_activity: outcome.node_activity,
             approval: outcome.approval,
@@ -883,13 +906,21 @@ impl WorkflowExecutionPipeline {
             .provider_factory
             .create(descriptor, &prepared.provider, api_key)
             .map_err(|error| WorkflowPipelineError::Store(redact_error(&materialized, &error)))?;
-        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(Arc::new(
-            ModelLiveActivityObserver::new(
-                prepared.request_id.to_string(),
-                prepared.snapshot.run_id.to_string(),
-                self.live_activity.clone(),
-            ),
-        )));
+        let previous_run_sequence = pending
+            .run_activity
+            .iter()
+            .map(|activity| activity.last_sequence)
+            .max()
+            .unwrap_or(0);
+        let run_events = Arc::new(RunEventStreamV1::resume(
+            prepared.request_id.to_string(),
+            prepared.snapshot.run_id.to_string(),
+            self.live_activity.clone(),
+            pending.run_activity.clone(),
+        ));
+        let model_observer = Arc::new(ModelRunEventObserverV1::new(run_events.clone()));
+        let gateway =
+            Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
         let workflow = prepared
             .worker_proposal
             .payload
@@ -900,9 +931,8 @@ impl WorkflowExecutionPipeline {
         let compiled = compile_graph_pass(&workflow, &prepared.tool_bindings)
             .map_err(WorkflowPipelineError::InvalidInput)?;
         let cancellation = CancellationToken::default();
-        let authority = self
-            .file_tool_authority
-            .bind(FrozenFileToolAuthorityContextV1 {
+        let authority = self.file_tool_authority.bind_with_run_events(
+            FrozenFileToolAuthorityContextV1 {
                 manifest: prepared.manifest.clone(),
                 run_id: prepared.snapshot.run_id.clone(),
                 request_id: prepared.request_id.clone(),
@@ -916,14 +946,11 @@ impl WorkflowExecutionPipeline {
                 model_version_hash: Some(descriptor.version_hash.clone()),
                 mcp_manifests: prepared.mcp_manifests.clone(),
                 cancellation: cancellation.clone(),
-            });
+            },
+            run_events.clone(),
+        );
         let graph_observer = |activity: &GraphNodeActivityV1| {
-            publish_graph_activity(
-                &self.live_activity,
-                prepared.request_id.as_str(),
-                prepared.snapshot.run_id.as_str(),
-                activity,
-            );
+            run_events.publish_graph_activity(activity);
         };
         let pass = execute_graph_pass_observed(
             &compiled,
@@ -948,12 +975,22 @@ impl WorkflowExecutionPipeline {
             &cancellation,
             Some(&graph_observer),
         );
+        model_observer.settle(graph_pass_live_status(pass.status));
+        run_events.flush();
+        let reasoning = model_observer
+            .reasoning_snapshot()
+            .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
+        let run_activity_all = run_events.activity_snapshots();
+        let run_activity = run_events.activity_snapshots_after(previous_run_sequence);
         match pass.status {
             GraphPassStatusV1::AwaitingApproval => {
-                let next = pass
+                let mut next = pass
                     .pending_state
                     .clone()
                     .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+                next.reasoning_body = reasoning.as_ref().map(|item| item.body.clone());
+                next.reasoning_category = reasoning.as_ref().map(|item| item.category.clone());
+                next.run_activity = run_activity_all.clone();
                 self.records.mark_approval_resolved(&decision)?;
                 self.records.store_pending_approval(&next)?;
                 Ok(WorkflowExecutionResultV1 {
@@ -968,12 +1005,14 @@ impl WorkflowExecutionPipeline {
                     outcome_hash: String::new(),
                     status: WorkflowExecutionStatusV1::AwaitingApproval,
                     assistant_text: None,
+                    reasoning: reasoning.clone(),
                     error: None,
                     model: prepared.provider.model.clone(),
                     input_units: next.input_units,
                     output_units: next.output_units,
                     model_turns: u64::from(next.attempted_model_turns),
                     tool_calls: u64::from(next.settled_tool_calls),
+                    run_activity,
                     tool_activity: next.tool_activity.clone(),
                     node_activity: next.activity.clone(),
                     approval: pass.approval,
@@ -991,6 +1030,7 @@ impl WorkflowExecutionPipeline {
                     invocation_id: broker_invocation_id.clone(),
                     status,
                     assistant_text: pass.assistant_text,
+                    reasoning,
                     error: pass.error,
                     model: prepared.provider.model.clone(),
                     input_units: pass.input_units,
@@ -999,6 +1039,7 @@ impl WorkflowExecutionPipeline {
                     settled_tool_calls: pass.settled_tool_calls,
                     tool_exchanges: pass.exchanges.clone(),
                     tool_activity: pass.tool_activity.clone(),
+                    run_activity: run_activity_all,
                     node_activity: pass.activity.clone(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -1032,12 +1073,14 @@ impl WorkflowExecutionPipeline {
                     outcome_hash,
                     status: record.status,
                     assistant_text: record.assistant_text,
+                    reasoning: record.reasoning,
                     error: record.error,
                     model: record.model,
                     input_units: record.input_units,
                     output_units: record.output_units,
                     model_turns: u64::from(record.attempted_model_turns),
                     tool_calls: u64::from(record.settled_tool_calls),
+                    run_activity,
                     tool_activity: record.tool_activity,
                     node_activity: record.node_activity,
                     approval: None,
@@ -1499,6 +1542,8 @@ struct ProviderOutcomeRecordV1 {
     invocation_id: StableId,
     status: WorkflowExecutionStatusV1,
     assistant_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning: Option<WorkflowReasoningActivityV1>,
     error: Option<String>,
     model: String,
     input_units: u64,
@@ -1511,6 +1556,8 @@ struct ProviderOutcomeRecordV1 {
     tool_exchanges: Vec<ModelToolExchangeV1>,
     #[serde(default)]
     tool_activity: Vec<WorkflowToolActivityV1>,
+    #[serde(default)]
+    run_activity: Vec<RunActivitySnapshotV1>,
     #[serde(default)]
     node_activity: Vec<GraphNodeActivityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1939,6 +1986,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 invocation_id: envelope.invocation_id.clone(),
                 status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                 assistant_text: None,
+                reasoning: None,
                 error: Some(
                     "frozen project workspace or Git branch drifted before provider dispatch"
                         .into(),
@@ -1950,6 +1998,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
@@ -1964,6 +2013,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     invocation_id: envelope.invocation_id.clone(),
                     status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                     assistant_text: None,
+                    reasoning: None,
                     error: Some(error.to_string()),
                     model: self.provider.model.clone(),
                     input_units: 0,
@@ -1972,6 +2022,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    run_activity: Vec::new(),
                     node_activity: Vec::new(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -2000,6 +2051,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         invocation_id: envelope.invocation_id.clone(),
                         status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                         assistant_text: None,
+                        reasoning: None,
                         error: Some(format!("credential lease materialization failed: {error}")),
                         model: self.provider.model.clone(),
                         input_units: 0,
@@ -2008,6 +2060,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
+                        run_activity: Vec::new(),
                         node_activity: Vec::new(),
                         approval: None,
                         scheduler_checkpoint: None,
@@ -2030,6 +2083,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         invocation_id: envelope.invocation_id.clone(),
                         status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                         assistant_text: None,
+                        reasoning: None,
                         error: Some("credential API-key field is not valid UTF-8".to_owned()),
                         model: self.provider.model.clone(),
                         input_units: 0,
@@ -2038,6 +2092,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
                         tool_activity: Vec::new(),
+                        run_activity: Vec::new(),
                         node_activity: Vec::new(),
                         approval: None,
                         scheduler_checkpoint: None,
@@ -2058,6 +2113,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     invocation_id: envelope.invocation_id.clone(),
                     status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                     assistant_text: None,
+                    reasoning: None,
                     error: Some(redact_error(&materialized, &error)),
                     model: self.provider.model.clone(),
                     input_units: 0,
@@ -2066,6 +2122,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
                     tool_activity: Vec::new(),
+                    run_activity: Vec::new(),
                     node_activity: Vec::new(),
                     approval: None,
                     scheduler_checkpoint: None,
@@ -2079,6 +2136,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 invocation_id: envelope.invocation_id.clone(),
                 status: WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
                 assistant_text: None,
+                reasoning: None,
                 error: Some("worker proposal did not contain a model context".to_owned()),
                 model: self.provider.model.clone(),
                 input_units: 0,
@@ -2087,19 +2145,21 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
                 tool_activity: Vec::new(),
+                run_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
                 scheduler_checkpoint: None,
                 scheduler_trace: Vec::new(),
             });
         };
-        let gateway = Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(Arc::new(
-            ModelLiveActivityObserver::new(
-                self.prepared.request_id.to_string(),
-                self.prepared.snapshot.run_id.to_string(),
-                self.live_activity.clone(),
-            ),
-        )));
+        let run_events = Arc::new(RunEventStreamV1::new(
+            self.prepared.request_id.to_string(),
+            self.prepared.snapshot.run_id.to_string(),
+            self.live_activity.clone(),
+        ));
+        let model_observer = Arc::new(ModelRunEventObserverV1::new(run_events.clone()));
+        let gateway =
+            Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
         let workflow = envelope
             .payload
             .get("config")
@@ -2123,9 +2183,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .workspace
                 .clone()
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-            let authority = self
-                .file_tool_authority
-                .bind(FrozenFileToolAuthorityContextV1 {
+            let authority = self.file_tool_authority.bind_with_run_events(
+                FrozenFileToolAuthorityContextV1 {
                     manifest: self.prepared.manifest.clone(),
                     run_id: self.prepared.snapshot.run_id.clone(),
                     request_id: self.prepared.request_id.clone(),
@@ -2139,16 +2198,13 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     model_version_hash: Some(self.descriptor.version_hash.clone()),
                     mcp_manifests: self.prepared.mcp_manifests.clone(),
                     cancellation: cancellation.clone(),
-                });
+                },
+                run_events.clone(),
+            );
             let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
                 .map_err(|error| WorkflowPipelineError::InvalidInput(error))?;
             let graph_observer = |activity: &GraphNodeActivityV1| {
-                publish_graph_activity(
-                    &self.live_activity,
-                    self.prepared.request_id.as_str(),
-                    self.prepared.snapshot.run_id.as_str(),
-                    activity,
-                );
+                run_events.publish_graph_activity(activity);
             };
             let pass = execute_graph_pass_observed(
                 &compiled,
@@ -2173,11 +2229,18 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 cancellation,
                 Some(&graph_observer),
             );
+            model_observer.settle(graph_pass_live_status(pass.status));
+            run_events.flush();
+            let reasoning = model_observer
+                .reasoning_snapshot()
+                .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
+            let run_activity = run_events.activity_snapshots();
             let base = ProviderOutcomeRecordV1 {
                 schema_version: 1,
                 invocation_id: envelope.invocation_id.clone(),
                 status: WorkflowExecutionStatusV1::FailedKnownStarted,
                 assistant_text: None,
+                reasoning: reasoning.clone(),
                 error: None,
                 model: self.provider.model.clone(),
                 input_units: pass.input_units,
@@ -2186,6 +2249,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 settled_tool_calls: pass.settled_tool_calls,
                 tool_exchanges: pass.exchanges.clone(),
                 tool_activity: pass.tool_activity.clone(),
+                run_activity: run_activity.clone(),
                 node_activity: pass.activity.clone(),
                 approval: pass.approval.clone(),
                 scheduler_checkpoint: None,
@@ -2205,10 +2269,14 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     ..base
                 },
                 GraphPassStatusV1::AwaitingApproval => {
-                    let pending = pass
+                    let mut pending = pass
                         .pending_state
                         .clone()
                         .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+                    pending.reasoning_body = reasoning.as_ref().map(|item| item.body.clone());
+                    pending.reasoning_category =
+                        reasoning.as_ref().map(|item| item.category.clone());
+                    pending.run_activity = run_activity;
                     self.records.store_pending_approval(&pending)?;
                     ProviderOutcomeRecordV1 {
                         status: WorkflowExecutionStatusV1::AwaitingApproval,
@@ -3283,6 +3351,14 @@ fn model_descriptor(
     Ok(descriptor)
 }
 
+fn graph_pass_live_status(status: GraphPassStatusV1) -> &'static str {
+    match status {
+        GraphPassStatusV1::Succeeded => "completed",
+        GraphPassStatusV1::Failed => "failed",
+        GraphPassStatusV1::AwaitingApproval => "awaiting_approval",
+    }
+}
+
 fn graph_failure_status(error: Option<&str>) -> WorkflowExecutionStatusV1 {
     let error = error.unwrap_or_default().to_ascii_lowercase();
     if error.contains("acceptance") && error.contains("ambiguous")
@@ -3702,12 +3778,17 @@ mod tests {
                         "aworkit_read_project_file",
                         json!({"path":"notes.txt"}),
                     ))?,
-                    ToolScriptV1::Edit => emit(tool_call(
-                        "call.edit",
-                        "tool.files.edit",
-                        "aworkit_edit_project_file",
-                        json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
-                    ))?,
+                    ToolScriptV1::Edit => {
+                        emit(ModelToolEventV1::ReasoningRaw {
+                            text: "I need to request approval before editing.\n".into(),
+                        })?;
+                        emit(tool_call(
+                            "call.edit",
+                            "tool.files.edit",
+                            "aworkit_edit_project_file",
+                            json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
+                        ))?;
+                    }
                     ToolScriptV1::Todo => emit(tool_call(
                         "call.todo",
                         "tool.todo",
@@ -4059,6 +4140,39 @@ mod tests {
                 .tool_activity
                 .iter()
                 .all(|activity| activity.status == "completed")
+        );
+        assert!(
+            first
+                .run_activity
+                .windows(2)
+                .all(|pair| pair[0].first_sequence < pair[1].first_sequence),
+            "semantic Run activities must retain their first live appearance order"
+        );
+        let first_tool = first
+            .run_activity
+            .iter()
+            .find(|activity| activity.call_id.as_deref() == Some("call.read"))
+            .or_else(|| {
+                first.run_activity.iter().find(|activity| {
+                    activity.capability_id.as_deref() == Some(FILE_READ_CAPABILITY_ID)
+                })
+            })
+            .expect("read tool Run activity");
+        assert_eq!(
+            first_tool
+                .input
+                .as_ref()
+                .and_then(|input| input.get("arguments"))
+                .and_then(|arguments| arguments.get("path")),
+            Some(&json!("notes.txt"))
+        );
+        assert_eq!(
+            first_tool
+                .output
+                .as_ref()
+                .and_then(|output| output.get("content"))
+                .and_then(|content| content.get("content")),
+            Some(&json!("alpha beta alpha"))
         );
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed[0]["content"], "alpha beta alpha");
@@ -4973,6 +5087,24 @@ mod tests {
             completed,
             vec!["input.1", "plan.1", "agent.1", "output.1", "wait.1"]
         );
+        let input = result
+            .run_activity
+            .iter()
+            .find(|activity| activity.node_id.as_deref() == Some("input.1"))
+            .expect("input activity");
+        assert_eq!(input.input, input.output);
+        assert!(input.input.as_ref().is_some_and(Value::is_string));
+        let model_turns = result
+            .run_activity
+            .iter()
+            .filter(|activity| activity.kind == "model_turn")
+            .collect::<Vec<_>>();
+        assert_eq!(model_turns.len(), 2);
+        assert!(
+            model_turns
+                .iter()
+                .all(|turn| turn.input.is_some() && turn.output.is_some())
+        );
     }
 
     #[test]
@@ -5141,6 +5273,14 @@ mod tests {
             WorkflowExecutionStatusV1::AwaitingApproval,
             "{:?}",
             suspended.error
+        );
+        assert_eq!(
+            suspended.reasoning.as_ref(),
+            Some(&WorkflowReasoningActivityV1 {
+                body: "I need to request approval before editing.\n".into(),
+                category: "source_provided".into(),
+            }),
+            "thinking produced before an approval must survive the durable suspension"
         );
         let approval = suspended.approval.expect("tool approval evidence");
         assert_eq!(approval.node_id, "agent.1");

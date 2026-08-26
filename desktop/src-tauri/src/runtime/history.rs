@@ -990,17 +990,132 @@ mod tests {
             "stored pending Chat command failed integrity validation"
         );
     }
+
+    #[test]
+    fn replay_updates_a_stable_activity_without_changing_its_first_position() {
+        let events = vec![
+            Event {
+                event_id: "event.chat.1".into(),
+                kind: "tool.waiting".into(),
+                payload: json!({
+                    "activityId": "tool.call.1",
+                    "title": "tool.files.list",
+                    "body": "Awaiting approval",
+                    "status": "awaiting_approval",
+                    "createdAt": "t1",
+                }),
+            },
+            Event {
+                event_id: "event.chat.2".into(),
+                kind: "approval.resolved".into(),
+                payload: json!({"body":"Approved","createdAt":"t2"}),
+            },
+            Event {
+                event_id: "event.chat.3".into(),
+                kind: "tool.completed".into(),
+                payload: json!({
+                    "activityId": "tool.call.1",
+                    "title": "tool.files.list",
+                    "body": "Listed 1 file.",
+                    "status": "completed",
+                    "createdAt": "t3",
+                    "input": {"arguments":{"path":"."}},
+                    "output": {"content":{"files":["a.txt"]}},
+                }),
+            },
+        ];
+
+        let replay = timeline(&events);
+        assert_eq!(replay.len(), 2);
+        assert_eq!(replay[0].id, "event.chat.1");
+        assert_eq!(replay[0].status.as_deref(), Some("completed"));
+        assert_eq!(replay[0].metadata["input"]["arguments"]["path"], ".");
+        assert_eq!(replay[1].kind, "approval");
+    }
+
+    #[test]
+    fn replay_hides_successful_output_nodes_but_keeps_wait_transitions() {
+        let events = vec![
+            Event {
+                event_id: "event.chat.1".into(),
+                kind: "node.completed".into(),
+                payload: json!({
+                    "activityId": "node.output.1",
+                    "nodeType": "output",
+                    "label": "Output",
+                    "body": "Response prepared.",
+                    "status": "completed",
+                    "createdAt": "t1",
+                    "input": "answer",
+                    "output": "answer",
+                }),
+            },
+            Event {
+                event_id: "event.chat.2".into(),
+                kind: "node.completed".into(),
+                payload: json!({
+                    "activityId": "node.wait.1",
+                    "nodeType": "wait",
+                    "label": "Wait for input",
+                    "body": "Ready for another message.",
+                    "status": "completed",
+                    "createdAt": "t2",
+                    "input": "answer",
+                    "output": "answer",
+                }),
+            },
+        ];
+
+        let replay = timeline(&events);
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].title, "Wait for input");
+        assert_eq!(replay[0].body, "Ready for another message.");
+    }
 }
 
 fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
-    events
+    let projected = events
         .iter()
         .filter_map(|event| {
             let (title, kind, status, action) = match event.kind.as_str() {
                 "message.user" => ("You", "message", "completed", None),
                 "message.assistant" => ("Aworkit", "message", "completed", None),
-                "tool.completed" => ("Project file tool", "tool", "completed", None),
-                "tool.failed" => ("Project file tool", "tool", "failed", None),
+                "model.reasoning" => ("Thinking", "thinking", "completed", None),
+                "model.progress" => ("Working", "thinking", "completed", None),
+                "model.turn" => (
+                    event
+                        .payload
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Model turn"),
+                    "model",
+                    event
+                        .payload
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("completed"),
+                    None,
+                ),
+                "tool.completed" | "tool.failed" | "tool.waiting" => (
+                    event
+                        .payload
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Tool invocation"),
+                    "tool",
+                    event
+                        .payload
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or(if event.kind == "tool.completed" {
+                            "completed"
+                        } else if event.kind == "tool.waiting" {
+                            "pending"
+                        } else {
+                            "failed"
+                        }),
+                    None,
+                ),
                 "approval.requested" => ("Approval required", "approval", "pending", Some("approve")),
                 "approval.resolved" => ("Approval resolved", "approval", "completed", None),
                 "node.completed" => {
@@ -1009,6 +1124,12 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                         .get("nodeType")
                         .and_then(Value::as_str)
                         .unwrap_or("node");
+                    // The assistant message is the user-facing projection of a
+                    // successful output node. Preserve the canonical fact
+                    // without rendering a duplicate timeline card.
+                    if node_type == "output" {
+                        return None;
+                    }
                     (
                         event
                             .payload
@@ -1035,6 +1156,17 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                         .unwrap_or("Workflow node"),
                     "error",
                     "failed",
+                    None,
+                ),
+                "node.skipped" => (
+                    event
+                        .payload
+                        .get("label")
+                        .or_else(|| event.payload.get("title"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("Workflow node"),
+                    "route",
+                    "skipped",
                     None,
                 ),
                 "node.waiting" => (
@@ -1066,7 +1198,15 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                 .and_then(Value::as_str)
                 .unwrap_or("time-unavailable")
                 .to_owned();
-            let metadata = if matches!(event.kind.as_str(), "tool.completed" | "tool.failed") {
+            let metadata = if matches!(
+                event.kind.as_str(),
+                "model.reasoning"
+                    | "model.progress"
+                    | "model.turn"
+                    | "tool.completed"
+                    | "tool.failed"
+                    | "tool.waiting"
+            ) {
                 event.payload.clone()
             } else if event.kind == "message.assistant" {
                 json!({
@@ -1092,6 +1232,7 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                     | "node.completed"
                     | "node.failed"
                     | "node.waiting"
+                    | "node.skipped"
             ) {
                 event.payload.clone()
             } else {
@@ -1105,10 +1246,45 @@ fn timeline(events: &[Event]) -> Vec<TimelineItemDto> {
                 created_at,
                 status: Some(status.into()),
                 action: action.map(str::to_owned),
+                reasoning_category: event
+                    .payload
+                    .get("reasoningCategory")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 metadata,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    reduce_timeline_activities(projected)
+}
+
+/// Canonical replay uses the same stable activity identity as the live
+/// reducer. Later lifecycle facts update the original card in place while the
+/// append-only source events remain available for detailed inspection.
+fn reduce_timeline_activities(projected: Vec<TimelineItemDto>) -> Vec<TimelineItemDto> {
+    let mut positions = BTreeMap::<String, usize>::new();
+    let mut reduced: Vec<TimelineItemDto> = Vec::new();
+    for mut item in projected {
+        let activity_id = item
+            .metadata
+            .get("activityId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let Some(activity_id) = activity_id else {
+            reduced.push(item);
+            continue;
+        };
+        if let Some(index) = positions.get(&activity_id).copied() {
+            // Retain the first event id so its timeline position is stable,
+            // exactly like the firstSequence key in the live reducer.
+            item.id = reduced[index].id.clone();
+            reduced[index] = item;
+        } else {
+            positions.insert(activity_id, reduced.len());
+            reduced.push(item);
+        }
+    }
+    reduced
 }
 
 fn evidence(events: &[Event]) -> Vec<EvidenceRecordDto> {

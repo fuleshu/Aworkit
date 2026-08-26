@@ -244,12 +244,12 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses() {
 fn openai_reasoning_is_observed_before_the_stream_finishes() {
     let reasoning = format!(
         "data: {}\n\n",
-        json!({"choices":[{"index":0,"delta":{"reasoning_content":"live reasoning"},"finish_reason":null}]})
+        json!({"choices":[{"index":0,"delta":{"reasoning_content":"live reasoning","tool_calls":null},"finish_reason":null}]})
     );
     let answer = [
         format!(
             "data: {}\n\n",
-            json!({"choices":[{"index":0,"delta":{"content":"final answer"},"finish_reason":null}]})
+            json!({"choices":[{"index":0,"delta":{"content":"final answer","tool_calls":null},"finish_reason":null}]})
         ),
         format!(
             "data: {}\n\n",

@@ -51,6 +51,9 @@ const timelineItemSchema = z.object({
   createdAt: z.string(),
   status: z.string().nullable(),
   action: z.string().nullable(),
+  reasoningCategory: z
+    .enum(["summary", "progress", "source_provided"])
+    .optional(),
   metadata: z.unknown(),
 });
 const evidenceRecordSchema = z.object({
@@ -79,13 +82,31 @@ const receiptSchema = z.object({
   reason: z.string().nullable(),
 });
 const liveActivitySchema = z.object({
+  schemaVersion: z.number().int().positive(),
   requestId: z.string(),
   runId: z.string(),
+  sequence: z.number().int().positive(),
+  eventId: z.string(),
   activityId: z.string(),
-  kind: z.enum(["thinking", "reasoning", "response", "step", "tool"]),
+  kind: z.enum([
+    "thinking",
+    "reasoning",
+    "progress",
+    "response",
+    "model_turn",
+    "step",
+    "tool",
+  ]),
   title: z.string(),
   body: z.string(),
   status: z.string(),
+  dataMode: z.enum(["append", "replace", "retain"]),
+  input: z.unknown().optional(),
+  output: z.unknown().optional(),
+  turn: z.number().int().positive().optional(),
+  nodeId: z.string().optional(),
+  nodeType: z.string().optional(),
+  callId: z.string().optional(),
   reasoningCategory: z
     .enum(["summary", "progress", "source_provided"])
     .optional(),

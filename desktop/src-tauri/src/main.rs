@@ -17,19 +17,41 @@ use aworkit_desktop::presentation::{
 use aworkit_desktop::runtime::{
     CredentialDeleteInputV2, CredentialStoreInputV2, DesktopRuntime, ExtensionConfigurationV2,
     ExtensionRegisterInputV2, ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
-    McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
-    LiveChatActivityPort, LiveChatActivityV1, ProjectProbeRequestV2, ProjectProbeResultV2,
-    ProviderProbeRequestV2, ProviderProbeResultV2,
-    ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
-    SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
-    UiCommandInput, UiCommandReceipt, WorkflowCommitInput, WorkflowCreateInput,
-    WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot, WorkflowRenameInput,
-    WorkflowSnapshot, WorkflowTargetInput,
+    LiveChatActivityPort, LiveChatActivityV1, McpProbeRequestV2, McpProbeResultV2,
+    ModelDiscoveryRequestV2, ModelDiscoveryResultV2, ProjectProbeRequestV2, ProjectProbeResultV2,
+    ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput, ProviderTestResult,
+    RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, SettingsV2CommitInput,
+    SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2, UiCommandInput, UiCommandReceipt,
+    WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
+    WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
 use tauri::{Emitter, Manager};
 
 type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
+
+/// Runs every potentially contended runtime access away from Tauri's IPC/UI
+/// dispatcher. A Chat execution deliberately owns the mutable runtime while it
+/// settles, but waiting for that ownership must never stall WebView rendering
+/// or delivery of live activity events.
+async fn runtime_worker<T, F>(
+    runtime: SharedRuntime,
+    operation: &'static str,
+    access: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut DesktopRuntime) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
+        access(&mut runtime)
+    })
+    .await
+    .map_err(|error| format!("{operation} worker failed: {error}"))?
+}
 
 struct TauriLiveChatActivity {
     app: tauri::AppHandle,
@@ -92,14 +114,16 @@ async fn native_pick_folder(app: tauri::AppHandle) -> Option<tauri_plugin_dialog
 }
 
 #[tauri::command]
-fn desktop_snapshot(
+async fn desktop_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
     after_sequence: u64,
 ) -> Result<RuntimeSnapshot, String> {
-    runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .snapshot(after_sequence)
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "desktop snapshot",
+        move |runtime| runtime.snapshot(after_sequence),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -119,11 +143,15 @@ async fn desktop_command(
 }
 
 #[tauri::command]
-fn settings_snapshot(runtime: tauri::State<'_, SharedRuntime>) -> Result<SettingsSnapshot, String> {
-    Ok(runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .settings_snapshot())
+async fn settings_snapshot(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<SettingsSnapshot, String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "settings snapshot",
+        |runtime| Ok(runtime.settings_snapshot()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -159,13 +187,15 @@ async fn settings_test_provider(
 }
 
 #[tauri::command]
-fn settings_v2_snapshot(
+async fn settings_v2_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
 ) -> Result<SettingsV2Snapshot, String> {
-    Ok(runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .settings_v2_snapshot())
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "settings-v2 snapshot",
+        |runtime| Ok(runtime.settings_v2_snapshot()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -345,27 +375,33 @@ async fn settings_v2_register_extension(
 }
 
 #[tauri::command]
-fn workflow_snapshot(
+async fn workflow_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
     workflow_id: Option<String>,
 ) -> Result<WorkflowSnapshot, String> {
-    let runtime = runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
-    Ok(match workflow_id {
-        Some(workflow_id) => runtime.workflow_snapshot_for(workflow_id),
-        None => runtime.workflow_snapshot(),
-    })
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "workflow snapshot",
+        move |runtime| {
+            Ok(match workflow_id {
+                Some(workflow_id) => runtime.workflow_snapshot_for(workflow_id),
+                None => runtime.workflow_snapshot(),
+            })
+        },
+    )
+    .await
 }
 
 #[tauri::command]
-fn workflow_library(
+async fn workflow_library(
     runtime: tauri::State<'_, SharedRuntime>,
 ) -> Result<WorkflowLibrarySnapshot, String> {
-    Ok(runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .workflow_library())
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "workflow library snapshot",
+        |runtime| Ok(runtime.workflow_library()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -465,26 +501,30 @@ async fn workflow_set_default(
 }
 
 #[tauri::command]
-fn management_repair_snapshot(
+async fn management_repair_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
     after_sequence: u64,
 ) -> Result<ManagementRepairProjectionDto, String> {
-    runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .management_repair_snapshot(after_sequence)
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "management snapshot",
+        move |runtime| runtime.management_repair_snapshot(after_sequence),
+    )
+    .await
 }
 
 #[tauri::command]
-fn management_repair_command(
+async fn management_repair_command(
     runtime: tauri::State<'_, SharedRuntime>,
     command: ManagementRepairCommandInput,
     expected_version: u64,
 ) -> Result<ManagementRepairReceipt, String> {
-    runtime
-        .lock()
-        .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-        .management_repair_command(command, expected_version)
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "management command",
+        move |runtime| runtime.management_repair_command(command, expected_version),
+    )
+    .await
 }
 
 #[cfg(target_os = "linux")]
@@ -533,10 +573,9 @@ fn main() {
                     .map_err(|error| std::io::Error::other(error.to_string()))?,
             );
             let management = ManagementRepairGateway::with_durable_ledger(ledger);
-            let live_activity: Arc<dyn LiveChatActivityPort> =
-                Arc::new(TauriLiveChatActivity {
-                    app: app.handle().clone(),
-                });
+            let live_activity: Arc<dyn LiveChatActivityPort> = Arc::new(TauriLiveChatActivity {
+                app: app.handle().clone(),
+            });
             let runtime = DesktopRuntime::open_with_live_activity(
                 app_data_root.join("runtime"),
                 live_activity,

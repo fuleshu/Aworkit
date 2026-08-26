@@ -49,12 +49,12 @@ use super::{
         FrozenChatExecutionRecordV1, FrozenCredentialBindingV1, FrozenToolBindingV1,
         PendingChatCommandV1, canonical_hash, identity_for_seed, message_fact, now_label,
     },
+    live_activity::{LiveChatActivityPort, noop_live_activity},
     mcp::probe_mcp_server,
     mcp::{materialize_bindings, prepare_mcp_server},
     mcp_tools::{
         MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
     },
-    live_activity::{LiveChatActivityPort, noop_live_activity},
     pipeline::{
         WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowExecutionPipeline, WorkflowExecutionRequestV1,
         WorkflowExecutionResultV1, WorkflowExecutionStatusV1, WorkflowMessageV1,
@@ -63,6 +63,7 @@ use super::{
     project_scope::{resolve_project_scope, selectable_projects},
     provider::{ProviderPort, production_provider, provider_supports_tool_calls},
     provider_health::{ProviderHealth, ProviderHealthRegistry},
+    run_events::RunActivitySnapshotV1,
     settings_diagnostics::{
         ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
         probe_project, probe_tool,
@@ -215,12 +216,7 @@ impl DesktopRuntime {
         store: Arc<dyn PlatformCredentialStorePort>,
         provider: Arc<dyn ProviderPort>,
     ) -> Result<Self, String> {
-        Self::open_with_store_and_live_activity(
-            data_root,
-            store,
-            provider,
-            noop_live_activity(),
-        )
+        Self::open_with_store_and_live_activity(data_root, store, provider, noop_live_activity())
     }
 
     fn open_with_store_and_live_activity(
@@ -767,6 +763,12 @@ impl DesktopRuntime {
             "message.user",
             message_fact(&user_input, &created_at, None, None, None),
         ));
+        facts.extend(ordered_run_activity_facts(
+            &result,
+            context,
+            &frozen.context_hash,
+            &created_at,
+        ));
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
@@ -827,13 +829,6 @@ impl DesktopRuntime {
                         result.model
                     )),
                 );
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push(("message.assistant", fact));
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
@@ -847,13 +842,6 @@ impl DesktopRuntime {
                     "authority pipeline reported an approval suspension without a decision identity"
                         .to_owned()
                 })?;
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push((
                     "approval.requested",
                     json!({
@@ -883,13 +871,6 @@ impl DesktopRuntime {
                         "Last authority-checked completion failed. Inspect the Chat evidence for details.",
                     ),
                 );
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push((
                     "execution.failed",
                     json!({
@@ -968,6 +949,12 @@ impl DesktopRuntime {
                 "frozenContextHash": frozen.context_hash,
             }),
         )];
+        facts.extend(ordered_run_activity_facts(
+            &result,
+            context,
+            &frozen.context_hash,
+            &created_at,
+        ));
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
                 facts.extend(todo_state_fact(
@@ -1028,13 +1015,6 @@ impl DesktopRuntime {
                         result.model
                     )),
                 );
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push(("message.assistant", fact));
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
@@ -1048,13 +1028,6 @@ impl DesktopRuntime {
                     "authority pipeline reported a second approval without a decision identity"
                         .to_owned()
                 })?;
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push((
                     "approval.requested",
                     json!({
@@ -1084,13 +1057,6 @@ impl DesktopRuntime {
                         "The approved workflow step failed. Inspect the Chat evidence for details.",
                     ),
                 );
-                facts.extend(tool_activity_facts(
-                    &result.tool_activity,
-                    context,
-                    &frozen.context_hash,
-                    &created_at,
-                ));
-                facts.extend(node_activity_facts(&result.node_activity, &created_at));
                 facts.push((
                     "execution.failed",
                     json!({
@@ -3328,6 +3294,150 @@ fn optional_project_id(payload: &Value) -> Result<Option<String>, String> {
     }
 }
 
+/// Projects the semantic reduction of the live Run stream into canonical Chat
+/// facts. Fresh executions take this path exclusively; the legacy projections
+/// remain only for replaying outcomes written before Run events existed.
+fn ordered_run_activity_facts(
+    result: &WorkflowExecutionResultV1,
+    context: &FrozenChatExecutionContextV1,
+    frozen_context_hash: &str,
+    created_at: &str,
+) -> Vec<(&'static str, Value)> {
+    if result.run_activity.is_empty() {
+        let mut legacy = model_reasoning_fact(result, created_at);
+        legacy.extend(tool_activity_facts(
+            &result.tool_activity,
+            context,
+            frozen_context_hash,
+            created_at,
+        ));
+        legacy.extend(node_activity_facts(&result.node_activity, created_at));
+        return legacy;
+    }
+
+    result
+        .run_activity
+        .iter()
+        // Streamed response chunks are atomically replaced by the canonical
+        // assistant message at settlement, avoiding duplicate response cards.
+        .filter(|activity| activity.kind != "response")
+        .map(|activity| {
+            let kind = run_activity_fact_kind(activity);
+            let frozen_tool_hash = activity.capability_id.as_deref().and_then(|capability_id| {
+                context
+                    .tools
+                    .iter()
+                    .find(|tool| tool.tool_id == capability_id)
+                    .map(|tool| tool.tool_hash.as_str())
+            });
+            let payload = json!({
+                "body": run_activity_body(activity),
+                "createdAt": created_at,
+                "requestId": result.request_id,
+                "runId": result.run_id,
+                "activityId": activity.activity_id,
+                "sourceFirstSequence": activity.first_sequence,
+                "sourceLastSequence": activity.last_sequence,
+                "activityKind": activity.kind,
+                "title": activity.title,
+                "status": activity.status,
+                "hasInput": activity.input.is_some(),
+                "input": activity.input,
+                "hasOutput": activity.output.is_some(),
+                "output": activity.output,
+                "turn": activity.turn,
+                "nodeId": activity.node_id,
+                "nodeType": activity.node_type,
+                "label": activity.title,
+                "callId": activity.call_id,
+                "capabilityId": activity.capability_id,
+                "reasoningCategory": activity.reasoning_category,
+                "model": result.model,
+                "frozenToolHash": frozen_tool_hash,
+                "frozenContextHash": frozen_context_hash,
+                "workspaceIdentityHash": context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
+            });
+            (kind, payload)
+        })
+        .collect()
+}
+
+fn run_activity_fact_kind(activity: &RunActivitySnapshotV1) -> &'static str {
+    match activity.kind.as_str() {
+        "reasoning" => "model.reasoning",
+        "progress" => "model.progress",
+        "model_turn" => "model.turn",
+        "tool" if activity.capability_id.as_deref() == Some(SUBAGENT_CAPABILITY_ID) => {
+            if activity.status == "completed" {
+                "subagent.completed"
+            } else {
+                "subagent.failed"
+            }
+        }
+        "tool"
+            if activity
+                .capability_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with(MCP_CAPABILITY_PREFIX)) =>
+        {
+            if activity.status == "completed" {
+                "mcp.completed"
+            } else {
+                "mcp.failed"
+            }
+        }
+        "tool" => match activity.status.as_str() {
+            "completed" => "tool.completed",
+            "awaiting_approval" | "requested" | "running" => "tool.waiting",
+            _ => "tool.failed",
+        },
+        "step" => match activity.status.as_str() {
+            "completed" => "node.completed",
+            "waiting" => "node.waiting",
+            "skipped" => "node.skipped",
+            _ => "node.failed",
+        },
+        _ => "run.activity",
+    }
+}
+
+fn run_activity_body(activity: &RunActivitySnapshotV1) -> String {
+    if !activity.body.is_empty() {
+        return activity.body.clone();
+    }
+    activity
+        .output
+        .as_ref()
+        .and_then(|output| serde_json::to_string_pretty(output).ok())
+        .unwrap_or_else(|| activity.status.clone())
+}
+
+/// Provider-supplied reasoning is a durable Chat fact, not a temporary busy
+/// placeholder. This lets settlement replace the live projection atomically
+/// without erasing the thinking the user already watched arrive.
+fn model_reasoning_fact(
+    result: &WorkflowExecutionResultV1,
+    created_at: &str,
+) -> Vec<(&'static str, Value)> {
+    result
+        .reasoning
+        .as_ref()
+        .map(|reasoning| {
+            vec![(
+                "model.reasoning",
+                json!({
+                    "body": reasoning.body,
+                    "createdAt": created_at,
+                    "requestId": result.request_id,
+                    "runId": result.run_id,
+                    "reasoningCategory": reasoning.category,
+                    "model": result.model,
+                }),
+            )]
+        })
+        .unwrap_or_default()
+}
+
 fn tool_activity_facts(
     activities: &[WorkflowToolActivityV1],
     context: &FrozenChatExecutionContextV1,
@@ -3651,12 +3761,14 @@ mod tests {
                 outcome_hash: format!("sha256:{}", "2".repeat(64)),
                 status: WorkflowExecutionStatusV1::Succeeded,
                 assistant_text: Some(completion.text),
+                reasoning: None,
                 error: None,
                 model: completion.model,
                 input_units: completion.input_units,
                 output_units: completion.output_units,
                 model_turns: 1,
                 tool_calls: 0,
+                run_activity: Vec::new(),
                 tool_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
@@ -3721,12 +3833,14 @@ mod tests {
                 outcome_hash: format!("sha256:{}", "7".repeat(64)),
                 status: WorkflowExecutionStatusV1::Succeeded,
                 assistant_text: Some(completion.text),
+                reasoning: None,
                 error: None,
                 model: completion.model,
                 input_units: completion.input_units,
                 output_units: completion.output_units,
                 model_turns: 1,
                 tool_calls: 0,
+                run_activity: Vec::new(),
                 tool_activity: Vec::new(),
                 node_activity: Vec::new(),
                 approval: None,
@@ -3775,12 +3889,62 @@ mod tests {
                     WorkflowExecutionStatusV1::OutcomeUncertain
                 },
                 assistant_text: succeeded.then(|| "activity fixture answer".into()),
+                reasoning: Some(super::super::pipeline::WorkflowReasoningActivityV1 {
+                    body: "I should inspect the requested project evidence.".into(),
+                    category: "source_provided".into(),
+                }),
                 error: (!succeeded).then(|| "provider failed after settled tool use".into()),
                 model: request.provider.model,
                 input_units: 5,
                 output_units: 2,
                 model_turns: 2,
                 tool_calls: 1,
+                run_activity: vec![
+                    RunActivitySnapshotV1 {
+                        first_sequence: 1,
+                        last_sequence: 2,
+                        activity_id: "model.reasoning.activity-fixture.turn.1".into(),
+                        kind: "reasoning".into(),
+                        title: "Thinking".into(),
+                        body: "I should inspect the requested project evidence.".into(),
+                        status: "completed".into(),
+                        input: None,
+                        output: Some(Value::String(
+                            "I should inspect the requested project evidence.".into(),
+                        )),
+                        turn: Some(1),
+                        node_id: None,
+                        node_type: None,
+                        call_id: None,
+                        reasoning_category: Some("source_provided".into()),
+                        capability_id: None,
+                    },
+                    RunActivitySnapshotV1 {
+                        first_sequence: 3,
+                        last_sequence: 4,
+                        activity_id: "tool.call.activity-fixture".into(),
+                        kind: "tool".into(),
+                        title: "tool.files.read".into(),
+                        body: "Read 7 bytes from notes.txt.".into(),
+                        status: "completed".into(),
+                        input: Some(json!({
+                            "callId": "call.activity-fixture",
+                            "capabilityId": "tool.files.read",
+                            "arguments": {"path": "notes.txt"},
+                        })),
+                        output: Some(json!({
+                            "callId": "call.activity-fixture",
+                            "content": {"content": "fixture"},
+                            "isError": false,
+                        })),
+                        turn: Some(1),
+                        node_id: None,
+                        node_type: None,
+                        call_id: Some("call.activity-fixture".into()),
+                        reasoning_category: None,
+                        capability_id: Some("tool.files.read".into()),
+                    },
+                ],
                 tool_activity: vec![WorkflowToolActivityV1 {
                     call_id: "call.activity-fixture".into(),
                     invocation_id: fixture_id("invocation.tool.activity-fixture")?,
@@ -4142,11 +4306,7 @@ mod tests {
     #[test]
     fn subagent_freeze_includes_enabled_child_tools_without_adding_parent_tool_ids() {
         let mut settings = SettingsConfigurationV2::default();
-        for tool_id in [
-            SUBAGENT_CAPABILITY_ID,
-            "tool.files.read",
-            "tool.todo",
-        ] {
+        for tool_id in [SUBAGENT_CAPABILITY_ID, "tool.files.read", "tool.todo"] {
             settings
                 .tools
                 .iter_mut()
@@ -4156,8 +4316,7 @@ mod tests {
         }
         let mut workflow = crate::runtime::documents::bundled_workflow_template("simple-chat")
             .expect("bundled workflow");
-        workflow["nodes"][1]["configuration"]["toolIds"] =
-            json!([SUBAGENT_CAPABILITY_ID]);
+        workflow["nodes"][1]["configuration"]["toolIds"] = json!([SUBAGENT_CAPABILITY_ID]);
         workflow["nodes"][1]["configuration"]["maxTurns"] = json!(2);
 
         let frozen = freeze_graph_bindings(&workflow, &settings, true, &BTreeMap::new())
@@ -4421,22 +4580,47 @@ mod tests {
                 .unwrap();
             let snapshot = runtime.snapshot(0).unwrap();
             assert_eq!(snapshot.chat.phase, expected_phase);
-            assert_eq!(snapshot.timeline.len(), 3);
+            assert_eq!(snapshot.timeline.len(), 4);
             assert_eq!(snapshot.timeline[0].kind, "message");
-            assert_eq!(snapshot.timeline[1].kind, "tool");
-            assert_eq!(snapshot.timeline[1].status.as_deref(), Some("completed"));
-            assert_eq!(snapshot.timeline[2].kind, terminal_kind);
+            assert_eq!(snapshot.timeline[1].kind, "thinking");
             assert_eq!(
-                snapshot.timeline[1].metadata["capabilityId"],
+                snapshot.timeline[1].body,
+                "I should inspect the requested project evidence."
+            );
+            assert_eq!(
+                snapshot.timeline[1].reasoning_category.as_deref(),
+                Some("source_provided")
+            );
+            assert_eq!(
+                snapshot.timeline[1].metadata["requestId"],
+                match outcome {
+                    ActivityPipelineOutcomeV1::Succeeded => "chat.tool.activity-success",
+                    ActivityPipelineOutcomeV1::FailedAfterTool => "chat.tool.activity-failure",
+                }
+            );
+            assert_eq!(snapshot.timeline[2].kind, "tool");
+            assert_eq!(snapshot.timeline[2].status.as_deref(), Some("completed"));
+            assert_eq!(snapshot.timeline[3].kind, terminal_kind);
+            assert_eq!(
+                snapshot.timeline[2].metadata["capabilityId"],
                 "tool.files.read"
             );
+            assert_eq!(
+                snapshot.timeline[2].metadata["input"]["arguments"]["path"],
+                "notes.txt"
+            );
+            assert_eq!(
+                snapshot.timeline[2].metadata["output"]["content"]["content"],
+                "fixture"
+            );
+            assert_eq!(snapshot.timeline[2].metadata["sourceFirstSequence"], 3);
             assert!(
-                snapshot.timeline[1].metadata["frozenToolHash"]
+                snapshot.timeline[2].metadata["frozenToolHash"]
                     .as_str()
                     .is_some_and(|hash| hash.starts_with("sha256:"))
             );
             assert!(
-                snapshot.timeline[1].metadata["workspaceIdentityHash"]
+                snapshot.timeline[2].metadata["workspaceIdentityHash"]
                     .as_str()
                     .is_some_and(|hash| hash.starts_with("sha256:"))
             );

@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -76,7 +77,8 @@ pub struct ModelRequestV1 {
     pub input: Value,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ModelEventV1 {
     AssistantOutput(String),
     ReasoningRaw(String),
@@ -92,9 +94,15 @@ pub enum ModelEventV1 {
 /// events. Observation is best-effort and never participates in execution
 /// authority, persistence, or provider success.
 pub trait ModelEventObserverV1: Send + Sync {
+    /// Announces the exact normalized request entering one provider turn.
+    fn model_turn_started(&self, _input: &Value) {}
+
     fn model_event(&self, _event: &ModelEventV1) {}
 
     fn model_tool_event(&self, _event: &ModelToolEventV1) {}
+
+    /// Announces the exact normalized event stream returned by that turn.
+    fn model_turn_completed(&self, _output: &Value, _status: &str) {}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,6 +231,9 @@ impl FrozenModelGateway {
         {
             return Err(ProviderError::InvalidPlan);
         }
+        if let Some(observer) = &self.observer {
+            observer.model_turn_started(&request.input);
+        }
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
             if cancellation.is_cancelled() {
@@ -261,6 +272,12 @@ impl FrozenModelGateway {
                     {
                         return Err(ProviderError::MissingOrDuplicateUsage);
                     }
+                    if let Some(observer) = &self.observer {
+                        observer.model_turn_completed(
+                            &serde_json::to_value(&events).unwrap_or(Value::Null),
+                            "completed",
+                        );
+                    }
                     return Ok(ModelDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,
@@ -297,6 +314,9 @@ impl FrozenModelGateway {
             plan,
             &serde_json::to_value(request).map_err(|_| ProviderError::InvalidPlan)?,
         )?;
+        if let Some(observer) = &self.observer {
+            observer.model_turn_started(&serde_json::to_value(request).unwrap_or(Value::Null));
+        }
 
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
@@ -330,6 +350,12 @@ impl FrozenModelGateway {
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     validate_tool_events(request, &events)?;
+                    if let Some(observer) = &self.observer {
+                        observer.model_turn_completed(
+                            &serde_json::to_value(&events).unwrap_or(Value::Null),
+                            "completed",
+                        );
+                    }
                     return Ok(ModelToolDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,
