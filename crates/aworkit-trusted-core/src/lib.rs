@@ -68,6 +68,7 @@ pub use broker::{
     DispatchOutboxV1, DurableInvocationBroker, InvocationBroker, InvocationDecision,
     InvocationLeasePortV1, InvocationLedgerEventV1, InvocationLedgerPortV1, MemoryInvocationLedger,
     WorkerInvocationProposalV1, WorkerProposal, WorkerResultOutboxV1,
+    is_definitely_not_started_settlement_v1,
 };
 pub use committer::{
     CanonicalCommitOutcomeV1, CanonicalCommitRequestV1, CanonicalCommitter, CommitRequest,

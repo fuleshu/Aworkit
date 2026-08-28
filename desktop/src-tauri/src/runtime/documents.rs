@@ -724,7 +724,14 @@ fn load_or_create_workflows(
         };
         let editable = stored.access == DocumentAccessMode::Editable;
         let mut document = stored_value(stored, "workflow")?;
-        if editable && migrate_rescue_model_node(&mut document) {
+        let migrated = if editable {
+            let rescue_migrated = migrate_rescue_model_node(&mut document);
+            let plan_migrated = migrate_standard_agent_plan_contract(&mut document);
+            rescue_migrated || plan_migrated
+        } else {
+            false
+        };
+        if migrated {
             let saved = repository
                 .save(
                     DocumentKind::Workflow,
@@ -732,7 +739,7 @@ fn load_or_create_workflows(
                     Some(version),
                     &json_document(&document)?,
                 )
-                .map_err(|error| format!("cannot migrate legacy workflow Agent node: {error}"))?;
+                .map_err(|error| format!("cannot migrate built-in workflow contract: {error}"))?;
             workflows.insert(
                 id,
                 StoredWorkflowState {
@@ -1155,6 +1162,42 @@ fn migrate_rescue_model_node(document: &mut Value) -> bool {
     true
 }
 
+const LEGACY_STANDARD_PLAN_INSTRUCTIONS: &str = "Analyze the user request and produce a concise plan before acting. Note open questions, needed evidence, and the intended tool order.";
+const STRUCTURED_STANDARD_PLAN_INSTRUCTIONS: &str = "Analyze the user request without answering it. Return only one JSON object with exactly these fields: goal (string), openQuestions (string array), evidenceNeeded (string array), and toolOrder (non-empty string array).";
+
+/// Migrates only the exact legacy bundled Plan prompt. Any user-edited Plan
+/// instructions remain untouched and can opt into the contract explicitly.
+fn migrate_standard_agent_plan_contract(document: &mut Value) -> bool {
+    if document.get("id").and_then(Value::as_str) != Some("workflow.standard-agent") {
+        return false;
+    }
+    let Some(configuration) = document
+        .get_mut("nodes")
+        .and_then(Value::as_array_mut)
+        .and_then(|nodes| {
+            nodes.iter_mut().find(|node| {
+                node.get("id").and_then(Value::as_str) == Some("plan.1")
+                    && node.get("type").and_then(Value::as_str) == Some("model_call")
+            })
+        })
+        .and_then(|node| node.get_mut("configuration"))
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    if configuration.get("instructions").and_then(Value::as_str)
+        != Some(LEGACY_STANDARD_PLAN_INSTRUCTIONS)
+    {
+        return false;
+    }
+    configuration.insert(
+        "instructions".into(),
+        Value::String(STRUCTURED_STANDARD_PLAN_INSTRUCTIONS.into()),
+    );
+    configuration.insert("outputContract".into(), Value::String("plan".into()));
+    true
+}
+
 /// The closed v1 executable catalog: known node types, per-type configuration
 /// contracts, acyclic structure, reachability, and condition-route labels.
 /// Unknown node types and inert configuration are preserved by the editor but
@@ -1370,10 +1413,16 @@ fn validate_agent_configuration(
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
     let required = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
-    let allowed = BTreeSet::from(["instructions", "maxTurns", "modelTierId", "toolIds"]);
+    let allowed = BTreeSet::from([
+        "instructions",
+        "maxTurns",
+        "modelTierId",
+        "timeoutSeconds",
+        "toolIds",
+    ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions"
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions"
         ));
     }
     if config
@@ -1420,6 +1469,16 @@ fn validate_agent_configuration(
             "workflow node '{node_id}' agent maxTurns must be {MINIMUM_AGENT_TURNS}..={MAXIMUM_AGENT_TURNS}"
         ));
     }
+    if let Some(timeout_seconds) = config.get("timeoutSeconds") {
+        let timeout_seconds = timeout_seconds.as_u64().ok_or_else(|| {
+            format!("workflow node '{node_id}' agent timeoutSeconds must be an integer")
+        })?;
+        if !(30..=3_600).contains(&timeout_seconds) {
+            return Err(format!(
+                "workflow node '{node_id}' agent timeoutSeconds must be 30..=3600"
+            ));
+        }
+    }
     validate_optional_instructions(node_id, config.get("instructions"))?;
     Ok(())
 }
@@ -1430,10 +1489,15 @@ fn validate_model_call_configuration(
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
     let required = BTreeSet::from(["modelTierId"]);
-    let allowed = BTreeSet::from(["instructions", "maximumTokens", "modelTierId"]);
+    let allowed = BTreeSet::from([
+        "instructions",
+        "maximumTokens",
+        "modelTierId",
+        "outputContract",
+    ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens"
+            "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract"
         ));
     }
     if config
@@ -1444,6 +1508,14 @@ fn validate_model_call_configuration(
     {
         return Err(format!(
             "workflow node '{node_id}' model_call modelTierId must reference a tier:<name> model tier"
+        ));
+    }
+    if config
+        .get("outputContract")
+        .is_some_and(|contract| contract.as_str() != Some("plan"))
+    {
+        return Err(format!(
+            "workflow node '{node_id}' model_call outputContract must be 'plan' when present"
         ));
     }
     if let Some(tokens) = config.get("maximumTokens") {
@@ -2124,6 +2196,43 @@ mod tests {
             reopened.workflow_library().default_workflow_id,
             library.default_workflow_id
         );
+    }
+
+    #[test]
+    fn exact_legacy_standard_agent_plan_is_migrated_to_the_structured_contract() {
+        let mut workflow = bundled_workflow_template("standard-agent").unwrap();
+        let configuration = workflow["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["id"] == "plan.1")
+            .unwrap()["configuration"]
+            .as_object_mut()
+            .unwrap();
+        configuration.insert(
+            "instructions".into(),
+            Value::String(LEGACY_STANDARD_PLAN_INSTRUCTIONS.into()),
+        );
+        configuration.remove("outputContract");
+
+        assert!(migrate_standard_agent_plan_contract(&mut workflow));
+        let configuration = workflow["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["id"] == "plan.1")
+            .unwrap()["configuration"]
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            configuration.get("instructions").and_then(Value::as_str),
+            Some(STRUCTURED_STANDARD_PLAN_INSTRUCTIONS)
+        );
+        assert_eq!(
+            configuration.get("outputContract").and_then(Value::as_str),
+            Some("plan")
+        );
+        assert!(!migrate_standard_agent_plan_contract(&mut workflow));
     }
 
     #[test]

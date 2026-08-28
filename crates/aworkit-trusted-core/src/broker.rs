@@ -12,6 +12,15 @@ use thiserror::Error;
 
 use crate::{ApprovalRequirement, AuthorityManifest};
 
+const HOST_DISPATCH_DEFINITELY_NOT_STARTED_REASON: &str = "host_dispatch_definitely_not_started";
+
+/// Identifies the broker-owned terminal settlement written when the host
+/// conclusively rejects a dispatch before any tool effect can start.
+#[must_use]
+pub fn is_definitely_not_started_settlement_v1(settlement_hash: &str, uncertain: bool) -> bool {
+    !uncertain && settlement_hash == outcome_hash(HOST_DISPATCH_DEFINITELY_NOT_STARTED_REASON)
+}
+
 /// Compatibility proposal used by the first broker scaffold.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkerProposal {
@@ -740,7 +749,7 @@ impl DurableInvocationBroker {
             DeliveryAcceptanceV1::RejectedDefinitelyNotStarted => {
                 self.settle_unaccepted_dispatch(
                     invocation_id,
-                    "host_dispatch_definitely_not_started",
+                    HOST_DISPATCH_DEFINITELY_NOT_STARTED_REASON,
                     false,
                 )?;
                 self.ledger.mark_dispatch_delivered(&outbox.outbox_id)?;

@@ -590,12 +590,14 @@ pre {
 .message-body {
   max-width: min(72%, 640px);
 }
-.from-user .message-body {
+.user-speech-bubble {
   background: var(--aw-inset);
-  border-radius: 6px;
+  border: 1px solid var(--aw-divider);
+  border-radius: 16px 16px 4px 16px;
   padding: 10px 14px;
 }
 .message-body p {
+  margin: 0;
   white-space: pre-wrap;
 }
 .message-body small {
@@ -603,6 +605,248 @@ pre {
   display: block;
   font-size: 9px;
   margin-top: 5px;
+}
+.actor-turn {
+  align-items: end;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  max-width: min(82%, 760px);
+  padding: 4px 0;
+}
+.actor-avatar {
+  align-items: center;
+  align-self: end;
+  background: color-mix(in srgb, var(--aw-accent) 16%, var(--aw-panel));
+  border: 1px solid color-mix(in srgb, var(--aw-accent) 48%, var(--aw-divider));
+  border-radius: 50%;
+  color: var(--aw-accent);
+  display: inline-flex;
+  font-size: 9px;
+  font-weight: 800;
+  height: 30px;
+  justify-content: center;
+  letter-spacing: -0.04em;
+  margin-bottom: 2px;
+  width: 30px;
+}
+.actor-avatar svg {
+  fill: none;
+  height: 19px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.65;
+  width: 19px;
+}
+.actor-avatar-subagent {
+  background: color-mix(in srgb, var(--aw-success) 14%, var(--aw-panel));
+  border-color: color-mix(in srgb, var(--aw-success) 46%, var(--aw-divider));
+  color: var(--aw-success);
+}
+.chat-bubble {
+  background: color-mix(in srgb, var(--aw-panel) 92%, var(--aw-accent));
+  border: 1px solid color-mix(in srgb, var(--aw-accent) 24%, var(--aw-divider));
+  min-width: 0;
+  overflow: visible;
+  padding: 10px 13px;
+  position: relative;
+}
+.speech-bubble {
+  border-radius: 17px 17px 17px 5px;
+}
+.speech-bubble::before {
+  background: color-mix(in srgb, var(--aw-panel) 92%, var(--aw-accent));
+  border-bottom: 1px solid color-mix(in srgb, var(--aw-accent) 24%, var(--aw-divider));
+  border-left: 1px solid color-mix(in srgb, var(--aw-accent) 24%, var(--aw-divider));
+  bottom: 10px;
+  content: "";
+  height: 10px;
+  left: -6px;
+  position: absolute;
+  transform: rotate(45deg);
+  width: 10px;
+}
+.thinking-turn {
+  margin-bottom: 3px;
+}
+.thinking-bubble {
+  background: color-mix(in srgb, var(--aw-panel) 96%, var(--aw-accent));
+  border-color: color-mix(in srgb, var(--aw-accent) 35%, var(--aw-divider));
+  border-radius: 19px;
+  padding: 9px 12px 10px;
+}
+.thinking-bubble::before,
+.thinking-bubble::after {
+  background: color-mix(in srgb, var(--aw-panel) 96%, var(--aw-accent));
+  border: 1px solid color-mix(in srgb, var(--aw-accent) 35%, var(--aw-divider));
+  border-radius: 50%;
+  content: "";
+  position: absolute;
+}
+.thinking-bubble::before {
+  bottom: 7px;
+  height: 8px;
+  left: -9px;
+  width: 8px;
+}
+.thinking-bubble::after {
+  bottom: 1px;
+  height: 4px;
+  left: -15px;
+  width: 4px;
+}
+.actor-turn.selected .chat-bubble {
+  border-color: var(--aw-accent);
+  box-shadow: 0 0 0 1px var(--aw-accent);
+}
+.bubble-heading {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-height: 24px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+.bubble-activity-mark {
+  align-items: center;
+  display: inline-flex;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+.actor-turn[aria-busy="true"] .bubble-activity-mark::before {
+  animation: aworkit-busy-spin 0.8s linear infinite;
+  border: 2px solid var(--aw-control);
+  border-radius: 50%;
+  border-top-color: var(--aw-accent);
+  content: "";
+  display: block;
+  height: 12px;
+  width: 12px;
+}
+.bubble-heading-copy {
+  display: grid;
+  min-width: 0;
+}
+.bubble-heading-copy small {
+  color: var(--aw-muted);
+  font-size: 9px;
+  font-weight: 400;
+  margin-top: 1px;
+}
+.bubble-heading > .status {
+  font-size: 9px;
+}
+.bubble-byline {
+  color: var(--aw-muted);
+  display: block;
+  font-size: 9px;
+  margin-top: 7px;
+}
+.bubble-markdown {
+  font-size: 11px;
+  line-height: 1.55;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.thinking-bubble .bubble-markdown {
+  color: var(--aw-secondary);
+  margin-top: 6px;
+}
+.bubble-markdown > :first-child {
+  margin-top: 0;
+}
+.bubble-markdown > :last-child {
+  margin-bottom: 0;
+}
+.bubble-markdown p,
+.bubble-markdown ul,
+.bubble-markdown ol,
+.bubble-markdown blockquote,
+.bubble-markdown pre,
+.bubble-markdown table {
+  margin: 0 0 8px;
+}
+.bubble-markdown ul,
+.bubble-markdown ol {
+  padding-left: 20px;
+}
+.bubble-markdown li + li {
+  margin-top: 2px;
+}
+.bubble-markdown h1,
+.bubble-markdown h2,
+.bubble-markdown h3,
+.bubble-markdown h4 {
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 10px 0 5px;
+}
+.bubble-markdown a {
+  color: var(--aw-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.bubble-markdown code {
+  background: var(--aw-inset);
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 1px 4px;
+}
+.bubble-markdown pre {
+  background: var(--aw-inset);
+  border-radius: 5px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px 10px;
+}
+.bubble-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+.bubble-markdown blockquote {
+  border-left: 2px solid var(--aw-accent);
+  color: var(--aw-secondary);
+  padding-left: 9px;
+}
+.bubble-markdown table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.bubble-markdown th,
+.bubble-markdown td {
+  border: 1px solid var(--aw-divider);
+  padding: 4px 7px;
+  text-align: left;
+}
+.chat-bubble > .activity-data {
+  border: 0;
+  margin-top: 7px;
+  padding: 0;
+}
+.chat-bubble > .activity-raw {
+  margin: 8px -12px -10px;
+}
+.bubble-data-details {
+  border-top: 1px solid var(--aw-divider);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.bubble-data-details > summary {
+  color: var(--aw-secondary);
+  cursor: pointer;
+  font-size: 10px;
+}
+.bubble-data-details > .activity-data {
+  border: 0;
+  padding: 7px 0 0;
 }
 .activity-card {
   background: var(--aw-panel);

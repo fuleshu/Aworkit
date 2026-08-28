@@ -30,6 +30,7 @@ use aworkit_trusted_core::{
     BrokerError, CapabilityBinding, CapabilityBindingV1, CommittedWorkerResultPortV1,
     DeliveryAcceptanceV1, DurableInvocationBroker, InvocationLedgerEventV1, InvocationLedgerPortV1,
     ProjectCoordinator, WorkerInvocationProposalV1, WorkerResultOutboxV1, WorkspaceBindingV1,
+    is_definitely_not_started_settlement_v1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1179,9 +1180,8 @@ impl BoundFileToolAuthorityV1 {
                 serde_json::to_value(&settled.result).unwrap_or(Value::Null),
             ),
             Err(WorkflowPipelineError::ToolApproval(challenge)) => {
-                self.run_events.publish_tool_terminal(
+                self.run_events.publish_tool_waiting(
                     call,
-                    "awaiting_approval",
                     challenge.summary.clone(),
                     serde_json::to_value(challenge).unwrap_or(Value::Null),
                 );
@@ -1339,9 +1339,19 @@ impl BoundFileToolAuthorityV1 {
             .runtime
             .records
             .outcome(&invocation_id)?
-            .filter(|outcome| canonical_hash(outcome).ok().as_deref() == Some(&outcome_hash))
-            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            .filter(|outcome| canonical_hash(outcome).ok().as_deref() == Some(&outcome_hash));
         let _ = broker.deliver_worker_results(&CommittedToolResultAckV1);
+        let Some(outcome) = outcome else {
+            if is_definitely_not_started_settlement_v1(&outcome_hash, uncertain) {
+                let detail = if current_epoch_millis() >= self.context.deadline_epoch_millis {
+                    "tool invocation deadline elapsed before execution started"
+                } else {
+                    "tool invocation was rejected before execution started"
+                };
+                return Err(WorkflowPipelineError::Host(detail.into()));
+            }
+            return Err(WorkflowPipelineError::IncompleteEvidence);
+        };
         Ok(SettledModelToolCallV1 {
             result: ModelToolResultV1 {
                 call_id: call.call_id.clone(),
@@ -2226,6 +2236,7 @@ impl FileToolDispatcherV1 {
                     .max(2),
                 maximum_tool_calls: SUBAGENT_MAXIMUM_TOOL_CALLS,
                 maximum_tokens: SUBAGENT_MAXIMUM_TOKENS,
+                deadline_epoch_millis: self.record.deadline_epoch_millis,
             },
             &child_authority,
             cancellation,
@@ -3361,6 +3372,39 @@ mod tests {
                     .settlement(invocation_id)
                     .expect("settlement")
                     .is_some_and(|(_, uncertain)| !uncertain))
+        );
+
+        let expired_authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            manifest: manifest("manifest.tool-run-expired", capability_binding.clone())
+                .expect("expired manifest"),
+            run_id: stable("run.tool-run-expired").expect("expired run"),
+            request_id: stable("command.tool-run-expired").expect("expired request"),
+            node_id: stable("agent.1").expect("node"),
+            workspace: projects
+                .resolve_workspace_v1(&workspace_a)
+                .expect("expired binding"),
+            project_branch: None,
+            bindings: vec![tool.clone()],
+            deadline_epoch_millis: current_epoch_millis().saturating_sub(1),
+            model_gateway: None,
+            model_binding_id: None,
+            model_version_hash: None,
+            mcp_manifests: BTreeMap::new(),
+            cancellation: CancellationToken::default(),
+        });
+        let expired_error = expired_authority
+            .invoke_v1(
+                &stable("invocation.outer-tool-run-expired").expect("expired outer"),
+                1,
+                &read_call("call.tool-run-expired", "notes.txt"),
+                &CancellationToken::default(),
+            )
+            .expect_err("expired dispatch must fail before execution");
+        assert!(matches!(expired_error, WorkflowPipelineError::Host(_)));
+        assert!(
+            expired_error
+                .to_string()
+                .contains("deadline elapsed before execution started")
         );
 
         let workspace_c = root.path().join("workspace-c");

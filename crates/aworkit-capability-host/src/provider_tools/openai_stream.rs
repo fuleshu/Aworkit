@@ -135,12 +135,7 @@ fn process_event(
         .get("delta")
         .and_then(Value::as_object)
         .ok_or_else(|| invalid_stream("choice omitted its delta"))?;
-    emit_text(
-        delta,
-        "reasoning_content",
-        |text| ModelToolEventV1::ReasoningRaw { text },
-        emit,
-    )?;
+    emit_reasoning(delta, emit)?;
     emit_text(
         delta,
         "content",
@@ -158,6 +153,31 @@ fn process_event(
         Some(_) => return Err(invalid_stream("contained an invalid finish reason")),
     }
     Ok(())
+}
+
+fn emit_reasoning(
+    delta: &Map<String, Value>,
+    emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+) -> Result<(), ProviderError> {
+    // OpenAI-compatible servers currently use both spellings. vLLM's Qwen 3
+    // parser emits `reasoning`, while several other adapters expose
+    // `reasoning_content`. Validate both and prefer the established field if a
+    // server redundantly returns both in one delta.
+    let reasoning_content = optional_text(delta, "reasoning_content")?;
+    let reasoning = optional_text(delta, "reasoning")?;
+    if let Some(text) = reasoning_content.or(reasoning) {
+        emit(ModelToolEventV1::ReasoningRaw { text })?;
+    }
+    Ok(())
+}
+
+fn optional_text(delta: &Map<String, Value>, key: &str) -> Result<Option<String>, ProviderError> {
+    match delta.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if text.is_empty() => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(invalid_stream("contained invalid text content")),
+    }
 }
 
 fn emit_text(
@@ -312,4 +332,60 @@ fn required_u64(object: &Map<String, Value>, key: &str) -> Result<u64, ProviderE
 
 fn invalid_stream(reason: &str) -> ProviderError {
     ProviderError::Failed(format!("OpenAI stream {reason}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn reasoning_from(delta: Value) -> Vec<String> {
+        let mut state = StreamState::default();
+        let mut events = Vec::new();
+        process_event(
+            &json!({
+                "choices": [{
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": null
+                }]
+            })
+            .to_string(),
+            &[],
+            "openai.fixture",
+            &mut state,
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .expect("reasoning delta");
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                ModelToolEventV1::ReasoningRaw { text } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn accepts_vllm_qwen_reasoning_alias() {
+        assert_eq!(
+            reasoning_from(json!({"reasoning": "inspect the repository"})),
+            ["inspect the repository"]
+        );
+    }
+
+    #[test]
+    fn prefers_reasoning_content_when_both_aliases_are_present() {
+        assert_eq!(
+            reasoning_from(json!({
+                "reasoning_content": "canonical chunk",
+                "reasoning": "duplicate chunk"
+            })),
+            ["canonical chunk"]
+        );
+    }
 }

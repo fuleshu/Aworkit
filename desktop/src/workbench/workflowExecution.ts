@@ -11,6 +11,7 @@ export interface WorkflowExecutionIssue {
     | "native_model_tier"
     | "native_agent_tools"
     | "native_agent_turns"
+    | "native_agent_timeout"
     | "native_tool_node"
     | "native_condition"
     | "native_condition_routes"
@@ -175,7 +176,7 @@ export function assessNativeWorkflow(
       if (configuration === null) {
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions.`,
+          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions.`,
         });
       } else {
         const keys = new Set(Object.keys(configuration));
@@ -184,6 +185,7 @@ export function assessNativeWorkflow(
           "instructions",
           "maxTurns",
           "modelTierId",
+          "timeoutSeconds",
           "toolIds",
         ]);
         if (
@@ -192,7 +194,7 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional instructions.`,
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
@@ -239,6 +241,18 @@ export function assessNativeWorkflow(
             code: "native_agent_turns",
             message: `Workflow node '${id}' agent maxTurns must be ${MINIMUM_AGENT_TURNS}..=${MAXIMUM_AGENT_TURNS}.`,
           });
+        const timeoutSeconds = configuration.timeoutSeconds;
+        if (
+          timeoutSeconds !== undefined &&
+          (typeof timeoutSeconds !== "number" ||
+            !Number.isInteger(timeoutSeconds) ||
+            timeoutSeconds < 30 ||
+            timeoutSeconds > 3_600)
+        )
+          issues.push({
+            code: "native_agent_timeout",
+            message: `Workflow node '${id}' agent timeoutSeconds must be 30..=3600.`,
+          });
         instructionsIssue(id, configuration.instructions, issues);
       }
     }
@@ -247,20 +261,33 @@ export function assessNativeWorkflow(
       if (configuration === null)
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens.`,
+          message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract.`,
         });
       else {
         const keys = new Set(Object.keys(configuration));
-        const allowed = new Set(["instructions", "maximumTokens", "modelTierId"]);
+        const allowed = new Set([
+          "instructions",
+          "maximumTokens",
+          "modelTierId",
+          "outputContract",
+        ]);
         if (!keys.has("modelTierId") || [...keys].some((key) => !allowed.has(key)))
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions and maximumTokens.`,
+            message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
             code: "native_model_tier",
             message: `Workflow node '${id}' model_call modelTierId must reference a tier:<name> model tier.`,
+          });
+        if (
+          configuration.outputContract !== undefined &&
+          configuration.outputContract !== "plan"
+        )
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' model_call outputContract must be 'plan' when present.`,
           });
         const maximumTokens = configuration.maximumTokens;
         if (maximumTokens !== undefined) {

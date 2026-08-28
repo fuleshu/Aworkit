@@ -85,6 +85,9 @@ struct ProcessedCommand {
 // body at half the full message-context budget leaves deterministic room for
 // Agent instructions and durable envelopes before that first context commit.
 const WORKFLOW_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
+const DEFAULT_AGENT_TIMEOUT_SECONDS: u64 = 600;
+const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
+const MAXIMUM_WORKFLOW_TIMEOUT_MILLIS: u64 = 60 * 60 * 1_000;
 
 trait WorkflowPipelinePort: Send + Sync {
     fn preflight(&self, _request: &WorkflowExecutionRequestV1) -> Result<(), String> {
@@ -731,6 +734,7 @@ impl DesktopRuntime {
             current_epoch_millis()?,
         );
         execution_request.frozen_context_hash = frozen.context_hash.clone();
+        execution_request.model_parameters = context.model_snapshot.parameters.clone();
         execution_request.workspace = context
             .project
             .as_ref()
@@ -759,6 +763,7 @@ impl DesktopRuntime {
         execution_request.budget.tool_calls = context.maximum_tool_calls;
         execution_request.budget.actions =
             u64::from(context.agent_maximum_turns).saturating_add(context.maximum_tool_calls);
+        execution_request.set_deadline_millis(context.run_deadline_millis);
         if serde_json::to_vec(&execution_request.messages)
             .map_err(|error| format!("cannot encode Chat message context: {error}"))?
             .len()
@@ -1422,6 +1427,7 @@ impl DesktopRuntime {
             workflow_snapshot: workflow.document,
             agent_maximum_turns: agent.maximum_turns,
             maximum_tool_calls: agent.maximum_tool_calls,
+            run_deadline_millis: agent.run_deadline_millis,
             tools: agent.tools,
             model_tier_id: resolved.tier.id.clone(),
             model_tier_hash: canonical_hash(&resolved.tier)?,
@@ -2905,6 +2911,7 @@ fn validate_credential_metadata_update(
 struct FrozenWorkflowAgentV1 {
     maximum_turns: u32,
     maximum_tool_calls: u64,
+    run_deadline_millis: u64,
     tools: Vec<FrozenToolBindingV1>,
 }
 
@@ -2959,6 +2966,7 @@ fn freeze_graph_bindings(
         .and_then(Value::as_array)
         .ok_or_else(|| "workflow nodes are missing".to_owned())?;
     let mut maximum_turns = 0_u32;
+    let mut run_deadline_millis = 0_u64;
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
     for node in nodes {
@@ -2995,8 +3003,21 @@ fn freeze_graph_bindings(
                 u32::try_from(turns)
                     .map_err(|_| format!("workflow node '{node_id}' maxTurns is out of range"))?,
             );
+            let timeout_seconds = configuration
+                .and_then(|config| config.get("timeoutSeconds"))
+                .map(|value| {
+                    value.as_u64().ok_or_else(|| {
+                        format!("workflow node '{node_id}' timeoutSeconds is out of range")
+                    })
+                })
+                .transpose()?
+                .unwrap_or(DEFAULT_AGENT_TIMEOUT_SECONDS);
+            run_deadline_millis = run_deadline_millis
+                .saturating_add(timeout_seconds.saturating_mul(1_000));
         } else if node_type == "model_call" {
             maximum_turns = maximum_turns.saturating_add(1);
+            run_deadline_millis = run_deadline_millis
+                .saturating_add(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000));
         }
         for tool_id in tool_ids {
             if !seen.insert(tool_id.clone()) {
@@ -3086,6 +3107,9 @@ fn freeze_graph_bindings(
     Ok(FrozenWorkflowAgentV1 {
         maximum_turns: maximum_turns.max(1),
         maximum_tool_calls,
+        run_deadline_millis: run_deadline_millis
+            .max(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000))
+            .min(MAXIMUM_WORKFLOW_TIMEOUT_MILLIS),
         tools,
     })
 }
@@ -3419,11 +3443,39 @@ fn require_consumed_provider_options(
     let models = selected_model
         .map(std::slice::from_ref)
         .unwrap_or(provider.models.as_slice());
-    if let Some(model) = models.iter().find(|model| !model.parameters.is_empty()) {
+    for model in models {
+        validate_consumed_model_parameters(provider, model)?;
+    }
+    Ok(())
+}
+
+fn validate_consumed_model_parameters(
+    provider: &ProviderConfigurationV2,
+    model: &ModelConfigurationV2,
+) -> Result<(), String> {
+    if model.parameters.is_empty() {
+        return Ok(());
+    }
+    if provider.kind != "openai_compatible" {
         return Err(format!(
-            "model '{}:{}' has nonempty Provider parameters, but the installed native adapter has no consumer for those fields; clear Provider parameters before Test, Discover, or workflow execution",
-            provider.id, model.id
+            "model '{}:{}' has parameters, but the '{}' adapter has no consumer for those fields",
+            provider.id, model.id, provider.kind
         ));
+    }
+    for (key, value) in &model.parameters {
+        let valid = match key.as_str() {
+            "reasoningEffort" => value
+                .as_str()
+                .is_some_and(|value| matches!(value, "low" | "medium" | "high")),
+            "enableThinking" | "preserveThinking" => value.is_boolean(),
+            _ => false,
+        };
+        if !valid {
+            return Err(format!(
+                "model '{}:{}' parameter '{}' is unsupported or invalid; OpenAI-compatible models accept reasoningEffort (low, medium, or high), enableThinking (boolean), and preserveThinking (boolean)",
+                provider.id, model.id, key
+            ));
+        }
     }
     Ok(())
 }
@@ -4092,6 +4144,9 @@ mod tests {
             .find(|model| model.remote_id == "fixture-model")
             .expect("fixture model");
         model.capabilities = vec!["text".into()];
+        model
+            .parameters
+            .insert("enableThinking".into(), Value::Bool(true));
         assert_eq!(model.capabilities, vec!["text"]);
         for tool in &mut settings.tools {
             if matches!(
@@ -4145,6 +4200,11 @@ mod tests {
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
         let requests = provider.execution_requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].budget.deadline_ms, 1_020_000);
+        assert_eq!(
+            requests[0].model_parameters.get("enableThinking"),
+            Some(&Value::Bool(true))
+        );
         assert!(
             requests[0]
                 .tools
@@ -4370,6 +4430,7 @@ mod tests {
         let frozen = runtime.history.current_frozen_context().unwrap().unwrap();
         assert_eq!(frozen.context.agent_maximum_turns, 2);
         assert_eq!(frozen.context.maximum_tool_calls, 8);
+        assert_eq!(frozen.context.run_deadline_millis, 120_000);
         assert_eq!(frozen.context.tools.len(), 1);
         assert_eq!(frozen.context.tools[0].tool_id, "tool.files.read");
         assert!(frozen.context.tools[0].tool_hash.starts_with("sha256:"));
@@ -4407,6 +4468,11 @@ mod tests {
         assert_eq!(requests[0].tools, requests[1].tools);
         assert_eq!(requests[0].maximum_turns, 2);
         assert_eq!(requests[0].budget.tool_calls, 8);
+        assert_eq!(requests[0].budget.deadline_ms, 120_000);
+        assert_eq!(
+            requests[0].deadline_epoch_millis,
+            requests[0].now_epoch_millis.saturating_add(120_000)
+        );
         assert_eq!(
             requests[1].tools[0].configuration["maximumBytes"],
             Value::from(crate::runtime::PROJECT_FILE_READ_MAXIMUM_BYTES_V1)
@@ -5647,6 +5713,20 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("no consumer"));
 
+        let mut supported_model_parameters = provider.clone();
+        supported_model_parameters.models[0]
+            .parameters
+            .insert("reasoningEffort".into(), Value::from("medium"));
+        runtime
+            .settings_v2_test_provider(ProviderProbeRequestV2 {
+                provider: supported_model_parameters,
+                model_id: "model.draft".into(),
+                replacement_credential: None,
+                use_stored_credential: false,
+                draft_fingerprint: "draft.supported-model-parameters".into(),
+            })
+            .expect("supported OpenAI-compatible reasoning parameters");
+
         let mut unsupported_model_parameters = provider;
         unsupported_model_parameters.models[0]
             .parameters
@@ -5660,8 +5740,8 @@ mod tests {
                 draft_fingerprint: "draft.unsupported-model-parameters".into(),
             })
             .unwrap_err();
-        assert!(error.contains("no consumer"));
-        assert_eq!(provider_port.connection_tests.load(Ordering::SeqCst), 1);
+        assert!(error.contains("unsupported or invalid"));
+        assert_eq!(provider_port.connection_tests.load(Ordering::SeqCst), 2);
     }
 
     #[test]

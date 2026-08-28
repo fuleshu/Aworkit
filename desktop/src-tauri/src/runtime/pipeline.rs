@@ -85,6 +85,7 @@ const MAXIMUM_PREPARED_RECORD_BYTES: usize = 768 * 1024;
 const MAXIMUM_PROVIDER_OUTCOME_BYTES: usize = 896 * 1024;
 const MAXIMUM_ERROR_BYTES: usize = 16 * 1024;
 const APPROVAL_TTL_MILLIS: u64 = 60_000;
+const DEFAULT_WORKFLOW_DEADLINE_MILLIS: u64 = 10 * 60_000;
 const LEASE_TTL: Duration = Duration::from_secs(2 * 60);
 const PIPELINE_CHAT_ID: &str = "pipeline.execution";
 const BROKER_CHAT_ID: &str = "broker.invocations";
@@ -172,6 +173,8 @@ pub struct WorkflowExecutionRequestV1 {
     pub chat_id: StableId,
     pub run_id: StableId,
     pub provider: WorkflowProviderBindingV1,
+    /// Closed non-secret model parameters frozen from Settings.
+    pub model_parameters: BTreeMap<String, Value>,
     /// Hash of the complete secret-free Chat/Run context frozen at first send.
     /// It binds saved-workflow and resolution provenance into the authority
     /// snapshot without copying editable Settings into the provider payload.
@@ -213,6 +216,7 @@ impl WorkflowExecutionRequestV1 {
             chat_id,
             run_id,
             provider,
+            model_parameters: BTreeMap::new(),
             frozen_context_hash: DEFAULT_FROZEN_CONTEXT_HASH.to_owned(),
             workspace: None,
             project_branch: None,
@@ -221,7 +225,8 @@ impl WorkflowExecutionRequestV1 {
             workflow_snapshot: Value::Null,
             messages,
             now_epoch_millis,
-            deadline_epoch_millis: now_epoch_millis.saturating_add(60_000),
+            deadline_epoch_millis: now_epoch_millis
+                .saturating_add(DEFAULT_WORKFLOW_DEADLINE_MILLIS),
             mcp_servers: Vec::new(),
             budget: WorkerBudgetV1 {
                 turns: 1,
@@ -233,9 +238,16 @@ impl WorkflowExecutionRequestV1 {
                 depth: 0,
                 fanout: 1,
                 parallel: 1,
-                deadline_ms: 60_000,
+                deadline_ms: DEFAULT_WORKFLOW_DEADLINE_MILLIS,
             },
         }
+    }
+
+    /// Replaces the bounded constructor's default with the exact duration
+    /// frozen from the selected workflow.
+    pub fn set_deadline_millis(&mut self, deadline_millis: u64) {
+        self.deadline_epoch_millis = self.now_epoch_millis.saturating_add(deadline_millis);
+        self.budget.deadline_ms = deadline_millis;
     }
 }
 
@@ -506,6 +518,7 @@ impl WorkflowExecutionPipeline {
             kind: request.provider.kind.clone(),
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
+            parameters: request.model_parameters.clone(),
         };
         let secret = request
             .provider
@@ -966,6 +979,7 @@ impl WorkflowExecutionPipeline {
             &descriptor.capability_id,
             &descriptor.version_hash,
             current_epoch_millis(),
+            prepared.deadline_epoch_millis,
             Some(&pending),
             Some(approved),
             &cancellation,
@@ -1168,6 +1182,7 @@ impl WorkflowExecutionPipeline {
             kind: protocol.kind().to_owned(),
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
+            parameters: request.model_parameters.clone(),
         };
         let tool_bindings = freeze_file_tool_bindings(&request.tools)?;
         let (nodes, transitions, entry_nodes, model_node_id) = compile_graph_snapshot(
@@ -1423,6 +1438,8 @@ struct StoredProviderBindingV1 {
     kind: String,
     base_url: String,
     model: String,
+    #[serde(default)]
+    parameters: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1629,6 +1646,7 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
                     api_key,
                     OpenAiCompatibleLimitsV1::default(),
                 )
+                .and_then(|config| config.with_request_parameters(&provider.parameters))
                 .map_err(|error| error.to_string())?;
                 OpenAiCompatibleProvider::new(config)
                     .map(|provider| Box::new(provider) as Box<dyn ProviderEnginePortV1>)
@@ -2226,6 +2244,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 &self.descriptor.capability_id,
                 &self.descriptor.version_hash,
                 current_epoch_millis(),
+                self.prepared.deadline_epoch_millis,
                 None,
                 None,
                 cancellation,
@@ -3220,6 +3239,10 @@ fn validate_request(
     }
     if request.messages.is_empty()
         || request.deadline_epoch_millis <= request.now_epoch_millis
+        || request.deadline_epoch_millis
+            != request
+                .now_epoch_millis
+                .saturating_add(request.budget.deadline_ms)
         || request.budget.turns == 0
         || request.budget.attempts == 0
         || request.budget.tokens == 0
@@ -3716,13 +3739,18 @@ mod tests {
 
         fn execute(
             &self,
-            _request: &ModelRequestV1,
+            request: &ModelRequestV1,
             emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
         ) -> Result<ProviderAcceptanceV1, ProviderError> {
             // Plain model calls (plan/model_call nodes) answer with fixed text;
             // the tool loop is driven through `execute_tool_turn_cancellable`.
             self.calls.fetch_add(1, Ordering::SeqCst);
-            emit(ModelEventV1::AssistantOutput("working answer".to_owned()))?;
+            let output = if request.input.to_string().contains("openQuestions") {
+                r#"{"goal":"Complete the requested project task","openQuestions":[],"evidenceNeeded":["Project files"],"toolOrder":["Read the project files","Search for relevant content"]}"#
+            } else {
+                "working answer"
+            };
+            emit(ModelEventV1::AssistantOutput(output.to_owned()))?;
             emit(ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3,

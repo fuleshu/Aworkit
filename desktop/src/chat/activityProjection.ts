@@ -59,6 +59,7 @@ export function projectSemanticTimeline(
         span,
         visibleDepth(span, spans, visibleSpanIds),
         hasFollowingAssistantMessage(span, ordered),
+        spanActor(span, spans),
       ),
     );
   return [...facts, ...spanItems].sort(
@@ -159,6 +160,7 @@ function spanItem(
   span: SpanProjection,
   depth: number,
   hasFinalAssistant: boolean,
+  actor: TimelineItem["actor"],
 ): TimelineItem {
   const includeAssistantOutput =
     span.spanKind === "model_call" && !hasFinalAssistant;
@@ -190,6 +192,7 @@ function spanItem(
       progress: span.progress,
       assistantOutput: span.assistantOutput,
     },
+    actor,
     live: isBusy(span.status),
   };
   return {
@@ -199,6 +202,7 @@ function spanItem(
     parentSpanId: span.parentSpanId,
     depth,
     kind: spanTimelineKind(span),
+    actor,
     title: span.title,
     body,
     reasoningCategory: span.reasoningCategory,
@@ -210,6 +214,23 @@ function spanItem(
     raw: span.sourceEvents,
     metadata,
   };
+}
+
+function spanActor(
+  span: SpanProjection,
+  spans: ReadonlyMap<string, SpanProjection>,
+): TimelineItem["actor"] {
+  let current: SpanProjection | undefined = span;
+  const visited = new Set<string>();
+  while (current !== undefined && !visited.has(current.spanId)) {
+    visited.add(current.spanId);
+    if (current.spanKind === "external_agent") return "subagent";
+    current =
+      current.parentSpanId === undefined
+        ? undefined
+        : spans.get(current.parentSpanId);
+  }
+  return "model";
 }
 
 function spanTimelineKind(span: SpanProjection): TimelineKind {
@@ -319,11 +340,14 @@ function projectLegacyActivity(
       status: terminalStatus(event.kind),
     });
   if (event.kind.startsWith("subagent."))
-    return baseItem(event, fact, {
-      kind: "subagent",
-      title: "Subagent run",
-      status: terminalStatus(event.kind),
-    });
+    return {
+      ...baseItem(event, fact, {
+        kind: "subagent",
+        title: "Subagent run",
+        status: terminalStatus(event.kind),
+      }),
+      actor: "subagent",
+    };
   if (event.kind.startsWith("node.")) {
     const role = string(fact.nodeType) ?? "unknown";
     if (["input", "output", "wait", "completion"].includes(role))
@@ -350,6 +374,10 @@ function baseItem(
     id: event.eventId,
     sequence: event.sequence,
     kind: display.kind,
+    actor:
+      event.kind === "message.assistant" || event.kind.startsWith("model.")
+        ? "model"
+        : undefined,
     title: display.title,
     body: string(fact.body) ?? "",
     createdAt: string(fact.createdAt) ?? "",

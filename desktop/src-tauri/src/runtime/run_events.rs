@@ -28,6 +28,7 @@ struct RunEventState {
     parent_spans: BTreeMap<String, String>,
     active_model_node: Option<String>,
     agent_loop_span: Option<String>,
+    active_subagent_span: Option<String>,
     tool_requests: BTreeMap<String, String>,
     commit_error: Option<String>,
 }
@@ -261,6 +262,12 @@ impl RunEventStream {
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(span_id) = &state.active_subagent_span
+            && state.started_spans.contains(span_id)
+            && !state.terminal_spans.contains(span_id)
+        {
+            return span_id.clone();
+        }
         let parent = state
             .active_model_node
             .clone()
@@ -369,7 +376,7 @@ impl RunEventStream {
             .get(&call.call_id)
             .cloned();
         self.start_span(
-            span_id,
+            span_id.clone(),
             Some(self.agent_loop_span()),
             span_kind,
             "tool",
@@ -381,6 +388,15 @@ impl RunEventStream {
                 "causationEventId": causation,
             }),
         );
+        if call.capability_id == "tool.subagent" {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if !state.terminal_spans.contains(&span_id) {
+                state.active_subagent_span = Some(span_id);
+            }
+        }
     }
 
     pub(crate) fn publish_tool_terminal(
@@ -400,6 +416,38 @@ impl RunEventStream {
             json!({
                 "callId": call.call_id,
                 "capabilityId": call.capability_id,
+            }),
+        );
+        if call.capability_id == "tool.subagent" {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if state.active_subagent_span.as_deref() == Some(span_id.as_str()) {
+                state.active_subagent_span = None;
+            }
+        }
+    }
+
+    /// Keeps an approval-gated tool span open across suspension. The resumed
+    /// command will rehydrate this same span and close it with the actual
+    /// approved or denied settlement.
+    pub(crate) fn publish_tool_waiting(
+        &self,
+        call: &aworkit_capability_host::ModelToolCallV1,
+        body: String,
+        output: Value,
+    ) {
+        let span_id = format!("span.tool.{}", call.call_id);
+        self.publish_tool_started(call);
+        self.update_span(
+            &span_id,
+            "waiting",
+            body,
+            json!({
+                "callId": call.call_id,
+                "capabilityId": call.capability_id,
+                "output": output,
             }),
         );
     }
@@ -446,9 +494,32 @@ pub(crate) struct ModelRunEventObserver {
 
 impl ModelRunEventObserver {
     pub(crate) fn new(stream: Arc<RunEventStream>) -> Self {
+        // Approval resume creates a fresh observer for the same durable
+        // request. Continue after the highest committed turn so a new provider
+        // callback can never target an already-terminal model span.
+        let turn = stream
+            .events()
+            .iter()
+            .filter(|event| {
+                event.kind == "span.started"
+                    && event.payload.get("spanKind").and_then(Value::as_str)
+                        == Some("model_call")
+            })
+            .filter_map(|event| {
+                event
+                    .payload
+                    .get("turn")
+                    .and_then(Value::as_u64)
+                    .and_then(|turn| u32::try_from(turn).ok())
+            })
+            .max()
+            .unwrap_or(0);
         Self {
             stream,
-            state: Mutex::new(ModelObserverState::default()),
+            state: Mutex::new(ModelObserverState {
+                turn,
+                current_model_span: None,
+            }),
         }
     }
 
@@ -663,6 +734,7 @@ fn rehydrate_state(
     let mut state = RunEventState::default();
     let mut model_nodes = Vec::new();
     let mut agent_loops = Vec::new();
+    let mut subagents = Vec::new();
     for event in events {
         if event.payload.get("requestId").and_then(Value::as_str) != Some(request_id)
             || event.payload.get("runId").and_then(Value::as_str) != Some(run_id)
@@ -679,6 +751,7 @@ fn rehydrate_state(
                 }
                 match event.payload.get("spanKind").and_then(Value::as_str) {
                     Some("agent_loop") => agent_loops.push(span_id.clone()),
+                    Some("external_agent") => subagents.push(span_id.clone()),
                     Some("graph_node")
                         if matches!(
                             event.payload.get("semanticRole").and_then(Value::as_str),
@@ -716,6 +789,10 @@ fn rehydrate_state(
                 && state.parent_spans.get(span_id) == Some(parent)
         })
     });
+    state.active_subagent_span = subagents
+        .into_iter()
+        .rev()
+        .find(|span_id| !state.terminal_spans.contains(span_id));
     state
 }
 
@@ -816,6 +893,91 @@ mod tests {
     }
 
     #[test]
+    fn subagent_model_and_tool_spans_remain_owned_by_the_subagent() {
+        let stream = Arc::new(RunEventStream::new(
+            "request.subagent".into(),
+            "run.subagent".into(),
+            ephemeral_semantic_event_committer(),
+            CancellationToken::default(),
+        ));
+        let observer = ModelRunEventObserver::new(stream.clone());
+        let subagent = aworkit_capability_host::ModelToolCallV1 {
+            call_id: "call.subagent".into(),
+            provider_call_id: Some("call.subagent".into()),
+            capability_id: "tool.subagent".into(),
+            name: "spawn_subagent".into(),
+            arguments: json!({"task":"Inspect the project"}),
+            provider_context: None,
+        };
+        observer.model_turn_started(&json!({"messages": []}));
+        observer.model_tool_event(&ModelToolEventV1::ToolCall {
+            call: subagent.clone(),
+        });
+        observer.model_turn_completed(&json!({"toolCall":"call.subagent"}), "completed");
+        stream.publish_tool_started(&subagent);
+
+        observer.model_turn_started(&json!({"messages":["Inspect the project"]}));
+        observer.model_tool_event(&ModelToolEventV1::ReasoningRaw {
+            text: "I should list the files.".into(),
+        });
+        let child_tool = aworkit_capability_host::ModelToolCallV1 {
+            call_id: "call.child.list".into(),
+            provider_call_id: Some("call.child.list".into()),
+            capability_id: "tool.files.list".into(),
+            name: "list_files".into(),
+            arguments: json!({"path":"."}),
+            provider_context: None,
+        };
+        observer.model_tool_event(&ModelToolEventV1::ToolCall {
+            call: child_tool.clone(),
+        });
+        observer.model_turn_completed(&json!({"toolCall":"call.child.list"}), "completed");
+        stream.publish_tool_started(&child_tool);
+        stream.publish_tool_terminal(
+            &child_tool,
+            "completed",
+            "Listed files".into(),
+            json!(["Cargo.toml"]),
+        );
+        observer.model_turn_started(&json!({"toolResult":["Cargo.toml"]}));
+        observer.model_tool_event(&ModelToolEventV1::AssistantOutput {
+            text: "The project contains Cargo.toml.".into(),
+        });
+        observer.model_turn_completed(
+            &json!({"assistant":"The project contains Cargo.toml."}),
+            "completed",
+        );
+        stream.publish_tool_terminal(
+            &subagent,
+            "completed",
+            "Subagent completed".into(),
+            json!({"finalText":"The project contains Cargo.toml."}),
+        );
+
+        let events = stream.events();
+        let subagent_span = "span.tool.call.subagent";
+        let child_starts = events.iter().filter(|event| {
+            event.kind == "span.started"
+                && matches!(
+                    event.payload.get("spanKind").and_then(Value::as_str),
+                    Some("model_call" | "tool_call")
+                )
+                && event
+                    .payload
+                    .get("parentSpanId")
+                    .and_then(Value::as_str)
+                    == Some(subagent_span)
+        });
+        assert_eq!(child_starts.count(), 3, "two child model calls and one child tool");
+        assert!(events.iter().any(|event| {
+            event.kind == "span.completed"
+                && event.span_id.as_deref() == Some(subagent_span)
+                && event.payload["output"]["finalText"]
+                    == Value::String("The project contains Cargo.toml.".into())
+        }));
+    }
+
+    #[test]
     fn suspended_stream_rehydrates_open_spans_without_duplicate_starts() {
         let committer = ephemeral_semantic_event_committer();
         let first = RunEventStream::new(
@@ -880,6 +1042,123 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.kind == "span.completed"
                 && event.payload.get("nodeId").and_then(Value::as_str) == Some("gate.1")
+        }));
+    }
+
+    #[test]
+    fn resumed_observer_continues_after_terminal_model_turns() {
+        let committer = ephemeral_semantic_event_committer();
+        let first = Arc::new(RunEventStream::new(
+            "request.approval-resume".into(),
+            "run.approval-resume".into(),
+            committer.clone(),
+            CancellationToken::default(),
+        ));
+        first.publish_graph_activity(&GraphNodeActivityV1 {
+            node_id: "agent.1".into(),
+            node_type: "agent".into(),
+            label: "Agent".into(),
+            status: "started".into(),
+            summary: "Agent started".into(),
+            input: None,
+            output: None,
+        });
+        let observer = ModelRunEventObserver::new(first);
+        observer.model_turn_started(&json!({"messages": []}));
+        observer.model_tool_event(&ModelToolEventV1::ReasoningRaw {
+            text: "I need approval.".into(),
+        });
+        observer.model_turn_completed(&json!({"toolCall":"call.edit"}), "completed");
+
+        let resumed = Arc::new(RunEventStream::new(
+            "request.approval-resume".into(),
+            "run.approval-resume".into(),
+            committer,
+            CancellationToken::default(),
+        ));
+        let resumed_observer = ModelRunEventObserver::new(resumed.clone());
+        resumed_observer.model_turn_started(&json!({"toolResult": ["approved"]}));
+        resumed_observer.model_tool_event(&ModelToolEventV1::ReasoningRaw {
+            text: "The edit is approved.".into(),
+        });
+        resumed_observer.model_turn_completed(&json!({"assistant":"done"}), "completed");
+        resumed.ensure_healthy().unwrap();
+
+        let model_spans = resumed
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.kind == "span.started"
+                    && event.payload.get("spanKind").and_then(Value::as_str)
+                        == Some("model_call")
+            })
+            .filter_map(|event| event.span_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            model_spans,
+            vec![
+                "span.model.request.approval-resume.turn.1",
+                "span.model.request.approval-resume.turn.2",
+            ]
+        );
+    }
+
+    #[test]
+    fn approval_suspension_keeps_the_tool_span_open_for_resume() {
+        let committer = ephemeral_semantic_event_committer();
+        let first = Arc::new(RunEventStream::new(
+            "request.tool-approval".into(),
+            "run.tool-approval".into(),
+            committer.clone(),
+            CancellationToken::default(),
+        ));
+        first.publish_graph_activity(&GraphNodeActivityV1 {
+            node_id: "agent.1".into(),
+            node_type: "agent".into(),
+            label: "Agent".into(),
+            status: "started".into(),
+            summary: "Agent started".into(),
+            input: None,
+            output: None,
+        });
+        let call = aworkit_capability_host::ModelToolCallV1 {
+            call_id: "call.approved-edit".into(),
+            provider_call_id: Some("call.approved-edit".into()),
+            capability_id: "tool.files.edit".into(),
+            name: "edit_file".into(),
+            arguments: json!({"path":"notes.txt"}),
+            provider_context: None,
+        };
+        first.publish_tool_waiting(&call, "Approval required".into(), json!({"pending":true}));
+        first.ensure_healthy().unwrap();
+
+        let resumed = RunEventStream::new(
+            "request.tool-approval".into(),
+            "run.tool-approval".into(),
+            committer,
+            CancellationToken::default(),
+        );
+        resumed.publish_tool_started(&call);
+        resumed.publish_tool_terminal(&call, "completed", "Edited file".into(), json!({"ok":true}));
+        resumed.ensure_healthy().unwrap();
+
+        let events = resumed.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "span.started"
+                    && event.span_id.as_deref() == Some("span.tool.call.approved-edit"))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| {
+            event.kind == "span.updated"
+                && event.span_id.as_deref() == Some("span.tool.call.approved-edit")
+                && event.payload.get("status").and_then(Value::as_str) == Some("waiting")
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == "span.completed"
+                && event.span_id.as_deref() == Some("span.tool.call.approved-edit")
         }));
     }
 }

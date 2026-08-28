@@ -17,7 +17,12 @@
             "label": "Agent",
             "type": "agent",
             "position": { "x": 245, "y": 205 },
-            "configuration": { "modelTierId": "tier:balanced", "toolIds": [], "maxTurns": 1 }
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "toolIds": [],
+              "maxTurns": 1,
+              "timeoutSeconds": 120
+            }
           },
           { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 470, "y": 205 } },
           { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 695, "y": 205 } }
@@ -46,7 +51,8 @@
             "position": { "x": 245, "y": 205 },
             "configuration": {
               "modelTierId": "tier:balanced",
-              "instructions": "Analyze the user request and produce a concise plan before acting. Note open questions, needed evidence, and the intended tool order.",
+              "instructions": "Analyze the user request without answering it. Return only one JSON object with exactly these fields: goal (string), openQuestions (string array), evidenceNeeded (string array), and toolOrder (non-empty string array).",
+              "outputContract": "plan",
               "maximumTokens": 1024
             }
           },
@@ -67,6 +73,7 @@
                 "tool.web_fetch"
               ],
               "maxTurns": 8,
+              "timeoutSeconds": 900,
               "instructions": "You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
             }
           },

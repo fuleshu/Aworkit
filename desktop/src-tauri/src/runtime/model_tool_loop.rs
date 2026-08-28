@@ -4,6 +4,8 @@
 //! trusted-core port before the exact result is sent back on the next model
 //! turn. This module owns neither workspace authority nor tool execution.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
     ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolDispatchEvidenceV1,
@@ -121,6 +123,7 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub maximum_turns: u32,
     pub maximum_tool_calls: u32,
     pub maximum_tokens: u64,
+    pub deadline_epoch_millis: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,6 +187,17 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut settled_tool_calls = 0_u32;
 
     for turn in 1..=request.maximum_turns {
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         attempted_model_turns = attempted_model_turns.saturating_add(1);
         let evidence = gateway
             .execute_tool_turn_cancellable(
@@ -206,6 +220,17 @@ pub(crate) fn execute_model_tool_loop_v1(
                     &activities,
                 )
             })?;
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         let turn_output = normalize_turn(evidence);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
@@ -282,6 +307,17 @@ pub(crate) fn execute_model_tool_loop_v1(
 
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
+            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+                failure(
+                    error,
+                    input_tokens,
+                    output_tokens,
+                    attempted_model_turns,
+                    settled_tool_calls,
+                    &exchanges,
+                    &activities,
+                )
+            })?;
             let settled = authority
                 .invoke(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -376,6 +412,33 @@ fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelTool
     Ok(())
 }
 
+fn enforce_deadline(deadline_epoch_millis: u64) -> Result<(), ModelToolLoopErrorV1> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(u64::MAX, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        });
+    if now >= deadline_epoch_millis {
+        Err(ModelToolLoopErrorV1::Budget("Run deadline"))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn expired_deadline_is_a_budget_failure_before_provider_or_tool_work() {
+        assert!(matches!(
+            enforce_deadline(0),
+            Err(ModelToolLoopErrorV1::Budget("Run deadline"))
+        ));
+        enforce_deadline(u64::MAX).expect("maximum deadline remains open");
+    }
+}
+
 struct NormalizedTurnV1 {
     assistant_text: String,
     assistant_content: Vec<ModelAssistantContentV1>,
@@ -447,6 +510,17 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut settled_tool_calls = 0_u32;
 
     for turn in 1..=request.maximum_turns {
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         attempted_model_turns = attempted_model_turns.saturating_add(1);
         let evidence = gateway
             .execute_tool_turn_cancellable(
@@ -469,6 +543,17 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                     &activities,
                 )
             })?;
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         let turn_output = normalize_turn(evidence);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
@@ -544,6 +629,17 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
 
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
+            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+                failure(
+                    error,
+                    input_tokens,
+                    output_tokens,
+                    attempted_model_turns,
+                    settled_tool_calls,
+                    &exchanges,
+                    &activities,
+                )
+            })?;
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -682,6 +778,17 @@ pub(crate) fn resume_model_tool_loop_v1(
         approved,
         now_epoch_millis,
     };
+    enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+        failure(
+            error,
+            input_tokens,
+            output_tokens,
+            attempted_model_turns,
+            settled_tool_calls,
+            &exchanges,
+            &activities,
+        )
+    })?;
     let settled = authority
         .resolve(
             request.outer_invocation_id,
@@ -740,6 +847,17 @@ pub(crate) fn resume_model_tool_loop_v1(
     settled_tool_calls = settled_tool_calls.saturating_add(1);
 
     for turn in pending.turn.saturating_add(1)..=request.maximum_turns {
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         attempted_model_turns = attempted_model_turns.saturating_add(1);
         let evidence = gateway
             .execute_tool_turn_cancellable(
@@ -762,6 +880,17 @@ pub(crate) fn resume_model_tool_loop_v1(
                     &activities,
                 )
             })?;
+        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+            failure(
+                error,
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
+            )
+        })?;
         let turn_output = normalize_turn(evidence);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
@@ -836,6 +965,17 @@ pub(crate) fn resume_model_tool_loop_v1(
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
+            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
+                failure(
+                    error,
+                    input_tokens,
+                    output_tokens,
+                    attempted_model_turns,
+                    settled_tool_calls,
+                    &exchanges,
+                    &activities,
+                )
+            })?;
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {

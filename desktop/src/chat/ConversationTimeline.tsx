@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef } from "react";
+import { ActorBubble } from "./ActorBubble";
 import { toConversationCard } from "./conversation";
 import type { TimelineItem } from "./types";
 
@@ -171,18 +172,23 @@ export function TimelineCard({
   readonly onAction: ConversationTimelineProps["onAction"];
 }): React.JSX.Element {
   if (item.kind === "message")
-    return (
-      <article
-        className={`message-row ${item.title === "You" ? "from-user" : "from-assistant"}`}
-        aria-label={`${item.title} message`}
-      >
-        <div className="message-body">
-          <p>{item.body}</p>
+    return item.title === "You" ? (
+      <article className="message-row from-user" aria-label={`${item.title} message`}>
+        <div className="message-body user-speech-bubble">
+            <p>{item.body}</p>
           <small>
             {item.title} · {item.createdAt}
           </small>
         </div>
       </article>
+    ) : (
+      <ActorBubble
+        actor="model"
+        ariaLabel={`${item.title} message`}
+        body={item.body ?? ""}
+        createdAt={item.createdAt}
+        variant="speech"
+      />
     );
   if (item.kind === "plan") {
     const busy = isBusy(item.status);
@@ -279,30 +285,59 @@ export function TimelineCard({
         </ul>
       </article>
     );
-  if (item.kind === "subagent")
+  if (item.kind === "subagent") {
+    const speech = subagentFinalText(item);
     return (
-      <article className={`activity-card subagent-card ${selected ? "selected" : ""}`} aria-label={`Subagent: ${item.title}`}>
-        <details>
-          <summary className="activity-heading">
-            <span className="activity-icon">≋</span>
-            <strong>{item.title}</strong>
-            <span className={`status ${item.status ?? ""}`}>{item.status ?? "run"}</span>
-          </summary>
-          <p className="subagent-body">{item.body}</p>
-          {card.inspectable && (
-            <details className="activity-raw">
-              <summary>Inspect source record</summary>
-              <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
-            </details>
-          )}
-        </details>
-      </article>
+      <ActorBubble
+        actor="subagent"
+        ariaLabel={`Subagent: ${item.title}`}
+        body={speech ?? item.body ?? "Delegated work is in progress."}
+        busy={isBusy(item.status)}
+        createdAt={speech === undefined ? undefined : item.createdAt}
+        onSelect={speech === undefined ? () => onSelect(item.id) : undefined}
+        selected={selected}
+        status={item.status}
+        title={speech === undefined ? item.title : undefined}
+        variant={speech === undefined ? "thinking" : "speech"}
+      >
+        {speech === undefined && <ActivityData collapsed item={item} />}
+        {card.inspectable && (
+          <details className="activity-raw">
+            <summary>Inspect source record</summary>
+            <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
+          </details>
+        )}
+      </ActorBubble>
+    );
+  }
+  if (item.kind === "thinking")
+    return (
+      <ActorBubble
+        actor={item.actor ?? "model"}
+        ariaLabel={`${card.label}: ${item.title}`}
+        body={card.content}
+        busy={isBusy(item.status)}
+        onSelect={() => onSelect(item.id)}
+        reasoningLabel={card.reasoningLabel}
+        selected={selected}
+        status={item.status}
+        title={item.title}
+        variant="thinking"
+      >
+        <ActivityData collapsed item={item} />
+        {card.inspectable && (
+          <details className="activity-raw">
+            <summary>Inspect source record</summary>
+            <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
+          </details>
+        )}
+      </ActorBubble>
     );
   if (metadataOf(item).live === true)
     return (
       <article
         aria-busy={isBusy(item.status) || undefined}
-        className={`activity-card live-activity-card ${item.kind === "thinking" ? "thinking-card" : ""}`}
+        className="activity-card live-activity-card"
         aria-label={`${card.label}: ${item.title}`}
       >
         <div className="activity-main">
@@ -326,7 +361,7 @@ export function TimelineCard({
   return (
     <article
       aria-busy={isBusy(item.status) || undefined}
-      className={`activity-card ${item.kind === "thinking" ? "thinking-card" : ""} ${selected ? "selected" : ""}`}
+      className={`activity-card ${selected ? "selected" : ""}`}
       aria-label={`${card.label}: ${item.title}`}
     >
       <button
@@ -401,7 +436,13 @@ function safeJson(value: unknown): string {
   }
 }
 
-function ActivityData({ item }: { readonly item: TimelineItem }): React.JSX.Element | null {
+function ActivityData({
+  collapsed = false,
+  item,
+}: {
+  readonly collapsed?: boolean;
+  readonly item: TimelineItem;
+}): React.JSX.Element | null {
   const metadata = metadataOf(item);
   const nodeType = typeof metadata.nodeType === "string" ? metadata.nodeType : undefined;
   // Pass-through control nodes retain exact data in their source record, but
@@ -419,7 +460,7 @@ function ActivityData({ item }: { readonly item: TimelineItem }): React.JSX.Elem
   if (!hasInput && !hasOutput) return null;
   const input = item.input !== undefined ? item.input : metadata.input;
   const output = item.output !== undefined ? item.output : metadata.output;
-  return (
+  const data = (
     <dl className="activity-data" aria-label={`${item.title} data flow`}>
       {hasInput && (
         <div>
@@ -434,6 +475,14 @@ function ActivityData({ item }: { readonly item: TimelineItem }): React.JSX.Elem
         </div>
       )}
     </dl>
+  );
+  return collapsed ? (
+    <details className="bubble-data-details">
+      <summary>Input &amp; output</summary>
+      {data}
+    </details>
+  ) : (
+    data
   );
 }
 
@@ -512,4 +561,15 @@ function todoCount(item: TimelineItem): string {
   const todos = todosOf(item);
   const done = todos.filter((todo) => todo.done).length;
   return `${done}/${todos.length}`;
+}
+
+function subagentFinalText(item: TimelineItem): string | undefined {
+  for (const value of [item.output, metadataOf(item).output]) {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      continue;
+    const finalText = (value as Record<string, unknown>).finalText;
+    if (typeof finalText === "string" && finalText.trim().length > 0)
+      return finalText;
+  }
+  return undefined;
 }

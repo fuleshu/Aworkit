@@ -991,12 +991,9 @@ describe("Chat native-port recovery contracts", () => {
       reason: null,
     });
     expect(await screen.findByText("Agent finished")).toBeVisible();
+    const reasoningBubble = screen.getByLabelText("Thinking: Model call 1");
     expect(
-      screen.getByText(
-        (_content, element) =>
-          element?.tagName === "CODE" &&
-          element.textContent === "Inspecting the project",
-      ),
+      within(reasoningBubble).getByText("Inspecting the project"),
     ).toBeVisible();
     expect(screen.getByText("Provider-supplied reasoning")).toBeVisible();
   });
@@ -1128,6 +1125,9 @@ describe("Chat native-port recovery contracts", () => {
     const settled = screen.getByLabelText("Thinking: Thinking");
     expect(settled).not.toHaveAttribute("aria-busy", "true");
     expect(within(settled).getByText("✓")).toBeVisible();
+    expect(settled).toHaveClass("thinking-turn");
+    expect(within(settled).getByRole("img", { name: "Main model" })).toBeVisible();
+    expect(settled.querySelector(".thinking-bubble")).not.toBeNull();
 
     const runningItem = {
       id: "step.1",
@@ -1151,6 +1151,92 @@ describe("Chat native-port recovery contracts", () => {
       "aria-busy",
       "true",
     );
+  });
+
+  it("renders assistant Markdown inside a model-owned speech bubble", () => {
+    const item = {
+      id: "message.assistant.1",
+      kind: "message" as const,
+      title: "Aworkit",
+      body: "**Sunny** with a [forecast](https://example.test/weather).",
+      createdAt: "now",
+      status: "completed",
+    };
+
+    render(
+      <TimelineCard
+        card={toConversationCard(item)}
+        item={item}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+
+    const speech = screen.getByLabelText("Aworkit message");
+    expect(speech).toHaveClass("speech-turn");
+    expect(within(speech).getByRole("img", { name: "Main model" })).toBeVisible();
+    expect(within(speech).getByText("Sunny").tagName).toBe("STRONG");
+    expect(within(speech).getByRole("link", { name: "forecast" })).toHaveAttribute(
+      "href",
+      "https://example.test/weather",
+    );
+  });
+
+  it("points delegated speech and thinking at the subagent robot", () => {
+    const speech = {
+      id: "span.subagent.1",
+      kind: "subagent" as const,
+      actor: "subagent" as const,
+      title: "tool.subagent",
+      body: "Subagent completed.",
+      createdAt: "now",
+      status: "completed",
+      output: { finalText: "**Delegated result** with evidence." },
+    };
+    const { rerender } = render(
+      <TimelineCard
+        card={toConversationCard(speech)}
+        item={speech}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+
+    const speechBubble = screen.getByLabelText("Subagent: tool.subagent");
+    expect(speechBubble).toHaveClass("speech-turn", "actor-subagent");
+    expect(
+      within(speechBubble).getByRole("img", { name: "Subagent" }),
+    ).toBeVisible();
+    expect(within(speechBubble).getByText("Delegated result").tagName).toBe(
+      "STRONG",
+    );
+
+    const thinking = {
+      id: "span.subagent.model.1",
+      kind: "thinking" as const,
+      actor: "subagent" as const,
+      title: "Model call 1",
+      body: "Checking the delegated files.",
+      createdAt: "now",
+      status: "running",
+      reasoningCategory: "source_provided" as const,
+    };
+    rerender(
+      <TimelineCard
+        card={toConversationCard(thinking)}
+        item={thinking}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    const thoughtBubble = screen.getByLabelText("Thinking: Model call 1");
+    expect(thoughtBubble).toHaveClass("thinking-turn", "actor-subagent");
+    expect(
+      within(thoughtBubble).getByRole("img", { name: "Subagent" }),
+    ).toBeVisible();
   });
 
   it("renders wait transitions without duplicating their pass-through data", () => {

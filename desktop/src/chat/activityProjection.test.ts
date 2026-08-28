@@ -139,6 +139,55 @@ describe("canonical semantic timeline projection", () => {
     ]);
     expect(items).toEqual([]);
   });
+
+  it("projects delegated model thought and speech as subagent-owned", () => {
+    const items = projectSemanticTimeline([
+      span(1, "span.started", "span.agent", {
+        spanKind: "agent_loop",
+        semanticRole: "agent_loop",
+        title: "Agent",
+      }),
+      span(2, "span.started", "span.subagent", {
+        parentSpanId: "span.agent",
+        spanKind: "external_agent",
+        semanticRole: "tool",
+        title: "tool.subagent",
+        capabilityId: "tool.subagent",
+      }),
+      span(3, "span.started", "span.subagent.model", {
+        parentSpanId: "span.subagent",
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+      }),
+      span(4, "span.content_delta", "span.subagent.model", {
+        channel: "reasoning",
+        sourceClassification: "source_provided",
+        append: "Inspecting the delegated context.",
+      }),
+      span(5, "span.completed", "span.subagent.model", {
+        status: "completed",
+      }),
+      span(6, "span.completed", "span.subagent", {
+        status: "completed",
+        hasOutput: true,
+        output: { finalText: "**Delegated result**" },
+      }),
+    ]);
+
+    expect(items.find((item) => item.id === "span.subagent")).toMatchObject({
+      kind: "subagent",
+      actor: "subagent",
+      output: { finalText: "**Delegated result**" },
+    });
+    expect(
+      items.find((item) => item.id === "span.subagent.model"),
+    ).toMatchObject({
+      kind: "thinking",
+      actor: "subagent",
+      body: "Inspecting the delegated context.",
+    });
+  });
 });
 
 function event(

@@ -105,6 +105,40 @@ pub trait ModelEventObserverV1: Send + Sync {
     fn model_turn_completed(&self, _output: &Value, _status: &str) {}
 }
 
+/// Ensures every announced provider turn receives exactly one terminal
+/// observer callback, including binding, cancellation, transport, and
+/// normalized-stream validation failures.
+struct ModelTurnCompletion<'a> {
+    observer: Option<&'a dyn ModelEventObserverV1>,
+    completed: bool,
+}
+
+impl<'a> ModelTurnCompletion<'a> {
+    fn new(observer: Option<&'a dyn ModelEventObserverV1>) -> Self {
+        Self {
+            observer,
+            completed: false,
+        }
+    }
+
+    fn complete(&mut self, output: &Value, status: &str) {
+        self.completed = true;
+        if let Some(observer) = self.observer {
+            observer.model_turn_completed(output, status);
+        }
+    }
+}
+
+impl Drop for ModelTurnCompletion<'_> {
+    fn drop(&mut self) {
+        if !self.completed
+            && let Some(observer) = self.observer
+        {
+            observer.model_turn_completed(&Value::Null, "failed");
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderAcceptanceV1 {
     /// The provider positively proved that it never accepted the request.
@@ -234,6 +268,7 @@ impl FrozenModelGateway {
         if let Some(observer) = &self.observer {
             observer.model_turn_started(&request.input);
         }
+        let mut turn_completion = ModelTurnCompletion::new(self.observer.as_deref());
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
             if cancellation.is_cancelled() {
@@ -272,12 +307,10 @@ impl FrozenModelGateway {
                     {
                         return Err(ProviderError::MissingOrDuplicateUsage);
                     }
-                    if let Some(observer) = &self.observer {
-                        observer.model_turn_completed(
-                            &serde_json::to_value(&events).unwrap_or(Value::Null),
-                            "completed",
-                        );
-                    }
+                    turn_completion.complete(
+                        &serde_json::to_value(&events).unwrap_or(Value::Null),
+                        "completed",
+                    );
                     return Ok(ModelDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,
@@ -317,6 +350,7 @@ impl FrozenModelGateway {
         if let Some(observer) = &self.observer {
             observer.model_turn_started(&serde_json::to_value(request).unwrap_or(Value::Null));
         }
+        let mut turn_completion = ModelTurnCompletion::new(self.observer.as_deref());
 
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
@@ -350,12 +384,10 @@ impl FrozenModelGateway {
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     validate_tool_events(request, &events)?;
-                    if let Some(observer) = &self.observer {
-                        observer.model_turn_completed(
-                            &serde_json::to_value(&events).unwrap_or(Value::Null),
-                            "completed",
-                        );
-                    }
+                    turn_completion.complete(
+                        &serde_json::to_value(&events).unwrap_or(Value::Null),
+                        "completed",
+                    );
                     return Ok(ModelToolDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,

@@ -320,6 +320,49 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
             .all(|found| found.line_text.contains("beta"))
     );
     assert_eq!(grep.effect.kind, FileEffectKindV1::Grep);
+    std::fs::create_dir_all(project.join("src/nested")).expect("nested source tree");
+    for (path, content) in [
+        ("src/main.rs", b"fn main() {}".as_slice()),
+        ("src/nested/lib.rs", b"pub fn nested() {}".as_slice()),
+        ("src/app.ts", b"export {};".as_slice()),
+        ("src/nested/view.tsx", b"export default null;".as_slice()),
+        ("src/nested/data.json", b"{}".as_slice()),
+        ("src/nested/skip.md", b"skip".as_slice()),
+    ] {
+        std::fs::write(project.join(path), content).expect("nested source file");
+    }
+    let list_paths = |pattern: &str| {
+        files
+            .list_v1(
+                &FileListRequestV1 {
+                    pattern: pattern.into(),
+                    maximum_entries: 32,
+                },
+                &CancellationToken::default(),
+            )
+            .expect("recursive list")
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        list_paths("src/*.rs"),
+        BTreeSet::from(["src/main.rs".to_owned()])
+    );
+    assert_eq!(
+        list_paths("src/**/*.rs"),
+        BTreeSet::from(["src/main.rs".to_owned(), "src/nested/lib.rs".to_owned()])
+    );
+    assert_eq!(
+        list_paths("src/**/*.{ts,tsx,json}"),
+        BTreeSet::from([
+            "src/app.ts".to_owned(),
+            "src/nested/data.json".to_owned(),
+            "src/nested/view.tsx".to_owned()
+        ])
+    );
+    assert_eq!(list_paths("src/**").len(), 6);
     assert!(matches!(
         files.write_v1(
             &FileWriteRequestV1 {

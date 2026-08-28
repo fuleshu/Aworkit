@@ -144,6 +144,7 @@ function ConfigurationFieldInput({
             disabled={!editable}
             max={field.max}
             min={field.min}
+            placeholder={field.defaultValue?.toString()}
             step={field.step ?? 1}
             title={`${field.label} between ${field.min} and ${field.max}`}
             type="number"

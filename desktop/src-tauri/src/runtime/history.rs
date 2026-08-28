@@ -91,6 +91,9 @@ pub(crate) struct FrozenChatExecutionContextV1 {
     pub agent_maximum_turns: u32,
     #[serde(default)]
     pub maximum_tool_calls: u64,
+    /// Frozen wall-clock allowance for each command in this Chat/Run.
+    #[serde(default = "default_run_deadline_millis")]
+    pub run_deadline_millis: u64,
     #[serde(default)]
     pub tools: Vec<FrozenToolBindingV1>,
     pub model_tier_id: String,
@@ -466,9 +469,7 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
-            let record: FrozenChatExecutionRecordV1 = serde_json::from_value(value)
-                .map_err(|_| "stored frozen Chat context is invalid".to_owned())?;
-            validate_frozen_context_record(&record)?;
+            let record = decode_stored_frozen_context_record(value)?;
             if &record.context.identity.chat_id == chat_id {
                 return Ok(Some(record));
             }
@@ -487,9 +488,7 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
-            let record: FrozenChatExecutionRecordV1 = serde_json::from_value(value)
-                .map_err(|_| "stored frozen Chat context is invalid".to_owned())?;
-            validate_frozen_context_record(&record)?;
+            let record = decode_stored_frozen_context_record(value)?;
             if record.context.history_base_head == history_head {
                 return Ok(Some(record));
             }
@@ -626,7 +625,7 @@ impl ChatHistory {
             context,
             context_hash,
         };
-        validate_frozen_context_record(&record)?;
+        validate_frozen_context_record(&record, None)?;
         if let Some(existing) = self.frozen_context(&record.context.identity.chat_id)? {
             return if existing == record {
                 Ok(existing)
@@ -1071,8 +1070,31 @@ fn identity_from_event(event: &Event) -> Result<Option<ChatIdentityV1>, String> 
     }
 }
 
-fn validate_frozen_context_record(record: &FrozenChatExecutionRecordV1) -> Result<(), String> {
+/// Decodes a durable context while verifying the hash against the exact stored
+/// JSON. This keeps additive serde defaults backward compatible without ever
+/// treating the re-serialized, default-expanded value as the original bytes.
+fn decode_stored_frozen_context_record(
+    value: Value,
+) -> Result<FrozenChatExecutionRecordV1, String> {
+    let stored_context_hash = value
+        .get("context")
+        .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())
+        .and_then(canonical_hash)?;
+    let record: FrozenChatExecutionRecordV1 = serde_json::from_value(value)
+        .map_err(|_| "stored frozen Chat context is invalid".to_owned())?;
+    validate_frozen_context_record(&record, Some(&stored_context_hash))?;
+    Ok(record)
+}
+
+fn validate_frozen_context_record(
+    record: &FrozenChatExecutionRecordV1,
+    stored_context_hash: Option<&str>,
+) -> Result<(), String> {
     let context = &record.context;
+    let context_hash_matches = match stored_context_hash {
+        Some(hash) => hash == record.context_hash,
+        None => canonical_hash(context)? == record.context_hash,
+    };
     if context.schema_version != 1
         || context.settings_version == 0
         || context.workflow_version == 0
@@ -1107,7 +1129,7 @@ fn validate_frozen_context_record(record: &FrozenChatExecutionRecordV1) -> Resul
         || context.model_snapshot.id != context.model_id
         || context.model_snapshot.name != context.model_name
         || context.model_snapshot.remote_id != context.remote_model_id
-        || canonical_hash(context)? != record.context_hash
+        || !context_hash_matches
     {
         return Err("stored frozen Chat context failed integrity validation".into());
     }
@@ -1189,6 +1211,7 @@ fn validate_frozen_context_record(record: &FrozenChatExecutionRecordV1) -> Resul
         || context.agent_maximum_turns == 0
         || context.agent_maximum_turns > 12
         || context.maximum_tool_calls > 64
+        || !(30_000..=3_600_000).contains(&context.run_deadline_millis)
         || (context.tools.is_empty()
             && (context.agent_maximum_turns != 1 || context.maximum_tool_calls != 0))
     {
@@ -1252,6 +1275,10 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
 
 const fn default_agent_maximum_turns() -> u32 {
     1
+}
+
+const fn default_run_deadline_millis() -> u64 {
+    60_000
 }
 
 pub(crate) fn canonical_hash(value: &impl Serialize) -> Result<String, String> {

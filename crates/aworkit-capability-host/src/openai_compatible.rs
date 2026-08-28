@@ -1,5 +1,6 @@
 //! Blocking OpenAI-compatible provider transport with explicit resource bounds.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{BufReader, Read};
 use std::time::Duration;
@@ -17,7 +18,7 @@ use crate::{
     CancellationToken, ModelEventV1, ModelRequestV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
     model_tools::validate_tool_request,
-    provider_tools::{consume_openai_stream, openai_tool_request},
+    provider_tools::{OpenAiRequestParametersV1, consume_openai_stream, openai_tool_request},
 };
 
 const MAX_IDENTITY_BYTES: usize = 256;
@@ -72,6 +73,7 @@ pub struct OpenAiCompatibleProviderConfig {
     model: String,
     api_key: Option<Zeroizing<String>>,
     limits: OpenAiCompatibleLimitsV1,
+    request_parameters: OpenAiRequestParametersV1,
 }
 
 impl OpenAiCompatibleProviderConfig {
@@ -106,7 +108,19 @@ impl OpenAiCompatibleProviderConfig {
             model,
             api_key,
             limits: limits.validate()?,
+            request_parameters: OpenAiRequestParametersV1::default(),
         })
+    }
+
+    /// Freezes the closed, non-secret model Settings consumed by this
+    /// OpenAI-compatible adapter.
+    pub fn with_request_parameters(
+        mut self,
+        parameters: &BTreeMap<String, Value>,
+    ) -> Result<Self, OpenAiCompatibleProviderError> {
+        self.request_parameters = OpenAiRequestParametersV1::from_settings(parameters)
+            .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?;
+        Ok(self)
     }
 
     #[must_use]
@@ -224,14 +238,16 @@ impl OpenAiCompatibleProvider {
         request: &ModelRequestV1,
     ) -> Result<Response, OpenAiCompatibleProviderError> {
         let messages = normalize_messages(&request.input)?;
-        let body = ChatCompletionRequest {
+        let mut body = serde_json::to_value(ChatCompletionRequest {
             model: &self.config.model,
             messages: &messages,
             stream: true,
             stream_options: ChatStreamOptions {
                 include_usage: true,
             },
-        };
+        })
+        .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
+        self.config.request_parameters.apply(&mut body);
         self.successful_stream(self.send(
             self.client.post(self.completions_url.clone()).json(&body),
             "text/event-stream",
@@ -243,7 +259,8 @@ impl OpenAiCompatibleProvider {
         request: &ModelToolRequestV1,
     ) -> Result<Response, ProviderError> {
         validate_tool_request(request)?;
-        let body = openai_tool_request(&self.config.model, request)?;
+        let body =
+            openai_tool_request(&self.config.model, request, &self.config.request_parameters)?;
         let response = self
             .send(
                 self.client.post(self.completions_url.clone()).json(&body),
@@ -441,6 +458,8 @@ pub enum OpenAiCompatibleProviderError {
     InvalidApiKey,
     #[error("provider limits are invalid")]
     InvalidLimits,
+    #[error("provider request parameters are unsupported or invalid")]
+    InvalidRequestParameters,
     #[error("provider HTTP client could not be constructed")]
     ClientConstruction,
     #[error("provider request input is invalid")]
@@ -780,11 +799,14 @@ mod tests {
             assert_eq!(body["model"], "local/model:latest");
             assert_eq!(body["stream"], true);
             assert_eq!(body["stream_options"]["include_usage"], true);
+            assert_eq!(body["reasoning_effort"], "medium");
+            assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
+            assert_eq!(body["chat_template_kwargs"]["preserve_thinking"], false);
             assert_eq!(body["messages"][0]["role"], "user");
             assert_eq!(body["messages"][0]["content"], "hello");
             let body = [
-                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning_content":"Checking "},"finish_reason":null}]})),
-                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning_content":"the request."},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning":"Checking "},"finish_reason":null}]})),
+                format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"reasoning":"the request."},"finish_reason":null}]})),
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"Hello from "},"finish_reason":null}]})),
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"fixture"},"finish_reason":null}]})),
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),
@@ -797,11 +819,19 @@ mod tests {
                 delay: Duration::ZERO,
             }
         });
-        let provider = OpenAiCompatibleProvider::new(config(
-            &base_url,
-            Some("sk-fixture".into()),
-            OpenAiCompatibleLimitsV1::default(),
-        ))
+        let provider = OpenAiCompatibleProvider::new(
+            config(
+                &base_url,
+                Some("sk-fixture".into()),
+                OpenAiCompatibleLimitsV1::default(),
+            )
+            .with_request_parameters(&BTreeMap::from([
+                ("reasoningEffort".into(), json!("medium")),
+                ("enableThinking".into(), json!(true)),
+                ("preserveThinking".into(), json!(false)),
+            ]))
+            .expect("reasoning parameters"),
+        )
         .expect("provider");
         let mut events = Vec::new();
         assert_eq!(

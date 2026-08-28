@@ -45,6 +45,7 @@ export type ConfigurationField =
       readonly min: number;
       readonly max: number;
       readonly step?: number;
+      readonly defaultValue?: number;
     }
   | {
       readonly kind: "textarea";
@@ -117,6 +118,7 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     fields: [
       { kind: "modelTier", key: "modelTierId", label: "Model tier" },
       { kind: "textarea", key: "instructions", label: "Instructions" },
+      { kind: "text", key: "outputContract", label: "Output contract" },
       { kind: "number", key: "maximumTokens", label: "Maximum tokens", min: 1, max: 262_144, step: 1 },
     ],
     defaultConfiguration: { modelTierId: "tier:balanced" },
@@ -132,9 +134,23 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
       { kind: "modelTier", key: "modelTierId", label: "Model tier" },
       { kind: "toolMulti", key: "toolIds", label: "Tools" },
       { kind: "number", key: "maxTurns", label: "Maximum turns", min: 1, max: 12, step: 1 },
+      {
+        kind: "number",
+        key: "timeoutSeconds",
+        label: "Run timeout (seconds)",
+        min: 30,
+        max: 3_600,
+        step: 30,
+        defaultValue: 600,
+      },
       { kind: "textarea", key: "instructions", label: "Instructions" },
     ],
-    defaultConfiguration: { modelTierId: "tier:balanced", maxTurns: 1, toolIds: [] },
+    defaultConfiguration: {
+      modelTierId: "tier:balanced",
+      maxTurns: 1,
+      timeoutSeconds: 600,
+      toolIds: [],
+    },
   },
   {
     type: "tool",

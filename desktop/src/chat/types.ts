@@ -55,6 +55,8 @@ export type TimelineKind =
   | "repair"
   | "unknown";
 
+export type TimelineActor = "model" | "subagent";
+
 export interface TimelineItem {
   readonly id: string;
   /** First canonical sequence represented by this item. */
@@ -63,6 +65,7 @@ export interface TimelineItem {
   readonly parentSpanId?: string;
   readonly depth?: number;
   readonly kind: TimelineKind;
+  readonly actor?: TimelineActor;
   readonly title: string;
   readonly body?: string;
   readonly reasoningCategory?: "summary" | "progress" | "source_provided";

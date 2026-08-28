@@ -549,7 +549,7 @@ function ModelEditor({
       <JsonObjectField
         id={`${provider.id}-${model.id}-parameters`}
         label="Provider parameters"
-        title="Reserved non-secret model JSON; current Test operations require this object to be empty"
+        title="Non-secret model request JSON. OpenAI-compatible execution accepts reasoningEffort (low, medium, high), enableThinking, and preserveThinking"
         value={model.parameters}
         onChange={(parameters) => onChange({ ...model, parameters })}
       />

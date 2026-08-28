@@ -1,6 +1,7 @@
 //! Capability-rooted project file read, search, and atomic edit tools.
 
 use std::{
+    collections::BTreeSet,
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -22,6 +23,7 @@ use crate::CancellationToken;
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 1024;
 const MAX_LIST_ENTRIES: usize = 1000;
+const MAX_LIST_SCANNED_ENTRIES: u64 = 100_000;
 const MAX_GREP_MATCHES: usize = 512;
 const MAX_GREP_FILES: usize = 128;
 
@@ -422,6 +424,7 @@ impl ProjectFiles {
         let segments = glob_segments(&request.pattern)?;
         self.revalidate_root()?;
         let mut entries = Vec::new();
+        let mut seen = BTreeSet::new();
         let mut scanned = 0_u64;
         self.collect_glob(
             &Path::new(""),
@@ -429,6 +432,7 @@ impl ProjectFiles {
             0,
             request.maximum_entries,
             &mut entries,
+            &mut seen,
             &mut scanned,
             cancellation,
         )?;
@@ -460,6 +464,7 @@ impl ProjectFiles {
         segment_index: usize,
         maximum_entries: usize,
         entries: &mut Vec<FileListEntryV1>,
+        seen: &mut BTreeSet<String>,
         scanned: &mut u64,
         cancellation: &CancellationToken,
     ) -> Result<(), FileToolError> {
@@ -467,42 +472,55 @@ impl ProjectFiles {
             return Ok(());
         }
         check_cancelled(cancellation)?;
-        let directory = if directory_path.as_os_str().is_empty() {
-            self.directory.clone()
-        } else {
-            self.reject_symlinks(directory_path, false)?;
-            Arc::new(self.directory.open_dir(directory_path).map_err(
-                |error| match error.kind() {
-                    std::io::ErrorKind::NotFound => FileToolError::NoMatch(format!(
-                        "path {} does not exist",
-                        directory_path.display()
-                    )),
-                    _ => error.into(),
-                },
-            )?)
-        };
         let Some(segment) = segments.get(segment_index) else {
             return Ok(());
         };
         let last = segment_index + 1 == segments.len();
+        if segment.recursive && !last {
+            // `**` consumes zero directories first, then the same segment is
+            // retried in each child directory to consume one or more.
+            self.collect_glob(
+                directory_path,
+                segments,
+                segment_index + 1,
+                maximum_entries,
+                entries,
+                seen,
+                scanned,
+                cancellation,
+            )?;
+            if entries.len() >= maximum_entries {
+                return Ok(());
+            }
+        }
+        let directory = self.open_glob_directory(directory_path)?;
         for entry in directory.entries().map_err(FileToolError::Io)? {
+            if *scanned >= MAX_LIST_SCANNED_ENTRIES {
+                return Err(FileToolError::ListScanLimit);
+            }
             let entry = entry.map_err(FileToolError::Io)?;
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if !segment.matches(&name) {
+            let file_type = entry.file_type().map_err(FileToolError::Io)?;
+            let matches = segment.recursive || segment.matches(&name);
+            if !matches {
                 continue;
             }
             let relative = directory_path.join(name.as_ref());
             *scanned = scanned.saturating_add(1);
-            let file_type = entry.file_type().map_err(FileToolError::Io)?;
             if file_type.is_dir() {
-                if segment.recursive && !last {
+                if segment.recursive || !last {
                     self.collect_glob(
                         &relative,
                         segments,
-                        segment_index + 1,
+                        if segment.recursive {
+                            segment_index
+                        } else {
+                            segment_index + 1
+                        },
                         maximum_entries,
                         entries,
+                        seen,
                         scanned,
                         cancellation,
                     )?;
@@ -512,12 +530,16 @@ impl ProjectFiles {
             if !file_type.is_file() {
                 continue;
             }
-            if !last && !segment.recursive {
+            if !last {
                 continue;
             }
             let metadata = entry.metadata().map_err(FileToolError::Io)?;
+            let path = relative.to_string_lossy().replace('\\', "/");
+            if !seen.insert(path.clone()) {
+                continue;
+            }
             entries.push(FileListEntryV1 {
-                path: relative.to_string_lossy().replace('\\', "/"),
+                path,
                 size_bytes: metadata.len(),
                 modified_epoch_millis: metadata
                     .modified()
@@ -532,6 +554,23 @@ impl ProjectFiles {
             }
         }
         Ok(())
+    }
+
+    fn open_glob_directory(&self, directory_path: &Path) -> Result<Arc<Dir>, FileToolError> {
+        if directory_path.as_os_str().is_empty() {
+            return Ok(self.directory.clone());
+        }
+        self.reject_symlinks(directory_path, false)?;
+        self.directory
+            .open_dir(directory_path)
+            .map(Arc::new)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => FileToolError::NoMatch(format!(
+                    "path {} does not exist",
+                    directory_path.display()
+                )),
+                _ => error.into(),
+            })
     }
 
     /// Regex search across text files beneath the root with line context.
@@ -813,7 +852,7 @@ fn content_hash(bytes: &[u8]) -> String {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct GlobSegment {
-    parts: Vec<GlobPart>,
+    alternatives: Vec<Vec<GlobPart>>,
     recursive: bool,
 }
 
@@ -826,7 +865,9 @@ enum GlobPart {
 
 impl GlobSegment {
     fn matches(&self, name: &str) -> bool {
-        match_segments(&self.parts, name)
+        self.alternatives
+            .iter()
+            .any(|parts| match_segments(parts, name))
     }
 }
 
@@ -858,43 +899,86 @@ fn glob_segments(pattern: &str) -> Result<Vec<GlobSegment>, FileToolError> {
         if raw.is_empty() {
             continue;
         }
-        let mut parts = Vec::new();
-        let mut literal = String::new();
-        let mut recursive = false;
-        for character in raw.chars() {
-            match character {
-                '*' => {
-                    if !literal.is_empty() {
-                        parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
-                    }
-                    match parts.last() {
-                        Some(GlobPart::AnySequence) => {
-                            recursive = true;
-                        }
-                        _ => parts.push(GlobPart::AnySequence),
-                    }
-                }
-                '?' => {
-                    if !literal.is_empty() {
-                        parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
-                    }
-                    parts.push(GlobPart::Any);
-                }
-                other => literal.push(other),
-            }
-        }
-        if !literal.is_empty() {
-            parts.push(GlobPart::Literal(literal));
-        }
-        if parts.is_empty() {
-            return Err(FileToolError::InvalidList);
-        }
-        segments.push(GlobSegment { parts, recursive });
+        let recursive = raw == "**";
+        let alternatives = expand_brace_alternatives(raw)?
+            .into_iter()
+            .map(|alternative| glob_parts(&alternative))
+            .collect::<Result<Vec<_>, _>>()?;
+        segments.push(GlobSegment {
+            alternatives,
+            recursive,
+        });
     }
     if segments.is_empty() {
         return Err(FileToolError::InvalidList);
     }
     Ok(segments)
+}
+
+fn glob_parts(raw: &str) -> Result<Vec<GlobPart>, FileToolError> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    for character in raw.chars() {
+        match character {
+            '*' => {
+                if !literal.is_empty() {
+                    parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
+                }
+                match parts.last() {
+                    Some(GlobPart::AnySequence) => {}
+                    _ => parts.push(GlobPart::AnySequence),
+                }
+            }
+            '?' => {
+                if !literal.is_empty() {
+                    parts.push(GlobPart::Literal(std::mem::take(&mut literal)));
+                }
+                parts.push(GlobPart::Any);
+            }
+            other => literal.push(other),
+        }
+    }
+    if !literal.is_empty() {
+        parts.push(GlobPart::Literal(literal));
+    }
+    if parts.is_empty() {
+        return Err(FileToolError::InvalidList);
+    }
+    Ok(parts)
+}
+
+fn expand_brace_alternatives(raw: &str) -> Result<Vec<String>, FileToolError> {
+    let Some(open) = raw.find('{') else {
+        return if raw.contains('}') {
+            Err(FileToolError::InvalidList)
+        } else {
+            Ok(vec![raw.to_owned()])
+        };
+    };
+    let close = raw[open + 1..]
+        .find('}')
+        .map(|index| open + 1 + index)
+        .ok_or(FileToolError::InvalidList)?;
+    let choices = raw[open + 1..close].split(',').collect::<Vec<_>>();
+    if choices.len() < 2
+        || choices.iter().any(|choice| choice.is_empty())
+        || raw[open + 1..close]
+            .chars()
+            .any(|character| matches!(character, '{' | '}'))
+    {
+        return Err(FileToolError::InvalidList);
+    }
+    let suffixes = expand_brace_alternatives(&raw[close + 1..])?;
+    let mut expanded = Vec::new();
+    for choice in choices {
+        for suffix in &suffixes {
+            if expanded.len() >= 32 {
+                return Err(FileToolError::InvalidList);
+            }
+            expanded.push(format!("{}{}{}", &raw[..open], choice, suffix));
+        }
+    }
+    Ok(expanded)
 }
 
 fn truncate_line(line: &str, maximum_chars: usize) -> String {
@@ -925,6 +1009,8 @@ pub enum FileToolError {
     InvalidSearch,
     #[error("glob pattern is invalid")]
     InvalidList,
+    #[error("glob traversal exceeded its bounded scan limit")]
+    ListScanLimit,
     #[error("regex pattern or grep bounds are invalid")]
     InvalidGrep,
     #[error("glob matched no files: {0}")]

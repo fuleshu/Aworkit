@@ -10,7 +10,10 @@
 //! with a durably restorable prefix so a later decision resumes without
 //! recomputing completed model work.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1, ModelEventV1,
@@ -30,6 +33,7 @@ use super::{
     pipeline::{
         WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
     },
+    plan_contract::parse_plan_output_v1,
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
@@ -385,6 +389,7 @@ struct PassMachine<'a> {
     model_version_hash: &'a str,
     budget: GraphPassBudgetV1,
     now_epoch_millis: u64,
+    deadline_epoch_millis: u64,
     conversation: Vec<WorkflowMessageV1>,
     values: BTreeMap<String, Value>,
     completed: Vec<String>,
@@ -440,6 +445,12 @@ impl<'a> PassMachine<'a> {
             }
             if cancellation.is_cancelled() {
                 return self.failed_outcome("graph pass was cancelled".to_owned());
+            }
+            if deadline_elapsed(self.deadline_epoch_millis) {
+                return self.failed_outcome(format!(
+                    "workflow Run deadline elapsed before node '{}' started",
+                    node.id
+                ));
             }
             if let Err(error) = self.check_budget() {
                 return self.failed_outcome(error);
@@ -787,6 +798,12 @@ impl<'a> PassMachine<'a> {
             .execute_cancellable(&plan, &ModelRequestV1 { input }, cancellation)
         {
             Ok(evidence) => {
+                if deadline_elapsed(self.deadline_epoch_millis) {
+                    return Err(format!(
+                        "workflow Run deadline elapsed during model_call node '{}' provider turn",
+                        node.id
+                    ));
+                }
                 let (text, units) = evidence_text(evidence);
                 if text.trim().is_empty() {
                     return Err(format!(
@@ -796,7 +813,18 @@ impl<'a> PassMachine<'a> {
                 }
                 self.input_units = self.input_units.saturating_add(units.0);
                 self.output_units = self.output_units.saturating_add(units.1);
-                Ok(Value::String(text))
+                if node.configuration.get("outputContract").and_then(Value::as_str)
+                    == Some("plan")
+                {
+                    parse_plan_output_v1(&text).map_err(|error| {
+                        format!(
+                            "model_call node '{}' violated its plan output contract: {error}",
+                            node.id
+                        )
+                    })
+                } else {
+                    Ok(Value::String(text))
+                }
             }
             Err(error) => Err(format!("model_call node '{}' failed: {error}", node.id)),
         }
@@ -852,6 +880,12 @@ impl<'a> PassMachine<'a> {
                 cancellation,
             ) {
                 Ok(evidence) => {
+                    if deadline_elapsed(self.deadline_epoch_millis) {
+                        return Err(format!(
+                            "workflow Run deadline elapsed during agent node '{}' provider turn",
+                            node.id
+                        ));
+                    }
                     let (text, units) = evidence_text(evidence);
                     self.input_units = self.input_units.saturating_add(units.0);
                     self.output_units = self.output_units.saturating_add(units.1);
@@ -890,6 +924,7 @@ impl<'a> PassMachine<'a> {
                 maximum_turns,
                 maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
                 maximum_tokens: self.budget.tokens,
+                deadline_epoch_millis: self.deadline_epoch_millis,
             },
             self.tool_authority,
             cancellation,
@@ -999,6 +1034,7 @@ impl<'a> PassMachine<'a> {
             maximum_turns,
             maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
             maximum_tokens: self.budget.tokens,
+            deadline_epoch_millis: self.deadline_epoch_millis,
         };
         match resume_model_tool_loop_v1(
             self.gateway,
@@ -1215,6 +1251,7 @@ pub(crate) fn execute_graph_pass_observed(
     model_binding_id: &str,
     model_version_hash: &str,
     now_epoch_millis: u64,
+    deadline_epoch_millis: u64,
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
     cancellation: &CancellationToken,
@@ -1232,6 +1269,7 @@ pub(crate) fn execute_graph_pass_observed(
         model_version_hash,
         budget,
         now_epoch_millis,
+        deadline_epoch_millis,
         conversation: conversation.to_vec(),
         values: BTreeMap::new(),
         completed: Vec::new(),
@@ -1250,6 +1288,14 @@ pub(crate) fn execute_graph_pass_observed(
         activity_observer,
     };
     machine.run(pending, approval_decision, cancellation)
+}
+
+fn deadline_elapsed(deadline_epoch_millis: u64) -> bool {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(true, |duration| {
+            u64::try_from(duration.as_millis()).map_or(true, |now| now >= deadline_epoch_millis)
+        })
 }
 
 enum AgentResumeOutcomeV1 {
