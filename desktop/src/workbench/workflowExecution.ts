@@ -176,15 +176,17 @@ export function assessNativeWorkflow(
       if (configuration === null) {
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions.`,
+          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
         });
       } else {
         const keys = new Set(Object.keys(configuration));
         const required = new Set(["maxTurns", "modelTierId", "toolIds"]);
         const allowed = new Set([
+          "enableThinking",
           "instructions",
           "maxTurns",
           "modelTierId",
+          "reasoningEffort",
           "timeoutSeconds",
           "toolIds",
         ]);
@@ -194,7 +196,7 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions.`,
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
@@ -254,6 +256,7 @@ export function assessNativeWorkflow(
             message: `Workflow node '${id}' agent timeoutSeconds must be 30..=3600.`,
           });
         instructionsIssue(id, configuration.instructions, issues);
+        modelReasoningIssues(id, configuration, issues);
       }
     }
     if (node.type === "model_call") {
@@ -261,20 +264,22 @@ export function assessNativeWorkflow(
       if (configuration === null)
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract.`,
+          message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, outputContract, reasoningEffort, and enableThinking.`,
         });
       else {
         const keys = new Set(Object.keys(configuration));
         const allowed = new Set([
+          "enableThinking",
           "instructions",
           "maximumTokens",
           "modelTierId",
           "outputContract",
+          "reasoningEffort",
         ]);
         if (!keys.has("modelTierId") || [...keys].some((key) => !allowed.has(key)))
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract.`,
+            message: `Workflow node '${id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, outputContract, reasoningEffort, and enableThinking.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
@@ -302,6 +307,7 @@ export function assessNativeWorkflow(
               message: `Workflow node '${id}' maximumTokens must be 1..=${MAXIMUM_MODEL_CALL_TOKENS}.`,
             });
         }
+        modelReasoningIssues(id, configuration, issues);
         instructionsIssue(id, configuration.instructions, issues);
       }
     }
@@ -532,6 +538,43 @@ function instructionsIssue(
     issues.push({
       code: "native_node_configuration",
       message: `Workflow node '${id}' instructions must be a non-empty string of at most ${MAXIMUM_INSTRUCTIONS_BYTES / 1024} KiB.`,
+    });
+}
+
+const REASONING_EFFORTS = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+function modelReasoningIssues(
+  id: string,
+  configuration: JsonObject,
+  issues: WorkflowExecutionIssue[],
+): void {
+  const effort = configuration.reasoningEffort;
+  if (
+    effort !== undefined &&
+    effort !== null &&
+    (typeof effort !== "string" || !REASONING_EFFORTS.has(effort))
+  )
+    issues.push({
+      code: "native_node_configuration",
+      message: `Workflow node '${id}' reasoningEffort must be none, minimal, low, medium, high, xhigh, max, or null to inherit.`,
+    });
+  const enabled = configuration.enableThinking;
+  if (
+    enabled !== undefined &&
+    enabled !== null &&
+    typeof enabled !== "boolean"
+  )
+    issues.push({
+      code: "native_node_configuration",
+      message: `Workflow node '${id}' enableThinking must be a boolean or null to inherit.`,
     });
 }
 

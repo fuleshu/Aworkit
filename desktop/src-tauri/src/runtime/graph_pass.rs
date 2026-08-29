@@ -793,9 +793,14 @@ impl<'a> PassMachine<'a> {
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
         };
         self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
+        let parameters = node_model_parameters(&node.configuration);
         match self
             .gateway
-            .execute_cancellable(&plan, &ModelRequestV1 { input }, cancellation)
+            .execute_cancellable(
+                &plan,
+                &ModelRequestV1 { input, parameters },
+                cancellation,
+            )
         {
             Ok(evidence) => {
                 if deadline_elapsed(self.deadline_epoch_millis) {
@@ -865,6 +870,7 @@ impl<'a> PassMachine<'a> {
             .iter()
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
+        let parameters = node_model_parameters(&node.configuration);
         if definitions.is_empty() {
             self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
             return match self.gateway.execute_cancellable(
@@ -876,7 +882,10 @@ impl<'a> PassMachine<'a> {
                     maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                     maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 },
-                &ModelRequestV1 { input: context },
+                &ModelRequestV1 {
+                    input: context,
+                    parameters,
+                },
                 cancellation,
             ) {
                 Ok(evidence) => {
@@ -916,6 +925,7 @@ impl<'a> PassMachine<'a> {
             ModelToolLoopRequestV1 {
                 outer_invocation_id: self.outer_invocation_id,
                 input: context,
+                parameters,
                 definitions,
                 binding_id: self.model_binding_id.to_owned(),
                 binding_version_hash: self.model_version_hash.to_owned(),
@@ -1026,6 +1036,7 @@ impl<'a> PassMachine<'a> {
         let request = ModelToolLoopRequestV1 {
             outer_invocation_id: self.outer_invocation_id,
             input: context,
+            parameters: node_model_parameters(&node.configuration),
             definitions,
             binding_id: self.model_binding_id.to_owned(),
             binding_version_hash: self.model_version_hash.to_owned(),
@@ -1298,6 +1309,21 @@ fn deadline_elapsed(deadline_epoch_millis: u64) -> bool {
         })
 }
 
+/// Extracts the closed request overrides owned by a model-consuming workflow
+/// node. Null means "inherit the concrete model default" and is omitted.
+fn node_model_parameters(configuration: &Value) -> BTreeMap<String, Value> {
+    ["reasoningEffort", "enableThinking"]
+        .into_iter()
+        .filter_map(|key| {
+            configuration
+                .get(key)
+                .filter(|value| !value.is_null())
+                .cloned()
+                .map(|value| (key.to_owned(), value))
+        })
+        .collect()
+}
+
 enum AgentResumeOutcomeV1 {
     Value(Value),
     Suspended(GraphApprovalRequestV1, AgentLoopSuspensionV1),
@@ -1466,7 +1492,10 @@ fn node_completion_summary(node: &CompiledGraphNodeV1) -> &'static str {
 mod tests {
     use serde_json::json;
 
-    use super::{evaluate_predicate, node_completion_summary, topological_order, value_text};
+    use super::{
+        evaluate_predicate, node_completion_summary, node_model_parameters, topological_order,
+        value_text,
+    };
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
 
     fn node(id: &str, node_type: &str) -> CompiledGraphNodeV1 {
@@ -1581,6 +1610,28 @@ mod tests {
         assert_eq!(
             node_completion_summary(&node("completion.1", "completion")),
             "Workflow completed."
+        );
+    }
+
+    #[test]
+    fn model_node_parameters_keep_explicit_overrides_and_omit_inherited_values() {
+        assert_eq!(
+            node_model_parameters(&json!({
+                "reasoningEffort": "xhigh",
+                "enableThinking": false,
+                "instructions": "ignored"
+            })),
+            std::collections::BTreeMap::from([
+                ("enableThinking".into(), json!(false)),
+                ("reasoningEffort".into(), json!("xhigh")),
+            ])
+        );
+        assert!(
+            node_model_parameters(&json!({
+                "reasoningEffort": null,
+                "enableThinking": null
+            }))
+            .is_empty()
         );
     }
 }

@@ -128,7 +128,12 @@ impl OpenAiRequestParametersV1 {
             .map(|value| {
                 value
                     .as_str()
-                    .filter(|value| matches!(*value, "low" | "medium" | "high"))
+                    .filter(|value| {
+                        matches!(
+                            *value,
+                            "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                        )
+                    })
                     .map(str::to_owned)
                     .ok_or(())
             })
@@ -139,6 +144,20 @@ impl OpenAiRequestParametersV1 {
             reasoning_effort,
             enable_thinking,
             preserve_thinking,
+        })
+    }
+
+    /// Applies request-scoped node overrides over the concrete model defaults.
+    /// The same closed validation is used at both layers so unsupported fields
+    /// never leak into an OpenAI-compatible request body.
+    pub(crate) fn with_overrides(&self, overrides: &BTreeMap<String, Value>) -> Result<Self, ()> {
+        let overrides = Self::from_settings(overrides)?;
+        Ok(Self {
+            reasoning_effort: overrides
+                .reasoning_effort
+                .or_else(|| self.reasoning_effort.clone()),
+            enable_thinking: overrides.enable_thinking.or(self.enable_thinking),
+            preserve_thinking: overrides.preserve_thinking.or(self.preserve_thinking),
         })
     }
 

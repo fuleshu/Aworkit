@@ -154,6 +154,7 @@ fn execute(
                         {"role":"user","content":"hello"}
                     ]
                 }),
+                parameters: Default::default(),
             },
         )
         .expect("provider completion")

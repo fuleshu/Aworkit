@@ -1,6 +1,6 @@
 mod provider_tool_support;
 
-use std::{sync::mpsc, thread, time::Duration};
+use std::{collections::BTreeMap, sync::mpsc, thread, time::Duration};
 
 use aworkit_capability_host::{
     ModelAssistantContentV1, ModelToolDefinitionV1, ModelToolEventV1, ModelToolExchangeV1,
@@ -30,6 +30,10 @@ fn request(exchanges: Vec<ModelToolExchangeV1>) -> ModelToolRequestV1 {
             {"role":"system","content":"Use the provided project tools."},
             {"role":"user","content":"Read the README."}
         ]}),
+        parameters: BTreeMap::from([
+            ("reasoningEffort".into(), json!("high")),
+            ("enableThinking".into(), json!(false)),
+        ]),
         tools: vec![tool()],
         exchanges,
     }
@@ -113,6 +117,8 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
         assert_eq!(body["model"], "gpt-fixture");
         assert_eq!(body["stream"], true);
         assert_eq!(body["stream_options"]["include_usage"], true);
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "files_read");

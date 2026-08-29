@@ -2223,6 +2223,7 @@ impl FileToolDispatcherV1 {
             ModelToolLoopRequestV1 {
                 outer_invocation_id: &envelope.invocation_id,
                 input: child_input,
+                parameters: BTreeMap::new(),
                 definitions,
                 binding_id: binding_id.clone(),
                 binding_version_hash: version_hash.clone(),

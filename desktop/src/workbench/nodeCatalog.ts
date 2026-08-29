@@ -39,6 +39,16 @@ export type ConfigurationField =
       readonly label: string;
     }
   | {
+      readonly kind: "reasoningEffort";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
+      readonly kind: "thinkingToggle";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
       readonly kind: "number";
       readonly key: string;
       readonly label: string;
@@ -117,6 +127,8 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     outputPorts: [textPort("out", "Completion")],
     fields: [
       { kind: "modelTier", key: "modelTierId", label: "Model tier" },
+      { kind: "reasoningEffort", key: "reasoningEffort", label: "Reasoning effort" },
+      { kind: "thinkingToggle", key: "enableThinking", label: "Thinking" },
       { kind: "textarea", key: "instructions", label: "Instructions" },
       { kind: "text", key: "outputContract", label: "Output contract" },
       { kind: "number", key: "maximumTokens", label: "Maximum tokens", min: 1, max: 262_144, step: 1 },
@@ -132,6 +144,8 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     outputPorts: [textPort("out", "Result")],
     fields: [
       { kind: "modelTier", key: "modelTierId", label: "Model tier" },
+      { kind: "reasoningEffort", key: "reasoningEffort", label: "Reasoning effort" },
+      { kind: "thinkingToggle", key: "enableThinking", label: "Thinking" },
       { kind: "toolMulti", key: "toolIds", label: "Tools" },
       { kind: "number", key: "maxTurns", label: "Maximum turns", min: 1, max: 12, step: 1 },
       {

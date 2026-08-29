@@ -1,4 +1,6 @@
 use std::sync::Arc;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 use aworkit_capability_host::{
     AnthropicMessagesLimitsV1, AnthropicMessagesProvider, AnthropicMessagesProviderConfig,
@@ -197,7 +199,10 @@ impl ProviderPort for BuiltInProviderPort {
                     maximum_input_bytes: 1024 * 1024,
                     maximum_output_bytes: 1024 * 1024,
                 },
-                &ModelRequestV1 { input },
+                &ModelRequestV1 {
+                    input,
+                    parameters: BTreeMap::new(),
+                },
             )
             .map_err(|error| format!("provider completion failed: {error}"))?;
         let mut text = String::new();
@@ -239,14 +244,20 @@ impl ProviderPort for BuiltInProviderPort {
                     .test_connection()
                     .map_err(|error| format!("model discovery failed: {error}"))?;
                 Ok(connection
-                    .models
+                    .model_details
                     .into_iter()
-                    .map(|remote_id| DiscoveredProviderModel {
-                        name: remote_id.clone(),
-                        remote_id,
-                        context_window: None,
-                        max_output_tokens: None,
-                        capabilities: installed_model_capabilities(kind),
+                    .map(|model| {
+                        let mut capabilities = installed_model_capabilities(kind);
+                        capabilities.extend(model.capabilities);
+                        capabilities.sort();
+                        capabilities.dedup();
+                        DiscoveredProviderModel {
+                            name: model.id.clone(),
+                            remote_id: model.id,
+                            context_window: model.context_window,
+                            max_output_tokens: model.max_output_tokens,
+                            capabilities,
+                        }
                     })
                     .collect())
             }
@@ -413,7 +424,12 @@ mod tests {
                 "/v1/models",
                 "/v1",
                 "authorization: bearer desktop-secret",
-                json!({"data":[{"id":"fixture-model"}]}),
+                json!({"data":[{
+                    "id":"fixture-model",
+                    "max_model_len":65536,
+                    "supported_parameters":["reasoning_effort","enable_thinking"],
+                    "reasoning_efforts":["low","medium","high"]
+                }]}),
                 "fixture-model",
             ),
             (
@@ -459,7 +475,23 @@ mod tests {
             assert_eq!(discovered.len(), 1);
             assert_eq!(discovered[0].remote_id, "fixture-model");
             assert_eq!(discovered[0].name, expected_name);
-            assert_eq!(discovered[0].capabilities, vec!["text", "tools"]);
+            if kind == "openai_compatible" {
+                assert_eq!(discovered[0].context_window, Some(65_536));
+                assert_eq!(
+                    discovered[0].capabilities,
+                    vec![
+                        "reasoning",
+                        "reasoning_effort:high",
+                        "reasoning_effort:low",
+                        "reasoning_effort:medium",
+                        "text",
+                        "thinking_toggle",
+                        "tools",
+                    ]
+                );
+            } else {
+                assert_eq!(discovered[0].capabilities, vec!["text", "tools"]);
+            }
             if kind == "gemini" {
                 assert_eq!(discovered[0].context_window, Some(32_768));
                 assert_eq!(discovered[0].max_output_tokens, Some(4_096));

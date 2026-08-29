@@ -1414,15 +1414,17 @@ fn validate_agent_configuration(
     let keys = configuration_keys(config);
     let required = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
     let allowed = BTreeSet::from([
+        "enableThinking",
         "instructions",
         "maxTurns",
         "modelTierId",
+        "reasoningEffort",
         "timeoutSeconds",
         "toolIds",
     ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds and instructions"
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking"
         ));
     }
     if config
@@ -1479,6 +1481,7 @@ fn validate_agent_configuration(
             ));
         }
     }
+    validate_model_reasoning_overrides(node_id, config)?;
     validate_optional_instructions(node_id, config.get("instructions"))?;
     Ok(())
 }
@@ -1490,16 +1493,19 @@ fn validate_model_call_configuration(
     let keys = configuration_keys(config);
     let required = BTreeSet::from(["modelTierId"]);
     let allowed = BTreeSet::from([
+        "enableThinking",
         "instructions",
         "maximumTokens",
         "modelTierId",
         "outputContract",
+        "reasoningEffort",
     ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, and outputContract"
+            "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, outputContract, reasoningEffort, and enableThinking"
         ));
     }
+    validate_model_reasoning_overrides(node_id, config)?;
     if config
         .get("modelTierId")
         .and_then(Value::as_str)
@@ -1529,6 +1535,34 @@ fn validate_model_call_configuration(
         }
     }
     validate_optional_instructions(node_id, config.get("instructions"))?;
+    Ok(())
+}
+
+fn validate_model_reasoning_overrides(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    if let Some(effort) = config.get("reasoningEffort")
+        && !effort.is_null()
+        && !effort.as_str().is_some_and(|effort| {
+            matches!(
+                effort,
+                "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+            )
+        })
+    {
+        return Err(format!(
+            "workflow node '{node_id}' reasoningEffort must be none, minimal, low, medium, high, xhigh, max, or null to inherit"
+        ));
+    }
+    if let Some(enabled) = config.get("enableThinking")
+        && !enabled.is_null()
+        && !enabled.is_boolean()
+    {
+        return Err(format!(
+            "workflow node '{node_id}' enableThinking must be a boolean or null to inherit"
+        ));
+    }
     Ok(())
 }
 
@@ -2482,8 +2516,8 @@ mod tests {
             "nodes": [
                 {"id":"input.1","type":"input"},
                 {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"exists","path":"text"}}},
-                {"id":"plan.1","type":"model_call","configuration":{"modelTierId":"tier:balanced"}},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":["tool.todo"],"maxTurns":6}},
+                {"id":"plan.1","type":"model_call","configuration":{"modelTierId":"tier:balanced","reasoningEffort":"high","enableThinking":true}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":["tool.todo"],"maxTurns":6,"reasoningEffort":null,"enableThinking":false}},
                 {"id":"output.1","type":"output"},
                 {"id":"wait.1","type":"wait"}
             ],
@@ -2497,5 +2531,12 @@ mod tests {
             ]
         });
         validate_v1_executable_catalog(&branched).unwrap();
+        let mut invalid = branched;
+        invalid["nodes"][2]["configuration"]["reasoningEffort"] = json!("unbounded");
+        assert!(
+            validate_v1_executable_catalog(&invalid)
+                .unwrap_err()
+                .contains("reasoningEffort")
+        );
     }
 }

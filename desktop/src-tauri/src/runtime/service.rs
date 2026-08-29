@@ -501,6 +501,11 @@ impl DesktopRuntime {
                 .as_ref()
                 .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
             validate_model_capabilities(&model.provider, &model.model, !agent.tools.is_empty())?;
+            validate_workflow_model_parameters(
+                &workflow.document,
+                &model.provider,
+                &model.model,
+            )?;
             if !agent.tools.is_empty() && !has_project {
                 return Err(
                     "the saved Agent uses project tools, but Settings has no eligible local project"
@@ -1402,6 +1407,11 @@ impl DesktopRuntime {
             &mcp_definitions,
         )?;
         validate_model_capabilities(&resolved.provider, &resolved.model, !agent.tools.is_empty())?;
+        validate_workflow_model_parameters(
+            &workflow.document,
+            &resolved.provider,
+            &resolved.model,
+        )?;
         let credential = resolved
             .credential
             .as_ref()
@@ -3167,6 +3177,56 @@ fn validate_model_capabilities(
     Ok(())
 }
 
+fn validate_workflow_model_parameters(
+    workflow: &Value,
+    provider: &ProviderConfigurationV2,
+    model: &ModelConfigurationV2,
+) -> Result<(), String> {
+    let advertised_efforts = model
+        .capabilities
+        .iter()
+        .filter_map(|capability| capability.strip_prefix("reasoning_effort:"))
+        .collect::<BTreeSet<_>>();
+    let Some(nodes) = workflow.get("nodes").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for node in nodes {
+        if !matches!(
+            node.get("type").and_then(Value::as_str),
+            Some("agent" | "model_call")
+        ) {
+            continue;
+        }
+        let Some(configuration) = node.get("configuration").and_then(Value::as_object) else {
+            continue;
+        };
+        let has_override = ["reasoningEffort", "enableThinking"]
+            .into_iter()
+            .any(|key| configuration.get(key).is_some_and(|value| !value.is_null()));
+        if !has_override {
+            continue;
+        }
+        let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
+        if provider.kind != "openai_compatible" {
+            return Err(format!(
+                "workflow node '{node_id}' sets OpenAI-compatible reasoning controls, but tier resolution selected the '{}' provider adapter",
+                provider.kind
+            ));
+        }
+        if let Some(effort) = configuration.get("reasoningEffort").and_then(Value::as_str)
+            && !advertised_efforts.is_empty()
+            && !advertised_efforts.contains(effort)
+        {
+            return Err(format!(
+                "workflow node '{node_id}' selects reasoningEffort '{effort}', but model '{}' advertised only: {}",
+                model.name,
+                advertised_efforts.iter().copied().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 struct ResolvedWorkflowModel {
     tier: ModelTierConfigurationV2,
     provider: ProviderConfigurationV2,
@@ -3466,13 +3526,18 @@ fn validate_consumed_model_parameters(
         let valid = match key.as_str() {
             "reasoningEffort" => value
                 .as_str()
-                .is_some_and(|value| matches!(value, "low" | "medium" | "high")),
+                .is_some_and(|value| {
+                    matches!(
+                        value,
+                        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                    )
+                }),
             "enableThinking" | "preserveThinking" => value.is_boolean(),
             _ => false,
         };
         if !valid {
             return Err(format!(
-                "model '{}:{}' parameter '{}' is unsupported or invalid; OpenAI-compatible models accept reasoningEffort (low, medium, or high), enableThinking (boolean), and preserveThinking (boolean)",
+                "model '{}:{}' parameter '{}' is unsupported or invalid; OpenAI-compatible models accept reasoningEffort (none, minimal, low, medium, high, xhigh, or max), enableThinking (boolean), and preserveThinking (boolean)",
                 provider.id, model.id, key
             ));
         }
@@ -5716,7 +5781,7 @@ mod tests {
         let mut supported_model_parameters = provider.clone();
         supported_model_parameters.models[0]
             .parameters
-            .insert("reasoningEffort".into(), Value::from("medium"));
+            .insert("reasoningEffort".into(), Value::from("xhigh"));
         runtime
             .settings_v2_test_provider(ProviderProbeRequestV2 {
                 provider: supported_model_parameters,
@@ -5742,6 +5807,48 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("unsupported or invalid"));
         assert_eq!(provider_port.connection_tests.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn workflow_node_reasoning_overrides_follow_resolved_provider_metadata() {
+        let mut provider =
+            saved_provider_configuration("provider.reasoning", "https://example.com/v1");
+        provider.models[0].capabilities.extend([
+            "reasoning".into(),
+            "reasoning_effort:low".into(),
+            "reasoning_effort:high".into(),
+            "thinking_toggle".into(),
+        ]);
+        let model = provider.models[0].clone();
+        let workflow = json!({
+            "nodes":[{
+                "id":"agent.1",
+                "type":"agent",
+                "configuration":{
+                    "modelTierId":"tier:balanced",
+                    "toolIds":[],
+                    "maxTurns":2,
+                    "reasoningEffort":"high",
+                    "enableThinking":false
+                }
+            }]
+        });
+        validate_workflow_model_parameters(&workflow, &provider, &model).unwrap();
+
+        let mut unsupported_effort = workflow.clone();
+        unsupported_effort["nodes"][0]["configuration"]["reasoningEffort"] = json!("max");
+        assert!(
+            validate_workflow_model_parameters(&unsupported_effort, &provider, &model)
+                .unwrap_err()
+                .contains("advertised only")
+        );
+
+        provider.kind = "anthropic".into();
+        assert!(
+            validate_workflow_model_parameters(&workflow, &provider, &model)
+                .unwrap_err()
+                .contains("OpenAI-compatible")
+        );
     }
 
     #[test]

@@ -172,7 +172,20 @@ impl fmt::Debug for OpenAiCompatibleProviderConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenAiConnectionTestV1 {
     pub models: Vec<String>,
+    /// Optional metadata advertised by OpenAI-compatible catalog extensions.
+    /// The standard OpenAI model object contains identity/ownership only, so
+    /// every field except `id` can legitimately remain empty.
+    pub model_details: Vec<OpenAiDiscoveredModelV1>,
     pub configured_model_available: bool,
+}
+
+/// Bounded model metadata read from optional `GET /models` extensions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenAiDiscoveredModelV1 {
+    pub id: String,
+    pub context_window: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+    pub capabilities: Vec<String>,
 }
 
 /// Production adapter for streaming OpenAI-compatible chat completions.
@@ -218,17 +231,21 @@ impl OpenAiCompatibleProvider {
     pub fn test_connection(&self) -> Result<OpenAiConnectionTestV1, OpenAiCompatibleProviderError> {
         let response = self.send(self.client.get(self.models_url.clone()), "application/json")?;
         let catalog: ModelsResponse = self.decode_success(response)?;
-        let mut models = catalog
+        let mut model_details = catalog
             .data
             .into_iter()
-            .map(|entry| entry.id)
-            .filter(|model| valid_model(model))
+            .filter_map(discovered_model)
             .collect::<Vec<_>>();
-        models.sort();
-        models.dedup();
+        model_details.sort_by(|left, right| left.id.cmp(&right.id));
+        model_details.dedup_by(|left, right| left.id == right.id);
+        let models = model_details
+            .iter()
+            .map(|model| model.id.clone())
+            .collect::<Vec<_>>();
         let configured_model_available = models.iter().any(|model| model == &self.config.model);
         Ok(OpenAiConnectionTestV1 {
             models,
+            model_details,
             configured_model_available,
         })
     }
@@ -247,7 +264,11 @@ impl OpenAiCompatibleProvider {
             },
         })
         .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
-        self.config.request_parameters.apply(&mut body);
+        self.config
+            .request_parameters
+            .with_overrides(&request.parameters)
+            .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?
+            .apply(&mut body);
         self.successful_stream(self.send(
             self.client.post(self.completions_url.clone()).json(&body),
             "text/event-stream",
@@ -259,8 +280,12 @@ impl OpenAiCompatibleProvider {
         request: &ModelToolRequestV1,
     ) -> Result<Response, ProviderError> {
         validate_tool_request(request)?;
-        let body =
-            openai_tool_request(&self.config.model, request, &self.config.request_parameters)?;
+        let parameters = self
+            .config
+            .request_parameters
+            .with_overrides(&request.parameters)
+            .map_err(|()| ProviderError::Failed("OpenAI request parameters are invalid".into()))?;
+        let body = openai_tool_request(&self.config.model, request, &parameters)?;
         let response = self
             .send(
                 self.client.post(self.completions_url.clone()).json(&body),
@@ -486,6 +511,125 @@ struct ModelsResponse {
 #[derive(Deserialize)]
 struct ModelEntry {
     id: String,
+    #[serde(flatten)]
+    metadata: BTreeMap<String, Value>,
+}
+
+fn discovered_model(entry: ModelEntry) -> Option<OpenAiDiscoveredModelV1> {
+    if !valid_model(&entry.id) {
+        return None;
+    }
+    let context_window = first_u64(
+        &entry.metadata,
+        &["context_window", "max_model_len", "max_context_length"],
+    );
+    let max_output_tokens = first_u64(
+        &entry.metadata,
+        &["max_output_tokens", "maximum_output_tokens"],
+    );
+    let mut capabilities = metadata_capabilities(&entry.metadata);
+    capabilities.sort();
+    capabilities.dedup();
+    Some(OpenAiDiscoveredModelV1 {
+        id: entry.id,
+        context_window,
+        max_output_tokens,
+        capabilities,
+    })
+}
+
+fn first_u64(metadata: &BTreeMap<String, Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| metadata.get(*key).and_then(Value::as_u64))
+}
+
+fn metadata_capabilities(metadata: &BTreeMap<String, Value>) -> Vec<String> {
+    let mut capabilities = Vec::new();
+    if let Some(value) = metadata.get("capabilities") {
+        match value {
+            Value::Array(values) => capabilities.extend(
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|value| valid_capability(value))
+                    .map(str::to_owned),
+            ),
+            Value::Object(values) => capabilities.extend(
+                values
+                    .iter()
+                    .filter(|(_, enabled)| enabled.as_bool() == Some(true))
+                    .map(|(name, _)| name)
+                    .filter(|value| valid_capability(value))
+                    .cloned(),
+            ),
+            _ => {}
+        }
+    }
+    let supported_parameters = metadata
+        .get("supported_parameters")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if supported_parameters
+        .iter()
+        .any(|parameter| matches!(*parameter, "reasoning" | "reasoning_effort"))
+    {
+        capabilities.push("reasoning".into());
+    }
+    if supported_parameters.iter().any(|parameter| {
+        matches!(
+            *parameter,
+            "enable_thinking" | "chat_template_kwargs.enable_thinking"
+        )
+    }) {
+        capabilities.push("thinking_toggle".into());
+    }
+    for key in [
+        "reasoning_efforts",
+        "supported_reasoning_efforts",
+        "reasoning_effort",
+    ] {
+        let Some(value) = metadata.get(key) else {
+            continue;
+        };
+        let efforts = match value {
+            Value::Array(values) => values.iter().filter_map(Value::as_str).collect::<Vec<_>>(),
+            Value::String(value) => vec![value.as_str()],
+            _ => Vec::new(),
+        };
+        for effort in efforts {
+            if valid_reasoning_effort(effort) {
+                capabilities.push("reasoning".into());
+                capabilities.push(format!("reasoning_effort:{effort}"));
+            }
+        }
+    }
+    if metadata.get("supports_thinking").and_then(Value::as_bool) == Some(true)
+        || metadata
+            .get("chat_template_kwargs")
+            .and_then(Value::as_object)
+            .is_some_and(|kwargs| kwargs.contains_key("enable_thinking"))
+    {
+        capabilities.push("thinking_toggle".into());
+    }
+    capabilities
+}
+
+fn valid_capability(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
+        })
+}
+
+fn valid_reasoning_effort(value: &str) -> bool {
+    matches!(
+        value,
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    )
 }
 
 #[derive(Serialize)]
@@ -762,7 +906,14 @@ mod tests {
                     "object": "list",
                     "data": [
                         {"id": "other-model"},
-                        {"id": "local/model:latest"},
+                        {
+                            "id": "local/model:latest",
+                            "max_model_len": 32768,
+                            "max_output_tokens": 4096,
+                            "capabilities": {"vision": true, "audio": false},
+                            "supported_parameters": ["reasoning_effort", "enable_thinking"],
+                            "supported_reasoning_efforts": ["low", "medium", "high"]
+                        },
                         {"id": "other-model"}
                     ]
                 }))
@@ -780,6 +931,27 @@ mod tests {
             provider.test_connection().expect("connection test"),
             OpenAiConnectionTestV1 {
                 models: vec!["local/model:latest".into(), "other-model".into()],
+                model_details: vec![
+                    OpenAiDiscoveredModelV1 {
+                        id: "local/model:latest".into(),
+                        context_window: Some(32_768),
+                        max_output_tokens: Some(4_096),
+                        capabilities: vec![
+                            "reasoning".into(),
+                            "reasoning_effort:high".into(),
+                            "reasoning_effort:low".into(),
+                            "reasoning_effort:medium".into(),
+                            "thinking_toggle".into(),
+                            "vision".into(),
+                        ],
+                    },
+                    OpenAiDiscoveredModelV1 {
+                        id: "other-model".into(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        capabilities: Vec::new(),
+                    },
+                ],
                 configured_model_available: true,
             }
         );
@@ -799,8 +971,8 @@ mod tests {
             assert_eq!(body["model"], "local/model:latest");
             assert_eq!(body["stream"], true);
             assert_eq!(body["stream_options"]["include_usage"], true);
-            assert_eq!(body["reasoning_effort"], "medium");
-            assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
+            assert_eq!(body["reasoning_effort"], "high");
+            assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
             assert_eq!(body["chat_template_kwargs"]["preserve_thinking"], false);
             assert_eq!(body["messages"][0]["role"], "user");
             assert_eq!(body["messages"][0]["content"], "hello");
@@ -838,7 +1010,11 @@ mod tests {
             provider
                 .execute(
                     &ModelRequestV1 {
-                        input: json!("hello")
+                        input: json!("hello"),
+                        parameters: BTreeMap::from([
+                            ("reasoningEffort".into(), json!("high")),
+                            ("enableThinking".into(), json!(false)),
+                        ]),
                     },
                     &mut |event| {
                         events.push(event);
@@ -921,7 +1097,8 @@ mod tests {
         assert_eq!(
             provider.execute(
                 &ModelRequestV1 {
-                    input: json!("hello")
+                    input: json!("hello"),
+                    parameters: Default::default(),
                 },
                 &mut |event| {
                     events.push(event);

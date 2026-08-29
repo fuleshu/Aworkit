@@ -646,7 +646,13 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
         maximum_output_bytes: 64,
     };
     let evidence = gateway
-        .execute(&plan, &ModelRequestV1 { input: json!("hi") })
+        .execute(
+            &plan,
+            &ModelRequestV1 {
+                input: json!("hi"),
+                parameters: Default::default(),
+            },
+        )
         .expect("fallback");
     assert_eq!(evidence.selected_binding, "fallback");
     assert_eq!(evidence.attempted_bindings, vec!["primary", "fallback"]);
@@ -674,7 +680,13 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
         }),
     ]);
     assert_eq!(
-        ambiguous.execute(&plan, &ModelRequestV1 { input: json!(null) }),
+        ambiguous.execute(
+            &plan,
+            &ModelRequestV1 {
+                input: json!(null),
+                parameters: Default::default()
+            }
+        ),
         Err(ProviderError::AcceptanceAmbiguous)
     );
     assert_eq!(late_calls.load(Ordering::SeqCst), 0);
@@ -692,13 +704,26 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
         maximum_output_bytes: 64,
     };
     assert_eq!(
-        no_usage.execute(&one, &ModelRequestV1 { input: json!(null) }),
+        no_usage.execute(
+            &one,
+            &ModelRequestV1 {
+                input: json!(null),
+                parameters: Default::default()
+            }
+        ),
         Err(ProviderError::MissingOrDuplicateUsage)
     );
     let cancelled = CancellationToken::default();
     cancelled.cancel();
     assert_eq!(
-        gateway.execute_cancellable(&plan, &ModelRequestV1 { input: json!(null) }, &cancelled),
+        gateway.execute_cancellable(
+            &plan,
+            &ModelRequestV1 {
+                input: json!(null),
+                parameters: Default::default()
+            },
+            &cancelled
+        ),
         Err(ProviderError::Cancelled)
     );
     let duplicates = ModelResolutionPlanV1 {
@@ -710,7 +735,13 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
         maximum_output_bytes: 64,
     };
     assert_eq!(
-        gateway.execute(&duplicates, &ModelRequestV1 { input: json!(null) }),
+        gateway.execute(
+            &duplicates,
+            &ModelRequestV1 {
+                input: json!(null),
+                parameters: Default::default()
+            }
+        ),
         Err(ProviderError::InvalidPlan)
     );
 }

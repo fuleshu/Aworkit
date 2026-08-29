@@ -63,11 +63,17 @@ interface FieldOptions {
   readonly tiers: readonly { readonly value: string; readonly label: string }[];
   readonly tools: readonly { readonly value: string; readonly label: string }[];
   readonly mcpServers: readonly { readonly value: string; readonly label: string }[];
+  readonly modelCapabilitiesByTier: Readonly<Record<string, readonly string[]>>;
 }
 
 function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
   if (settings === undefined)
-    return { tiers: FALLBACK_TIERS, tools: [], mcpServers: [] };
+    return {
+      tiers: FALLBACK_TIERS,
+      tools: [],
+      mcpServers: [],
+      modelCapabilitiesByTier: {},
+    };
   const tiers =
     settings.settings.modelTiers.length > 0
       ? settings.settings.modelTiers.map(({ id, name }) => ({ value: id, label: name }))
@@ -78,7 +84,20 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
   const mcpServers = settings.settings.mcpServers
     .filter((server) => server.enabled)
     .map(({ id, name }) => ({ value: id, label: name }));
-  return { tiers, tools, mcpServers };
+  const modelCapabilitiesByTier = Object.fromEntries(
+    settings.settings.modelTiers.flatMap((tier) => {
+      const resolution = tier.resolution;
+      if (resolution.strategy !== "exact") return [];
+      const provider = settings.settings.providers.find(
+        ({ id }) => id === resolution.target.providerId,
+      );
+      const model = provider?.models.find(
+        ({ id }) => id === resolution.target.modelId,
+      );
+      return model === undefined ? [] : [[tier.id, model.capabilities]];
+    }),
+  );
+  return { tiers, tools, mcpServers, modelCapabilitiesByTier };
 }
 
 function ConfigurationFieldInput({
@@ -116,6 +135,66 @@ function ConfigurationFieldInput({
           </select>
         </label>
       );
+    case "reasoningEffort": {
+      const tier = stringValue(configuration.modelTierId);
+      const capabilities = options.modelCapabilitiesByTier[tier] ?? [];
+      const advertised = capabilities
+        .filter((capability) => capability.startsWith("reasoning_effort:"))
+        .map((capability) => capability.slice("reasoning_effort:".length));
+      const current = stringValue(configuration[field.key]);
+      const values = orderedReasoningEfforts(
+        advertised.length > 0 ? advertised : DEFAULT_REASONING_EFFORTS,
+        current,
+      );
+      const source = advertised.length > 0 ? "advertised by the selected model" : "not advertised by the model API; the provider may reject unsupported values";
+      return (
+        <label>
+          {field.label}
+          <select
+            disabled={!editable}
+            title={`Override reasoning effort for this node (${source})`}
+            value={current}
+            onChange={(event) =>
+              onChange({ [field.key]: event.target.value || null })
+            }
+          >
+            <option value="">Inherit model default</option>
+            {values.map((value) => (
+              <option key={value} value={value}>
+                {reasoningEffortLabel(value)}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+    case "thinkingToggle": {
+      const tier = stringValue(configuration.modelTierId);
+      const capabilities = options.modelCapabilitiesByTier[tier] ?? [];
+      const advertised = capabilities.includes("thinking_toggle");
+      const current = configuration[field.key];
+      const value = typeof current === "boolean" ? String(current) : "";
+      return (
+        <label>
+          {field.label}
+          <select
+            disabled={!editable}
+            title={`Override the provider's thinking toggle for this node (${advertised ? "advertised by the selected model" : "not advertised by the model API; intended for compatible servers such as vLLM/Qwen"})`}
+            value={value}
+            onChange={(event) =>
+              onChange({
+                [field.key]:
+                  event.target.value === "" ? null : event.target.value === "true",
+              })
+            }
+          >
+            <option value="">Inherit model default</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </label>
+      );
+    }
     case "toolSingle":
       return (
         <ToolSingleField
@@ -204,6 +283,37 @@ function ConfigurationFieldInput({
         />
       );
   }
+}
+
+const DEFAULT_REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+function orderedReasoningEfforts(
+  advertised: readonly string[],
+  current: string,
+): string[] {
+  const supported = new Set(advertised);
+  if (current !== "") supported.add(current);
+  const ordered = DEFAULT_REASONING_EFFORTS.filter((value) => supported.has(value));
+  const custom = [...supported]
+    .filter(
+      (value) => !(DEFAULT_REASONING_EFFORTS as readonly string[]).includes(value),
+    )
+    .sort();
+  return [...ordered, ...custom];
+}
+
+function reasoningEffortLabel(value: string): string {
+  return value === "xhigh"
+    ? "Extra high"
+    : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function ToolSingleField({

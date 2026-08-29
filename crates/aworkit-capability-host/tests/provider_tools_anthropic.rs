@@ -29,6 +29,7 @@ fn request(exchanges: Vec<ModelToolExchangeV1>) -> ModelToolRequestV1 {
             {"role":"system","content":"Use tools when evidence is needed."},
             {"role":"user","content":"Find the settings implementation."}
         ]}),
+        parameters: Default::default(),
         tools: vec![tool()],
         exchanges,
     }

@@ -4,7 +4,10 @@
 //! trusted-core port before the exact result is sent back on the next model
 //! turn. This module owns neither workspace authority nor tool execution.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
@@ -115,6 +118,7 @@ pub(crate) struct SettledModelToolCallV1 {
 pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub outer_invocation_id: &'a StableId,
     pub input: Value,
+    pub parameters: BTreeMap<String, Value>,
     pub definitions: Vec<ModelToolDefinitionV1>,
     pub binding_id: String,
     pub binding_version_hash: String,
@@ -204,6 +208,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &plan,
                 &ModelToolRequestV1 {
                     input: request.input.clone(),
+                    parameters: request.parameters.clone(),
                     tools: request.definitions.clone(),
                     exchanges: exchanges.clone(),
                 },
@@ -527,6 +532,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 &plan,
                 &ModelToolRequestV1 {
                     input: request.input.clone(),
+                    parameters: request.parameters.clone(),
                     tools: request.definitions.clone(),
                     exchanges: exchanges.clone(),
                 },
@@ -864,6 +870,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 &plan,
                 &ModelToolRequestV1 {
                     input: request.input.clone(),
+                    parameters: request.parameters.clone(),
                     tools: request.definitions.clone(),
                     exchanges: exchanges.clone(),
                 },

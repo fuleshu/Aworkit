@@ -4,6 +4,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::{
@@ -75,6 +76,9 @@ pub struct ModelResolutionPlanV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelRequestV1 {
     pub input: Value,
+    /// Closed provider-neutral request overrides supplied by the active
+    /// workflow node. Adapters must validate any fields they consume.
+    pub parameters: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -198,6 +202,7 @@ pub trait ProviderEnginePortV1: Send + Sync {
         self.execute_cancellable(
             &ModelRequestV1 {
                 input: request.input.clone(),
+                parameters: request.parameters.clone(),
             },
             cancellation,
             &mut bridge,

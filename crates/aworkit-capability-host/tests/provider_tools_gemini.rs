@@ -29,6 +29,7 @@ fn request(exchanges: Vec<ModelToolExchangeV1>) -> ModelToolRequestV1 {
             {"role":"system","content":"Use approved tools for calculations."},
             {"role":"user","content":"Calculate six times seven."}
         ]}),
+        parameters: Default::default(),
         tools: vec![tool()],
         exchanges,
     }

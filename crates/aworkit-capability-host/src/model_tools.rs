@@ -119,6 +119,9 @@ pub struct ModelToolExchangeV1 {
 pub struct ModelToolRequestV1 {
     /// Existing text conversation in the same accepted shapes as `ModelRequestV1`.
     pub input: Value,
+    /// Closed request overrides supplied by the active workflow node.
+    #[serde(default)]
+    pub parameters: BTreeMap<String, Value>,
     pub tools: Vec<ModelToolDefinitionV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
 }

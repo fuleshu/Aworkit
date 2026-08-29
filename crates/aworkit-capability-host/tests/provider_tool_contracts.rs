@@ -51,6 +51,7 @@ fn tool(schema: serde_json::Value) -> ModelToolDefinitionV1 {
 fn request(schema: serde_json::Value) -> ModelToolRequestV1 {
     ModelToolRequestV1 {
         input: json!("read the README"),
+        parameters: Default::default(),
         tools: vec![tool(schema)],
         exchanges: Vec::new(),
     }

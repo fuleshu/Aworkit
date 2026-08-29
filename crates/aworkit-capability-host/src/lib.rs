@@ -108,7 +108,7 @@ pub use normalize::{
 };
 pub use openai_compatible::{
     OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
-    OpenAiCompatibleProviderError, OpenAiConnectionTestV1,
+    OpenAiCompatibleProviderError, OpenAiConnectionTestV1, OpenAiDiscoveredModelV1,
 };
 pub use plugin::{
     AttestedPluginPinV1, ExtensionManifestV1, NativePluginProcessV1, PinnedPluginManifestV1,
