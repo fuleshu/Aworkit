@@ -98,6 +98,35 @@ for (let attempt = 0; attempt < 25; attempt += 1) {
   await new Promise((resolveWait) => setTimeout(resolveWait, 200));
 }
 
+const runDetailsState = await evaluate(`(() => {
+  const inspector = document.querySelector('[aria-label="Run details"]');
+  const content = inspector?.querySelector('.run-details-content');
+  return {
+    present: inspector !== null,
+    entireRunPresent: inspector?.textContent?.includes('Entire run') === true,
+    executionLogPresent: inspector?.textContent?.includes('Execution log') === true,
+    detailsContainsRawJson: content?.querySelector('pre') !== null,
+  };
+})()`);
+const rawRunDetailsState = await evaluate(`(async () => {
+  const inspector = document.querySelector('[aria-label="Run details"]');
+  const tabs = [...(inspector?.querySelectorAll('[role="tab"]') ?? [])];
+  const rawTab = tabs.find((element) => element.textContent?.trim() === 'Raw JSON');
+  rawTab?.click();
+  await new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame)));
+  const raw = inspector?.querySelector('.run-details-json');
+  const result = {
+    tabPresent: rawTab !== undefined,
+    jsonPresent: raw !== null,
+    scoped: raw?.textContent?.includes('"scope"') === true,
+  };
+  const detailsTab = tabs.find((element) => element.textContent?.trim() === 'Details');
+  detailsTab?.click();
+  await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+  return result;
+})()`);
+state = { ...state, runDetailsState, rawRunDetailsState };
+
 const screenshot = await command("Page.captureScreenshot", {
   format: "png",
   fromSurface: true,
@@ -113,6 +142,17 @@ if (state.obsoleteSnapshotError) failures.push("obsolete Chat snapshot fields ar
 if (!state.composerPresent) failures.push("Chat composer was not rendered");
 if (!state.composerEnabled) failures.push("Chat composer is disabled");
 if (!state.newChatPresent) failures.push("New Chat control was not rendered");
+if (!state.runDetailsState.present) failures.push("Run details was not rendered");
+if (!state.runDetailsState.entireRunPresent)
+  failures.push("whole-run details were not rendered");
+if (!state.runDetailsState.executionLogPresent)
+  failures.push("Run details has no execution log");
+if (state.runDetailsState.detailsContainsRawJson)
+  failures.push("Details contains a raw JSON block");
+if (!state.rawRunDetailsState.tabPresent)
+  failures.push("Raw JSON tab was not rendered");
+if (!state.rawRunDetailsState.jsonPresent || !state.rawRunDetailsState.scoped)
+  failures.push("Raw JSON does not contain scoped Run details");
 
 console.log(
   JSON.stringify(

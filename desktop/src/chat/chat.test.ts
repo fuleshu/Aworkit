@@ -12,16 +12,11 @@ import {
   visibleTimeline,
 } from "./conversation";
 import {
-  inspectEvidence,
-  queryEvidence,
-  redactedEvidenceJson,
-} from "./evidence";
-import {
   chatIntentPayload,
   normalizeRuntimeSnapshot,
   PreviewChatCorePort,
 } from "./corePort";
-import type { ChatProjection, EvidenceRecord } from "./types";
+import type { ChatProjection } from "./types";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 const draftChat: ChatProjection = {
@@ -39,7 +34,7 @@ const draftChat: ChatProjection = {
   expectedVersion: 0,
 };
 
-describe("Milestone 08 Chat and evidence experience", () => {
+describe("Milestone 08 Chat and Run details experience", () => {
   it("creates first-send and queued-input intents while retaining drafts until a receipt", () => {
     const draft = updateComposer(emptyComposer, {
       draft: "hello",
@@ -184,43 +179,6 @@ describe("Milestone 08 Chat and evidence experience", () => {
           createdAt: "now",
         }).label,
       ).not.toBe("Unknown activity");
-  });
-
-  it("paginates evidence and never invents values for unavailable records", () => {
-    const records: readonly EvidenceRecord[] = [
-      {
-        id: "usage",
-        category: "usage",
-        label: "Usage",
-        value: { tokens: 1 },
-        state: "available",
-      },
-      {
-        id: "secret",
-        category: "debug",
-        label: "Debug capture",
-        value: null,
-        state: "redacted",
-      },
-      {
-        id: "route",
-        category: "routing",
-        label: "Route",
-        value: {},
-        state: "opaque",
-      },
-    ];
-    expect(
-      queryEvidence(records, { filter: "usage", offset: 0, limit: 10 }).items,
-    ).toHaveLength(1);
-    expect(queryEvidence(records, { offset: 1, limit: 1 }).items[0]?.id).toBe(
-      "secret",
-    );
-    expect(inspectEvidence(records[1]!)).toContain("redacted");
-    expect(inspectEvidence(records[2]!)).toContain("opaque");
-    expect(
-      redactedEvidenceJson({ ...records[1]!, value: "must-not-leak" }),
-    ).not.toContain("must-not-leak");
   });
 
   it("deduplicates exact native-port retries and rejects changed command content", async () => {

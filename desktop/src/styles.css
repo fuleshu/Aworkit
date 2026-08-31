@@ -606,6 +606,34 @@ pre {
   font-size: 9px;
   margin-top: 5px;
 }
+.message-row.selected .user-speech-bubble {
+  border-color: var(--aw-accent);
+  box-shadow: 0 0 0 1px var(--aw-accent);
+}
+.message-byline {
+  align-items: end;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 5px;
+}
+.message-byline small {
+  margin-top: 0;
+}
+.message-byline button,
+.bubble-details-button,
+.activity-details-button {
+  background: transparent;
+  border-color: transparent;
+  color: var(--aw-muted);
+  font-size: 9px;
+  min-height: 22px;
+  padding: 1px 5px;
+}
+.bubble-details-button {
+  float: right;
+  margin-left: 8px;
+}
 .actor-turn {
   align-items: end;
   display: grid;
@@ -994,6 +1022,18 @@ pre {
   display: flex;
   gap: 9px;
 }
+.activity-select-heading {
+  background: transparent;
+  border: 0;
+  min-height: 28px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+.activity-details-button {
+  display: block;
+  margin: 0 9px 7px auto;
+}
 .activity-heading > span:last-child {
   color: var(--aw-secondary);
   font-size: 10px;
@@ -1101,14 +1141,14 @@ pre {
 .attachment-entry input {
   width: 100%;
 }
-.evidence-inspector {
+.run-details-inspector {
   background: var(--aw-navigation);
   border-left: 1px solid var(--aw-divider);
   display: grid;
-  grid-template-rows: 48px 34px auto minmax(0, 1fr) 38px;
+  grid-template-rows: 48px 34px auto minmax(0, 1fr);
   min-width: 0;
 }
-.evidence-inspector > header {
+.run-details-inspector > header {
   align-items: center;
   background: var(--aw-panel);
   border-bottom: 1px solid var(--aw-divider);
@@ -1116,7 +1156,7 @@ pre {
   justify-content: space-between;
   padding: 5px 10px 5px 12px;
 }
-.evidence-inspector > header button {
+.run-details-inspector > header button {
   border: 0;
   min-width: 28px;
 }
@@ -1136,54 +1176,142 @@ pre {
   border-bottom: 2px solid var(--aw-accent);
   color: var(--aw-accent);
 }
-.inspector-filter {
-  display: grid;
+.run-details-breadcrumb {
+  align-items: center;
+  border-bottom: 1px solid var(--aw-divider);
+  display: flex;
   gap: 3px;
-  padding: 10px 12px;
+  min-height: 34px;
+  overflow-x: auto;
+  padding: 3px 10px;
+  white-space: nowrap;
 }
-.evidence-detail {
+.run-details-breadcrumb span {
+  align-items: center;
+  display: inline-flex;
+  gap: 3px;
+}
+.run-details-breadcrumb i {
+  color: var(--aw-muted);
+  font-style: normal;
+}
+.run-details-breadcrumb button {
+  background: transparent;
+  border-color: transparent;
+  min-height: 26px;
+  padding: 2px 4px;
+}
+.run-details-breadcrumb button[aria-current="page"] {
+  color: var(--aw-secondary);
+  font-weight: 650;
+}
+.run-details-content {
   min-height: 0;
   overflow: auto;
-  padding: 0 12px 12px;
+  padding: 12px;
 }
-.evidence-record-list {
-  border-bottom: 1px solid var(--aw-divider);
+.run-details-fields {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.run-details-fields > div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.run-details-fields dt,
+.run-details-structured-value dt {
+  color: var(--aw-muted);
+}
+.run-details-fields dd,
+.run-details-structured-value dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.run-details-section {
+  border-top: 1px solid var(--aw-divider);
+  margin-top: 13px;
+  padding-top: 11px;
+}
+.run-details-section h3 {
+  font-size: 11px;
+  margin: 0 0 9px;
+}
+.run-details-prose,
+.run-details-primitive,
+.run-details-empty-value {
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.run-details-empty-value,
+.run-details-raw-note {
+  color: var(--aw-muted);
+}
+.run-details-structured-value {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.run-details-structured-value > div {
+  border-left: 2px solid var(--aw-divider);
+  padding-left: 8px;
+}
+.run-details-structured-value dd {
+  margin-top: 3px;
+  text-align: left;
+}
+.run-details-value-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+}
+.run-details-log {
   display: grid;
   gap: 3px;
-  margin-bottom: 10px;
-  padding-bottom: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-.evidence-record-list button {
+.run-details-log button {
   align-items: center;
   background: transparent;
   border-color: transparent;
   display: flex;
-  justify-content: space-between;
-  text-align: left;
-}
-.evidence-record-list button[aria-pressed="true"] {
-  background: var(--aw-selected);
-  box-shadow: inset 2px 0 var(--aw-accent);
-}
-.evidence-detail dl {
-  border-bottom: 1px solid var(--aw-divider);
-  display: grid;
   gap: 8px;
-  margin: 0 0 10px;
-  padding-bottom: 10px;
-}
-.evidence-detail dl div {
-  align-items: center;
-  display: flex;
   justify-content: space-between;
+  min-height: 38px;
+  padding: 4px 6px;
+  text-align: left;
+  width: 100%;
 }
-.evidence-detail dt {
+.run-details-log button:hover {
+  background: var(--aw-selected);
+}
+.run-details-log button > span:first-child {
+  display: grid;
+  min-width: 0;
+}
+.run-details-log strong,
+.run-details-log small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-details-log small {
   color: var(--aw-muted);
+  font-size: 9px;
+  margin-top: 2px;
 }
-.evidence-detail dd {
-  margin: 0;
+.run-details-raw-note {
+  margin: 0 0 8px;
 }
-.evidence-detail pre,
+.run-details-json,
 .properties-pane pre {
   background: var(--aw-inset);
   border: 1px solid var(--aw-control);
@@ -1194,16 +1322,8 @@ pre {
   padding: 10px;
   white-space: pre-wrap;
 }
-.evidence-inspector > footer {
-  align-items: center;
-  border-top: 1px solid var(--aw-divider);
-  display: flex;
-  gap: 5px;
-  padding: 5px 10px;
-}
-.evidence-inspector > footer span {
-  color: var(--aw-muted);
-  margin-right: auto;
+.run-details-json {
+  max-height: none;
 }
 
 /* Workflow */
@@ -2180,7 +2300,7 @@ pre {
   .chat-layout.with-inspector {
     grid-template-columns: minmax(0, 1fr);
   }
-  .evidence-inspector {
+  .run-details-inspector {
     bottom: 0;
     box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
     max-width: 420px;

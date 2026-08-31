@@ -8,7 +8,7 @@ import {
 } from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { controlsFor } from "./composer";
-import { EvidenceInspector } from "./EvidenceInspector";
+import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
 import type { ChatIntent, TimelineItem } from "./types";
@@ -73,6 +73,7 @@ export function ChatWorkspaceScreen({
   const wasActive = useRef(active);
   const snapshot = runtime.snapshot;
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
+  const projectedChatId = snapshot?.chat.chatId;
   const timelineItems = useMemo(
     () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
     [snapshot, runtime.events],
@@ -159,6 +160,9 @@ export function ChatWorkspaceScreen({
       onRecoveryPendingChange?.(projectedRecoveryPending);
   }, [onRecoveryPendingChange, projectedRecoveryPending]);
   useEffect(() => {
+    setSelectedTimelineId(null);
+  }, [projectedChatId]);
+  useEffect(() => {
     if (
       newChatRequest <= handledNewChatRequest.current ||
       runtime.snapshot === null ||
@@ -207,15 +211,10 @@ export function ChatWorkspaceScreen({
     );
     void runtime.dispatch(intent);
   };
-  const expectedEvidenceId =
-    selectedTimelineId === null ? null : `evidence.${selectedTimelineId}`;
-  const selectedEvidence =
-    (expectedEvidenceId !== null &&
-    snapshot.evidence.some(({ id }) => id === expectedEvidenceId)
-      ? expectedEvidenceId
-      : null) ??
-    snapshot.evidence[0]?.id ??
-    null;
+  const selectTimelineItem = (id: string | null) => {
+    setSelectedTimelineId(id);
+    setInspectorOpen(true);
+  };
   const chatContext = [
     chat.workflowName,
     chat.branch,
@@ -263,11 +262,11 @@ export function ChatWorkspaceScreen({
             )}
             <button
               aria-pressed={inspectorOpen}
-              title="Show or hide the evidence inspector"
+              title="Show or hide Run details"
               type="button"
               onClick={() => setInspectorOpen((open) => !open)}
             >
-              Evidence
+              Run details
             </button>
           </div>
         </header>
@@ -374,7 +373,7 @@ export function ChatWorkspaceScreen({
         <ConversationTimeline
           items={timelineItems}
           selectedId={selectedTimelineId}
-          onSelect={setSelectedTimelineId}
+          onSelect={selectTimelineItem}
           onAction={cardAction}
         />
         <ChatComposer
@@ -396,7 +395,7 @@ export function ChatWorkspaceScreen({
         <PaneSplitter
           className="inspector-splitter"
           direction={-1}
-          label="Resize evidence inspector"
+          label="Resize Run details"
           max={420}
           min={280}
           value={inspectorWidth}
@@ -404,9 +403,13 @@ export function ChatWorkspaceScreen({
         />
       )}
       {inspectorOpen && (
-        <EvidenceInspector
+        <RunDetailsInspector
+          chat={chat}
+          events={runtime.events}
+          items={timelineItems}
           records={snapshot.evidence}
-          selectedId={selectedEvidence}
+          selectedId={selectedTimelineId}
+          onSelect={selectTimelineItem}
           onClose={() => setInspectorOpen(false)}
         />
       )}

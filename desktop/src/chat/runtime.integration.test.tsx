@@ -753,10 +753,10 @@ describe("Chat native-port recovery contracts", () => {
     expect(onNewChat).toHaveBeenCalledOnce();
   });
 
-  it("maps selected tool and error cards to their distinct exact evidence records", async () => {
+  it("maps selected tool and error cards to distinct contextual Run details", async () => {
     const user = userEvent.setup();
     const projected = {
-      ...snapshot(2, "Evidence Chat", [
+      ...snapshot(2, "Run details Chat", [
         canonicalEvent(1, "tool.completed", {
           title: "Read notes",
           body: "notes.txt",
@@ -800,17 +800,39 @@ describe("Chat native-port recovery contracts", () => {
     };
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
 
-    await user.click(await screen.findByTitle("Inspect Read notes evidence"));
+    const toolCard = await screen.findByRole("article", {
+      name: "Tool: Read notes",
+    });
+    await user.click(within(toolCard).getByTitle("Show Run details for Read notes"));
     expect(
-      screen.getByRole("heading", { name: "Tool evidence" }),
+      screen.getByRole("heading", { name: "Read notes" }),
     ).toBeVisible();
-    const inspector = within(screen.getByLabelText("Evidence inspector"));
+    const inspectorElement = screen.getByLabelText("Run details");
+    const inspector = within(inspectorElement);
     expect(inspector.getByText(/notes\.txt/)).toBeVisible();
-    await user.click(screen.getByTitle("Inspect Provider failure evidence"));
+    expect(inspectorElement.querySelector(".run-details-content pre")).toBeNull();
+    await user.click(inspector.getByRole("tab", { name: "Raw JSON" }));
+    expect(inspectorElement.querySelector(".run-details-json")).toHaveTextContent(
+      '"scope": "timeline_item"',
+    );
+    await user.click(inspector.getByRole("tab", { name: "Details" }));
+    const errorCard = screen.getByRole("article", {
+      name: "Error: Provider failure",
+    });
+    await user.click(
+      within(errorCard).getByTitle("Show Run details for Provider failure"),
+    );
     expect(
-      screen.getByRole("heading", { name: "Error evidence" }),
+      screen.getByRole("heading", { name: "Provider failure" }),
     ).toBeVisible();
     expect(inspector.getByText(/network unavailable/)).toBeVisible();
+    await user.click(
+      inspector.getByTitle("Show Run details for Entire run"),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Entire run" }),
+    ).toBeVisible();
+    expect(inspector.getByRole("heading", { name: "Execution log" })).toBeVisible();
   });
 
   it("maps approval-card actions to the stable target and typed intent", async () => {
@@ -954,10 +976,10 @@ describe("Chat native-port recovery contracts", () => {
       }),
     ];
     for (const event of streamed) eventListener?.(event);
-    expect(await screen.findByText("tool.files.list")).toBeVisible();
     const toolCard = await screen.findByRole("article", {
       name: "Tool: tool.files.list",
     });
+    expect(within(toolCard).getByText("tool.files.list")).toBeVisible();
     expect(within(toolCard).getByText("Input")).toBeVisible();
     expect(within(toolCard).getByText("Output")).toBeVisible();
     expect(within(toolCard).getAllByText(/"path": "\."/)[0]).toBeVisible();

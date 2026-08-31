@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("honest JSON-workflow desktop slice", () => {
-  it("renders a clean draft Chat without fabricated projects, history, or evidence", async () => {
+  it("renders a clean draft Chat without fabricated projects, history, or run activity", async () => {
     const { container } = render(<App adapters={defaultDesktopAdapters} />);
     expect(
       await screen.findByRole("heading", { name: "New Chat" }),
@@ -38,7 +38,9 @@ describe("honest JSON-workflow desktop slice", () => {
     expect(
       screen.getByRole("button", { name: /Management Chat.*Unsupported/ }),
     ).toBeDisabled();
-    expect(screen.getByText("Draft")).toBeVisible();
+    expect(document.querySelector(".chat-view-header .run-status")).toHaveTextContent(
+      "Draft",
+    );
     expect(
       screen.getByRole("combobox", {
         name: "Workflow for the first Chat input",
@@ -51,9 +53,11 @@ describe("honest JSON-workflow desktop slice", () => {
       screen.getByRole("button", { name: "Add attachment references" }),
     ).toHaveAttribute("title", "Attachments are unsupported in this build");
     expect(screen.getByText(/No messages yet/)).toBeVisible();
-    expect(
-      screen.getByRole("complementary", { name: "Evidence inspector" }),
-    ).toHaveTextContent("0 records");
+    const runDetails = screen.getByRole("complementary", {
+      name: "Run details",
+    });
+    expect(runDetails).toHaveTextContent("Entire run");
+    expect(runDetails).toHaveTextContent("No execution activity has been recorded.");
     const results = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },
     });
@@ -155,7 +159,7 @@ describe("honest JSON-workflow desktop slice", () => {
     const composer = await screen.findByRole("textbox", { name: "Chat input" });
     await user.type(composer, "keep this local draft");
     const splitter = screen.getByRole("separator", {
-      name: "Resize evidence inspector",
+      name: "Resize Run details",
     });
     expect(splitter).toHaveAttribute("aria-valuenow", "320");
     fireEvent.keyDown(splitter, { key: "ArrowLeft" });
@@ -167,7 +171,7 @@ describe("honest JSON-workflow desktop slice", () => {
       await screen.findByRole("textbox", { name: "Chat input" }),
     ).toHaveValue("keep this local draft");
     expect(
-      screen.getByRole("separator", { name: "Resize evidence inspector" }),
+      screen.getByRole("separator", { name: "Resize Run details" }),
     ).toHaveAttribute("aria-valuenow", "328");
   });
 

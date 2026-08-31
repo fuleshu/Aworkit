@@ -57,6 +57,16 @@ export function ActorBubble({
     >
       <ActorAvatar actor={actor} />
       <div className={`chat-bubble ${variant}-bubble`}>
+        {variant === "speech" && onSelect !== undefined && (
+          <button
+            className="bubble-details-button"
+            title={`Show Run details for ${ariaLabel}`}
+            type="button"
+            onClick={onSelect}
+          >
+            Details
+          </button>
+        )}
         {heading !== null &&
           (onSelect === undefined ? (
             <div className="bubble-heading">{heading}</div>
@@ -64,7 +74,7 @@ export function ActorBubble({
             <button
               className="bubble-heading"
               type="button"
-              title={`Inspect ${title} evidence`}
+              title={`Show Run details for ${title}`}
               onClick={onSelect}
             >
               {heading}

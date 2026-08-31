@@ -977,7 +977,7 @@ impl DesktopRuntime {
                 let _ = self.record_provider_health(
                     &context.provider_snapshot,
                     ProviderHealth::error(
-                        "Last authority-checked completion failed. Inspect the Chat evidence for details.",
+                        "Last authority-checked completion failed. Inspect Run details for more information.",
                     ),
                 );
                 facts.push((
@@ -1208,7 +1208,7 @@ impl DesktopRuntime {
                 let _ = self.record_provider_health(
                     &context.provider_snapshot,
                     ProviderHealth::error(
-                        "The approved workflow step failed. Inspect the Chat evidence for details.",
+                        "The approved workflow step failed. Inspect Run details for more information.",
                     ),
                 );
                 facts.push((

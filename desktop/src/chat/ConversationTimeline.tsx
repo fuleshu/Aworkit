@@ -64,7 +64,7 @@ export function ConversationTimeline({
     const pendingRows = new Set<HTMLElement>();
     let measurementFrame: number | null = null;
     let scrollFrame: number | null = null;
-    const remeasureExpandedEvidence = (event: Event) => {
+    const remeasureExpandedDetails = (event: Event) => {
       if (!(event.target instanceof HTMLDetailsElement)) return;
       const row = event.target.closest<HTMLElement>(".virtual-row");
       if (row === null || !scroll.contains(row)) return;
@@ -96,9 +96,9 @@ export function ConversationTimeline({
         }
       });
     };
-    scroll.addEventListener("toggle", remeasureExpandedEvidence, true);
+    scroll.addEventListener("toggle", remeasureExpandedDetails, true);
     return () => {
-      scroll.removeEventListener("toggle", remeasureExpandedEvidence, true);
+      scroll.removeEventListener("toggle", remeasureExpandedDetails, true);
       if (measurementFrame !== null)
         window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
@@ -173,12 +173,22 @@ export function TimelineCard({
 }): React.JSX.Element {
   if (item.kind === "message")
     return item.title === "You" ? (
-      <article className="message-row from-user" aria-label={`${item.title} message`}>
+      <article
+        className={`message-row from-user ${selected ? "selected" : ""}`}
+        aria-label={`${item.title} message`}
+      >
         <div className="message-body user-speech-bubble">
-            <p>{item.body}</p>
-          <small>
-            {item.title} · {item.createdAt}
-          </small>
+          <p>{item.body}</p>
+          <div className="message-byline">
+            <small>{item.title} · {item.createdAt}</small>
+            <button
+              title="Show Run details for this message"
+              type="button"
+              onClick={() => onSelect(item.id)}
+            >
+              Details
+            </button>
+          </div>
         </div>
       </article>
     ) : (
@@ -187,6 +197,8 @@ export function TimelineCard({
         ariaLabel={`${item.title} message`}
         body={item.body ?? ""}
         createdAt={item.createdAt}
+        onSelect={() => onSelect(item.id)}
+        selected={selected}
         variant="speech"
       />
     );
@@ -207,13 +219,18 @@ export function TimelineCard({
     return (
       <article
         aria-busy={busy || undefined}
-        className="activity-card plan-card"
+        className={`activity-card plan-card ${selected ? "selected" : ""}`}
       >
-        <div className="activity-heading">
+        <button
+          className="activity-heading activity-select-heading"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
           <span className="activity-icon">{busy ? "" : statusIcon(item)}</span>
           <strong>{item.title}</strong>
           <span>{item.status}</span>
-        </div>
+        </button>
         <div
           aria-label="Plan progress"
           aria-valuemax={total}
@@ -240,19 +257,24 @@ export function TimelineCard({
   }
   if (isPlanCall(item))
     return (
-      <article className="activity-card plan-call-card" aria-label={`Plan: ${item.title}`}>
-        <div className="activity-heading">
+      <article className={`activity-card plan-call-card ${selected ? "selected" : ""}`} aria-label={`Plan: ${item.title}`}>
+        <button
+          className="activity-heading activity-select-heading"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
           <span className="activity-icon">◇</span>
           <strong>{item.title}</strong>
           <span>{item.status}</span>
-        </div>
+        </button>
         <p className="plan-call-body">{item.body}</p>
       </article>
     );
   if (isWebResult(item))
     return (
       <article className={`activity-card web-result-card ${selected ? "selected" : ""}`} aria-label={`${webTitle(item)}: ${item.title}`}>
-        <button className="activity-main" type="button" title={`Inspect ${item.title} evidence`} onClick={() => onSelect(item.id)}>
+        <button className="activity-main" type="button" title={`Show Run details for ${item.title}`} onClick={() => onSelect(item.id)}>
           <span className="activity-icon">⌕</span>
           <span>
             <strong>{webTitle(item)}</strong>
@@ -270,12 +292,17 @@ export function TimelineCard({
     );
   if (item.kind === "todo")
     return (
-      <article className="activity-card todo-card" aria-label={`Task list: ${item.title}`}>
-        <div className="activity-heading">
+      <article className={`activity-card todo-card ${selected ? "selected" : ""}`} aria-label={`Task list: ${item.title}`}>
+        <button
+          className="activity-heading activity-select-heading"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
           <span className="activity-icon">☑</span>
           <strong>{item.title}</strong>
           <span>{todoCount(item)}</span>
-        </div>
+        </button>
         <ul className="todo-list">
           {todosOf(item).map((todo, index) => (
             <li className={todo.done ? "done" : ""} key={`${index}-${todo.content}`}>
@@ -294,7 +321,7 @@ export function TimelineCard({
         body={speech ?? item.body ?? "Delegated work is in progress."}
         busy={isBusy(item.status)}
         createdAt={speech === undefined ? undefined : item.createdAt}
-        onSelect={speech === undefined ? () => onSelect(item.id) : undefined}
+        onSelect={() => onSelect(item.id)}
         selected={selected}
         status={item.status}
         title={speech === undefined ? item.title : undefined}
@@ -337,7 +364,7 @@ export function TimelineCard({
     return (
       <article
         aria-busy={isBusy(item.status) || undefined}
-        className="activity-card live-activity-card"
+        className={`activity-card live-activity-card ${selected ? "selected" : ""}`}
         aria-label={`${card.label}: ${item.title}`}
       >
         <div className="activity-main">
@@ -356,6 +383,14 @@ export function TimelineCard({
             {item.status ?? card.label}
           </span>
         </div>
+        <button
+          className="activity-details-button"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
+          Details
+        </button>
       </article>
     );
   return (
@@ -367,7 +402,7 @@ export function TimelineCard({
       <button
         className="activity-main"
         type="button"
-        title={`Inspect ${item.title} evidence`}
+        title={`Show Run details for ${item.title}`}
         onClick={() => onSelect(item.id)}
       >
         <span className="activity-icon">
