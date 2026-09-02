@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Aworkit: Rust",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/desktop/src-tauri/target/debug/aworkit-desktop.exe",
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "environment": [
+        {
+          "name": "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+          "value": "--remote-debugging-port=9223"
+        },
+        {
+          "name": "RUST_BACKTRACE",
+          "value": "1"
+        }
+      ],
+      "preLaunchTask": "aworkit:debug:prepare"
+    },
+    {
+      "name": "Aworkit: TypeScript WebView",
+      "type": "msedge",
+      "request": "attach",
+      "port": 9223,
+      "useWebView": true,
+      "urlFilter": "http://localhost:1420/*",
+      "webRoot": "${workspaceFolder}/desktop",
+      "sourceMaps": true,
+      "timeout": 180000
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Aworkit: Rust + TypeScript",
+      "configurations": [
+        "Aworkit: Rust",
+        "Aworkit: TypeScript WebView"
+      ],
+      "stopAll": true
+    }
+  ]
+}

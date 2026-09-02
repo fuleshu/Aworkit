@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "aworkit:ui:dev",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev"],
+      "options": {
+        "cwd": "${workspaceFolder}/desktop"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^[ ]*VITE v",
+          "endsPattern": "^[ ]*➜[ ]+Local:[ ]+http://localhost:1420/"
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      }
+    },
+    {
+      "label": "aworkit:rust:build-debug",
+      "type": "process",
+      "command": "cargo",
+      "args": ["build"],
+      "options": {
+        "cwd": "${workspaceFolder}/desktop/src-tauri",
+        "env": {
+          "TAURI_CONFIG": "{\"build\":{\"devUrl\":\"http://localhost:1420\"}}"
+        }
+      },
+      "problemMatcher": ["$rustc"],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      }
+    },
+    {
+      "label": "aworkit:debug:prepare",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "aworkit:ui:dev",
+        "aworkit:rust:build-debug"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

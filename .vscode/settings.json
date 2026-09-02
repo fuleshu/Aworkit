@@ -1,0 +1,12 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "desktop/src-tauri/Cargo.toml"
+  ],
+  "typescript.tsdk": "desktop/node_modules/typescript/lib",
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "desktop/dist/**": true
+  }
+}
