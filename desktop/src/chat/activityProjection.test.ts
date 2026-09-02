@@ -119,6 +119,39 @@ describe("canonical semantic timeline projection", () => {
     });
   });
 
+  it("upgrades legacy model terminal fragments at the replay boundary", () => {
+    const events = [
+      span(1, "span.started", "span.model.legacy", {
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+      }),
+      span(2, "span.completed", "span.model.legacy", {
+        status: "completed",
+        hasOutput: true,
+        output: [
+          { kind: "reasoning_raw", data: "The" },
+          { kind: "reasoning_raw", data: " user said hello." },
+          { kind: "assistant_output", data: "Hello " },
+          { kind: "assistant_output", data: "there!" },
+          {
+            kind: "usage",
+            data: { input_tokens: 8, output_tokens: 3 },
+          },
+        ],
+      }),
+    ];
+
+    const modelCall = projectSemanticTimeline(events)[0];
+
+    expect(modelCall.output).toEqual([
+      { kind: "reasoning_raw", text: "The user said hello." },
+      { kind: "assistant_output", text: "Hello there!" },
+      { kind: "usage", input_tokens: 8, output_tokens: 3 },
+    ]);
+    expect(modelCall.raw).toEqual(events);
+  });
+
   it("hides input, output, and wait graph plumbing", () => {
     const items = projectSemanticTimeline([
       span(1, "span.started", "span.input", {
@@ -186,6 +219,39 @@ describe("canonical semantic timeline projection", () => {
       kind: "thinking",
       actor: "subagent",
       body: "Inspecting the delegated context.",
+    });
+  });
+
+  it("adds the nearest workflow node name and type to a provider call", () => {
+    const items = projectSemanticTimeline([
+      span(1, "span.started", "span.node.respond", {
+        spanKind: "graph_node",
+        semanticRole: "agent",
+        nodeId: "respond",
+        nodeType: "agent",
+        label: "Friendly responder",
+        title: "Friendly responder",
+      }),
+      span(2, "span.started", "span.agent", {
+        parentSpanId: "span.node.respond",
+        spanKind: "agent_loop",
+        semanticRole: "agent_loop",
+        title: "Agent",
+      }),
+      span(3, "span.started", "span.model", {
+        parentSpanId: "span.agent",
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+      }),
+    ]);
+
+    expect(items.find(({ id }) => id === "span.model")?.metadata).toMatchObject({
+      workflowNode: {
+        id: "respond",
+        name: "Friendly responder",
+        type: "agent",
+      },
     });
   });
 });

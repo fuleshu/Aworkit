@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::{
     CancellationToken, ModelToolDispatchEvidenceV1, ModelToolEventV1, ModelToolRequestV1,
     model_tools::{tool_event_bytes, validate_tool_events, validate_tool_request},
+    project_model_events, project_model_tool_events,
 };
 
 /// Compatibility request retained for simple provider adapters.
@@ -105,7 +106,8 @@ pub trait ModelEventObserverV1: Send + Sync {
 
     fn model_tool_event(&self, _event: &ModelToolEventV1) {}
 
-    /// Announces the exact normalized event stream returned by that turn.
+    /// Announces the compact canonical result projected from the exact raw
+    /// event evidence returned by that turn.
     fn model_turn_completed(&self, _output: &Value, _status: &str) {}
 }
 
@@ -312,10 +314,8 @@ impl FrozenModelGateway {
                     {
                         return Err(ProviderError::MissingOrDuplicateUsage);
                     }
-                    turn_completion.complete(
-                        &serde_json::to_value(&events).unwrap_or(Value::Null),
-                        "completed",
-                    );
+                    let output = project_model_events(&events).output_value();
+                    turn_completion.complete(&output, "completed");
                     return Ok(ModelDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,
@@ -389,10 +389,8 @@ impl FrozenModelGateway {
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     validate_tool_events(request, &events)?;
-                    turn_completion.complete(
-                        &serde_json::to_value(&events).unwrap_or(Value::Null),
-                        "completed",
-                    );
+                    let output = project_model_tool_events(&events).output_value();
+                    turn_completion.complete(&output, "completed");
                     return Ok(ModelToolDispatchEvidenceV1 {
                         selected_binding: candidate.binding_id.clone(),
                         attempted_bindings: attempted,

@@ -11,8 +11,8 @@ use std::{
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
-    ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolDispatchEvidenceV1,
-    ModelToolEventV1, ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1, ProviderError,
+    ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolExchangeV1,
+    ModelToolRequestV1, ModelToolResultV1, ProviderError, project_model_tool_events,
 };
 use aworkit_protocol::StableId;
 use aworkit_trusted_core::ApprovalResponseV1;
@@ -236,7 +236,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &activities,
             )
         })?;
-        let turn_output = normalize_turn(evidence);
+        let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {
@@ -444,51 +444,6 @@ mod deadline_tests {
     }
 }
 
-struct NormalizedTurnV1 {
-    assistant_text: String,
-    assistant_content: Vec<ModelAssistantContentV1>,
-    calls: Vec<ModelToolCallV1>,
-    input_tokens: u64,
-    output_tokens: u64,
-}
-
-fn normalize_turn(evidence: ModelToolDispatchEvidenceV1) -> NormalizedTurnV1 {
-    let mut assistant_text = String::new();
-    let mut assistant_content = Vec::new();
-    let mut calls = Vec::new();
-    let mut input_tokens = 0_u64;
-    let mut output_tokens = 0_u64;
-    for event in evidence.events {
-        match event {
-            ModelToolEventV1::AssistantOutput { text } => {
-                assistant_text.push_str(&text);
-                assistant_content.push(ModelAssistantContentV1::Text { text });
-            }
-            ModelToolEventV1::ToolCall { call } => {
-                calls.push(call.clone());
-                assistant_content.push(ModelAssistantContentV1::ToolCall { call });
-            }
-            ModelToolEventV1::Usage {
-                input_tokens: input,
-                output_tokens: output,
-            } => {
-                input_tokens = input;
-                output_tokens = output;
-            }
-            ModelToolEventV1::ReasoningRaw { .. }
-            | ModelToolEventV1::ReasoningSummary { .. }
-            | ModelToolEventV1::Progress { .. } => {}
-        }
-    }
-    NormalizedTurnV1 {
-        assistant_text,
-        assistant_content,
-        calls,
-        input_tokens,
-        output_tokens,
-    }
-}
-
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation
 /// tool binding suspends the loop with a durable prefix instead of failing.
 pub(crate) fn execute_model_tool_loop_approval_v1(
@@ -560,7 +515,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 &activities,
             )
         })?;
-        let turn_output = normalize_turn(evidence);
+        let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {
@@ -898,7 +853,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 &activities,
             )
         })?;
-        let turn_output = normalize_turn(evidence);
+        let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {

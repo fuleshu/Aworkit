@@ -9,7 +9,8 @@ use aworkit_capability_host::{
 };
 #[cfg(test)]
 use aworkit_capability_host::{
-    FrozenModelGateway, ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1,
+    FrozenModelGateway, ModelCandidateV1, ModelRequestV1, ModelResolutionPlanV1,
+    project_model_events,
 };
 #[cfg(test)]
 use serde_json::{Value, json};
@@ -205,25 +206,13 @@ impl ProviderPort for BuiltInProviderPort {
                 },
             )
             .map_err(|error| format!("provider completion failed: {error}"))?;
-        let mut text = String::new();
-        let mut usage = None;
-        for event in evidence.events {
-            match event {
-                ModelEventV1::AssistantOutput(part) => text.push_str(&part),
-                ModelEventV1::Usage {
-                    input_tokens,
-                    output_tokens,
-                } => usage = Some((input_tokens, output_tokens)),
-                ModelEventV1::ReasoningRaw(_)
-                | ModelEventV1::ReasoningSummary(_)
-                | ModelEventV1::Progress(_) => {}
-            }
-        }
+        let turn = project_model_events(&evidence.events);
+        let text = turn.assistant_text;
         if text.trim().is_empty() {
             return Err("provider returned an empty assistant response".into());
         }
-        let (input_units, output_units) =
-            usage.ok_or_else(|| "provider completion returned no usage evidence".to_owned())?;
+        let input_units = turn.input_tokens;
+        let output_units = turn.output_tokens;
         Ok(ProviderCompletion {
             text,
             input_units,

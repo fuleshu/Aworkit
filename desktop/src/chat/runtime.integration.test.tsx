@@ -986,22 +986,39 @@ describe("Chat native-port recovery contracts", () => {
     expect(within(toolCard).getAllByText(/"notes.txt"/)[0]).toBeVisible();
     expect(screen.getByText("Inspecting the project")).toBeVisible();
     const terminal = [
-      canonicalEvent(7, "span.completed", {
+      canonicalEvent(7, "span.content_delta", {
+        spanId: "span.model.test",
+        channel: "assistant_output",
+        sourceClassification: "assistant_output",
+        append: "Agent ",
+        status: "running",
+      }),
+      canonicalEvent(8, "span.content_delta", {
+        spanId: "span.model.test",
+        channel: "assistant_output",
+        sourceClassification: "assistant_output",
+        append: "finished",
+        status: "running",
+      }),
+      canonicalEvent(9, "span.completed", {
         spanId: "span.model.test",
         status: "completed",
         hasOutput: true,
-        output: "I found the project",
+        output: [
+          { kind: "assistant_output", data: "Agent " },
+          { kind: "assistant_output", data: "finished" },
+        ],
       }),
-      canonicalEvent(8, "span.completed", {
+      canonicalEvent(10, "span.completed", {
         spanId: "span.agent.test",
         status: "completed",
       }),
-      canonicalEvent(9, "message.assistant", {
+      canonicalEvent(11, "message.assistant", {
         body: "Agent finished",
         createdAt: "now",
       }),
     ];
-    projectedSnapshot = snapshot(9, "Live Chat", [
+    projectedSnapshot = snapshot(11, "Live Chat", [
       { sequence: 1 },
       ...streamed,
       ...terminal,
@@ -1009,7 +1026,7 @@ describe("Chat native-port recovery contracts", () => {
     settle({
       commandId,
       accepted: true,
-      currentVersion: 9,
+      currentVersion: 11,
       reason: null,
     });
     expect(await screen.findByText("Agent finished")).toBeVisible();
@@ -1018,6 +1035,22 @@ describe("Chat native-port recovery contracts", () => {
       within(reasoningBubble).getByText("Inspecting the project"),
     ).toBeVisible();
     expect(screen.getByText("Provider-supplied reasoning")).toBeVisible();
+    const modelCall = screen.getByRole("group", {
+      name: "Model call: Model call 1",
+    });
+    expect(
+      within(modelCall).getByLabelText("Model output: Model call 1"),
+    ).toHaveClass("speech-turn");
+    expect(screen.getAllByText("Agent finished")).toHaveLength(1);
+    expect(within(modelCall).getByText("Output").closest("details")).not.toHaveAttribute(
+      "open",
+    );
+
+    await user.click(within(modelCall).getByText("Agent finished"));
+    const inspector = screen.getByLabelText("Run details");
+    expect(
+      within(inspector).getByRole("heading", { name: "Model call 1" }),
+    ).toBeVisible();
   });
 
   it("subscribes before dispatch so immediate provider states cannot be lost", async () => {

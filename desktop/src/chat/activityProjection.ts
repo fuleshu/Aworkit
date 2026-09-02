@@ -60,6 +60,7 @@ export function projectSemanticTimeline(
         visibleDepth(span, spans, visibleSpanIds),
         hasFollowingAssistantMessage(span, ordered),
         spanActor(span, spans),
+        workflowNodeContext(span, spans),
       ),
     );
   return [...facts, ...spanItems].sort(
@@ -161,7 +162,12 @@ function spanItem(
   depth: number,
   hasFinalAssistant: boolean,
   actor: TimelineItem["actor"],
+  workflowNode: FactPayload | undefined,
 ): TimelineItem {
+  const output =
+    span.spanKind === "model_call"
+      ? canonicalModelResultOutput(span.output)
+      : span.output;
   const includeAssistantOutput =
     span.spanKind === "model_call" && !hasFinalAssistant;
   const streamedBody = [
@@ -186,7 +192,7 @@ function spanItem(
     hasInput: span.hasInput,
     hasOutput: span.hasOutput && !suppressRedundantOutput,
     input: span.input,
-    output: suppressRedundantOutput ? undefined : span.output,
+    output: suppressRedundantOutput ? undefined : output,
     channels: {
       reasoning: span.reasoning,
       progress: span.progress,
@@ -194,6 +200,7 @@ function spanItem(
     },
     actor,
     live: isBusy(span.status),
+    workflowNode,
   };
   return {
     id: span.spanId,
@@ -210,10 +217,81 @@ function spanItem(
     status: normalizeStatus(span.status),
     input: span.hasInput ? span.input : undefined,
     output:
-      span.hasOutput && !suppressRedundantOutput ? span.output : undefined,
+      span.hasOutput && !suppressRedundantOutput ? output : undefined,
     raw: span.sourceEvents,
     metadata,
   };
+}
+
+/**
+ * Upgrades terminal arrays written before the canonical Rust result projector
+ * existed. Raw source events remain unchanged on `TimelineItem.raw`; every
+ * visible consumer receives the same compact result from this reducer.
+ */
+function canonicalModelResultOutput(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  const compacted: unknown[] = [];
+  const textIndexes = new Map<string, number>();
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.kind !== "string") {
+      compacted.push(entry);
+      continue;
+    }
+    const text =
+      typeof entry.text === "string"
+        ? entry.text
+        : typeof entry.data === "string"
+          ? entry.data
+          : undefined;
+    if (text !== undefined) {
+      const existing = textIndexes.get(entry.kind);
+      if (existing !== undefined) {
+        const prior = compacted[existing];
+        if (isRecord(prior) && typeof prior.text === "string") {
+          compacted[existing] = { ...prior, text: prior.text + text };
+        }
+        continue;
+      }
+      const canonical: FactPayload = { ...entry, text };
+      delete canonical.data;
+      textIndexes.set(entry.kind, compacted.length);
+      compacted.push(canonical);
+      continue;
+    }
+    if (entry.kind === "usage" && isRecord(entry.data)) {
+      const canonical: FactPayload = { ...entry, ...entry.data };
+      delete canonical.data;
+      compacted.push(canonical);
+      continue;
+    }
+    compacted.push(entry);
+  }
+  return compacted;
+}
+
+/** Nearest graph-node ancestor supplies the user-authored workflow context. */
+function workflowNodeContext(
+  span: SpanProjection,
+  spans: ReadonlyMap<string, SpanProjection>,
+): FactPayload | undefined {
+  let current =
+    span.parentSpanId === undefined ? undefined : spans.get(span.parentSpanId);
+  const visited = new Set<string>();
+  while (current !== undefined && !visited.has(current.spanId)) {
+    visited.add(current.spanId);
+    if (current.spanKind === "graph_node") {
+      return {
+        id: current.metadata.nodeId ?? current.spanId,
+        name: current.metadata.label ?? current.title,
+        type: current.metadata.nodeType ?? current.semanticRole,
+      };
+    }
+    current =
+      current.parentSpanId === undefined
+        ? undefined
+        : spans.get(current.parentSpanId);
+  }
+  return undefined;
 }
 
 function spanActor(
@@ -414,9 +492,11 @@ function payload(event: RuntimeEvent): FactPayload {
 }
 
 function record(value: unknown): FactPayload {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as FactPayload)
-    : {};
+  return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is FactPayload {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function string(value: unknown): string | undefined {

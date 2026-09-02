@@ -718,7 +718,7 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
             self.stream.terminal_span(
                 &span_id,
                 status,
-                "Normalized model event stream settled.".to_owned(),
+                "Canonical model result settled.".to_owned(),
                 Some(output.clone()),
                 Value::Null,
             );

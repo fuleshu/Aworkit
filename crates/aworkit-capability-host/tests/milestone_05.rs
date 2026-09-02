@@ -15,20 +15,20 @@ use aworkit_capability_host::{
     FileAuthority, FileEditRequestV1, FileEffectKindV1, FileGrepRequestV1, FileListRequestV1,
     FileReadRequestV1, FileSearchRequestV1, FileToolError, FileWriteRequestV1, FrozenModelGateway,
     HermeticProcessPort, HermeticProcessStep, HostControlEnvelopeV1, HostControlKindV1, HostError,
-    HostToolLimitsV1, InjectionTargetV1, InvocationNormalizer, ModelCandidateV1, ModelEventV1,
-    ModelRequestV1, ModelResolutionPlanV1, NormalizeError, NormalizedContentV1,
-    OutcomeDispositionV1, PlatformProcessPort, ProcessSpecV1, ProcessTermination, ProjectFiles,
-    ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError, PythonInvocationV1, Redactor,
-    RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
-    SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
-    SecretMaterializer, ShellInvocationV1, SideEffectClass, TerminalEvidenceV1, ToolAdapterError,
-    ToolAuthorityModeV1, classify_outcome,
+    HostToolLimitsV1, InjectionTargetV1, InvocationNormalizer, ModelCandidateV1,
+    ModelEventObserverV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1, NormalizeError,
+    NormalizedContentV1, OutcomeDispositionV1, PlatformProcessPort, ProcessSpecV1,
+    ProcessTermination, ProjectFiles, ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
+    PythonInvocationV1, Redactor, RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1,
+    SecretFieldPlanV1, SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
+    SecretMaterializationPlanV1, SecretMaterializer, ShellInvocationV1, SideEffectClass,
+    TerminalEvidenceV1, ToolAdapterError, ToolAuthorityModeV1, classify_outcome,
 };
 use aworkit_protocol::{
     AttestedExtensionSetV1, ProcessGeneration, SchemaVersion, StableId,
     attested_extension_set_hash_v1,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use zeroize::Zeroizing;
 
@@ -582,6 +582,20 @@ struct ScriptedProvider {
     calls: Arc<AtomicUsize>,
 }
 
+#[derive(Default)]
+struct RecordingModelObserver {
+    completions: Mutex<Vec<(Value, String)>>,
+}
+
+impl ModelEventObserverV1 for RecordingModelObserver {
+    fn model_turn_completed(&self, output: &Value, status: &str) {
+        self.completions
+            .lock()
+            .expect("observer lock")
+            .push((output.clone(), status.to_owned()));
+    }
+}
+
 impl ProviderEnginePortV1 for ScriptedProvider {
     fn binding_id(&self) -> &str {
         self.binding
@@ -615,6 +629,7 @@ fn candidate(binding_id: &str, version_hash: &str) -> ModelCandidateV1 {
 fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation() {
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
+    let observer = Arc::new(RecordingModelObserver::default());
     let gateway = FrozenModelGateway::new(vec![
         Box::new(ScriptedProvider {
             binding: "primary",
@@ -627,7 +642,10 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
             binding: "fallback",
             version: "hash-b",
             events: vec![
-                ModelEventV1::AssistantOutput("answer".into()),
+                ModelEventV1::ReasoningRaw("The".into()),
+                ModelEventV1::ReasoningRaw(" thought".into()),
+                ModelEventV1::AssistantOutput("ans".into()),
+                ModelEventV1::AssistantOutput("wer".into()),
                 ModelEventV1::Usage {
                     input_tokens: 2,
                     output_tokens: 1,
@@ -636,7 +654,8 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
             acceptance: ProviderAcceptanceV1::Accepted,
             calls: second_calls.clone(),
         }),
-    ]);
+    ])
+    .with_observer(observer.clone());
     let plan = ModelResolutionPlanV1 {
         candidates: vec![
             candidate("primary", "hash-a"),
@@ -656,6 +675,22 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
         .expect("fallback");
     assert_eq!(evidence.selected_binding, "fallback");
     assert_eq!(evidence.attempted_bindings, vec!["primary", "fallback"]);
+    assert_eq!(evidence.events.len(), 5, "raw stream evidence stays exact");
+    assert_eq!(
+        observer
+            .completions
+            .lock()
+            .expect("observer lock")
+            .as_slice(),
+        [(
+            json!([
+                {"kind":"reasoning_raw","text":"The thought"},
+                {"kind":"assistant_output","text":"answer"},
+                {"kind":"usage","input_tokens":2,"output_tokens":1}
+            ]),
+            "completed".to_owned()
+        )]
+    );
     assert_eq!(first_calls.load(Ordering::SeqCst), 1);
     assert_eq!(second_calls.load(Ordering::SeqCst), 1);
 

@@ -16,8 +16,8 @@ use std::{
 };
 
 use aworkit_capability_host::{
-    CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1, ModelEventV1,
-    ModelRequestV1, ModelResolutionPlanV1, ModelToolCallV1, ModelToolExchangeV1,
+    CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelRequestV1,
+    ModelResolutionPlanV1, ModelToolCallV1, ModelToolExchangeV1, project_model_events,
 };
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
@@ -809,7 +809,9 @@ impl<'a> PassMachine<'a> {
                         node.id
                     ));
                 }
-                let (text, units) = evidence_text(evidence);
+                let turn = project_model_events(&evidence.events);
+                let text = turn.assistant_text;
+                let units = (turn.input_tokens, turn.output_tokens);
                 if text.trim().is_empty() {
                     return Err(format!(
                         "model_call node '{}' returned no assistant text",
@@ -895,7 +897,9 @@ impl<'a> PassMachine<'a> {
                             node.id
                         ));
                     }
-                    let (text, units) = evidence_text(evidence);
+                    let turn = project_model_events(&evidence.events);
+                    let text = turn.assistant_text;
+                    let units = (turn.input_tokens, turn.output_tokens);
                     self.input_units = self.input_units.saturating_add(units.0);
                     self.output_units = self.output_units.saturating_add(units.1);
                     if text.trim().is_empty() {
@@ -1340,24 +1344,6 @@ fn tool_approval_request(
         title: format!("Allow tool {}?", challenge.capability_id),
         message: challenge.summary.clone(),
     }
-}
-
-fn evidence_text(evidence: ModelDispatchEvidenceV1) -> (String, (u64, u64)) {
-    let mut assistant_text = String::new();
-    let mut usage = (0_u64, 0_u64);
-    for event in evidence.events {
-        match event {
-            ModelEventV1::AssistantOutput(text) => assistant_text.push_str(&text),
-            ModelEventV1::Usage {
-                input_tokens,
-                output_tokens,
-            } => usage = (input_tokens, output_tokens),
-            ModelEventV1::ReasoningRaw(_)
-            | ModelEventV1::ReasoningSummary(_)
-            | ModelEventV1::Progress(_) => {}
-        }
-    }
-    (assistant_text, usage)
 }
 
 fn value_text(value: &Value) -> String {

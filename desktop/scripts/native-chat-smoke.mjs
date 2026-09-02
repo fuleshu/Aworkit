@@ -108,6 +108,40 @@ const runDetailsState = await evaluate(`(() => {
     detailsContainsRawJson: content?.querySelector('pre') !== null,
   };
 })()`);
+const modelCallOutputState = await evaluate(`(() => {
+  const block = document.querySelector('.model-call-block');
+  const output = [...(block?.querySelectorAll('details.model-call-data') ?? [])]
+    .find((element) => element.querySelector('summary')?.textContent?.trim() === 'Output');
+  const json = output?.querySelector('pre')?.textContent ?? null;
+  if (json === null) {
+    return { blockPresent: block !== null, outputPresent: false, validJson: false, duplicateTextKinds: [] };
+  }
+  try {
+    const value = JSON.parse(json);
+    const textKinds = Array.isArray(value)
+      ? value.flatMap((entry) =>
+          entry !== null && typeof entry === 'object' && typeof entry.kind === 'string' &&
+          (typeof entry.text === 'string' || typeof entry.data === 'string')
+            ? [entry.kind + ':' + (typeof entry.text === 'string' ? 'text' : 'data')]
+            : [],
+        )
+      : [];
+    const seen = new Set();
+    const duplicates = new Set();
+    for (const kind of textKinds) {
+      if (seen.has(kind)) duplicates.add(kind);
+      seen.add(kind);
+    }
+    return {
+      blockPresent: true,
+      outputPresent: true,
+      validJson: true,
+      duplicateTextKinds: [...duplicates],
+    };
+  } catch {
+    return { blockPresent: true, outputPresent: true, validJson: false, duplicateTextKinds: [] };
+  }
+})()`);
 const rawRunDetailsState = await evaluate(`(async () => {
   const inspector = document.querySelector('[aria-label="Run details"]');
   const tabs = [...(inspector?.querySelectorAll('[role="tab"]') ?? [])];
@@ -156,7 +190,13 @@ const layoutState = await evaluate(`(() => {
     runDetails: scrollState('.run-details-content'),
   };
 })()`);
-state = { ...state, runDetailsState, rawRunDetailsState, layoutState };
+state = {
+  ...state,
+  runDetailsState,
+  modelCallOutputState,
+  rawRunDetailsState,
+  layoutState,
+};
 
 const screenshot = await command("Page.captureScreenshot", {
   format: "png",
@@ -180,6 +220,12 @@ if (!state.runDetailsState.executionLogPresent)
   failures.push("Run details has no execution log");
 if (state.runDetailsState.detailsContainsRawJson)
   failures.push("Details contains a raw JSON block");
+if (state.modelCallOutputState.outputPresent && !state.modelCallOutputState.validJson)
+  failures.push("Model-call Output is not valid formatted JSON");
+if (state.modelCallOutputState.duplicateTextKinds.length > 0)
+  failures.push(
+    `Model-call Output still contains streamed fragments for: ${state.modelCallOutputState.duplicateTextKinds.join(", ")}`,
+  );
 if (!state.rawRunDetailsState.tabPresent)
   failures.push("Raw JSON tab was not rendered");
 if (!state.rawRunDetailsState.jsonPresent || !state.rawRunDetailsState.scoped)

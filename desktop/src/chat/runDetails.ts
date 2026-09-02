@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from "./corePort";
+import { prettyJson } from "./jsonPresentation";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
 
 export interface RunDetailField {
@@ -68,11 +69,7 @@ export function projectRunDetails(input: RunDetailsInput): RunDetailsView {
 }
 
 export function rawRunDetailsJson(view: RunDetailsView): string {
-  try {
-    return JSON.stringify(view.raw, null, 2);
-  } catch {
-    return "The selected Run details are not serializable.";
-  }
+  return prettyJson(view.raw, "The selected Run details are not serializable.");
 }
 
 export function humanizeRunDetailLabel(value: string): string {

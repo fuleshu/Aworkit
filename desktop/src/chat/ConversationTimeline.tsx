@@ -2,6 +2,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
 import { ActorBubble } from "./ActorBubble";
 import { toConversationCard } from "./conversation";
+import {
+  isModelCallSpan,
+  ModelCallBlock,
+  modelCallAssistantOutput,
+} from "./ModelCallBlock";
+import { prettyJson } from "./jsonPresentation";
 import type { TimelineItem } from "./types";
 
 interface ConversationTimelineProps {
@@ -23,21 +29,26 @@ export function ConversationTimeline({
 }: ConversationTimelineProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToEnd = useRef(true);
+  const presentedItems = useMemo(() => presentTimelineItems(items), [items]);
+  const presentedSelectedId = useMemo(
+    () => presentedSelectionId(items, selectedId),
+    [items, selectedId],
+  );
   const layoutRevision = useMemo(
     () =>
-      items
+      presentedItems
         .map(
           (item) =>
             `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}\u0000${item.depth ?? 0}`,
         )
         .join("\u0001"),
-    [items],
+    [presentedItems],
   );
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count: presentedItems.length,
     getScrollElement: () => scrollRef.current,
-    getItemKey: (index) => items[index]?.id ?? index,
-    estimateSize: (index) => estimate(items[index]),
+    getItemKey: (index) => presentedItems[index]?.id ?? index,
+    estimateSize: (index) => estimate(presentedItems[index]),
     overscan: 6,
   });
   useEffect(() => {
@@ -51,9 +62,9 @@ export function ConversationTimeline({
           virtualizer.resizeItem(index, row.getBoundingClientRect().height);
         }
       }
-      if (pinnedToEnd.current && items.length > 0) {
+      if (pinnedToEnd.current && presentedItems.length > 0) {
         scrollFrame = window.requestAnimationFrame(() => {
-          virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+          virtualizer.scrollToIndex(presentedItems.length - 1, { align: "end" });
         });
       }
     });
@@ -61,7 +72,7 @@ export function ConversationTimeline({
       window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [items.length, layoutRevision, virtualizer]);
+  }, [presentedItems.length, layoutRevision, virtualizer]);
   useEffect(() => {
     const scroll = scrollRef.current;
     if (scroll === null) return;
@@ -92,10 +103,12 @@ export function ConversationTimeline({
           }
         }
         pendingRows.clear();
-        if (pinnedToEnd.current && items.length > 0) {
+        if (pinnedToEnd.current && presentedItems.length > 0) {
           scrollFrame = window.requestAnimationFrame(() => {
             scrollFrame = null;
-            virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+            virtualizer.scrollToIndex(presentedItems.length - 1, {
+              align: "end",
+            });
           });
         }
       });
@@ -107,7 +120,7 @@ export function ConversationTimeline({
         window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [items.length, virtualizer]);
+  }, [presentedItems.length, virtualizer]);
   return (
     <div
       aria-live="polite"
@@ -134,7 +147,7 @@ export function ConversationTimeline({
         style={{ height: virtualizer.getTotalSize() }}
       >
         {virtualizer.getVirtualItems().map((row) => {
-          const item = items[row.index];
+          const item = presentedItems[row.index];
           const card = toConversationCard(item);
           return (
             <div
@@ -150,7 +163,7 @@ export function ConversationTimeline({
               <TimelineCard
                 card={card}
                 item={item}
-                selected={selectedId === item.id}
+                selected={presentedSelectedId === item.id}
                 onSelect={onSelect}
                 onAction={onAction}
               />
@@ -175,6 +188,10 @@ export function TimelineCard({
   readonly onSelect: (id: string) => void;
   readonly onAction: ConversationTimelineProps["onAction"];
 }): React.JSX.Element {
+  if (isModelCallSpan(item))
+    return (
+      <ModelCallBlock item={item} selected={selected} onSelect={onSelect} />
+    );
   if (item.kind === "message")
     return item.title === "You" ? (
       <article
@@ -462,17 +479,56 @@ export function TimelineCard({
 
 function estimate(item: TimelineItem | undefined): number {
   if (item?.kind === "plan" || item?.kind === "todo") return 168;
+  if (item !== undefined && isModelCallSpan(item)) return 220;
   if (item?.kind === "message") return 92;
   if (item?.kind === "subagent") return 96;
   return item !== undefined && toConversationCard(item).inspectable ? 132 : 92;
 }
 
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "Source record is not serializable.";
+/** Removes only an assistant message already rendered from its exact stream. */
+export function presentTimelineItems(
+  items: readonly TimelineItem[],
+): readonly TimelineItem[] {
+  return items.filter((item, index) => {
+    if (item.kind !== "message" || item.title === "You") return true;
+    return mirroredModelCall(items, index, item.body ?? "") === undefined;
+  });
+}
+
+function presentedSelectionId(
+  items: readonly TimelineItem[],
+  selectedId: string | null,
+): string | null {
+  if (selectedId === null) return null;
+  const index = items.findIndex(({ id }) => id === selectedId);
+  if (index < 0) return selectedId;
+  const item = items[index];
+  if (item.kind !== "message" || item.title === "You") return selectedId;
+  return mirroredModelCall(items, index, item.body ?? "")?.id ?? selectedId;
+}
+
+function mirroredModelCall(
+  items: readonly TimelineItem[],
+  assistantIndex: number,
+  assistantBody: string,
+): TimelineItem | undefined {
+  const expected = assistantBody.trim();
+  if (expected.length === 0) return undefined;
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const candidate = items[index];
+    if (candidate.kind === "message" && candidate.title === "You") break;
+    if (
+      isModelCallSpan(candidate) &&
+      modelCallAssistantOutput(candidate).trim() === expected
+    ) {
+      return candidate;
+    }
   }
+  return undefined;
+}
+
+function safeJson(value: unknown): string {
+  return prettyJson(value, "Source record is not serializable.");
 }
 
 function ActivityData({
