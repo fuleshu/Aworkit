@@ -13,6 +13,7 @@ import type { TimelineItem } from "./types";
 interface ConversationTimelineProps {
   readonly items: readonly TimelineItem[];
   readonly selectedId: string | null;
+  readonly actionsDisabled?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onAction: (
     action: NonNullable<TimelineItem["action"]>,
@@ -24,6 +25,7 @@ interface ConversationTimelineProps {
 export function ConversationTimeline({
   items,
   selectedId,
+  actionsDisabled = false,
   onSelect,
   onAction,
 }: ConversationTimelineProps): React.JSX.Element {
@@ -164,6 +166,7 @@ export function ConversationTimeline({
                 card={card}
                 item={item}
                 selected={presentedSelectedId === item.id}
+                actionsDisabled={actionsDisabled}
                 onSelect={onSelect}
                 onAction={onAction}
               />
@@ -179,12 +182,14 @@ export function TimelineCard({
   card,
   item,
   selected,
+  actionsDisabled = false,
   onSelect,
   onAction,
 }: {
   readonly card: ReturnType<typeof toConversationCard>;
   readonly item: TimelineItem;
   readonly selected: boolean;
+  readonly actionsDisabled?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onAction: ConversationTimelineProps["onAction"];
 }): React.JSX.Element {
@@ -417,7 +422,9 @@ export function TimelineCard({
   return (
     <article
       aria-busy={isBusy(item.status) || undefined}
-      className={`activity-card ${selected ? "selected" : ""}`}
+      className={`activity-card ${item.kind === "approval" ? "approval-card" : ""} ${
+        selected ? "selected" : ""
+      }`}
       aria-label={`${card.label}: ${item.title}`}
     >
       <button
@@ -441,18 +448,28 @@ export function TimelineCard({
         </span>
       </button>
       <ActivityData item={item} />
-      {item.kind === "approval" ? (
+      {item.kind === "approval" && item.action === "approve" ? (
         <div className="activity-actions">
           <button
+            disabled={actionsDisabled}
             type="button"
-            title="Approve this requested action"
+            title={
+              actionsDisabled
+                ? "Wait for the current Chat command to settle"
+                : "Approve this requested action"
+            }
             onClick={() => onAction("approve", item.id)}
           >
             Approve
           </button>
           <button
+            disabled={actionsDisabled}
             type="button"
-            title="Reject this requested action"
+            title={
+              actionsDisabled
+                ? "Wait for the current Chat command to settle"
+                : "Reject this requested action"
+            }
             onClick={() => onAction("reject", item.id)}
           >
             Reject

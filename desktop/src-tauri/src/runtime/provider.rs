@@ -1,6 +1,6 @@
-use std::sync::Arc;
 #[cfg(test)]
 use std::collections::BTreeMap;
+use std::{sync::Arc, time::Duration};
 
 use aworkit_capability_host::{
     AnthropicMessagesLimitsV1, AnthropicMessagesProvider, AnthropicMessagesProviderConfig,
@@ -61,7 +61,13 @@ pub(crate) fn provider_supports_tool_calls(kind: &str) -> bool {
 }
 
 pub(crate) trait ProviderPort: Send + Sync {
-    fn validate(&self, kind: &str, base_url: &str, model: &str) -> Result<(), String>;
+    fn validate(
+        &self,
+        kind: &str,
+        base_url: &str,
+        model: &str,
+        request_timeout: Duration,
+    ) -> Result<(), String>;
 
     fn test_connection(
         &self,
@@ -69,6 +75,7 @@ pub(crate) trait ProviderPort: Send + Sync {
         base_url: &str,
         model: &str,
         api_key: Option<String>,
+        request_timeout: Duration,
     ) -> ProviderTestResult;
 
     #[cfg(test)]
@@ -85,6 +92,7 @@ pub(crate) trait ProviderPort: Send + Sync {
         _kind: &str,
         _base_url: &str,
         _api_key: Option<String>,
+        _request_timeout: Duration,
     ) -> Result<Vec<DiscoveredProviderModel>, String> {
         Err("this provider adapter does not implement model discovery".into())
     }
@@ -94,11 +102,19 @@ pub(crate) trait ProviderPort: Send + Sync {
 pub(crate) struct BuiltInProviderPort;
 
 impl ProviderPort for BuiltInProviderPort {
-    fn validate(&self, kind: &str, base_url: &str, model: &str) -> Result<(), String> {
+    fn validate(
+        &self,
+        kind: &str,
+        base_url: &str,
+        model: &str,
+        request_timeout: Duration,
+    ) -> Result<(), String> {
         match kind {
-            "openai_compatible" => openai_provider(base_url, model, None).map(|_| ()),
-            "anthropic" => anthropic_provider(base_url, model, None).map(|_| ()),
-            "gemini" => gemini_provider(base_url, model, None).map(|_| ()),
+            "openai_compatible" => {
+                openai_provider(base_url, model, None, request_timeout).map(|_| ())
+            }
+            "anthropic" => anthropic_provider(base_url, model, None, request_timeout).map(|_| ()),
+            "gemini" => gemini_provider(base_url, model, None, request_timeout).map(|_| ()),
             _ => Err(format!(
                 "provider protocol '{kind}' has no installed native adapter"
             )),
@@ -111,36 +127,42 @@ impl ProviderPort for BuiltInProviderPort {
         base_url: &str,
         model: &str,
         api_key: Option<String>,
+        request_timeout: Duration,
     ) -> ProviderTestResult {
         let result = match kind {
-            "openai_compatible" => openai_provider(base_url, model, api_key).and_then(|provider| {
-                provider
-                    .test_connection()
-                    .map(|test| (test.models, test.configured_model_available))
-                    .map_err(|error| error.to_string())
-            }),
-            "anthropic" => anthropic_provider(base_url, model, api_key).and_then(|provider| {
-                provider
-                    .test_connection()
-                    .map(|test| {
-                        (
-                            test.models.into_iter().map(|model| model.id).collect(),
-                            test.configured_model_available,
-                        )
-                    })
-                    .map_err(|error| error.to_string())
-            }),
-            "gemini" => gemini_provider(base_url, model, api_key).and_then(|provider| {
-                provider
-                    .test_connection()
-                    .map(|test| {
-                        (
-                            test.models.into_iter().map(|model| model.id).collect(),
-                            test.configured_model_available,
-                        )
-                    })
-                    .map_err(|error| error.to_string())
-            }),
+            "openai_compatible" => openai_provider(base_url, model, api_key, request_timeout)
+                .and_then(|provider| {
+                    provider
+                        .test_connection()
+                        .map(|test| (test.models, test.configured_model_available))
+                        .map_err(|error| error.to_string())
+                }),
+            "anthropic" => {
+                anthropic_provider(base_url, model, api_key, request_timeout).and_then(|provider| {
+                    provider
+                        .test_connection()
+                        .map(|test| {
+                            (
+                                test.models.into_iter().map(|model| model.id).collect(),
+                                test.configured_model_available,
+                            )
+                        })
+                        .map_err(|error| error.to_string())
+                })
+            }
+            "gemini" => {
+                gemini_provider(base_url, model, api_key, request_timeout).and_then(|provider| {
+                    provider
+                        .test_connection()
+                        .map(|test| {
+                            (
+                                test.models.into_iter().map(|model| model.id).collect(),
+                                test.configured_model_available,
+                            )
+                        })
+                        .map_err(|error| error.to_string())
+                })
+            }
             _ => Err(format!(
                 "provider protocol '{kind}' has no installed native adapter"
             )),
@@ -182,7 +204,12 @@ impl ProviderPort for BuiltInProviderPort {
         if messages.is_empty() {
             return Err("Chat requires at least one message".into());
         }
-        let provider = openai_provider(base_url, model, api_key)?;
+        let provider = openai_provider(
+            base_url,
+            model,
+            api_key,
+            OpenAiCompatibleLimitsV1::default().request_timeout,
+        )?;
         let gateway = FrozenModelGateway::new(vec![Box::new(provider)]);
         let input = Value::Array(
             messages
@@ -226,12 +253,14 @@ impl ProviderPort for BuiltInProviderPort {
         kind: &str,
         base_url: &str,
         api_key: Option<String>,
+        request_timeout: Duration,
     ) -> Result<Vec<DiscoveredProviderModel>, String> {
         match kind {
             "openai_compatible" => {
-                let connection = openai_provider(base_url, "aworkit-discovery", api_key)?
-                    .test_connection()
-                    .map_err(|error| format!("model discovery failed: {error}"))?;
+                let connection =
+                    openai_provider(base_url, "aworkit-discovery", api_key, request_timeout)?
+                        .test_connection()
+                        .map_err(|error| format!("model discovery failed: {error}"))?;
                 Ok(connection
                     .model_details
                     .into_iter()
@@ -251,9 +280,10 @@ impl ProviderPort for BuiltInProviderPort {
                     .collect())
             }
             "anthropic" => {
-                let connection = anthropic_provider(base_url, "aworkit-discovery", api_key)?
-                    .test_connection()
-                    .map_err(|error| format!("model discovery failed: {error}"))?;
+                let connection =
+                    anthropic_provider(base_url, "aworkit-discovery", api_key, request_timeout)?
+                        .test_connection()
+                        .map_err(|error| format!("model discovery failed: {error}"))?;
                 Ok(connection
                     .models
                     .into_iter()
@@ -267,9 +297,10 @@ impl ProviderPort for BuiltInProviderPort {
                     .collect())
             }
             "gemini" => {
-                let connection = gemini_provider(base_url, "aworkit-discovery", api_key)?
-                    .test_connection()
-                    .map_err(|error| format!("model discovery failed: {error}"))?;
+                let connection =
+                    gemini_provider(base_url, "aworkit-discovery", api_key, request_timeout)?
+                        .test_connection()
+                        .map_err(|error| format!("model discovery failed: {error}"))?;
                 Ok(connection
                     .models
                     .into_iter()
@@ -297,6 +328,7 @@ fn openai_provider(
     base_url: &str,
     model: &str,
     api_key: Option<String>,
+    request_timeout: Duration,
 ) -> Result<OpenAiCompatibleProvider, String> {
     let config = OpenAiCompatibleProviderConfig::new(
         OPENAI_BINDING_ID,
@@ -304,7 +336,10 @@ fn openai_provider(
         base_url,
         model,
         api_key,
-        OpenAiCompatibleLimitsV1::default(),
+        OpenAiCompatibleLimitsV1 {
+            request_timeout,
+            ..OpenAiCompatibleLimitsV1::default()
+        },
     )
     .map_err(|error| error.to_string())?;
     OpenAiCompatibleProvider::new(config).map_err(|error| error.to_string())
@@ -314,6 +349,7 @@ fn anthropic_provider(
     base_url: &str,
     model: &str,
     api_key: Option<String>,
+    request_timeout: Duration,
 ) -> Result<AnthropicMessagesProvider, String> {
     let config = AnthropicMessagesProviderConfig::new(
         ANTHROPIC_BINDING_ID,
@@ -321,7 +357,10 @@ fn anthropic_provider(
         base_url,
         model,
         api_key,
-        AnthropicMessagesLimitsV1::default(),
+        AnthropicMessagesLimitsV1 {
+            request_timeout,
+            ..AnthropicMessagesLimitsV1::default()
+        },
     )
     .map_err(|error| error.to_string())?;
     AnthropicMessagesProvider::new(config).map_err(|error| error.to_string())
@@ -331,6 +370,7 @@ fn gemini_provider(
     base_url: &str,
     model: &str,
     api_key: Option<String>,
+    request_timeout: Duration,
 ) -> Result<GoogleGeminiProvider, String> {
     let config = GoogleGeminiProviderConfig::new(
         GEMINI_BINDING_ID,
@@ -338,7 +378,10 @@ fn gemini_provider(
         base_url,
         model,
         api_key,
-        GoogleGeminiLimitsV1::default(),
+        GoogleGeminiLimitsV1 {
+            request_timeout,
+            ..GoogleGeminiLimitsV1::default()
+        },
     )
     .map_err(|error| error.to_string())?;
     GoogleGeminiProvider::new(config).map_err(|error| error.to_string())
@@ -449,17 +492,23 @@ mod tests {
             let (origin, server) = catalog_fixture(path, authorization, response);
             let base_url = format!("{origin}{base_suffix}");
             let port = BuiltInProviderPort;
-            port.validate(kind, &base_url, "fixture-model")
+            port.validate(kind, &base_url, "fixture-model", Duration::from_secs(42))
                 .expect("valid provider draft");
             let probe = port.test_connection(
                 kind,
                 &base_url,
                 "fixture-model",
                 Some("desktop-secret".to_owned()),
+                Duration::from_secs(42),
             );
             assert!(probe.ok, "{kind} probe failed: {}", probe.message);
             let discovered = port
-                .discover_models(kind, &base_url, Some("desktop-secret".to_owned()))
+                .discover_models(
+                    kind,
+                    &base_url,
+                    Some("desktop-secret".to_owned()),
+                    Duration::from_secs(42),
+                )
                 .expect("provider discovery");
             assert_eq!(discovered.len(), 1);
             assert_eq!(discovered[0].remote_id, "fixture-model");

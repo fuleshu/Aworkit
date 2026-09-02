@@ -16,7 +16,7 @@ export class ChatWorkspaceController {
       };
     if (type === "enqueue") return { type, commandId, input: "" };
     if (type === "approval")
-      return { type, commandId, targetId: targetId ?? "", approved: false };
+      return { type, commandId, decisionId: targetId ?? "", approved: false };
     return { type, commandId, targetId };
   }
 }

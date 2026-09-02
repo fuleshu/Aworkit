@@ -98,6 +98,9 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
             .collect::<Result<Vec<_>, ProviderError>>()?;
         contents.push(json!({"role":"user","parts":result_parts}));
     }
+    if let Some(notice) = &request.retry_notice {
+        contents.push(json!({"role":"user","parts":[{"text":notice}]}));
+    }
 
     let declarations = request
         .tools

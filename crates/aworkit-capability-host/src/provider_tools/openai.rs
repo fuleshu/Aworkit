@@ -77,6 +77,9 @@ pub(crate) fn openai_tool_request(
             }));
         }
     }
+    if let Some(notice) = &request.retry_notice {
+        messages.push(json!({"role":"user","content":notice}));
+    }
 
     let tools = request
         .tools

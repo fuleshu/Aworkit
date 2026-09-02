@@ -16,8 +16,9 @@ use std::{
 };
 
 use aworkit_capability_host::{
-    CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelRequestV1,
-    ModelResolutionPlanV1, ModelToolCallV1, ModelToolExchangeV1, project_model_events,
+    CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1,
+    ModelRequestV1, ModelResolutionPlanV1, ModelToolCallV1, ModelToolExchangeV1, ProviderError,
+    project_model_events,
 };
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,8 @@ use super::{
     documents::validate_v1_executable_catalog,
     model_tool_loop::{
         ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
-        ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, resume_model_tool_loop_v1,
+        ModelToolLoopRunV1, PROVIDER_TIMEOUT_NOTICE, execute_model_tool_loop_approval_v1,
+        resume_model_tool_loop_v1,
     },
     pipeline::{
         WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
@@ -50,6 +52,8 @@ pub(crate) struct GraphPassBudgetV1 {
     pub tool_calls: u64,
     pub tokens: u64,
     pub actions: u64,
+    pub maximum_timeout_recoveries: u32,
+    pub maximum_tool_output_bytes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -113,6 +117,8 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub output_units: u64,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
+    #[serde(default)]
+    pub timeout_recoveries: u32,
 }
 
 /// Durable agent-loop suspension captured when a PerInvocation tool call asks
@@ -402,6 +408,7 @@ struct PassMachine<'a> {
     output_units: u64,
     attempted_model_turns: u32,
     settled_tool_calls: u32,
+    timeout_recoveries: u32,
     final_text: Option<String>,
     pending_tool_approval: Option<(GraphApprovalRequestV1, AgentLoopSuspensionV1)>,
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
@@ -426,6 +433,7 @@ impl<'a> PassMachine<'a> {
             self.output_units = pending.output_units;
             self.attempted_model_turns = pending.attempted_model_turns;
             self.settled_tool_calls = pending.settled_tool_calls;
+            self.timeout_recoveries = pending.timeout_recoveries;
             self.conversation = pending.conversation.clone();
             self.resume_agent_suspension = pending
                 .agent_loop
@@ -553,6 +561,7 @@ impl<'a> PassMachine<'a> {
             output_units: self.output_units,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
+            timeout_recoveries: self.timeout_recoveries,
         };
         GraphPassOutcomeV1 {
             status: GraphPassStatusV1::AwaitingApproval,
@@ -792,16 +801,8 @@ impl<'a> PassMachine<'a> {
             maximum_input_bytes: MAXIMUM_MODEL_CALL_INPUT_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
         };
-        self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
         let parameters = node_model_parameters(&node.configuration);
-        match self
-            .gateway
-            .execute_cancellable(
-                &plan,
-                &ModelRequestV1 { input, parameters },
-                cancellation,
-            )
-        {
+        match self.execute_text_turn(&plan, ModelRequestV1 { input, parameters }, cancellation) {
             Ok(evidence) => {
                 if deadline_elapsed(self.deadline_epoch_millis) {
                     return Err(format!(
@@ -820,7 +821,10 @@ impl<'a> PassMachine<'a> {
                 }
                 self.input_units = self.input_units.saturating_add(units.0);
                 self.output_units = self.output_units.saturating_add(units.1);
-                if node.configuration.get("outputContract").and_then(Value::as_str)
+                if node
+                    .configuration
+                    .get("outputContract")
+                    .and_then(Value::as_str)
                     == Some("plan")
                 {
                     parse_plan_output_v1(&text).map_err(|error| {
@@ -874,8 +878,7 @@ impl<'a> PassMachine<'a> {
             .collect::<Vec<_>>();
         let parameters = node_model_parameters(&node.configuration);
         if definitions.is_empty() {
-            self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
-            return match self.gateway.execute_cancellable(
+            return match self.execute_text_turn(
                 &ModelResolutionPlanV1 {
                     candidates: vec![ModelCandidateV1 {
                         binding_id: self.model_binding_id.to_owned(),
@@ -884,7 +887,7 @@ impl<'a> PassMachine<'a> {
                     maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                     maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 },
-                &ModelRequestV1 {
+                ModelRequestV1 {
                     input: context,
                     parameters,
                 },
@@ -935,7 +938,12 @@ impl<'a> PassMachine<'a> {
                 binding_version_hash: self.model_version_hash.to_owned(),
                 maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                 maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
+                maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
                 maximum_turns,
+                maximum_timeout_recoveries: self
+                    .budget
+                    .maximum_timeout_recoveries
+                    .saturating_sub(self.timeout_recoveries),
                 maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
                 maximum_tokens: self.budget.tokens,
                 deadline_epoch_millis: self.deadline_epoch_millis,
@@ -952,11 +960,17 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(completed.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(completed.input_tokens);
                 self.output_units = self.output_units.saturating_add(completed.output_tokens);
+                self.timeout_recoveries = self
+                    .timeout_recoveries
+                    .saturating_add(completed.timeout_recoveries);
                 self.exchanges.extend(completed.exchanges);
                 self.tool_activity.extend(completed.activities);
                 Ok(Value::String(completed.assistant_text))
             }
             Ok(ModelToolLoopRunV1::Suspended { challenge, pending }) => {
+                self.timeout_recoveries = self
+                    .timeout_recoveries
+                    .saturating_add(pending.timeout_recoveries);
                 let approval = tool_approval_request(&challenge, &node.id);
                 self.pending_tool_approval = Some((
                     approval,
@@ -984,6 +998,34 @@ impl<'a> PassMachine<'a> {
                     "agent node '{}' failed: {}",
                     node.id, failure.error
                 ))
+            }
+        }
+    }
+
+    fn execute_text_turn(
+        &mut self,
+        plan: &ModelResolutionPlanV1,
+        mut request: ModelRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
+        loop {
+            if deadline_elapsed(self.deadline_epoch_millis) {
+                return Err(ProviderError::Failed(
+                    "workflow Run deadline elapsed before provider retry".to_owned(),
+                ));
+            }
+            self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
+            match self
+                .gateway
+                .execute_cancellable(plan, &request, cancellation)
+            {
+                Err(ProviderError::RequestTimedOut)
+                    if self.timeout_recoveries < self.budget.maximum_timeout_recoveries =>
+                {
+                    self.timeout_recoveries = self.timeout_recoveries.saturating_add(1);
+                    append_retry_notice(&mut request.input)?;
+                }
+                result => return result,
             }
         }
     }
@@ -1046,7 +1088,12 @@ impl<'a> PassMachine<'a> {
             binding_version_hash: self.model_version_hash.to_owned(),
             maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
+            maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
             maximum_turns,
+            maximum_timeout_recoveries: self
+                .budget
+                .maximum_timeout_recoveries
+                .saturating_sub(self.timeout_recoveries),
             maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
             maximum_tokens: self.budget.tokens,
             deadline_epoch_millis: self.deadline_epoch_millis,
@@ -1069,11 +1116,17 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(completed.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(completed.input_tokens);
                 self.output_units = self.output_units.saturating_add(completed.output_tokens);
+                self.timeout_recoveries = self
+                    .timeout_recoveries
+                    .saturating_add(completed.timeout_recoveries);
                 self.exchanges.extend(completed.exchanges);
                 self.tool_activity.extend(completed.activities);
                 AgentResumeOutcomeV1::Value(Value::String(completed.assistant_text))
             }
             Ok(ModelToolLoopRunV1::Suspended { challenge, pending }) => {
+                self.timeout_recoveries = self
+                    .timeout_recoveries
+                    .saturating_add(pending.timeout_recoveries);
                 let approval = tool_approval_request(&challenge, &node.id);
                 AgentResumeOutcomeV1::Suspended(
                     approval,
@@ -1196,6 +1249,7 @@ impl<'a> PassMachine<'a> {
             output_units: self.output_units,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
+            timeout_recoveries: self.timeout_recoveries,
         };
         GraphPassOutcomeV1 {
             status: GraphPassStatusV1::AwaitingApproval,
@@ -1297,6 +1351,7 @@ pub(crate) fn execute_graph_pass_observed(
         output_units: 0,
         attempted_model_turns: 0,
         settled_tool_calls: 0,
+        timeout_recoveries: 0,
         final_text: None,
         pending_tool_approval: None,
         resume_agent_suspension: None,
@@ -1311,6 +1366,29 @@ fn deadline_elapsed(deadline_epoch_millis: u64) -> bool {
         .map_or(true, |duration| {
             u64::try_from(duration.as_millis()).map_or(true, |now| now >= deadline_epoch_millis)
         })
+}
+
+fn append_retry_notice(input: &mut Value) -> Result<(), ProviderError> {
+    let notice = json!({"role":"user","content":PROVIDER_TIMEOUT_NOTICE});
+    match input {
+        Value::String(text) => {
+            *input = json!({"messages":[
+                {"role":"user","content":text.clone()},
+                notice,
+            ]});
+        }
+        Value::Array(messages) => messages.push(notice),
+        Value::Object(object) if object.contains_key("messages") => object
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+            .ok_or(ProviderError::InvalidPlan)?
+            .push(notice),
+        Value::Object(object) if object.contains_key("role") && object.contains_key("content") => {
+            *input = Value::Array(vec![Value::Object(object.clone()), notice]);
+        }
+        _ => return Err(ProviderError::InvalidPlan),
+    }
+    Ok(())
 }
 
 /// Extracts the closed request overrides owned by a model-consuming workflow
@@ -1341,7 +1419,11 @@ fn tool_approval_request(
     GraphApprovalRequestV1 {
         decision_id: challenge.decision_id.clone(),
         node_id: node_id.to_owned(),
-        title: format!("Allow tool {}?", challenge.capability_id),
+        title: if challenge.title.trim().is_empty() {
+            format!("Allow tool {}?", challenge.capability_id)
+        } else {
+            challenge.title.clone()
+        },
         message: challenge.summary.clone(),
     }
 }

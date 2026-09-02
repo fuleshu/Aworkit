@@ -35,7 +35,7 @@ impl Default for GoogleGeminiLimitsV1 {
     fn default() -> Self {
         Self {
             connect_timeout: Duration::from_secs(5),
-            request_timeout: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(300),
             maximum_response_bytes: 1024 * 1024,
         }
     }
@@ -380,7 +380,10 @@ impl ProviderEnginePortV1 for GoogleGeminiProvider {
 
 impl From<GoogleGeminiProviderError> for ProviderError {
     fn from(error: GoogleGeminiProviderError) -> Self {
-        Self::Failed(error.to_string())
+        match error {
+            GoogleGeminiProviderError::RequestTimedOut => Self::RequestTimedOut,
+            other => Self::Failed(other.to_string()),
+        }
     }
 }
 

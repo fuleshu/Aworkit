@@ -473,6 +473,8 @@ pub enum ProviderError {
     InvalidPlan,
     #[error("provider failed: {0}")]
     Failed(String),
+    #[error("provider request timed out")]
+    RequestTimedOut,
     #[error("provider execution was cancelled")]
     Cancelled,
     #[error("an accepted provider result must contain exactly one usage event")]

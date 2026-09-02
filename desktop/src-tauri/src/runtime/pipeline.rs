@@ -62,6 +62,7 @@ use super::{
         PendingGraphPassStateV1, compile_graph_pass, execute_graph_pass_observed,
     },
     mcp_tools::{MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1},
+    model_tool_loop::PROVIDER_TIMEOUT_RECOVERIES_V1,
     project_scope::revalidate_git_branch,
     run_events::{ModelRunEventObserver, RunEventStream},
     semantic_events::{SemanticEventCommitter, ephemeral_semantic_event_committer},
@@ -94,6 +95,7 @@ const HOST_DESTINATION: &str = "aworkit.capability-host";
 const WORKER_DESTINATION: &str = "aworkit.workflow-worker";
 const DEFAULT_FROZEN_CONTEXT_HASH: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+const MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 3_600;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum ProviderProtocolV1 {
@@ -163,6 +165,8 @@ pub struct WorkflowProviderBindingV1 {
     pub kind: String,
     pub base_url: String,
     pub model: String,
+    pub request_timeout_seconds: u64,
+    pub maximum_tool_output_bytes: usize,
     /// Opaque metadata only. The secret value remains in the platform store.
     pub credential: Option<CredentialMetadataV1>,
 }
@@ -190,6 +194,8 @@ pub struct WorkflowExecutionRequestV1 {
     pub tools: Vec<WorkflowToolBindingV1>,
     /// Maximum provider turns frozen from the Agent node.
     pub maximum_turns: u32,
+    /// Additional provider attempts reserved only for typed request timeouts.
+    pub maximum_timeout_recoveries: u32,
     /// Exact saved workflow JSON document frozen at the first input.
     pub workflow_snapshot: Value,
     pub messages: Vec<WorkflowMessageV1>,
@@ -222,6 +228,7 @@ impl WorkflowExecutionRequestV1 {
             project_branch: None,
             tools: Vec::new(),
             maximum_turns: 1,
+            maximum_timeout_recoveries: 0,
             workflow_snapshot: Value::Null,
             messages,
             now_epoch_millis,
@@ -519,6 +526,8 @@ impl WorkflowExecutionPipeline {
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
             parameters: request.model_parameters.clone(),
+            request_timeout_seconds: request.provider.request_timeout_seconds,
+            maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
         let secret = request
             .provider
@@ -950,6 +959,7 @@ impl WorkflowExecutionPipeline {
                 model_gateway: Some(gateway.clone()),
                 model_binding_id: Some(descriptor.capability_id.clone()),
                 model_version_hash: Some(descriptor.version_hash.clone()),
+                maximum_tool_output_bytes: prepared.provider.maximum_tool_output_bytes,
                 mcp_manifests: prepared.mcp_manifests.clone(),
                 cancellation: cancellation.clone(),
             },
@@ -969,6 +979,8 @@ impl WorkflowExecutionPipeline {
                 tool_calls: prepared.snapshot.budget.tool_calls,
                 tokens: prepared.snapshot.budget.tokens,
                 actions: prepared.snapshot.budget.actions,
+                maximum_timeout_recoveries: prepared.maximum_timeout_recoveries,
+                maximum_tool_output_bytes: prepared.provider.maximum_tool_output_bytes,
             },
             &gateway,
             &authority,
@@ -1183,6 +1195,8 @@ impl WorkflowExecutionPipeline {
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
             parameters: request.model_parameters.clone(),
+            request_timeout_seconds: request.provider.request_timeout_seconds,
+            maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
         let tool_bindings = freeze_file_tool_bindings(&request.tools)?;
         let (nodes, transitions, entry_nodes, model_node_id) = compile_graph_snapshot(
@@ -1298,12 +1312,12 @@ impl WorkflowExecutionPipeline {
             scope_id,
             maximum_turns: request.maximum_turns,
             turn_reservation: Usage {
-                turns: u64::from(request.maximum_turns),
-                attempts: u64::from(request.maximum_turns),
+                turns: request.budget.turns,
+                attempts: request.budget.attempts,
                 tool_calls: request.budget.tool_calls,
                 tokens: request.budget.tokens,
                 cost_micros: request.budget.cost_micros,
-                actions: u64::from(request.maximum_turns).saturating_add(request.budget.tool_calls),
+                actions: request.budget.actions,
             },
             context_pointers: Vec::new(),
             allowed_tool_capability_refs: tool_bindings
@@ -1355,6 +1369,7 @@ impl WorkflowExecutionPipeline {
             provider,
             tool_bindings,
             maximum_turns: request.maximum_turns,
+            maximum_timeout_recoveries: request.maximum_timeout_recoveries,
             secret,
             worker_proposal,
             broker_proposal,
@@ -1440,6 +1455,10 @@ struct StoredProviderBindingV1 {
     model: String,
     #[serde(default)]
     parameters: BTreeMap<String, Value>,
+    #[serde(default = "default_provider_request_timeout_seconds")]
+    request_timeout_seconds: u64,
+    #[serde(default = "default_maximum_tool_output_bytes")]
+    maximum_tool_output_bytes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1490,6 +1509,8 @@ struct PreparedExecutionRecordV1 {
     tool_bindings: Vec<StoredFileToolBindingV1>,
     #[serde(default = "default_maximum_turns")]
     maximum_turns: u32,
+    #[serde(default)]
+    maximum_timeout_recoveries: u32,
     #[serde(rename = "opaqueBinding")]
     secret: Option<StoredSecretBindingV1>,
     worker_proposal: WorkerInvocationProposalContractV1,
@@ -1541,6 +1562,7 @@ impl PreparedExecutionRecordV1 {
             && self.provider == other.provider
             && self.tool_bindings == other.tool_bindings
             && self.maximum_turns == other.maximum_turns
+            && self.maximum_timeout_recoveries == other.maximum_timeout_recoveries
             && self.secret == other.secret
     }
 }
@@ -1638,13 +1660,17 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
         let api_key = api_key.map(|mut value| std::mem::take(&mut *value));
         match protocol {
             ProviderProtocolV1::OpenAiCompatible => {
+                let limits = OpenAiCompatibleLimitsV1 {
+                    request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    ..OpenAiCompatibleLimitsV1::default()
+                };
                 let config = OpenAiCompatibleProviderConfig::new(
                     protocol.capability_id(),
                     descriptor.version_hash.clone(),
                     &provider.base_url,
                     provider.model.clone(),
                     api_key,
-                    OpenAiCompatibleLimitsV1::default(),
+                    limits,
                 )
                 .and_then(|config| config.with_request_parameters(&provider.parameters))
                 .map_err(|error| error.to_string())?;
@@ -1653,13 +1679,17 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
                     .map_err(|error| error.to_string())
             }
             ProviderProtocolV1::Anthropic => {
+                let limits = AnthropicMessagesLimitsV1 {
+                    request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    ..AnthropicMessagesLimitsV1::default()
+                };
                 let config = AnthropicMessagesProviderConfig::new(
                     protocol.capability_id(),
                     descriptor.version_hash.clone(),
                     &provider.base_url,
                     provider.model.clone(),
                     api_key,
-                    AnthropicMessagesLimitsV1::default(),
+                    limits,
                 )
                 .map_err(|error| error.to_string())?;
                 AnthropicMessagesProvider::new(config)
@@ -1667,13 +1697,17 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
                     .map_err(|error| error.to_string())
             }
             ProviderProtocolV1::Gemini => {
+                let limits = GoogleGeminiLimitsV1 {
+                    request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    ..GoogleGeminiLimitsV1::default()
+                };
                 let config = GoogleGeminiProviderConfig::new(
                     protocol.capability_id(),
                     descriptor.version_hash.clone(),
                     &provider.base_url,
                     provider.model.clone(),
                     api_key,
-                    GoogleGeminiLimitsV1::default(),
+                    limits,
                 )
                 .map_err(|error| error.to_string())?;
                 GoogleGeminiProvider::new(config)
@@ -2213,6 +2247,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     model_gateway: Some(gateway.clone()),
                     model_binding_id: Some(self.descriptor.capability_id.clone()),
                     model_version_hash: Some(self.descriptor.version_hash.clone()),
+                    maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
                     mcp_manifests: self.prepared.mcp_manifests.clone(),
                     cancellation: cancellation.clone(),
                 },
@@ -2234,6 +2269,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     tool_calls: self.prepared.snapshot.budget.tool_calls,
                     tokens: self.prepared.snapshot.budget.tokens,
                     actions: self.prepared.snapshot.budget.actions,
+                    maximum_timeout_recoveries: self.prepared.maximum_timeout_recoveries,
+                    maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
                 },
                 &gateway,
                 &authority,
@@ -3212,6 +3249,14 @@ const fn default_maximum_turns() -> u32 {
     1
 }
 
+const fn default_provider_request_timeout_seconds() -> u64 {
+    300
+}
+
+const fn default_maximum_tool_output_bytes() -> usize {
+    64 * 1024
+}
+
 fn invalid_workflow(message: &str) -> WorkflowPipelineError {
     WorkflowPipelineError::InvalidInput(format!("frozen workflow JSON: {message}"))
 }
@@ -3226,8 +3271,16 @@ fn validate_request(
     })?;
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
     if request.maximum_turns == 0
-        || u64::from(request.maximum_turns) > request.budget.turns
+        || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
+        || u64::from(
+            request
+                .maximum_turns
+                .saturating_add(request.maximum_timeout_recoveries),
+        ) > request.budget.turns
         || request.budget.attempts < request.budget.turns
+        || request.provider.request_timeout_seconds == 0
+        || request.provider.request_timeout_seconds > MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1
+        || !(1024..=512 * 1024).contains(&request.provider.maximum_tool_output_bytes)
         || request.budget.tool_calls > 64
         || frozen_tools.len() != request.tools.len()
         || (request.tools.is_empty() && request.budget.tool_calls != 0)
@@ -3591,6 +3644,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum ScriptedBehavior {
         Succeed,
+        TimeoutThenSucceed,
         Ambiguous,
         EmptyAcceptedOutput,
         OversizedOutput,
@@ -3644,7 +3698,7 @@ mod tests {
             request: &ModelRequestV1,
             emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
         ) -> Result<aworkit_capability_host::ProviderAcceptanceV1, ProviderError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
             if let Some(observed) = &self.observed_inputs {
                 observed
                     .lock()
@@ -3652,6 +3706,12 @@ mod tests {
                     .push(request.input.clone());
             }
             match self.behavior {
+                ScriptedBehavior::TimeoutThenSucceed if call_index == 0 => {
+                    return Err(ProviderError::RequestTimedOut);
+                }
+                ScriptedBehavior::TimeoutThenSucceed => {
+                    assert!(request.input.to_string().contains("timed out"));
+                }
                 ScriptedBehavior::Ambiguous => {
                     return Err(ProviderError::AcceptanceAmbiguous);
                 }
@@ -3686,6 +3746,8 @@ mod tests {
     #[derive(Clone, Copy)]
     enum ToolScriptV1 {
         ReadAndSearch,
+        ReadOnly,
+        TimeoutThenRead,
         LargeAggregate,
         Escape,
         Malformed,
@@ -3767,7 +3829,14 @@ mod tests {
             if cancellation.is_cancelled() {
                 return Err(ProviderError::Cancelled);
             }
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if matches!(self.script, ToolScriptV1::TimeoutThenRead)
+                && request.exchanges.is_empty()
+                && call_index == 0
+            {
+                assert!(request.retry_notice.is_none());
+                return Err(ProviderError::RequestTimedOut);
+            }
             if request.exchanges.is_empty() {
                 match self.script {
                     ToolScriptV1::ReadAndSearch => {
@@ -3782,6 +3851,22 @@ mod tests {
                             FILE_SEARCH_CAPABILITY_ID,
                             "aworkit_search_project_file",
                             json!({"path":"notes.txt","query":"alpha"}),
+                        ))?;
+                    }
+                    ToolScriptV1::ReadOnly | ToolScriptV1::TimeoutThenRead => {
+                        if matches!(self.script, ToolScriptV1::TimeoutThenRead) {
+                            assert!(
+                                request
+                                    .retry_notice
+                                    .as_deref()
+                                    .is_some_and(|notice| notice.contains("timed out"))
+                            );
+                        }
+                        emit(tool_call(
+                            "call.read",
+                            FILE_READ_CAPABILITY_ID,
+                            "aworkit_read_project_file",
+                            json!({"path":"notes.txt"}),
                         ))?;
                     }
                     ToolScriptV1::LargeAggregate => emit(tool_call(
@@ -4019,6 +4104,8 @@ mod tests {
                 kind: "openai_compatible".to_owned(),
                 base_url: "http://127.0.0.1:9876/v1".to_owned(),
                 model: "test-model".to_owned(),
+                request_timeout_seconds: 300,
+                maximum_tool_output_bytes: 512 * 1024,
                 credential: Some(metadata),
             },
             vec![WorkflowMessageV1 {
@@ -4266,6 +4353,53 @@ mod tests {
                 .expect("follow-up record lookup")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn typed_provider_timeout_is_reported_to_the_model_and_recovered_once() {
+        let root = TempDir::new().expect("root");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::write(project.join("notes.txt"), b"recovery evidence").expect("notes");
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::TimeoutThenRead);
+        let mut request =
+            tool_bound_request(&pipeline, metadata, &project, &[FILE_READ_CAPABILITY_ID]);
+        request.maximum_timeout_recoveries = 1;
+        request.budget.turns = 3;
+        request.budget.attempts = 3;
+        request.budget.actions = 11;
+
+        let result = pipeline.execute(request).expect("timeout recovery");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(result.assistant_text.as_deref(), Some("tool loop complete"));
+        assert_eq!(result.model_turns, 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            observed_results.lock().unwrap()[0]["content"],
+            "recovery evidence"
+        );
+    }
+
+    #[test]
+    fn tool_output_is_truncated_with_an_explicit_model_facing_marker() {
+        let root = TempDir::new().expect("root");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::write(project.join("notes.txt"), "é".repeat(4_000)).expect("notes");
+        let (pipeline, _store, metadata, _calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::ReadOnly);
+        let mut request =
+            tool_bound_request(&pipeline, metadata, &project, &[FILE_READ_CAPABILITY_ID]);
+        request.provider.maximum_tool_output_bytes = 1024;
+
+        let result = pipeline.execute(request).expect("truncated tool result");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        let observed = observed_results.lock().expect("tool results");
+        let text = observed[0].as_str().expect("truncated result becomes text");
+        assert!(text.len() <= 1024);
+        assert!(text.contains("Aworkit: tool output truncated"));
+        assert!(text.is_char_boundary(text.len()));
     }
 
     #[test]
@@ -4853,6 +4987,26 @@ mod tests {
     }
 
     #[test]
+    fn typed_timeout_on_a_no_tool_model_turn_is_model_visible_and_recovered_once() {
+        let root = TempDir::new().expect("root");
+        let (pipeline, _credential_store, metadata, calls, _) =
+            setup(&root, ScriptedBehavior::TimeoutThenSucceed);
+        let mut execution_request = request(metadata);
+        execution_request.maximum_timeout_recoveries = 1;
+        execution_request.budget.turns = 2;
+        execution_request.budget.attempts = 2;
+        execution_request.budget.actions = 2;
+
+        let result = pipeline
+            .execute(execution_request)
+            .expect("plain model timeout recovery");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(result.assistant_text.as_deref(), Some("working answer"));
+        assert_eq!(result.model_turns, 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn request_identity_cannot_be_reused_with_changed_messages() {
         let root = TempDir::new().expect("root");
         let (pipeline, _credential_store, metadata, calls, _) =
@@ -5275,11 +5429,10 @@ mod tests {
         );
         let approval = suspended.approval.expect("tool approval evidence");
         assert_eq!(approval.node_id, "agent.1");
-        assert!(approval.title.contains(FILE_EDIT_CAPABILITY_ID));
-        assert!(
-            !approval.message.is_empty(),
-            "the challenge summary describes the pending call"
-        );
+        assert_eq!(approval.title, "Allow project file edit?");
+        assert!(approval.message.contains("notes.txt"));
+        assert!(approval.message.contains("alpha"));
+        assert!(approval.message.contains("beta"));
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,
@@ -5620,7 +5773,9 @@ mod tests {
         );
         let approval = suspended.approval.expect("subagent approval");
         assert_eq!(approval.node_id, "agent.1");
-        assert!(approval.title.contains(SUBAGENT_CAPABILITY_ID));
+        assert_eq!(approval.title, "Allow subagent task?");
+        assert!(approval.message.contains(SUBAGENT_CAPABILITY_ID));
+        assert!(approval.message.contains("Summarize the project notes."));
 
         let resumed = pipeline
             .resume_approval(&approval.decision_id, true)

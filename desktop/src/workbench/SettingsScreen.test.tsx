@@ -101,6 +101,46 @@ describe("Settings v2 workbench", () => {
       expect(field.getAttribute("title"), field.outerHTML).toBeTruthy();
   });
 
+  it("shows provider runtime defaults and saves explicit timeout and tool-output limits", async () => {
+    const port = new RecordingSettingsV2Port();
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    const timeout = await screen.findByLabelText("Request timeout (seconds)");
+    const toolOutput = screen.getByLabelText("Maximum tool output (bytes)");
+    expect(timeout).toHaveValue(300);
+    expect(toolOutput).toHaveValue(65_536);
+
+    fireEvent.change(timeout, { target: { value: "180" } });
+    fireEvent.change(toolOutput, { target: { value: "32768" } });
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]?.settings.providers[0]?.configuration).toEqual({
+      requestTimeoutSeconds: 180,
+      maximumToolOutputBytes: 32_768,
+    });
+  });
+
+  it("keeps legacy provider metadata recoverable until the user clears it", async () => {
+    const settings = configuration();
+    settings.providers[0]!.configuration = { apiStyle: "responses" };
+    const port = new RecordingSettingsV2Port(settings);
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    const unsupported = await screen.findByLabelText(
+      "Unsupported provider configuration",
+    );
+    expect(unsupported).toHaveValue('{\n  "apiStyle": "responses"\n}');
+
+    fireEvent.change(unsupported, { target: { value: "{}" } });
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]?.settings.providers[0]?.configuration).toEqual({});
+  });
+
   it("fails closed when an accepted Save cannot recover its receipt version", async () => {
     const port = new RecordingSettingsV2Port();
     port.mutationSnapshotVersionOffset = -1;
@@ -470,9 +510,8 @@ describe("Settings v2 workbench", () => {
     render(<SettingsScreen settingsPort={port} presentation={native} />);
 
     await screen.findByLabelText("Base URL");
-    const providerJson = screen.getByLabelText("Provider configuration");
-    fireEvent.change(providerJson, { target: { value: "{invalid" } });
-    expect(screen.getByText(/JSON/i, { selector: ".field-error" })).toBeVisible();
+    const timeout = screen.getByLabelText("Request timeout (seconds)");
+    fireEvent.change(timeout, { target: { value: "120" } });
     await user.click(screen.getByRole("button", { name: /Appearance/ }));
     await user.click(screen.getByRole("radio", { name: /Dark/ }));
     expect(document.documentElement.dataset.appearance).toBe("dark");
@@ -485,7 +524,7 @@ describe("Settings v2 workbench", () => {
     expect(screen.getByRole("radio", { name: /System/ })).toBeChecked();
     expect(document.documentElement.dataset.appearance).not.toBe("dark");
     await user.click(screen.getByRole("button", { name: /Providers & models/ }));
-    expect(screen.getByLabelText("Provider configuration")).toHaveValue("{}");
+    expect(screen.getByLabelText("Request timeout (seconds)")).toHaveValue(300);
   });
 
   it("stores and deletes write-only credentials through dedicated versioned commands", async () => {

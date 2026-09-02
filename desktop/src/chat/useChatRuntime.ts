@@ -12,10 +12,16 @@ export interface ChatRuntimeState {
   readonly events: readonly RuntimeEvent[];
   readonly stale: boolean;
   readonly loading: boolean;
-  readonly error: string | null;
+  readonly error: RuntimeErrorNotice | null;
   readonly pendingCommandIds: ReadonlySet<string>;
   dispatch(intent: ChatIntent): Promise<boolean>;
   resynchronize(): Promise<boolean>;
+  dismissError(): void;
+}
+
+export interface RuntimeErrorNotice {
+  readonly id: number;
+  readonly message: string;
 }
 
 /**
@@ -39,17 +45,40 @@ export function useChatRuntime(
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
   const pendingRef = useRef<Set<string>>(new Set());
   const eventReadyRef = useRef<Promise<void>>(Promise.resolve());
+  const nextErrorIdRef = useRef(0);
+  const lastFailureRef = useRef<string | null>(null);
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<RuntimeErrorNotice | null>(null);
   const [pendingCommandIds, setPending] = useState<ReadonlySet<string>>(
     new Set(),
   );
 
-  const failProjection = useCallback((failure: unknown): void => {
-    setStale(true);
-    setError(message(failure));
+  const reportError = useCallback((failure: unknown): void => {
+    const failureMessage = message(failure);
+    // A disconnected poll can repeat the same failure indefinitely. Keep one
+    // acknowledged occurrence until a healthy core call resets the cycle.
+    if (lastFailureRef.current === failureMessage) return;
+    lastFailureRef.current = failureMessage;
+    nextErrorIdRef.current += 1;
+    setError({ id: nextErrorIdRef.current, message: failureMessage });
   }, []);
+
+  const markHealthy = useCallback((): void => {
+    lastFailureRef.current = null;
+  }, []);
+
+  const dismissError = useCallback((): void => {
+    setError(null);
+  }, []);
+
+  const failProjection = useCallback(
+    (failure: unknown): void => {
+      setStale(true);
+      reportError(failure);
+    },
+    [reportError],
+  );
 
   const publishEvents = useCallback((next: RuntimeEvent[]): void => {
     eventsRef.current = next;
@@ -117,7 +146,7 @@ export function useChatRuntime(
       }
       replaceSnapshot(next, true);
       setStale(false);
-      setError(null);
+      markHealthy();
       return true;
     } catch (failure) {
       failProjection(failure);
@@ -125,7 +154,7 @@ export function useChatRuntime(
     } finally {
       setLoading(false);
     }
-  }, [failProjection, port, replaceSnapshot]);
+  }, [failProjection, markHealthy, port, replaceSnapshot]);
 
   const refresh = useCallback(async (): Promise<void> => {
     // A running command is driven exclusively by pushed committed events. The
@@ -144,11 +173,11 @@ export function useChatRuntime(
       }
       replaceSnapshot(next, false);
       setStale(false);
-      setError(null);
+      markHealthy();
     } catch (failure) {
       failProjection(failure);
     }
-  }, [failProjection, port, replaceSnapshot, resynchronize]);
+  }, [failProjection, markHealthy, port, replaceSnapshot, resynchronize]);
 
   // Register the push listener before the initial snapshot. Events committed
   // during that race are buffered by sequence and deduplicated against replay.
@@ -201,14 +230,14 @@ export function useChatRuntime(
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";
           await resynchronize();
-          setError(reason);
+          reportError(reason);
           return false;
         }
         return await resynchronize();
       } catch (failure) {
         const failureMessage = message(failure);
         await resynchronize();
-        setError(failureMessage);
+        reportError(failureMessage);
         return false;
       } finally {
         pendingRef.current.delete(intent.commandId);
@@ -219,7 +248,7 @@ export function useChatRuntime(
         });
       }
     },
-    [port, resynchronize, stale],
+    [port, reportError, resynchronize, stale],
   );
 
   return {
@@ -231,6 +260,7 @@ export function useChatRuntime(
     pendingCommandIds,
     dispatch,
     resynchronize,
+    dismissError,
   };
 }
 

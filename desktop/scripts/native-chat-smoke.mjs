@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 const endpoint = process.env.AWORKIT_CDP_URL ?? "http://127.0.0.1:9223";
+const verifyProviderRuntimeSettings =
+  process.env.AWORKIT_VERIFY_PROVIDER_RUNTIME_SETTINGS === "1";
 const screenshotPath = resolve(
   process.env.AWORKIT_SMOKE_SCREENSHOT ??
     "src-tauri/target/native-chat-smoke.png",
@@ -142,6 +144,26 @@ const modelCallOutputState = await evaluate(`(() => {
     return { blockPresent: true, outputPresent: true, validJson: false, duplicateTextKinds: [] };
   }
 })()`);
+const approvalState = await evaluate(`(() => {
+  const cards = [...document.querySelectorAll('.approval-card')];
+  const projected = cards.map((card) => ({
+    status: card.querySelector('.status')?.textContent?.trim() ?? null,
+    approvePresent: [...card.querySelectorAll('button')].some(
+      (button) => button.textContent?.trim() === 'Approve',
+    ),
+    rejectPresent: [...card.querySelectorAll('button')].some(
+      (button) => button.textContent?.trim() === 'Reject',
+    ),
+  }));
+  return {
+    cards: projected,
+    staleActions: projected.filter(
+      (card) =>
+        card.status !== 'pending' &&
+        (card.approvePresent || card.rejectPresent),
+    ).length,
+  };
+})()`);
 const rawRunDetailsState = await evaluate(`(async () => {
   const inspector = document.querySelector('[aria-label="Run details"]');
   const tabs = [...(inspector?.querySelectorAll('[role="tab"]') ?? [])];
@@ -190,12 +212,41 @@ const layoutState = await evaluate(`(() => {
     runDetails: scrollState('.run-details-content'),
   };
 })()`);
+const providerRuntimeSettingsState = verifyProviderRuntimeSettings
+  ? await evaluate(`(async () => {
+      const settingsControl = [...document.querySelectorAll("button, a")].find(
+        (element) => element.textContent?.includes("Settings") === true,
+      );
+      settingsControl?.click();
+      let timeout = null;
+      let toolOutput = null;
+      for (let attempt = 0; attempt < 25; attempt += 1) {
+        timeout = document.querySelector('[id$="-request-timeout-seconds"]');
+        toolOutput = document.querySelector('[id$="-maximum-tool-output-bytes"]');
+        if (timeout !== null && toolOutput !== null) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+      }
+      return {
+        settingsControlPresent: settingsControl !== undefined,
+        timeoutPresent: timeout !== null,
+        timeoutValue: timeout?.value ?? null,
+        timeoutMinimum: timeout?.min ?? null,
+        timeoutMaximum: timeout?.max ?? null,
+        toolOutputPresent: toolOutput !== null,
+        toolOutputValue: toolOutput?.value ?? null,
+        toolOutputMinimum: toolOutput?.min ?? null,
+        toolOutputMaximum: toolOutput?.max ?? null,
+      };
+    })()`)
+  : null;
 state = {
   ...state,
   runDetailsState,
   modelCallOutputState,
+  approvalState,
   rawRunDetailsState,
   layoutState,
+  providerRuntimeSettingsState,
 };
 
 const screenshot = await command("Page.captureScreenshot", {
@@ -226,6 +277,8 @@ if (state.modelCallOutputState.duplicateTextKinds.length > 0)
   failures.push(
     `Model-call Output still contains streamed fragments for: ${state.modelCallOutputState.duplicateTextKinds.join(", ")}`,
   );
+if (state.approvalState.staleActions > 0)
+  failures.push("settled or cancelled approval cards still expose decision actions");
 if (!state.rawRunDetailsState.tabPresent)
   failures.push("Raw JSON tab was not rendered");
 if (!state.rawRunDetailsState.jsonPresent || !state.rawRunDetailsState.scoped)
@@ -244,6 +297,19 @@ if (!["auto", "scroll"].includes(state.layoutState.timeline?.overflowY))
   failures.push("Chat timeline has no independent vertical scroll contract");
 if (!["auto", "scroll"].includes(state.layoutState.runDetails?.overflowY))
   failures.push("Run details has no independent vertical scroll contract");
+if (verifyProviderRuntimeSettings) {
+  const settings = state.providerRuntimeSettingsState;
+  if (!settings?.settingsControlPresent)
+    failures.push("Settings navigation was not rendered");
+  if (!settings?.timeoutPresent || settings.timeoutValue !== "300")
+    failures.push("Provider request timeout does not render its 300 second default");
+  if (settings?.timeoutMinimum !== "1" || settings?.timeoutMaximum !== "3600")
+    failures.push("Provider request timeout bounds are incorrect");
+  if (!settings?.toolOutputPresent || settings.toolOutputValue !== "65536")
+    failures.push("Maximum tool output does not render its 65536 byte default");
+  if (settings?.toolOutputMinimum !== "1024" || settings?.toolOutputMaximum !== "524288")
+    failures.push("Maximum tool output bounds are incorrect");
+}
 
 console.log(
   JSON.stringify(

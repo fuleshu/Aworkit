@@ -38,6 +38,19 @@ export function projectSemanticTimeline(
   );
   const spans = new Map<string, SpanProjection>();
   const facts: TimelineItem[] = [];
+  const approvalResolutions = new Map<string, boolean>();
+  const terminalEvents = ordered.filter(
+    (event) =>
+      event.kind === "execution.failed" || event.kind === "chat.cancelled",
+  );
+
+  for (const event of ordered) {
+    if (event.kind !== "approval.resolved") continue;
+    const fact = payload(event);
+    const decisionId = string(fact.decisionId);
+    if (decisionId !== undefined)
+      approvalResolutions.set(decisionId, fact.approved === true);
+  }
 
   for (const event of ordered) {
     const fact = payload(event);
@@ -45,7 +58,12 @@ export function projectSemanticTimeline(
       reduceSpan(spans, event, fact);
       continue;
     }
-    const item = projectFact(event, fact);
+    const item = projectFact(
+      event,
+      fact,
+      approvalResolutions,
+      terminalEvents,
+    );
     if (item !== undefined) facts.push(item);
   }
 
@@ -348,6 +366,8 @@ function hasFollowingAssistantMessage(
 function projectFact(
   event: RuntimeEvent,
   fact: FactPayload,
+  approvalResolutions: ReadonlyMap<string, boolean>,
+  terminalEvents: readonly RuntimeEvent[],
 ): TimelineItem | undefined {
   if (event.kind === "message.user" || event.kind === "message.assistant") {
     return baseItem(event, fact, {
@@ -357,23 +377,31 @@ function projectFact(
     });
   }
   if (event.kind === "approval.requested") {
+    const decisionId = string(fact.decisionId);
+    const approved =
+      decisionId === undefined
+        ? undefined
+        : approvalResolutions.get(decisionId);
+    const terminal = terminalEvents.find(
+      (candidate) => candidate.sequence > event.sequence,
+    );
+    const status = approvalStatus(approved, terminal?.kind);
     return {
       ...baseItem(event, fact, {
         kind: "approval",
-        title: "Approval required",
-        status: "pending",
+        title: string(fact.title) ?? "Approval required",
+        status,
       }),
-      id: string(fact.decisionId) ?? event.eventId,
-      action: "approve",
+      id: decisionId ?? event.eventId,
+      action:
+        approved === undefined && terminal === undefined
+          ? "approve"
+          : undefined,
     };
   }
-  if (event.kind === "approval.resolved") {
-    return baseItem(event, fact, {
-      kind: "approval",
-      title: "Approval resolved",
-      status: "completed",
-    });
-  }
+  // Resolution updates the original approval card above instead of creating a
+  // second card with stale action buttons.
+  if (event.kind === "approval.resolved") return undefined;
   if (event.kind === "execution.failed") {
     return baseItem(event, fact, {
       kind: "error",
@@ -383,6 +411,16 @@ function projectFact(
   }
   if (event.kind === "tool.todo") return todoCard(event, fact);
   return projectLegacyActivity(event, fact);
+}
+
+function approvalStatus(
+  approved: boolean | undefined,
+  terminalKind: string | undefined,
+): string {
+  if (approved !== undefined) return approved ? "approved" : "rejected";
+  if (terminalKind === "chat.cancelled") return "cancelled";
+  if (terminalKind === "execution.failed") return "failed";
+  return "pending";
 }
 
 function projectLegacyActivity(

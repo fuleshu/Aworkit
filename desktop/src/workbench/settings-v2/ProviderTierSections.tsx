@@ -8,6 +8,13 @@ import type {
   ProviderHealthSnapshotV2,
 } from "../configuration";
 import {
+  DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES,
+  DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS,
+  MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES,
+  MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS,
+  MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES,
+} from "../configuration";
+import {
   PROVIDER_PRESETS,
   providerPreset,
 } from "../providerCatalog";
@@ -66,6 +73,10 @@ export function ProvidersModelsSection({
     provider === null
       ? null
       : health.find(({ providerId }) => providerId === provider.id) ?? null;
+  const unsupportedConfiguration =
+    provider === null
+      ? {}
+      : unsupportedProviderConfiguration(provider.configuration);
   const updateProvider = (next: ProviderConfiguration) => {
     if (provider !== null) {
       setResult(null);
@@ -281,17 +292,72 @@ export function ProvidersModelsSection({
                 Provider enabled
               </label>
             </div>
-            <JsonObjectField
-              id={`${provider.id}-configuration`}
-              label="Provider configuration"
-              title="Reserved non-secret provider JSON; current Test and Discover operations require this object to be empty"
-              value={provider.configuration}
-              onChange={(configuration) => updateProvider({ ...provider, configuration })}
-            />
-            <p className="field-warning">
-              Provider-specific JSON is preserved for future adapters. Current
-              Test and Discover operations fail explicitly unless it is empty.
-            </p>
+            <div className="settings-grid two-columns">
+              <RequiredNumber
+                id={`${provider.id}-request-timeout-seconds`}
+                label="Request timeout (seconds)"
+                maximum={MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS}
+                minimum={1}
+                title="Maximum elapsed time for a provider request, including streamed response data; a timed-out model turn is reported to the model and retried once within the Run budget"
+                value={providerNumber(
+                  provider.configuration.requestTimeoutSeconds,
+                  DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS,
+                )}
+                onChange={(requestTimeoutSeconds) =>
+                  updateProvider({
+                    ...provider,
+                    configuration: {
+                      ...provider.configuration,
+                      requestTimeoutSeconds,
+                    },
+                  })
+                }
+              />
+              <RequiredNumber
+                id={`${provider.id}-maximum-tool-output-bytes`}
+                label="Maximum tool output (bytes)"
+                maximum={MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES}
+                minimum={MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES}
+                title="Maximum compact tool-result bytes sent back to the model; larger results are UTF-8 safely truncated and include an explicit Aworkit truncation marker"
+                value={providerNumber(
+                  provider.configuration.maximumToolOutputBytes,
+                  DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES,
+                )}
+                onChange={(maximumToolOutputBytes) =>
+                  updateProvider({
+                    ...provider,
+                    configuration: {
+                      ...provider.configuration,
+                      maximumToolOutputBytes,
+                    },
+                  })
+                }
+              />
+            </div>
+            {Object.keys(unsupportedConfiguration).length > 0 && (
+              <>
+                <JsonObjectField
+                  id={`${provider.id}-unsupported-configuration`}
+                  label="Unsupported provider configuration"
+                  title="Legacy provider metadata that is not consumed by the installed native runtime; clear it before Save"
+                  value={unsupportedConfiguration}
+                  onChange={(unsupported) =>
+                    updateProvider({
+                      ...provider,
+                      configuration: mergeProviderRuntimeConfiguration(
+                        provider.configuration,
+                        unsupported,
+                      ),
+                    })
+                  }
+                />
+                <p className="field-warning">
+                  These legacy fields are preserved for recovery but cannot be
+                  saved or used by the installed runtime. Clear this object to
+                  use the typed controls above.
+                </p>
+              </>
+            )}
             <div className="section-heading-row model-heading">
               <div>
                 <h3>Concrete models</h3>
@@ -993,6 +1059,69 @@ function OptionalNumber({
       />
     </label>
   );
+}
+
+function RequiredNumber({
+  id,
+  label,
+  title,
+  value,
+  minimum,
+  maximum,
+  onChange,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly title: string;
+  readonly value: number;
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly onChange: (value: number) => void;
+}): React.JSX.Element {
+  return (
+    <label className="settings-field" htmlFor={id}>
+      {label}
+      <input
+        id={id}
+        max={maximum}
+        min={minimum}
+        step={1}
+        title={title}
+        type="number"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function providerNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function unsupportedProviderConfiguration(
+  configuration: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(configuration).filter(
+      ([key]) =>
+        key !== "requestTimeoutSeconds" && key !== "maximumToolOutputBytes",
+    ),
+  );
+}
+
+function mergeProviderRuntimeConfiguration(
+  current: Readonly<Record<string, unknown>>,
+  unsupported: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged = { ...unsupported };
+  if ("requestTimeoutSeconds" in current) {
+    merged.requestTimeoutSeconds = current.requestTimeoutSeconds;
+  }
+  if ("maximumToolOutputBytes" in current) {
+    merged.maximumToolOutputBytes = current.maximumToolOutputBytes;
+  }
+  return merged;
 }
 
 function replaceAt<T>(values: readonly T[], index: number, value: T): T[] {

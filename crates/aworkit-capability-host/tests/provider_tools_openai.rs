@@ -36,6 +36,7 @@ fn request(exchanges: Vec<ModelToolExchangeV1>) -> ModelToolRequestV1 {
         ]),
         tools: vec![tool()],
         exchanges,
+        retry_notice: None,
     }
 }
 

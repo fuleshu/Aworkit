@@ -43,8 +43,8 @@ use super::{
         mcp_provider_name, split_mcp_capability,
     },
     model_tool_loop::{
-        ModelToolInvocationPortV1, ModelToolLoopRequestV1, SettledModelToolCallV1, ToolInvokeV1,
-        execute_model_tool_loop_v1,
+        ModelToolInvocationPortV1, ModelToolLoopRequestV1, PROVIDER_TIMEOUT_RECOVERIES_V1,
+        SettledModelToolCallV1, ToolInvokeV1, execute_model_tool_loop_v1,
     },
     pipeline::{CoreAuthenticationKey, LocalInvocationLedger, WorkflowPipelineError},
     project_scope::revalidate_git_branch,
@@ -174,6 +174,9 @@ pub struct ToolApprovalChallengeV1 {
     pub expires_epoch_millis: u64,
     pub capability_id: String,
     pub call_id: String,
+    /// Human-readable action title captured with the durable challenge.
+    #[serde(default)]
+    pub title: String,
     pub summary: String,
 }
 
@@ -181,6 +184,7 @@ fn tool_approval_challenge(
     challenge: &ApprovalChallengeV1,
     call: &ModelToolCallV1,
 ) -> ToolApprovalChallengeV1 {
+    let (title, summary) = tool_approval_copy(call);
     ToolApprovalChallengeV1 {
         decision_id: challenge.invocation_id.to_string(),
         invocation_id: challenge.invocation_id.to_string(),
@@ -188,11 +192,81 @@ fn tool_approval_challenge(
         expires_epoch_millis: challenge.expires_epoch_millis,
         capability_id: challenge.capability_id.to_string(),
         call_id: call.call_id.clone(),
-        summary: bounded_activity_text(format!(
-            "The model requested tool {}.",
-            challenge.capability_id
-        )),
+        title,
+        summary,
     }
+}
+
+/// Produces durable, secret-free approval copy from the exact model request.
+/// The proposed arguments are safe to show because credentials are bound only
+/// after authority approval and are never present in `ModelToolCallV1`.
+fn tool_approval_copy(call: &ModelToolCallV1) -> (String, String) {
+    let arguments = serde_json::to_string_pretty(&call.arguments)
+        .unwrap_or_else(|_| "<arguments could not be formatted>".into());
+    let (title, message) = match call.capability_id.as_str() {
+        SHELL_CAPABILITY_ID => {
+            let command = call
+                .arguments
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or(arguments.as_str());
+            if contains_git_command(command) {
+                (
+                    "Allow Git shell command?".to_owned(),
+                    format!(
+                        "The model wants to run this host shell command containing Git operations:\n\n{command}"
+                    ),
+                )
+            } else {
+                (
+                    "Allow host shell command?".to_owned(),
+                    format!("The model wants to run this host shell command:\n\n{command}"),
+                )
+            }
+        }
+        PYTHON_CAPABILITY_ID => {
+            let code = call
+                .arguments
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or(arguments.as_str());
+            (
+                "Allow host Python code?".to_owned(),
+                format!("The model wants to run this Python code on the host:\n\n{code}"),
+            )
+        }
+        FILE_EDIT_CAPABILITY_ID => (
+            "Allow project file edit?".to_owned(),
+            format!("The model wants to edit project files with these arguments:\n\n{arguments}"),
+        ),
+        FILE_WRITE_CAPABILITY_ID => (
+            "Allow project file write?".to_owned(),
+            format!("The model wants to write a project file with these arguments:\n\n{arguments}"),
+        ),
+        SUBAGENT_CAPABILITY_ID => (
+            "Allow subagent task?".to_owned(),
+            format!(
+                "The model wants to delegate a task to a subagent ({}) with these arguments:\n\n{arguments}",
+                call.capability_id
+            ),
+        ),
+        _ => (
+            format!("Allow {}?", call.name.replace('_', " ")),
+            format!(
+                "The model wants to run {} ({}) with these arguments:\n\n{arguments}",
+                call.name, call.capability_id
+            ),
+        ),
+    };
+    (bounded_activity_text(title), bounded_activity_text(message))
+}
+
+fn contains_git_command(command: &str) -> bool {
+    command
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+        })
+        .any(|token| token.eq_ignore_ascii_case("git") || token.eq_ignore_ascii_case("git.exe"))
 }
 
 /// Durable, UI-safe evidence for one authority-settled provider tool call.
@@ -954,6 +1028,7 @@ pub(crate) struct FrozenFileToolAuthorityContextV1 {
     pub model_gateway: Option<Arc<FrozenModelGateway>>,
     pub model_binding_id: Option<String>,
     pub model_version_hash: Option<String>,
+    pub maximum_tool_output_bytes: usize,
     /// Frozen core-attested MCP manifests bound to this Run, keyed by server
     /// id. Sessions open on demand with exact binding-drift protection.
     pub mcp_manifests: BTreeMap<String, McpServerManifestV1>,
@@ -2229,12 +2304,14 @@ impl FileToolDispatcherV1 {
                 binding_version_hash: version_hash.clone(),
                 maximum_input_bytes: SUBAGENT_MAXIMUM_INPUT_BYTES,
                 maximum_output_bytes: SUBAGENT_MAXIMUM_OUTPUT_BYTES,
+                maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
                 // One tool turn plus one final turn is the minimum loop shape;
                 // frozen values below that bound follow the same convention
                 // as agent nodes and execute with the minimum.
                 maximum_turns: u32::try_from(maximum_turns)
                     .map_err(|_| "subagent turn bound is out of range".to_owned())?
                     .max(2),
+                maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
                 maximum_tool_calls: SUBAGENT_MAXIMUM_TOOL_CALLS,
                 maximum_tokens: SUBAGENT_MAXIMUM_TOKENS,
                 deadline_epoch_millis: self.record.deadline_epoch_millis,
@@ -3205,6 +3282,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn approval_copy_names_and_shows_git_shell_commands() {
+        let call = ModelToolCallV1 {
+            call_id: "call.git-status".into(),
+            provider_call_id: Some("call.git-status".into()),
+            capability_id: SHELL_CAPABILITY_ID.into(),
+            name: SHELL_PROVIDER_NAME.into(),
+            arguments: json!({"command":"git status --short && git log -5"}),
+            provider_context: None,
+        };
+
+        let (title, message) = tool_approval_copy(&call);
+
+        assert_eq!(title, "Allow Git shell command?");
+        assert!(message.contains("host shell command containing Git operations"));
+        assert!(message.contains("git status --short && git log -5"));
+    }
+
+    #[test]
+    fn approval_copy_shows_non_shell_tool_arguments() {
+        let call = ModelToolCallV1 {
+            call_id: "call.edit".into(),
+            provider_call_id: Some("call.edit".into()),
+            capability_id: FILE_EDIT_CAPABILITY_ID.into(),
+            name: FILE_EDIT_PROVIDER_NAME.into(),
+            arguments: json!({"path":"README.md","patch":"replacement"}),
+            provider_context: None,
+        };
+
+        let (title, message) = tool_approval_copy(&call);
+
+        assert_eq!(title, "Allow project file edit?");
+        assert!(message.contains("README.md"));
+        assert!(message.contains("replacement"));
+    }
+
+    #[test]
+    fn legacy_approval_challenge_defaults_the_new_display_title() {
+        let challenge: ToolApprovalChallengeV1 = serde_json::from_value(json!({
+            "decisionId":"invoke.legacy",
+            "invocationId":"invoke.legacy",
+            "nonce":"approval.legacy",
+            "expiresEpochMillis":123,
+            "capabilityId":"tool.shell.host",
+            "callId":"call.legacy",
+            "summary":"The model requested tool tool.shell.host."
+        }))
+        .unwrap();
+
+        assert!(challenge.title.is_empty());
+    }
+
     fn stage_pending(
         authority: &BoundFileToolAuthorityV1,
         outer_invocation_id: &StableId,
@@ -3321,6 +3450,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });
@@ -3339,6 +3469,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });
@@ -3390,6 +3521,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });
@@ -3430,6 +3562,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });

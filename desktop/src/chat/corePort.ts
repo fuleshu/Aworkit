@@ -135,8 +135,17 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
       attachments: intent.attachments,
     };
   if (intent.type === "enqueue") return { input: intent.input };
-  if (intent.type === "approval") return { approved: intent.approved };
+  if (intent.type === "approval")
+    return {
+      decisionId: intent.decisionId,
+      approved: intent.approved,
+    };
   return {};
+}
+
+/** Only Chat-scoped actions participate in the native stale-target check. */
+export function chatIntentTargetId(intent: ChatIntent): string | null {
+  return "targetId" in intent ? (intent.targetId ?? null) : null;
 }
 
 /** Native implementation: all persistent or privileged actions cross one typed Tauri port. */
@@ -157,7 +166,9 @@ export class TauriChatCorePort implements ChatCorePort {
           commandId: intent.commandId,
           expectedVersion,
           action: intent.type,
-          targetId: "targetId" in intent ? (intent.targetId ?? null) : null,
+          // Approval decision IDs identify a suspended invocation. They must
+          // not cross the separate Chat-target freshness boundary.
+          targetId: chatIntentTargetId(intent),
           payload: chatIntentPayload(intent),
         },
       }),

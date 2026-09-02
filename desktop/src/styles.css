@@ -184,6 +184,11 @@ pre {
   justify-content: flex-end;
   margin-top: 16px;
 }
+.error-dialog p {
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  white-space: pre-wrap;
+}
 
 /* Persistent desktop shell */
 .desktop-shell {
@@ -1035,6 +1040,12 @@ pre {
 }
 .thinking-card .activity-main code,
 .live-activity-card .activity-main code {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+.approval-card .activity-main code {
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;

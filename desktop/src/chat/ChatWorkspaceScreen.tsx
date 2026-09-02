@@ -8,9 +8,11 @@ import {
 } from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { controlsFor } from "./composer";
+import { ErrorDialog } from "./ErrorDialog";
 import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
+import { useChatErrorNotices } from "./useChatErrorNotices";
 import type { ChatIntent, TimelineItem } from "./types";
 import {
   createWorkflowLibraryPort,
@@ -85,6 +87,19 @@ export function ChatWorkspaceScreen({
     () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
     [snapshot, runtime.events],
   );
+  const errorNotices = useChatErrorNotices(
+    runtime.events,
+    snapshot !== null,
+    runtime.error,
+    runtime.dismissError,
+  );
+  const errorDialog =
+    errorNotices.notice === null ? null : (
+      <ErrorDialog
+        notice={errorNotices.notice}
+        onDismiss={errorNotices.dismiss}
+      />
+    );
 
   // Load the saved-workflow library once so the composer can list and default
   // to the profile default workflow.
@@ -183,23 +198,28 @@ export function ChatWorkspaceScreen({
   }, [commandIds, newChatRequest, runtime]);
   if (runtime.loading && snapshot === null)
     return (
-      <section className="route-loading" role="status">
-        Connecting to the trusted core…
-      </section>
+      <>
+        <section className="route-loading" role="status">
+          Connecting to the trusted core…
+        </section>
+        {errorDialog}
+      </>
     );
   if (snapshot === null)
     return (
-      <section className="route-error" role="alert">
-        <h2>Chat projection unavailable</h2>
-        <p>{runtime.error}</p>
-        <button
-          type="button"
-          title="Retry the trusted-core projection query"
-          onClick={() => void runtime.resynchronize()}
-        >
-          Retry
-        </button>
-      </section>
+      <>
+        <section className="route-error" role="alert">
+          <h2>Chat projection unavailable</h2>
+          <button
+            type="button"
+            title="Retry the trusted-core projection query"
+            onClick={() => void runtime.resynchronize()}
+          >
+            Retry
+          </button>
+        </section>
+        {errorDialog}
+      </>
     );
   const chat = snapshot.chat;
   const control = (type: "cancel") => {
@@ -286,12 +306,6 @@ export function ChatWorkspaceScreen({
                 Aworkit preserved the exact staged command. Resume replays that
                 command; normal input, New Chat, and Cancel remain locked.
               </p>
-              {runtime.error !== null && (
-                <p className="field-error" role="alert">
-                  Recovery command failed: {runtime.error} You can retry Resume
-                  or explicitly abandon the staged command as outcome-uncertain.
-                </p>
-              )}
             </div>
             <div className="recovery-actions">
               {runtime.stale && (
@@ -373,14 +387,11 @@ export function ChatWorkspaceScreen({
               Resync
             </button>
           </div>
-        ) : runtime.error !== null ? (
-          <div className="command-banner" role="status">
-            {runtime.error}
-          </div>
         ) : null}
         <ConversationTimeline
           items={timelineItems}
           selectedId={selectedTimelineId}
+          actionsDisabled={runtime.pendingCommandIds.size > 0}
           onSelect={selectTimelineItem}
           onAction={cardAction}
         />
@@ -422,6 +433,7 @@ export function ChatWorkspaceScreen({
           onClose={() => setInspectorOpen(false)}
         />
       )}
+      {errorDialog}
     </section>
   );
 }
@@ -435,7 +447,7 @@ export function timelineActionIntent(
     ? {
         type: "approval",
         commandId,
-        targetId,
+        decisionId: targetId,
         approved: action === "approve",
       }
     : { type: action, commandId, targetId };

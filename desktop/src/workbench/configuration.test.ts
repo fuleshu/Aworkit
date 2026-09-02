@@ -18,7 +18,10 @@ function configuration(): SettingsConfigurationV2 {
         baseUrl: "http://127.0.0.1:11434/v1",
         enabled: true,
         credentialRef: null,
-        configuration: { apiStyle: "chat_completions" },
+        configuration: {
+          requestTimeoutSeconds: 300,
+          maximumToolOutputBytes: 65_536,
+        },
         models: [
           {
             id: "model.chat",
@@ -67,6 +70,21 @@ function configuration(): SettingsConfigurationV2 {
 }
 
 describe("Settings configuration v2", () => {
+  it("validates bounded provider runtime controls", () => {
+    const value = configuration();
+    value.providers[0]!.configuration = {
+      requestTimeoutSeconds: 300,
+      maximumToolOutputBytes: 65_536,
+    };
+    expect(settingsConfigurationV2Schema.safeParse(value).success).toBe(true);
+
+    value.providers[0]!.configuration = { requestTimeoutSeconds: 3_601 };
+    expect(settingsConfigurationV2Schema.safeParse(value).success).toBe(false);
+
+    value.providers[0]!.configuration = { apiStyle: "responses" };
+    expect(settingsConfigurationV2Schema.safeParse(value).success).toBe(true);
+  });
+
   it("rejects unknown built-in adapter configuration fields before save", () => {
     const parsed = builtInToolConfigurationSchema.safeParse({
       id: "tool.files.read",
@@ -430,12 +448,19 @@ describe("Settings configuration v2", () => {
       "credentialRef",
     ]) {
       const value = configuration();
-      value.providers[0]!.configuration = {
-        public: { nested: { [key]: "must-not-persist" } },
-      };
+      value.extensions = [{
+        id: "extension.fixture",
+        name: "Fixture extension",
+        version: "1.0.0",
+        status: "discovered",
+        enabled: false,
+        trustAccepted: false,
+        manifestPath: "C:\\fixture\\extension.json",
+        configuration: { public: { nested: { [key]: "must-not-persist" } } },
+      }];
       expect(settingsDraftIssues(value, {})).toContainEqual(
         expect.objectContaining({
-          section: "providers",
+          section: "extensions",
           message: expect.stringContaining(key),
         }),
       );

@@ -31,6 +31,11 @@ const MAX_ARGUMENTS: usize = 512;
 const MAX_STRING_BYTES: usize = 16 * 1024;
 const MAX_FREEFORM_BYTES: usize = 256 * 1024;
 const MAX_FREEFORM_DEPTH: usize = 16;
+pub(crate) const DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 300;
+pub(crate) const MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 3_600;
+pub(crate) const DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES_V1: usize = 64 * 1024;
+pub(crate) const MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES_V1: u64 = 1024;
+pub(crate) const MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES_V1: u64 = 512 * 1024;
 const STANDARD_TIERS: [(&str, &str); 4] = [
     ("tier:fast", "Fast"),
     ("tier:simple", "Simple"),
@@ -220,6 +225,7 @@ impl SettingsConfigurationV2 {
     /// semantics.
     pub(crate) fn validate_installed_runtime_consumers(&self) -> Result<(), String> {
         for provider in &self.providers {
+            provider.runtime_limits()?;
             let Some(reference) = provider.credential_ref.as_deref() else {
                 continue;
             };
@@ -474,6 +480,69 @@ impl ProviderConfigurationV2 {
             &Value::Object(to_json_map(&self.configuration)),
         )
     }
+
+    /// Resolves the closed provider/runtime controls while keeping older
+    /// records with an empty configuration on the current safe defaults.
+    pub(crate) fn runtime_limits(&self) -> Result<ProviderRuntimeLimitsV1, String> {
+        let supported = BTreeSet::from(["requestTimeoutSeconds", "maximumToolOutputBytes"]);
+        if let Some(unknown) = self
+            .configuration
+            .keys()
+            .find(|key| !supported.contains(key.as_str()))
+        {
+            return Err(format!(
+                "provider '{}' configuration field '{}' is unsupported by the installed native runtime",
+                self.id, unknown
+            ));
+        }
+        let request_timeout_seconds = optional_provider_u64(
+            self,
+            "requestTimeoutSeconds",
+            1,
+            MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1,
+        )?
+        .unwrap_or(DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1);
+        let maximum_tool_output_bytes = optional_provider_u64(
+            self,
+            "maximumToolOutputBytes",
+            MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES_V1,
+            MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES_V1,
+        )?
+        .map_or(DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES_V1, |value| {
+            usize::try_from(value).unwrap_or(usize::MAX)
+        });
+        Ok(ProviderRuntimeLimitsV1 {
+            request_timeout_seconds,
+            maximum_tool_output_bytes,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProviderRuntimeLimitsV1 {
+    pub request_timeout_seconds: u64,
+    pub maximum_tool_output_bytes: usize,
+}
+
+fn optional_provider_u64(
+    provider: &ProviderConfigurationV2,
+    field: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<u64>, String> {
+    let Some(value) = provider.configuration.get(field) else {
+        return Ok(None);
+    };
+    value
+        .as_u64()
+        .filter(|value| (minimum..=maximum).contains(value))
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "provider '{}' configuration.{field} must be an integer from {minimum} through {maximum}",
+                provider.id
+            )
+        })
 }
 
 /// One concrete provider model selectable by a model tier.
@@ -2187,7 +2256,16 @@ mod tests {
                 capabilities: vec!["text".into(), "tools".into()],
                 parameters: BTreeMap::from([("reasoningEffort".into(), Value::from("medium"))]),
             }],
-            configuration: BTreeMap::from([("apiStyle".into(), Value::from("responses"))]),
+            configuration: BTreeMap::from([
+                (
+                    "requestTimeoutSeconds".into(),
+                    Value::from(DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1),
+                ),
+                (
+                    "maximumToolOutputBytes".into(),
+                    Value::from(DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES_V1),
+                ),
+            ]),
         });
         settings.model_tiers[2].resolution = ModelTierResolutionV2::Exact {
             target: ModelTargetV2 {
@@ -2286,6 +2364,57 @@ mod tests {
                 .tools
                 .iter()
                 .all(|tool| tool.id != "tool.python.sandboxed")
+        );
+    }
+
+    #[test]
+    fn provider_runtime_limits_default_and_reject_unconsumed_fields() {
+        let mut provider = configured().providers.remove(0);
+        provider.configuration.clear();
+        assert_eq!(
+            provider.runtime_limits().unwrap(),
+            ProviderRuntimeLimitsV1 {
+                request_timeout_seconds: 300,
+                maximum_tool_output_bytes: 65_536,
+            }
+        );
+
+        provider
+            .configuration
+            .insert("requestTimeoutSeconds".into(), Value::from(600));
+        provider
+            .configuration
+            .insert("maximumToolOutputBytes".into(), Value::from(4096));
+        assert_eq!(
+            provider.runtime_limits().unwrap().request_timeout_seconds,
+            600
+        );
+        assert_eq!(
+            provider.runtime_limits().unwrap().maximum_tool_output_bytes,
+            4096
+        );
+
+        provider
+            .configuration
+            .insert("requestTimeoutSeconds".into(), Value::from(3_601));
+        assert!(
+            provider
+                .runtime_limits()
+                .unwrap_err()
+                .contains("1 through 3600")
+        );
+        provider
+            .configuration
+            .insert("requestTimeoutSeconds".into(), Value::from(600));
+
+        provider
+            .configuration
+            .insert("ignoredByRuntime".into(), Value::Bool(true));
+        assert!(
+            provider
+                .runtime_limits()
+                .unwrap_err()
+                .contains("unsupported")
         );
     }
 

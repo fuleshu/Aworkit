@@ -144,6 +144,7 @@ export type ChatIntent =
   | {
       readonly type: "approval";
       readonly commandId: string;
-      readonly targetId: string;
+      /** Exact durable approval decision, not a Chat navigation target. */
+      readonly decisionId: string;
       readonly approved: boolean;
     };

@@ -848,6 +848,7 @@ describe("Chat native-port recovery contracts", () => {
       body: "Write generated files",
       createdAt: "now",
       status: "pending",
+      action: "approve" as const,
     };
     render(
       <TimelineCard
@@ -861,15 +862,118 @@ describe("Chat native-port recovery contracts", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Approve" }));
-    expect(actions).toEqual([{ action: "approve", id: "approval.lease.1" }]);
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    expect(actions).toEqual([
+      { action: "approve", id: "approval.lease.1" },
+      { action: "reject", id: "approval.lease.1" },
+    ]);
     expect(
       timelineActionIntent(actions[0]!.action, actions[0]!.id, "command.5"),
     ).toEqual({
       type: "approval",
       commandId: "command.5",
-      targetId: "approval.lease.1",
+      decisionId: "approval.lease.1",
       approved: true,
     });
+    expect(
+      timelineActionIntent(actions[1]!.action, actions[1]!.id, "command.6"),
+    ).toEqual({
+      type: "approval",
+      commandId: "command.6",
+      decisionId: "approval.lease.1",
+      approved: false,
+    });
+  });
+
+  it("keeps a rejected command error in an acknowledged modal", async () => {
+    const user = userEvent.setup();
+    const initial = snapshot(1, "Rejected command", [{ sequence: 1 }]);
+    const port: ChatCorePort = {
+      async snapshot() {
+        return initial;
+      },
+      async command(intent) {
+        return {
+          commandId: intent.commandId,
+          accepted: false,
+          currentVersion: 1,
+          reason: "Chat target 'invoke.pending' is stale",
+        };
+      },
+    };
+
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+    await screen.findByRole("heading", { name: "Rejected command" });
+    await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Aworkit error",
+    });
+    expect(within(dialog).getByText(/invoke\.pending/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "OK" })).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("opens one modal for a terminal failure instead of every failed span", async () => {
+    const user = userEvent.setup();
+    let listener: ((event: CoreEventEnvelope) => void) | undefined;
+    const port: ChatCorePort = {
+      async snapshot() {
+        return snapshot(1, "Failed spans", [{ sequence: 1 }]);
+      },
+      async command(intent) {
+        return {
+          commandId: intent.commandId,
+          accepted: true,
+          currentVersion: 1,
+          reason: null,
+        };
+      },
+      async subscribeEvents(next) {
+        listener = next;
+        return () => undefined;
+      },
+    };
+
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+    await screen.findByRole("heading", { name: "Failed spans" });
+    await waitFor(() => expect(listener).toBeDefined());
+    listener?.(
+      canonicalEvent(2, "span.failed", {
+        spanId: "span.model.1",
+        body: "provider transport failed",
+        status: "failed",
+      }),
+    );
+    listener?.(
+      canonicalEvent(3, "span.failed", {
+        spanId: "span.agent.1",
+        body: "provider transport failed",
+        status: "failed",
+      }),
+    );
+    listener?.(
+      canonicalEvent(4, "execution.failed", {
+        body: "provider transport failed",
+        status: "failed",
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Execution failed",
+    });
+    expect(within(dialog).getByText("provider transport failed")).toBeVisible();
+    expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    listener?.(
+      canonicalEvent(4, "execution.failed", {
+        body: "provider transport failed",
+        status: "failed",
+      }),
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("preserves waiting-for-input and queues follow-up input without run controls", async () => {

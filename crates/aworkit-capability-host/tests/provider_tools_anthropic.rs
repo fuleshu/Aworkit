@@ -32,6 +32,7 @@ fn request(exchanges: Vec<ModelToolExchangeV1>) -> ModelToolRequestV1 {
         parameters: Default::default(),
         tools: vec![tool()],
         exchanges,
+        retry_notice: None,
     }
 }
 

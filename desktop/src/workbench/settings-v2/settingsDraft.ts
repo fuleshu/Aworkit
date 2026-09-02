@@ -351,7 +351,7 @@ function freeformSecretIssues(
     candidates.push({
       section: "providers",
       path: `providers.${provider.id}.configuration`,
-      focusId: `${provider.id}-configuration`,
+      focusId: `${provider.id}-unsupported-configuration`,
       value: provider.configuration,
     });
     for (const model of provider.models) {

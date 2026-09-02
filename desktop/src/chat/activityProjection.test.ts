@@ -254,6 +254,48 @@ describe("canonical semantic timeline projection", () => {
       },
     });
   });
+
+  it("keeps detailed approval copy on one card and removes settled actions", () => {
+    const requested = event(1, "approval.requested", {
+      decisionId: "invoke.git-command",
+      title: "Allow Git shell command?",
+      body: "The model wants to run this host shell command:\n\ngit status --short",
+      createdAt: "1",
+    });
+
+    expect(projectSemanticTimeline([requested])).toEqual([
+      expect.objectContaining({
+        id: "invoke.git-command",
+        title: "Allow Git shell command?",
+        body: expect.stringContaining("git status --short"),
+        status: "pending",
+        action: "approve",
+      }),
+    ]);
+
+    expect(
+      projectSemanticTimeline([
+        requested,
+        event(2, "approval.resolved", {
+          decisionId: "invoke.git-command",
+          approved: false,
+        }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        id: "invoke.git-command",
+        status: "rejected",
+        action: undefined,
+      }),
+    ]);
+
+    expect(
+      projectSemanticTimeline([
+        requested,
+        event(2, "chat.cancelled", { createdAt: "2" }),
+      ])[0],
+    ).toMatchObject({ status: "cancelled", action: undefined });
+  });
 });
 
 function event(

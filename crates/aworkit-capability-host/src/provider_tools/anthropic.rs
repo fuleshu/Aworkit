@@ -87,6 +87,9 @@ pub(crate) fn anthropic_tool_request(
             .collect::<Result<Vec<_>, ProviderError>>()?;
         messages.push(json!({"role":"user","content":results}));
     }
+    if let Some(notice) = &request.retry_notice {
+        messages.push(json!({"role":"user","content":notice}));
+    }
 
     let tools = request
         .tools

@@ -11,8 +11,9 @@ use std::{
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
-    ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolExchangeV1,
-    ModelToolRequestV1, ModelToolResultV1, ProviderError, project_model_tool_events,
+    ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolDispatchEvidenceV1,
+    ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1, ProviderError,
+    project_model_tool_events,
 };
 use aworkit_protocol::StableId;
 use aworkit_trusted_core::ApprovalResponseV1;
@@ -29,6 +30,8 @@ const MAXIMUM_MODEL_TURNS: u32 = 12;
 const MAXIMUM_TOOL_CALLS: u32 = 64;
 const MAXIMUM_TOOL_CALLS_PER_TURN: usize = 8;
 const MAXIMUM_DURABLE_EXCHANGE_BYTES: usize = 512 * 1024;
+pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 1;
+pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
 
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
@@ -98,6 +101,8 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     pub total_calls: u32,
+    #[serde(default)]
+    pub timeout_recoveries: u32,
 }
 
 /// Outcome of one approval-aware agent loop invocation.
@@ -124,7 +129,9 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub binding_version_hash: String,
     pub maximum_input_bytes: usize,
     pub maximum_output_bytes: usize,
+    pub maximum_tool_output_bytes: usize,
     pub maximum_turns: u32,
+    pub maximum_timeout_recoveries: u32,
     pub maximum_tool_calls: u32,
     pub maximum_tokens: u64,
     pub deadline_epoch_millis: u64,
@@ -137,6 +144,7 @@ pub(crate) struct ModelToolLoopOutcomeV1 {
     pub output_tokens: u64,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
+    pub timeout_recoveries: u32,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub activities: Vec<WorkflowToolActivityV1>,
 }
@@ -176,8 +184,8 @@ pub(crate) fn execute_model_tool_loop_v1(
     validate_limits(&request).map_err(|error| failure(error, 0, 0, 0, 0, &[], &[]))?;
     let plan = ModelResolutionPlanV1 {
         candidates: vec![ModelCandidateV1 {
-            binding_id: request.binding_id,
-            version_hash: request.binding_version_hash,
+            binding_id: request.binding_id.clone(),
+            version_hash: request.binding_version_hash.clone(),
         }],
         maximum_input_bytes: request.maximum_input_bytes,
         maximum_output_bytes: request.maximum_output_bytes,
@@ -189,6 +197,7 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut output_tokens = 0_u64;
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
+    let mut timeout_recoveries = 0_u32;
 
     for turn in 1..=request.maximum_turns {
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
@@ -202,29 +211,26 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &activities,
             )
         })?;
-        attempted_model_turns = attempted_model_turns.saturating_add(1);
-        let evidence = gateway
-            .execute_tool_turn_cancellable(
-                &plan,
-                &ModelToolRequestV1 {
-                    input: request.input.clone(),
-                    parameters: request.parameters.clone(),
-                    tools: request.definitions.clone(),
-                    exchanges: exchanges.clone(),
-                },
-                cancellation,
+        let evidence = execute_tool_turn_with_timeout_recovery(
+            gateway,
+            &plan,
+            &request,
+            &exchanges,
+            cancellation,
+            &mut attempted_model_turns,
+            &mut timeout_recoveries,
+        )
+        .map_err(|error| {
+            failure(
+                error.into(),
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
             )
-            .map_err(|error| {
-                failure(
-                    error.into(),
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
+        })?;
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -270,6 +276,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 output_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
+                timeout_recoveries,
                 exchanges,
                 activities,
             });
@@ -336,7 +343,10 @@ pub(crate) fn execute_model_tool_loop_v1(
                         &activities,
                     )
                 })?;
-            results.push(settled.result);
+            results.push(model_facing_tool_result(
+                &settled.result,
+                request.maximum_tool_output_bytes,
+            ));
             activities.push(settled.activity);
             settled_tool_calls = settled_tool_calls.saturating_add(1);
         }
@@ -408,6 +418,8 @@ fn failure(
 fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelToolLoopErrorV1> {
     if request.definitions.is_empty()
         || !(2..=MAXIMUM_MODEL_TURNS).contains(&request.maximum_turns)
+        || request.maximum_tool_output_bytes == 0
+        || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
         || request.maximum_tool_calls == 0
         || request.maximum_tool_calls > MAXIMUM_TOOL_CALLS
         || request.maximum_tokens == 0
@@ -415,6 +427,65 @@ fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelTool
         return Err(ModelToolLoopErrorV1::Budget("invalid frozen limits"));
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_tool_turn_with_timeout_recovery(
+    gateway: &FrozenModelGateway,
+    plan: &ModelResolutionPlanV1,
+    request: &ModelToolLoopRequestV1<'_>,
+    exchanges: &[ModelToolExchangeV1],
+    cancellation: &CancellationToken,
+    attempted_model_turns: &mut u32,
+    timeout_recoveries: &mut u32,
+) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
+    let mut retry_notice = None;
+    loop {
+        enforce_deadline(request.deadline_epoch_millis)?;
+        *attempted_model_turns = attempted_model_turns.saturating_add(1);
+        let provider_request = ModelToolRequestV1 {
+            input: request.input.clone(),
+            parameters: request.parameters.clone(),
+            tools: request.definitions.clone(),
+            exchanges: exchanges.to_vec(),
+            retry_notice: retry_notice.clone(),
+        };
+        match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
+            Err(ProviderError::RequestTimedOut)
+                if *timeout_recoveries < request.maximum_timeout_recoveries =>
+            {
+                *timeout_recoveries = timeout_recoveries.saturating_add(1);
+                retry_notice = Some(PROVIDER_TIMEOUT_NOTICE.to_owned());
+            }
+            Err(error) => return Err(error.into()),
+            Ok(evidence) => return Ok(evidence),
+        }
+    }
+}
+
+fn model_facing_tool_result(result: &ModelToolResultV1, maximum_bytes: usize) -> ModelToolResultV1 {
+    let rendered = match &result.content {
+        Value::String(text) => text.clone(),
+        value => serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned()),
+    };
+    if rendered.len() <= maximum_bytes {
+        return result.clone();
+    }
+    let marker = format!(
+        "\n\n[Aworkit: tool output truncated; originalBytes={}; maximumBytes={}. Use a narrower tool request to retrieve omitted data.]",
+        rendered.len(),
+        maximum_bytes
+    );
+    let prefix_limit = maximum_bytes.saturating_sub(marker.len());
+    let mut boundary = prefix_limit.min(rendered.len());
+    while !rendered.is_char_boundary(boundary) {
+        boundary = boundary.saturating_sub(1);
+    }
+    ModelToolResultV1 {
+        call_id: result.call_id.clone(),
+        content: Value::String(format!("{}{}", &rendered[..boundary], marker)),
+        is_error: result.is_error,
+    }
 }
 
 fn enforce_deadline(deadline_epoch_millis: u64) -> Result<(), ModelToolLoopErrorV1> {
@@ -468,6 +539,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut output_tokens = 0_u64;
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
+    let mut timeout_recoveries = 0_u32;
 
     for turn in 1..=request.maximum_turns {
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
@@ -481,29 +553,26 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 &activities,
             )
         })?;
-        attempted_model_turns = attempted_model_turns.saturating_add(1);
-        let evidence = gateway
-            .execute_tool_turn_cancellable(
-                &plan,
-                &ModelToolRequestV1 {
-                    input: request.input.clone(),
-                    parameters: request.parameters.clone(),
-                    tools: request.definitions.clone(),
-                    exchanges: exchanges.clone(),
-                },
-                cancellation,
+        let evidence = execute_tool_turn_with_timeout_recovery(
+            gateway,
+            &plan,
+            &request,
+            &exchanges,
+            cancellation,
+            &mut attempted_model_turns,
+            &mut timeout_recoveries,
+        )
+        .map_err(|error| {
+            failure(
+                error.into(),
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
             )
-            .map_err(|error| {
-                failure(
-                    error.into(),
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
+        })?;
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -548,6 +617,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 output_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
+                timeout_recoveries,
                 exchanges,
                 activities,
             }));
@@ -616,7 +686,10 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 })?;
             match settled {
                 ToolInvokeV1::Settled(settled) => {
-                    results.push(settled.result);
+                    results.push(model_facing_tool_result(
+                        &settled.result,
+                        request.maximum_tool_output_bytes,
+                    ));
                     activities.push(settled.activity);
                     settled_tool_calls = settled_tool_calls.saturating_add(1);
                 }
@@ -634,6 +707,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                             attempted_model_turns,
                             settled_tool_calls,
                             total_calls,
+                            timeout_recoveries,
                         },
                     });
                 }
@@ -712,6 +786,7 @@ pub(crate) fn resume_model_tool_loop_v1(
     let mut output_tokens = pending.output_tokens;
     let mut attempted_model_turns = pending.attempted_model_turns;
     let mut settled_tool_calls = pending.settled_tool_calls;
+    let mut timeout_recoveries = 0_u32;
 
     let response = ApprovalResponseV1 {
         invocation_id: StableId::parse(pending.challenge.invocation_id.clone()).map_err(|_| {
@@ -773,7 +848,10 @@ pub(crate) fn resume_model_tool_loop_v1(
         assistant_content: vec![ModelAssistantContentV1::ToolCall {
             call: pending.call.clone(),
         }],
-        results: vec![settled.result.clone()],
+        results: vec![model_facing_tool_result(
+            &settled.result,
+            request.maximum_tool_output_bytes,
+        )],
     };
     let mut durable_exchanges = exchanges.clone();
     durable_exchanges.push(exchange.clone());
@@ -819,29 +897,26 @@ pub(crate) fn resume_model_tool_loop_v1(
                 &activities,
             )
         })?;
-        attempted_model_turns = attempted_model_turns.saturating_add(1);
-        let evidence = gateway
-            .execute_tool_turn_cancellable(
-                &plan,
-                &ModelToolRequestV1 {
-                    input: request.input.clone(),
-                    parameters: request.parameters.clone(),
-                    tools: request.definitions.clone(),
-                    exchanges: exchanges.clone(),
-                },
-                cancellation,
+        let evidence = execute_tool_turn_with_timeout_recovery(
+            gateway,
+            &plan,
+            &request,
+            &exchanges,
+            cancellation,
+            &mut attempted_model_turns,
+            &mut timeout_recoveries,
+        )
+        .map_err(|error| {
+            failure(
+                error.into(),
+                input_tokens,
+                output_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                &exchanges,
+                &activities,
             )
-            .map_err(|error| {
-                failure(
-                    error.into(),
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
+        })?;
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -886,6 +961,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 output_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
+                timeout_recoveries,
                 exchanges,
                 activities,
             }));
@@ -953,7 +1029,10 @@ pub(crate) fn resume_model_tool_loop_v1(
                 })?;
             match settled {
                 ToolInvokeV1::Settled(settled) => {
-                    results.push(settled.result);
+                    results.push(model_facing_tool_result(
+                        &settled.result,
+                        request.maximum_tool_output_bytes,
+                    ));
                     activities.push(settled.activity);
                     settled_tool_calls = settled_tool_calls.saturating_add(1);
                 }
@@ -971,6 +1050,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                             attempted_model_turns,
                             settled_tool_calls,
                             total_calls,
+                            timeout_recoveries,
                         },
                     });
                 }

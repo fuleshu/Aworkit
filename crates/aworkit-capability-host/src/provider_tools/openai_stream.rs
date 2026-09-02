@@ -1,6 +1,9 @@
 //! Bounded OpenAI-compatible Server-Sent Event normalization.
 
-use std::{collections::BTreeMap, io::BufRead};
+use std::{
+    collections::BTreeMap,
+    io::{self, BufRead},
+};
 
 use serde_json::{Map, Value};
 
@@ -45,9 +48,7 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
             return Err(ProviderError::Cancelled);
         }
         line.clear();
-        let read = reader
-            .read_line(&mut line)
-            .map_err(|_| invalid_stream("transport failed"))?;
+        let read = reader.read_line(&mut line).map_err(map_read_error)?;
         total_bytes = total_bytes.saturating_add(read);
         if total_bytes > maximum_response_bytes {
             return Err(invalid_stream("response exceeded the size bound"));
@@ -334,8 +335,25 @@ fn invalid_stream(reason: &str) -> ProviderError {
     ProviderError::Failed(format!("OpenAI stream {reason}"))
 }
 
+fn map_read_error(error: io::Error) -> ProviderError {
+    let timeout = matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) || error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<reqwest::Error>())
+        .is_some_and(reqwest::Error::is_timeout);
+    if timeout {
+        ProviderError::RequestTimedOut
+    } else {
+        invalid_stream("transport failed")
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::{self, BufRead, Read};
+
     use serde_json::json;
 
     use super::*;
@@ -387,5 +405,35 @@ mod tests {
             })),
             ["canonical chunk"]
         );
+    }
+
+    struct TimedOutReader;
+
+    impl Read for TimedOutReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "fixture timeout"))
+        }
+    }
+
+    impl BufRead for TimedOutReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "fixture timeout"))
+        }
+
+        fn consume(&mut self, _amount: usize) {}
+    }
+
+    #[test]
+    fn preserves_stream_read_timeouts_as_a_typed_provider_error() {
+        let error = consume_openai_stream(
+            TimedOutReader,
+            1024,
+            &[],
+            "openai.fixture",
+            &CancellationToken::default(),
+            &mut |_| Ok(()),
+        )
+        .expect_err("timeout must be preserved");
+        assert_eq!(error, ProviderError::RequestTimedOut);
     }
 }

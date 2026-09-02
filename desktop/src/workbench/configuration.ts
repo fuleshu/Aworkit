@@ -25,6 +25,31 @@ export const modelTargetSchema = z
   .object({ providerId: stableIdSchema, modelId: stableIdSchema })
   .strict();
 
+export const DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 300;
+export const MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS = 3_600;
+export const DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES = 65_536;
+export const MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES = 1_024;
+export const MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES = 524_288;
+
+const providerRuntimeConfigurationSchema = z
+  .object({
+    requestTimeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS)
+      .optional(),
+    maximumToolOutputBytes: z
+      .number()
+      .int()
+      .min(MINIMUM_MAXIMUM_TOOL_OUTPUT_BYTES)
+      .max(MAXIMUM_MAXIMUM_TOOL_OUTPUT_BYTES)
+      .optional(),
+  })
+  // Preserve older provider metadata so Settings can render it and let the
+  // user remove it. The native runtime still rejects every unconsumed field.
+  .catchall(z.unknown());
+
 export const modelConfigurationSchema = z
   .object({
     id: stableIdSchema,
@@ -47,7 +72,7 @@ export const providerConfigurationSchema = z
     enabled: z.boolean(),
     credentialRef: stableIdSchema.nullable().optional(),
     models: z.array(modelConfigurationSchema),
-    configuration: z.record(z.string(), z.unknown()),
+    configuration: providerRuntimeConfigurationSchema,
   })
   .strict();
 

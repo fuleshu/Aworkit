@@ -40,7 +40,7 @@ impl Default for OpenAiCompatibleLimitsV1 {
     fn default() -> Self {
         Self {
             connect_timeout: Duration::from_secs(5),
-            request_timeout: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(300),
             maximum_response_bytes: 1024 * 1024,
         }
     }
@@ -461,7 +461,10 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
 
 impl From<OpenAiCompatibleProviderError> for ProviderError {
     fn from(error: OpenAiCompatibleProviderError) -> Self {
-        Self::Failed(error.to_string())
+        match error {
+            OpenAiCompatibleProviderError::RequestTimedOut => Self::RequestTimedOut,
+            other => Self::Failed(other.to_string()),
+        }
     }
 }
 

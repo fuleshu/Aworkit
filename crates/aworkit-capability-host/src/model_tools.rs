@@ -14,6 +14,7 @@ const INVALID_TOOL_RESPONSE: &str = "provider tool response is invalid or unsupp
 
 const MAX_TOOL_DEFINITIONS: usize = 128;
 const MAX_TOOL_EXCHANGES: usize = 64;
+const MAX_RETRY_NOTICE_BYTES: usize = 4 * 1024;
 const MAX_TOOL_CALLS_PER_EXCHANGE: usize = 64;
 const MAX_ASSISTANT_CONTENT_BLOCKS: usize = 256;
 const MAX_TEXT_MESSAGES: usize = 4096;
@@ -124,6 +125,10 @@ pub struct ModelToolRequestV1 {
     pub parameters: BTreeMap<String, Value>,
     pub tools: Vec<ModelToolDefinitionV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
+    /// Transient recovery context appended after completed tool exchanges.
+    /// It records a failed provider attempt without fabricating model output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_notice: Option<String>,
 }
 
 /// Provider-neutral events emitted by a tool-capable model turn.
@@ -241,6 +246,9 @@ pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), 
     if request.tools.is_empty()
         || request.tools.len() > MAX_TOOL_DEFINITIONS
         || request.exchanges.len() > MAX_TOOL_EXCHANGES
+        || request.retry_notice.as_ref().is_some_and(|notice| {
+            notice.is_empty() || notice.len() > MAX_RETRY_NOTICE_BYTES || notice.contains('\0')
+        })
     {
         return Err(invalid_tool_request());
     }

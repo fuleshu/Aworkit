@@ -4,7 +4,7 @@ use std::{
     io::{self, Write},
     path::Path,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use aworkit_capability_host::{McpCapabilitySnapshotV1, McpPeerPort, ModelToolDefinitionV1};
@@ -53,6 +53,7 @@ use super::{
     mcp_tools::{
         MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
     },
+    model_tool_loop::PROVIDER_TIMEOUT_RECOVERIES_V1,
     pipeline::{
         WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowExecutionPipeline, WorkflowExecutionRequestV1,
         WorkflowExecutionResultV1, WorkflowExecutionStatusV1, WorkflowMessageV1,
@@ -68,10 +69,11 @@ use super::{
     },
     settings_v2::{
         AppearanceModeV2, BuiltInToolConfigurationV2, CredentialMetadataConfigurationV2,
-        ExtensionConfigurationV2, IntegrationTransportV2, ModelConfigurationV2, ModelTargetV2,
-        ModelTierConfigurationV2, ModelTierResolutionV2, ProviderConfigurationV2,
-        SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, validate_extension_lifecycle_update,
-        validate_http_url, validate_unavailable_executor_enablement_update,
+        DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1, ExtensionConfigurationV2,
+        IntegrationTransportV2, ModelConfigurationV2, ModelTargetV2, ModelTierConfigurationV2,
+        ModelTierResolutionV2, ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2,
+        SettingsConfigurationV2, validate_extension_lifecycle_update, validate_http_url,
+        validate_unavailable_executor_enablement_update,
     },
     tool_loop::{SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolBindingV1},
 };
@@ -501,11 +503,7 @@ impl DesktopRuntime {
                 .as_ref()
                 .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
             validate_model_capabilities(&model.provider, &model.model, !agent.tools.is_empty())?;
-            validate_workflow_model_parameters(
-                &workflow.document,
-                &model.provider,
-                &model.model,
-            )?;
+            validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
             if !agent.tools.is_empty() && !has_project {
                 return Err(
                     "the saved Agent uses project tools, but Settings has no eligible local project"
@@ -711,6 +709,7 @@ impl DesktopRuntime {
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
+        let provider_runtime_limits = context.provider_snapshot.runtime_limits()?;
         let provider_messages = conversation
             .iter()
             .map(|message| WorkflowMessageV1 {
@@ -726,6 +725,8 @@ impl DesktopRuntime {
                 kind: context.provider_kind.clone(),
                 base_url: context.provider_base_url.clone(),
                 model: context.remote_model_id.clone(),
+                request_timeout_seconds: provider_runtime_limits.request_timeout_seconds,
+                maximum_tool_output_bytes: provider_runtime_limits.maximum_tool_output_bytes,
                 credential: context
                     .credential
                     .as_ref()
@@ -762,12 +763,16 @@ impl DesktopRuntime {
             .collect::<Result<Vec<_>, String>>()?;
         execution_request.mcp_servers = context.mcp_manifests.values().cloned().collect();
         execution_request.maximum_turns = context.agent_maximum_turns;
+        execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = context.workflow_snapshot.clone();
-        execution_request.budget.turns = u64::from(context.agent_maximum_turns);
-        execution_request.budget.attempts = u64::from(context.agent_maximum_turns);
+        let provider_attempts = context
+            .agent_maximum_turns
+            .saturating_add(PROVIDER_TIMEOUT_RECOVERIES_V1);
+        execution_request.budget.turns = u64::from(provider_attempts);
+        execution_request.budget.attempts = u64::from(provider_attempts);
         execution_request.budget.tool_calls = context.maximum_tool_calls;
         execution_request.budget.actions =
-            u64::from(context.agent_maximum_turns).saturating_add(context.maximum_tool_calls);
+            u64::from(provider_attempts).saturating_add(context.maximum_tool_calls);
         execution_request.set_deadline_millis(context.run_deadline_millis);
         if serde_json::to_vec(&execution_request.messages)
             .map_err(|error| format!("cannot encode Chat message context: {error}"))?
@@ -1733,9 +1738,13 @@ impl DesktopRuntime {
         } else {
             direct_key
         };
-        let mut result =
-            self.provider
-                .test_connection("openai_compatible", &base_url, &model, api_key);
+        let mut result = self.provider.test_connection(
+            "openai_compatible",
+            &base_url,
+            &model,
+            api_key,
+            Duration::from_secs(DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1),
+        );
         let tests_saved_binding = base_url == saved_provider.base_url
             && model == saved_provider.model
             && tests_saved_credentials;
@@ -1790,6 +1799,7 @@ impl DesktopRuntime {
                 "openai_compatible",
                 &input.provider.base_url,
                 &input.provider.model,
+                Duration::from_secs(DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1),
             )?;
         } else if input.provider.api_key.is_some() {
             return Err("configure a provider endpoint and model before storing an API key".into());
@@ -2274,10 +2284,12 @@ impl DesktopRuntime {
                     request.provider.id, request.model_id
                 )
             })?;
+        let runtime_limits = request.provider.runtime_limits()?;
         self.provider.validate(
             &request.provider.kind,
             &request.provider.base_url,
             &model.remote_id,
+            Duration::from_secs(runtime_limits.request_timeout_seconds),
         )?;
         let tests_saved_credential_binding = request.replacement_credential.is_none()
             && if request.provider.credential_ref.is_some() {
@@ -2320,6 +2332,7 @@ impl DesktopRuntime {
             &request.provider.base_url,
             &model.remote_id,
             credential,
+            Duration::from_secs(runtime_limits.request_timeout_seconds),
         );
         let latency_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         if tests_saved_credential_binding
@@ -2363,12 +2376,14 @@ impl DesktopRuntime {
             request.replacement_credential.take(),
             request.use_stored_credential,
         )?;
+        let runtime_limits = request.provider.runtime_limits()?;
         let models = self
             .provider
             .discover_models(
                 &request.provider.kind,
                 &request.provider.base_url,
                 credential,
+                Duration::from_secs(runtime_limits.request_timeout_seconds),
             )?
             .into_iter()
             .map(|model| DiscoveredModelV2 {
@@ -3022,8 +3037,8 @@ fn freeze_graph_bindings(
                 })
                 .transpose()?
                 .unwrap_or(DEFAULT_AGENT_TIMEOUT_SECONDS);
-            run_deadline_millis = run_deadline_millis
-                .saturating_add(timeout_seconds.saturating_mul(1_000));
+            run_deadline_millis =
+                run_deadline_millis.saturating_add(timeout_seconds.saturating_mul(1_000));
         } else if node_type == "model_call" {
             maximum_turns = maximum_turns.saturating_add(1);
             run_deadline_millis = run_deadline_millis
@@ -3220,7 +3235,11 @@ fn validate_workflow_model_parameters(
             return Err(format!(
                 "workflow node '{node_id}' selects reasoningEffort '{effort}', but model '{}' advertised only: {}",
                 model.name,
-                advertised_efforts.iter().copied().collect::<Vec<_>>().join(", ")
+                advertised_efforts
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -3494,12 +3513,7 @@ fn require_consumed_provider_options(
     provider: &ProviderConfigurationV2,
     selected_model: Option<&ModelConfigurationV2>,
 ) -> Result<(), String> {
-    if !provider.configuration.is_empty() {
-        return Err(format!(
-            "provider '{}' has nonempty Provider configuration, but the installed native adapter has no consumer for those fields; clear Provider configuration before Test, Discover, or workflow execution",
-            provider.id
-        ));
-    }
+    provider.runtime_limits()?;
     let models = selected_model
         .map(std::slice::from_ref)
         .unwrap_or(provider.models.as_slice());
@@ -3524,14 +3538,12 @@ fn validate_consumed_model_parameters(
     }
     for (key, value) in &model.parameters {
         let valid = match key.as_str() {
-            "reasoningEffort" => value
-                .as_str()
-                .is_some_and(|value| {
-                    matches!(
-                        value,
-                        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
-                    )
-                }),
+            "reasoningEffort" => value.as_str().is_some_and(|value| {
+                matches!(
+                    value,
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                )
+            }),
             "enableThinking" | "preserveThinking" => value.is_boolean(),
             _ => false,
         };
@@ -3739,7 +3751,13 @@ mod tests {
     }
 
     impl ProviderPort for FixtureProvider {
-        fn validate(&self, _kind: &str, _base_url: &str, _model: &str) -> Result<(), String> {
+        fn validate(
+            &self,
+            _kind: &str,
+            _base_url: &str,
+            _model: &str,
+            _request_timeout: Duration,
+        ) -> Result<(), String> {
             Ok(())
         }
 
@@ -3749,6 +3767,7 @@ mod tests {
             _base_url: &str,
             model: &str,
             _api_key: Option<String>,
+            _request_timeout: Duration,
         ) -> ProviderTestResult {
             self.connection_tests.fetch_add(1, Ordering::SeqCst);
             ProviderTestResult {
@@ -3781,6 +3800,7 @@ mod tests {
             kind: &str,
             _base_url: &str,
             _api_key: Option<String>,
+            _request_timeout: Duration,
         ) -> Result<Vec<super::super::provider::DiscoveredProviderModel>, String> {
             if kind != "openai_compatible" {
                 return Err("unsupported fixture protocol".into());
@@ -4532,6 +4552,10 @@ mod tests {
         assert_eq!(requests[0].workspace, requests[1].workspace);
         assert_eq!(requests[0].tools, requests[1].tools);
         assert_eq!(requests[0].maximum_turns, 2);
+        assert_eq!(requests[0].maximum_timeout_recoveries, 1);
+        assert_eq!(requests[0].budget.turns, 3);
+        assert_eq!(requests[0].provider.request_timeout_seconds, 300);
+        assert_eq!(requests[0].provider.maximum_tool_output_bytes, 65_536);
         assert_eq!(requests[0].budget.tool_calls, 8);
         assert_eq!(requests[0].budget.deadline_ms, 120_000);
         assert_eq!(
@@ -5097,7 +5121,10 @@ mod tests {
             enabled: false,
             credential_ref: None,
             models: Vec::new(),
-            configuration: BTreeMap::from([("apiStyle".into(), Value::from("chat_completions"))]),
+            configuration: BTreeMap::from([
+                ("requestTimeoutSeconds".into(), Value::from(180)),
+                ("maximumToolOutputBytes".into(), Value::from(32_768)),
+            ]),
         });
         settings.model_tiers.push(ModelTierConfigurationV2 {
             id: "tier:private".into(),
@@ -5776,7 +5803,7 @@ mod tests {
                 draft_fingerprint: "draft.unsupported-provider-configuration".into(),
             })
             .unwrap_err();
-        assert!(error.contains("no consumer"));
+        assert!(error.contains("unsupported"));
 
         let mut supported_model_parameters = provider.clone();
         supported_model_parameters.models[0]

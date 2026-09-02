@@ -13,6 +13,7 @@ import {
 } from "./conversation";
 import {
   chatIntentPayload,
+  chatIntentTargetId,
   normalizeRuntimeSnapshot,
   PreviewChatCorePort,
 } from "./corePort";
@@ -82,6 +83,28 @@ describe("Milestone 08 Chat and Run details experience", () => {
         input: "again",
       }),
     ).toEqual({ input: "again" });
+  });
+
+  it("projects an approval decision into the native payload", () => {
+    expect(
+      chatIntentPayload({
+        type: "approval",
+        commandId: "chat.approval",
+        decisionId: "invoke.pending-tool",
+        approved: false,
+      }),
+    ).toEqual({
+      decisionId: "invoke.pending-tool",
+      approved: false,
+    });
+    expect(
+      chatIntentTargetId({
+        type: "approval",
+        commandId: "chat.approval",
+        decisionId: "invoke.pending-tool",
+        approved: false,
+      }),
+    ).toBeNull();
   });
 
   it("blocks IME composition and exposes projection-derived terminal controls", () => {
