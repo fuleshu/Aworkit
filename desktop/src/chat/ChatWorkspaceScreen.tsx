@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
 import { projectSemanticTimeline } from "./activityProjection";
 import type { ChatCorePort } from "./corePort";
@@ -49,6 +49,13 @@ export function ChatWorkspaceScreen({
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(320);
+  const chatLayoutRef = useRef<HTMLElement>(null);
+  const previewInspectorWidth = useCallback((width: number) => {
+    chatLayoutRef.current?.style.setProperty(
+      "--aw-inspector-width",
+      `${width}px`,
+    );
+  }, []);
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const nativeWorkflowPort = useMemo(
     () =>
@@ -222,6 +229,7 @@ export function ChatWorkspaceScreen({
   ].filter((item): item is string => item !== null);
   return (
     <section
+      ref={chatLayoutRef}
       className={`chat-layout ${inspectorOpen ? "with-inspector" : ""}`}
       style={
         inspectorOpen
@@ -399,6 +407,7 @@ export function ChatWorkspaceScreen({
           max={420}
           min={280}
           value={inspectorWidth}
+          onPreview={previewInspectorWidth}
           onChange={setInspectorWidth}
         />
       )}

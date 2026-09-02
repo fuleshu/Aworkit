@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ActorBubble } from "./ActorBubble";
 import { toConversationCard } from "./conversation";
 import type { TimelineItem } from "./types";
@@ -23,12 +23,16 @@ export function ConversationTimeline({
 }: ConversationTimelineProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToEnd = useRef(true);
-  const layoutRevision = items
-    .map(
-      (item) =>
-        `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}\u0000${item.depth ?? 0}`,
-    )
-    .join("\u0001");
+  const layoutRevision = useMemo(
+    () =>
+      items
+        .map(
+          (item) =>
+            `${item.id}\u0000${item.title.length}\u0000${item.body?.length ?? 0}\u0000${item.status ?? ""}\u0000${item.depth ?? 0}`,
+        )
+        .join("\u0001"),
+    [items],
+  );
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,

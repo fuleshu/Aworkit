@@ -125,7 +125,38 @@ const rawRunDetailsState = await evaluate(`(async () => {
   await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
   return result;
 })()`);
-state = { ...state, runDetailsState, rawRunDetailsState };
+const layoutState = await evaluate(`(() => {
+  const viewportHeight = document.documentElement.clientHeight;
+  const rect = (selector) => {
+    const element = document.querySelector(selector);
+    if (element === null) return null;
+    const bounds = element.getBoundingClientRect();
+    return { top: bounds.top, bottom: bounds.bottom, height: bounds.height };
+  };
+  const scrollState = (selector) => {
+    const element = document.querySelector(selector);
+    if (element === null) return null;
+    return {
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: getComputedStyle(element).overflowY,
+    };
+  };
+  const composer = rect('[aria-label="Chat composer"]');
+  return {
+    viewportHeight,
+    bodyScrollHeight: document.body.scrollHeight,
+    shell: rect('.desktop-shell'),
+    chat: rect('.chat-layout'),
+    composer,
+    composerFullyVisible:
+      composer !== null && composer.top >= 0 && composer.bottom <= viewportHeight + 1,
+    timeline: scrollState('.timeline-scroll'),
+    inspector: rect('[aria-label="Run details"]'),
+    runDetails: scrollState('.run-details-content'),
+  };
+})()`);
+state = { ...state, runDetailsState, rawRunDetailsState, layoutState };
 
 const screenshot = await command("Page.captureScreenshot", {
   format: "png",
@@ -153,6 +184,20 @@ if (!state.rawRunDetailsState.tabPresent)
   failures.push("Raw JSON tab was not rendered");
 if (!state.rawRunDetailsState.jsonPresent || !state.rawRunDetailsState.scoped)
   failures.push("Raw JSON does not contain scoped Run details");
+const boundedBottom = (bounds) =>
+  bounds !== null && bounds.bottom <= state.layoutState.viewportHeight + 1;
+if (!boundedBottom(state.layoutState.shell))
+  failures.push("desktop shell extends below the WebView");
+if (!boundedBottom(state.layoutState.chat))
+  failures.push("Chat extends below the WebView");
+if (!state.layoutState.composerFullyVisible)
+  failures.push("Chat composer is clipped by the WebView");
+if (!boundedBottom(state.layoutState.inspector))
+  failures.push("Run details extends below the WebView");
+if (!["auto", "scroll"].includes(state.layoutState.timeline?.overflowY))
+  failures.push("Chat timeline has no independent vertical scroll contract");
+if (!["auto", "scroll"].includes(state.layoutState.runDetails?.overflowY))
+  failures.push("Run details has no independent vertical scroll contract");
 
 console.log(
   JSON.stringify(
