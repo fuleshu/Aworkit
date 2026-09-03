@@ -20,6 +20,7 @@ mod plan_contract;
 mod project_scope;
 mod provider;
 mod provider_health;
+mod repeat_tool_reminder;
 mod run_events;
 mod semantic_events;
 mod service;

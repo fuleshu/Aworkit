@@ -35,8 +35,6 @@ const BUNDLED_WORKFLOW_LIBRARY_JSON: &str =
 const MAXIMUM_WORKFLOW_NAME_BYTES: usize = 128;
 const MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 const MAXIMUM_MODEL_CALL_TOKENS: u64 = 8192;
-const MINIMUM_AGENT_TURNS: u64 = 1;
-const MAXIMUM_AGENT_TURNS: u64 = 12;
 pub(crate) const KNOWN_NODE_TYPES: &[&str] = &[
     "input",
     "agent",
@@ -537,6 +535,7 @@ fn load_or_migrate_settings(
             let mut settings: SettingsDocument = decode_ref(&stored, "settings")?;
             let repaired = settings.disable_inactive_runtime_controls()
                 | settings.normalize_legacy_project_tool_limits()
+                | settings.normalize_legacy_agent_turn_limits()
                 | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {
@@ -727,7 +726,8 @@ fn load_or_create_workflows(
         let migrated = if editable {
             let rescue_migrated = migrate_rescue_model_node(&mut document);
             let plan_migrated = migrate_standard_agent_plan_contract(&mut document);
-            rescue_migrated || plan_migrated
+            let turn_limit_migrated = migrate_agent_turn_limits(&mut document);
+            rescue_migrated || plan_migrated || turn_limit_migrated
         } else {
             false
         };
@@ -1135,8 +1135,7 @@ fn migrate_rescue_model_node(document: &mut Value) -> bool {
             "configuration".into(),
             json!({
                 "modelTierId": "tier:balanced",
-                "toolIds": [],
-                "maxTurns": 1
+                "toolIds": []
             }),
         );
     }
@@ -1196,6 +1195,29 @@ fn migrate_standard_agent_plan_contract(document: &mut Value) -> bool {
     );
     configuration.insert("outputContract".into(), Value::String("plan".into()));
     true
+}
+
+/// Removes the obsolete Agent turn-limit setting. Agent loops now continue
+/// until the model answers, the user cancels, or a real runtime limit (such as
+/// deadline or context capacity) is reached.
+fn migrate_agent_turn_limits(document: &mut Value) -> bool {
+    let Some(nodes) = document.get_mut("nodes").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some("agent") {
+            continue;
+        }
+        if node
+            .get_mut("configuration")
+            .and_then(Value::as_object_mut)
+            .is_some_and(|configuration| configuration.remove("maxTurns").is_some())
+        {
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// The closed v1 executable catalog: known node types, per-type configuration
@@ -1412,11 +1434,10 @@ fn validate_agent_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let required = BTreeSet::from(["maxTurns", "modelTierId", "toolIds"]);
+    let required = BTreeSet::from(["modelTierId", "toolIds"]);
     let allowed = BTreeSet::from([
         "enableThinking",
         "instructions",
-        "maxTurns",
         "modelTierId",
         "reasoningEffort",
         "timeoutSeconds",
@@ -1424,7 +1445,7 @@ fn validate_agent_configuration(
     ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking"
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking"
         ));
     }
     if config
@@ -1461,15 +1482,6 @@ fn validate_agent_configuration(
                 "workflow node '{node_id}' agent toolIds must be unique"
             ));
         }
-    }
-    let maximum_turns = config
-        .get("maxTurns")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format!("workflow node '{node_id}' agent maxTurns must be an integer"))?;
-    if !(MINIMUM_AGENT_TURNS..=MAXIMUM_AGENT_TURNS).contains(&maximum_turns) {
-        return Err(format!(
-            "workflow node '{node_id}' agent maxTurns must be {MINIMUM_AGENT_TURNS}..={MAXIMUM_AGENT_TURNS}"
-        ));
     }
     if let Some(timeout_seconds) = config.get("timeoutSeconds") {
         let timeout_seconds = timeout_seconds.as_u64().ok_or_else(|| {
@@ -2434,7 +2446,7 @@ mod tests {
             "schemaVersion": 1,
             "nodes": [
                 {"id":"input.1","type":"input"},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
                 {"id":"wait.1","type":"wait"}
             ],
             "edges": [
@@ -2454,7 +2466,7 @@ mod tests {
             "nodes": [
                 {"id":"input.1","type":"input"},
                 {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"always"}}},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
                 {"id":"wait.1","type":"wait"}
             ],
             "edges": [
@@ -2473,7 +2485,7 @@ mod tests {
             "schemaVersion": 1,
             "nodes": [
                 {"id":"input.1","type":"input"},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":99}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"unexpected":99}},
                 {"id":"wait.1","type":"wait"}
             ],
             "edges": [
@@ -2484,14 +2496,14 @@ mod tests {
         assert!(
             validate_v1_executable_catalog(&bad_agent)
                 .unwrap_err()
-                .contains("maxTurns")
+                .contains("accepts exactly")
         );
 
         let unreachable = json!({
             "schemaVersion": 1,
             "nodes": [
                 {"id":"input.1","type":"input"},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":2}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
                 {"id":"orphan.1","type":"output"},
                 {"id":"wait.1","type":"wait"}
             ],
@@ -2517,7 +2529,7 @@ mod tests {
                 {"id":"input.1","type":"input"},
                 {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"exists","path":"text"}}},
                 {"id":"plan.1","type":"model_call","configuration":{"modelTierId":"tier:balanced","reasoningEffort":"high","enableThinking":true}},
-                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":["tool.todo"],"maxTurns":6,"reasoningEffort":null,"enableThinking":false}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":["tool.todo"],"reasoningEffort":null,"enableThinking":false}},
                 {"id":"output.1","type":"output"},
                 {"id":"wait.1","type":"wait"}
             ],
@@ -2538,5 +2550,35 @@ mod tests {
                 .unwrap_err()
                 .contains("reasoningEffort")
         );
+    }
+
+    #[test]
+    fn legacy_agent_turn_limit_is_removed_without_changing_other_configuration() {
+        let mut workflow = json!({
+            "schemaVersion": 1,
+            "nodes": [{
+                "id": "agent.1",
+                "type": "agent",
+                "configuration": {
+                    "modelTierId": "tier:balanced",
+                    "toolIds": ["tool.todo"],
+                    "maxTurns": 8,
+                    "instructions": "Keep working until done."
+                }
+            }],
+            "edges": []
+        });
+
+        assert!(migrate_agent_turn_limits(&mut workflow));
+        assert!(
+            workflow["nodes"][0]["configuration"]
+                .get("maxTurns")
+                .is_none()
+        );
+        assert_eq!(
+            workflow["nodes"][0]["configuration"]["instructions"],
+            "Keep working until done."
+        );
+        assert!(!migrate_agent_turn_limits(&mut workflow));
     }
 }

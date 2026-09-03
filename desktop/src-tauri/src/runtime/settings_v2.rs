@@ -57,9 +57,6 @@ const BUILTIN_TOOL_IDS: [&str; 12] = [
     "tool.subagent",
 ];
 
-/// Maximum child-loop turn budget accepted for the subagent tool contract.
-const SUBAGENT_MAXIMUM_TURNS_V1: u64 = 8;
-
 /// Complete canonical configuration persisted as one versioned JSON document.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -415,6 +412,16 @@ impl SettingsConfigurationV2 {
             }
         }
         changed
+    }
+
+    /// Removes the obsolete subagent turn limit from stored Settings. Child
+    /// loops now use the same natural-completion and repeat-reminder strategy
+    /// as their parent Agent loop.
+    pub(crate) fn normalize_legacy_agent_turn_limits(&mut self) -> bool {
+        self.tools
+            .iter_mut()
+            .filter(|tool| tool.id == "tool.subagent")
+            .any(|tool| tool.configuration.remove("maximumTurns").is_some())
     }
 
     pub(crate) fn credential(&self, reference: &str) -> Option<&CredentialMetadataConfigurationV2> {
@@ -889,14 +896,10 @@ impl BuiltInToolConfigurationV2 {
                 )
             }
             "tool.subagent" => {
-                require_exact_config_keys(
-                    self,
-                    &["authorityMode", "requiresApproval", "maximumTurns"],
-                )?;
+                require_exact_config_keys(self, &["authorityMode", "requiresApproval"])?;
                 require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "run_subagent")?;
-                require_config_bool(self, "requiresApproval", true)?;
-                require_config_u64(self, "maximumTurns", 1, SUBAGENT_MAXIMUM_TURNS_V1)
+                require_config_bool(self, "requiresApproval", true)
             }
             _ => Err(format!("built-in tool '{}' is not implemented", self.id)),
         }
@@ -1752,7 +1755,6 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             BTreeMap::from([
                 ("authorityMode".into(), Value::from("run_subagent")),
                 ("requiresApproval".into(), Value::Bool(true)),
-                ("maximumTurns".into(), Value::from(4_u64)),
             ]),
         ),
     ]
@@ -2661,6 +2663,23 @@ mod tests {
         assert_eq!(settings.data.detailed_capture_retention_days, None);
         assert_eq!(settings.data.local_history_retention_days, None);
         assert!(!settings.projects[0].portable_history_enabled);
+    }
+
+    #[test]
+    fn legacy_subagent_turn_limit_is_removed_once() {
+        let mut settings = SettingsConfigurationV2::default();
+        let subagent = settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.subagent")
+            .expect("subagent tool");
+        subagent
+            .configuration
+            .insert("maximumTurns".into(), Value::from(4));
+
+        assert!(settings.normalize_legacy_agent_turn_limits());
+        assert!(!settings.normalize_legacy_agent_turn_limits());
+        settings.validate().expect("normalized settings");
     }
 
     #[test]

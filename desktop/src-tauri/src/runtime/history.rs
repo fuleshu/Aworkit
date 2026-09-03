@@ -87,10 +87,12 @@ pub(crate) struct FrozenChatExecutionContextV1 {
     pub workflow_version: u64,
     pub workflow_snapshot_hash: String,
     pub workflow_snapshot: Value,
-    #[serde(default = "default_agent_maximum_turns")]
-    pub agent_maximum_turns: u32,
-    #[serde(default)]
-    pub maximum_tool_calls: u64,
+    /// Compatibility sinks for contexts frozen before Agent model turn caps
+    /// were removed. New contexts omit both obsolete fields.
+    #[serde(default, rename = "agentMaximumTurns", skip_serializing)]
+    pub legacy_agent_maximum_turns: Option<u32>,
+    #[serde(default, rename = "maximumToolCalls", skip_serializing)]
+    pub legacy_maximum_tool_calls: Option<u64>,
     /// Frozen wall-clock allowance for each command in this Chat/Run.
     #[serde(default = "default_run_deadline_millis")]
     pub run_deadline_millis: u64,
@@ -1208,14 +1210,9 @@ fn validate_frozen_context_record(
         .iter()
         .any(|tool| tool.tool_snapshot.requires_project)
         && context.project.is_none()
-        || context.agent_maximum_turns == 0
-        || context.agent_maximum_turns > 12
-        || context.maximum_tool_calls > 64
         || !(30_000..=3_600_000).contains(&context.run_deadline_millis)
-        || (context.tools.is_empty()
-            && (context.agent_maximum_turns != 1 || context.maximum_tool_calls != 0))
     {
-        return Err("stored frozen Chat Agent tool budget is invalid".into());
+        return Err("stored frozen Chat Agent execution context is invalid".into());
     }
     Ok(())
 }
@@ -1271,10 +1268,6 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         return Err("stored pending Chat command exceeds its size bound".into());
     }
     Ok(())
-}
-
-const fn default_agent_maximum_turns() -> u32 {
-    1
 }
 
 const fn default_run_deadline_millis() -> u64 {

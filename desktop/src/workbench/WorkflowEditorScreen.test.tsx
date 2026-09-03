@@ -289,7 +289,6 @@ function simpleChat(): WorkflowDocument {
         type: "agent",
         configuration: {
           modelTierId: "tier:balanced",
-          maxTurns: 1,
           toolIds: [],
         },
       },

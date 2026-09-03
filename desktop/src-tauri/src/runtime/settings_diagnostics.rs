@@ -525,7 +525,6 @@ mod tests {
                 configuration: BTreeMap::from([
                     ("authorityMode".into(), json!("run_subagent")),
                     ("requiresApproval".into(), json!(true)),
-                    ("maximumTurns".into(), json!(4)),
                 ]),
             },
             project: None,

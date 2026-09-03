@@ -888,7 +888,7 @@ fn model_agent_settles_turns_and_subagents_keep_context_and_budgets_isolated() {
         authority_manifest_ref: id("authority.agent"),
         budget_ref: id("budget.agent"),
         scope_id: "root".to_owned(),
-        maximum_turns: 2,
+        legacy_maximum_turns: None,
         turn_reservation: Usage {
             turns: 1,
             attempts: 1,
@@ -1065,7 +1065,7 @@ fn model_agent_settles_turns_and_subagents_keep_context_and_budgets_isolated() {
 }
 
 #[test]
-fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usage() {
+fn aggregate_agent_run_charges_resources_without_capping_provider_or_tool_counts() {
     let budget = BudgetEnvelope {
         turns: 8,
         attempts: 8,
@@ -1086,7 +1086,7 @@ fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usag
         authority_manifest_ref: id("authority.aggregate"),
         budget_ref: id("budget.aggregate"),
         scope_id: "root".into(),
-        maximum_turns: 8,
+        legacy_maximum_turns: None,
         turn_reservation: Usage {
             turns: 8,
             attempts: 8,
@@ -1111,20 +1111,20 @@ fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usag
         usage: None,
     };
     let actual = Usage {
-        turns: 2,
-        attempts: 2,
-        tool_calls: 3,
+        turns: 9,
+        attempts: 9,
+        tool_calls: 100,
         tokens: 125,
         cost_micros: 0,
-        actions: 5,
+        actions: 109,
     };
     assert!(
         agent
             .settle_committed_run_outcome(&outcome, &mut limits, actual)
             .expect("aggregate settlement")
     );
-    assert_eq!(limits.remaining("root").expect("remaining").turns, 6);
-    assert_eq!(limits.remaining("root").expect("remaining").tool_calls, 29);
+    assert_eq!(limits.remaining("root").expect("remaining").turns, 8);
+    assert_eq!(limits.remaining("root").expect("remaining").tool_calls, 32);
     assert_eq!(limits.remaining("root").expect("remaining").tokens, 875);
     assert!(
         !agent
@@ -1140,7 +1140,7 @@ fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usag
         authority_manifest_ref: id("authority.no-start"),
         budget_ref: id("budget.no-start"),
         scope_id: "no-start".into(),
-        maximum_turns: 8,
+        legacy_maximum_turns: None,
         turn_reservation: Usage {
             turns: 8,
             attempts: 8,
@@ -1170,7 +1170,7 @@ fn aggregate_agent_run_reserves_maxima_and_settles_actual_provider_and_tool_usag
             &mut no_start_limits,
             Usage {
                 turns: 9,
-                attempts: 9,
+                attempts: 8,
                 actions: 9,
                 ..Usage::default()
             },

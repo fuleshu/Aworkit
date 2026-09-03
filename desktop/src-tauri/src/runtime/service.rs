@@ -762,17 +762,14 @@ impl DesktopRuntime {
             })
             .collect::<Result<Vec<_>, String>>()?;
         execution_request.mcp_servers = context.mcp_manifests.values().cloned().collect();
-        execution_request.maximum_turns = context.agent_maximum_turns;
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = context.workflow_snapshot.clone();
-        let provider_attempts = context
-            .agent_maximum_turns
-            .saturating_add(PROVIDER_TIMEOUT_RECOVERIES_V1);
-        execution_request.budget.turns = u64::from(provider_attempts);
-        execution_request.budget.attempts = u64::from(provider_attempts);
-        execution_request.budget.tool_calls = context.maximum_tool_calls;
-        execution_request.budget.actions =
-            u64::from(provider_attempts).saturating_add(context.maximum_tool_calls);
+        // One outer graph execution is brokered. Agent-internal provider and
+        // tool calls are telemetry, not termination budgets.
+        execution_request.budget.turns = 1;
+        execution_request.budget.attempts = 1;
+        execution_request.budget.tool_calls = 0;
+        execution_request.budget.actions = 1;
         execution_request.set_deadline_millis(context.run_deadline_millis);
         if serde_json::to_vec(&execution_request.messages)
             .map_err(|error| format!("cannot encode Chat message context: {error}"))?
@@ -1440,8 +1437,8 @@ impl DesktopRuntime {
             workflow_version: workflow.version,
             workflow_snapshot_hash: canonical_hash(&workflow.document)?,
             workflow_snapshot: workflow.document,
-            agent_maximum_turns: agent.maximum_turns,
-            maximum_tool_calls: agent.maximum_tool_calls,
+            legacy_agent_maximum_turns: None,
+            legacy_maximum_tool_calls: None,
             run_deadline_millis: agent.run_deadline_millis,
             tools: agent.tools,
             model_tier_id: resolved.tier.id.clone(),
@@ -2934,13 +2931,11 @@ fn validate_credential_metadata_update(
 }
 
 struct FrozenWorkflowAgentV1 {
-    maximum_turns: u32,
-    maximum_tool_calls: u64,
     run_deadline_millis: u64,
     tools: Vec<FrozenToolBindingV1>,
 }
 
-/// Freezes the tool subset and turn budget for a catalog-valid graph workflow:
+/// Freezes the tool subset and deadline for a catalog-valid graph workflow:
 /// the union of every agent/tool node's bindings, resolved only against saved
 /// enabled Settings records. Only tools this build can execute survive the
 /// pipeline freeze; a node binding anything else fails closed.
@@ -2990,7 +2985,6 @@ fn freeze_graph_bindings(
         .get("nodes")
         .and_then(Value::as_array)
         .ok_or_else(|| "workflow nodes are missing".to_owned())?;
-    let mut maximum_turns = 0_u32;
     let mut run_deadline_millis = 0_u64;
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
@@ -3020,14 +3014,6 @@ fn freeze_graph_bindings(
             _ => Vec::new(),
         };
         if node_type == "agent" {
-            let turns = configuration
-                .and_then(|config| config.get("maxTurns"))
-                .and_then(Value::as_u64)
-                .ok_or_else(|| format!("workflow node '{node_id}' maxTurns is missing"))?;
-            maximum_turns = maximum_turns.saturating_add(
-                u32::try_from(turns)
-                    .map_err(|_| format!("workflow node '{node_id}' maxTurns is out of range"))?,
-            );
             let timeout_seconds = configuration
                 .and_then(|config| config.get("timeoutSeconds"))
                 .map(|value| {
@@ -3040,7 +3026,6 @@ fn freeze_graph_bindings(
             run_deadline_millis =
                 run_deadline_millis.saturating_add(timeout_seconds.saturating_mul(1_000));
         } else if node_type == "model_call" {
-            maximum_turns = maximum_turns.saturating_add(1);
             run_deadline_millis = run_deadline_millis
                 .saturating_add(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000));
         }
@@ -3122,16 +3107,7 @@ fn freeze_graph_bindings(
             });
         }
     }
-    let maximum_tool_calls = if tools.is_empty() {
-        0
-    } else {
-        u64::from(maximum_turns.saturating_sub(1))
-            .saturating_mul(8)
-            .min(64)
-    };
     Ok(FrozenWorkflowAgentV1 {
-        maximum_turns: maximum_turns.max(1),
-        maximum_tool_calls,
         run_deadline_millis: run_deadline_millis
             .max(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000))
             .min(MAXIMUM_WORKFLOW_TIMEOUT_MILLIS),
@@ -4195,7 +4171,6 @@ mod tests {
 
         let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["nodes"][1]["configuration"]["toolIds"] = json!(["tool.files.read"]);
-        workflow.document["nodes"][1]["configuration"]["maxTurns"] = json!(2);
         runtime
             .workflow_commit(WorkflowCommitInput {
                 command_id: "workflow.tool-test".into(),
@@ -4312,7 +4287,6 @@ mod tests {
         let mut workflow = crate::runtime::documents::bundled_workflow_template("simple-chat")
             .expect("bundled workflow");
         workflow["nodes"][1]["configuration"]["toolIds"] = json!([SUBAGENT_CAPABILITY_ID]);
-        workflow["nodes"][1]["configuration"]["maxTurns"] = json!(2);
 
         let frozen = freeze_graph_bindings(&workflow, &settings, true, &BTreeMap::new())
             .expect("subagent freeze");
@@ -4513,8 +4487,8 @@ mod tests {
             ))
             .unwrap();
         let frozen = runtime.history.current_frozen_context().unwrap().unwrap();
-        assert_eq!(frozen.context.agent_maximum_turns, 2);
-        assert_eq!(frozen.context.maximum_tool_calls, 8);
+        assert_eq!(frozen.context.legacy_agent_maximum_turns, None);
+        assert_eq!(frozen.context.legacy_maximum_tool_calls, None);
         assert_eq!(frozen.context.run_deadline_millis, 120_000);
         assert_eq!(frozen.context.tools.len(), 1);
         assert_eq!(frozen.context.tools[0].tool_id, "tool.files.read");
@@ -4551,12 +4525,11 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].workspace, requests[1].workspace);
         assert_eq!(requests[0].tools, requests[1].tools);
-        assert_eq!(requests[0].maximum_turns, 2);
         assert_eq!(requests[0].maximum_timeout_recoveries, 1);
-        assert_eq!(requests[0].budget.turns, 3);
+        assert_eq!(requests[0].budget.turns, 1);
         assert_eq!(requests[0].provider.request_timeout_seconds, 300);
         assert_eq!(requests[0].provider.maximum_tool_output_bytes, 65_536);
-        assert_eq!(requests[0].budget.tool_calls, 8);
+        assert_eq!(requests[0].budget.tool_calls, 0);
         assert_eq!(requests[0].budget.deadline_ms, 120_000);
         assert_eq!(
             requests[0].deadline_epoch_millis,
@@ -5854,7 +5827,6 @@ mod tests {
                 "configuration":{
                     "modelTierId":"tier:balanced",
                     "toolIds":[],
-                    "maxTurns":2,
                     "reasoningEffort":"high",
                     "enableThinking":false
                 }

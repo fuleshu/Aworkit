@@ -74,7 +74,7 @@ describe("workflow connection and cycle validation", () => {
       schemaVersion: 1,
       nodes: [
         { id: "i.1", type: "input" },
-        { id: "a.1", type: "agent", configuration: { modelTierId: "tier:balanced", maxTurns: 1, toolIds: [] } },
+        { id: "a.1", type: "agent", configuration: { modelTierId: "tier:balanced", toolIds: [] } },
       ],
       edges: [{ id: "e.1", source: "i.1", target: "a.1", sourcePort: "missing" }],
     };
@@ -126,7 +126,7 @@ function simpleChat(): WorkflowDocument {
         id: "agent.1",
         label: "Agent",
         type: "agent",
-        configuration: { modelTierId: "tier:balanced", maxTurns: 1, toolIds: [] },
+        configuration: { modelTierId: "tier:balanced", toolIds: [] },
       },
       { id: "output.1", label: "Output", type: "output" },
       { id: "wait.1", label: "Wait for input", type: "wait" },

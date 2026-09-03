@@ -1,4 +1,4 @@
-//! Bounded provider/tool orchestration for one frozen Agent invocation.
+//! Provider/tool orchestration for one frozen Agent invocation.
 //!
 //! Providers can only request tools. Every request is settled by the injected
 //! trusted-core port before the exact result is sent back on the next model
@@ -21,13 +21,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::tool_loop::{ToolApprovalChallengeV1, WorkflowToolActivityV1};
+use super::{
+    repeat_tool_reminder::RepeatToolReminderStateV1,
+    tool_loop::{ToolApprovalChallengeV1, WorkflowToolActivityV1},
+};
 
-// These ceilings must accept every budget that the frozen workflow contract
-// can produce. Agent nodes allow up to 12 turns and the run freezer caps the
-// aggregate tool-call budget at 64.
-const MAXIMUM_MODEL_TURNS: u32 = 12;
-const MAXIMUM_TOOL_CALLS: u32 = 64;
 const MAXIMUM_TOOL_CALLS_PER_TURN: usize = 8;
 const MAXIMUM_DURABLE_EXCHANGE_BYTES: usize = 512 * 1024;
 pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 1;
@@ -100,9 +98,16 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub output_tokens: u64,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
-    pub total_calls: u32,
+    /// Compatibility sink for approval checkpoints written while aggregate
+    /// tool calls were a termination budget. New checkpoints omit it.
+    #[serde(default, rename = "totalCalls", skip_serializing)]
+    pub _legacy_total_calls: Option<u32>,
     #[serde(default)]
     pub timeout_recoveries: u32,
+    #[serde(default)]
+    pub repeat_tool_reminder: RepeatToolReminderStateV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_runtime_notice: Option<String>,
 }
 
 /// Outcome of one approval-aware agent loop invocation.
@@ -130,9 +135,7 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub maximum_input_bytes: usize,
     pub maximum_output_bytes: usize,
     pub maximum_tool_output_bytes: usize,
-    pub maximum_turns: u32,
     pub maximum_timeout_recoveries: u32,
-    pub maximum_tool_calls: u32,
     pub maximum_tokens: u64,
     pub deadline_epoch_millis: u64,
 }
@@ -173,8 +176,9 @@ pub(crate) struct ModelToolLoopFailureV1 {
     pub activities: Vec<WorkflowToolActivityV1>,
 }
 
-/// Runs the exact frozen model/tool loop until a final assistant message or a
-/// fail-closed budget/authority error is reached.
+/// Runs the exact frozen model/tool loop until the model returns a final
+/// assistant message or a real authority, deadline, context, or token error is
+/// reached. There is deliberately no model-turn or aggregate tool-call cap.
 pub(crate) fn execute_model_tool_loop_v1(
     gateway: &FrozenModelGateway,
     request: ModelToolLoopRequestV1<'_>,
@@ -192,14 +196,16 @@ pub(crate) fn execute_model_tool_loop_v1(
     };
     let mut exchanges = Vec::new();
     let mut activities = Vec::new();
-    let mut total_calls = 0_u32;
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
     let mut timeout_recoveries = 0_u32;
+    let mut repeat_tool_reminder = RepeatToolReminderStateV1::default();
+    let mut pending_runtime_notice = None;
+    let mut turn = 1_u32;
 
-    for turn in 1..=request.maximum_turns {
+    loop {
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -216,6 +222,7 @@ pub(crate) fn execute_model_tool_loop_v1(
             &plan,
             &request,
             &exchanges,
+            pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
@@ -281,17 +288,6 @@ pub(crate) fn execute_model_tool_loop_v1(
                 activities,
             });
         }
-        if turn == request.maximum_turns {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("model turn limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
             return Err(failure(
                 ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
@@ -303,20 +299,6 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &activities,
             ));
         }
-        total_calls =
-            total_calls.saturating_add(u32::try_from(turn_output.calls.len()).unwrap_or(u32::MAX));
-        if total_calls > request.maximum_tool_calls {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
-
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
             enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
@@ -349,6 +331,10 @@ pub(crate) fn execute_model_tool_loop_v1(
             ));
             activities.push(settled.activity);
             settled_tool_calls = settled_tool_calls.saturating_add(1);
+            append_runtime_notices(
+                &mut pending_runtime_notice,
+                repeat_tool_reminder.observe_calls(std::slice::from_ref(call)),
+            );
         }
         let exchange = ModelToolExchangeV1 {
             assistant_content: turn_output.assistant_content,
@@ -383,16 +369,8 @@ pub(crate) fn execute_model_tool_loop_v1(
                 )
             })?;
         exchanges.push(exchange);
+        turn = turn.saturating_add(1);
     }
-    Err(failure(
-        ModelToolLoopErrorV1::Budget("model turn limit"),
-        input_tokens,
-        output_tokens,
-        attempted_model_turns,
-        settled_tool_calls,
-        &exchanges,
-        &activities,
-    ))
 }
 
 fn failure(
@@ -417,11 +395,8 @@ fn failure(
 
 fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelToolLoopErrorV1> {
     if request.definitions.is_empty()
-        || !(2..=MAXIMUM_MODEL_TURNS).contains(&request.maximum_turns)
         || request.maximum_tool_output_bytes == 0
         || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
-        || request.maximum_tool_calls == 0
-        || request.maximum_tool_calls > MAXIMUM_TOOL_CALLS
         || request.maximum_tokens == 0
     {
         return Err(ModelToolLoopErrorV1::Budget("invalid frozen limits"));
@@ -435,11 +410,12 @@ fn execute_tool_turn_with_timeout_recovery(
     plan: &ModelResolutionPlanV1,
     request: &ModelToolLoopRequestV1<'_>,
     exchanges: &[ModelToolExchangeV1],
+    runtime_notice: Option<String>,
     cancellation: &CancellationToken,
     attempted_model_turns: &mut u32,
     timeout_recoveries: &mut u32,
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
-    let mut retry_notice = None;
+    let mut retry_notice = runtime_notice;
     loop {
         enforce_deadline(request.deadline_epoch_millis)?;
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
@@ -455,10 +431,25 @@ fn execute_tool_turn_with_timeout_recovery(
                 if *timeout_recoveries < request.maximum_timeout_recoveries =>
             {
                 *timeout_recoveries = timeout_recoveries.saturating_add(1);
-                retry_notice = Some(PROVIDER_TIMEOUT_NOTICE.to_owned());
+                retry_notice = Some(match retry_notice {
+                    Some(notice) => format!("{notice}\n\n{PROVIDER_TIMEOUT_NOTICE}"),
+                    None => PROVIDER_TIMEOUT_NOTICE.to_owned(),
+                });
             }
             Err(error) => return Err(error.into()),
             Ok(evidence) => return Ok(evidence),
+        }
+    }
+}
+
+fn append_runtime_notices(target: &mut Option<String>, notices: Vec<String>) {
+    for notice in notices {
+        match target {
+            Some(existing) => {
+                existing.push_str("\n\n");
+                existing.push_str(&notice);
+            }
+            None => *target = Some(notice),
         }
     }
 }
@@ -534,14 +525,16 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     };
     let mut exchanges = Vec::new();
     let mut activities = Vec::new();
-    let mut total_calls = 0_u32;
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
     let mut timeout_recoveries = 0_u32;
+    let mut repeat_tool_reminder = RepeatToolReminderStateV1::default();
+    let mut pending_runtime_notice = None;
+    let mut turn = 1_u32;
 
-    for turn in 1..=request.maximum_turns {
+    loop {
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -558,6 +551,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             &plan,
             &request,
             &exchanges,
+            pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
@@ -622,17 +616,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 activities,
             }));
         }
-        if turn == request.maximum_turns {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("model turn limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
             return Err(failure(
                 ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
@@ -644,20 +627,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 &activities,
             ));
         }
-        total_calls =
-            total_calls.saturating_add(u32::try_from(turn_output.calls.len()).unwrap_or(u32::MAX));
-        if total_calls > request.maximum_tool_calls {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
-
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
             enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
@@ -692,6 +661,10 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                     ));
                     activities.push(settled.activity);
                     settled_tool_calls = settled_tool_calls.saturating_add(1);
+                    append_runtime_notices(
+                        &mut pending_runtime_notice,
+                        repeat_tool_reminder.observe_calls(std::slice::from_ref(call)),
+                    );
                 }
                 ToolInvokeV1::Approval(challenge) => {
                     return Ok(ModelToolLoopRunV1::Suspended {
@@ -706,8 +679,10 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                             output_tokens,
                             attempted_model_turns,
                             settled_tool_calls,
-                            total_calls,
+                            _legacy_total_calls: None,
                             timeout_recoveries,
+                            repeat_tool_reminder,
+                            pending_runtime_notice,
                         },
                     });
                 }
@@ -746,16 +721,8 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 )
             })?;
         exchanges.push(exchange);
+        turn = turn.saturating_add(1);
     }
-    Err(failure(
-        ModelToolLoopErrorV1::Budget("model turn limit"),
-        input_tokens,
-        output_tokens,
-        attempted_model_turns,
-        settled_tool_calls,
-        &exchanges,
-        &activities,
-    ))
 }
 
 /// Resumes a suspended agent loop: the exact original call is settled with
@@ -781,12 +748,13 @@ pub(crate) fn resume_model_tool_loop_v1(
     };
     let mut exchanges = pending.exchanges.clone();
     let mut activities = pending.activities.clone();
-    let mut total_calls = pending.total_calls;
     let mut input_tokens = pending.input_tokens;
     let mut output_tokens = pending.output_tokens;
     let mut attempted_model_turns = pending.attempted_model_turns;
     let mut settled_tool_calls = pending.settled_tool_calls;
-    let mut timeout_recoveries = 0_u32;
+    let mut timeout_recoveries = pending.timeout_recoveries;
+    let mut repeat_tool_reminder = pending.repeat_tool_reminder.clone();
+    let mut pending_runtime_notice = pending.pending_runtime_notice.clone();
 
     let response = ApprovalResponseV1 {
         invocation_id: StableId::parse(pending.challenge.invocation_id.clone()).map_err(|_| {
@@ -884,8 +852,13 @@ pub(crate) fn resume_model_tool_loop_v1(
     exchanges.push(exchange);
     activities.push(settled.activity);
     settled_tool_calls = settled_tool_calls.saturating_add(1);
+    append_runtime_notices(
+        &mut pending_runtime_notice,
+        repeat_tool_reminder.observe_calls(std::slice::from_ref(&pending.call)),
+    );
 
-    for turn in pending.turn.saturating_add(1)..=request.maximum_turns {
+    let mut turn = pending.turn.saturating_add(1);
+    loop {
         enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
             failure(
                 error,
@@ -902,6 +875,7 @@ pub(crate) fn resume_model_tool_loop_v1(
             &plan,
             &request,
             &exchanges,
+            pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
@@ -966,33 +940,9 @@ pub(crate) fn resume_model_tool_loop_v1(
                 activities,
             }));
         }
-        if turn == request.maximum_turns {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("model turn limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
             return Err(failure(
                 ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
-        total_calls =
-            total_calls.saturating_add(u32::try_from(turn_output.calls.len()).unwrap_or(u32::MAX));
-        if total_calls > request.maximum_tool_calls {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("tool-call limit"),
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -1035,6 +985,10 @@ pub(crate) fn resume_model_tool_loop_v1(
                     ));
                     activities.push(settled.activity);
                     settled_tool_calls = settled_tool_calls.saturating_add(1);
+                    append_runtime_notices(
+                        &mut pending_runtime_notice,
+                        repeat_tool_reminder.observe_calls(std::slice::from_ref(call)),
+                    );
                 }
                 ToolInvokeV1::Approval(challenge) => {
                     return Ok(ModelToolLoopRunV1::Suspended {
@@ -1049,8 +1003,10 @@ pub(crate) fn resume_model_tool_loop_v1(
                             output_tokens,
                             attempted_model_turns,
                             settled_tool_calls,
-                            total_calls,
+                            _legacy_total_calls: None,
                             timeout_recoveries,
+                            repeat_tool_reminder,
+                            pending_runtime_notice,
                         },
                     });
                 }
@@ -1089,14 +1045,6 @@ pub(crate) fn resume_model_tool_loop_v1(
                 )
             })?;
         exchanges.push(exchange);
+        turn = turn.saturating_add(1);
     }
-    Err(failure(
-        ModelToolLoopErrorV1::Budget("model turn limit"),
-        input_tokens,
-        output_tokens,
-        attempted_model_turns,
-        settled_tool_calls,
-        &exchanges,
-        &activities,
-    ))
 }

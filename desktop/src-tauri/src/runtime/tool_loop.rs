@@ -118,8 +118,6 @@ pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
 const SUBAGENT_PROVIDER_NAME: &str = "aworkit_spawn_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
-const SUBAGENT_MAXIMUM_TURNS: u64 = 8;
-const SUBAGENT_MAXIMUM_TOOL_CALLS: u32 = 8;
 const SUBAGENT_MAXIMUM_TOKENS: u64 = 64_000;
 const SUBAGENT_MAXIMUM_TASK_BYTES: usize = 16 * 1024;
 const SUBAGENT_MAXIMUM_CONTEXT_BYTES: usize = 32 * 1024;
@@ -341,7 +339,10 @@ pub(crate) enum StoredFileToolLimitV1 {
         maximum_extract_bytes: usize,
     },
     Subagent {
-        maximum_turns: usize,
+        /// Compatibility sink for bindings frozen before child turn caps were
+        /// removed. New bindings omit this obsolete value.
+        #[serde(default, rename = "maximum_turns", skip_serializing)]
+        legacy_maximum_turns: Option<usize>,
     },
     Mcp {
         server_id: String,
@@ -762,19 +763,20 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             SUBAGENT_CAPABILITY_ID => (
                 SUBAGENT_PROVIDER_NAME.to_owned(),
-                "Delegate one bounded read-only subtask to a fresh subagent context; approval required.".to_owned(),
+                "Delegate one read-only subtask to a fresh subagent context; approval required.".to_owned(),
                 subagent_schema(),
                 StoredFileToolLimitV1::Subagent {
-                    maximum_turns: *freeze_configuration(
-                        &requested.configuration,
-                        &[
-                            ("authorityMode", Value::String("run_subagent".into())),
-                            ("requiresApproval", Value::Bool(true)),
-                        ],
-                        &[("maximumTurns", 1, SUBAGENT_MAXIMUM_TURNS)],
-                    )?
-                    .get("maximumTurns")
-                    .expect("frozen maximumTurns"),
+                    legacy_maximum_turns: {
+                        freeze_configuration(
+                            &requested.configuration,
+                            &[
+                                ("authorityMode", Value::String("run_subagent".into())),
+                                ("requiresApproval", Value::Bool(true)),
+                            ],
+                            &[],
+                        )?;
+                        None
+                    },
                 },
             ),
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => freeze_mcp_binding(requested)?,
@@ -2148,9 +2150,7 @@ impl FileToolDispatcherV1 {
                     tool_name,
                     schema_hash,
                 } => self.run_mcp_tool(envelope, server_id, tool_name, schema_hash, cancellation),
-                StoredFileToolLimitV1::Subagent { maximum_turns } => {
-                    self.run_subagent(envelope, *maximum_turns, cancellation)
-                }
+                StoredFileToolLimitV1::Subagent { .. } => self.run_subagent(envelope, cancellation),
             }
         })();
         match result {
@@ -2233,7 +2233,7 @@ impl FileToolDispatcherV1 {
         }
     }
 
-    /// Runs the bounded subagent child loop: a fresh model/tool conversation
+    /// Runs a subagent child loop: a fresh model/tool conversation
     /// over the same frozen gateway with the read-only, approval-free child
     /// tool subset. The child cannot delegate further (the subagent tool is
     /// excluded from its definitions and port) and every interaction is fenced
@@ -2243,7 +2243,6 @@ impl FileToolDispatcherV1 {
     fn run_subagent(
         &self,
         envelope: &ApprovedInvocationEnvelopeV1,
-        maximum_turns: usize,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
         let task = self.record.call.arguments["task"]
@@ -2305,14 +2304,7 @@ impl FileToolDispatcherV1 {
                 maximum_input_bytes: SUBAGENT_MAXIMUM_INPUT_BYTES,
                 maximum_output_bytes: SUBAGENT_MAXIMUM_OUTPUT_BYTES,
                 maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
-                // One tool turn plus one final turn is the minimum loop shape;
-                // frozen values below that bound follow the same convention
-                // as agent nodes and execute with the minimum.
-                maximum_turns: u32::try_from(maximum_turns)
-                    .map_err(|_| "subagent turn bound is out of range".to_owned())?
-                    .max(2),
                 maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
-                maximum_tool_calls: SUBAGENT_MAXIMUM_TOOL_CALLS,
                 maximum_tokens: SUBAGENT_MAXIMUM_TOKENS,
                 deadline_epoch_millis: self.record.deadline_epoch_millis,
             },
@@ -3674,7 +3666,6 @@ mod tests {
             configuration: json!({
                 "authorityMode":"run_subagent",
                 "requiresApproval":true,
-                "maximumTurns":4,
             }),
             definition: None,
         }])
@@ -3682,7 +3673,9 @@ mod tests {
         .remove(0);
         assert_eq!(
             binding.limit,
-            StoredFileToolLimitV1::Subagent { maximum_turns: 4 }
+            StoredFileToolLimitV1::Subagent {
+                legacy_maximum_turns: None
+            }
         );
         assert!(binding.requires_approval);
         assert!(matches!(
@@ -3690,7 +3683,6 @@ mod tests {
                 capability_id: SUBAGENT_CAPABILITY_ID.into(),
                 configuration: json!({
                     "authorityMode":"run_subagent",
-                    "maximumTurns":4,
                 }),
                 definition: None,
             }]),

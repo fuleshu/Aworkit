@@ -20,7 +20,6 @@
             "configuration": {
               "modelTierId": "tier:balanced",
               "toolIds": [],
-              "maxTurns": 1,
               "timeoutSeconds": 120
             }
           },
@@ -72,7 +71,6 @@
                 "tool.web_search",
                 "tool.web_fetch"
               ],
-              "maxTurns": 8,
               "timeoutSeconds": 900,
               "instructions": "You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
             }

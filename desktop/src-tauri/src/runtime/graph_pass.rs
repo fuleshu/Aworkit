@@ -43,15 +43,11 @@ pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
 const MAXIMUM_NODE_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
 const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
-const MAXIMUM_AGENT_TURNS_WITH_TOOLS: u32 = 12;
 
 /// Per-node pass budget ceilings derived from the frozen snapshot.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GraphPassBudgetV1 {
-    pub turns: u64,
-    pub tool_calls: u64,
     pub tokens: u64,
-    pub actions: u64,
     pub maximum_timeout_recoveries: u32,
     pub maximum_tool_output_bytes: usize,
 }
@@ -160,7 +156,6 @@ pub(crate) struct CompiledGraphNodeV1 {
     pub label: String,
     pub configuration: Value,
     pub tool_bindings: Vec<StoredFileToolBindingV1>,
-    pub maximum_turns: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -222,7 +217,6 @@ pub(crate) fn compile_graph_pass(
             .cloned()
             .unwrap_or_else(|| json!({}));
         let mut tool_bindings_for_node = Vec::new();
-        let mut maximum_turns = 1_u32;
         match node_type.as_str() {
             "input" => {
                 if entry_node_id.is_empty() {
@@ -255,13 +249,6 @@ pub(crate) fn compile_graph_pass(
                         })?;
                     tool_bindings_for_node.push(binding);
                 }
-                maximum_turns = u32::try_from(
-                    configuration
-                        .get("maxTurns")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(1),
-                )
-                .map_err(|_| format!("workflow node '{id}' maxTurns is out of range"))?;
             }
             "tool" => {
                 let tool_id = configuration
@@ -287,7 +274,6 @@ pub(crate) fn compile_graph_pass(
             label,
             configuration,
             tool_bindings: tool_bindings_for_node,
-            maximum_turns,
         });
     }
     if entry_node_id.is_empty() {
@@ -663,14 +649,7 @@ impl<'a> PassMachine<'a> {
     }
 
     fn check_budget(&self) -> Result<(), String> {
-        let actions = self
-            .attempted_model_turns
-            .saturating_add(self.settled_tool_calls);
-        if u64::from(self.attempted_model_turns) > self.budget.turns
-            || u64::from(self.settled_tool_calls) > self.budget.tool_calls
-            || u64::from(actions) > self.budget.actions
-            || self.input_units.saturating_add(self.output_units) > self.budget.tokens
-        {
+        if self.input_units.saturating_add(self.output_units) > self.budget.tokens {
             return Err("graph pass budget is exhausted".to_owned());
         }
         Ok(())
@@ -917,16 +896,6 @@ impl<'a> PassMachine<'a> {
                 Err(error) => Err(format!("agent node '{}' failed: {error}", node.id)),
             };
         }
-        let maximum_turns = if (2..=MAXIMUM_AGENT_TURNS_WITH_TOOLS).contains(&node.maximum_turns) {
-            node.maximum_turns
-        } else if node.maximum_turns == 1 {
-            2
-        } else {
-            return Err(format!(
-                "agent node '{}' maxTurns {} is outside the 1..={MAXIMUM_AGENT_TURNS_WITH_TOOLS} bound",
-                node.id, node.maximum_turns
-            ));
-        };
         match execute_model_tool_loop_approval_v1(
             self.gateway,
             ModelToolLoopRequestV1 {
@@ -939,12 +908,10 @@ impl<'a> PassMachine<'a> {
                 maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
                 maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
-                maximum_turns,
                 maximum_timeout_recoveries: self
                     .budget
                     .maximum_timeout_recoveries
                     .saturating_sub(self.timeout_recoveries),
-                maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
                 maximum_tokens: self.budget.tokens,
                 deadline_epoch_millis: self.deadline_epoch_millis,
             },
@@ -1069,16 +1036,6 @@ impl<'a> PassMachine<'a> {
             .iter()
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
-        let maximum_turns = if (2..=MAXIMUM_AGENT_TURNS_WITH_TOOLS).contains(&node.maximum_turns) {
-            node.maximum_turns
-        } else if node.maximum_turns == 1 {
-            2
-        } else {
-            return AgentResumeOutcomeV1::Failed(format!(
-                "agent node '{}' maxTurns {} is outside the 1..={MAXIMUM_AGENT_TURNS_WITH_TOOLS} bound",
-                node.id, node.maximum_turns
-            ));
-        };
         let request = ModelToolLoopRequestV1 {
             outer_invocation_id: self.outer_invocation_id,
             input: context,
@@ -1089,12 +1046,10 @@ impl<'a> PassMachine<'a> {
             maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
             maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
-            maximum_turns,
             maximum_timeout_recoveries: self
                 .budget
                 .maximum_timeout_recoveries
                 .saturating_sub(self.timeout_recoveries),
-            maximum_tool_calls: u32::try_from(self.budget.tool_calls).unwrap_or(u32::MAX),
             maximum_tokens: self.budget.tokens,
             deadline_epoch_millis: self.deadline_epoch_millis,
         };
@@ -1573,7 +1528,6 @@ mod tests {
             label: id.into(),
             configuration: json!({}),
             tool_bindings: Vec::new(),
-            maximum_turns: 1,
         }
     }
 

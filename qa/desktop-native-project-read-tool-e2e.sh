@@ -361,8 +361,7 @@ native_click_at 1415 604
 native_select_all
 for workflow_json_fragment in \
   '{' '"modelTierId"' ':' '"tier:balanced"' ',' \
-  '"toolIds"' ':' '[' '"tool.files.read"' ']' ',' \
-  '"maxTurns"' ':' '2' '}'; do
+  '"toolIds"' ':' '[' '"tool.files.read"' ']' '}'; do
   native_type_text "$workflow_json_fragment"
 done
 sleep 1
@@ -380,7 +379,7 @@ for _ in {1..120}; do
       if jq -e '
         .nodes[1].configuration.modelTierId == "tier:balanced"
         and .nodes[1].configuration.toolIds == ["tool.files.read"]
-        and .nodes[1].configuration.maxTurns == 2
+        and (.nodes[1].configuration | has("maxTurns") | not)
       ' "$workflow_body" >/dev/null; then
         break
       fi
@@ -400,8 +399,7 @@ jq -e '
   ])
   and .nodes[1].configuration == {
     "modelTierId":"tier:balanced",
-    "toolIds":["tool.files.read"],
-    "maxTurns":2
+    "toolIds":["tool.files.read"]
   }
 ' "$workflow_body" >/dev/null
 workflow_version=$(jq -er '.documents["workflow.simple-chat"].document_version' \
@@ -461,9 +459,9 @@ jq -e \
     and (.context.project.workspaceIdentityHash | test("^sha256:[0-9a-f]{64}$"))
     and .context.workflowId == "workflow.simple-chat"
     and .context.workflowSnapshot.nodes[1].configuration.toolIds == ["tool.files.read"]
-    and .context.workflowSnapshot.nodes[1].configuration.maxTurns == 2
-    and .context.agentMaximumTurns == 2
-    and .context.maximumToolCalls == 8
+    and (.context.workflowSnapshot.nodes[1].configuration | has("maxTurns") | not)
+    and (.context | has("agentMaximumTurns") | not)
+    and (.context | has("maximumToolCalls") | not)
     and (.context.tools | length == 1)
     and .context.tools[0].toolId == "tool.files.read"
     and (.context.tools[0].toolHash | test("^sha256:[0-9a-f]{64}$"))

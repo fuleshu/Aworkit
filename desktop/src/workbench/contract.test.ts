@@ -253,7 +253,6 @@ describe("desktop design and workflow contracts", () => {
             configuration: {
               modelTierId: "tier:balanced",
               toolIds: [],
-              maxTurns: 1,
             },
           },
           { id: "output.1", type: "output" },
@@ -279,7 +278,6 @@ describe("desktop design and workflow contracts", () => {
               configuration: {
                 modelTierId: "tier:balanced",
                 toolIds: [],
-                maxTurns: 1,
                 instructions: "Use project evidence.",
               },
             }
@@ -347,7 +345,6 @@ describe("desktop design and workflow contracts", () => {
               configuration: {
                 modelTierId: "tier:balanced",
                 toolIds: [],
-                maxTurns: 1,
                 future: true,
               },
             }
@@ -368,7 +365,6 @@ describe("desktop design and workflow contracts", () => {
               configuration: {
                 modelTierId: "balanced",
                 toolIds: [],
-                maxTurns: 1,
               },
             }
           : node,
@@ -386,7 +382,6 @@ describe("desktop design and workflow contracts", () => {
               configuration: {
                 modelTierId: "tier:balanced",
                 toolIds: ["tool.files.read"],
-                maxTurns: 2,
               },
             }
           : node,

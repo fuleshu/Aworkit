@@ -1543,7 +1543,6 @@ function simpleChatWorkflow(bindsProjectRead: boolean): WorkflowDocument {
         configuration: {
           modelTierId: "tier:balanced",
           toolIds: bindsProjectRead ? ["tool.files.read"] : [],
-          maxTurns: bindsProjectRead ? 2 : 1,
         },
       },
       { id: "output.1", type: "output" },

@@ -14,7 +14,7 @@ describe("model node reasoning controls", () => {
     const onChange = vi.fn();
     render(
       <NodeConfigurationForm
-        configuration={{ modelTierId: "tier:balanced", maxTurns: 2, toolIds: [] }}
+        configuration={{ modelTierId: "tier:balanced", toolIds: [] }}
         editable
         nodeType="agent"
         settings={settingsWithCapabilities([

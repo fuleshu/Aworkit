@@ -58,8 +58,6 @@ const BUILTIN_TOOL_BINDING_IDS = new Set([
   "tool.subagent",
 ]);
 
-const MINIMUM_AGENT_TURNS = 1;
-const MAXIMUM_AGENT_TURNS = 12;
 const MAXIMUM_MODEL_CALL_TOKENS = 8192;
 const MAXIMUM_INSTRUCTIONS_BYTES = 64 * 1024;
 const PREDICATE_KINDS = new Set([
@@ -176,15 +174,14 @@ export function assessNativeWorkflow(
       if (configuration === null) {
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
+          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
         });
       } else {
         const keys = new Set(Object.keys(configuration));
-        const required = new Set(["maxTurns", "modelTierId", "toolIds"]);
+        const required = new Set(["modelTierId", "toolIds"]);
         const allowed = new Set([
           "enableThinking",
           "instructions",
-          "maxTurns",
           "modelTierId",
           "reasoningEffort",
           "timeoutSeconds",
@@ -196,7 +193,7 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, maxTurns, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
@@ -232,17 +229,6 @@ export function assessNativeWorkflow(
               message: `Workflow node '${id}' agent toolIds must be unique.`,
             });
         }
-        const maximumTurns = configuration.maxTurns;
-        if (
-          typeof maximumTurns !== "number" ||
-          !Number.isInteger(maximumTurns) ||
-          maximumTurns < MINIMUM_AGENT_TURNS ||
-          maximumTurns > MAXIMUM_AGENT_TURNS
-        )
-          issues.push({
-            code: "native_agent_turns",
-            message: `Workflow node '${id}' agent maxTurns must be ${MINIMUM_AGENT_TURNS}..=${MAXIMUM_AGENT_TURNS}.`,
-          });
         const timeoutSeconds = configuration.timeoutSeconds;
         if (
           timeoutSeconds !== undefined &&

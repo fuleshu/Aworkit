@@ -97,9 +97,13 @@ pub struct AgentLoopConfigV1 {
     pub authority_manifest_ref: StableId,
     pub budget_ref: StableId,
     pub scope_id: String,
-    pub maximum_turns: u32,
-    /// Frozen upper bound reserved before each model invocation. The committed
-    /// normalized outcome settles this reservation exactly once.
+    /// Compatibility sink for checkpoints written before model-turn caps were
+    /// removed. New checkpoints omit this obsolete field.
+    #[serde(default, rename = "maximumTurns", skip_serializing)]
+    pub legacy_maximum_turns: Option<u32>,
+    /// Frozen token/cost bound reserved before each model invocation. Legacy
+    /// count dimensions are retained in the wire type but are not termination
+    /// controls for an Agent loop.
     pub turn_reservation: Usage,
     pub context_pointers: Vec<String>,
     pub allowed_tool_capability_refs: Vec<StableId>,
@@ -118,8 +122,8 @@ pub struct AgentLoopCheckpointV1 {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum AgentErrorV1 {
-    #[error("agent loop exhausted its frozen turn bound")]
-    TurnLimit,
+    #[error("agent loop configuration or checkpoint is invalid")]
+    InvalidState,
     #[error("agent loop has an uncommitted invocation")]
     InvocationPending,
     #[error("capability is not permitted by the frozen loop")]
@@ -136,7 +140,7 @@ pub enum AgentErrorV1 {
     InvalidIdentifier,
 }
 
-/// A bounded Aworkit-owned model loop. It emits a broker proposal and cannot
+/// An Aworkit-owned model loop. It emits a broker proposal and cannot
 /// advance a turn until the core returns the committed normalized outcome.
 #[derive(Debug)]
 pub struct AgentLoopV1 {
@@ -150,15 +154,12 @@ pub struct AgentLoopV1 {
 
 impl AgentLoopV1 {
     pub fn new(config: AgentLoopConfigV1) -> Result<Self, AgentErrorV1> {
-        if config.maximum_turns == 0
-            || config.scope_id.is_empty()
-            || config.turn_reservation.is_zero()
-            || config.turn_reservation.turns == 0
-            || config.turn_reservation.attempts == 0
+        if config.scope_id.is_empty()
+            || resource_usage(config.turn_reservation).is_zero()
             || config.context_pointers.len() > 256
             || config.allowed_tool_capability_refs.len() > 256
         {
-            return Err(AgentErrorV1::TurnLimit);
+            return Err(AgentErrorV1::InvalidState);
         }
         Ok(Self {
             config,
@@ -181,9 +182,6 @@ impl AgentLoopV1 {
         if self.pending_invocation_id.is_some() {
             return Err(AgentErrorV1::InvocationPending);
         }
-        if self.next_turn >= self.config.maximum_turns {
-            return Err(AgentErrorV1::TurnLimit);
-        }
         let invocation_id =
             stable_id(&format!("agent:{}:{}", self.config.loop_id, self.next_turn))?;
         let reservation_id = format!("agent.{}.{}", self.config.loop_id, self.next_turn);
@@ -191,7 +189,7 @@ impl AgentLoopV1 {
             .reserve(
                 &self.config.scope_id,
                 reservation_id.clone(),
-                self.config.turn_reservation,
+                resource_usage(self.config.turn_reservation),
             )
             .map_err(|error| AgentErrorV1::Budget(error.to_string()))?;
         let projected = match project_context(context, &self.config.context_pointers) {
@@ -240,11 +238,11 @@ impl AgentLoopV1 {
                 "a committed model turn must charge exactly one turn and attempt".to_owned(),
             ));
         }
-        self.settle_reserved_outcome(outcome, limits, actual_usage)
+        self.settle_reserved_outcome(outcome, limits, resource_usage(actual_usage))
     }
 
-    /// Settles one outer Agent invocation that durably aggregates a bounded
-    /// provider/tool loop. The reservation contains the frozen maxima while
+    /// Settles one outer Agent invocation that durably aggregates a
+    /// provider/tool loop. The reservation contains resource maxima while
     /// committed usage records the provider turns and authority-settled tool
     /// calls that actually occurred.
     pub fn settle_committed_run_outcome(
@@ -261,15 +259,14 @@ impl AgentLoopV1 {
             CapabilityOutcomeClassV1::DefiniteNotStarted | CapabilityOutcomeClassV1::Denied
         );
         if actual_usage.turns != actual_usage.attempts
-            || actual_usage.turns > u64::from(self.config.maximum_turns)
             || (actual_usage.turns == 0 && !permits_zero_turns)
         {
             return Err(AgentErrorV1::Budget(
-                "a committed Agent run must charge its actual bounded provider turns and attempts"
+                "a committed Agent run must charge its actual provider turns and attempts"
                     .to_owned(),
             ));
         }
-        self.settle_reserved_outcome(outcome, limits, actual_usage)
+        self.settle_reserved_outcome(outcome, limits, resource_usage(actual_usage))
     }
 
     /// Returns `true` for an already-settled outcome and otherwise verifies
@@ -363,12 +360,11 @@ impl AgentLoopV1 {
             .iter()
             .map(StableId::as_str)
             .collect();
-        if checkpoint.next_turn > checkpoint.config.maximum_turns
-            || !pending_consistent
+        if !pending_consistent
             || completed.len() != checkpoint.completed_outcome_ids.len()
             || usize::try_from(checkpoint.next_turn).ok() != Some(completed.len())
         {
-            return Err(AgentErrorV1::TurnLimit);
+            return Err(AgentErrorV1::InvalidState);
         }
         let mut restored = Self::new(checkpoint.config)?;
         restored.next_turn = checkpoint.next_turn;
@@ -381,6 +377,17 @@ impl AgentLoopV1 {
             .collect();
         restored.cancelled = checkpoint.cancelled;
         Ok(restored)
+    }
+}
+
+/// Agent liveness is not governed by arbitrary call counters. The worker
+/// ledger still reserves and charges economic/context resources while turn,
+/// attempt, tool-call, and action counts remain separately reported telemetry.
+fn resource_usage(usage: Usage) -> Usage {
+    Usage {
+        tokens: usage.tokens,
+        cost_micros: usage.cost_micros,
+        ..Usage::default()
     }
 }
 

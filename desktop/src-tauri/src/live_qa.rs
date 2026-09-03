@@ -436,7 +436,6 @@ fn save_case_workflow(
 ) -> Result<(), String> {
     let snapshot = runtime.workflow_snapshot_for(WORKFLOW_ID.into());
     let tools = case.tool.map_or_else(Vec::new, |tool| vec![tool]);
-    let maximum_turns = if case.tool.is_some() { 4 } else { 1 };
     let instructions = case_instructions(case)?;
     let document = json!({
         "schemaVersion":1,
@@ -447,7 +446,6 @@ fn save_case_workflow(
             {"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{
                 "modelTierId":"tier:balanced",
                 "toolIds":tools,
-                "maxTurns":maximum_turns,
                 "instructions":instructions
             }},
             {"id":"output.1","label":"Output","type":"output","position":{"x":470,"y":205}},

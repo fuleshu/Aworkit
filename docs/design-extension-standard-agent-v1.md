@@ -20,7 +20,9 @@ specification, edited in the workflow editor with a complete working UI.
 DeepSeek Harness (`packages/core/agent-loop/src/agent.ts`): session → turn → step event
 machine; system-prompt assembly + request derivation per step; tool calls settled in
 model order through pre-execute → execute → post-execute → finalize → result; no built-in
-turn budget; termination = final assistant step ∧ empty inbox. Essential tool set of the
+turn budget; termination = final assistant step ∧ empty inbox. Repeated
+identical tool calls receive escalating advisory reminders at counts 3, 5, and 8 but are
+never blocked by a turn counter. Essential tool set of the
 `standard` preset: read/write/edit/glob/grep/bash|pwsh, todo_write, skill, web_search,
 subagent/fork/control/report, workflow/ralph, goal tools, ask_user_question.
 
@@ -38,7 +40,7 @@ and a typed `configuration` object. Unknown types/fields remain lossless.
 |---|---|---|---|
 | `input` | Pure | none | Entry; passes the latest user text. |
 | `model_call` | Model (no tools) | `modelTierId`, `instructions`, `maximumTokens` | One completion; output text feeds downstream (planning/context). |
-| `agent` | Agent | `modelTierId`, `toolIds[]`, `maxTurns` (1..12), `instructions` | The standard turn/step loop; tools bound from enabled Settings tools. |
+| `agent` | Agent | `modelTierId`, `toolIds[]`, `instructions` | The standard turn/step loop; tools bound from enabled Settings tools. It runs until the model answers or a real deadline/context failure occurs. |
 | `tool` | Brokered | `toolId`, `parameters` | One settled capability invocation; result feeds downstream. |
 | `condition` | Router | `predicate` (always/exists/eq/neq/and/or/not over the incoming value) | Routes true/false per edge `route` label (`true`, `false`, `fallback`). |
 | `parallel` | Branch fork | none | Pure fork marker; every successor runs; downstream nodes join implicitly (a node runs once all predecessors settle). |

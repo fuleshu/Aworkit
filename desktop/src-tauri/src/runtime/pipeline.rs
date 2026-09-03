@@ -192,8 +192,6 @@ pub struct WorkflowExecutionRequestV1 {
     /// Exact enabled read/search bindings frozen from Settings and the Agent
     /// node. A non-project Chat must leave this empty.
     pub tools: Vec<WorkflowToolBindingV1>,
-    /// Maximum provider turns frozen from the Agent node.
-    pub maximum_turns: u32,
     /// Additional provider attempts reserved only for typed request timeouts.
     pub maximum_timeout_recoveries: u32,
     /// Exact saved workflow JSON document frozen at the first input.
@@ -227,7 +225,6 @@ impl WorkflowExecutionRequestV1 {
             workspace: None,
             project_branch: None,
             tools: Vec::new(),
-            maximum_turns: 1,
             maximum_timeout_recoveries: 0,
             workflow_snapshot: Value::Null,
             messages,
@@ -597,7 +594,6 @@ impl WorkflowExecutionPipeline {
             || existing.provider != provider
             || existing.secret != secret
             || existing.tool_bindings != tools
-            || existing.maximum_turns != request.maximum_turns
             || existing.project_branch != request.project_branch
             || existing.snapshot.budget != request.budget
             || stored_messages != request_messages
@@ -975,10 +971,7 @@ impl WorkflowExecutionPipeline {
             &compiled,
             &pending.conversation,
             GraphPassBudgetV1 {
-                turns: prepared.snapshot.budget.turns,
-                tool_calls: prepared.snapshot.budget.tool_calls,
                 tokens: prepared.snapshot.budget.tokens,
-                actions: prepared.snapshot.budget.actions,
                 maximum_timeout_recoveries: prepared.maximum_timeout_recoveries,
                 maximum_tool_output_bytes: prepared.provider.maximum_tool_output_bytes,
             },
@@ -1310,7 +1303,9 @@ impl WorkflowExecutionPipeline {
             authority_manifest_ref: manifest.manifest_id.clone(),
             budget_ref: budget_ref.clone(),
             scope_id,
-            maximum_turns: request.maximum_turns,
+            // The worker loop represents one outer, durably brokered graph
+            // execution. Provider calls inside Agent nodes are not turn-capped.
+            legacy_maximum_turns: None,
             turn_reservation: Usage {
                 turns: request.budget.turns,
                 attempts: request.budget.attempts,
@@ -1368,7 +1363,7 @@ impl WorkflowExecutionPipeline {
             project_branch: request.project_branch.clone(),
             provider,
             tool_bindings,
-            maximum_turns: request.maximum_turns,
+            legacy_maximum_turns: None,
             maximum_timeout_recoveries: request.maximum_timeout_recoveries,
             secret,
             worker_proposal,
@@ -1507,8 +1502,10 @@ struct PreparedExecutionRecordV1 {
     provider: StoredProviderBindingV1,
     #[serde(default)]
     tool_bindings: Vec<StoredFileToolBindingV1>,
-    #[serde(default = "default_maximum_turns")]
-    maximum_turns: u32,
+    /// Compatibility sink for prepared records written before Agent model
+    /// turn caps were removed. New records omit this obsolete field.
+    #[serde(default, rename = "maximumTurns", skip_serializing)]
+    legacy_maximum_turns: Option<u32>,
     #[serde(default)]
     maximum_timeout_recoveries: u32,
     #[serde(rename = "opaqueBinding")]
@@ -1561,7 +1558,6 @@ impl PreparedExecutionRecordV1 {
             && self.project_branch == other.project_branch
             && self.provider == other.provider
             && self.tool_bindings == other.tool_bindings
-            && self.maximum_turns == other.maximum_turns
             && self.maximum_timeout_recoveries == other.maximum_timeout_recoveries
             && self.secret == other.secret
     }
@@ -2265,10 +2261,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 &compiled,
                 &conversation,
                 GraphPassBudgetV1 {
-                    turns: self.prepared.snapshot.budget.turns,
-                    tool_calls: self.prepared.snapshot.budget.tool_calls,
                     tokens: self.prepared.snapshot.budget.tokens,
-                    actions: self.prepared.snapshot.budget.actions,
                     maximum_timeout_recoveries: self.prepared.maximum_timeout_recoveries,
                     maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
                 },
@@ -2916,12 +2909,7 @@ fn validate_provider_outcome_accounting(
     prepared: &PreparedExecutionRecordV1,
     outcome: &ProviderOutcomeRecordV1,
 ) -> Result<(), WorkflowPipelineError> {
-    let turns = u64::from(outcome.attempted_model_turns);
-    let tool_calls = u64::from(outcome.settled_tool_calls);
-    if turns > prepared.snapshot.budget.turns
-        || tool_calls > prepared.snapshot.budget.tool_calls
-        || turns.saturating_add(tool_calls) > prepared.snapshot.budget.actions
-    {
+    if outcome.input_units.saturating_add(outcome.output_units) > prepared.snapshot.budget.tokens {
         return Err(WorkflowPipelineError::IncompleteEvidence);
     }
     Ok(())
@@ -3027,14 +3015,14 @@ fn compile_graph_snapshot(
             "frozenContextHash".into(),
             Value::String(request.frozen_context_hash.clone()),
         );
-        let (executor, capability_ref, node_tools, maximum_turns) = match node_type {
-            "input" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
-            "output" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
-            "parallel" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
-            "approval" => (WorkerExecutorKindV1::Pure, None, Vec::new(), None),
-            "wait" => (WorkerExecutorKindV1::Wait, None, Vec::new(), None),
-            "completion" => (WorkerExecutorKindV1::Terminal, None, Vec::new(), None),
-            "condition" => (WorkerExecutorKindV1::Router, None, Vec::new(), None),
+        let (executor, capability_ref, node_tools) = match node_type {
+            "input" => (WorkerExecutorKindV1::Pure, None, Vec::new()),
+            "output" => (WorkerExecutorKindV1::Pure, None, Vec::new()),
+            "parallel" => (WorkerExecutorKindV1::Pure, None, Vec::new()),
+            "approval" => (WorkerExecutorKindV1::Pure, None, Vec::new()),
+            "wait" => (WorkerExecutorKindV1::Wait, None, Vec::new()),
+            "completion" => (WorkerExecutorKindV1::Terminal, None, Vec::new()),
+            "condition" => (WorkerExecutorKindV1::Router, None, Vec::new()),
             "model_call" => {
                 let mut model_config = config.clone();
                 model_config.insert(
@@ -3096,15 +3084,10 @@ fn compile_graph_snapshot(
                         })?;
                     node_tools.push(binding);
                 }
-                let maximum_turns = configuration
-                    .get("maxTurns")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1);
                 (
                     WorkerExecutorKindV1::Agent,
                     Some(model_capability.clone()),
                     node_tools,
-                    Some(maximum_turns),
                 )
             }
             "tool" => {
@@ -3129,7 +3112,6 @@ fn compile_graph_snapshot(
                         },
                     )?),
                     vec![binding],
-                    None,
                 )
             }
             other => {
@@ -3159,14 +3141,10 @@ fn compile_graph_snapshot(
             "tools".into(),
             serde_json::to_value(&node_tools).map_err(json_error)?,
         );
-        if let Some(maximum_turns) = maximum_turns {
-            config.insert("maximumTurns".into(), Value::from(maximum_turns));
-        }
         let contribution = json!({
             "savedNode": source,
             "modelDescriptor": descriptor.version_hash,
             "tools": node_tools,
-            "maximumTurns": maximum_turns,
         });
         nodes.push(WorkerNodeV1 {
             node_id: node_id.clone(),
@@ -3245,10 +3223,6 @@ fn compile_graph_snapshot(
     ))
 }
 
-const fn default_maximum_turns() -> u32 {
-    1
-}
-
 const fn default_provider_request_timeout_seconds() -> u64 {
     300
 }
@@ -3270,24 +3244,14 @@ fn validate_request(
         WorkflowPipelineError::InvalidInput(format!("workflow graph is not executable: {error}"))
     })?;
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
-    if request.maximum_turns == 0
-        || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
-        || u64::from(
-            request
-                .maximum_turns
-                .saturating_add(request.maximum_timeout_recoveries),
-        ) > request.budget.turns
-        || request.budget.attempts < request.budget.turns
+    if request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
         || request.provider.request_timeout_seconds == 0
         || request.provider.request_timeout_seconds > MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1
         || !(1024..=512 * 1024).contains(&request.provider.maximum_tool_output_bytes)
-        || request.budget.tool_calls > 64
         || frozen_tools.len() != request.tools.len()
-        || (request.tools.is_empty() && request.budget.tool_calls != 0)
     {
         return Err(WorkflowPipelineError::InvalidInput(
-            "workflow turn, tool, attempt, and action budgets do not match the frozen JSON bindings"
-                .to_owned(),
+            "workflow provider and tool limits do not match the frozen JSON bindings".to_owned(),
         ));
     }
     if request.messages.is_empty()
@@ -3747,12 +3711,14 @@ mod tests {
     enum ToolScriptV1 {
         ReadAndSearch,
         ReadOnly,
+        ReadLoop,
         TimeoutThenRead,
         LargeAggregate,
         Escape,
         Malformed,
         ReadThenProviderFailure,
         Edit,
+        EditLoop,
         Todo,
         Subagent,
         SubagentNest,
@@ -3853,7 +3819,9 @@ mod tests {
                             json!({"path":"notes.txt","query":"alpha"}),
                         ))?;
                     }
-                    ToolScriptV1::ReadOnly | ToolScriptV1::TimeoutThenRead => {
+                    ToolScriptV1::ReadOnly
+                    | ToolScriptV1::ReadLoop
+                    | ToolScriptV1::TimeoutThenRead => {
                         if matches!(self.script, ToolScriptV1::TimeoutThenRead) {
                             assert!(
                                 request
@@ -3893,12 +3861,16 @@ mod tests {
                         "aworkit_read_project_file",
                         json!({"path":"notes.txt"}),
                     ))?,
-                    ToolScriptV1::Edit => {
+                    ToolScriptV1::Edit | ToolScriptV1::EditLoop => {
                         emit(ModelToolEventV1::ReasoningRaw {
                             text: "I need to request approval before editing.\n".into(),
                         })?;
                         emit(tool_call(
-                            "call.edit",
+                            if matches!(self.script, ToolScriptV1::EditLoop) {
+                                "call.edit.1"
+                            } else {
+                                "call.edit"
+                            },
                             "tool.files.edit",
                             "aworkit_edit_project_file",
                             json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
@@ -4005,22 +3977,64 @@ mod tests {
                 .lock()
                 .expect("observed tool results")
                 .extend(results);
+            if matches!(self.script, ToolScriptV1::ReadLoop) {
+                if !request
+                    .retry_notice
+                    .as_deref()
+                    .is_some_and(|notice| notice.contains("repeating the exact same tool call"))
+                {
+                    emit(tool_call(
+                        &format!("call.read.{}", request.exchanges.len() + 1),
+                        FILE_READ_CAPABILITY_ID,
+                        "aworkit_read_project_file",
+                        json!({"path":"notes.txt"}),
+                    ))?;
+                    emit(ModelToolEventV1::Usage {
+                        input_tokens: 5,
+                        output_tokens: 2,
+                    })?;
+                    return Ok(ProviderAcceptanceV1::Accepted);
+                }
+            }
+            if matches!(self.script, ToolScriptV1::EditLoop)
+                && !request
+                    .retry_notice
+                    .as_deref()
+                    .is_some_and(|notice| notice.contains("repeating the exact same tool call"))
+            {
+                emit(tool_call(
+                    &format!("call.edit.{}", request.exchanges.len() + 1),
+                    "tool.files.edit",
+                    "aworkit_edit_project_file",
+                    json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
+                ))?;
+                emit(ModelToolEventV1::Usage {
+                    input_tokens: 5,
+                    output_tokens: 2,
+                })?;
+                return Ok(ProviderAcceptanceV1::Accepted);
+            }
             if matches!(self.script, ToolScriptV1::ReadThenProviderFailure) {
                 return Err(ProviderError::Failed(
                     "provider failed after one settled tool call".into(),
                 ));
             }
             if matches!(self.script, ToolScriptV1::SubagentLoop) {
-                // The child keeps requesting reads until its turn budget
-                // exhausts; the parent still finishes normally.
+                // The child keeps requesting the same read until the advisory
+                // repeat reminder prompts it to finish normally.
                 let child_turn = request.input["messages"]
                     .as_array()
                     .and_then(|messages| messages.first())
                     .and_then(|message| message["content"].as_str())
                     .is_some_and(|content| content.contains("Relevant context:"));
-                if child_turn {
+                if child_turn
+                    && !request
+                        .retry_notice
+                        .as_deref()
+                        .is_some_and(|notice| notice.contains("repeating the exact same tool call"))
+                {
                     emit(tool_call(
-                        "call.loop-read",
+                        &format!("call.loop-read.{}", request.exchanges.len() + 1),
                         FILE_READ_CAPABILITY_ID,
                         "aworkit_read_project_file",
                         json!({"path":"notes.txt"}),
@@ -4165,7 +4179,6 @@ mod tests {
                 .resolve_workspace_v1(project)
                 .expect("workspace"),
         );
-        request.maximum_turns = 2;
         request.budget.turns = 2;
         request.budget.attempts = 2;
         request.budget.tool_calls = 8;
@@ -4209,7 +4222,6 @@ mod tests {
             })
             .collect();
         request.workflow_snapshot["nodes"][1]["configuration"]["toolIds"] = json!(tool_ids);
-        request.workflow_snapshot["nodes"][1]["configuration"]["maxTurns"] = json!(2);
         request
     }
 
@@ -4352,6 +4364,31 @@ mod tests {
                 .execution(&follow_up.request_id)
                 .expect("follow-up record lookup")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn repeated_tool_calls_receive_an_advisory_reminder_without_a_turn_cap() {
+        let root = TempDir::new().expect("root");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::write(project.join("notes.txt"), b"enough evidence").expect("notes");
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::ReadLoop);
+        let request = tool_bound_request(&pipeline, metadata, &project, &[FILE_READ_CAPABILITY_ID]);
+
+        let result = pipeline.execute(request).expect("best-effort completion");
+
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(result.assistant_text.as_deref(), Some("tool loop complete"));
+        assert_eq!((result.model_turns, result.tool_calls), (4, 3));
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 3);
+        assert!(
+            observed
+                .iter()
+                .all(|result| result["content"] == "enough evidence")
         );
     }
 
@@ -4521,11 +4558,9 @@ mod tests {
             setup_tool_pipeline(&root, ToolScriptV1::LargeAggregate);
         let mut execution_request =
             tool_bound_request(&pipeline, metadata, &project, &[FILE_READ_CAPABILITY_ID]);
-        execution_request.maximum_turns = 3;
         execution_request.budget.turns = 3;
         execution_request.budget.attempts = 3;
         execution_request.budget.actions = 11;
-        execution_request.workflow_snapshot["nodes"][1]["configuration"]["maxTurns"] = json!(3);
 
         let result = pipeline
             .execute(execution_request)
@@ -5181,7 +5216,7 @@ mod tests {
             nodes.push(json!({"id":"gate.1","label":"Approve","type":"approval","position":{"x":454,"y":205},"configuration":{"title":"Continue?","message":"Approve the plan."}}));
         }
         nodes.extend([
-            json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":663,"y":205},"configuration":{"modelTierId":"tier:balanced","toolIds":[],"maxTurns":1}}),
+            json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":663,"y":205},"configuration":{"modelTierId":"tier:balanced","toolIds":[]}}),
             json!({"id":"output.1","label":"Output","type":"output","position":{"x":872,"y":205}}),
             json!({"id":"wait.1","label":"Wait for input","type":"wait","position":{"x":1081,"y":205}}),
         ]);
@@ -5350,7 +5385,6 @@ mod tests {
                 json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{
                     "modelTierId":"tier:balanced",
                     "toolIds":["tool.files.edit"],
-                    "maxTurns":1,
                     "instructions":"Edit the project file."
                 }}),
                 json!({"id":"output.1","label":"Output","type":"output","position":{"x":454,"y":205}}),
@@ -5381,7 +5415,6 @@ mod tests {
                 .resolve_workspace_v1(project)
                 .expect("workspace"),
         );
-        request.maximum_turns = 2;
         request.budget.turns = 4;
         request.budget.attempts = 4;
         request.budget.tool_calls = 8;
@@ -5487,6 +5520,47 @@ mod tests {
             pipeline
                 .resume_approval(&approval.decision_id, true)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn repeated_tool_reminder_survives_approval_suspension_and_resume() {
+        let root = TempDir::new().expect("temporary directory");
+        let project = edit_approval_project(&root);
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::EditLoop);
+        let mut execution_request = edit_approval_request(&pipeline, metadata, &project);
+        execution_request.project_branch = Some("main".into());
+
+        let first = pipeline
+            .execute(execution_request)
+            .expect("first edit approval");
+        assert_eq!(first.status, WorkflowExecutionStatusV1::AwaitingApproval);
+
+        let second = pipeline
+            .resume_approval(&first.approval.expect("first approval").decision_id, true)
+            .expect("second edit approval");
+        assert_eq!(second.status, WorkflowExecutionStatusV1::AwaitingApproval);
+
+        let third = pipeline
+            .resume_approval(&second.approval.expect("second approval").decision_id, true)
+            .expect("third edit approval");
+        assert_eq!(third.status, WorkflowExecutionStatusV1::AwaitingApproval);
+
+        let completed = pipeline
+            .resume_approval(&third.approval.expect("third approval").decision_id, true)
+            .expect("finish after repeated-call reminder");
+        assert_eq!(completed.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(
+            completed.assistant_text.as_deref(),
+            Some("tool loop complete")
+        );
+        assert_eq!((completed.model_turns, completed.tool_calls), (4, 3));
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            observed_results.lock().expect("tool results").len(),
+            3,
+            "all three settled approval-gated calls must reach the model"
         );
     }
 
@@ -5614,7 +5688,6 @@ mod tests {
             bundled_workflow_template("standard-agent").expect("bundled Standard Agent");
         execution_request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
         execution_request.project_branch = Some("main".into());
-        execution_request.maximum_turns = 9;
         execution_request.budget.turns = 9;
         execution_request.budget.attempts = 9;
         execution_request.budget.tool_calls = 64;
@@ -5673,7 +5746,6 @@ mod tests {
                 json!({"id":"agent.1","label":"Agent","type":"agent","position":{"x":245,"y":205},"configuration":{
                     "modelTierId":"tier:balanced",
                     "toolIds":[tool_id],
-                    "maxTurns":1,
                     "instructions":"Use the tool and finish."
                 }}),
                 json!({"id":"output.1","label":"Output","type":"output","position":{"x":454,"y":205}}),
@@ -5688,13 +5760,12 @@ mod tests {
     }
 
     /// Graph-mode request delegating through the subagent tool with the given
-    /// frozen bindings; `subagent_maximum_turns` sets the child turn budget.
+    /// frozen bindings.
     fn subagent_request(
         pipeline: &WorkflowExecutionPipeline,
         metadata: CredentialMetadataV1,
         project: &Path,
         tool_ids: &[&str],
-        subagent_maximum_turns: u64,
     ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
         request.request_id = stable("command.pipeline-subagent-test").expect("request");
@@ -5706,7 +5777,6 @@ mod tests {
                 .resolve_workspace_v1(project)
                 .expect("workspace"),
         );
-        request.maximum_turns = 2;
         request.budget.turns = 6;
         request.budget.attempts = 6;
         request.budget.tool_calls = 12;
@@ -5729,7 +5799,6 @@ mod tests {
                     SUBAGENT_CAPABILITY_ID => json!({
                         "authorityMode":"run_subagent",
                         "requiresApproval":true,
-                        "maximumTurns":subagent_maximum_turns,
                     }),
                     _ => json!({}),
                 },
@@ -5756,7 +5825,6 @@ mod tests {
                 FILE_SEARCH_CAPABILITY_ID,
                 SUBAGENT_CAPABILITY_ID,
             ],
-            4,
         );
         execution_request.project_branch = Some("main".into());
 
@@ -5836,7 +5904,6 @@ mod tests {
             metadata.clone(),
             &project,
             &[FILE_READ_CAPABILITY_ID, SUBAGENT_CAPABILITY_ID],
-            4,
         );
         execution_request.project_branch = Some("main".into());
 
@@ -5882,7 +5949,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_turn_budget_exhaustion_returns_an_error_result() {
+    fn subagent_repeated_tools_receive_a_reminder_and_finish_without_a_turn_cap() {
         let root = TempDir::new().expect("temporary directory");
         let project = subagent_project(&root);
         let (pipeline, _store, metadata, calls, observed_results) =
@@ -5896,7 +5963,6 @@ mod tests {
                 FILE_SEARCH_CAPABILITY_ID,
                 SUBAGENT_CAPABILITY_ID,
             ],
-            2,
         );
         execution_request.project_branch = Some("main".into());
 
@@ -5922,22 +5988,21 @@ mod tests {
             .iter()
             .find(|activity| activity.capability_id == SUBAGENT_CAPABILITY_ID)
             .expect("subagent activity");
-        assert_eq!(subagent.status, "failed");
+        assert_eq!(subagent.status, "completed");
         let observed = observed_results.lock().expect("tool results");
-        // The child recorded its first read result before requesting another
-        // read on its final turn, where the turn budget fired; the parent then
-        // observed only the subagent error result.
-        assert_eq!(observed.len(), 2);
-        assert_eq!(observed[0]["content"], "alpha beta alpha");
+        // The child executes all three reads, receives the advisory reminder,
+        // and then completes; the parent receives the normal child result.
+        assert_eq!(observed.len(), 4);
         assert!(
-            observed[1]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("model turn limit")),
-            "{:?}",
-            observed[1]
+            observed[..3]
+                .iter()
+                .all(|result| result["content"] == "alpha beta alpha")
         );
+        assert_eq!(observed[3]["finalText"], "tool loop complete");
+        assert_eq!(observed[3]["modelTurns"], 4);
+        assert_eq!(observed[3]["toolCalls"], 3);
         drop(observed);
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
     }
 
     // ---------------------------------------------------------------------
@@ -6183,7 +6248,6 @@ mod tests {
         request.request_id = stable("command.pipeline-mcp-test").expect("request");
         request.chat_id = stable("chat.pipeline-mcp-test").expect("chat");
         request.run_id = stable("run.pipeline-mcp-test").expect("run");
-        request.maximum_turns = 2;
         request.budget.turns = 4;
         request.budget.attempts = 4;
         request.budget.tool_calls = 4;
@@ -6198,7 +6262,6 @@ mod tests {
         request.workflow_snapshot["id"] = json!("workflow.mcp-test");
         request.workflow_snapshot["nodes"][2]["configuration"]["toolIds"] =
             json!([MCP_FIXTURE_CAPABILITY]);
-        request.workflow_snapshot["nodes"][2]["configuration"]["maxTurns"] = json!(2);
         request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
         request
     }

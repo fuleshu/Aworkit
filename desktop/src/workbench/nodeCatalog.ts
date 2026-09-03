@@ -139,7 +139,7 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     type: "agent",
     label: "Agent",
     icon: "AI",
-    description: "Bounded model/tool loop.",
+    description: "Model/tool loop that runs until the model returns a final answer.",
     inputPorts: [textPort("in", "Prompt")],
     outputPorts: [textPort("out", "Result")],
     fields: [
@@ -147,7 +147,6 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
       { kind: "reasoningEffort", key: "reasoningEffort", label: "Reasoning effort" },
       { kind: "thinkingToggle", key: "enableThinking", label: "Thinking" },
       { kind: "toolMulti", key: "toolIds", label: "Tools" },
-      { kind: "number", key: "maxTurns", label: "Maximum turns", min: 1, max: 12, step: 1 },
       {
         kind: "number",
         key: "timeoutSeconds",
@@ -161,7 +160,6 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     ],
     defaultConfiguration: {
       modelTierId: "tier:balanced",
-      maxTurns: 1,
       timeoutSeconds: 600,
       toolIds: [],
     },
