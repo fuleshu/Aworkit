@@ -15,6 +15,7 @@ interface QueuedErrorNotice extends ErrorDialogNotice {
 export function useChatErrorNotices(
   events: readonly RuntimeEvent[],
   eventsReady: boolean,
+  chatId: string | null,
   runtimeError: RuntimeErrorNotice | null,
   dismissRuntimeError: () => void,
 ): {
@@ -23,7 +24,7 @@ export function useChatErrorNotices(
 } {
   const [queue, setQueue] = useState<readonly QueuedErrorNotice[]>([]);
   const knownKeysRef = useRef(new Set<string>());
-  const initializedEventsRef = useRef(false);
+  const hydratedChatIdRef = useRef<string | null>(null);
 
   const enqueue = useCallback((notice: QueuedErrorNotice): void => {
     if (knownKeysRef.current.has(notice.key)) return;
@@ -42,14 +43,18 @@ export function useChatErrorNotices(
   }, [enqueue, runtimeError]);
 
   useEffect(() => {
-    if (!eventsReady) return;
+    if (!eventsReady || chatId === null) return;
+    // Snapshot and event state are published together, but guard the boundary
+    // explicitly so a concurrent render can never associate the previous
+    // Chat's envelopes with the newly selected Chat.
+    if (events.some((event) => event.streamId !== chatId)) return;
     const failures = events.filter(
       (event) => event.kind === "execution.failed",
     );
-    if (!initializedEventsRef.current) {
+    if (hydratedChatIdRef.current !== chatId) {
       for (const event of failures)
         knownKeysRef.current.add(`execution-error.${event.eventId}`);
-      initializedEventsRef.current = true;
+      hydratedChatIdRef.current = chatId;
       return;
     }
     for (const event of failures) {
@@ -62,7 +67,7 @@ export function useChatErrorNotices(
           "The run failed without a detailed error message. Inspect Run details for the source record.",
       });
     }
-  }, [enqueue, events, eventsReady]);
+  }, [chatId, enqueue, events, eventsReady]);
 
   const dismiss = useCallback((): void => {
     const current = queue[0];

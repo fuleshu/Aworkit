@@ -12,6 +12,7 @@ mod extension_registration;
 mod external_agent;
 mod graph_pass;
 mod history;
+mod history_index;
 mod mcp;
 mod mcp_tools;
 mod model_tool_loop;

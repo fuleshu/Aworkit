@@ -166,7 +166,7 @@ describe("honest JSON-workflow desktop slice", () => {
     expect(splitter).toHaveAttribute("aria-valuenow", "328");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
     await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
-    await user.click(screen.getByRole("button", { name: /^○?Chat$/ }));
+    await user.click(screen.getByRole("button", { name: "New Chat" }));
     expect(
       await screen.findByRole("textbox", { name: "Chat input" }),
     ).toHaveValue("keep this local draft");
@@ -192,7 +192,7 @@ describe("honest JSON-workflow desktop slice", () => {
     expect(
       screen.getByRole("button", { name: "Save configuration" }),
     ).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /^○?Chat$/ }));
+    await user.click(screen.getByRole("button", { name: "New Chat" }));
     await screen.findByRole("heading", { name: "New Chat" });
     await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(screen.getByLabelText("Base URL")).toHaveValue(

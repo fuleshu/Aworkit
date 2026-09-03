@@ -478,12 +478,13 @@ describe("Chat native-port recovery contracts", () => {
         expectedVersion: 2,
       },
     };
+    const newChatSnapshot = snapshot(3, "New Chat", [
+      { sequence: 1 },
+      { sequence: 2 },
+      { sequence: 3 },
+    ]);
     const newChatProjection = {
-      ...snapshot(3, "New Chat", [
-        { sequence: 1 },
-        { sequence: 2 },
-        { sequence: 3 },
-      ]),
+      ...newChatSnapshot,
       chat: {
         ...normal.chat,
         chatId: "chat.new",
@@ -495,6 +496,10 @@ describe("Chat native-port recovery contracts", () => {
         recoveryPending: false,
         expectedVersion: 3,
       },
+      events: newChatSnapshot.events.map((event) => ({
+        ...event,
+        streamId: "chat.new",
+      })),
     };
     const port: ChatCorePort = {
       async snapshot() {
@@ -753,6 +758,78 @@ describe("Chat native-port recovery contracts", () => {
     expect(onNewChat).toHaveBeenCalledOnce();
   });
 
+  it("groups Chat history by project and exposes pin, fork, and delete actions", async () => {
+    const user = userEvent.setup();
+    const onSelectChat = vi.fn();
+    const onSetChatPinned = vi.fn();
+    const onForkChat = vi.fn();
+    const onDeleteChat = vi.fn();
+    const entry = (
+      chatId: string,
+      title: string,
+      projectId: string | null,
+      pinned = false,
+    ) => ({
+      chatId,
+      runId: `run.${chatId}`,
+      title,
+      projectId,
+      projectName: projectId === null ? null : "Project Atlas",
+      phase: "waiting_input" as const,
+      pinned,
+      parentChatId: null,
+      createdAt: "1",
+      updatedAt: "2",
+    });
+    render(
+      <NavigationPane
+        route="chat"
+        collapsed={false}
+        history={[
+          entry("chat.pinned", "Pinned investigation", null, true),
+          entry("chat.project", "Project discussion", "project.atlas"),
+          entry("chat.local", "Standalone idea", null),
+        ]}
+        projects={[
+          {
+            projectId: "project.atlas",
+            name: "Project Atlas",
+            workspaceKind: "git_worktree",
+          },
+        ]}
+        selectedChatId="chat.project"
+        onNavigate={() => undefined}
+        onNewChat={() => undefined}
+        onToggleCollapsed={() => undefined}
+        onSelectChat={onSelectChat}
+        onSetChatPinned={onSetChatPinned}
+        onForkChat={onForkChat}
+        onDeleteChat={onDeleteChat}
+      />,
+    );
+
+    expect(screen.getByText("PINNED")).toBeVisible();
+    expect(screen.getByText("Project Atlas")).toBeVisible();
+    expect(screen.getByText("CHATS")).toBeVisible();
+    const projectChat = screen.getByRole("button", { name: "Project discussion" });
+    expect(projectChat).toHaveAttribute("aria-current", "page");
+    await user.click(projectChat);
+    expect(onSelectChat).toHaveBeenCalledWith("chat.project");
+
+    const actions = screen.getByRole("button", {
+      name: "Actions for Project discussion",
+    });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Pin" }));
+    expect(onSetChatPinned).toHaveBeenCalledWith("chat.project", true);
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Fork" }));
+    expect(onForkChat).toHaveBeenCalledWith("chat.project");
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(onDeleteChat).toHaveBeenCalledWith("chat.project");
+  });
+
   it("maps selected tool and error cards to distinct contextual Run details", async () => {
     const user = userEvent.setup();
     const projected = {
@@ -974,6 +1051,127 @@ describe("Chat native-port recovery contracts", () => {
       }),
     );
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("hydrates a failed historical Chat without replaying its failure dialog", async () => {
+    let selected = false;
+    let listener: ((event: CoreEventEnvelope) => void) | undefined;
+    const historicalFailure: CoreEventEnvelope = {
+      ...canonicalEvent(1, "execution.failed", {
+        body: "old provider transport failure",
+        status: "failed",
+      }),
+      streamId: "chat.historical",
+    };
+    const port: ChatCorePort = {
+      async snapshot() {
+        if (!selected) return snapshot(0, "Current Chat", []);
+        return {
+          ...snapshot(1, "Historical failure", [historicalFailure]),
+          chat: {
+            ...runningChat,
+            chatId: "chat.historical",
+            title: "Historical failure",
+            phase: "failed",
+            expectedVersion: 1,
+          },
+        };
+      },
+      async command(intent) {
+        selected = true;
+        return {
+          commandId: intent.commandId,
+          accepted: true,
+          currentVersion: 1,
+          reason: null,
+        };
+      },
+      async subscribeEvents(next) {
+        listener = next;
+        return () => undefined;
+      },
+    };
+
+    const view = render(
+      <ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />,
+    );
+    await screen.findByRole("heading", { name: "Current Chat" });
+    view.rerender(
+      <ChatWorkspaceScreen
+        corePort={port}
+        pollIntervalMs={60_000}
+        historyActionRequest={{
+          requestId: 1,
+          type: "select_chat",
+          targetId: "chat.historical",
+        }}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Historical failure" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    // A delayed event from the previously selected stream must not collide
+    // with the newly hydrated stream at the same sequence.
+    listener?.(canonicalEvent(1, "message.user", { body: "late" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("accepts a lower-sequence selected Chat after its command response is lost", async () => {
+    let selected = false;
+    const port: ChatCorePort = {
+      async snapshot() {
+        if (!selected) return snapshot(4, "Long current Chat", [
+          { sequence: 1 },
+          { sequence: 2 },
+          { sequence: 3 },
+          { sequence: 4 },
+        ]);
+        const target = snapshot(1, "Short historical Chat", [
+          {
+            ...canonicalEvent(1, "message.user", { body: "older" }),
+            streamId: "chat.short",
+          },
+        ]);
+        return {
+          ...target,
+          chat: {
+            ...target.chat,
+            chatId: "chat.short",
+            title: "Short historical Chat",
+            expectedVersion: 1,
+          },
+        };
+      },
+      async command() {
+        selected = true;
+        throw new Error("selection response was lost");
+      },
+    };
+
+    const view = render(
+      <ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />,
+    );
+    await screen.findByRole("heading", { name: "Long current Chat" });
+    view.rerender(
+      <ChatWorkspaceScreen
+        corePort={port}
+        pollIntervalMs={60_000}
+        historyActionRequest={{
+          requestId: 1,
+          type: "select_chat",
+          targetId: "chat.short",
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Short historical Chat" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Projection disconnected.")).not.toBeInTheDocument();
   });
 
   it("preserves waiting-for-input and queues follow-up input without run controls", async () => {
@@ -1481,6 +1679,7 @@ function snapshot(
     reducerVersion: "chat.semantic.reducer.v1",
     stateHash: `sha256:${"0".repeat(64)}`,
     chat: { ...runningChat, title, expectedVersion: sequence },
+    history: [],
     projects: [],
     evidence: [],
     events: events.map(canonicalTestEvent),

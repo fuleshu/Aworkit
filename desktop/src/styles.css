@@ -296,11 +296,107 @@ pre {
   display: grid;
   gap: 1px;
 }
+.navigation-history {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 1px 8px;
+  scrollbar-gutter: stable;
+}
+.history-section {
+  display: grid;
+  gap: 1px;
+}
+.history-project {
+  margin-top: 7px;
+}
+.history-project > summary {
+  align-items: center;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  gap: 7px;
+  min-height: 28px;
+  overflow: hidden;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+.history-project > summary::-webkit-details-marker {
+  display: none;
+}
+.history-project > summary:hover {
+  background: var(--aw-accent-subtle);
+}
+.history-project > summary span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-project-entries {
+  display: grid;
+  gap: 1px;
+  padding-left: 14px;
+}
+.chat-history-row {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  min-width: 0;
+  position: relative;
+}
+.navigation-pane .chat-history-link {
+  min-width: 0;
+  padding-right: 2px;
+}
+.chat-history-link span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.navigation-pane .chat-history-more {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-width: 24px;
+  opacity: 0;
+  padding: 2px;
+  width: 24px;
+}
+.chat-history-row:hover .chat-history-more,
+.chat-history-more[aria-expanded="true"],
+.chat-history-more:focus-visible {
+  opacity: 1;
+}
+.chat-history-actions {
+  position: relative;
+}
+.chat-history-menu {
+  background: var(--aw-raised);
+  border: 1px solid var(--aw-control);
+  border-radius: 5px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  display: grid;
+  min-width: 126px;
+  padding: 3px;
+  position: fixed;
+  transform: translate(-108px, 2px);
+  z-index: 20;
+}
+.navigation-pane .chat-history-menu button {
+  border: 0;
+  border-radius: 3px;
+  min-height: 26px;
+  padding: 4px 8px;
+}
+.navigation-pane .chat-history-menu button:hover {
+  background: var(--aw-accent-subtle);
+}
+.navigation-pane .chat-history-menu .danger-menu-item {
+  color: var(--aw-danger);
+}
 .navigation-footer {
   border-top: 1px solid var(--aw-divider);
   display: grid;
   gap: 4px;
-  margin-top: auto;
   padding-top: 6px;
 }
 .account-row {

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import type {
   ChatIntent,
+  ChatHistoryEntry,
   ChatProjectChoice,
   ChatProjection,
   CoreEventEnvelope,
@@ -42,6 +43,18 @@ const chatProjectChoiceSchema = z.object({
     "container_mount",
   ]),
 });
+const chatHistoryEntrySchema = z.object({
+  chatId: z.string().min(1),
+  runId: z.string().min(1),
+  title: z.string().min(1),
+  projectId: z.string().min(1).nullable(),
+  projectName: z.string().min(1).nullable(),
+  phase: chatProjectionSchema.shape.phase,
+  pinned: z.boolean(),
+  parentChatId: z.string().min(1).nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
 const evidenceRecordSchema = z.object({
   id: z.string(),
   category: z.string(),
@@ -68,6 +81,7 @@ const runtimeSnapshotSchema = z.object({
   reducerVersion: z.string().min(1),
   stateHash: z.string().startsWith("sha256:"),
   chat: chatProjectionSchema,
+  history: z.array(chatHistoryEntrySchema).default([]),
   projects: z.array(chatProjectChoiceSchema),
   evidence: z.array(evidenceRecordSchema),
   events: z.array(runtimeEventSchema),
@@ -84,6 +98,7 @@ export interface RuntimeSnapshot {
   readonly reducerVersion: string;
   readonly stateHash: string;
   readonly chat: ChatProjection;
+  readonly history: readonly ChatHistoryEntry[];
   readonly projects: readonly ChatProjectChoice[];
   readonly evidence: readonly EvidenceRecord[];
   readonly events: readonly RuntimeEvent[];
@@ -115,6 +130,7 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
       phase: parsed.chat.phase,
       disabledReason: parsed.chat.disabledReason ?? undefined,
     },
+    history: parsed.history,
     projects: parsed.projects,
     evidence: parsed.evidence.map((item) => ({
       ...item,
@@ -140,6 +156,7 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
       decisionId: intent.decisionId,
       approved: intent.approved,
     };
+  if (intent.type === "set_chat_pinned") return { pinned: intent.pinned };
   return {};
 }
 
@@ -213,6 +230,20 @@ export class PreviewChatCorePort implements ChatCorePort {
   };
   private readonly evidence: EvidenceRecord[] = [];
   private readonly events: RuntimeEvent[] = [];
+  private history: ChatHistoryEntry[] = [
+    {
+      chatId: "chat.preview",
+      runId: "run.draft",
+      title: "New Chat",
+      projectId: null,
+      projectName: null,
+      phase: "draft",
+      pinned: false,
+      parentChatId: null,
+      createdAt: "0",
+      updatedAt: "0",
+    },
+  ];
   public async snapshot(afterSequence = 0): Promise<RuntimeSnapshot> {
     return {
       version: this.version,
@@ -220,6 +251,7 @@ export class PreviewChatCorePort implements ChatCorePort {
       reducerVersion: "chat.semantic.reducer.v1",
       stateHash: `sha256:${"0".repeat(64)}`,
       chat: this.chat,
+      history: this.history,
       projects: [],
       evidence: this.evidence,
       events: this.events.filter((event) => event.sequence > afterSequence),
@@ -252,8 +284,9 @@ export class PreviewChatCorePort implements ChatCorePort {
       return receipt;
     }
     if (intent.type === "new_chat") {
+      const chatId = intent.commandId.replace(/^desktop\./u, "");
       this.chat = {
-        chatId: intent.commandId,
+        chatId,
         runId: "run.draft",
         title: "New Chat",
         scope: "No project",
@@ -266,6 +299,75 @@ export class PreviewChatCorePort implements ChatCorePort {
         queuedInputs: [],
         expectedVersion: this.version,
       };
+      this.history = [
+        {
+          chatId,
+          runId: "run.draft",
+          title: "New Chat",
+          projectId: null,
+          projectName: null,
+          phase: "draft",
+          pinned: false,
+          parentChatId: null,
+          createdAt: String(Date.now()),
+          updatedAt: String(Date.now()),
+        },
+        ...this.history,
+      ];
+    }
+    if (intent.type === "select_chat") {
+      const selected = this.history.find(({ chatId }) => chatId === intent.targetId);
+      if (selected !== undefined) {
+        this.chat = {
+          ...this.chat,
+          chatId: selected.chatId,
+          runId: selected.runId,
+          title: selected.title,
+          projectId: selected.projectId,
+          scope: selected.projectName ?? "No project",
+          phase: selected.phase,
+          lockedWorkflow: selected.phase !== "draft",
+        };
+      }
+    }
+    if (intent.type === "set_chat_pinned")
+      this.history = this.history.map((entry) =>
+        entry.chatId === intent.targetId
+          ? { ...entry, pinned: intent.pinned }
+          : entry,
+      );
+    if (intent.type === "delete_chat") {
+      this.history = this.history.filter(({ chatId }) => chatId !== intent.targetId);
+      if (this.chat.chatId === intent.targetId) {
+        const fallback = this.history[0];
+        this.chat = fallback === undefined
+          ? { ...this.chat, chatId: "chat.preview", runId: "run.draft", title: "New Chat" }
+          : {
+              ...this.chat,
+              chatId: fallback.chatId,
+              runId: fallback.runId,
+              title: fallback.title,
+              projectId: fallback.projectId,
+              scope: fallback.projectName ?? "No project",
+              phase: fallback.phase,
+            };
+      }
+    }
+    if (intent.type === "fork") {
+      const parent = this.history.find(({ chatId }) => chatId === intent.targetId);
+      if (parent !== undefined) {
+        const child = {
+          ...parent,
+          chatId: intent.commandId.replace(/^desktop\./u, ""),
+          runId: `${parent.runId}.fork`,
+          parentChatId: parent.chatId,
+          pinned: false,
+          createdAt: String(Date.now()),
+          updatedAt: String(Date.now()),
+        };
+        this.history = [child, ...this.history];
+        this.chat = { ...this.chat, chatId: child.chatId, runId: child.runId };
+      }
     }
     if (intent.type === "pause") this.chat = { ...this.chat, phase: "paused" };
     if (intent.type === "resume")

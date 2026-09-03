@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
 import { projectSemanticTimeline } from "./activityProjection";
-import type { ChatCorePort } from "./corePort";
+import type { ChatCorePort, RuntimeSnapshot } from "./corePort";
 import {
   ChatComposer,
   type WorkflowOption,
@@ -26,14 +26,26 @@ interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;
   readonly pollIntervalMs?: number;
   readonly newChatRequest?: number;
+  readonly historyActionRequest?: ChatHistoryActionRequest | null;
   readonly active?: boolean;
   readonly workflowPort?: Pick<WorkflowCorePort, "snapshot">;
   readonly libraryPort?: WorkflowLibraryPort;
   readonly onRecoveryPendingChange?: (pending: boolean) => void;
+  readonly onRuntimeSnapshotChange?: (
+    snapshot: RuntimeSnapshot,
+    state: { readonly stale: boolean; readonly pending: boolean },
+  ) => void;
   readonly confirmRecoveryAbandon?: (
     title: string,
     body: string,
   ) => Promise<boolean>;
+}
+
+export interface ChatHistoryActionRequest {
+  readonly requestId: number;
+  readonly type: "select_chat" | "set_chat_pinned" | "delete_chat" | "fork";
+  readonly targetId: string;
+  readonly pinned?: boolean;
 }
 
 /** Complete projected Chat surface connected to the native trusted-core adapter. */
@@ -41,10 +53,12 @@ export function ChatWorkspaceScreen({
   corePort,
   pollIntervalMs,
   newChatRequest = 0,
+  historyActionRequest = null,
   active = true,
   workflowPort,
   libraryPort,
   onRecoveryPendingChange,
+  onRuntimeSnapshotChange,
   confirmRecoveryAbandon = browserRecoveryConfirmation,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
@@ -79,6 +93,7 @@ export function ChatWorkspaceScreen({
   const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
     useState(false);
   const handledNewChatRequest = useRef(0);
+  const handledHistoryActionRequest = useRef(0);
   const wasActive = useRef(active);
   const snapshot = runtime.snapshot;
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
@@ -90,6 +105,7 @@ export function ChatWorkspaceScreen({
   const errorNotices = useChatErrorNotices(
     runtime.events,
     snapshot !== null,
+    projectedChatId ?? null,
     runtime.error,
     runtime.dismissError,
   );
@@ -196,6 +212,37 @@ export function ChatWorkspaceScreen({
     setSelectedTimelineId(null);
     void runtime.dispatch(commandIds.createIntent("new_chat"));
   }, [commandIds, newChatRequest, runtime]);
+  useEffect(() => {
+    if (
+      historyActionRequest === null ||
+      historyActionRequest.requestId <= handledHistoryActionRequest.current ||
+      runtime.snapshot === null ||
+      runtime.stale
+    )
+      return;
+    handledHistoryActionRequest.current = historyActionRequest.requestId;
+    const created = commandIds.createIntent(
+      historyActionRequest.type,
+      historyActionRequest.targetId,
+    );
+    const intent: ChatIntent =
+      created.type === "set_chat_pinned"
+        ? { ...created, pinned: historyActionRequest.pinned ?? false }
+        : created;
+    void runtime.dispatch(intent);
+  }, [commandIds, historyActionRequest, runtime]);
+  useEffect(() => {
+    if (runtime.snapshot !== null)
+      onRuntimeSnapshotChange?.(runtime.snapshot, {
+        stale: runtime.stale,
+        pending: runtime.pendingCommandIds.size > 0,
+      });
+  }, [
+    onRuntimeSnapshotChange,
+    runtime.pendingCommandIds.size,
+    runtime.snapshot,
+    runtime.stale,
+  ]);
   if (runtime.loading && snapshot === null)
     return (
       <>

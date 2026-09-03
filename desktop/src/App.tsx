@@ -12,7 +12,11 @@ import {
   nativePresentationEvent,
   type NativePresentationRequest,
 } from "./adapters/contracts";
-import { ChatWorkspaceScreen } from "./chat/ChatWorkspaceScreen";
+import {
+  ChatWorkspaceScreen,
+  type ChatHistoryActionRequest,
+} from "./chat/ChatWorkspaceScreen";
+import type { RuntimeSnapshot } from "./chat/corePort";
 import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
@@ -47,6 +51,14 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
   const [navigationWidth, setNavigationWidth] = useState(208);
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
+  const [historyActionRequest, setHistoryActionRequest] =
+    useState<ChatHistoryActionRequest | null>(null);
+  const historyActionSequence = useRef(0);
+  const [chatRuntimeState, setChatRuntimeState] = useState<{
+    readonly snapshot: RuntimeSnapshot;
+    readonly stale: boolean;
+    readonly pending: boolean;
+  } | null>(null);
   const [chatRecoveryPending, setChatRecoveryPending] = useState<
     boolean | null
   >(null);
@@ -69,6 +81,29 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
     navigate("chat");
     setNewChatRequest((request) => request + 1);
   }, [chatRecoveryPending, navigate]);
+  const requestHistoryAction = useCallback(
+    (
+      type: ChatHistoryActionRequest["type"],
+      targetId: string,
+      pinned?: boolean,
+    ) => {
+      historyActionSequence.current += 1;
+      setHistoryActionRequest({
+        requestId: historyActionSequence.current,
+        type,
+        targetId,
+        pinned,
+      });
+    },
+    [],
+  );
+  const updateChatRuntimeState = useCallback(
+    (
+      snapshot: RuntimeSnapshot,
+      state: { readonly stale: boolean; readonly pending: boolean },
+    ) => setChatRuntimeState({ snapshot, ...state }),
+    [],
+  );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -154,6 +189,47 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             : null
         }
         onToggleCollapsed={() => setCollapsed((value) => !value)}
+        history={chatRuntimeState?.snapshot.history}
+        projects={chatRuntimeState?.snapshot.projects}
+        selectedChatId={chatRuntimeState?.snapshot.chat.chatId}
+        historyDisabledReason={
+          chatRuntimeState === null
+            ? "Loading Chat history"
+            : chatRecoveryPending
+              ? "Resolve the interrupted Chat command before changing history"
+              : chatRuntimeState.stale
+                ? "Resynchronize Chat history before changing it"
+                : chatRuntimeState.pending
+                  ? "Wait for the current Chat command to commit"
+                  : null
+        }
+        onSelectChat={(chatId) => {
+          navigate("chat");
+          if (chatId !== chatRuntimeState?.snapshot.chat.chatId)
+            requestHistoryAction("select_chat", chatId);
+        }}
+        onSetChatPinned={(chatId, pinned) =>
+          requestHistoryAction("set_chat_pinned", chatId, pinned)
+        }
+        onForkChat={(chatId) => {
+          navigate("chat");
+          requestHistoryAction("fork", chatId);
+        }}
+        onDeleteChat={(chatId) => {
+          const entry = chatRuntimeState?.snapshot.history.find(
+            (candidate) => candidate.chatId === chatId,
+          );
+          void adapters.nativePresentation
+            .confirm(
+              "Delete Chat?",
+              `Delete “${entry?.title ?? "this Chat"}” from Chat history? Its canonical record will be tombstoned and no longer shown.`,
+            )
+            .then((confirmed) => {
+              if (!confirmed) return;
+              navigate("chat");
+              requestHistoryAction("delete_chat", chatId);
+            });
+        }}
       />
       <PaneSplitter
         value={navigationWidth}
@@ -178,7 +254,9 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
                   adapters.nativePresentation.confirm(title, body)
                 }
                 newChatRequest={newChatRequest}
+                historyActionRequest={historyActionRequest}
                 onRecoveryPendingChange={setChatRecoveryPending}
+                onRuntimeSnapshotChange={updateChatRuntimeState}
               />
             </div>
           )}

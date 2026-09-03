@@ -468,6 +468,28 @@ impl LocalHistoryStore {
         Ok(events)
     }
 
+    /// Returns the current stream head without decoding its semantic events.
+    ///
+    /// Navigation callers use this scalar lookup for optimistic fences. A
+    /// missing stream is distinct from an existing empty stream at the store
+    /// boundary; callers that model unmaterialized drafts may map it to zero.
+    pub fn head_sequence(&self, chat_id: &str, branch_id: &str) -> Result<Option<u64>, StoreError> {
+        validate_id(chat_id)?;
+        validate_id(branch_id)?;
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        connection
+            .query_row(
+                "SELECT head_sequence FROM chat_streams
+                 WHERE chat_id = ?1 AND branch_id = ?2",
+                params![chat_id, branch_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(from_i64)
+            .transpose()
+    }
+
     pub(crate) fn committed_timeline_page(
         &self,
         chat_id: &str,
@@ -1717,6 +1739,7 @@ mod tests {
     #[test]
     fn commits_every_local_history_fact_atomically() {
         let (store, root) = store();
+        assert_eq!(store.head_sequence("chat_01", "main").expect("head"), None);
         let committed = store.commit(&batch(0)).expect("commit");
         assert!(matches!(
             committed,
@@ -1728,6 +1751,10 @@ mod tests {
         assert_eq!(
             store.event_ids("chat_01", "main").expect("events"),
             ["event_0"]
+        );
+        assert_eq!(
+            store.head_sequence("chat_01", "main").expect("head"),
+            Some(1)
         );
         let pending = store.pending_outbox_v1(0, 8).expect("outbox");
         assert_eq!(pending.len(), 1);

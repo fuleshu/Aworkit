@@ -35,6 +35,20 @@ export interface ChatProjectChoice {
     | "container_mount";
 }
 
+/** Immutable sidebar summary projected from the native Chat history index. */
+export interface ChatHistoryEntry {
+  readonly chatId: string;
+  readonly runId: string;
+  readonly title: string;
+  readonly projectId: string | null;
+  readonly projectName: string | null;
+  readonly phase: RunPhase;
+  readonly pinned: boolean;
+  readonly parentChatId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export type TimelineKind =
   | "message"
   | "thinking"
@@ -136,10 +150,20 @@ export type ChatIntent =
         | "abandon_recovery"
         | "cancel"
         | "retry"
-        | "fork"
         | "continue";
       readonly commandId: string;
       readonly targetId?: string;
+    }
+  | {
+      readonly type: "select_chat" | "delete_chat" | "fork";
+      readonly commandId: string;
+      readonly targetId: string;
+    }
+  | {
+      readonly type: "set_chat_pinned";
+      readonly commandId: string;
+      readonly targetId: string;
+      readonly pinned: boolean;
     }
   | {
       readonly type: "approval";

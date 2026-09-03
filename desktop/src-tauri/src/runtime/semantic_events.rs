@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// One immutable event from the canonical Chat/Branch stream.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -132,10 +133,24 @@ pub(crate) fn envelope(
         stream_id: stream_id.to_owned(),
         branch_id: branch_id.to_owned(),
         sequence,
-        event_id: format!("event.chat.{sequence}"),
+        event_id: event_identity(stream_id, branch_id, sequence),
         kind: event.kind,
         span_id,
         causation_event_id,
         payload: event.payload,
     }
+}
+
+/// Event IDs are globally unique even though canonical sequence numbers are
+/// scoped to one Chat/branch stream. The legacy singleton keeps its historical
+/// IDs so existing stored envelopes remain byte-for-byte readable.
+pub(crate) fn event_identity(stream_id: &str, branch_id: &str, sequence: u64) -> String {
+    if stream_id == "chat.local" && branch_id == "main" {
+        return format!("event.chat.{sequence}");
+    }
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(format!("{stream_id}\0{branch_id}").as_bytes())
+    );
+    format!("event.chat.{}.{sequence}", &digest[..20])
 }

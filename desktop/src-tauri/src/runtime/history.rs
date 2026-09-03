@@ -15,11 +15,16 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::dto::{
-    ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput, UiCommandReceipt,
+    ChatHistoryEntryDto, ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput,
+    UiCommandReceipt,
+};
+use super::history_index::{
+    self, ChatSummaryProjection, HistoryIndexState, IndexedChat,
 };
 use super::project_scope::{FrozenProjectScopeV1, validate_frozen_project_scope};
 use super::semantic_events::{
-    CommittedChatEventPort, CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft, envelope,
+    CommittedChatEventPort, CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft,
+    envelope, event_identity,
 };
 use super::settings_v2::{
     BuiltInToolConfigurationV2, ModelConfigurationV2, ModelTierConfigurationV2,
@@ -163,13 +168,23 @@ impl ChatHistory {
             store,
             committed_events,
         };
+        history.initialize_history_index(data_root)?;
+        history.ensure_history_summaries()?;
         history.drain_committed_outbox()?;
         Ok(history)
     }
 
     pub(crate) fn head(&self) -> Result<u64, String> {
-        u64::try_from(self.events()?.len())
-            .map_err(|_| "Chat history sequence is exhausted".to_owned())
+        let chat_id = self.selected_identity()?.chat_id;
+        self.head_for_chat(&chat_id)
+    }
+
+    /// Reads the indexed stream head without loading or parsing event payloads.
+    fn head_for_chat(&self, chat_id: &StableId) -> Result<u64, String> {
+        self.store
+            .head_sequence(chat_id.as_str(), BRANCH_ID)
+            .map(|head| head.unwrap_or(0))
+            .map_err(|error| format!("cannot read desktop Chat head: {error}"))
     }
 
     pub(crate) fn ensure_expected(&self, expected: u64) -> Result<(), String> {
@@ -188,6 +203,9 @@ impl ChatHistory {
         command_id: &str,
         command_hash: &str,
     ) -> Result<Option<UiCommandReceipt>, String> {
+        if let Some(receipt) = history_index::replay(&self.store, command_id, command_hash)? {
+            return Ok(Some(receipt));
+        }
         for event in self.events()? {
             if event.payload.get("commandId").and_then(Value::as_str) == Some(command_id) {
                 if event.payload.get("commandHash").and_then(Value::as_str) != Some(command_hash) {
@@ -235,13 +253,14 @@ impl ChatHistory {
                 )
             })
             .collect::<Vec<_>>();
+        let stream_id = self.selected_identity()?.chat_id.to_string();
         validate_span_drafts(&self.events()?, &drafts)?;
-        let committed = committed_envelopes(expected_head, &drafts);
-        let events = local_events(expected_head, &drafts);
+        let committed = committed_envelopes(&stream_id, expected_head, &drafts);
+        let events = local_events(&stream_id, expected_head, &drafts);
         let outcome = self
             .store
             .commit(&CommitBatch {
-                chat_id: CHAT_ID.into(),
+                chat_id: stream_id,
                 branch_id: BRANCH_ID.into(),
                 expected_head,
                 events,
@@ -289,15 +308,16 @@ impl ChatHistory {
             .into_iter()
             .map(|(kind, payload)| SemanticEventDraft::new(kind, payload))
             .collect::<Vec<_>>();
+        let stream_id = self.selected_identity()?.chat_id.to_string();
         validate_span_drafts(&self.events()?, &drafts)?;
-        let committed = committed_envelopes(expected_head, &drafts);
+        let committed = committed_envelopes(&stream_id, expected_head, &drafts);
         let outcome = self
             .store
             .commit(&CommitBatch {
-                chat_id: CHAT_ID.into(),
+                chat_id: stream_id.clone(),
                 branch_id: BRANCH_ID.into(),
                 expected_head,
-                events: local_events(expected_head, &drafts),
+                events: local_events(&stream_id, expected_head, &drafts),
                 attempt: None,
                 checkpoint: None,
                 deduplication: Some(Deduplication {
@@ -336,7 +356,7 @@ impl ChatHistory {
         body: &str,
         created_at: &str,
     ) -> Result<Vec<Value>, String> {
-        let events = current_chat_events(self.events()?);
+        let events = self.events()?;
         let mut terminal = events
             .iter()
             .filter(|event| {
@@ -401,7 +421,7 @@ impl ChatHistory {
     }
 
     pub(crate) fn conversation(&self) -> Result<Vec<ConversationMessage>, String> {
-        let events = current_chat_events(self.events()?);
+        let events = self.events()?;
         Ok(events
             .into_iter()
             .filter_map(|event| match event.kind.as_str() {
@@ -413,18 +433,11 @@ impl ChatHistory {
     }
 
     pub(crate) fn current_chat_identity(&self) -> Result<Option<ChatIdentityV1>, String> {
-        let current = current_chat_events(self.events()?);
-        current
-            .iter()
-            .rev()
-            .find(|event| matches!(event.kind.as_str(), "chat.created" | "chat.started"))
-            .map(identity_from_event)
-            .transpose()
-            .map(Option::flatten)
+        Ok(Some(self.selected_identity()?))
     }
 
     pub(crate) fn ensure_accepts_follow_up(&self) -> Result<(), String> {
-        let current = current_chat_events(self.events()?);
+        let current = self.events()?;
         if current.iter().any(|event| event.kind == "chat.cancelled") {
             return Err("the current Chat is cancelled and cannot accept more input".into());
         }
@@ -438,7 +451,7 @@ impl ChatHistory {
     }
 
     pub(crate) fn ensure_cancellable(&self) -> Result<(), String> {
-        let current = current_chat_events(self.events()?);
+        let current = self.events()?;
         if !current.iter().any(|event| event.kind == "chat.started") {
             return Err("cannot cancel a draft Chat".into());
         }
@@ -483,6 +496,7 @@ impl ChatHistory {
         &self,
         history_head: u64,
     ) -> Result<Option<FrozenChatExecutionRecordV1>, String> {
+        let selected_chat_id = self.selected_identity()?.chat_id;
         for event in self.session_events()?.into_iter().rev() {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
@@ -491,7 +505,9 @@ impl ChatHistory {
                 return Err("stored frozen Chat context is incomplete".into());
             };
             let record = decode_stored_frozen_context_record(value)?;
-            if record.context.history_base_head == history_head {
+            if record.context.identity.chat_id == selected_chat_id
+                && record.context.history_base_head == history_head
+            {
                 return Ok(Some(record));
             }
         }
@@ -505,8 +521,27 @@ impl ChatHistory {
         &self,
         history_head: u64,
     ) -> Result<Option<PendingChatCommandV1>, String> {
-        let chat_events = self.events()?;
-        for event in self.session_events()?.into_iter().rev() {
+        let selected_chat_id = self.selected_identity()?.chat_id;
+        let chat_events = self.events_for_chat(&selected_chat_id)?;
+        // Decode the profile-level session aggregate exactly once. The former
+        // nested lookup reopened and revalidated every frozen context for each
+        // staged command, making every history selection quadratic in the
+        // number of past commands and contexts.
+        let session_events = self.session_events()?;
+        let mut contexts = Vec::new();
+        let mut contexts_by_hash = BTreeMap::new();
+        for event in &session_events {
+            if event.kind != "chat.execution-context-frozen" {
+                continue;
+            }
+            let Some(value) = event.payload.get("record").cloned() else {
+                return Err("stored frozen Chat context is incomplete".into());
+            };
+            let context = decode_stored_frozen_context_record(value)?;
+            contexts_by_hash.insert(context.context_hash.clone(), context.clone());
+            contexts.push(context);
+        }
+        for event in session_events.iter().rev() {
             if event.kind != "chat.effect-command-staged" {
                 continue;
             }
@@ -516,6 +551,12 @@ impl ChatHistory {
             let record: PendingChatCommandV1 = serde_json::from_value(value)
                 .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
             validate_pending_command_record(&record)?;
+            let Some(context) = contexts_by_hash.get(&record.frozen_context_hash) else {
+                return Err("stored pending Chat command has no frozen context".into());
+            };
+            if context.context.identity.chat_id != selected_chat_id {
+                continue;
+            }
             let settled = chat_events.iter().any(|event| {
                 matches!(
                     event.kind.as_str(),
@@ -531,7 +572,10 @@ impl ChatHistory {
                 return Ok(Some(record));
             }
         }
-        let Some(context) = self.pending_context_at_head(history_head)? else {
+        let Some(context) = contexts.into_iter().rev().find(|context| {
+            context.context.identity.chat_id == selected_chat_id
+                && context.context.history_base_head == history_head
+        }) else {
             return Ok(None);
         };
         Ok(context
@@ -666,46 +710,398 @@ impl ChatHistory {
         Ok(record)
     }
 
+    fn initialize_history_index(&self, data_root: &Path) -> Result<(), String> {
+        let legacy_events = self
+            .store
+            .events(CHAT_ID, BRANCH_ID)
+            .map_err(|error| format!("cannot inspect legacy desktop Chat history: {error}"))?;
+        if legacy_events.is_empty() {
+            if history_index::load(&self.store)?.is_some() {
+                return Ok(());
+            }
+            let identity =
+                identity_for_seed(&format!("initial-chat:{}", data_root.to_string_lossy()))?;
+            return history_index::initialize(
+                &self.store,
+                &[(identity.chat_id, identity.run_id, now_label())],
+            );
+        }
+
+        let segments = legacy_chat_segments(legacy_events)?;
+        let mut chats = Vec::with_capacity(segments.len());
+        for (identity, events) in segments {
+            self.copy_legacy_chat(&identity.chat_id, &events)?;
+            let created_at = events
+                .iter()
+                .find_map(event_created_at)
+                .unwrap_or_else(now_label);
+            chats.push((identity.chat_id, identity.run_id, created_at));
+        }
+        history_index::initialize(&self.store, &chats)
+    }
+
+    /// One-time upgrade for history indexes created before compact sidebar
+    /// summaries existed. Later snapshots only refresh the selected Chat.
+    fn ensure_history_summaries(&self) -> Result<(), String> {
+        let missing = self
+            .index()?
+            .entries
+            .into_iter()
+            .filter(|entry| !entry.deleted && entry.summary.is_none())
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let frozen = self.frozen_contexts()?;
+        let mut summaries = Vec::with_capacity(missing.len());
+        for entry in missing {
+            let events = self.events_for_chat(&entry.chat_id)?;
+            summaries.push((
+                entry.chat_id.clone(),
+                sidebar_summary(
+                    &events,
+                    frozen.get(entry.chat_id.as_str()),
+                    &entry.created_at,
+                ),
+            ));
+        }
+        history_index::append_summaries(&self.store, summaries)
+    }
+
+    fn copy_legacy_chat(&self, chat_id: &StableId, events: &[Event]) -> Result<(), String> {
+        let existing = self.events_for_chat(chat_id)?;
+        if existing.len() > events.len()
+            || existing
+                .iter()
+                .zip(events)
+                .any(|(left, right)| left.kind != right.kind || left.payload != right.payload)
+        {
+            return Err("partially migrated Chat history differs from its legacy source".into());
+        }
+        let stream_id = chat_id.to_string();
+        for chunk in events[existing.len()..].chunks(64) {
+            let expected_head = u64::try_from(self.events_for_chat(chat_id)?.len())
+                .map_err(|_| "migrated Chat history sequence is exhausted".to_owned())?;
+            let copied = chunk
+                .iter()
+                .enumerate()
+                .map(|(offset, event)| {
+                    let sequence = expected_head
+                        .checked_add(u64::try_from(offset).expect("bounded migration batch"))
+                        .and_then(|value| value.checked_add(1))
+                        .expect("validated migration sequence");
+                    Event {
+                        event_id: event_identity(&stream_id, BRANCH_ID, sequence),
+                        kind: event.kind.clone(),
+                        payload: event.payload.clone(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            self.store
+                .commit(&CommitBatch {
+                    chat_id: stream_id.clone(),
+                    branch_id: BRANCH_ID.into(),
+                    expected_head,
+                    events: copied,
+                    attempt: None,
+                    checkpoint: None,
+                    deduplication: None,
+                    outbox: Vec::new(),
+                })
+                .map_err(|error| format!("cannot migrate legacy Chat history: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn index(&self) -> Result<HistoryIndexState, String> {
+        history_index::load(&self.store)?
+            .ok_or_else(|| "Chat history index is not initialized".to_owned())
+    }
+
+    fn selected_identity(&self) -> Result<ChatIdentityV1, String> {
+        let index = self.index()?;
+        let entry = index
+            .entries
+            .iter()
+            .find(|entry| entry.chat_id == index.selected_chat_id && !entry.deleted)
+            .ok_or_else(|| "selected Chat is unavailable".to_owned())?;
+        Ok(ChatIdentityV1 {
+            chat_id: entry.chat_id.clone(),
+            run_id: entry.run_id.clone(),
+        })
+    }
+
+    pub(crate) fn identity(&self, chat_id: &str) -> Result<ChatIdentityV1, String> {
+        let entry = self.require_visible_entry(chat_id)?;
+        Ok(ChatIdentityV1 {
+            chat_id: entry.chat_id,
+            run_id: entry.run_id,
+        })
+    }
+
+    fn require_visible_entry(&self, chat_id: &str) -> Result<IndexedChat, String> {
+        self.index()?
+            .entries
+            .into_iter()
+            .find(|entry| entry.chat_id.as_str() == chat_id && !entry.deleted)
+            .ok_or_else(|| format!("Chat '{chat_id}' does not exist or was deleted"))
+    }
+
+    pub(crate) fn create_chat(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+    ) -> Result<UiCommandReceipt, String> {
+        self.ensure_expected(expected_head)?;
+        let identity = identity_for_seed(command_id)?;
+        let created_at = now_label();
+        let summary = ChatSummaryProjection::draft(&created_at);
+        history_index::append_command(
+            &self.store,
+            command_id,
+            command_hash,
+            0,
+            vec![(
+                "history.chat-created",
+                json!({
+                    "chatId": identity.chat_id,
+                    "runId": identity.run_id,
+                    "createdAt": created_at,
+                    "summary": summary,
+                }),
+            )],
+        )
+    }
+
+    pub(crate) fn select_chat(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        chat_id: &str,
+    ) -> Result<UiCommandReceipt, String> {
+        self.ensure_expected(expected_head)?;
+        let target = self.require_visible_entry(chat_id)?;
+        let target_head = self.head_for_chat(&target.chat_id)?;
+        history_index::append_command(
+            &self.store,
+            command_id,
+            command_hash,
+            target_head,
+            vec![(
+                "history.chat-selected",
+                json!({"chatId": target.chat_id, "createdAt": now_label()}),
+            )],
+        )
+    }
+
+    pub(crate) fn set_chat_pinned(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        chat_id: &str,
+        pinned: bool,
+    ) -> Result<UiCommandReceipt, String> {
+        self.ensure_expected(expected_head)?;
+        let target = self.require_visible_entry(chat_id)?;
+        history_index::append_command(
+            &self.store,
+            command_id,
+            command_hash,
+            expected_head,
+            vec![(
+                "history.chat-pin-changed",
+                json!({
+                    "chatId": target.chat_id,
+                    "pinned": pinned,
+                    "createdAt": now_label(),
+                }),
+            )],
+        )
+    }
+
+    pub(crate) fn delete_chat(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        chat_id: &str,
+    ) -> Result<UiCommandReceipt, String> {
+        self.ensure_expected(expected_head)?;
+        let target = self.require_visible_entry(chat_id)?;
+        let index = self.index()?;
+        let mut facts = vec![(
+            "history.chat-deleted",
+            json!({"chatId": target.chat_id, "createdAt": now_label()}),
+        )];
+        let result_head = if index.selected_chat_id == target.chat_id {
+            if let Some(next) = index
+                .entries
+                .iter()
+                .filter(|entry| !entry.deleted && entry.chat_id != target.chat_id)
+                .max_by_key(|entry| entry.ordinal)
+            {
+                facts.push((
+                    "history.chat-selected",
+                    json!({"chatId": next.chat_id, "createdAt": now_label()}),
+                ));
+                self.head_for_chat(&next.chat_id)?
+            } else {
+                let replacement = identity_for_seed(&format!("{command_id}.replacement"))?;
+                let created_at = now_label();
+                let summary = ChatSummaryProjection::draft(&created_at);
+                facts.push((
+                    "history.chat-created",
+                    json!({
+                        "chatId": replacement.chat_id,
+                        "runId": replacement.run_id,
+                        "createdAt": created_at,
+                        "summary": summary,
+                    }),
+                ));
+                0
+            }
+        } else {
+            expected_head
+        };
+        history_index::append_command(&self.store, command_id, command_hash, result_head, facts)
+    }
+
+    pub(crate) fn append_fork_content(
+        &self,
+        identity: &ChatIdentityV1,
+        command_id: &str,
+        command_hash: &str,
+        facts: Vec<(&str, Value)>,
+    ) -> Result<u64, String> {
+        let stream_id = identity.chat_id.to_string();
+        let result_head = u64::try_from(facts.len())
+            .map_err(|_| "forked Chat sequence is exhausted".to_owned())?;
+        let drafts = facts
+            .into_iter()
+            .map(|(kind, payload)| {
+                SemanticEventDraft::new(
+                    kind,
+                    receipt_payload(payload, command_id, command_hash, result_head),
+                )
+            })
+            .collect::<Vec<_>>();
+        let existing = self.events_for_chat(&identity.chat_id)?;
+        if existing.len() > drafts.len()
+            || existing
+                .iter()
+                .zip(&drafts)
+                .any(|(event, draft)| event.kind != draft.kind || event.payload != draft.payload)
+        {
+            return Err("partially created fork differs from its source Chat".into());
+        }
+        let mut expected_head = u64::try_from(existing.len())
+            .map_err(|_| "forked Chat sequence is exhausted".to_owned())?;
+        for chunk in drafts[existing.len()..].chunks(64) {
+            self.store
+                .commit(&CommitBatch {
+                    chat_id: stream_id.clone(),
+                    branch_id: BRANCH_ID.into(),
+                    expected_head,
+                    events: local_events(&stream_id, expected_head, chunk),
+                    attempt: None,
+                    checkpoint: None,
+                    deduplication: Some(Deduplication {
+                        key_type: "desktop.fork-content".into(),
+                        key: format!("{command_id}.{expected_head}"),
+                        request_hash: command_hash.into(),
+                    }),
+                    outbox: Vec::new(),
+                })
+                .map_err(|error| format!("cannot create forked Chat history: {error}"))?;
+            expected_head = expected_head
+                .checked_add(u64::try_from(chunk.len()).expect("bounded fork batch"))
+                .ok_or_else(|| "forked Chat sequence is exhausted".to_owned())?;
+        }
+        Ok(result_head)
+    }
+
+    pub(crate) fn record_fork(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        parent_chat_id: &StableId,
+        child: &ChatIdentityV1,
+        child_head: u64,
+    ) -> Result<UiCommandReceipt, String> {
+        self.require_visible_entry(parent_chat_id.as_str())?;
+        history_index::append_command(
+            &self.store,
+            command_id,
+            command_hash,
+            child_head,
+            vec![(
+                "history.chat-created",
+                json!({
+                    "chatId": child.chat_id,
+                    "runId": child.run_id,
+                    "parentChatId": parent_chat_id,
+                    "createdAt": now_label(),
+                }),
+            )],
+        )
+    }
+
+    fn history_entries(index: HistoryIndexState) -> Vec<ChatHistoryEntryDto> {
+        let mut entries = Vec::new();
+        for entry in index.entries {
+            if entry.deleted {
+                continue;
+            }
+            entries.push(Self::history_entry(entry));
+        }
+        entries.sort_by(|left, right| {
+            sortable_time(&right.updated_at)
+                .cmp(&sortable_time(&left.updated_at))
+                .then_with(|| right.chat_id.cmp(&left.chat_id))
+        });
+        entries
+    }
+
+    fn history_entry(entry: IndexedChat) -> ChatHistoryEntryDto {
+        let summary = entry
+            .summary
+            .unwrap_or_else(|| ChatSummaryProjection::draft(&entry.created_at));
+        ChatHistoryEntryDto {
+            chat_id: entry.chat_id.to_string(),
+            run_id: entry.run_id.to_string(),
+            title: summary.title,
+            project_id: summary.project_id,
+            project_name: summary.project_name,
+            phase: summary.phase,
+            pinned: entry.pinned,
+            parent_chat_id: entry.parent_chat_id.map(|value| value.to_string()),
+            created_at: entry.created_at,
+            updated_at: summary.updated_at,
+        }
+    }
+
     pub(crate) fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
-        let all_events = self.events()?;
+        let mut index = self.index()?;
+        let indexed_position = index
+            .entries
+            .iter()
+            .position(|entry| entry.chat_id == index.selected_chat_id && !entry.deleted)
+            .ok_or_else(|| "selected Chat is unavailable".to_owned())?;
+        let indexed = index.entries[indexed_position].clone();
+        let identity = ChatIdentityV1 {
+            chat_id: indexed.chat_id.clone(),
+            run_id: indexed.run_id.clone(),
+        };
+        let all_events = self.events_for_chat(&identity.chat_id)?;
         let head = u64::try_from(all_events.len())
             .map_err(|_| "Chat history sequence is exhausted".to_owned())?;
-        let current = current_chat_events(all_events.clone());
-        let identity = current
-            .iter()
-            .rev()
-            .find(|event| matches!(event.kind.as_str(), "chat.created" | "chat.started"))
-            .map(identity_from_event)
-            .transpose()?
-            .flatten();
-        let frozen = identity
-            .as_ref()
-            .map(|identity| self.frozen_context(&identity.chat_id))
-            .transpose()?
-            .flatten();
+        let current = all_events.clone();
+        let frozen = self.frozen_context(&identity.chat_id)?;
         let evidence = evidence(&current);
-        let has_exchange = current
-            .iter()
-            .any(|event| event.kind == "message.assistant");
         let started = current.iter().any(|event| event.kind == "chat.started");
-        let failed = current.iter().any(|event| event.kind == "execution.failed");
-        let cancelled = current.iter().any(|event| event.kind == "chat.cancelled");
-        let open_approvals = current
-            .iter()
-            .filter(|event| event.kind == "approval.requested")
-            .filter(|event| {
-                let decision_id = event
-                    .payload
-                    .get("decisionId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                !current.iter().any(|resolved| {
-                    resolved.kind == "approval.resolved"
-                        && resolved.payload.get("decisionId").and_then(Value::as_str)
-                            == Some(decision_id)
-                })
-            })
-            .count();
         let title = current
             .iter()
             .find(|event| event.kind == "message.user")
@@ -713,31 +1109,10 @@ impl ChatHistory {
             .and_then(Value::as_str)
             .map(compact_title)
             .unwrap_or_else(|| "New Chat".into());
-        let phase = if cancelled {
-            "cancelled"
-        } else if failed {
-            "failed"
-        } else if open_approvals > 0 {
-            "awaiting_approval"
-        } else if has_exchange {
-            "waiting_input"
-        } else {
-            "draft"
-        };
+        let phase = projected_phase(&current);
         let chat = ChatProjectionDto {
-            chat_id: identity
-                .as_ref()
-                .map_or_else(|| CHAT_ID.into(), |identity| identity.chat_id.to_string()),
-            run_id: identity.as_ref().map_or_else(
-                || {
-                    if started {
-                        "run.legacy".into()
-                    } else {
-                        "run.draft".into()
-                    }
-                },
-                |identity| identity.run_id.to_string(),
-            ),
+            chat_id: identity.chat_id.to_string(),
+            run_id: identity.run_id.to_string(),
             title,
             scope: frozen
                 .as_ref()
@@ -771,6 +1146,16 @@ impl ChatHistory {
             "chat": &chat,
             "evidence": &evidence,
         }))?;
+        let summary = sidebar_summary(&current, frozen.as_ref(), &indexed.created_at);
+        if indexed.summary.as_ref() != Some(&summary) {
+            history_index::append_summaries(
+                &self.store,
+                vec![(identity.chat_id.clone(), summary.clone())],
+            )?;
+            index.entries[indexed_position].summary = Some(summary);
+        }
+        let history = Self::history_entries(index);
+        let stream_id = identity.chat_id.to_string();
         let events = all_events
             .into_iter()
             .enumerate()
@@ -778,7 +1163,7 @@ impl ChatHistory {
                 let sequence = u64::try_from(offset).ok()?.checked_add(1)?;
                 (sequence > after_sequence).then(|| {
                     envelope(
-                        CHAT_ID,
+                        &stream_id,
                         BRANCH_ID,
                         sequence,
                         SemanticEventDraft::new(event.kind, event.payload),
@@ -792,6 +1177,7 @@ impl ChatHistory {
             reducer_version: "chat.semantic.reducer.v1".into(),
             state_hash,
             chat,
+            history,
             projects: Vec::new(),
             evidence,
             events,
@@ -799,8 +1185,13 @@ impl ChatHistory {
     }
 
     fn events(&self) -> Result<Vec<Event>, String> {
+        let chat_id = self.selected_identity()?.chat_id;
+        self.events_for_chat(&chat_id)
+    }
+
+    pub(crate) fn events_for_chat(&self, chat_id: &StableId) -> Result<Vec<Event>, String> {
         self.store
-            .events(CHAT_ID, BRANCH_ID)
+            .events(chat_id.as_str(), BRANCH_ID)
             .map_err(|error| format!("cannot read desktop Chat history: {error}"))
     }
 
@@ -808,6 +1199,25 @@ impl ChatHistory {
         self.store
             .events(SESSION_AGGREGATE_ID, BRANCH_ID)
             .map_err(|error| format!("cannot read frozen Chat contexts: {error}"))
+    }
+
+    /// Decodes frozen contexts once while upgrading legacy sidebar summaries.
+    /// Ordinary snapshots resolve only the selected Chat's frozen context.
+    fn frozen_contexts(&self) -> Result<BTreeMap<String, FrozenChatExecutionRecordV1>, String> {
+        let mut contexts = BTreeMap::new();
+        for event in self.session_events()? {
+            if event.kind != "chat.execution-context-frozen" {
+                continue;
+            }
+            let value = event
+                .payload
+                .get("record")
+                .cloned()
+                .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())?;
+            let record = decode_stored_frozen_context_record(value)?;
+            contexts.insert(record.context.identity.chat_id.to_string(), record);
+        }
+        Ok(contexts)
     }
 }
 
@@ -817,15 +1227,16 @@ impl SemanticEventCommitter for ChatHistory {
             return Ok(Vec::new());
         }
         let expected_head = self.head()?;
+        let stream_id = self.selected_identity()?.chat_id.to_string();
         validate_span_drafts(&self.events()?, &drafts)?;
-        let committed = committed_envelopes(expected_head, &drafts);
+        let committed = committed_envelopes(&stream_id, expected_head, &drafts);
         let outcome = self
             .store
             .commit(&CommitBatch {
-                chat_id: CHAT_ID.into(),
+                chat_id: stream_id.clone(),
                 branch_id: BRANCH_ID.into(),
                 expected_head,
-                events: local_events(expected_head, &drafts),
+                events: local_events(&stream_id, expected_head, &drafts),
                 attempt: None,
                 checkpoint: None,
                 deduplication: None,
@@ -840,13 +1251,14 @@ impl SemanticEventCommitter for ChatHistory {
     }
 
     fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
+        let stream_id = self.selected_identity()?.chat_id.to_string();
         Ok(self
             .events()?
             .into_iter()
             .enumerate()
             .map(|(offset, event)| {
                 envelope(
-                    CHAT_ID,
+                    &stream_id,
                     BRANCH_ID,
                     u64::try_from(offset)
                         .expect("bounded history offset")
@@ -934,6 +1346,7 @@ fn observe_existing_span(state: &mut SpanLedgerState, kind: &str, payload: &Valu
 }
 
 fn committed_envelopes(
+    stream_id: &str,
     expected_head: u64,
     drafts: &[SemanticEventDraft],
 ) -> Vec<CoreEventEnvelope> {
@@ -946,7 +1359,7 @@ fn committed_envelopes(
                 .checked_add(u64::try_from(offset).expect("bounded semantic batch"))
                 .and_then(|value| value.checked_add(1))
                 .expect("validated semantic sequence");
-            envelope(CHAT_ID, BRANCH_ID, sequence, draft)
+            envelope(stream_id, BRANCH_ID, sequence, draft)
         })
         .collect()
 }
@@ -956,7 +1369,7 @@ fn delivery_outbox(events: &[CoreEventEnvelope]) -> Result<Vec<OutboxEntry>, Str
         .iter()
         .map(|event| {
             Ok(OutboxEntry {
-                outbox_id: format!("outbox.chat.event.{}", event.sequence),
+                outbox_id: format!("outbox.{}", event.event_id),
                 destination: COMMITTED_EVENT_DESTINATION.into(),
                 payload: serde_json::to_value(event)
                     .map_err(|error| format!("cannot encode committed Chat event: {error}"))?,
@@ -965,7 +1378,7 @@ fn delivery_outbox(events: &[CoreEventEnvelope]) -> Result<Vec<OutboxEntry>, Str
         .collect()
 }
 
-fn local_events(expected_head: u64, drafts: &[SemanticEventDraft]) -> Vec<Event> {
+fn local_events(stream_id: &str, expected_head: u64, drafts: &[SemanticEventDraft]) -> Vec<Event> {
     drafts
         .iter()
         .enumerate()
@@ -975,7 +1388,7 @@ fn local_events(expected_head: u64, drafts: &[SemanticEventDraft]) -> Vec<Event>
                 .and_then(|value| value.checked_add(1))
                 .expect("validated semantic sequence");
             Event {
-                event_id: format!("event.chat.{sequence}"),
+                event_id: event_identity(stream_id, BRANCH_ID, sequence),
                 kind: draft.kind.clone(),
                 payload: draft.payload.clone(),
             }
@@ -1042,19 +1455,104 @@ fn receipt_payload(
     Value::Object(object)
 }
 
-fn current_chat_events(events: Vec<Event>) -> Vec<Event> {
-    let start = events
-        .iter()
-        .rposition(|event| event.kind == "chat.created")
-        .unwrap_or(0);
-    if events
-        .get(start)
-        .is_some_and(|event| event.kind == "chat.created")
-    {
-        events.into_iter().skip(start).collect()
-    } else {
-        events
+fn legacy_chat_segments(events: Vec<Event>) -> Result<Vec<(ChatIdentityV1, Vec<Event>)>, String> {
+    let mut segments = Vec::<Vec<Event>>::new();
+    for event in events {
+        if event.kind == "chat.created" && segments.last().is_some_and(|items| !items.is_empty()) {
+            segments.push(Vec::new());
+        }
+        if segments.is_empty() {
+            segments.push(Vec::new());
+        }
+        segments.last_mut().expect("segment exists").push(event);
     }
+    segments
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, events)| {
+            let identity = events
+                .iter()
+                .find(|event| matches!(event.kind.as_str(), "chat.created" | "chat.started"))
+                .map(identity_from_event)
+                .transpose()?
+                .flatten()
+                .unwrap_or(identity_for_seed(&format!("legacy-chat-{ordinal}"))?);
+            Ok((identity, events))
+        })
+        .collect()
+}
+
+fn projected_phase(events: &[Event]) -> &'static str {
+    if events.iter().any(|event| event.kind == "chat.cancelled") {
+        return "cancelled";
+    }
+    if events.iter().any(|event| event.kind == "execution.failed") {
+        return "failed";
+    }
+    let has_open_approval = events
+        .iter()
+        .filter(|event| event.kind == "approval.requested")
+        .any(|event| {
+            let decision_id = event
+                .payload
+                .get("decisionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            !events.iter().any(|resolved| {
+                resolved.kind == "approval.resolved"
+                    && resolved.payload.get("decisionId").and_then(Value::as_str)
+                        == Some(decision_id)
+            })
+        });
+    if has_open_approval {
+        "awaiting_approval"
+    } else if events.iter().any(|event| event.kind == "message.assistant") {
+        "waiting_input"
+    } else {
+        "draft"
+    }
+}
+
+/// Folds only the selected canonical stream into the compact sidebar row.
+/// Other Chat streams are never opened during an ordinary snapshot.
+fn sidebar_summary(
+    events: &[Event],
+    frozen: Option<&FrozenChatExecutionRecordV1>,
+    created_at: &str,
+) -> ChatSummaryProjection {
+    let title = events
+        .iter()
+        .find(|event| event.kind == "message.user")
+        .and_then(|event| event.payload.get("body"))
+        .and_then(Value::as_str)
+        .map(compact_title)
+        .unwrap_or_else(|| "New Chat".into());
+    let updated_at = events
+        .iter()
+        .rev()
+        .find_map(event_created_at)
+        .unwrap_or_else(|| created_at.to_owned());
+    let project = frozen.and_then(|record| record.context.project.as_ref());
+    ChatSummaryProjection {
+        head_sequence: u64::try_from(events.len()).unwrap_or(u64::MAX),
+        title,
+        project_id: project.map(|project| project.project_id.clone()),
+        project_name: project.map(|project| project.project_name.clone()),
+        phase: projected_phase(events).into(),
+        updated_at,
+    }
+}
+
+fn event_created_at(event: &Event) -> Option<String> {
+    event
+        .payload
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn sortable_time(value: &str) -> u64 {
+    value.parse().unwrap_or(0)
 }
 
 fn identity_from_event(event: &Event) -> Result<Option<ChatIdentityV1>, String> {

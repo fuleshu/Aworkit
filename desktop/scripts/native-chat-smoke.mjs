@@ -4,6 +4,9 @@ import { dirname, resolve } from "node:path";
 const endpoint = process.env.AWORKIT_CDP_URL ?? "http://127.0.0.1:9223";
 const verifyProviderRuntimeSettings =
   process.env.AWORKIT_VERIFY_PROVIDER_RUNTIME_SETTINGS === "1";
+const verifyChatHistory = process.env.AWORKIT_VERIFY_CHAT_HISTORY === "1";
+const verifyChatSelection =
+  process.env.AWORKIT_VERIFY_CHAT_SELECTION === "1";
 const screenshotPath = resolve(
   process.env.AWORKIT_SMOKE_SCREENSHOT ??
     "src-tauri/target/native-chat-smoke.png",
@@ -99,6 +102,128 @@ for (let attempt = 0; attempt < 25; attempt += 1) {
   if (state.projectionUnavailable || state.composerPresent) break;
   await new Promise((resolveWait) => setTimeout(resolveWait, 200));
 }
+
+const chatHistoryState = verifyChatHistory
+  ? await evaluate(`(async () => {
+      const waitFor = async (predicate) => {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          if (predicate()) return true;
+          await new Promise((resolveWait) => setTimeout(resolveWait, 125));
+        }
+        return false;
+      };
+      const rows = () => [...document.querySelectorAll('.chat-history-row')];
+      const row = (chatId) =>
+        document.querySelector('[data-chat-id="' + CSS.escape(chatId) + '"]');
+      const addedChatIds = (initialIds) =>
+        rows()
+          .map((entry) => entry.dataset.chatId)
+          .filter((chatId) => chatId !== undefined && !initialIds.has(chatId));
+      const openMenu = async (chatId) => {
+        row(chatId)?.querySelector('.chat-history-more')?.click();
+        return waitFor(
+          () => row(chatId)?.querySelector('[role="menu"]') !== null,
+        );
+      };
+      const invokeAction = async (chatId, label) => {
+        if (!(await openMenu(chatId))) return false;
+        const action = [...(row(chatId)?.querySelectorAll('[role="menuitem"]') ?? [])]
+          .find((button) => button.textContent?.trim() === label);
+        action?.click();
+        return action !== undefined;
+      };
+
+      const initialIds = new Set(
+        rows().map((entry) => entry.dataset.chatId).filter(Boolean),
+      );
+      const initialCount = initialIds.size;
+      const newChat = document.querySelector('button.new-chat');
+      newChat?.click();
+      const newChatCreated = await waitFor(
+        () => addedChatIds(initialIds).length === 1,
+      );
+      const parentChatId = addedChatIds(initialIds)[0] ?? '';
+      const pinInvoked = await invokeAction(parentChatId, 'Pin');
+      const pinned = await waitFor(
+        () =>
+          document.querySelector(
+            '[aria-label="pinned"] [data-chat-id="' + CSS.escape(parentChatId) + '"]',
+          ) !== null,
+      );
+      const forkInvoked = await invokeAction(parentChatId, 'Fork');
+      const forkCreated = await waitFor(
+        () => addedChatIds(initialIds).length === 2,
+      );
+      const childChatId =
+        addedChatIds(initialIds).find((chatId) => chatId !== parentChatId) ?? '';
+      const menuOpened = await openMenu(childChatId);
+      const activeActions = [...(row(childChatId)?.querySelectorAll('[role="menuitem"]') ?? [])]
+        .map((button) => button.textContent?.trim() ?? '');
+      document.body.click();
+      return {
+        initialCount,
+        finalCount: rows().length,
+        newChatCreated,
+        pinInvoked,
+        pinned,
+        forkInvoked,
+        forkCreated,
+        menuOpened,
+        activeActions,
+        addedChatIds: addedChatIds(initialIds),
+      };
+    })()`)
+  : null;
+
+const chatSelectionState = verifyChatSelection
+  ? await evaluate(`(async () => {
+      const waitFor = async (predicate) => {
+        for (let attempt = 0; attempt < 80; attempt += 1) {
+          if (predicate()) return true;
+          await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+        }
+        return false;
+      };
+      const rows = [...document.querySelectorAll('.chat-history-row')];
+      const active = rows.find(
+        (row) => row.querySelector('.chat-history-link')?.getAttribute('aria-current') === 'page',
+      );
+      const target = rows.find(
+        (row) => row !== active && !row.querySelector('.chat-history-link')?.disabled,
+      );
+      const activeId = active?.dataset.chatId ?? null;
+      const targetId = target?.dataset.chatId ?? null;
+      const startedAt = performance.now();
+      target?.querySelector('.chat-history-link')?.click();
+      const selected = targetId !== null && await waitFor(
+        () =>
+          document.querySelector(
+            '[data-chat-id="' + CSS.escape(targetId) + '"] .chat-history-link',
+          )?.getAttribute('aria-current') === 'page',
+      );
+      await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      const errorDialogPresent = document.querySelector('[role="alertdialog"]') !== null;
+      if (activeId !== null) {
+        document.querySelector(
+          '[data-chat-id="' + CSS.escape(activeId) + '"] .chat-history-link',
+        )?.click();
+        await waitFor(
+          () =>
+            document.querySelector(
+              '[data-chat-id="' + CSS.escape(activeId) + '"] .chat-history-link',
+            )?.getAttribute('aria-current') === 'page',
+        );
+      }
+      return {
+        activeId,
+        targetId,
+        selected,
+        elapsedMs,
+        errorDialogPresent,
+      };
+    })()`)
+  : null;
 
 const runDetailsState = await evaluate(`(() => {
   const inspector = document.querySelector('[aria-label="Run details"]');
@@ -247,6 +372,8 @@ state = {
   rawRunDetailsState,
   layoutState,
   providerRuntimeSettingsState,
+  chatHistoryState,
+  chatSelectionState,
 };
 
 const screenshot = await command("Page.captureScreenshot", {
@@ -264,6 +391,32 @@ if (state.obsoleteSnapshotError) failures.push("obsolete Chat snapshot fields ar
 if (!state.composerPresent) failures.push("Chat composer was not rendered");
 if (!state.composerEnabled) failures.push("Chat composer is disabled");
 if (!state.newChatPresent) failures.push("New Chat control was not rendered");
+if (verifyChatHistory) {
+  const history = state.chatHistoryState;
+  if (!history?.newChatCreated)
+    failures.push("New Chat did not create a separate history entry");
+  if (!history?.pinInvoked || !history?.pinned)
+    failures.push("Chat history Pin did not move the selected Chat into Pinned");
+  if (!history?.forkInvoked || !history?.forkCreated)
+    failures.push("Chat history Fork did not create and select a separate child Chat");
+  if (!history?.menuOpened)
+    failures.push("The selected Chat context menu could not be opened");
+  for (const action of ["Pin", "Fork", "Delete"]) {
+    if (!history?.activeActions.includes(action))
+      failures.push(`The selected Chat context menu has no ${action} action`);
+  }
+}
+if (verifyChatSelection) {
+  const selection = state.chatSelectionState;
+  if (!selection?.selected)
+    failures.push("An existing Chat history row could not be selected");
+  if ((selection?.elapsedMs ?? Number.POSITIVE_INFINITY) > 2_000)
+    failures.push(
+      `Chat history selection took ${selection?.elapsedMs ?? "unknown"} ms`,
+    );
+  if (selection?.errorDialogPresent)
+    failures.push("Selecting historical Chat data opened an error dialog");
+}
 if (!state.runDetailsState.present) failures.push("Run details was not rendered");
 if (!state.runDetailsState.entireRunPresent)
   failures.push("whole-run details were not rendered");

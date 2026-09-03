@@ -430,11 +430,11 @@ impl DesktopRuntime {
         let mut snapshot = self.history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
         let history_head = self.history.head()?;
-        if self
+        let pending = self
             .history
             .pending_effect_command_at_head(history_head)?
-            .is_some()
-        {
+            .is_some();
+        if pending {
             let frozen = self
                 .history
                 .pending_context_at_head(history_head)?
@@ -561,21 +561,43 @@ impl DesktopRuntime {
         }
         match input.action.as_str() {
             "new_chat" => {
-                let identity = identity_for_seed(&input.command_id)?;
-                self.history.append(
+                self.history
+                    .create_chat(&input.command_id, &fingerprint, input.expected_version)
+            }
+            "select_chat" => {
+                let target_id = required_chat_target(&input)?;
+                self.history.select_chat(
                     &input.command_id,
                     &fingerprint,
                     input.expected_version,
-                    vec![(
-                        "chat.created",
-                        json!({
-                            "createdAt":now_label(),
-                            "chatId":identity.chat_id,
-                            "runId":identity.run_id,
-                        }),
-                    )],
+                    &target_id,
                 )
             }
+            "set_chat_pinned" => {
+                let target_id = required_chat_target(&input)?;
+                let pinned = input
+                    .payload
+                    .get("pinned")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "set_chat_pinned requires a boolean pinned field".to_owned())?;
+                self.history.set_chat_pinned(
+                    &input.command_id,
+                    &fingerprint,
+                    input.expected_version,
+                    &target_id,
+                    pinned,
+                )
+            }
+            "delete_chat" => {
+                let target_id = required_chat_target(&input)?;
+                self.history.delete_chat(
+                    &input.command_id,
+                    &fingerprint,
+                    input.expected_version,
+                    &target_id,
+                )
+            }
+            "fork" => self.fork_chat(input, fingerprint),
             "start" | "enqueue" => self.complete_workflow_input(input, fingerprint),
             "approval" => self.complete_approval(input, fingerprint),
             "resume" => {
@@ -610,6 +632,102 @@ impl DesktopRuntime {
                 "desktop action '{other}' is not implemented in the Chat runtime"
             )),
         }
+    }
+
+    /// Creates an independently selectable child Chat with an immutable copy
+    /// of the parent's conversational context and frozen execution binding.
+    /// Tool activity remains evidence on the parent; user/model messages are
+    /// copied with provenance so continuing the child sends the same context.
+    fn fork_chat(
+        &mut self,
+        input: UiCommandInput,
+        fingerprint: String,
+    ) -> Result<UiCommandReceipt, String> {
+        self.history.ensure_expected(input.expected_version)?;
+        let target_id = required_chat_target(&input)?;
+        let parent = self.history.identity(&target_id)?;
+        let child = identity_for_seed(&format!("{}:fork", input.command_id))?;
+        let parent_events = self.history.events_for_chat(&parent.chat_id)?;
+        let parent_context = self.history.frozen_context(&parent.chat_id)?;
+        let child_context = if let Some(parent_context) = parent_context.as_ref() {
+            let mut child_context = parent_context.context.clone();
+            child_context.identity = child.clone();
+            child_context.history_base_head = 0;
+            child_context.start_command_id =
+                StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
+            child_context.start_command_hash = fingerprint.clone();
+            child_context.pending_start_command = None;
+            Some(self.history.freeze_context(child_context)?)
+        } else {
+            None
+        };
+
+        // A retry after a partial child-stream commit must reproduce the exact
+        // first batch. Reuse its durable timestamp instead of generating a
+        // different payload that the prefix-integrity check would reject.
+        let created_at = self
+            .history
+            .events_for_chat(&child.chat_id)?
+            .first()
+            .and_then(|event| event.payload.get("createdAt"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(now_label);
+        let mut facts = vec![
+            (
+                "chat.created",
+                json!({
+                    "createdAt": created_at,
+                    "chatId": child.chat_id,
+                    "runId": child.run_id,
+                    "parentChatId": parent.chat_id,
+                }),
+            ),
+            (
+                "chat.continued",
+                json!({
+                    "createdAt": created_at,
+                    "chatId": child.chat_id,
+                    "runId": child.run_id,
+                    "parentChatId": parent.chat_id,
+                }),
+            ),
+        ];
+        if let Some(context) = child_context.as_ref() {
+            facts.push((
+                "chat.started",
+                json!({
+                    "createdAt": created_at,
+                    "chatId": child.chat_id,
+                    "runId": child.run_id,
+                    "workflowId": context.context.workflow_id,
+                    "workflowVersion": context.context.workflow_version,
+                    "frozenContextHash": context.context_hash,
+                    "projectId": context.context.project.as_ref().map(|project| project.project_id.as_str()),
+                    "workspaceIdentityHash": context.context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
+                    "parentChatId": parent.chat_id,
+                }),
+            ));
+        }
+        for event in parent_events
+            .iter()
+            .filter(|event| matches!(event.kind.as_str(), "message.user" | "message.assistant"))
+        {
+            facts.push((
+                event.kind.as_str(),
+                forked_message_payload(event, &parent.chat_id, &child.run_id),
+            ));
+        }
+        let child_head =
+            self.history
+                .append_fork_content(&child, &input.command_id, &fingerprint, facts)?;
+        self.history.record_fork(
+            &input.command_id,
+            &fingerprint,
+            &parent.chat_id,
+            &child,
+            child_head,
+        )
     }
 
     fn complete_workflow_input(
@@ -3576,6 +3694,43 @@ fn string_field(payload: &Value, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("command payload requires non-empty {name}"))
 }
 
+fn required_chat_target(input: &UiCommandInput) -> Result<String, String> {
+    input
+        .target_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{} requires a Chat target", input.action))
+}
+
+fn forked_message_payload(
+    event: &aworkit_local_store::Event,
+    parent_chat_id: &StableId,
+    child_run_id: &StableId,
+) -> Value {
+    let mut object = event.payload.as_object().cloned().unwrap_or_default();
+    for field in [
+        "commandId",
+        "commandHash",
+        "resultHead",
+        "requestId",
+        "settlesCommandId",
+    ] {
+        object.remove(field);
+    }
+    object.insert("schemaVersion".into(), Value::from(1));
+    object.insert("runId".into(), Value::String(child_run_id.to_string()));
+    object.insert(
+        "copiedFromEventId".into(),
+        Value::String(event.event_id.clone()),
+    );
+    object.insert(
+        "parentChatId".into(),
+        Value::String(parent_chat_id.to_string()),
+    );
+    Value::Object(object)
+}
+
 fn optional_project_id(payload: &Value) -> Result<Option<String>, String> {
     match payload.get("projectId") {
         None | Some(Value::Null) => Ok(None),
@@ -4903,6 +5058,230 @@ mod tests {
             continued.iter().any(|message| {
                 message.role == "assistant" && message.content == "fixture: hello"
             })
+        );
+    }
+
+    #[test]
+    fn chat_history_selects_pins_forks_deletes_and_reopens_independent_streams() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+
+        runtime
+            .command(send("chat.history.first", 0, "first topic"))
+            .unwrap();
+        let first = runtime.snapshot(0).unwrap();
+        let first_id = first.chat.chat_id.clone();
+        assert_eq!(first.history.len(), 1);
+        assert_eq!(first.history[0].title, "first topic");
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.history.new".into(),
+                expected_version: first.version,
+                action: "new_chat".into(),
+                target_id: Some(first_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        assert_eq!(runtime.snapshot(0).unwrap().version, 0);
+        runtime
+            .command(send("chat.history.second", 0, "second topic"))
+            .unwrap();
+        let second = runtime.snapshot(0).unwrap();
+        let second_id = second.chat.chat_id.clone();
+        assert_ne!(first_id, second_id);
+        assert_eq!(second.history.len(), 2);
+        assert!(second.events.iter().any(|event| {
+            event.kind == "message.user"
+                && event.payload.get("body").and_then(Value::as_str) == Some("second topic")
+        }));
+        assert!(!second.events.iter().any(|event| {
+            event.payload.get("body").and_then(Value::as_str) == Some("first topic")
+        }));
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.history.pin".into(),
+                expected_version: second.version,
+                action: "set_chat_pinned".into(),
+                target_id: Some(first_id.clone()),
+                payload: json!({"pinned": true}),
+            })
+            .unwrap();
+        assert!(
+            runtime
+                .snapshot(0)
+                .unwrap()
+                .history
+                .iter()
+                .find(|entry| entry.chat_id == first_id)
+                .unwrap()
+                .pinned
+        );
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.history.select".into(),
+                expected_version: second.version,
+                action: "select_chat".into(),
+                target_id: Some(first_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let selected = runtime.snapshot(0).unwrap();
+        assert_eq!(selected.chat.chat_id, first_id);
+        assert!(selected.events.iter().any(|event| {
+            event.payload.get("body").and_then(Value::as_str) == Some("first topic")
+        }));
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.history.fork".into(),
+                expected_version: selected.version,
+                action: "fork".into(),
+                target_id: Some(first_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let fork = runtime.snapshot(0).unwrap();
+        let fork_id = fork.chat.chat_id.clone();
+        assert_ne!(fork_id, first_id);
+        assert_eq!(fork.history.len(), 3);
+        assert_eq!(
+            fork.history
+                .iter()
+                .find(|entry| entry.chat_id == fork_id)
+                .unwrap()
+                .parent_chat_id
+                .as_deref(),
+            Some(first_id.as_str())
+        );
+        assert!(fork.events.iter().any(|event| {
+            event.kind == "message.user"
+                && event.payload.get("body").and_then(Value::as_str) == Some("first topic")
+                && event.payload.get("parentChatId").and_then(Value::as_str)
+                    == Some(first_id.as_str())
+        }));
+
+        runtime
+            .command(send(
+                "chat.history.fork.continue",
+                fork.version,
+                "fork follow-up",
+            ))
+            .unwrap();
+        let continued_fork = runtime.snapshot(0).unwrap();
+        assert_eq!(continued_fork.chat.chat_id, fork_id);
+        assert!(continued_fork.events.iter().any(|event| {
+            event.kind == "message.user"
+                && event.payload.get("body").and_then(Value::as_str) == Some("fork follow-up")
+        }));
+        let conversations = provider.conversations.lock().unwrap();
+        let continued_messages = conversations.last().unwrap();
+        assert!(continued_messages.iter().any(|message| {
+            message.role == "assistant" && message.content == "fixture: first topic"
+        }));
+        assert!(
+            continued_messages
+                .iter()
+                .any(|message| { message.role == "user" && message.content == "fork follow-up" })
+        );
+        drop(conversations);
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.history.delete".into(),
+                expected_version: continued_fork.version,
+                action: "delete_chat".into(),
+                target_id: Some(second_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let deleted = runtime.snapshot(0).unwrap();
+        assert_eq!(deleted.chat.chat_id, fork_id);
+        assert!(
+            !deleted
+                .history
+                .iter()
+                .any(|entry| entry.chat_id == second_id)
+        );
+        drop(runtime);
+
+        let reopened =
+            runtime_with_store(&root, provider, Arc::new(MemoryCredentialStore::default()));
+        let restored = reopened.snapshot(0).unwrap();
+        assert_eq!(restored.chat.chat_id, fork_id);
+        assert_eq!(restored.history.len(), 2);
+        assert!(restored.history.iter().any(|entry| entry.pinned));
+    }
+
+    #[test]
+    fn deleting_the_selected_or_last_chat_always_leaves_a_valid_selection() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        let initial = runtime.snapshot(0).unwrap();
+        let initial_id = initial.chat.chat_id.clone();
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.delete-selected.new".into(),
+                expected_version: initial.version,
+                action: "new_chat".into(),
+                target_id: Some(initial_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let second = runtime.snapshot(0).unwrap();
+        let second_id = second.chat.chat_id.clone();
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.delete-selected.second".into(),
+                expected_version: second.version,
+                action: "delete_chat".into(),
+                target_id: Some(second_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let fallback = runtime.snapshot(0).unwrap();
+        assert_eq!(fallback.chat.chat_id, initial_id);
+        assert!(
+            !fallback
+                .history
+                .iter()
+                .any(|entry| entry.chat_id == second_id)
+        );
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.delete-selected.last".into(),
+                expected_version: fallback.version,
+                action: "delete_chat".into(),
+                target_id: Some(initial_id.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        let replacement = runtime.snapshot(0).unwrap();
+        assert_ne!(replacement.chat.chat_id, initial_id);
+        assert_eq!(replacement.chat.phase, "draft");
+        assert_eq!(replacement.history.len(), 1);
+
+        drop(runtime);
+        let reopened =
+            runtime_with_store(&root, provider, Arc::new(MemoryCredentialStore::default()));
+        assert_eq!(
+            reopened.snapshot(0).unwrap().chat.chat_id,
+            replacement.chat.chat_id
         );
     }
 
@@ -6693,7 +7072,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.credential.next-start".into(),
-                expected_version: 12,
+                expected_version: 0,
                 action: "start".into(),
                 target_id: None,
                 payload: json!({
@@ -6806,7 +7185,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.future.start".into(),
-                expected_version: 12,
+                expected_version: 0,
                 action: "start".into(),
                 target_id: Some(next_chat_id),
                 payload: json!({
@@ -6870,13 +7249,27 @@ mod tests {
         let mut start = send("chat.project.start", 0, "hello project");
         start.payload["projectId"] = Value::String("project.atlas".into());
         runtime.command(start).unwrap();
-        let first_projection = runtime.snapshot(0).unwrap().chat;
+        let first_snapshot = runtime.snapshot(0).unwrap();
+        let first_projection = first_snapshot.chat;
         assert_eq!(first_projection.scope, "Project Atlas");
         assert_eq!(
             first_projection.project_id.as_deref(),
             Some("project.atlas")
         );
         assert_eq!(first_projection.branch.as_deref(), Some("main"));
+        let first_history_entry = first_snapshot
+            .history
+            .iter()
+            .find(|entry| entry.chat_id == first_projection.chat_id)
+            .unwrap();
+        assert_eq!(
+            first_history_entry.project_id.as_deref(),
+            Some("project.atlas")
+        );
+        assert_eq!(
+            first_history_entry.project_name.as_deref(),
+            Some("Project Atlas")
+        );
         let first_context = runtime.history.current_frozen_context().unwrap().unwrap();
         let first_project = first_context.context.project.as_ref().unwrap();
         assert_eq!(
@@ -6945,7 +7338,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.project.future-start".into(),
-                expected_version: 12,
+                expected_version: 0,
                 action: "start".into(),
                 target_id: Some(next_chat),
                 payload: json!({

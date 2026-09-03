@@ -92,6 +92,10 @@ export function useChatRuntime(
           bufferEvent(bufferedRef.current, event);
           return;
         }
+        // The native subscription is process-wide. A delayed envelope from a
+        // previously selected Chat is valid history, but it does not belong in
+        // the active stream projection and must not collide by sequence.
+        if (event.streamId !== snapshotRef.current?.chat.chatId) return;
         const existing = eventsRef.current[event.sequence - 1];
         if (existing !== undefined) {
           assertSameEnvelope(existing, event);
@@ -110,6 +114,9 @@ export function useChatRuntime(
 
   const replaceSnapshot = useCallback(
     (next: RuntimeSnapshot, full: boolean): void => {
+      if (next.events.some((event) => event.streamId !== next.chat.chatId)) {
+        throw new Error("trusted-core snapshot contains a foreign Chat stream");
+      }
       const merged = mergeCanonicalEvents(
         full ? [] : eventsRef.current,
         next.events,
@@ -121,7 +128,7 @@ export function useChatRuntime(
       }
       const buffered = [...bufferedRef.current.values()].sort(
         (left, right) => left.sequence - right.sequence,
-      );
+      ).filter((event) => event.streamId === next.chat.chatId);
       for (const event of buffered) mergeOne(merged, event);
       bufferedRef.current.clear();
       assertContiguous(merged);
@@ -133,10 +140,11 @@ export function useChatRuntime(
     [publishEvents],
   );
 
-  const resynchronize = useCallback(async (): Promise<boolean> => {
+  const resynchronize = useCallback(async (replaceStream = false): Promise<boolean> => {
     try {
       const next = await port.snapshot(0);
       if (
+        !replaceStream &&
         snapshotRef.current !== null &&
         next.throughSequence < snapshotRef.current.throughSequence
       ) {
@@ -229,14 +237,23 @@ export function useChatRuntime(
         if (!receipt.accepted) {
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";
-          await resynchronize();
+          await resynchronize(replacesSelectedChat(intent));
           reportError(reason);
           return false;
         }
-        return await resynchronize();
+        return await resynchronize(replacesSelectedChat(intent));
       } catch (failure) {
         const failureMessage = message(failure);
-        await resynchronize();
+        // The command response can be lost after a stream-changing mutation
+        // committed. Recovery must accept the newly selected stream even when
+        // its sequence is lower than the previously visible Chat.
+        const recovered = await resynchronize(replacesSelectedChat(intent));
+        if (
+          recovered &&
+          intent.type === "select_chat" &&
+          snapshotRef.current?.chat.chatId === intent.targetId
+        )
+          return true;
         reportError(failureMessage);
         return false;
       } finally {
@@ -262,6 +279,12 @@ export function useChatRuntime(
     resynchronize,
     dismissError,
   };
+}
+
+function replacesSelectedChat(intent: ChatIntent): boolean {
+  return ["new_chat", "select_chat", "delete_chat", "fork"].includes(
+    intent.type,
+  );
 }
 
 function message(error: unknown): string {
@@ -294,9 +317,15 @@ function mergeCanonicalEvents(
   current: readonly RuntimeEvent[],
   incoming: readonly RuntimeEvent[],
 ): RuntimeEvent[] {
-  const merged = [...current];
-  for (const event of incoming) mergeOne(merged, event);
-  merged.sort((left, right) => left.sequence - right.sequence);
+  const bySequence = new Map<number, RuntimeEvent>();
+  for (const event of [...current, ...incoming]) {
+    const existing = bySequence.get(event.sequence);
+    if (existing === undefined) bySequence.set(event.sequence, event);
+    else assertSameEnvelope(existing, event);
+  }
+  const merged = [...bySequence.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
   assertContiguous(merged);
   return merged;
 }

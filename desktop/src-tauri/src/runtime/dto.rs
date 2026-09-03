@@ -65,6 +65,23 @@ pub struct ChatProjectionDto {
     pub recovery_pending: bool,
 }
 
+/// Sidebar-safe summary of one durable Chat stream. Deleted Chats are
+/// tombstoned in the canonical history index and never enter this projection.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatHistoryEntryDto {
+    pub chat_id: String,
+    pub run_id: String,
+    pub title: String,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub phase: String,
+    pub pinned: bool,
+    pub parent_chat_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// One saved project that the native workflow runtime can select
 /// before its first input. Paths stay behind the trusted native boundary.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,6 +110,7 @@ pub struct RuntimeSnapshot {
     pub reducer_version: String,
     pub state_hash: String,
     pub chat: ChatProjectionDto,
+    pub history: Vec<ChatHistoryEntryDto>,
     pub projects: Vec<ProjectChoiceDto>,
     pub evidence: Vec<EvidenceRecordDto>,
     pub events: Vec<CoreEventEnvelope>,
