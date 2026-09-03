@@ -419,13 +419,16 @@ function findSecretLikeKey(value: unknown): string | null {
         "authheader",
         "bearertoken",
         "clientsecret",
-        "credential",
         "password",
         "passwd",
         "privatekey",
         "secret",
-        "token",
-      ].some((marker) => normalized.includes(marker))
+      ].some((marker) => normalized.includes(marker)) ||
+      normalized === "token" ||
+      normalized.endsWith("tokenvalue") ||
+      normalized === "credential" ||
+      normalized.endsWith("credentials") ||
+      normalized.includes("credentialref")
     )
       return key;
     const result = findSecretLikeKey(nested);

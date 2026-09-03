@@ -439,6 +439,7 @@ impl WorkflowExecutionPipeline {
             file_tool_descriptors.clone(),
             generation,
             core_key.clone(),
+            credential_store.clone(),
         )?;
         Ok(Self {
             root,
@@ -3573,7 +3574,7 @@ mod tests {
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
         PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
         PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
-        WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1, WEB_SEARCH_MAXIMUM_RESULTS_V1,
+        WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
     };
 
     use std::collections::BTreeMap;
@@ -3881,7 +3882,7 @@ mod tests {
                         "tool.todo",
                         "aworkit_todo",
                         json!({"todos":[
-                            {"content":"Write tests","status":"pending"},
+                            {"content":"Write tests","status":"in_progress"},
                             {"content":"Fix pipeline","status":"completed"},
                         ]}),
                     ))?,
@@ -4209,15 +4210,17 @@ mod tests {
                         "maximumMatches":PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
                     }),
                     TODO_CAPABILITY_ID => json!({"authorityMode":"run_todo"}),
-                    WEB_SEARCH_CAPABILITY_ID => json!({
-                        "maximumResults":WEB_SEARCH_MAXIMUM_RESULTS_V1,
-                    }),
+                    WEB_SEARCH_CAPABILITY_ID => serde_json::to_value(
+                        aworkit_capability_host::WebSearchConfigurationV1::default(),
+                    )
+                    .expect("web-search configuration"),
                     WEB_FETCH_CAPABILITY_ID => json!({
                         "maximumDownloadBytes":WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
                         "maximumExtractBytes":WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
                     }),
                     _ => json!({}),
                 },
+                credential_bindings: Vec::new(),
                 definition: None,
             })
             .collect();
@@ -5427,6 +5430,7 @@ mod tests {
                 "requiresApproval": true,
                 "maximumBytes": PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1,
             }),
+            credential_bindings: Vec::new(),
             definition: None,
         }];
         request.workflow_snapshot = edit_approval_workflow();
@@ -5650,7 +5654,7 @@ mod tests {
         assert_eq!(
             stored,
             json!([
-                {"content":"Write tests","status":"pending"},
+                {"content":"Write tests","status":"in_progress"},
                 {"content":"Fix pipeline","status":"completed"},
             ])
         );
@@ -5802,6 +5806,7 @@ mod tests {
                     }),
                     _ => json!({}),
                 },
+                credential_bindings: Vec::new(),
                 definition: None,
             })
             .collect();
@@ -6255,6 +6260,7 @@ mod tests {
         request.tools = vec![WorkflowToolBindingV1 {
             capability_id: MCP_FIXTURE_CAPABILITY.into(),
             configuration: json!({"serverId": MCP_FIXTURE_SERVER, "tool": MCP_FIXTURE_TOOL}),
+            credential_bindings: Vec::new(),
             definition: Some(mcp_echo_definition()),
         }];
         request.mcp_servers = vec![mcp_fixture_manifest(pipeline.generation)];

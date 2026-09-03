@@ -536,6 +536,7 @@ fn load_or_migrate_settings(
             let repaired = settings.disable_inactive_runtime_controls()
                 | settings.normalize_legacy_project_tool_limits()
                 | settings.normalize_legacy_agent_turn_limits()
+                | settings.normalize_legacy_web_search_configuration()
                 | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {

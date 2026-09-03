@@ -241,11 +241,27 @@ impl SettingsConfigurationV2 {
             }
         }
         for tool in &self.tools {
-            if !tool.credential_bindings.is_empty() {
+            if tool.id != "tool.web_search" && !tool.credential_bindings.is_empty() {
                 return Err(format!(
                     "built-in tool '{}' has credential bindings, but the installed adapter cannot consume them",
                     tool.id
                 ));
+            }
+            if tool.id == "tool.web_search" {
+                for binding in &tool.credential_bindings {
+                    let credential = self.credential(&binding.credential_ref).ok_or_else(|| {
+                        format!(
+                            "web-search tool references unknown credential '{}'",
+                            binding.credential_ref
+                        )
+                    })?;
+                    if credential.bound_provider_id.is_some() {
+                        return Err(format!(
+                            "web-search tool credential '{}' must be an unbound integration credential",
+                            binding.credential_ref
+                        ));
+                    }
+                }
             }
         }
         let provider_scoped = self
@@ -422,6 +438,28 @@ impl SettingsConfigurationV2 {
             .iter_mut()
             .filter(|tool| tool.id == "tool.subagent")
             .any(|tool| tool.configuration.remove("maximumTurns").is_some())
+    }
+
+    /// Expands the one-field web-search record written by earlier builds into
+    /// the complete provider-neutral configuration without changing its
+    /// enabled state or credential bindings.
+    pub(crate) fn normalize_legacy_web_search_configuration(&mut self) -> bool {
+        let Some(tool) = self
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+        else {
+            return false;
+        };
+        let defaults = web_search_default_configuration();
+        let mut changed = false;
+        for (key, value) in defaults {
+            if !tool.configuration.contains_key(&key) {
+                tool.configuration.insert(key, value);
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub(crate) fn credential(&self, reference: &str) -> Option<&CredentialMetadataConfigurationV2> {
@@ -875,9 +913,164 @@ impl BuiltInToolConfigurationV2 {
                 require_config_string(self, "authorityMode", "run_todo")
             }
             "tool.web_search" => {
-                require_exact_config_keys(self, &["maximumResults"])?;
+                require_exact_config_keys(
+                    self,
+                    &[
+                        "backend",
+                        "credentialBackend",
+                        "providerTier",
+                        "maximumResults",
+                        "requestTimeoutSeconds",
+                        "maximumRetries",
+                        "keylessFallback",
+                        "keylessRescue",
+                        "cacheEnabled",
+                        "cacheTtlMinutes",
+                        "searxngBaseUrl",
+                        "providerBaseUrl",
+                        "parallelSearchMode",
+                        "xaiModel",
+                        "xaiAllowedDomains",
+                        "xaiExcludedDomains",
+                        "deepseekBaseUrl",
+                        "deepseekModel",
+                        "deepseekMaximumOutputTokens",
+                    ],
+                )?;
                 require_tool_project_scope(self, false)?;
-                require_config_u64(self, "maximumResults", 1, WEB_SEARCH_MAXIMUM_RESULTS_V1)
+                let backend = require_config_one_of(
+                    self,
+                    "backend",
+                    &[
+                        "automatic",
+                        "keyless",
+                        "duckduckgo",
+                        "searxng",
+                        "exa",
+                        "parallel",
+                        "firecrawl",
+                        "tavily",
+                        "brave",
+                        "keenable",
+                        "xai",
+                        "deepseek",
+                    ],
+                )?;
+                require_config_one_of(
+                    self,
+                    "credentialBackend",
+                    &[
+                        "exa",
+                        "parallel",
+                        "firecrawl",
+                        "tavily",
+                        "brave",
+                        "keenable",
+                        "xai",
+                        "deepseek",
+                    ],
+                )?;
+                let provider_tier =
+                    require_config_one_of(self, "providerTier", &["automatic", "free", "paid"])?;
+                require_config_u64(self, "maximumResults", 1, WEB_SEARCH_MAXIMUM_RESULTS_V1)?;
+                require_config_u64(self, "requestTimeoutSeconds", 5, 120)?;
+                require_config_u64(self, "maximumRetries", 0, 3)?;
+                require_config_boolean(self, "keylessFallback")?;
+                require_config_boolean(self, "keylessRescue")?;
+                require_config_boolean(self, "cacheEnabled")?;
+                require_config_u64(self, "cacheTtlMinutes", 1, 1_440)?;
+                require_optional_search_url(self, "searxngBaseUrl", true)?;
+                require_optional_search_url(self, "providerBaseUrl", true)?;
+                require_config_one_of(
+                    self,
+                    "parallelSearchMode",
+                    &["fast", "one-shot", "agentic"],
+                )?;
+                require_config_text(self, "xaiModel", 1, 256)?;
+                require_search_domain_filters(self)?;
+                require_optional_search_url(self, "deepseekBaseUrl", false)?;
+                require_config_text(self, "deepseekModel", 1, 256)?;
+                require_config_u64(self, "deepseekMaximumOutputTokens", 256, 16_384)?;
+                let keyless_fallback = self.configuration["keylessFallback"]
+                    .as_bool()
+                    .expect("validated keylessFallback");
+                let keyless_rescue = self.configuration["keylessRescue"]
+                    .as_bool()
+                    .expect("validated keylessRescue");
+                if keyless_rescue && !keyless_fallback {
+                    return Err(
+                        "built-in tool 'tool.web_search' keylessRescue requires keylessFallback"
+                            .into(),
+                    );
+                }
+                if backend == "searxng"
+                    && self.configuration["searxngBaseUrl"]
+                        .as_str()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(
+                        "built-in tool 'tool.web_search' requires searxngBaseUrl when backend is searxng"
+                            .into(),
+                    );
+                }
+                if backend == "deepseek"
+                    && self.configuration["deepseekBaseUrl"]
+                        .as_str()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(
+                        "built-in tool 'tool.web_search' requires deepseekBaseUrl when backend is deepseek"
+                            .into(),
+                    );
+                }
+                if backend == "automatic" && provider_tier != "automatic" {
+                    return Err(
+                        "built-in tool 'tool.web_search' providerTier must be automatic when backend is automatic"
+                            .into(),
+                    );
+                }
+                if matches!(backend, "keyless" | "duckduckgo" | "searxng")
+                    && provider_tier != "automatic"
+                {
+                    return Err(format!(
+                        "built-in tool 'tool.web_search' providerTier must be automatic when backend is '{backend}'"
+                    ));
+                }
+                if matches!(backend, "brave" | "xai" | "deepseek") && provider_tier == "free" {
+                    return Err(format!(
+                        "built-in tool 'tool.web_search' backend '{backend}' has no anonymous free tier"
+                    ));
+                }
+                if self.credential_bindings.len() > 1
+                    || self
+                        .credential_bindings
+                        .iter()
+                        .any(|binding| binding.name != "api_key")
+                {
+                    return Err(
+                        "built-in tool 'tool.web_search' accepts at most one credential binding named 'api_key'"
+                            .into(),
+                    );
+                }
+                let dual_tier_backend = matches!(
+                    backend,
+                    "exa" | "parallel" | "firecrawl" | "tavily" | "keenable"
+                );
+                let requires_key = matches!(backend, "brave" | "xai" | "deepseek")
+                    || (dual_tier_backend && provider_tier == "paid");
+                let forbids_key = matches!(backend, "keyless" | "duckduckgo" | "searxng")
+                    || (dual_tier_backend && provider_tier == "free");
+                if requires_key && self.credential_bindings.len() != 1 {
+                    return Err(format!(
+                        "built-in tool 'tool.web_search' requires one api_key credential binding for backend '{backend}'"
+                    ));
+                }
+                if forbids_key && !self.credential_bindings.is_empty() {
+                    return Err(format!(
+                        "built-in tool 'tool.web_search' backend '{backend}' does not consume an api_key credential at the selected tier"
+                    ));
+                }
+                Ok(())
             }
             "tool.web_fetch" => {
                 require_exact_config_keys(self, &["maximumDownloadBytes", "maximumExtractBytes"])?;
@@ -1728,10 +1921,7 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             "tool.web_search",
             "Web search",
             false,
-            BTreeMap::from([(
-                "maximumResults".into(),
-                Value::from(crate::runtime::WEB_SEARCH_MAXIMUM_RESULTS_V1),
-            )]),
+            web_search_default_configuration(),
         ),
         builtin_tool(
             "tool.web_fetch",
@@ -1758,6 +1948,33 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             ]),
         ),
     ]
+}
+
+pub(crate) fn web_search_default_configuration() -> BTreeMap<String, Value> {
+    BTreeMap::from([
+        ("backend".into(), Value::from("automatic")),
+        ("credentialBackend".into(), Value::from("deepseek")),
+        ("providerTier".into(), Value::from("automatic")),
+        ("maximumResults".into(), Value::from(10_u64)),
+        ("requestTimeoutSeconds".into(), Value::from(30_u64)),
+        ("maximumRetries".into(), Value::from(1_u64)),
+        ("keylessFallback".into(), Value::Bool(true)),
+        ("keylessRescue".into(), Value::Bool(true)),
+        ("cacheEnabled".into(), Value::Bool(true)),
+        ("cacheTtlMinutes".into(), Value::from(20_u64)),
+        ("searxngBaseUrl".into(), Value::from("")),
+        ("providerBaseUrl".into(), Value::from("")),
+        ("parallelSearchMode".into(), Value::from("agentic")),
+        ("xaiModel".into(), Value::from("grok-build-0.1")),
+        ("xaiAllowedDomains".into(), Value::Array(Vec::new())),
+        ("xaiExcludedDomains".into(), Value::Array(Vec::new())),
+        (
+            "deepseekBaseUrl".into(),
+            Value::from("https://api.deepseek.com"),
+        ),
+        ("deepseekModel".into(), Value::from("deepseek-v4-flash")),
+        ("deepseekMaximumOutputTokens".into(), Value::from(4_096_u64)),
+    ])
 }
 
 fn builtin_tool(
@@ -1936,6 +2153,164 @@ fn require_config_string(
             tool.id
         ))
     }
+}
+
+fn require_config_one_of<'a>(
+    tool: &BuiltInToolConfigurationV2,
+    field: &str,
+    expected: &'a [&str],
+) -> Result<&'a str, String> {
+    let Some(value) = tool.configuration.get(field).and_then(Value::as_str) else {
+        return Err(format!(
+            "built-in tool '{}' configuration.{field} must be one of {}",
+            tool.id,
+            expected.join(", ")
+        ));
+    };
+    expected
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == value)
+        .ok_or_else(|| {
+            format!(
+                "built-in tool '{}' configuration.{field} must be one of {}",
+                tool.id,
+                expected.join(", ")
+            )
+        })
+}
+
+fn require_config_boolean(tool: &BuiltInToolConfigurationV2, field: &str) -> Result<(), String> {
+    if tool.configuration.get(field).is_some_and(Value::is_boolean) {
+        Ok(())
+    } else {
+        Err(format!(
+            "built-in tool '{}' configuration.{field} must be a boolean",
+            tool.id
+        ))
+    }
+}
+
+fn require_config_text(
+    tool: &BuiltInToolConfigurationV2,
+    field: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<(), String> {
+    if tool
+        .configuration
+        .get(field)
+        .and_then(Value::as_str)
+        .is_some_and(|value| {
+            value.trim().len() >= minimum
+                && value.len() <= maximum
+                && !value.contains(['\0', '\r', '\n'])
+        })
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "built-in tool '{}' configuration.{field} must contain {minimum} through {maximum} safe text bytes",
+            tool.id
+        ))
+    }
+}
+
+fn require_optional_search_url(
+    tool: &BuiltInToolConfigurationV2,
+    field: &str,
+    allow_loopback_http: bool,
+) -> Result<(), String> {
+    let value = tool
+        .configuration
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "built-in tool '{}' configuration.{field} must be a URL string",
+                tool.id
+            )
+        })?;
+    if value.trim().is_empty() {
+        return Ok(());
+    }
+    validate_http_url(field, value)?;
+    let url = Url::parse(value).map_err(|_| format!("{field} is invalid"))?;
+    let loopback = url
+        .host_str()
+        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+    if url.scheme() == "https" || (allow_loopback_http && url.scheme() == "http" && loopback) {
+        Ok(())
+    } else {
+        Err(format!(
+            "built-in tool '{}' configuration.{field} must use HTTPS{}",
+            tool.id,
+            if allow_loopback_http {
+                " or loopback HTTP"
+            } else {
+                ""
+            }
+        ))
+    }
+}
+
+fn require_search_domain_filters(tool: &BuiltInToolConfigurationV2) -> Result<(), String> {
+    fn read<'a>(tool: &'a BuiltInToolConfigurationV2, field: &str) -> Result<Vec<&'a str>, String> {
+        let values = tool
+            .configuration
+            .get(field)
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "built-in tool '{}' configuration.{field} must be an array",
+                    tool.id
+                )
+            })?;
+        if values.len() > 5 {
+            return Err(format!(
+                "built-in tool '{}' configuration.{field} accepts at most five domains",
+                tool.id
+            ));
+        }
+        values
+            .iter()
+            .map(|value| {
+                let domain = value.as_str().ok_or_else(|| {
+                    format!(
+                        "built-in tool '{}' configuration.{field} entries must be strings",
+                        tool.id
+                    )
+                })?;
+                let safe = !domain.is_empty()
+                    && domain.len() <= 253
+                    && domain.split('.').all(|label| {
+                        !label.is_empty()
+                            && label.len() <= 63
+                            && !label.starts_with('-')
+                            && !label.ends_with('-')
+                            && label
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    });
+                safe.then_some(domain).ok_or_else(|| {
+                    format!(
+                        "built-in tool '{}' configuration.{field} contains an invalid domain",
+                        tool.id
+                    )
+                })
+            })
+            .collect()
+    }
+
+    let allowed = read(tool, "xaiAllowedDomains")?;
+    let excluded = read(tool, "xaiExcludedDomains")?;
+    if !allowed.is_empty() && !excluded.is_empty() {
+        return Err(
+            "built-in tool 'tool.web_search' xaiAllowedDomains and xaiExcludedDomains are mutually exclusive"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn require_config_bool(
@@ -2198,7 +2573,7 @@ fn normalize_sensitive_name(value: &str) -> String {
 }
 
 fn secret_like_normalized(normalized: &str) -> bool {
-    [
+    let explicit_secret_markers = [
         "apikey",
         "accesstoken",
         "authtoken",
@@ -2206,15 +2581,19 @@ fn secret_like_normalized(normalized: &str) -> bool {
         "authheader",
         "bearertoken",
         "clientsecret",
-        "credential",
         "password",
         "passwd",
         "privatekey",
         "secret",
-        "token",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
+    ];
+    explicit_secret_markers
+        .iter()
+        .any(|marker| normalized.contains(marker))
+        || normalized == "token"
+        || normalized.ends_with("tokenvalue")
+        || normalized == "credential"
+        || normalized.ends_with("credentials")
+        || normalized.contains("credentialref")
 }
 
 fn to_json_map(values: &BTreeMap<String, Value>) -> serde_json::Map<String, Value> {
@@ -2366,6 +2745,81 @@ mod tests {
                 .tools
                 .iter()
                 .all(|tool| tool.id != "tool.python.sandboxed")
+        );
+    }
+
+    #[test]
+    fn web_search_provider_tiers_enforce_exact_credential_contracts() {
+        let mut settings = SettingsConfigurationV2::default();
+        let web_search = settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+            .expect("web-search tool");
+        web_search
+            .configuration
+            .insert("backend".into(), Value::from("exa"));
+        web_search
+            .configuration
+            .insert("providerTier".into(), Value::from("paid"));
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("requires one api_key")
+        );
+
+        add_integration_credential(&mut settings);
+        settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+            .expect("web-search tool")
+            .credential_bindings = vec![integration_binding("api_key")];
+        settings.validate().expect("paid Exa configuration");
+        settings
+            .validate_installed_runtime_consumers()
+            .expect("installed paid Exa consumer");
+
+        let web_search = settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+            .expect("web-search tool");
+        web_search
+            .configuration
+            .insert("providerTier".into(), Value::from("free"));
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("does not consume an api_key")
+        );
+        settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+            .expect("web-search tool")
+            .credential_bindings
+            .clear();
+        settings.validate().expect("anonymous Exa configuration");
+
+        let web_search = settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_search")
+            .expect("web-search tool");
+        web_search
+            .configuration
+            .insert("backend".into(), Value::from("deepseek"));
+        web_search
+            .configuration
+            .insert("providerTier".into(), Value::from("paid"));
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("requires one api_key")
         );
     }
 

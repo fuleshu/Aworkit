@@ -15,6 +15,7 @@ export interface ChatProjection {
   readonly runId: string;
   readonly title: string;
   readonly scope: string;
+  readonly workflowId: string | null;
   readonly workflowName: string | null;
   readonly branch: string | null;
   readonly projectId: string | null;

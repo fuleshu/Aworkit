@@ -52,6 +52,7 @@ const runningChat: ChatProjection = {
   runId: "run.test",
   title: "Contiguous projection",
   scope: "Test project",
+  workflowId: "workflow.test",
   workflowName: "Test workflow",
   branch: "main",
   projectId: "project.test",
@@ -164,6 +165,33 @@ describe("Chat native-port recovery contracts", () => {
         attachments: [],
       },
     ]);
+  });
+
+  it("shows the frozen workflow for a selected historical Chat", () => {
+    const onWorkflowChange = vi.fn();
+    render(
+      <ChatComposer
+        chat={runningChat}
+        projects={[]}
+        workflows={[
+          { id: "workflow.simple-chat", name: "Simple Chat" },
+          { id: "workflow.test", name: "Test workflow" },
+        ]}
+        defaultWorkflowId="workflow.simple-chat"
+        nextCommandId={() => "command.locked-workflow"}
+        pending={false}
+        stale={false}
+        onWorkflowChange={onWorkflowChange}
+        onSubmit={async () => true}
+      />,
+    );
+
+    const workflow = screen.getByRole("combobox", {
+      name: "Workflow for the first Chat input",
+    });
+    expect(workflow).toHaveValue("workflow.test");
+    expect(workflow).toBeDisabled();
+    expect(onWorkflowChange).toHaveBeenCalledWith("workflow.test");
   });
 
   it("blocks first Send when the saved workflow binds project tools but No project is selected", async () => {
@@ -828,6 +856,14 @@ describe("Chat native-port recovery contracts", () => {
     await user.click(actions);
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(onDeleteChat).toHaveBeenCalledWith("chat.project");
+
+    const history = screen.getByLabelText("Chat history");
+    history.scrollTop = 400;
+    fireEvent.contextMenu(projectChat, { clientX: 96, clientY: 180 });
+    const scrolledMenu = screen.getByRole("menu");
+    expect(scrolledMenu).toHaveStyle({ left: "96px", top: "180px" });
+    fireEvent.scroll(history);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("maps selected tool and error cards to distinct contextual Run details", async () => {

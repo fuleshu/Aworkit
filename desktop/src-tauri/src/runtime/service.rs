@@ -65,7 +65,7 @@ use super::{
     semantic_events::{CommittedChatEventPort, SemanticEventCommitter, noop_committed_event_port},
     settings_diagnostics::{
         ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
-        probe_project, probe_tool,
+        probe_project, probe_tool_with_api_key,
     },
     settings_v2::{
         AppearanceModeV2, BuiltInToolConfigurationV2, CredentialMetadataConfigurationV2,
@@ -75,7 +75,10 @@ use super::{
         SettingsConfigurationV2, validate_extension_lifecycle_update, validate_http_url,
         validate_unavailable_executor_enablement_update,
     },
-    tool_loop::{SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolBindingV1},
+    tool_loop::{
+        SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolBindingV1,
+        WorkflowToolCredentialBindingV1,
+    },
 };
 
 struct ProcessedCommand {
@@ -447,6 +450,7 @@ impl DesktopRuntime {
                     || "No project".into(),
                     |project| project.project_name.clone(),
                 );
+                snapshot.chat.workflow_id = Some(context.workflow_id);
                 snapshot.chat.workflow_name = Some(context.workflow_name);
                 snapshot.chat.branch = context
                     .project
@@ -875,6 +879,32 @@ impl DesktopRuntime {
                     capability_id: tool.tool_id.clone(),
                     configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
                         .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
+                    credential_bindings: tool
+                        .tool_snapshot
+                        .credential_bindings
+                        .iter()
+                        .map(|binding| {
+                            let metadata = tool
+                                .credentials
+                                .iter()
+                                .find(|metadata| {
+                                    metadata.credential_ref.as_str() == binding.credential_ref
+                                })
+                                .ok_or_else(|| {
+                                    format!(
+                                        "frozen tool '{}' is missing credential metadata for '{}'",
+                                        tool.tool_id, binding.credential_ref
+                                    )
+                                })?;
+                            Ok(WorkflowToolCredentialBindingV1 {
+                                name: binding.name.clone(),
+                                credential_ref: metadata.credential_ref.clone(),
+                                field: binding.field.clone(),
+                                field_names: metadata.field_names.clone(),
+                                revision: metadata.revision,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
                     definition: tool.definition.clone(),
                 })
             })
@@ -2555,8 +2585,37 @@ impl DesktopRuntime {
 
     /// Exercises the installed built-in adapter using bounded, side-effect-free
     /// health behavior against the exact unsaved tool/project draft.
-    pub fn settings_v2_probe_tool(&self, request: ToolProbeRequestV2) -> ToolProbeResultV2 {
-        probe_tool(request)
+    pub fn settings_v2_probe_tool(&mut self, request: ToolProbeRequestV2) -> ToolProbeResultV2 {
+        let api_key = request
+            .tool
+            .credential_bindings
+            .first()
+            .map(|binding| {
+                self.credentials
+                    .resolve_fields(
+                        &binding.credential_ref,
+                        BTreeSet::from([binding.field.clone()]),
+                    )
+                    .and_then(|mut fields| {
+                        let bytes = fields.remove(&binding.field).ok_or_else(|| {
+                            "credential store did not return the bound tool field".to_owned()
+                        })?;
+                        String::from_utf8(bytes.as_slice().to_vec())
+                            .map(zeroize::Zeroizing::new)
+                            .map_err(|_| "bound tool credential is not valid UTF-8".to_owned())
+                    })
+            })
+            .transpose();
+        match api_key {
+            Ok(api_key) => probe_tool_with_api_key(request, api_key.as_deref().map(String::as_str)),
+            Err(message) => ToolProbeResultV2 {
+                ok: false,
+                tool_id: request.tool.id.clone(),
+                adapter: "unavailable".into(),
+                message,
+                draft_fingerprint: request.draft_fingerprint,
+            },
+        }
     }
 
     /// Reads and validates an inert extension manifest. No entry point is
@@ -3172,6 +3231,7 @@ fn freeze_graph_bindings(
                     tool_id,
                     tool_hash,
                     tool_snapshot: snapshot,
+                    credentials: Vec::new(),
                     definition: Some(definition),
                 });
                 continue;
@@ -3195,6 +3255,7 @@ fn freeze_graph_bindings(
                 tool_id,
                 tool_hash: canonical_hash(configured)?,
                 tool_snapshot: configured.clone(),
+                credentials: freeze_tool_credentials(configured, settings)?,
                 definition: None,
             });
         }
@@ -3221,6 +3282,7 @@ fn freeze_graph_bindings(
                 tool_id: child_id.to_owned(),
                 tool_hash: canonical_hash(configured)?,
                 tool_snapshot: configured.clone(),
+                credentials: freeze_tool_credentials(configured, settings)?,
                 definition: None,
             });
         }
@@ -3231,6 +3293,34 @@ fn freeze_graph_bindings(
             .min(MAXIMUM_WORKFLOW_TIMEOUT_MILLIS),
         tools,
     })
+}
+
+fn freeze_tool_credentials(
+    tool: &BuiltInToolConfigurationV2,
+    settings: &SettingsConfigurationV2,
+) -> Result<Vec<FrozenCredentialBindingV1>, String> {
+    let mut references = BTreeSet::new();
+    let mut frozen = Vec::new();
+    for binding in &tool.credential_bindings {
+        if !references.insert(binding.credential_ref.as_str()) {
+            continue;
+        }
+        let metadata = settings
+            .credential(&binding.credential_ref)
+            .ok_or_else(|| {
+                format!(
+                    "tool '{}' references missing credential '{}'",
+                    tool.id, binding.credential_ref
+                )
+            })?;
+        frozen.push(FrozenCredentialBindingV1 {
+            credential_ref: StableId::parse(metadata.credential_ref.clone())
+                .map_err(|error| error.to_string())?,
+            field_names: metadata.field_names.iter().cloned().collect(),
+            revision: metadata.revision,
+        });
+    }
+    Ok(frozen)
 }
 
 /// The distinct model tiers referenced by the graph's model-consuming nodes.

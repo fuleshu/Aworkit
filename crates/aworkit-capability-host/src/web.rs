@@ -1,7 +1,9 @@
-//! Bounded HTTPS web search and fetch tools behind a replaceable transport
-//! port. Search uses the keyless DuckDuckGo HTML endpoint; fetch downloads at
-//! most a bounded prefix and extracts plain text. All network activity is
-//! explicit desktop-user authority — these are read-only but not sandboxed.
+//! Bounded web search and fetch tools behind replaceable transport ports.
+//!
+//! Search supports provider selection, retries, keyless rescue, request
+//! coalescing, and a bounded memory cache. Fetch downloads at most a bounded
+//! prefix and extracts plain text. Network activity uses desktop-user
+//! authority: these tools are read-only, but they are not sandboxes.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,11 +12,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::CancellationToken;
 
-const MAXIMUM_SEARCH_RESULTS: usize = 8;
+mod providers;
+mod search;
+
+pub use search::{
+    WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1, WebSearchOutcomeV1,
+    WebSearchProviderTierV1,
+};
+
+pub(super) const MAXIMUM_SEARCH_RESULTS: usize = 100;
 const MAXIMUM_QUERY_BYTES: usize = 16 * 1024;
 const MAXIMUM_DOWNLOAD_BYTES: usize = 1024 * 1024;
 const MAXIMUM_EXTRACT_BYTES: usize = 32 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -33,8 +43,8 @@ pub struct WebFetchResultV1 {
     pub bytes_downloaded: u64,
 }
 
-/// Replaceable network seam; production uses the keyless DuckDuckGo HTML
-/// search endpoint and plain HTTPS GET with redirects.
+/// Replaceable network seam used by deterministic tests. Production search
+/// uses the provider runtime while fetch uses the plain HTTPS transport.
 pub trait WebTransportPort: Send + Sync {
     fn search(&self, query: &str, maximum_results: usize)
     -> Result<Vec<WebSearchResultV1>, String>;
@@ -49,17 +59,24 @@ pub trait WebTransportPort: Send + Sync {
 #[derive(Clone)]
 pub struct WebTools {
     transport: Arc<dyn WebTransportPort>,
+    search_runtime: Option<search::WebSearchRuntime>,
 }
 
 impl WebTools {
     #[must_use]
     pub fn production() -> Self {
-        Self::new(Arc::new(ProductionWebTransport))
+        Self {
+            transport: Arc::new(ProductionWebTransport),
+            search_runtime: Some(search::WebSearchRuntime::production()),
+        }
     }
 
     #[must_use]
     pub fn new(transport: Arc<dyn WebTransportPort>) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            search_runtime: None,
+        }
     }
 
     pub fn search_v1(
@@ -75,12 +92,57 @@ impl WebTools {
             return Err(WebToolError::InvalidBound);
         }
         check_cancelled(cancellation)?;
-        let mut results = self
-            .transport
-            .search(query, maximum_results)
-            .map_err(WebToolError::Transport)?;
+        let mut results = if let Some(runtime) = &self.search_runtime {
+            let configuration = WebSearchConfigurationV1 {
+                maximum_results,
+                ..WebSearchConfigurationV1::default()
+            };
+            runtime
+                .search(query, &configuration, None, cancellation)?
+                .results
+        } else {
+            self.transport
+                .search(query, maximum_results)
+                .map_err(WebToolError::Transport)?
+        };
         results.truncate(maximum_results);
         Ok(results)
+    }
+
+    /// Executes the exact provider configuration frozen with the Chat. API
+    /// key material is invocation-local and is never stored by this runtime.
+    pub fn search_configured_v1(
+        &self,
+        query: &str,
+        configuration: &WebSearchConfigurationV1,
+        api_key: Option<&str>,
+        cancellation: &CancellationToken,
+    ) -> Result<WebSearchOutcomeV1, WebToolError> {
+        validate_query(query)?;
+        if let Some(runtime) = &self.search_runtime {
+            return runtime.search(query, configuration, api_key, cancellation);
+        }
+        if configuration != &WebSearchConfigurationV1::default() || api_key.is_some() {
+            return Err(WebToolError::Transport(
+                "the injected test transport supports only default keyless search".into(),
+            ));
+        }
+        let results = self.search_v1(query, configuration.maximum_results, cancellation)?;
+        Ok(WebSearchOutcomeV1 {
+            query: query.to_owned(),
+            backend: "test".into(),
+            results,
+            cached: false,
+            coalesced: false,
+            attempts: vec![WebSearchAttemptV1 {
+                backend: "test".into(),
+                attempt: 1,
+                status: "completed".into(),
+                error: None,
+            }],
+            rescued_from: None,
+            backend_error: None,
+        })
     }
 
     pub fn fetch_v1(
@@ -124,6 +186,14 @@ fn parse_https_url(url: &str) -> Result<String, WebToolError> {
     Ok(parsed.to_string())
 }
 
+fn validate_query(query: &str) -> Result<(), WebToolError> {
+    if query.trim().is_empty() || query.len() > MAXIMUM_QUERY_BYTES || query.contains('\0') {
+        Err(WebToolError::InvalidQuery)
+    } else {
+        Ok(())
+    }
+}
+
 struct ProductionWebTransport;
 
 impl WebTransportPort for ProductionWebTransport {
@@ -132,24 +202,8 @@ impl WebTransportPort for ProductionWebTransport {
         query: &str,
         maximum_results: usize,
     ) -> Result<Vec<WebSearchResultV1>, String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .user_agent("Aworkit/1.0 web-search")
-            .build()
-            .map_err(|error| format!("web client unavailable: {error}"))?;
-        let response = client
-            .get("https://html.duckduckgo.com/html/")
-            .query(&[("q", query)])
-            .send()
-            .map_err(|error| format!("web search failed: {error}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("web search failed: HTTP {status}"));
-        }
-        let body = response
-            .text()
-            .map_err(|error| format!("web search response unreadable: {error}"))?;
-        Ok(parse_duckduckgo_html(&body, maximum_results))
+        providers::search_keyless(query, maximum_results, REQUEST_TIMEOUT)
+            .map_err(|error| error.message)
     }
 
     fn fetch(
@@ -196,62 +250,6 @@ impl WebTransportPort for ProductionWebTransport {
             bytes_downloaded,
         ))
     }
-}
-
-fn parse_duckduckgo_html(html: &str, maximum_results: usize) -> Vec<WebSearchResultV1> {
-    let mut results = Vec::new();
-    let mut cursor = 0_usize;
-    while results.len() < maximum_results {
-        let Some(link_start) = html[cursor..].find("result__a") else {
-            break;
-        };
-        let link_start = cursor + link_start;
-        let Some(href_start) = html[link_start..].find("href=\"") else {
-            cursor = link_start + 1;
-            continue;
-        };
-        let href_start = link_start + href_start + "href=\"".len();
-        let Some(href_end) = html[href_start..].find('"') else {
-            break;
-        };
-        let href = &html[href_start..href_start + href_end];
-        let Some(title_start) = html[href_start + href_end..].find('>') else {
-            break;
-        };
-        let title_start = href_start + href_end + title_start + 1;
-        let Some(title_end_rel) = html[title_start..].find("</a>") else {
-            break;
-        };
-        let title = html[title_start..title_start + title_end_rel].to_owned();
-        let snippet = html[title_start + title_end_rel..]
-            .find("result__snippet")
-            .and_then(|offset| {
-                let offset = title_start + title_end_rel + offset;
-                let start = html[offset..].find('>')? + offset + 1;
-                let end = html[start..].find("</a>")?;
-                Some(html[start..start + end].to_owned())
-            })
-            .unwrap_or_default();
-        let url = reqwest::Url::parse(href)
-            .ok()
-            .and_then(|url| {
-                url.query_pairs()
-                    .find(|(key, _)| key == "uddg")
-                    .map(|(_, value)| value.to_string())
-            })
-            .or_else(|| Some(href.to_owned()))
-            .filter(|url| url.starts_with("http"))
-            .unwrap_or_else(|| href.to_owned());
-        if !title.trim().is_empty() {
-            results.push(WebSearchResultV1 {
-                title: strip_tags(&title),
-                url: url.trim().to_owned(),
-                snippet: strip_tags(&snippet),
-            });
-        }
-        cursor = title_start + title_end_rel + 1;
-    }
-    results
 }
 
 fn extract_title(html: &str) -> String {
@@ -352,7 +350,7 @@ fn strip_tags(text: &str) -> String {
             _ => {}
         }
     }
-    decode_entities(&output.trim().to_owned())
+    decode_entities(output.trim())
 }
 
 fn truncate_utf8(mut value: String, maximum_bytes: usize) -> String {
@@ -509,20 +507,6 @@ mod tests {
     }
 
     #[test]
-    fn duckduckgo_parser_extracts_bounded_result_tuples() {
-        let html = r#"<a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fone.example">One Title</a>
-            <a class="result__snippet">First snippet</a>
-            <a class="result__a" href="https://two.example">Two Title</a>
-            <a class="result__snippet">Second snippet</a>"#;
-        let results = parse_duckduckgo_html(html, 2);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].title, "One Title");
-        assert_eq!(results[0].url, "https://one.example");
-        assert_eq!(results[0].snippet, "First snippet");
-        assert_eq!(results[1].url, "https://two.example");
-    }
-
-    #[test]
     fn plain_text_extraction_drops_blocks_and_decodes_entities() {
         assert_eq!(
             extract_plain_text(
@@ -530,6 +514,34 @@ mod tests {
                  <body><p>Hello &amp; goodbye</p><script>alert(1)</script></body></html>"
             ),
             "T Hello & goodbye"
+        );
+    }
+
+    #[test]
+    #[ignore = "uses the configured public internet"]
+    fn production_keyless_search_returns_ranked_results() {
+        let tools = WebTools::production();
+        let configuration = WebSearchConfigurationV1 {
+            maximum_results: 3,
+            maximum_retries: 0,
+            cache_enabled: false,
+            ..WebSearchConfigurationV1::default()
+        };
+        let outcome = tools
+            .search_configured_v1(
+                "deepseek-v4-flash pricing per million tokens",
+                &configuration,
+                None,
+                &CancellationToken::default(),
+            )
+            .expect("public keyless search");
+        assert!(!outcome.results.is_empty(), "{outcome:?}");
+        assert!(
+            outcome
+                .results
+                .iter()
+                .all(|result| result.url.starts_with("http")),
+            "{outcome:?}"
         );
     }
 }

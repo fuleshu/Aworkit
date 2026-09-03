@@ -54,6 +54,7 @@ pub struct ChatProjectionDto {
     pub run_id: String,
     pub title: String,
     pub scope: String,
+    pub workflow_id: Option<String>,
     pub workflow_name: Option<String>,
     pub branch: Option<String>,
     pub project_id: Option<String>,

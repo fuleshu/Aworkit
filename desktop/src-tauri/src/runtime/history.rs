@@ -18,9 +18,7 @@ use super::dto::{
     ChatHistoryEntryDto, ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput,
     UiCommandReceipt,
 };
-use super::history_index::{
-    self, ChatSummaryProjection, HistoryIndexState, IndexedChat,
-};
+use super::history_index::{self, ChatSummaryProjection, HistoryIndexState, IndexedChat};
 use super::project_scope::{FrozenProjectScopeV1, validate_frozen_project_scope};
 use super::semantic_events::{
     CommittedChatEventPort, CoreEventEnvelope, SemanticEventCommitter, SemanticEventDraft,
@@ -62,6 +60,10 @@ pub(crate) struct FrozenToolBindingV1 {
     pub tool_id: String,
     pub tool_hash: String,
     pub tool_snapshot: BuiltInToolConfigurationV2,
+    /// Credential metadata frozen with the tool. Values remain solely in the
+    /// operating-system credential store and are never part of Chat history.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<FrozenCredentialBindingV1>,
     /// Exact model-facing definition discovered at freeze for dynamic tools
     /// (MCP). Absent for compile-time owned built-ins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1121,6 +1123,9 @@ impl ChatHistory {
                     || "No project".into(),
                     |project| project.project_name.clone(),
                 ),
+            workflow_id: frozen
+                .as_ref()
+                .map(|record| record.context.workflow_id.clone()),
             workflow_name: frozen
                 .as_ref()
                 .map(|record| record.context.workflow_name.clone())
@@ -1690,10 +1695,30 @@ fn validate_frozen_context_record(
     }
     let mut tool_ids = BTreeSet::new();
     if context.tools.iter().any(|tool| {
+        let frozen_refs = tool
+            .credentials
+            .iter()
+            .map(|credential| credential.credential_ref.as_str())
+            .collect::<BTreeSet<_>>();
+        let configured_refs = tool
+            .tool_snapshot
+            .credential_bindings
+            .iter()
+            .map(|binding| binding.credential_ref.as_str())
+            .collect::<BTreeSet<_>>();
         !tool_ids.insert(tool.tool_id.as_str())
             || tool.tool_id != tool.tool_snapshot.id
             || !tool.tool_snapshot.enabled
             || canonical_hash(&tool.tool_snapshot).ok().as_deref() != Some(&tool.tool_hash)
+            || frozen_refs != configured_refs
+            || tool.credentials.iter().any(|credential| {
+                credential.revision == 0
+                    || credential.field_names.is_empty()
+                    || credential
+                        .field_names
+                        .iter()
+                        .any(|field| field.is_empty() || field.chars().any(char::is_control))
+            })
             || !(super::documents::builtin_tool_binding_ids().contains(&tool.tool_id)
                 || (tool.tool_id.starts_with("mcp://")
                     && tool.definition.is_some()

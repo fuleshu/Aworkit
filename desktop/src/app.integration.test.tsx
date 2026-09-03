@@ -189,6 +189,7 @@ describe("honest JSON-workflow desktop slice", () => {
     await user.click(screen.getByRole("button", { name: "Add model" }));
     const remoteModel = screen.getByLabelText("Remote model ID");
     await user.type(remoteModel, "qwen3");
+    expect(screen.queryByText(/validation issue$/u)).toBeNull();
     expect(
       screen.getByRole("button", { name: "Save configuration" }),
     ).toBeEnabled();

@@ -25,6 +25,7 @@ const draftChat: ChatProjection = {
   runId: "run-1",
   title: "Chat",
   scope: "Project",
+  workflowId: null,
   workflowName: null,
   branch: "main",
   projectId: "project.test",

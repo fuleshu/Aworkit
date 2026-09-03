@@ -11,6 +11,7 @@ const chat: ChatProjection = {
   runId: "run.test",
   title: "Run details",
   scope: "Project Atlas",
+  workflowId: "workflow.standard-agent",
   workflowName: "Standard Agent",
   branch: "main",
   projectId: "project.atlas",

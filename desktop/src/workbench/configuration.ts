@@ -139,6 +139,27 @@ const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[
     "requiresApproval",
     "timeoutSeconds",
   ],
+  "tool.web_search": [
+    "backend",
+    "cacheEnabled",
+    "cacheTtlMinutes",
+    "credentialBackend",
+    "deepseekBaseUrl",
+    "deepseekMaximumOutputTokens",
+    "deepseekModel",
+    "keylessFallback",
+    "keylessRescue",
+    "maximumResults",
+    "maximumRetries",
+    "parallelSearchMode",
+    "providerBaseUrl",
+    "providerTier",
+    "requestTimeoutSeconds",
+    "searxngBaseUrl",
+    "xaiAllowedDomains",
+    "xaiExcludedDomains",
+    "xaiModel",
+  ],
 };
 
 export const builtInToolConfigurationSchema = z
@@ -183,7 +204,9 @@ export const builtInToolConfigurationSchema = z
             Number.isInteger(value.maximumResults) &&
             value.maximumResults >= 1 &&
             value.maximumResults <= 512
-          : true;
+          : tool.id === "tool.web_search"
+            ? webSearchConfigurationIsValid(tool)
+            : true;
     if (!validImplementedContract)
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -192,6 +215,150 @@ export const builtInToolConfigurationSchema = z
           "Configuration exceeds or contradicts the installed persistence-safe adapter contract.",
       });
   });
+
+function webSearchConfigurationIsValid(tool: {
+  readonly requiresProject: boolean;
+  readonly credentialBindings: readonly CredentialBindingConfiguration[];
+  readonly configuration: Readonly<Record<string, unknown>>;
+}): boolean {
+  const value = tool.configuration;
+  const backend = value.backend;
+  const validBackend =
+    backend === "automatic" ||
+    backend === "keyless" ||
+    backend === "duckduckgo" ||
+    backend === "searxng" ||
+    backend === "exa" ||
+    backend === "parallel" ||
+    backend === "firecrawl" ||
+    backend === "tavily" ||
+    backend === "brave" ||
+    backend === "keenable" ||
+    backend === "xai" ||
+    backend === "deepseek";
+  const credentialBackend = value.credentialBackend;
+  const validCredentialBackend =
+    credentialBackend === "exa" ||
+    credentialBackend === "parallel" ||
+    credentialBackend === "firecrawl" ||
+    credentialBackend === "tavily" ||
+    credentialBackend === "brave" ||
+    credentialBackend === "keenable" ||
+    credentialBackend === "xai" ||
+    credentialBackend === "deepseek";
+  const providerTier = value.providerTier;
+  const validProviderTier =
+    providerTier === "automatic" || providerTier === "free" || providerTier === "paid";
+  const integerIn = (candidate: unknown, minimum: number, maximum: number) =>
+    typeof candidate === "number" &&
+    Number.isInteger(candidate) &&
+    candidate >= minimum &&
+    candidate <= maximum;
+  const validEndpoint = (candidate: unknown, allowLoopbackHttp: boolean) => {
+    if (typeof candidate !== "string") return false;
+    if (candidate.trim() === "") return true;
+    try {
+      const parsed = new URL(candidate);
+      const loopback =
+        parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "[::1]";
+      return (
+        parsed.username === "" &&
+        parsed.password === "" &&
+        parsed.search === "" &&
+        parsed.hash === "" &&
+        (parsed.protocol === "https:" ||
+          (allowLoopbackHttp && parsed.protocol === "http:" && loopback))
+      );
+    } catch {
+      return false;
+    }
+  };
+  const validDomains = (candidate: unknown) =>
+    Array.isArray(candidate) &&
+    candidate.length <= 5 &&
+    candidate.every(
+      (domain) =>
+        typeof domain === "string" &&
+        domain.length >= 1 &&
+        domain.length <= 253 &&
+        domain.split(".").every(
+          (label) =>
+            label.length >= 1 &&
+            label.length <= 63 &&
+            !label.startsWith("-") &&
+            !label.endsWith("-") &&
+            /^[a-zA-Z0-9-]+$/u.test(label),
+        ),
+    );
+  const dualTierBackend =
+    backend === "exa" ||
+    backend === "parallel" ||
+    backend === "firecrawl" ||
+    backend === "tavily" ||
+    backend === "keenable";
+  const requiresKey =
+    backend === "brave" ||
+    backend === "xai" ||
+    backend === "deepseek" ||
+    (dualTierBackend && providerTier === "paid");
+  const forbidsKey =
+    backend === "keyless" ||
+    backend === "duckduckgo" ||
+    backend === "searxng" ||
+    (dualTierBackend && providerTier === "free");
+  const credentialsValid =
+    tool.credentialBindings.length <= 1 &&
+    tool.credentialBindings.every(({ name }) => name === "api_key") &&
+    (!requiresKey || tool.credentialBindings.length === 1) &&
+    (!forbidsKey || tool.credentialBindings.length === 0);
+  return (
+    tool.requiresProject === false &&
+    validBackend &&
+    validCredentialBackend &&
+    validProviderTier &&
+    (backend !== "automatic" || providerTier === "automatic") &&
+    (!(backend === "keyless" || backend === "duckduckgo" || backend === "searxng") ||
+      providerTier === "automatic") &&
+    (!(backend === "brave" || backend === "xai" || backend === "deepseek") ||
+      providerTier !== "free") &&
+    credentialsValid &&
+    integerIn(value.maximumResults, 1, 100) &&
+    integerIn(value.requestTimeoutSeconds, 5, 120) &&
+    integerIn(value.maximumRetries, 0, 3) &&
+    typeof value.keylessFallback === "boolean" &&
+    typeof value.keylessRescue === "boolean" &&
+    (!value.keylessRescue || value.keylessFallback === true) &&
+    typeof value.cacheEnabled === "boolean" &&
+    integerIn(value.cacheTtlMinutes, 1, 1_440) &&
+    validEndpoint(value.searxngBaseUrl, true) &&
+    validEndpoint(value.providerBaseUrl, true) &&
+    validEndpoint(value.deepseekBaseUrl, false) &&
+    (backend !== "searxng" ||
+      (typeof value.searxngBaseUrl === "string" &&
+        value.searxngBaseUrl.trim() !== "")) &&
+    (backend !== "deepseek" ||
+      (typeof value.deepseekBaseUrl === "string" &&
+        value.deepseekBaseUrl.trim() !== "")) &&
+    (value.parallelSearchMode === "fast" ||
+      value.parallelSearchMode === "one-shot" ||
+      value.parallelSearchMode === "agentic") &&
+    typeof value.xaiModel === "string" &&
+    value.xaiModel.trim().length >= 1 &&
+    value.xaiModel.length <= 256 &&
+    validDomains(value.xaiAllowedDomains) &&
+    validDomains(value.xaiExcludedDomains) &&
+    !(
+      (value.xaiAllowedDomains as unknown[]).length > 0 &&
+      (value.xaiExcludedDomains as unknown[]).length > 0
+    ) &&
+    typeof value.deepseekModel === "string" &&
+    value.deepseekModel.trim().length >= 1 &&
+    value.deepseekModel.length <= 256 &&
+    integerIn(value.deepseekMaximumOutputTokens, 256, 16_384)
+  );
+}
 
 export const extensionConfigurationSchema = z
   .object({
@@ -668,13 +835,36 @@ export function validateSettingsConfiguration(
       `tools.${tool.id}`,
       issues,
     );
-    if (tool.credentialBindings.length > 0) {
+    if (tool.credentialBindings.length > 0 && tool.id !== "tool.web_search") {
       issues.push({
         section: "tools",
         path: `tools.${tool.id}.credentialBindings`,
         message:
           "Installed built-in adapters do not consume credential bindings.",
       });
+    }
+    if (tool.id === "tool.web_search") {
+      if (!webSearchConfigurationIsValid(tool)) {
+        issues.push({
+          section: "tools",
+          path: `tools.${tool.id}.credentialBindings`,
+          message:
+            "The selected web-search provider tier and api_key binding do not satisfy the installed adapter contract.",
+        });
+      }
+      for (const binding of tool.credentialBindings) {
+        const credential = settings.credentials.find(
+          ({ credentialRef }) => credentialRef === binding.credentialRef,
+        );
+        if (credential?.boundProviderId != null) {
+          issues.push({
+            section: "tools",
+            path: `tools.${tool.id}.credentialBindings`,
+            message:
+              "Web search requires an unbound integration credential so it cannot cross a model-provider endpoint binding.",
+          });
+        }
+      }
     }
   }
   uniqueIds(

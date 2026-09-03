@@ -502,8 +502,7 @@ impl ModelRunEventObserver {
             .iter()
             .filter(|event| {
                 event.kind == "span.started"
-                    && event.payload.get("spanKind").and_then(Value::as_str)
-                        == Some("model_call")
+                    && event.payload.get("spanKind").and_then(Value::as_str) == Some("model_call")
             })
             .filter_map(|event| {
                 event
@@ -962,13 +961,13 @@ mod tests {
                     event.payload.get("spanKind").and_then(Value::as_str),
                     Some("model_call" | "tool_call")
                 )
-                && event
-                    .payload
-                    .get("parentSpanId")
-                    .and_then(Value::as_str)
-                    == Some(subagent_span)
+                && event.payload.get("parentSpanId").and_then(Value::as_str) == Some(subagent_span)
         });
-        assert_eq!(child_starts.count(), 3, "two child model calls and one child tool");
+        assert_eq!(
+            child_starts.count(),
+            3,
+            "two child model calls and one child tool"
+        );
         assert!(events.iter().any(|event| {
             event.kind == "span.completed"
                 && event.span_id.as_deref() == Some(subagent_span)
@@ -1089,8 +1088,7 @@ mod tests {
             .into_iter()
             .filter(|event| {
                 event.kind == "span.started"
-                    && event.payload.get("spanKind").and_then(Value::as_str)
-                        == Some("model_call")
+                    && event.payload.get("spanKind").and_then(Value::as_str) == Some("model_call")
             })
             .filter_map(|event| event.span_id)
             .collect::<Vec<_>>();

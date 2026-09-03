@@ -331,7 +331,10 @@ export function TimelineCard({
         </button>
         <ul className="todo-list">
           {todosOf(item).map((todo, index) => (
-            <li className={todo.done ? "done" : ""} key={`${index}-${todo.content}`}>
+            <li
+              className={todo.done ? "done" : todo.active ? "active" : ""}
+              key={`${index}-${todo.content}`}
+            >
               {todo.content}
             </li>
           ))}
@@ -654,7 +657,11 @@ function webTitle(item: TimelineItem): string {
     : "Web search";
 }
 
-function todosOf(item: TimelineItem): readonly { readonly content: string; readonly done: boolean }[] {
+function todosOf(item: TimelineItem): readonly {
+  readonly content: string;
+  readonly done: boolean;
+  readonly active: boolean;
+}[] {
   const todos = metadataOf(item).todos;
   if (!Array.isArray(todos)) return [];
   return todos.map((todo) => {
@@ -665,7 +672,11 @@ function todosOf(item: TimelineItem): readonly { readonly content: string; reado
     const content =
       typeof record.content === "string" ? record.content : String(record.content ?? "");
     const status = typeof record.status === "string" ? record.status : "";
-    return { content, done: status === "completed" || status === "done" };
+    return {
+      content,
+      done: status === "completed" || status === "done",
+      active: status === "in_progress",
+    };
   });
 }
 

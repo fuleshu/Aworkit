@@ -31,7 +31,9 @@ pub(crate) fn parse_plan_output_v1(text: &str) -> Result<Value, String> {
         ("toolOrder", &plan.tool_order),
     ] {
         if items.len() > MAXIMUM_PLAN_ITEMS {
-            return Err(format!("{label} exceeds the {MAXIMUM_PLAN_ITEMS}-item bound"));
+            return Err(format!(
+                "{label} exceeds the {MAXIMUM_PLAN_ITEMS}-item bound"
+            ));
         }
         for item in items {
             validate_text(label, item)?;
@@ -47,10 +49,7 @@ fn strip_json_fence(text: &str) -> &str {
 }
 
 fn validate_text(label: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty()
-        || value.len() > MAXIMUM_PLAN_TEXT_BYTES
-        || value.contains('\0')
-    {
+    if value.trim().is_empty() || value.len() > MAXIMUM_PLAN_TEXT_BYTES || value.contains('\0') {
         return Err(format!(
             "{label} entries must be non-empty and at most {} KiB",
             MAXIMUM_PLAN_TEXT_BYTES / 1024

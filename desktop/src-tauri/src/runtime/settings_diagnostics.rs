@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf, time::Duration};
 use aworkit_capability_host::{
     BuiltInProcessTools, CancellationToken, FileAuthority, HostToolLimitsV1, NativeProcessPort,
     PlatformProcessPort, ProjectFiles, PythonInvocationV1, ShellInvocationV1, ToolAuthorityModeV1,
-    WebTools,
+    WebSearchConfigurationV1, WebTools,
 };
 use serde::{Deserialize, Serialize};
 
@@ -82,9 +82,21 @@ pub(crate) fn probe_project(request: ProjectProbeRequestV2) -> ProjectProbeResul
     }
 }
 
+#[cfg(test)]
 pub(crate) fn probe_tool(request: ToolProbeRequestV2) -> ToolProbeResultV2 {
+    probe_tool_with_api_key(request, None)
+}
+
+pub(crate) fn probe_tool_with_api_key(
+    request: ToolProbeRequestV2,
+    api_key: Option<&str>,
+) -> ToolProbeResultV2 {
     let tool_id = request.tool.id.clone();
-    let outcome = if request.tool.credential_bindings.is_empty() {
+    let bindings_supported = request.tool.credential_bindings.is_empty()
+        || (tool_id == "tool.web_search"
+            && request.tool.credential_bindings.len() == 1
+            && request.tool.credential_bindings[0].name == "api_key");
+    let outcome = if bindings_supported {
         match tool_id.as_str() {
             "tool.files.read" | "tool.files.search" | "tool.files.list" | "tool.files.grep"
             | "tool.files.edit" | "tool.files.write" => {
@@ -94,17 +106,15 @@ pub(crate) fn probe_tool(request: ToolProbeRequestV2) -> ToolProbeResultV2 {
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
             "tool.subagent" => probe_subagent_tool(&request.tool),
-            "tool.web_search" | "tool.web_fetch" => probe_web_tool(&request.tool),
+            "tool.web_search" => probe_web_search_tool(&request.tool, api_key),
+            "tool.web_fetch" => probe_web_fetch_tool(&request.tool),
             _ => Err(format!(
                 "No native built-in adapter is installed for '{}'.",
                 request.tool.id
             )),
         }
     } else {
-        Err(
-            "Built-in adapters do not consume credential bindings; remove every binding before probing."
-                .into(),
-        )
+        Err("This built-in adapter does not consume the configured credential bindings.".into())
     };
     match outcome {
         Ok((adapter, message)) => ToolProbeResultV2 {
@@ -195,7 +205,35 @@ fn probe_subagent_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, Str
 
 /// The web adapters perform a live bounded HTTPS round trip so the probe
 /// reports real connectivity instead of a static capability claim.
-fn probe_web_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+fn probe_web_search_tool(
+    tool: &BuiltInToolConfigurationV2,
+    api_key: Option<&str>,
+) -> Result<(String, String), String> {
+    let configuration = serde_json::from_value::<WebSearchConfigurationV1>(
+        serde_json::to_value(&tool.configuration)
+            .map_err(|error| format!("Cannot encode web-search draft: {error}"))?,
+    )
+    .map_err(|error| format!("Web-search draft does not match adapter v2: {error}"))?;
+    let outcome = WebTools::production()
+        .search_configured_v1(
+            "Aworkit web search connectivity test",
+            &configuration,
+            api_key,
+            &CancellationToken::default(),
+        )
+        .map_err(|error| format!("Bounded web search failed: {error}"))?;
+    Ok((
+        format!("web-search-{}", outcome.backend),
+        format!(
+            "{} completed a bounded live search via {} and returned {} result(s).",
+            tool.name,
+            outcome.backend,
+            outcome.results.len()
+        ),
+    ))
+}
+
+fn probe_web_fetch_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
     let fetched = WebTools::production()
         .fetch_v1(
             "https://example.com/",
@@ -476,7 +514,7 @@ mod tests {
         assert!(
             result
                 .message
-                .contains("do not consume credential bindings")
+                .contains("does not consume the configured credential bindings")
         );
     }
 

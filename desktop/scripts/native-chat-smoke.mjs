@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 const endpoint = process.env.AWORKIT_CDP_URL ?? "http://127.0.0.1:9223";
 const verifyProviderRuntimeSettings =
   process.env.AWORKIT_VERIFY_PROVIDER_RUNTIME_SETTINGS === "1";
+const verifyWebSearchSettings =
+  process.env.AWORKIT_VERIFY_WEB_SEARCH_SETTINGS === "1";
 const verifyChatHistory = process.env.AWORKIT_VERIFY_CHAT_HISTORY === "1";
 const verifyChatSelection =
   process.env.AWORKIT_VERIFY_CHAT_SELECTION === "1";
@@ -193,6 +195,56 @@ const chatSelectionState = verifyChatSelection
       );
       const activeId = active?.dataset.chatId ?? null;
       const targetId = target?.dataset.chatId ?? null;
+      const initialWorkflowControl = document.querySelector(
+        '[aria-label="Workflow for the first Chat input"]',
+      );
+      const initialWorkflowLabel =
+        initialWorkflowControl?.selectedOptions[0]?.textContent?.trim() ?? '';
+      const initialChatContext =
+        document.querySelector('.chat-title-line > span')?.textContent ?? '';
+      const initialWorkflowMatchesHeader =
+        initialWorkflowControl?.disabled !== true ||
+        (initialWorkflowLabel.length > 0 && initialChatContext.includes(initialWorkflowLabel));
+      const historyViewport = document.querySelector('.navigation-history');
+      const originalHistoryScrollTop = historyViewport?.scrollTop ?? 0;
+      if (historyViewport !== null) {
+        historyViewport.scrollTop = Math.max(
+          0,
+          Math.floor((historyViewport.scrollHeight - historyViewport.clientHeight) / 2),
+        );
+        await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+      }
+      const positionedRow = rows.find((candidate) => {
+        const bounds = candidate.getBoundingClientRect();
+        const viewport = historyViewport?.getBoundingClientRect();
+        return viewport === undefined || (bounds.bottom > viewport.top && bounds.top < viewport.bottom);
+      });
+      const positionedLink = positionedRow?.querySelector('.chat-history-link');
+      const positionedBounds = positionedLink?.getBoundingClientRect();
+      const contextX = Math.round((positionedBounds?.left ?? 24) + 8);
+      const contextY = Math.round((positionedBounds?.top ?? 24) + 8);
+      positionedLink?.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: contextX,
+        clientY: contextY,
+      }));
+      const contextMenuOpened = await waitFor(
+        () => positionedRow?.querySelector('[role="menu"]') !== null,
+      );
+      const contextMenu = positionedRow?.querySelector('[role="menu"]');
+      const contextBounds = contextMenu?.getBoundingClientRect();
+      const expectedLeft = contextBounds === undefined
+        ? contextX
+        : Math.min(Math.max(contextX, 8), window.innerWidth - contextBounds.width - 8);
+      const expectedTop = contextBounds === undefined
+        ? contextY
+        : Math.min(Math.max(contextY, 8), window.innerHeight - contextBounds.height - 8);
+      const menuPositionedAfterScroll = contextBounds !== undefined &&
+        Math.abs(contextBounds.left - expectedLeft) <= 1 &&
+        Math.abs(contextBounds.top - expectedTop) <= 1;
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      if (historyViewport !== null) historyViewport.scrollTop = originalHistoryScrollTop;
       const startedAt = performance.now();
       target?.querySelector('.chat-history-link')?.click();
       const selected = targetId !== null && await waitFor(
@@ -204,6 +256,13 @@ const chatSelectionState = verifyChatSelection
       await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
       const elapsedMs = Math.round(performance.now() - startedAt);
       const errorDialogPresent = document.querySelector('[role="alertdialog"]') !== null;
+      const workflowControl = document.querySelector(
+        '[aria-label="Workflow for the first Chat input"]',
+      );
+      const workflowLabel = workflowControl?.selectedOptions[0]?.textContent?.trim() ?? '';
+      const chatContext = document.querySelector('.chat-title-line > span')?.textContent ?? '';
+      const workflowMatchesHeader = workflowControl?.disabled !== true ||
+        (workflowLabel.length > 0 && chatContext.includes(workflowLabel));
       if (activeId !== null) {
         document.querySelector(
           '[data-chat-id="' + CSS.escape(activeId) + '"] .chat-history-link',
@@ -218,9 +277,17 @@ const chatSelectionState = verifyChatSelection
       return {
         activeId,
         targetId,
+        initialWorkflowLabel,
+        initialChatContext,
+        initialWorkflowMatchesHeader,
         selected,
         elapsedMs,
         errorDialogPresent,
+        contextMenuOpened,
+        menuPositionedAfterScroll,
+        workflowLabel,
+        chatContext,
+        workflowMatchesHeader,
       };
     })()`)
   : null;
@@ -364,6 +431,63 @@ const providerRuntimeSettingsState = verifyProviderRuntimeSettings
       };
     })()`)
   : null;
+const webSearchSettingsState = verifyWebSearchSettings
+  ? await evaluate(`(async () => {
+      const settingsControl = [...document.querySelectorAll("button, a")].find(
+        (element) => element.textContent?.includes("Settings") === true,
+      );
+      settingsControl?.click();
+      let toolsControl = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        toolsControl = [...document.querySelectorAll("button")].find(
+          (element) => element.textContent?.trim().startsWith("Tools") === true,
+        );
+        if (toolsControl !== undefined && toolsControl !== null) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 125));
+      }
+      toolsControl?.click();
+      let backend = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        backend = document.getElementById('tool.web_search-backend');
+        if (backend !== null) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 125));
+      }
+      const maximumResults = document.getElementById('tool.web_search-maximum-results');
+      const keylessRescue = document.getElementById('tool.web_search-keyless-rescue');
+      const deepseekUrl = document.getElementById('tool.web_search-deepseek-url');
+      const deepseekModel = document.getElementById('tool.web_search-deepseek-model');
+      const deepseekOutputTokens = document.getElementById(
+        'tool.web_search-deepseek-output-tokens',
+      );
+      const credential = document.getElementById('tool.web_search-provider-credential');
+      backend?.closest('.settings-record')?.scrollIntoView({ block: 'start' });
+      await new Promise((resolveFrame) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolveFrame)),
+      );
+      return {
+        settingsControlPresent: settingsControl !== undefined,
+        toolsControlPresent: toolsControl !== undefined && toolsControl !== null,
+        backendPresent: backend !== null,
+        backendOptions: [...(backend?.options ?? [])].map((option) => option.value),
+        maximumResultsValue: maximumResults?.value ?? null,
+        maximumResultsMaximum: maximumResults?.max ?? null,
+        keylessRescuePresent: keylessRescue !== null,
+        deepseekUrlValue: deepseekUrl?.value ?? null,
+        deepseekModelValue: deepseekModel?.value ?? null,
+        deepseekOutputTokensValue: deepseekOutputTokens?.value ?? null,
+        credentialPresent: credential !== null,
+        controlsWithoutTooltips: [
+          backend,
+          maximumResults,
+          keylessRescue,
+          deepseekUrl,
+          deepseekModel,
+          deepseekOutputTokens,
+          credential,
+        ].filter((control) => control !== null && !control.title).length,
+      };
+    })()`)
+  : null;
 state = {
   ...state,
   runDetailsState,
@@ -372,6 +496,7 @@ state = {
   rawRunDetailsState,
   layoutState,
   providerRuntimeSettingsState,
+  webSearchSettingsState,
   chatHistoryState,
   chatSelectionState,
 };
@@ -416,6 +541,16 @@ if (verifyChatSelection) {
     );
   if (selection?.errorDialogPresent)
     failures.push("Selecting historical Chat data opened an error dialog");
+  if (!selection?.contextMenuOpened || !selection?.menuPositionedAfterScroll)
+    failures.push("Chat context menu is not viewport-aligned after history scrolling");
+  if (!selection?.workflowMatchesHeader)
+    failures.push(
+      `Historical Chat workflow selector does not match its frozen header (${selection?.workflowLabel ?? "unknown"})`,
+    );
+  if (!selection?.initialWorkflowMatchesHeader)
+    failures.push(
+      `Initially selected Chat workflow does not match its frozen header (${selection?.initialWorkflowLabel ?? "unknown"})`,
+    );
 }
 if (!state.runDetailsState.present) failures.push("Run details was not rendered");
 if (!state.runDetailsState.entireRunPresent)
@@ -462,6 +597,51 @@ if (verifyProviderRuntimeSettings) {
     failures.push("Maximum tool output does not render its 65536 byte default");
   if (settings?.toolOutputMinimum !== "1024" || settings?.toolOutputMaximum !== "524288")
     failures.push("Maximum tool output bounds are incorrect");
+}
+if (verifyWebSearchSettings) {
+  const settings = state.webSearchSettingsState;
+  const expectedBackends = [
+    "automatic",
+    "keyless",
+    "duckduckgo",
+    "searxng",
+    "exa",
+    "parallel",
+    "firecrawl",
+    "tavily",
+    "brave",
+    "keenable",
+    "xai",
+    "deepseek",
+  ];
+  if (
+    !settings?.settingsControlPresent ||
+    !settings?.toolsControlPresent ||
+    !settings?.backendPresent
+  )
+    failures.push("Web-search Settings were not rendered in the native WebView");
+  if (JSON.stringify(settings?.backendOptions) !== JSON.stringify(expectedBackends))
+    failures.push("Web-search Settings do not expose the complete provider list");
+  const maximumResults = Number(settings?.maximumResultsValue ?? Number.NaN);
+  if (
+    !Number.isInteger(maximumResults) ||
+    maximumResults < 1 ||
+    maximumResults > 100 ||
+    settings?.maximumResultsMaximum !== "100"
+  )
+    failures.push("Web-search maximum-result defaults or bounds are incorrect");
+  if (!settings?.keylessRescuePresent)
+    failures.push("Web-search one-shot keyless rescue control was not rendered");
+  if (
+    settings?.deepseekUrlValue !== "https://api.deepseek.com" ||
+    settings?.deepseekModelValue !== "deepseek-v4-flash" ||
+    settings?.deepseekOutputTokensValue !== "4096"
+  )
+    failures.push("Paid DeepSeek search settings were not rendered with their defaults");
+  if (!settings?.credentialPresent)
+    failures.push("Web-search credential lease selector was not rendered");
+  if ((settings?.controlsWithoutTooltips ?? 1) !== 0)
+    failures.push("A native web-search Settings control has no tooltip");
 }
 
 console.log(

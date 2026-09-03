@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatHistoryEntry, ChatProjectChoice } from "../chat/types";
 
 export type Route = "chat" | "management" | "workflows" | "settings";
@@ -23,6 +23,11 @@ interface ProjectHistoryGroup {
   readonly id: string;
   readonly name: string;
   readonly entries: readonly ChatHistoryEntry[];
+}
+
+interface MenuPosition {
+  readonly left: number;
+  readonly top: number;
 }
 
 /** Persistent desktop navigation in the formal-design order. */
@@ -245,19 +250,40 @@ function ChatHistoryRow({
   readonly onForkChat?: (chatId: string) => void;
   readonly onDeleteChat?: (chatId: string) => void;
 }): React.JSX.Element {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuOpen = menuPosition !== null;
   const disabled = disabledReason !== null || onSelectChat === undefined;
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+      if (!actionsRef.current?.contains(event.target as Node))
+        setMenuPosition(null);
     };
+    const closeForViewportChange = () => setMenuPosition(null);
     window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
+    window.addEventListener("resize", closeForViewportChange);
+    window.addEventListener("scroll", closeForViewportChange, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", closeForViewportChange);
+      window.removeEventListener("scroll", closeForViewportChange, true);
+    };
   }, [menuOpen]);
+  useLayoutEffect(() => {
+    if (menuPosition === null || menuRef.current === null) return;
+    const bounds = menuRef.current.getBoundingClientRect();
+    const fitted = fitMenuToViewport(menuPosition, bounds.width, bounds.height);
+    if (
+      fitted.left !== menuPosition.left ||
+      fitted.top !== menuPosition.top
+    ) {
+      setMenuPosition(fitted);
+    }
+  }, [menuPosition]);
   const invoke = (action: () => void) => {
-    setMenuOpen(false);
+    setMenuPosition(null);
     action();
   };
   return (
@@ -274,13 +300,21 @@ function ChatHistoryRow({
         onClick={() => onSelectChat?.(entry.chatId)}
         onContextMenu={(event) => {
           event.preventDefault();
-          if (disabledReason === null) setMenuOpen(true);
+          if (disabledReason === null) {
+            setMenuPosition(
+              fitMenuToViewport(
+                { left: event.clientX, top: event.clientY },
+                126,
+                90,
+              ),
+            );
+          }
         }}
       >
         <span className="nav-icon" aria-hidden="true">○</span>
         <span>{entry.title}</span>
       </button>
-      <div className="chat-history-actions" ref={menuRef}>
+      <div className="chat-history-actions" ref={actionsRef}>
         <button
           aria-expanded={menuOpen}
           aria-haspopup="menu"
@@ -289,16 +323,31 @@ function ChatHistoryRow({
           disabled={disabledReason !== null}
           title={disabledReason ?? `Chat actions for ${entry.title}`}
           type="button"
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={(event) => {
+            if (menuOpen) {
+              setMenuPosition(null);
+              return;
+            }
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setMenuPosition(
+              fitMenuToViewport(
+                { left: bounds.right - 126, top: bounds.bottom + 2 },
+                126,
+                90,
+              ),
+            );
+          }}
         >
           ⋯
         </button>
         {menuOpen && (
           <div
             className="chat-history-menu"
+            ref={menuRef}
             role="menu"
+            style={{ left: menuPosition.left, top: menuPosition.top }}
             onKeyDown={(event) => {
-              if (event.key === "Escape") setMenuOpen(false);
+              if (event.key === "Escape") setMenuPosition(null);
             }}
           >
             <button
@@ -331,6 +380,21 @@ function ChatHistoryRow({
       </div>
     </div>
   );
+}
+
+/** Keeps a viewport-fixed menu visible regardless of sidebar scroll offset. */
+function fitMenuToViewport(
+  position: MenuPosition,
+  width: number,
+  height: number,
+): MenuPosition {
+  const padding = 8;
+  const maximumLeft = Math.max(padding, window.innerWidth - width - padding);
+  const maximumTop = Math.max(padding, window.innerHeight - height - padding);
+  return {
+    left: Math.min(Math.max(position.left, padding), maximumLeft),
+    top: Math.min(Math.max(position.top, padding), maximumTop),
+  };
 }
 
 function organizeHistory(

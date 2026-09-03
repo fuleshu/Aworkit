@@ -378,7 +378,6 @@ pre {
   min-width: 126px;
   padding: 3px;
   position: fixed;
-  transform: translate(-108px, 2px);
   z-index: 20;
 }
 .navigation-pane .chat-history-menu button {
@@ -2077,6 +2076,37 @@ pre {
   display: grid;
   gap: 10px;
 }
+.settings-subsection {
+  background: color-mix(in srgb, var(--aw-panel) 70%, var(--aw-surface));
+  border: 1px solid var(--aw-divider);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.settings-subsection > h4 {
+  font-size: 12px;
+  margin: 0;
+}
+.web-search-settings {
+  border-top: 1px solid var(--aw-divider);
+  padding-top: 12px;
+}
+.web-search-domain-list {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+.web-search-domain-list > legend {
+  padding: 0;
+}
+.web-search-domain-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .settings-record {
   background: var(--aw-panel);
   border: 1px solid var(--aw-divider);
@@ -2797,6 +2827,10 @@ pre {
 .todo-list li.done::before {
   color: var(--aw-success);
   content: "✓";
+}
+.todo-list li.active::before {
+  color: var(--aw-accent);
+  content: "◉";
 }
 .subagent-card > details > summary {
   align-items: center;

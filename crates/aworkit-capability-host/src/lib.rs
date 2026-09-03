@@ -143,4 +143,8 @@ pub use tools::{
     ArgumentVectorInvocationV1, BuiltInProcessTools, HostToolLimitsV1, PythonInvocationV1,
     ShellInvocationV1, ToolAdapterError, ToolAuthorityModeV1,
 };
-pub use web::{WebFetchResultV1, WebSearchResultV1, WebToolError, WebTools, WebTransportPort};
+pub use web::{
+    WebFetchResultV1, WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1,
+    WebSearchOutcomeV1, WebSearchProviderTierV1, WebSearchResultV1, WebToolError, WebTools,
+    WebTransportPort,
+};

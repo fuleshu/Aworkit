@@ -17,10 +17,14 @@ use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
     BuiltInProcessTools, CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind,
     FileAuthority, FileGrepRequestV1, FileListRequestV1, FileReadRequestV1, FileSearchRequestV1,
-    FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, McpCallKindV1, McpCallOutcomeV1,
-    McpCallV1, McpServerManifestV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolExchangeV1,
-    ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1, ProjectFiles, PythonInvocationV1,
-    ShellInvocationV1, SideEffectClass, ToolAuthorityModeV1, WebTools,
+    FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, InjectionTargetV1, McpCallKindV1,
+    McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelToolCallV1, ModelToolDefinitionV1,
+    ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1, ProjectFiles,
+    PythonInvocationV1, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
+    SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
+    SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
+    SecretMaterializer, ShellInvocationV1, SideEffectClass, ToolAuthorityModeV1,
+    WebSearchBackendV1, WebSearchConfigurationV1, WebSearchProviderTierV1, WebTools,
 };
 use aworkit_local_store::{CommitBatch, Deduplication, Event, LocalHistoryStore, StoreError};
 use aworkit_protocol::{ProcessGeneration, SchemaVersion, StableId};
@@ -28,13 +32,17 @@ use aworkit_trusted_core::{
     ApprovalChallengeV1, ApprovalRequirement, ApprovalResponseV1, ApprovedDispatchV1,
     ApprovedHostDispatchPortV1, AuthorityManifest, AuthorityManifestV1, BrokerDecisionV1,
     BrokerError, CapabilityBinding, CapabilityBindingV1, CommittedWorkerResultPortV1,
-    DeliveryAcceptanceV1, DurableInvocationBroker, InvocationLedgerEventV1, InvocationLedgerPortV1,
-    ProjectCoordinator, WorkerInvocationProposalV1, WorkerResultOutboxV1, WorkspaceBindingV1,
+    CredentialMetadataV1, CredentialRef, DeliveryAcceptanceV1, DurableInvocationBroker,
+    InvocationLeasePortV1, InvocationLedgerEventV1, InvocationLedgerPortV1,
+    PlatformCredentialStorePort, ProjectCoordinator,
+    RedeemLeaseRequestV1 as CoreRedeemLeaseRequestV1, ScopedLeaseRequestV1, SecretBroker,
+    WorkerInvocationProposalV1, WorkerResultOutboxV1, WorkspaceBindingV1,
     is_definitely_not_started_settlement_v1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use super::{
     PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
@@ -52,6 +60,8 @@ use super::{
 };
 
 pub(crate) const FILE_TOOL_ADAPTER_VERSION: &str = "1.0.0";
+const TODO_TOOL_ADAPTER_VERSION: &str = "1.1.0";
+const WEB_SEARCH_TOOL_ADAPTER_VERSION: &str = "2.0.0";
 pub(crate) const FILE_READ_CAPABILITY_ID: &str = "tool.files.read";
 pub(crate) const FILE_SEARCH_CAPABILITY_ID: &str = "tool.files.search";
 pub(crate) const FILE_LIST_CAPABILITY_ID: &str = "tool.files.list";
@@ -111,7 +121,6 @@ const MAXIMUM_ACTIVITY_TEXT_BYTES: usize = 512;
 pub(crate) const PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1: u64 = 1000;
 pub(crate) const PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1: u64 = 512;
 pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
-pub(crate) const WEB_SEARCH_MAXIMUM_RESULTS_V1: u64 = 8;
 pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
@@ -154,10 +163,24 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
 pub struct WorkflowToolBindingV1 {
     pub capability_id: String,
     pub configuration: Value,
+    /// Secret-free metadata for exact credential fields frozen with the Run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_bindings: Vec<WorkflowToolCredentialBindingV1>,
     /// Exact model-facing definition discovered at freeze for dynamic tools
     /// (MCP). Absent for built-ins whose schemas are compile-time owned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<ModelToolDefinitionV1>,
+}
+
+/// One named credential field resolved from Settings without secret material.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowToolCredentialBindingV1 {
+    pub name: String,
+    pub credential_ref: StableId,
+    pub field: String,
+    pub field_names: BTreeSet<String>,
+    pub revision: u64,
 }
 
 /// Durable per-invocation approval challenge a tool call is suspended on.
@@ -291,6 +314,8 @@ pub(crate) struct StoredFileToolBindingV1 {
     pub configuration: Value,
     pub configuration_hash: String,
     pub limit: StoredFileToolLimitV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<StoredToolSecretBindingV1>,
     #[serde(default)]
     pub requires_approval: bool,
     /// StableId-safe internal identity for dynamic tools (MCP): a deterministic
@@ -298,6 +323,16 @@ pub(crate) struct StoredFileToolBindingV1 {
     /// capability id directly throughout the broker/manifest chain.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub internal_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoredToolSecretBindingV1 {
+    pub name: String,
+    pub credential_ref: StableId,
+    pub field: String,
+    pub field_names: BTreeSet<String>,
+    pub revision: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -332,7 +367,7 @@ pub(crate) enum StoredFileToolLimitV1 {
     },
     Todo,
     WebSearch {
-        maximum_results: usize,
+        configuration: WebSearchConfigurationV1,
     },
     WebFetch {
         maximum_download_bytes: usize,
@@ -468,7 +503,7 @@ pub(crate) fn file_tool_descriptors()
     ] {
         let mut descriptor = CapabilityDescriptor::build(
             capability_id,
-            FILE_TOOL_ADAPTER_VERSION,
+            builtin_tool_adapter_version(capability_id),
             kind,
             side_effect,
         )
@@ -487,6 +522,18 @@ pub(crate) fn file_tool_descriptors()
         descriptors.insert(capability_id.to_owned(), descriptor);
     }
     Ok(descriptors)
+}
+
+/// Todo v1.1 adds the provider-standard in-progress state without changing
+/// the authority or side-effect class of any other built-in capability.
+fn builtin_tool_adapter_version(capability_id: &str) -> &'static str {
+    if capability_id == TODO_CAPABILITY_ID {
+        TODO_TOOL_ADAPTER_VERSION
+    } else if capability_id == WEB_SEARCH_CAPABILITY_ID {
+        WEB_SEARCH_TOOL_ADAPTER_VERSION
+    } else {
+        FILE_TOOL_ADAPTER_VERSION
+    }
 }
 
 /// Builds a per-tool dynamic descriptor for one `mcp://<server>/<tool>`
@@ -715,23 +762,17 @@ pub(crate) fn freeze_file_tool_bindings(
                 )?;
                 (
                     TODO_PROVIDER_NAME.to_owned(),
-                    "Replace the Run's task list with an ordered checklist of pending/completed items.".to_owned(),
+                    "Replace the Run's task list with an ordered checklist of pending, in-progress, or completed items.".to_owned(),
                     todo_schema(),
                     StoredFileToolLimitV1::Todo,
                 )
             }
             WEB_SEARCH_CAPABILITY_ID => (
                 WEB_SEARCH_PROVIDER_NAME.to_owned(),
-                "Search the web over HTTPS and return bounded title/snippet/url results.".to_owned(),
+                "Search the web with frozen provider routing, retry, cache, and keyless-rescue settings; return a requested number of bounded title/snippet/url results.".to_owned(),
                 web_search_schema(),
                 StoredFileToolLimitV1::WebSearch {
-                    maximum_results: exact_unsigned_configuration(
-                        &requested.configuration,
-                        &[],
-                        "maximumResults",
-                        1,
-                        WEB_SEARCH_MAXIMUM_RESULTS_V1,
-                    )?,
+                    configuration: freeze_web_search_configuration(requested)?,
                 },
             ),
             WEB_FETCH_CAPABILITY_ID => (
@@ -787,6 +828,7 @@ pub(crate) fn freeze_file_tool_bindings(
         } else {
             String::new()
         };
+        let secret = freeze_tool_secret(requested, &limit)?;
         bindings.push(StoredFileToolBindingV1 {
             capability_id: requested.capability_id.clone(),
             provider_name,
@@ -795,6 +837,7 @@ pub(crate) fn freeze_file_tool_bindings(
             configuration_hash: canonical_hash(&requested.configuration)?,
             configuration: requested.configuration.clone(),
             limit,
+            secret,
             requires_approval: !requested.capability_id.starts_with(MCP_CAPABILITY_PREFIX)
                 && !approval_free_tool_ids().contains(requested.capability_id.as_str()),
             internal_id,
@@ -947,6 +990,7 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     host: Arc<CapabilityHost>,
     descriptors: BTreeMap<String, CapabilityDescriptor>,
     web: WebTools,
+    lease_authority: Arc<ToolLeaseAuthority>,
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
     generation: ProcessGeneration,
     core_key: Arc<CoreAuthenticationKey>,
@@ -960,6 +1004,7 @@ impl FileToolAuthorityRuntimeV1 {
         descriptors: BTreeMap<String, CapabilityDescriptor>,
         generation: ProcessGeneration,
         core_key: Arc<CoreAuthenticationKey>,
+        credential_store: Arc<dyn PlatformCredentialStorePort>,
     ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             projects,
@@ -973,6 +1018,7 @@ impl FileToolAuthorityRuntimeV1 {
             host,
             descriptors,
             web: WebTools::production(),
+            lease_authority: Arc::new(ToolLeaseAuthority::new(generation, credential_store)),
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
             generation,
             core_key,
@@ -1013,6 +1059,182 @@ impl FileToolAuthorityRuntimeV1 {
     ) -> Result<Option<Value>, WorkflowPipelineError> {
         self.records.todo_state(run_id)
     }
+}
+
+/// Core-side owner of one-use tool credential leases. Only secret-free
+/// metadata crosses into the frozen binding; plaintext exists solely in the
+/// materializer during the admitted host invocation.
+struct ToolLeaseAuthority {
+    generation: ProcessGeneration,
+    store: Arc<dyn PlatformCredentialStorePort>,
+    brokers: Mutex<BTreeMap<String, SecretBroker>>,
+}
+
+impl ToolLeaseAuthority {
+    fn new(generation: ProcessGeneration, store: Arc<dyn PlatformCredentialStorePort>) -> Self {
+        Self {
+            generation,
+            store,
+            brokers: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn prepare(
+        &self,
+        secret: Option<&StoredToolSecretBindingV1>,
+        invocation_id: &StableId,
+        run_id: &StableId,
+        lease_ids: &[StableId],
+    ) -> Result<(), WorkflowPipelineError> {
+        let Some(secret) = secret else {
+            return if lease_ids.is_empty() {
+                Ok(())
+            } else {
+                Err(WorkflowPipelineError::IncompleteEvidence)
+            };
+        };
+        if lease_ids.len() != 1 {
+            return Err(WorkflowPipelineError::IncompleteEvidence);
+        }
+        let expected = tool_lease_id(invocation_id, secret)?;
+        if lease_ids[0] != expected {
+            return Err(WorkflowPipelineError::IncompleteEvidence);
+        }
+        let mut brokers = self.brokers.lock().map_err(|_| {
+            WorkflowPipelineError::Host("tool credential lease lock poisoned".into())
+        })?;
+        if brokers.contains_key(expected.as_str()) {
+            return Ok(());
+        }
+        let mut broker = SecretBroker::with_store(self.store.clone());
+        broker
+            .restore_credential_metadata(CredentialMetadataV1 {
+                credential: CredentialRef(secret.credential_ref.clone()),
+                field_names: secret.field_names.clone(),
+                revision: secret.revision,
+            })
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
+        broker
+            .issue_scoped(ScopedLeaseRequestV1 {
+                lease_id: expected.clone(),
+                credential: CredentialRef(secret.credential_ref.clone()),
+                decision_id: invocation_id.clone(),
+                invocation_id: invocation_id.clone(),
+                run_id: run_id.clone(),
+                audience_generation: self.generation,
+                permitted_fields: BTreeSet::from([secret.field.clone()]),
+                ttl: Duration::from_secs(180),
+                maximum_uses: 1,
+            })
+            .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
+        brokers.insert(expected.as_str().to_owned(), broker);
+        Ok(())
+    }
+
+    fn redeem(
+        &self,
+        request: &HostRedeemLeaseRequestV1,
+    ) -> Result<HostSecretDeliveryV1, SecretMaterializationError> {
+        let mut brokers = self
+            .brokers
+            .lock()
+            .map_err(|_| SecretMaterializationError::ChannelUnavailable)?;
+        let broker = brokers
+            .get_mut(request.lease_id.as_str())
+            .ok_or(SecretMaterializationError::LeaseDenied)?;
+        let delivery = broker
+            .redeem_scoped(&CoreRedeemLeaseRequestV1 {
+                lease_id: request.lease_id.clone(),
+                decision_id: request.decision_id.clone(),
+                invocation_id: request.invocation_id.clone(),
+                audience_generation: request.host_generation,
+                requested_fields: request.requested_fields.clone(),
+            })
+            .map_err(|_| SecretMaterializationError::LeaseDenied)?;
+        Ok(HostSecretDeliveryV1 {
+            fields: delivery.into_fields(),
+        })
+    }
+
+    fn revoke(&self, lease_id: &StableId) -> Result<(), SecretMaterializationError> {
+        let mut brokers = self
+            .brokers
+            .lock()
+            .map_err(|_| SecretMaterializationError::ChannelUnavailable)?;
+        if let Some(mut broker) = brokers.remove(lease_id.as_str()) {
+            broker.revoke(lease_id);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ToolSecretLeaseClient {
+    authority: Arc<ToolLeaseAuthority>,
+}
+
+impl SecretLeaseClientV1 for ToolSecretLeaseClient {
+    fn redeem(
+        &self,
+        request: &HostRedeemLeaseRequestV1,
+    ) -> Result<HostSecretDeliveryV1, SecretMaterializationError> {
+        self.authority.redeem(request)
+    }
+
+    fn revoke(&self, lease_id: &StableId) -> Result<(), SecretMaterializationError> {
+        self.authority.revoke(lease_id)
+    }
+}
+
+struct PreparedToolLeaseIssuer {
+    authority: Arc<ToolLeaseAuthority>,
+    secret: Option<StoredToolSecretBindingV1>,
+}
+
+impl InvocationLeasePortV1 for PreparedToolLeaseIssuer {
+    fn issue_for_dispatch(
+        &self,
+        proposal: &WorkerInvocationProposalV1,
+        _manifest: &AuthorityManifest,
+        invocation_id: &StableId,
+    ) -> Result<Vec<StableId>, BrokerError> {
+        let Some(secret) = &self.secret else {
+            return Ok(Vec::new());
+        };
+        let lease_id =
+            tool_lease_id(invocation_id, secret).map_err(|_| BrokerError::Unavailable)?;
+        self.authority
+            .prepare(
+                Some(secret),
+                invocation_id,
+                &proposal.run_id,
+                std::slice::from_ref(&lease_id),
+            )
+            .map_err(|_| BrokerError::Unavailable)?;
+        Ok(vec![lease_id])
+    }
+
+    fn revoke_uncommitted(&self, lease_ids: &[StableId]) -> Result<(), BrokerError> {
+        for lease_id in lease_ids {
+            self.authority
+                .revoke(lease_id)
+                .map_err(|_| BrokerError::Unavailable)?;
+        }
+        Ok(())
+    }
+}
+
+fn tool_lease_id(
+    invocation_id: &StableId,
+    secret: &StoredToolSecretBindingV1,
+) -> Result<StableId, WorkflowPipelineError> {
+    digest_id(
+        "lease.tool",
+        &format!(
+            "{}:{}:{}:{}",
+            invocation_id, secret.credential_ref, secret.field, secret.revision
+        ),
+    )
 }
 
 #[derive(Clone)]
@@ -1343,9 +1565,14 @@ impl BoundFileToolAuthorityV1 {
             manifest_binding,
         )?;
         let proposal = record.proposal.clone();
+        let secret = record.binding.secret.clone();
         let replayed = self.runtime.records.record_invocation(&record)?;
         Ok((
-            DurableInvocationBroker::new(self.runtime.ledger.clone(), TOOL_APPROVAL_TTL_MILLIS),
+            DurableInvocationBroker::new(self.runtime.ledger.clone(), TOOL_APPROVAL_TTL_MILLIS)
+                .with_lease_port(Arc::new(PreparedToolLeaseIssuer {
+                    authority: self.runtime.lease_authority.clone(),
+                    secret,
+                })),
             proposal,
             replayed,
         ))
@@ -1583,9 +1810,28 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
             || record.manifest_binding.capability_id != dispatch.capability_id
             || record.manifest_binding.adapter_version != descriptor.version
             || record.manifest_binding.descriptor_hash != descriptor.version_hash
-            || !dispatch.lease_ids.is_empty()
         {
             return Err(BrokerError::IdentityConflict);
+        }
+        match &record.binding.secret {
+            None if dispatch.lease_ids.is_empty() => {}
+            Some(secret) if dispatch.lease_ids.len() == 1 => {
+                let expected = tool_lease_id(&dispatch.invocation_id, secret)
+                    .map_err(|_| BrokerError::Unavailable)?;
+                if dispatch.lease_ids[0] != expected {
+                    return Err(BrokerError::IdentityConflict);
+                }
+                self.runtime
+                    .lease_authority
+                    .prepare(
+                        Some(secret),
+                        &dispatch.invocation_id,
+                        &record.proposal.run_id,
+                        &dispatch.lease_ids,
+                    )
+                    .map_err(|_| BrokerError::Unavailable)?;
+            }
+            _ => return Err(BrokerError::IdentityConflict),
         }
         if self
             .runtime
@@ -1612,7 +1858,7 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
             deadline_epoch_millis: record.deadline_epoch_millis,
             cancellation_token: digest_id("cancel.tool", dispatch.invocation_id.as_str())
                 .map_err(|_| BrokerError::Unavailable)?,
-            lease_handles: Vec::new(),
+            lease_handles: dispatch.lease_ids.clone(),
             max_output_bytes: descriptor.max_output_bytes,
             payload: record.payload.clone(),
             core_authentication_tag: String::new(),
@@ -1628,6 +1874,9 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
             context: self.context.clone(),
             run_events: self.run_events.clone(),
             record,
+            secret_client: ToolSecretLeaseClient {
+                authority: self.runtime.lease_authority.clone(),
+            },
         };
         match self
             .runtime
@@ -1669,6 +1918,7 @@ struct FileToolDispatcherV1 {
     context: FrozenFileToolAuthorityContextV1,
     run_events: Arc<RunEventStream>,
     record: ToolInvocationRecordV1,
+    secret_client: ToolSecretLeaseClient,
 }
 
 impl AdmittedInvocationDispatcherV1 for FileToolDispatcherV1 {
@@ -1763,6 +2013,9 @@ impl FileToolHostPortV1 {
             context: self.context.clone(),
             run_events: self.run_events.clone(),
             record,
+            secret_client: ToolSecretLeaseClient {
+                authority: self.runtime.lease_authority.clone(),
+            },
         };
         let cancellation = self
             .runtime
@@ -1822,6 +2075,20 @@ impl FileToolDispatcherV1 {
             .and_then(Value::as_str)
             .unwrap_or("-")
             .to_owned();
+        let materialized = match self.materialize_secret(envelope) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.failed_outcome(
+                    envelope,
+                    path,
+                    format!("tool credential lease materialization failed: {error}"),
+                );
+            }
+        };
+        let api_key = match self.api_key(&materialized) {
+            Ok(value) => value,
+            Err(error) => return self.failed_outcome(envelope, path, error),
+        };
         let result: Result<(Value, String), String> = (|| {
             self.projects
                 .revalidate_workspace_v1(&self.record.workspace)
@@ -2104,20 +2371,43 @@ impl FileToolDispatcherV1 {
                     let value = json!({"todos": todos});
                     Ok((value, "Updated the Run task list.".to_owned()))
                 }
-                StoredFileToolLimitV1::WebSearch { maximum_results } => {
+                StoredFileToolLimitV1::WebSearch { configuration } => {
                     let query = self.record.call.arguments["query"]
                         .as_str()
                         .ok_or_else(|| "query is invalid".to_owned())?;
-                    let results = self
+                    let requested_limit =
+                        self.record.call.arguments["limit"].as_u64().unwrap_or(5) as usize;
+                    let mut invocation_configuration = configuration.clone();
+                    invocation_configuration.maximum_results =
+                        requested_limit.min(configuration.maximum_results);
+                    let outcome = self
                         .web
-                        .search_v1(query, *maximum_results, cancellation)
+                        .search_configured_v1(
+                            query,
+                            &invocation_configuration,
+                            api_key.as_deref().map(String::as_str),
+                            cancellation,
+                        )
                         .map_err(|error| error.to_string())?;
-                    let results_len = results.len();
-                    let value = json!({"query": query, "results": results});
+                    let results_len = outcome.results.len();
+                    let backend = outcome.backend.clone();
+                    let cached = outcome.cached;
+                    let rescued_from = outcome.rescued_from.clone();
+                    let value = serde_json::to_value(outcome)
+                        .map_err(|error| format!("cannot encode web-search result: {error}"))?;
                     enforce_result_bound(&value)?;
+                    let route = rescued_from.map_or_else(
+                        || backend.clone(),
+                        |source| format!("{backend}, rescued from {source}"),
+                    );
                     Ok((
                         value,
-                        format!("Web search returned {results_len} result(s)."),
+                        format!(
+                            "Web search returned {results_len} result(s) via {route}{}. ",
+                            if cached { " from cache" } else { "" }
+                        )
+                        .trim()
+                        .to_owned(),
                     ))
                 }
                 StoredFileToolLimitV1::WebFetch {
@@ -2170,10 +2460,82 @@ impl FileToolDispatcherV1 {
                 call_id: self.record.call.call_id.clone(),
                 capability_id: self.record.call.capability_id.clone(),
                 path,
-                result: json!({"error": error}),
+                result: json!({
+                    "error": bounded_activity_text(redact_tool_error(&materialized, &error))
+                }),
                 is_error: true,
                 summary: "Tool operation was denied or failed within its frozen authority.".into(),
             },
+        }
+    }
+
+    fn materialize_secret(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+    ) -> Result<Option<aworkit_capability_host::SecretMaterializationV1>, String> {
+        let Some(secret) = &self.record.binding.secret else {
+            return if envelope.lease_handles.is_empty() {
+                Ok(None)
+            } else {
+                Err("unexpected tool credential lease".into())
+            };
+        };
+        let lease_id = envelope
+            .lease_handles
+            .first()
+            .ok_or_else(|| "tool credential lease is missing".to_owned())?;
+        if envelope.lease_handles.len() != 1 {
+            return Err("tool received an invalid credential lease set".into());
+        }
+        SecretMaterializer::new(self.secret_client.clone())
+            .materialize(&SecretMaterializationPlanV1 {
+                decision_id: envelope.decision_id.clone(),
+                invocation_id: envelope.invocation_id.clone(),
+                host_generation: envelope.host_generation,
+                lease: SecretLeaseHandleV1 {
+                    lease_id: lease_id.clone(),
+                },
+                fields: vec![SecretFieldPlanV1 {
+                    field: secret.field.clone(),
+                    target: InjectionTargetV1::Header("Authorization".into()),
+                }],
+            })
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    fn api_key(
+        &self,
+        materialized: &Option<aworkit_capability_host::SecretMaterializationV1>,
+    ) -> Result<Option<Zeroizing<String>>, String> {
+        let Some(secret) = &self.record.binding.secret else {
+            return Ok(None);
+        };
+        let bytes = materialized
+            .as_ref()
+            .and_then(|value| value.value(&secret.field))
+            .ok_or_else(|| "tool credential field was not materialized".to_owned())?;
+        String::from_utf8(bytes.to_vec())
+            .map(Zeroizing::new)
+            .map(Some)
+            .map_err(|_| "tool credential field is not valid UTF-8".to_owned())
+    }
+
+    fn failed_outcome(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        path: String,
+        error: String,
+    ) -> ToolOutcomeRecordV1 {
+        ToolOutcomeRecordV1 {
+            schema_version: 1,
+            invocation_id: envelope.invocation_id.clone(),
+            call_id: self.record.call.call_id.clone(),
+            capability_id: self.record.call.capability_id.clone(),
+            path,
+            result: json!({"error": error}),
+            is_error: true,
+            summary: "Tool operation was denied or failed within its frozen authority.".into(),
         }
     }
 
@@ -2746,7 +3108,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
-        StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query"]),
+        StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit"]),
         StoredFileToolLimitV1::WebFetch { .. } => BTreeSet::from(["url"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         // MCP argument shapes are server-defined; the frozen validator only
@@ -2755,11 +3117,17 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Mcp { .. } => return validate_mcp_arguments(arguments),
     };
     let observed_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    let valid_keys = if matches!(binding.limit, StoredFileToolLimitV1::Subagent { .. }) {
-        // The subagent context slice is optional; the task is required.
-        observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
-    } else {
-        observed_keys == expected_keys
+    let valid_keys = match binding.limit {
+        StoredFileToolLimitV1::Subagent { .. } => {
+            // The subagent context slice is optional; the task is required.
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
+        }
+        StoredFileToolLimitV1::WebSearch { .. } => {
+            // Hermes exposes `limit` as an optional call-level request. The
+            // frozen Settings maximum remains the hard authority ceiling.
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("query")
+        }
+        _ => observed_keys == expected_keys,
     };
     if !valid_keys {
         return Err(invalid_tool(
@@ -2860,9 +3228,11 @@ fn validate_call_arguments(
                     .ok_or_else(|| invalid_tool("todo content is empty or oversized"))?;
                 if !matches!(
                     todo.get("status").and_then(Value::as_str),
-                    Some("pending" | "completed")
+                    Some("pending" | "in_progress" | "completed")
                 ) {
-                    return Err(invalid_tool("todo status must be pending or completed"));
+                    return Err(invalid_tool(
+                        "todo status must be pending, in_progress, or completed",
+                    ));
                 }
                 let keys = todo.keys().map(String::as_str).collect::<BTreeSet<_>>();
                 if keys != BTreeSet::from(["content", "status"]) {
@@ -2875,8 +3245,18 @@ fn validate_call_arguments(
             object
                 .get("query")
                 .and_then(Value::as_str)
-                .filter(|query| !query.is_empty() && query.len() <= 16_384)
-                .ok_or_else(|| invalid_tool("web search query is empty or oversized"))?;
+                .filter(|query| !query.is_empty() && query.len() <= 16_384 && !query.contains('\0'))
+                .ok_or_else(|| {
+                    invalid_tool("web search query is empty, oversized, or malformed")
+                })?;
+            if object
+                .get("limit")
+                .is_some_and(|limit| !matches!(limit.as_u64(), Some(1..=100)))
+            {
+                return Err(invalid_tool(
+                    "web search limit must be an integer from 1 through 100",
+                ));
+            }
         }
         StoredFileToolLimitV1::WebFetch { .. } => {
             object
@@ -2941,6 +3321,91 @@ fn exact_unsigned_configuration(
             .get(numeric_name)
             .expect("frozen numeric field"),
     )
+}
+
+fn freeze_web_search_configuration(
+    requested: &WorkflowToolBindingV1,
+) -> Result<WebSearchConfigurationV1, WorkflowPipelineError> {
+    let configuration =
+        serde_json::from_value::<WebSearchConfigurationV1>(requested.configuration.clone())
+            .map_err(|_| invalid_tool("web-search configuration does not match adapter v2"))?;
+    configuration
+        .validate()
+        .map_err(|error| invalid_tool(&error.to_string()))?;
+    Ok(configuration)
+}
+
+fn freeze_tool_secret(
+    requested: &WorkflowToolBindingV1,
+    limit: &StoredFileToolLimitV1,
+) -> Result<Option<StoredToolSecretBindingV1>, WorkflowPipelineError> {
+    let accepts_secret = matches!(limit, StoredFileToolLimitV1::WebSearch { .. });
+    if !accepts_secret && !requested.credential_bindings.is_empty() {
+        return Err(invalid_tool(
+            "the selected built-in adapter does not accept credential bindings",
+        ));
+    }
+    if requested.credential_bindings.len() > 1 {
+        return Err(invalid_tool(
+            "web search accepts at most one credential binding",
+        ));
+    }
+    let Some(binding) = requested.credential_bindings.first() else {
+        if matches!(limit, StoredFileToolLimitV1::WebSearch { configuration } if web_search_requires_key(configuration))
+        {
+            return Err(invalid_tool(
+                "the selected paid web-search provider requires one api_key credential binding",
+            ));
+        }
+        return Ok(None);
+    };
+    let StoredFileToolLimitV1::WebSearch { configuration } = limit else {
+        return Err(invalid_tool("unexpected tool credential binding"));
+    };
+    if web_search_forbids_key(configuration)
+        || binding.name != "api_key"
+        || binding.revision == 0
+        || !binding.field_names.contains(&binding.field)
+    {
+        return Err(invalid_tool(
+            "web-search credential metadata does not match the frozen adapter contract",
+        ));
+    }
+    Ok(Some(StoredToolSecretBindingV1 {
+        name: binding.name.clone(),
+        credential_ref: binding.credential_ref.clone(),
+        field: binding.field.clone(),
+        field_names: binding.field_names.clone(),
+        revision: binding.revision,
+    }))
+}
+
+fn web_search_requires_key(configuration: &WebSearchConfigurationV1) -> bool {
+    matches!(
+        configuration.backend,
+        WebSearchBackendV1::Brave | WebSearchBackendV1::Xai | WebSearchBackendV1::Deepseek
+    ) || (matches!(
+        configuration.backend,
+        WebSearchBackendV1::Exa
+            | WebSearchBackendV1::Parallel
+            | WebSearchBackendV1::Firecrawl
+            | WebSearchBackendV1::Tavily
+            | WebSearchBackendV1::Keenable
+    ) && configuration.provider_tier == WebSearchProviderTierV1::Paid)
+}
+
+fn web_search_forbids_key(configuration: &WebSearchConfigurationV1) -> bool {
+    matches!(
+        configuration.backend,
+        WebSearchBackendV1::Keyless | WebSearchBackendV1::Duckduckgo | WebSearchBackendV1::Searxng
+    ) || (matches!(
+        configuration.backend,
+        WebSearchBackendV1::Exa
+            | WebSearchBackendV1::Parallel
+            | WebSearchBackendV1::Firecrawl
+            | WebSearchBackendV1::Tavily
+            | WebSearchBackendV1::Keenable
+    ) && configuration.provider_tier == WebSearchProviderTierV1::Free)
 }
 
 /// Validates the exact frozen Settings shape for one tool: every fixed field
@@ -3084,7 +3549,7 @@ fn todo_schema() -> Value {
                     "additionalProperties": false,
                     "properties": {
                         "content": {"type":"string","minLength":1,"maxLength":4096},
-                        "status": {"enum":["pending","completed"]}
+                        "status": {"enum":["pending","in_progress","completed"]}
                     },
                     "required": ["content","status"]
                 }
@@ -3099,7 +3564,14 @@ fn web_search_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "query": {"type":"string","minLength":1,"maxLength":16384}
+            "query": {"type":"string","minLength":1,"maxLength":16384},
+            "limit": {
+                "type":"integer",
+                "minimum":1,
+                "maximum":100,
+                "default":5,
+                "description":"Maximum results requested for this search; the frozen Settings maximum may reduce it."
+            }
         },
         "required": ["query"]
     })
@@ -3134,6 +3606,16 @@ fn enforce_result_bound(value: &Value) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn redact_tool_error(
+    materialized: &Option<aworkit_capability_host::SecretMaterializationV1>,
+    error: &str,
+) -> String {
+    materialized.as_ref().map_or_else(
+        || error.to_owned(),
+        |secret| secret.redactor().redact(error),
+    )
 }
 
 fn bounded_activity_text(mut value: String) -> String {
@@ -3407,6 +3889,7 @@ mod tests {
             descriptors.clone(),
             generation,
             core_key,
+            Arc::new(aworkit_trusted_core::NativeCredentialStore::new()),
         )
         .expect("tool authority");
         let tool = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
@@ -3416,6 +3899,7 @@ mod tests {
                 "effect":"read",
                 "maximumBytes":PROJECT_FILE_READ_MAXIMUM_BYTES_V1,
             }),
+            credential_bindings: Vec::new(),
             definition: None,
         }])
         .expect("frozen tool")
@@ -3610,6 +4094,7 @@ mod tests {
                 "effect":"search",
                 "maximumResults":PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
             }),
+            credential_bindings: Vec::new(),
             definition: None,
         }])
         .expect("search binding")
@@ -3650,6 +4135,62 @@ mod tests {
     }
 
     #[test]
+    fn todo_contract_advertises_and_accepts_in_progress() {
+        let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            capability_id: TODO_CAPABILITY_ID.into(),
+            configuration: json!({"authorityMode":"run_todo"}),
+            credential_bindings: Vec::new(),
+            definition: None,
+        }])
+        .expect("todo binding")
+        .remove(0);
+        assert_eq!(
+            binding.input_schema["properties"]["todos"]["items"]["properties"]["status"]["enum"],
+            json!(["pending", "in_progress", "completed"])
+        );
+        validate_call_arguments(
+            &binding,
+            &json!({"todos":[{"content":"Investigate","status":"in_progress"}]}),
+        )
+        .expect("in-progress todo");
+        let descriptor = file_tool_descriptors()
+            .expect("descriptors")
+            .remove(TODO_CAPABILITY_ID)
+            .expect("todo descriptor");
+        assert_eq!(descriptor.version, TODO_TOOL_ADAPTER_VERSION);
+    }
+
+    #[test]
+    fn web_search_contract_accepts_a_bounded_optional_hermes_limit() {
+        let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
+            configuration: serde_json::to_value(WebSearchConfigurationV1::default())
+                .expect("web-search configuration"),
+            credential_bindings: Vec::new(),
+            definition: None,
+        }])
+        .expect("web-search binding")
+        .remove(0);
+
+        assert_eq!(
+            binding.input_schema["properties"]["limit"]["default"],
+            json!(5)
+        );
+        validate_call_arguments(&binding, &json!({"query":"rust web search"}))
+            .expect("default limit");
+        validate_call_arguments(&binding, &json!({"query":"rust web search","limit":100}))
+            .expect("maximum limit");
+        for invalid in [
+            json!({"query":"rust web search","limit":0}),
+            json!({"query":"rust web search","limit":101}),
+            json!({"query":"rust web search","limit":1.5}),
+            json!({"query":"rust web search","unexpected":true}),
+        ] {
+            assert!(validate_call_arguments(&binding, &invalid).is_err());
+        }
+    }
+
+    #[test]
     fn subagent_deadline_predicate_fails_closed_once_the_run_deadline_passes() {
         assert!(!subagent_deadline_expired(
             current_epoch_millis().saturating_add(60_000)
@@ -3667,6 +4208,7 @@ mod tests {
                 "authorityMode":"run_subagent",
                 "requiresApproval":true,
             }),
+            credential_bindings: Vec::new(),
             definition: None,
         }])
         .expect("subagent binding")
@@ -3684,6 +4226,7 @@ mod tests {
                 configuration: json!({
                     "authorityMode":"run_subagent",
                 }),
+                credential_bindings: Vec::new(),
                 definition: None,
             }]),
             Err(WorkflowPipelineError::InvalidInput(_))
@@ -3694,6 +4237,7 @@ mod tests {
         WorkflowToolBindingV1 {
             capability_id: "mcp://serv.fixture/echo".into(),
             configuration: json!({"serverId":"serv.fixture","tool":"echo"}),
+            credential_bindings: Vec::new(),
             definition,
         }
     }

@@ -10,6 +10,7 @@ import { settingsRecordFingerprint } from "./settingsDraft";
 import {
   JsonObjectField,
 } from "./SettingsFields";
+import { WebSearchSettingsEditor } from "./WebSearchSettingsEditor";
 
 export interface CredentialWriteDraft {
   readonly replaceCredentialRef: string | null;
@@ -326,7 +327,7 @@ export function CredentialsSection({
 
 export function ToolsSection({
   tools,
-  credentials: _credentials,
+  credentials,
   projects,
   onChange,
   onProbe,
@@ -365,7 +366,11 @@ export function ToolsSection({
       ) : (
         <div className="settings-record-list">
           {tools.map((tool, index) => {
-            const bindingCompatible = tool.credentialBindings.length === 0;
+            const bindingCompatible =
+              tool.id === "tool.web_search"
+                ? tool.credentialBindings.length <= 1 &&
+                  tool.credentialBindings.every(({ name }) => name === "api_key")
+                : tool.credentialBindings.length === 0;
             const selectedProjectId =
               selectedProjects[tool.id] ?? probeableProjects[0]?.id ?? "";
             const selectedProject =
@@ -465,7 +470,10 @@ export function ToolsSection({
                   title={
                     tool.requiresProject && selectedProject === null
                       ? "Add or select a project before testing this project-scoped tool"
-                      : "Exercise the installed bounded adapter without granting it to a workflow"
+                      : tool.id === "tool.web_search" &&
+                          tool.credentialBindings.length > 0
+                        ? "Run one live configured web search; this verifies the provider adapter and may incur provider charges"
+                        : "Exercise the installed bounded adapter without granting it to a workflow"
                   }
                   type="button"
                   onClick={() => {
@@ -511,16 +519,12 @@ export function ToolsSection({
                   </p>
                 )}
               </div>
-              {bindingCompatible ? (
-                <p className="field-warning">
-                  Built-in adapters do not accept credential injection. No
-                  secret will be leased to this tool.
-                </p>
-              ) : (
+              {!bindingCompatible && (
                 <div className="field-warning" role="alert">
                   <p>
-                    This saved draft contains unsupported credential bindings.
-                    Native probes and workflow execution reject them.
+                    This saved draft contains unsupported credential bindings
+                    that do not match the installed adapter contract. Native
+                    probes and workflow execution reject them.
                   </p>
                   <button
                     title="Remove every unsupported credential binding from this built-in tool draft"
@@ -533,15 +537,28 @@ export function ToolsSection({
                   </button>
                 </div>
               )}
-              <JsonObjectField
-                id={`${tool.id}-configuration`}
-                label="Tool configuration"
-                title="Non-secret bounded tool settings such as authority mode, timeout, write access, and output limits"
-                value={tool.configuration}
-                onChange={(configuration) =>
-                  updateTool({ ...tool, configuration })
-                }
-              />
+              {tool.id === "tool.web_search" ? (
+                <WebSearchSettingsEditor
+                  tool={tool}
+                  credentials={credentials}
+                  onChange={updateTool}
+                />
+              ) : (
+                <>
+                  <p className="field-warning">
+                    This built-in adapter does not accept credential injection.
+                  </p>
+                  <JsonObjectField
+                    id={`${tool.id}-configuration`}
+                    label="Tool configuration"
+                    title="Non-secret bounded tool settings such as authority mode, timeout, write access, and output limits"
+                    value={tool.configuration}
+                    onChange={(configuration) =>
+                      updateTool({ ...tool, configuration })
+                    }
+                  />
+                </>
+              )}
               </section>
             );
           })}
@@ -568,7 +585,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Runs one bounded host Python script; approval required per call.",
   "tool.todo": "Replaces the Run task list; rendered as a live plan card.",
   "tool.web_search":
-    "Searches the web and returns bounded title/snippet/url results.",
+    "Hermes-compatible multi-provider search with an anonymous failover ring, explicit free or paid tiers, SearXNG and DuckDuckGo, retries, one-shot rescue, request coalescing, caching, and optional DeepSeek search.",
   "tool.web_fetch":
     "Fetches one HTTPS page and extracts bounded plain text.",
   "tool.subagent":
