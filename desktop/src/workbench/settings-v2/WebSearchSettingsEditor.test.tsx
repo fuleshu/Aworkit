@@ -76,6 +76,9 @@ describe("WebSearchSettingsEditor", () => {
     expect(screen.getByText(/rotates through Exa, Parallel, Firecrawl/)).toBeVisible();
     expect(screen.getByLabelText("SearXNG base URL")).toHaveAttribute("title");
     expect(screen.getByLabelText("Search model")).toHaveValue("deepseek-v4-flash");
+    expect(screen.getByLabelText("Freshness validation")).toBeChecked();
+    expect(screen.getByLabelText("Current-result age (days)")).toHaveValue(45);
+    expect(screen.getByLabelText("Bypass cache for live data")).toBeChecked();
     expect(screen.getByText(/incur model token charges/)).toBeVisible();
   });
 

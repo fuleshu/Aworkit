@@ -24,7 +24,8 @@ use aworkit_capability_host::{
     SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
     SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
     SecretMaterializer, ShellInvocationV1, SideEffectClass, ToolAuthorityModeV1,
-    WebSearchBackendV1, WebSearchConfigurationV1, WebSearchProviderTierV1, WebTools,
+    WebSearchBackendV1, WebSearchConfigurationV1, WebSearchFreshnessModeV1,
+    WebSearchProviderTierV1, WebTools,
 };
 use aworkit_local_store::{CommitBatch, Deduplication, Event, LocalHistoryStore, StoreError};
 use aworkit_protocol::{ProcessGeneration, SchemaVersion, StableId};
@@ -46,6 +47,7 @@ use zeroize::Zeroizing;
 
 use super::{
     PROJECT_FILE_READ_MAXIMUM_BYTES_V1, PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1,
+    WEB_SEARCH_MAXIMUM_RESULTS_V1,
     mcp_tools::{
         MCP_ADAPTER_ID, MCP_ADAPTER_VERSION, MCP_CAPABILITY_PREFIX, MCP_SCOPE, McpToolRuntimeV1,
         mcp_provider_name, split_mcp_capability,
@@ -73,6 +75,7 @@ pub(crate) const PYTHON_CAPABILITY_ID: &str = "tool.python.host";
 pub(crate) const TODO_CAPABILITY_ID: &str = "tool.todo";
 pub(crate) const WEB_SEARCH_CAPABILITY_ID: &str = "tool.web_search";
 pub(crate) const WEB_FETCH_CAPABILITY_ID: &str = "tool.web_fetch";
+pub(crate) const WEB_EXTRACT_CAPABILITY_ID: &str = "tool.web_extract";
 const FILE_READ_PROVIDER_NAME: &str = "aworkit_read_project_file";
 const FILE_SEARCH_PROVIDER_NAME: &str = "aworkit_search_project_file";
 const FILE_LIST_PROVIDER_NAME: &str = "aworkit_list_project_files";
@@ -84,6 +87,7 @@ const PYTHON_PROVIDER_NAME: &str = "aworkit_host_python";
 const TODO_PROVIDER_NAME: &str = "aworkit_todo";
 const WEB_SEARCH_PROVIDER_NAME: &str = "aworkit_web_search";
 const WEB_FETCH_PROVIDER_NAME: &str = "aworkit_web_fetch";
+const WEB_EXTRACT_PROVIDER_NAME: &str = "aworkit_web_extract";
 const FILE_READ_ADAPTER_ID: &str = "adapter.project-files.read";
 const FILE_SEARCH_ADAPTER_ID: &str = "adapter.project-files.search";
 const FILE_LIST_ADAPTER_ID: &str = "adapter.project-files.list";
@@ -95,6 +99,7 @@ const PYTHON_ADAPTER_ID: &str = "adapter.host-tools.python";
 const TODO_ADAPTER_ID: &str = "adapter.run-tools.todo";
 const WEB_SEARCH_ADAPTER_ID: &str = "adapter.web-tools.search";
 const WEB_FETCH_ADAPTER_ID: &str = "adapter.web-tools.fetch";
+const WEB_EXTRACT_ADAPTER_ID: &str = "adapter.web-tools.extract";
 const FILE_READ_SCOPE: &str = "project.read";
 const FILE_SEARCH_SCOPE: &str = "project.search";
 const FILE_LIST_SCOPE: &str = "project.list";
@@ -106,6 +111,7 @@ const PYTHON_SCOPE: &str = "host.python";
 const TODO_SCOPE: &str = "run.todo";
 const WEB_SEARCH_SCOPE: &str = "web.search";
 const WEB_FETCH_SCOPE: &str = "web.fetch";
+const WEB_EXTRACT_SCOPE: &str = "web.extract";
 const TOOL_RECORD_CHAT_ID: &str = "pipeline.tool-invocations";
 const TOOL_BROKER_CHAT_ID: &str = "broker.tool-invocations";
 const TOOL_HOST_DESTINATION: &str = "aworkit.capability-host.tools";
@@ -134,13 +140,14 @@ const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
-pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 7] = [
+pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 8] = [
     FILE_READ_CAPABILITY_ID,
     FILE_SEARCH_CAPABILITY_ID,
     FILE_LIST_CAPABILITY_ID,
     FILE_GREP_CAPABILITY_ID,
     WEB_SEARCH_CAPABILITY_ID,
     WEB_FETCH_CAPABILITY_ID,
+    WEB_EXTRACT_CAPABILITY_ID,
     TODO_CAPABILITY_ID,
 ];
 
@@ -154,6 +161,7 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         TODO_CAPABILITY_ID,
         WEB_SEARCH_CAPABILITY_ID,
         WEB_FETCH_CAPABILITY_ID,
+        WEB_EXTRACT_CAPABILITY_ID,
     ])
 }
 
@@ -313,6 +321,7 @@ pub(crate) struct StoredFileToolBindingV1 {
     pub input_schema: Value,
     pub configuration: Value,
     pub configuration_hash: String,
+    #[serde(deserialize_with = "deserialize_stored_file_tool_limit")]
     pub limit: StoredFileToolLimitV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<StoredToolSecretBindingV1>,
@@ -384,6 +393,46 @@ pub(crate) enum StoredFileToolLimitV1 {
         tool_name: String,
         schema_hash: String,
     },
+}
+
+/// Decodes the current frozen tool limit while upgrading the only historical
+/// web-search shape written by adapter v1. Keeping the migration at the
+/// persisted-field boundary means all in-memory bindings use the canonical v2
+/// configuration and can be compared or re-serialized without legacy state.
+fn deserialize_stored_file_tool_limit<'de, D>(
+    deserializer: D,
+) -> Result<StoredFileToolLimitV1, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match serde_json::from_value::<StoredFileToolLimitV1>(value.clone()) {
+        Ok(limit) => Ok(limit),
+        Err(current_error) => {
+            let Some(object) = value.as_object() else {
+                return Err(serde::de::Error::custom(current_error));
+            };
+            let is_legacy_web_search = object.len() == 2
+                && object.get("kind").and_then(Value::as_str) == Some("web_search")
+                && object.contains_key("maximum_results");
+            if !is_legacy_web_search {
+                return Err(serde::de::Error::custom(current_error));
+            }
+            let maximum_results = object
+                .get("maximum_results")
+                .and_then(Value::as_u64)
+                .filter(|value| (1..=WEB_SEARCH_MAXIMUM_RESULTS_V1).contains(value))
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "legacy web-search maximum_results must be from 1 through 100",
+                    )
+                })?;
+            let mut configuration = WebSearchConfigurationV1::default();
+            configuration.maximum_results = maximum_results;
+            Ok(StoredFileToolLimitV1::WebSearch { configuration })
+        }
+    }
 }
 
 impl StoredFileToolBindingV1 {
@@ -489,6 +538,14 @@ pub(crate) fn file_tool_descriptors()
             CapabilityKind::WebFetch,
             WEB_FETCH_SCOPE,
             web_fetch_schema(),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            WEB_EXTRACT_CAPABILITY_ID,
+            CapabilityKind::WebFetch,
+            WEB_EXTRACT_SCOPE,
+            web_extract_schema(),
             SideEffectClass::ReadOnly,
             false,
         ),
@@ -802,6 +859,33 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumExtractBytes"),
                 },
             ),
+            WEB_EXTRACT_CAPABILITY_ID => (
+                WEB_EXTRACT_PROVIDER_NAME.to_owned(),
+                "Fetch and extract up to ten HTTPS pages independently. Use this after web search before making current price, availability, news, score, or other live-data claims.".to_owned(),
+                web_extract_schema(),
+                StoredFileToolLimitV1::WebFetch {
+                    maximum_download_bytes: *freeze_configuration(
+                        &requested.configuration,
+                        &[],
+                        &[
+                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
+                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
+                        ],
+                    )?
+                    .get("maximumDownloadBytes")
+                    .expect("frozen maximumDownloadBytes"),
+                    maximum_extract_bytes: *freeze_configuration(
+                        &requested.configuration,
+                        &[],
+                        &[
+                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
+                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
+                        ],
+                    )?
+                    .get("maximumExtractBytes")
+                    .expect("frozen maximumExtractBytes"),
+                },
+            ),
             SUBAGENT_CAPABILITY_ID => (
                 SUBAGENT_PROVIDER_NAME.to_owned(),
                 "Delegate one read-only subtask to a fresh subagent context; approval required.".to_owned(),
@@ -963,6 +1047,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             TODO_CAPABILITY_ID => TODO_ADAPTER_ID,
             WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_ADAPTER_ID,
             WEB_FETCH_CAPABILITY_ID => WEB_FETCH_ADAPTER_ID,
+            WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_ADAPTER_ID,
             SUBAGENT_CAPABILITY_ID => SUBAGENT_ADAPTER_ID,
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_ADAPTER_ID,
             _ => return Err(WorkflowPipelineError::IncompleteEvidence),
@@ -2380,18 +2465,26 @@ impl FileToolDispatcherV1 {
                     let mut invocation_configuration = configuration.clone();
                     invocation_configuration.maximum_results =
                         requested_limit.min(configuration.maximum_results);
+                    let freshness_mode = match self.record.call.arguments["freshness"].as_str() {
+                        None | Some("auto") => WebSearchFreshnessModeV1::Auto,
+                        Some("current") => WebSearchFreshnessModeV1::Current,
+                        Some("any") => WebSearchFreshnessModeV1::Any,
+                        Some(_) => return Err("freshness is invalid".to_owned()),
+                    };
                     let outcome = self
                         .web
-                        .search_configured_v1(
+                        .search_configured_with_freshness_v1(
                             query,
                             &invocation_configuration,
                             api_key.as_deref().map(String::as_str),
+                            freshness_mode,
                             cancellation,
                         )
                         .map_err(|error| error.to_string())?;
                     let results_len = outcome.results.len();
                     let backend = outcome.backend.clone();
                     let cached = outcome.cached;
+                    let extraction_required = outcome.freshness.extraction_required;
                     let rescued_from = outcome.rescued_from.clone();
                     let value = serde_json::to_value(outcome)
                         .map_err(|error| format!("cannot encode web-search result: {error}"))?;
@@ -2403,8 +2496,13 @@ impl FileToolDispatcherV1 {
                     Ok((
                         value,
                         format!(
-                            "Web search returned {results_len} result(s) via {route}{}. ",
-                            if cached { " from cache" } else { "" }
+                            "Web search returned {results_len} result(s) via {route}{}{}.",
+                            if cached { " from cache" } else { "" },
+                            if extraction_required {
+                                "; live page extraction is required before making a current-data claim"
+                            } else {
+                                ""
+                            }
                         )
                         .trim()
                         .to_owned(),
@@ -2414,6 +2512,43 @@ impl FileToolDispatcherV1 {
                     maximum_download_bytes,
                     maximum_extract_bytes,
                 } => {
+                    if self.record.binding.provider_name == WEB_EXTRACT_PROVIDER_NAME {
+                        let urls = self.record.call.arguments["urls"]
+                            .as_array()
+                            .ok_or_else(|| "urls is invalid".to_owned())?
+                            .iter()
+                            .map(|url| {
+                                url.as_str()
+                                    .map(str::to_owned)
+                                    .ok_or_else(|| "urls is invalid".to_owned())
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let requested_extract_bytes = self.record.call.arguments["char_limit"]
+                            .as_u64()
+                            .and_then(|value| usize::try_from(value).ok())
+                            .unwrap_or(*maximum_extract_bytes)
+                            .min(*maximum_extract_bytes);
+                        let pages = self
+                            .web
+                            .extract_v1(
+                                &urls,
+                                *maximum_download_bytes,
+                                *maximum_extract_bytes,
+                                requested_extract_bytes,
+                                cancellation,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let completed = pages.iter().filter(|page| page.error.is_none()).count();
+                        let failed = pages.len().saturating_sub(completed);
+                        let value = json!({"results": pages});
+                        enforce_result_bound(&value)?;
+                        return Ok((
+                            value,
+                            format!(
+                                "Extracted {completed} live page(s); {failed} page(s) failed independently."
+                            ),
+                        ));
+                    }
                     let url = self.record.call.arguments["url"]
                         .as_str()
                         .ok_or_else(|| "url is invalid".to_owned())?;
@@ -3108,7 +3243,14 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
-        StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit"]),
+        StoredFileToolLimitV1::WebSearch { .. } => {
+            BTreeSet::from(["query", "limit", "freshness"])
+        }
+        StoredFileToolLimitV1::WebFetch { .. }
+            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
+        {
+            BTreeSet::from(["urls", "char_limit"])
+        }
         StoredFileToolLimitV1::WebFetch { .. } => BTreeSet::from(["url"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         // MCP argument shapes are server-defined; the frozen validator only
@@ -3126,6 +3268,11 @@ fn validate_call_arguments(
             // Hermes exposes `limit` as an optional call-level request. The
             // frozen Settings maximum remains the hard authority ceiling.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("query")
+        }
+        StoredFileToolLimitV1::WebFetch { .. }
+            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
+        {
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("urls")
         }
         _ => observed_keys == expected_keys,
     };
@@ -3257,13 +3404,41 @@ fn validate_call_arguments(
                     "web search limit must be an integer from 1 through 100",
                 ));
             }
+            if object.get("freshness").is_some_and(|freshness| {
+                !matches!(freshness.as_str(), Some("auto" | "current" | "any"))
+            }) {
+                return Err(invalid_tool(
+                    "web search freshness must be auto, current, or any",
+                ));
+            }
         }
         StoredFileToolLimitV1::WebFetch { .. } => {
-            object
-                .get("url")
-                .and_then(Value::as_str)
-                .filter(|url| !url.is_empty() && url.len() <= 4096)
-                .ok_or_else(|| invalid_tool("web fetch url is empty or oversized"))?;
+            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME {
+                let urls = object
+                    .get("urls")
+                    .and_then(Value::as_array)
+                    .filter(|urls| !urls.is_empty() && urls.len() <= 10)
+                    .ok_or_else(|| invalid_tool("web extract requires from 1 through 10 URLs"))?;
+                if urls.iter().any(|url| {
+                    url.as_str()
+                        .is_none_or(|url| url.is_empty() || url.len() > 4096 || url.contains('\0'))
+                }) {
+                    return Err(invalid_tool("web extract URLs are empty or oversized"));
+                }
+                if object.get("char_limit").is_some_and(|limit| {
+                    !matches!(limit.as_u64(), Some(1..=WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1))
+                }) {
+                    return Err(invalid_tool(
+                        "web extract char_limit exceeds the native extraction bound",
+                    ));
+                }
+            } else {
+                object
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .filter(|url| !url.is_empty() && url.len() <= 4096)
+                    .ok_or_else(|| invalid_tool("web fetch url is empty or oversized"))?;
+            }
         }
         StoredFileToolLimitV1::Subagent { .. } => {
             object
@@ -3571,6 +3746,11 @@ fn web_search_schema() -> Value {
                 "maximum":100,
                 "default":5,
                 "description":"Maximum results requested for this search; the frozen Settings maximum may reduce it."
+            },
+            "freshness": {
+                "enum":["auto","current","any"],
+                "default":"auto",
+                "description":"Use current for live prices, availability, scores, news, weather, and similar time-sensitive facts. Auto detects those intents; any permits historical results."
             }
         },
         "required": ["query"]
@@ -3585,6 +3765,30 @@ fn web_fetch_schema() -> Value {
             "url": {"type":"string","minLength":1,"maxLength":4096}
         },
         "required": ["url"]
+    })
+}
+
+fn web_extract_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "urls": {
+                "type":"array",
+                "minItems":1,
+                "maxItems":10,
+                "items":{"type":"string","minLength":1,"maxLength":4096},
+                "description":"Candidate HTTPS result URLs to fetch and verify against their live page content."
+            },
+            "char_limit": {
+                "type":"integer",
+                "minimum":1,
+                "maximum":32768,
+                "default":32768,
+                "description":"Maximum extracted characters returned per page; frozen Settings may reduce it."
+            }
+        },
+        "required": ["urls"]
     })
 }
 
@@ -3653,6 +3857,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         TODO_CAPABILITY_ID => TODO_SCOPE,
         WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_SCOPE,
         WEB_FETCH_CAPABILITY_ID => WEB_FETCH_SCOPE,
+        WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_SCOPE,
         SUBAGENT_CAPABILITY_ID => SUBAGENT_SCOPE,
         id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_SCOPE,
         _ => "invalid",
@@ -4161,7 +4366,7 @@ mod tests {
     }
 
     #[test]
-    fn web_search_contract_accepts_a_bounded_optional_hermes_limit() {
+    fn web_search_contract_accepts_bounded_limit_and_freshness_controls() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
             capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
             configuration: serde_json::to_value(WebSearchConfigurationV1::default())
@@ -4180,14 +4385,84 @@ mod tests {
             .expect("default limit");
         validate_call_arguments(&binding, &json!({"query":"rust web search","limit":100}))
             .expect("maximum limit");
+        validate_call_arguments(
+            &binding,
+            &json!({"query":"rust web search","freshness":"current"}),
+        )
+        .expect("explicit current freshness");
         for invalid in [
             json!({"query":"rust web search","limit":0}),
             json!({"query":"rust web search","limit":101}),
             json!({"query":"rust web search","limit":1.5}),
+            json!({"query":"rust web search","freshness":"recent-ish"}),
             json!({"query":"rust web search","unexpected":true}),
         ] {
             assert!(validate_call_arguments(&binding, &invalid).is_err());
         }
+    }
+
+    #[test]
+    fn web_extract_contract_accepts_multiple_urls_and_keeps_web_fetch_legacy_shape() {
+        let configuration = json!({
+            "maximumDownloadBytes":WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
+            "maximumExtractBytes":WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
+        });
+        let extract = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            capability_id: WEB_EXTRACT_CAPABILITY_ID.into(),
+            configuration: configuration.clone(),
+            credential_bindings: Vec::new(),
+            definition: None,
+        }])
+        .expect("web-extract binding")
+        .remove(0);
+        assert_eq!(extract.provider_name, WEB_EXTRACT_PROVIDER_NAME);
+        validate_call_arguments(
+            &extract,
+            &json!({"urls":["https://example.com","https://example.org"],"char_limit":4096}),
+        )
+        .expect("multi-page extract");
+        assert!(
+            validate_call_arguments(&extract, &json!({"url":"https://example.com"})).is_err()
+        );
+
+        let fetch = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            capability_id: WEB_FETCH_CAPABILITY_ID.into(),
+            configuration,
+            credential_bindings: Vec::new(),
+            definition: None,
+        }])
+        .expect("legacy web-fetch binding")
+        .remove(0);
+        validate_call_arguments(&fetch, &json!({"url":"https://example.com"}))
+            .expect("legacy single-page fetch");
+    }
+
+    #[test]
+    fn legacy_web_search_limit_decodes_as_canonical_v2_configuration() {
+        let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
+            configuration: serde_json::to_value(WebSearchConfigurationV1::default())
+                .expect("web-search configuration"),
+            credential_bindings: Vec::new(),
+            definition: None,
+        }])
+        .expect("web-search binding")
+        .remove(0);
+        let mut stored = serde_json::to_value(binding).expect("stored binding");
+        stored["limit"] = json!({"kind":"web_search","maximum_results":8});
+
+        let restored: StoredFileToolBindingV1 =
+            serde_json::from_value(stored).expect("legacy binding migration");
+        let StoredFileToolLimitV1::WebSearch { configuration } = &restored.limit else {
+            panic!("expected web-search limit");
+        };
+        assert_eq!(configuration.maximum_results, 8);
+        assert_eq!(configuration.backend, WebSearchBackendV1::Automatic);
+        assert!(configuration.keyless_fallback);
+
+        let canonical = serde_json::to_value(restored).expect("canonical binding");
+        assert!(canonical["limit"].get("configuration").is_some());
+        assert!(canonical["limit"].get("maximum_results").is_none());
     }
 
     #[test]

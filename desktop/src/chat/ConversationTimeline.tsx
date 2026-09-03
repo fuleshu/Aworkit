@@ -647,14 +647,16 @@ function isWebResult(item: TimelineItem): boolean {
   if (item.kind !== "tool") return false;
   const capabilityId = metadataOf(item).capabilityId;
   return (
-    capabilityId === "tool.web_search" || capabilityId === "tool.web_fetch"
+    capabilityId === "tool.web_search" ||
+    capabilityId === "tool.web_fetch" ||
+    capabilityId === "tool.web_extract"
   );
 }
 
 function webTitle(item: TimelineItem): string {
-  return metadataOf(item).capabilityId === "tool.web_fetch"
-    ? "Web fetch"
-    : "Web search";
+  const capabilityId = metadataOf(item).capabilityId;
+  if (capabilityId === "tool.web_extract") return "Web extract";
+  return capabilityId === "tool.web_fetch" ? "Web fetch" : "Web search";
 }
 
 function todosOf(item: TimelineItem): readonly {

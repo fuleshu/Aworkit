@@ -65,7 +65,8 @@ Approval-free (authority-settled, read-only or run-local state):
 `tool.files.read` (≤64 KiB), `tool.files.search` (≤512 results), `tool.files.list`
 (glob, ≤1000 entries), `tool.files.grep` (regex, ≤512 matches, bounded files),
 `tool.todo` (run-local plan/task list), `tool.web_search` (HTTPS, ≤8 results),
-`tool.web_fetch` (HTTPS, 1 MiB download / 32 KiB extracted), MCP tools
+`tool.web_fetch` (legacy single-page HTTPS fetch), `tool.web_extract` (up to ten
+independently settled HTTPS pages, 1 MiB download / 32 KiB extracted per page), MCP tools
 (`mcp://<server>/<tool>` for enabled, core-attested servers).
 
 Approval-required (committed user decision before effect):

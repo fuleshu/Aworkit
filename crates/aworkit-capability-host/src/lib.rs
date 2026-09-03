@@ -144,7 +144,7 @@ pub use tools::{
     ShellInvocationV1, ToolAdapterError, ToolAuthorityModeV1,
 };
 pub use web::{
-    WebFetchResultV1, WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1,
-    WebSearchOutcomeV1, WebSearchProviderTierV1, WebSearchResultV1, WebToolError, WebTools,
-    WebTransportPort,
+    WebExtractPageV1, WebFetchResultV1, WebSearchAttemptV1, WebSearchBackendV1,
+    WebSearchConfigurationV1, WebSearchFreshnessModeV1, WebSearchFreshnessV1, WebSearchOutcomeV1,
+    WebSearchProviderTierV1, WebSearchResultV1, WebToolError, WebTools, WebTransportPort,
 };

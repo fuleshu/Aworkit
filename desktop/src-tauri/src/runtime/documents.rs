@@ -1387,6 +1387,7 @@ pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
         "tool.todo",
         "tool.web_search",
         "tool.web_fetch",
+        "tool.web_extract",
         "tool.subagent",
     ]
     .into_iter()
@@ -1912,7 +1913,7 @@ mod tests {
             migrated.settings.projects[0].workspace.location,
             "/workspace/atlas"
         );
-        assert_eq!(migrated.settings.tools.len(), 12);
+        assert_eq!(migrated.settings.tools.len(), 13);
         assert!(migrated.settings.tools.iter().all(|tool| !tool.enabled));
         let canonical = repository
             .export_lossless(DocumentKind::Configuration, SETTINGS_ID)
@@ -1990,10 +1991,10 @@ mod tests {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
         let mut settings = SettingsConfigurationV2::default();
-        // Simulate a document written before tool.subagent existed: drop the
-        // newest built-in entry while preserving one user-enabled entry.
+        // Simulate a document written before tool.subagent existed: drop that
+        // built-in entry while preserving one user-enabled entry.
         settings.tools.retain(|tool| tool.id != "tool.subagent");
-        assert_eq!(settings.tools.len(), 11);
+        assert_eq!(settings.tools.len(), 12);
         settings.tools[3].enabled = true;
         repository
             .save(
@@ -2006,7 +2007,7 @@ mod tests {
 
         let repaired = CanonicalDocuments::open(root.path()).unwrap();
         assert_eq!(repaired.settings_version, 2);
-        assert_eq!(repaired.settings.tools.len(), 12);
+        assert_eq!(repaired.settings.tools.len(), 13);
         assert!(
             repaired
                 .settings
@@ -2018,7 +2019,7 @@ mod tests {
         drop(repaired);
 
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.settings.tools.len(), 12);
+        assert_eq!(reopened.settings.tools.len(), 13);
     }
 
     #[test]

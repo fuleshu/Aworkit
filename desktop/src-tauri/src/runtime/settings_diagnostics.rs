@@ -107,7 +107,7 @@ pub(crate) fn probe_tool_with_api_key(
             "tool.todo" => probe_todo_tool(&request.tool),
             "tool.subagent" => probe_subagent_tool(&request.tool),
             "tool.web_search" => probe_web_search_tool(&request.tool, api_key),
-            "tool.web_fetch" => probe_web_fetch_tool(&request.tool),
+            "tool.web_fetch" | "tool.web_extract" => probe_web_fetch_tool(&request.tool),
             _ => Err(format!(
                 "No native built-in adapter is installed for '{}'.",
                 request.tool.id

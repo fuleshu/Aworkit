@@ -149,6 +149,9 @@ const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[
     "deepseekModel",
     "keylessFallback",
     "keylessRescue",
+    "freshnessBypassCache",
+    "freshnessMaximumAgeDays",
+    "freshnessValidation",
     "maximumResults",
     "maximumRetries",
     "parallelSearchMode",
@@ -160,6 +163,8 @@ const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[
     "xaiExcludedDomains",
     "xaiModel",
   ],
+  "tool.web_fetch": ["maximumDownloadBytes", "maximumExtractBytes"],
+  "tool.web_extract": ["maximumDownloadBytes", "maximumExtractBytes"],
 };
 
 export const builtInToolConfigurationSchema = z
@@ -332,6 +337,9 @@ function webSearchConfigurationIsValid(tool: {
     (!value.keylessRescue || value.keylessFallback === true) &&
     typeof value.cacheEnabled === "boolean" &&
     integerIn(value.cacheTtlMinutes, 1, 1_440) &&
+    typeof value.freshnessValidation === "boolean" &&
+    integerIn(value.freshnessMaximumAgeDays, 1, 365) &&
+    typeof value.freshnessBypassCache === "boolean" &&
     validEndpoint(value.searxngBaseUrl, true) &&
     validEndpoint(value.providerBaseUrl, true) &&
     validEndpoint(value.deepseekBaseUrl, false) &&

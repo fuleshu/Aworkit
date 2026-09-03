@@ -248,6 +248,7 @@ dependencies = [
  "aworkit-process",
  "aworkit-protocol",
  "cap-std",
+ "chrono",
  "command-group",
  "futures",
  "hmac",

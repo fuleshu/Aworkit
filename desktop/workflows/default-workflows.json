@@ -69,10 +69,10 @@
                 "tool.files.grep",
                 "tool.todo",
                 "tool.web_search",
-                "tool.web_fetch"
+                "tool.web_extract"
               ],
               "timeoutSeconds": 900,
-              "instructions": "You are Aworkit's standard agent. Keep the todo list current, inspect project evidence with the file tools, use web_search and web_fetch when current information is required, and produce a final answer with citations. Do not claim tool results you did not receive."
+              "instructions": "You are Aworkit's standard agent. Keep the todo list current and inspect project evidence with the file tools. Use web_search for discovery. When its freshness evidence requires extraction—or before making any current price, availability, news, score, weather, schedule, or other live-data claim—call web_extract on the best candidate URLs and base the claim on the live extracted pages. Produce a final answer with citations and do not claim tool results you did not receive."
             }
           },
           { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 695, "y": 205 } },

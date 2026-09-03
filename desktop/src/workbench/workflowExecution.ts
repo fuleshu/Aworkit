@@ -55,6 +55,7 @@ const BUILTIN_TOOL_BINDING_IDS = new Set([
   "tool.todo",
   "tool.web_search",
   "tool.web_fetch",
+  "tool.web_extract",
   "tool.subagent",
 ]);
 

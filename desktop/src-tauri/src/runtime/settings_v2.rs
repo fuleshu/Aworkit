@@ -42,7 +42,7 @@ const STANDARD_TIERS: [(&str, &str); 4] = [
     ("tier:balanced", "Balanced"),
     ("tier:quality", "Quality"),
 ];
-const BUILTIN_TOOL_IDS: [&str; 12] = [
+const BUILTIN_TOOL_IDS: [&str; 13] = [
     "tool.files.read",
     "tool.files.search",
     "tool.files.list",
@@ -54,6 +54,7 @@ const BUILTIN_TOOL_IDS: [&str; 12] = [
     "tool.todo",
     "tool.web_search",
     "tool.web_fetch",
+    "tool.web_extract",
     "tool.subagent",
 ];
 
@@ -327,7 +328,10 @@ impl SettingsConfigurationV2 {
     /// stored document was written, preserving every existing entry exactly
     /// (including its enabled state). New entries start disabled with the
     /// current default contract and the list is reordered to the canonical
-    /// implemented-id order. Returns whether the document changed.
+    /// implemented-id order. `web_extract` inherits the legacy `web_fetch`
+    /// enabled state so existing users receive the replacement verification
+    /// stage without silently losing a capability. Returns whether the
+    /// document changed.
     pub(crate) fn reconcile_builtin_tools(&mut self) -> bool {
         let existing = self
             .tools
@@ -335,12 +339,20 @@ impl SettingsConfigurationV2 {
             .map(|tool| tool.id.clone())
             .collect::<BTreeSet<String>>();
         let mut changed = false;
+        let legacy_web_fetch_enabled = self
+            .tools
+            .iter()
+            .find(|tool| tool.id == "tool.web_fetch")
+            .is_some_and(|tool| tool.enabled);
         for id in BUILTIN_TOOL_IDS {
             if !existing.contains(id) {
-                let default = default_builtin_tools()
+                let mut default = default_builtin_tools()
                     .into_iter()
                     .find(|tool| tool.id == id)
                     .expect("built-in tool default exists");
+                if id == "tool.web_extract" {
+                    default.enabled = legacy_web_fetch_enabled;
+                }
                 self.tools.push(default);
                 changed = true;
             }
@@ -926,6 +938,9 @@ impl BuiltInToolConfigurationV2 {
                         "keylessRescue",
                         "cacheEnabled",
                         "cacheTtlMinutes",
+                        "freshnessValidation",
+                        "freshnessMaximumAgeDays",
+                        "freshnessBypassCache",
                         "searxngBaseUrl",
                         "providerBaseUrl",
                         "parallelSearchMode",
@@ -979,6 +994,9 @@ impl BuiltInToolConfigurationV2 {
                 require_config_boolean(self, "keylessRescue")?;
                 require_config_boolean(self, "cacheEnabled")?;
                 require_config_u64(self, "cacheTtlMinutes", 1, 1_440)?;
+                require_config_boolean(self, "freshnessValidation")?;
+                require_config_u64(self, "freshnessMaximumAgeDays", 1, 365)?;
+                require_config_boolean(self, "freshnessBypassCache")?;
                 require_optional_search_url(self, "searxngBaseUrl", true)?;
                 require_optional_search_url(self, "providerBaseUrl", true)?;
                 require_config_one_of(
@@ -1072,7 +1090,7 @@ impl BuiltInToolConfigurationV2 {
                 }
                 Ok(())
             }
-            "tool.web_fetch" => {
+            "tool.web_fetch" | "tool.web_extract" => {
                 require_exact_config_keys(self, &["maximumDownloadBytes", "maximumExtractBytes"])?;
                 require_tool_project_scope(self, false)?;
                 require_config_u64(
@@ -1939,6 +1957,21 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             ]),
         ),
         builtin_tool(
+            "tool.web_extract",
+            "Web page extract",
+            false,
+            BTreeMap::from([
+                (
+                    "maximumDownloadBytes".into(),
+                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
+                ),
+                (
+                    "maximumExtractBytes".into(),
+                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
+                ),
+            ]),
+        ),
+        builtin_tool(
             "tool.subagent",
             "Subagent delegation",
             false,
@@ -1962,6 +1995,9 @@ pub(crate) fn web_search_default_configuration() -> BTreeMap<String, Value> {
         ("keylessRescue".into(), Value::Bool(true)),
         ("cacheEnabled".into(), Value::Bool(true)),
         ("cacheTtlMinutes".into(), Value::from(20_u64)),
+        ("freshnessValidation".into(), Value::Bool(true)),
+        ("freshnessMaximumAgeDays".into(), Value::from(45_u64)),
+        ("freshnessBypassCache".into(), Value::Bool(true)),
         ("searxngBaseUrl".into(), Value::from("")),
         ("providerBaseUrl".into(), Value::from("")),
         ("parallelSearchMode".into(), Value::from("agentic")),
@@ -2736,6 +2772,7 @@ mod tests {
                 "tool.todo",
                 "tool.web_search",
                 "tool.web_fetch",
+                "tool.web_extract",
                 "tool.subagent"
             ]
         );
@@ -2746,6 +2783,27 @@ mod tests {
                 .iter()
                 .all(|tool| tool.id != "tool.python.sandboxed")
         );
+    }
+
+    #[test]
+    fn web_extract_migration_inherits_the_legacy_fetch_enabled_state() {
+        let mut settings = SettingsConfigurationV2::default();
+        settings.tools.retain(|tool| tool.id != "tool.web_extract");
+        settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.web_fetch")
+            .expect("legacy web fetch")
+            .enabled = true;
+
+        assert!(settings.reconcile_builtin_tools());
+        let extract = settings
+            .tools
+            .iter()
+            .find(|tool| tool.id == "tool.web_extract")
+            .expect("reconciled web extract");
+        assert!(extract.enabled);
+        settings.validate().expect("reconciled settings");
     }
 
     #[test]

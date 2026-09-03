@@ -47,6 +47,9 @@ const DEFAULT_CONFIGURATION = {
   keylessRescue: true,
   cacheEnabled: true,
   cacheTtlMinutes: 20,
+  freshnessValidation: true,
+  freshnessMaximumAgeDays: 45,
+  freshnessBypassCache: true,
   searxngBaseUrl: "",
   providerBaseUrl: "",
   parallelSearchMode: "agentic" as ParallelSearchMode,
@@ -227,6 +230,40 @@ export function WebSearchSettingsEditor({
           max={3}
           value={configuration.maximumRetries}
           onChange={(maximumRetries) => updateConfiguration({ maximumRetries })}
+        />
+      </div>
+
+      <div className="settings-grid two-columns">
+        <BooleanField
+          id={`${tool.id}-freshness-validation`}
+          label="Freshness validation"
+          title="Detect live-data queries, reject clearly stale or contradictory dated search snippets, and require live web extraction before a current-data claim"
+          checked={configuration.freshnessValidation}
+          onChange={(freshnessValidation) =>
+            updateConfiguration({ freshnessValidation })
+          }
+        />
+        <NumberField
+          id={`${tool.id}-freshness-maximum-age`}
+          label="Current-result age (days)"
+          title="Maximum age accepted for explicit dates in current-data search results, from 1 through 365 days"
+          min={1}
+          max={365}
+          value={configuration.freshnessMaximumAgeDays}
+          disabled={!configuration.freshnessValidation}
+          onChange={(freshnessMaximumAgeDays) =>
+            updateConfiguration({ freshnessMaximumAgeDays })
+          }
+        />
+        <BooleanField
+          id={`${tool.id}-freshness-bypass-cache`}
+          label="Bypass cache for live data"
+          title="Send freshness-sensitive searches to the provider instead of serving a previous in-memory search result"
+          checked={configuration.freshnessBypassCache}
+          disabled={!configuration.freshnessValidation}
+          onChange={(freshnessBypassCache) =>
+            updateConfiguration({ freshnessBypassCache })
+          }
         />
       </div>
 
@@ -635,6 +672,9 @@ function readConfiguration(
     keylessRescue: booleanOr(merged.keylessRescue, true),
     cacheEnabled: booleanOr(merged.cacheEnabled, true),
     cacheTtlMinutes: numberOr(merged.cacheTtlMinutes, 20),
+    freshnessValidation: booleanOr(merged.freshnessValidation, true),
+    freshnessMaximumAgeDays: numberOr(merged.freshnessMaximumAgeDays, 45),
+    freshnessBypassCache: booleanOr(merged.freshnessBypassCache, true),
     searxngBaseUrl: stringOr(merged.searxngBaseUrl, ""),
     providerBaseUrl: stringOr(merged.providerBaseUrl, ""),
     parallelSearchMode: isParallelMode(merged.parallelSearchMode)

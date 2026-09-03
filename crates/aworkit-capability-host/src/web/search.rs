@@ -8,6 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::freshness::{
+    FreshnessLedger, FreshnessPolicy, WebSearchFreshnessModeV1, WebSearchFreshnessV1,
+};
 use super::providers::{ProductionSearchExecutor, SearchFailure, SearchProviderV1};
 use super::{CancellationToken, WebSearchResultV1, WebToolError, check_cancelled};
 
@@ -120,6 +123,12 @@ pub struct WebSearchConfigurationV1 {
     pub keyless_rescue: bool,
     pub cache_enabled: bool,
     pub cache_ttl_minutes: u64,
+    #[serde(default = "default_true")]
+    pub freshness_validation: bool,
+    #[serde(default = "default_freshness_maximum_age_days")]
+    pub freshness_maximum_age_days: u64,
+    #[serde(default = "default_true")]
+    pub freshness_bypass_cache: bool,
     pub searxng_base_url: String,
     pub provider_base_url: String,
     pub parallel_search_mode: String,
@@ -144,6 +153,9 @@ impl Default for WebSearchConfigurationV1 {
             keyless_rescue: true,
             cache_enabled: true,
             cache_ttl_minutes: 20,
+            freshness_validation: true,
+            freshness_maximum_age_days: default_freshness_maximum_age_days(),
+            freshness_bypass_cache: true,
             searxng_base_url: String::new(),
             provider_base_url: String::new(),
             parallel_search_mode: "agentic".into(),
@@ -182,6 +194,7 @@ pub struct WebSearchOutcomeV1 {
     pub rescued_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_error: Option<String>,
+    pub freshness: WebSearchFreshnessV1,
 }
 
 pub(super) trait SearchExecutorPort: Send + Sync {
@@ -213,6 +226,7 @@ struct SearchCacheKey {
     provider_configuration: String,
     query: String,
     maximum_results: usize,
+    freshness_required: bool,
 }
 
 struct CacheEntry {
@@ -245,8 +259,33 @@ impl WebSearchRuntime {
         api_key: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<WebSearchOutcomeV1, WebToolError> {
+        self.search_with_freshness(
+            query,
+            configuration,
+            api_key,
+            WebSearchFreshnessModeV1::Auto,
+            cancellation,
+        )
+    }
+
+    pub(super) fn search_with_freshness(
+        &self,
+        query: &str,
+        configuration: &WebSearchConfigurationV1,
+        api_key: Option<&str>,
+        freshness_mode: WebSearchFreshnessModeV1,
+        cancellation: &CancellationToken,
+    ) -> Result<WebSearchOutcomeV1, WebToolError> {
         configuration.validate()?;
         check_cancelled(cancellation)?;
+        let freshness_policy = FreshnessPolicy::resolve(
+            query,
+            freshness_mode,
+            configuration.freshness_validation,
+            configuration.freshness_maximum_age_days,
+        );
+        let cache_allowed = configuration.cache_enabled
+            && !(freshness_policy.required() && configuration.freshness_bypass_cache);
         let provider = select_provider(configuration, api_key)?;
         let requested_results = configuration.maximum_results;
         let fetch_results = bucket_limit(requested_results);
@@ -255,6 +294,7 @@ impl WebSearchRuntime {
             provider_configuration: provider_configuration_key(provider, configuration),
             query: normalize_query(query),
             maximum_results: fetch_results,
+            freshness_required: freshness_policy.required(),
         };
         let ttl = Duration::from_secs(configuration.cache_ttl_minutes.saturating_mul(60));
 
@@ -264,9 +304,7 @@ impl WebSearchRuntime {
                 .lock()
                 .map_err(|_| WebToolError::Transport("web-search cache lock poisoned".into()))?;
             prune_expired(&mut state, ttl);
-            if configuration.cache_enabled
-                && let Some(entry) = state.cache.get(&key)
-            {
+            if cache_allowed && let Some(entry) = state.cache.get(&key) {
                 let mut cached = entry.outcome.clone();
                 cached.cached = true;
                 return Ok(slice_outcome(cached, requested_results));
@@ -292,6 +330,7 @@ impl WebSearchRuntime {
                 configuration,
                 api_key,
                 cancellation,
+                &freshness_policy,
             )
             .map_err(|error| error.to_string());
         {
@@ -307,7 +346,7 @@ impl WebSearchRuntime {
             .lock()
             .map_err(|_| WebToolError::Transport("web-search cache lock poisoned".into()))?;
         state.flights.remove(&key);
-        if configuration.cache_enabled
+        if cache_allowed
             && let Ok(outcome) = &result
             && outcome.rescued_from.is_none()
         {
@@ -333,8 +372,10 @@ impl WebSearchRuntime {
         configuration: &WebSearchConfigurationV1,
         api_key: Option<&str>,
         cancellation: &CancellationToken,
+        freshness_policy: &FreshnessPolicy,
     ) -> Result<WebSearchOutcomeV1, WebToolError> {
         let mut attempts = Vec::new();
+        let mut freshness = FreshnessLedger::default();
         match self.try_route(
             provider,
             query,
@@ -343,6 +384,8 @@ impl WebSearchRuntime {
             api_key,
             cancellation,
             &mut attempts,
+            freshness_policy,
+            &mut freshness,
         ) {
             Ok((served_by, results)) => Ok(WebSearchOutcomeV1 {
                 query: query.to_owned(),
@@ -353,6 +396,7 @@ impl WebSearchRuntime {
                 attempts,
                 rescued_from: None,
                 backend_error: None,
+                freshness: freshness.finish(freshness_policy),
             }),
             Err(primary_error)
                 if !provider.is_keyless()
@@ -369,6 +413,8 @@ impl WebSearchRuntime {
                         None,
                         cancellation,
                         &mut attempts,
+                        freshness_policy,
+                        &mut freshness,
                     )
                     .map_err(|error| WebToolError::Transport(error.message))?;
                 Ok(WebSearchOutcomeV1 {
@@ -380,6 +426,7 @@ impl WebSearchRuntime {
                     attempts,
                     rescued_from: Some(provider.as_str().into()),
                     backend_error: Some(primary_message),
+                    freshness: freshness.finish(freshness_policy),
                 })
             }
             Err(error) => Err(WebToolError::Transport(error.message)),
@@ -395,19 +442,28 @@ impl WebSearchRuntime {
         api_key: Option<&str>,
         cancellation: &CancellationToken,
         attempts: &mut Vec<WebSearchAttemptV1>,
+        freshness_policy: &FreshnessPolicy,
+        freshness: &mut FreshnessLedger,
     ) -> Result<(SearchProviderV1, Vec<WebSearchResultV1>), SearchFailure> {
         if provider != SearchProviderV1::Keyless {
-            return self
-                .try_provider(
-                    provider,
-                    query,
-                    maximum_results,
-                    configuration,
-                    api_key,
-                    cancellation,
-                    attempts,
-                )
-                .map(|results| (provider, results));
+            let results = self.try_provider(
+                provider,
+                query,
+                maximum_results,
+                configuration,
+                api_key,
+                cancellation,
+                attempts,
+            )?;
+            let evaluation = freshness.evaluate(freshness_policy, results);
+            if evaluation.rejected_all {
+                mark_stale_attempt(attempts);
+                return Err(SearchFailure::terminal(format!(
+                    "{} returned only stale or contradictory dated results",
+                    provider.as_str()
+                )));
+            }
+            return Ok((provider, evaluation.results));
         }
 
         let mut last_error = SearchFailure::retryable("all keyless providers failed");
@@ -422,7 +478,18 @@ impl WebSearchRuntime {
                 cancellation,
                 attempts,
             ) {
-                Ok(results) if !results.is_empty() => return Ok((candidate, results)),
+                Ok(results) if !results.is_empty() => {
+                    let evaluation = freshness.evaluate(freshness_policy, results);
+                    if evaluation.rejected_all {
+                        mark_stale_attempt(attempts);
+                        last_error = SearchFailure::retryable(format!(
+                            "{} returned only stale or contradictory dated results",
+                            candidate.as_str()
+                        ));
+                        continue;
+                    }
+                    return Ok((candidate, evaluation.results));
+                }
                 Ok(results) => {
                     // Anonymous services occasionally return a syntactically valid but
                     // empty response when their public quota or anti-bot edge is active.
@@ -511,6 +578,7 @@ impl WebSearchConfigurationV1 {
             || !(5..=120).contains(&self.request_timeout_seconds)
             || self.maximum_retries > 3
             || !(1..=1_440).contains(&self.cache_ttl_minutes)
+            || !(1..=365).contains(&self.freshness_maximum_age_days)
             || !(256..=16_384).contains(&self.deepseek_maximum_output_tokens)
             || !matches!(
                 self.parallel_search_mode.as_str(),
@@ -566,6 +634,24 @@ impl WebSearchConfigurationV1 {
         validate_optional_search_url(&self.deepseek_base_url, false)?;
         Ok(())
     }
+}
+
+fn mark_stale_attempt(attempts: &mut [WebSearchAttemptV1]) {
+    if let Some(attempt) = attempts.last_mut() {
+        attempt.status = "stale".into();
+        attempt.error = Some(
+            "provider results contained only stale or contradictory date signals; trying another route"
+                .into(),
+        );
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_freshness_maximum_age_days() -> u64 {
+    45
 }
 
 fn select_provider(
@@ -756,7 +842,7 @@ fn provider_configuration_key(
     configuration: &WebSearchConfigurationV1,
 ) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         provider.as_str(),
         configuration.backend.as_str(),
         configuration.provider_tier.as_str(),
@@ -766,6 +852,9 @@ fn provider_configuration_key(
         configuration.xai_model,
         configuration.xai_allowed_domains.join(","),
         configuration.xai_excluded_domains.join(","),
+        configuration.freshness_validation,
+        configuration.freshness_maximum_age_days,
+        configuration.freshness_bypass_cache,
         format_args!(
             "{}|{}|{}",
             configuration.deepseek_base_url.trim().to_lowercase(),
@@ -1038,6 +1127,64 @@ mod tests {
                 .count(),
             4
         );
+    }
+
+    struct StaleThenCurrentExecutor;
+
+    impl SearchExecutorPort for StaleThenCurrentExecutor {
+        fn search(
+            &self,
+            provider: SearchProviderV1,
+            _configuration: &WebSearchConfigurationV1,
+            _query: &str,
+            _maximum_results: usize,
+            _api_key: Option<&str>,
+        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+            let (title, snippet) = if provider == SearchProviderV1::ExaKeyless {
+                (
+                    "September 2026 prices",
+                    "Mai 2026 Preise: stale index snapshot",
+                )
+            } else {
+                (
+                    "Live shop result",
+                    "Price and availability on the live page",
+                )
+            };
+            Ok(vec![WebSearchResultV1 {
+                title: title.into(),
+                url: format!("https://example.com/{}", provider.as_str()),
+                snippet: snippet.into(),
+            }])
+        }
+    }
+
+    #[test]
+    fn current_search_rejects_stale_ring_results_and_uses_the_next_provider() {
+        let runtime = WebSearchRuntime::new(Arc::new(StaleThenCurrentExecutor));
+        let configuration = WebSearchConfigurationV1 {
+            backend: WebSearchBackendV1::Exa,
+            provider_tier: WebSearchProviderTierV1::Free,
+            cache_enabled: true,
+            freshness_bypass_cache: true,
+            ..WebSearchConfigurationV1::default()
+        };
+
+        let outcome = runtime
+            .search_with_freshness(
+                "cheapest current price right now",
+                &configuration,
+                None,
+                WebSearchFreshnessModeV1::Current,
+                &CancellationToken::default(),
+            )
+            .expect("freshness fallback search");
+
+        assert_ne!(outcome.backend, SearchProviderV1::ExaKeyless.as_str());
+        assert_eq!(outcome.freshness.rejected_results, 1);
+        assert!(outcome.freshness.extraction_required);
+        assert_eq!(outcome.attempts[0].status, "stale");
+        assert!(!outcome.cached);
     }
 
     #[test]

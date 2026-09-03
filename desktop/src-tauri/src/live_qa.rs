@@ -316,6 +316,13 @@ fn live_cases(marker: &str) -> Vec<LiveCase> {
             Some("Example Domain".into()),
         ),
         tool_case(
+            "web-extract",
+            "tool.web_extract",
+            "aworkit_web_extract",
+            json!({"urls":["https://example.com"]}),
+            Some("Example Domain".into()),
+        ),
+        tool_case(
             "subagent",
             "tool.subagent",
             "aworkit_spawn_subagent",

@@ -4463,6 +4463,7 @@ mod tests {
                     | "tool.todo"
                     | "tool.web_search"
                     | "tool.web_fetch"
+                    | "tool.web_extract"
             ) {
                 tool.enabled = true;
             }
@@ -5644,7 +5645,7 @@ mod tests {
         let settings = reopened.settings_v2_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION_V2);
-        assert_eq!(settings.settings.tools.len(), 12);
+        assert_eq!(settings.settings.tools.len(), 13);
         assert!(
             settings
                 .settings
@@ -5679,6 +5680,7 @@ mod tests {
             "tool.todo",
             "tool.web_search",
             "tool.web_fetch",
+            "tool.web_extract",
             "tool.subagent",
         ] {
             let mut attempted = runtime.settings_v2_snapshot().settings;

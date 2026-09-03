@@ -6,15 +6,17 @@
 //! authority: these tools are read-only, but they are not sandboxes.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::CancellationToken;
 
+mod freshness;
 mod providers;
 mod search;
 
+pub use freshness::{WebSearchFreshnessModeV1, WebSearchFreshnessV1};
 pub use search::{
     WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1, WebSearchOutcomeV1,
     WebSearchProviderTierV1,
@@ -24,6 +26,7 @@ pub(super) const MAXIMUM_SEARCH_RESULTS: usize = 100;
 const MAXIMUM_QUERY_BYTES: usize = 16 * 1024;
 const MAXIMUM_DOWNLOAD_BYTES: usize = 1024 * 1024;
 const MAXIMUM_EXTRACT_BYTES: usize = 32 * 1024;
+const MAXIMUM_EXTRACT_URLS: usize = 10;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -41,6 +44,20 @@ pub struct WebFetchResultV1 {
     pub title: String,
     pub text: String,
     pub bytes_downloaded: u64,
+}
+
+/// One independently settled page in a multi-URL `web_extract` call.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebExtractPageV1 {
+    pub url: String,
+    pub title: String,
+    pub content: String,
+    pub raw_content: String,
+    pub bytes_downloaded: u64,
+    pub fetched_at_epoch_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Replaceable network seam used by deterministic tests. Production search
@@ -118,9 +135,33 @@ impl WebTools {
         api_key: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<WebSearchOutcomeV1, WebToolError> {
+        self.search_configured_with_freshness_v1(
+            query,
+            configuration,
+            api_key,
+            WebSearchFreshnessModeV1::Auto,
+            cancellation,
+        )
+    }
+
+    /// Executes configured search with an explicit call-level freshness mode.
+    pub fn search_configured_with_freshness_v1(
+        &self,
+        query: &str,
+        configuration: &WebSearchConfigurationV1,
+        api_key: Option<&str>,
+        freshness_mode: WebSearchFreshnessModeV1,
+        cancellation: &CancellationToken,
+    ) -> Result<WebSearchOutcomeV1, WebToolError> {
         validate_query(query)?;
         if let Some(runtime) = &self.search_runtime {
-            return runtime.search(query, configuration, api_key, cancellation);
+            return runtime.search_with_freshness(
+                query,
+                configuration,
+                api_key,
+                freshness_mode,
+                cancellation,
+            );
         }
         if configuration != &WebSearchConfigurationV1::default() || api_key.is_some() {
             return Err(WebToolError::Transport(
@@ -142,6 +183,14 @@ impl WebTools {
             }],
             rescued_from: None,
             backend_error: None,
+            freshness: freshness::FreshnessLedger::default().finish(
+                &freshness::FreshnessPolicy::resolve(
+                    query,
+                    freshness_mode,
+                    configuration.freshness_validation,
+                    configuration.freshness_maximum_age_days,
+                ),
+            ),
         })
     }
 
@@ -173,6 +222,63 @@ impl WebTools {
             bytes_downloaded,
         })
     }
+
+    /// Fetches and extracts multiple candidate pages independently. A broken
+    /// page becomes an item-level error so one failed URL cannot erase useful
+    /// evidence from the rest of the search result set.
+    pub fn extract_v1(
+        &self,
+        urls: &[String],
+        maximum_download_bytes: usize,
+        maximum_extract_bytes: usize,
+        requested_extract_bytes: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<WebExtractPageV1>, WebToolError> {
+        if urls.is_empty()
+            || urls.len() > MAXIMUM_EXTRACT_URLS
+            || requested_extract_bytes == 0
+            || requested_extract_bytes > maximum_extract_bytes
+        {
+            return Err(WebToolError::InvalidBound);
+        }
+        let mut pages = Vec::with_capacity(urls.len());
+        for url in urls {
+            check_cancelled(cancellation)?;
+            match self.fetch_v1(
+                url,
+                maximum_download_bytes,
+                requested_extract_bytes,
+                cancellation,
+            ) {
+                Ok(fetched) => pages.push(WebExtractPageV1 {
+                    url: fetched.url,
+                    title: fetched.title,
+                    raw_content: fetched.text.clone(),
+                    content: fetched.text,
+                    bytes_downloaded: fetched.bytes_downloaded,
+                    fetched_at_epoch_ms: now_epoch_ms(),
+                    error: None,
+                }),
+                Err(WebToolError::Cancelled) => return Err(WebToolError::Cancelled),
+                Err(error) => pages.push(WebExtractPageV1 {
+                    url: url.clone(),
+                    title: String::new(),
+                    content: String::new(),
+                    raw_content: String::new(),
+                    bytes_downloaded: 0,
+                    fetched_at_epoch_ms: now_epoch_ms(),
+                    error: Some(error.to_string()),
+                }),
+            }
+        }
+        Ok(pages)
+    }
+}
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
 }
 
 fn parse_https_url(url: &str) -> Result<String, WebToolError> {
@@ -504,6 +610,56 @@ mod tests {
             .expect("fetch");
         assert_eq!(fetched.bytes_downloaded, 300);
         assert!(fetched.text.len() <= 10, "{}", fetched.text.len());
+    }
+
+    struct PartialExtractTransport;
+
+    impl WebTransportPort for PartialExtractTransport {
+        fn search(
+            &self,
+            _query: &str,
+            _maximum_results: usize,
+        ) -> Result<Vec<WebSearchResultV1>, String> {
+            Ok(Vec::new())
+        }
+
+        fn fetch(
+            &self,
+            url: &str,
+            _maximum_download_bytes: usize,
+        ) -> Result<(String, String, u64), String> {
+            if url.contains("broken") {
+                Err("fixture page failed".into())
+            } else {
+                Ok(("Live page".into(), "current page content".into(), 20))
+            }
+        }
+    }
+
+    #[test]
+    fn web_extract_keeps_successful_pages_when_another_url_fails() {
+        let tools = WebTools::new(Arc::new(PartialExtractTransport));
+        let pages = tools
+            .extract_v1(
+                &[
+                    "https://example.com/live".into(),
+                    "https://broken.example/page".into(),
+                ],
+                4096,
+                1024,
+                1024,
+                &CancellationToken::default(),
+            )
+            .expect("multi-page extraction");
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].content, "current page content");
+        assert!(pages[0].error.is_none());
+        assert_eq!(
+            pages[1].error.as_deref(),
+            Some("web request failed: fixture page failed")
+        );
+        assert!(pages[0].fetched_at_epoch_ms > 0);
     }
 
     #[test]

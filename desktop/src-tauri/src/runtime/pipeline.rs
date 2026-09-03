@@ -2413,28 +2413,37 @@ impl PipelineRecordStore {
             .write_lock
             .lock()
             .map_err(|_| WorkflowPipelineError::Store("record lock poisoned".into()))?;
-        let executions = self.executions()?;
-        if let Some(existing) = executions
-            .iter()
-            .find(|existing| existing.request_id == record.request_id)
-        {
-            return if existing == record {
-                Ok(true)
-            } else {
-                Err(WorkflowPipelineError::Store(
-                    "request ID was reused with changed frozen execution semantics".to_owned(),
-                ))
-            };
-        }
-        if executions.iter().any(|existing| {
-            existing.snapshot.chat_id == record.snapshot.chat_id
-                && existing.snapshot.run_id == record.snapshot.run_id
-                && existing.scheduler_checkpoint.is_some()
-                && existing.scheduler_continuation == record.scheduler_continuation
-        }) {
-            return Err(WorkflowPipelineError::Store(
-                "this frozen Run continuation already has a different durable request".to_owned(),
-            ));
+        for value in self.execution_values()? {
+            if value.get("requestId").and_then(Value::as_str)
+                == Some(record.request_id.as_str())
+            {
+                let existing = decode_execution(value)?;
+                return if existing == *record {
+                    Ok(true)
+                } else {
+                    Err(WorkflowPipelineError::Store(
+                        "request ID was reused with changed frozen execution semantics".to_owned(),
+                    ))
+                };
+            }
+            let same_run = value.pointer("/snapshot/chatId").and_then(Value::as_str)
+                == Some(record.snapshot.chat_id.as_str())
+                && value.pointer("/snapshot/runId").and_then(Value::as_str)
+                    == Some(record.snapshot.run_id.as_str());
+            let same_continuation = value
+                .get("schedulerCheckpoint")
+                .is_some_and(|checkpoint| !checkpoint.is_null())
+                && value
+                    .get("schedulerContinuation")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
+                    == record.scheduler_continuation;
+            if same_run && same_continuation {
+                return Err(WorkflowPipelineError::Store(
+                    "this frozen Run continuation already has a different durable request"
+                        .to_owned(),
+                ));
+            }
         }
         self.append_record_without_lock(
             "pipeline.execution-prepared",
@@ -2520,28 +2529,29 @@ impl PipelineRecordStore {
         &self,
         request_id: &StableId,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for record in self.executions()? {
-            if &record.request_id == request_id {
-                return Ok(Some(record));
+        for value in self.execution_values()? {
+            if value.get("requestId").and_then(Value::as_str) == Some(request_id.as_str()) {
+                return decode_execution(value).map(Some);
             }
         }
         Ok(None)
     }
 
-    fn executions(&self) -> Result<Vec<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        self.events_of_kind("pipeline.execution-prepared")?
-            .into_iter()
-            .map(|event| serde_json::from_value(event).map_err(json_error))
-            .collect()
+    fn execution_values(&self) -> Result<Vec<Value>, WorkflowPipelineError> {
+        self.events_of_kind("pipeline.execution-prepared")
     }
 
     fn execution_for_dispatch(
         &self,
         dispatch: &ApprovedDispatchV1,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for record in self.executions()? {
-            if record.broker_proposal.proposal_id == dispatch.proposal_id {
-                return Ok(Some(record));
+        for value in self.execution_values()? {
+            if value
+                .pointer("/brokerProposal/proposal_id")
+                .and_then(Value::as_str)
+                == Some(dispatch.proposal_id.as_str())
+            {
+                return decode_execution(value).map(Some);
             }
         }
         Ok(None)
@@ -2552,8 +2562,13 @@ impl PipelineRecordStore {
         chat_id: &StableId,
         run_id: &StableId,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for record in self.executions()? {
-            if record.snapshot.chat_id == *chat_id || record.snapshot.run_id == *run_id {
+        for value in self.execution_values()? {
+            let chat_matches = value.pointer("/snapshot/chatId").and_then(Value::as_str)
+                == Some(chat_id.as_str());
+            let run_matches = value.pointer("/snapshot/runId").and_then(Value::as_str)
+                == Some(run_id.as_str());
+            if chat_matches || run_matches {
+                let record = decode_execution(value)?;
                 if record.snapshot.chat_id != *chat_id || record.snapshot.run_id != *run_id {
                     return Err(WorkflowPipelineError::Store(
                         "Chat and Run identities no longer refer to the same frozen session"
@@ -3563,6 +3578,10 @@ fn json_error(error: impl std::fmt::Display) -> WorkflowPipelineError {
     WorkflowPipelineError::Store(error.to_string())
 }
 
+fn decode_execution(value: Value) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
+    serde_json::from_value(value).map_err(json_error)
+}
+
 fn broker_error(error: BrokerError) -> WorkflowPipelineError {
     WorkflowPipelineError::Broker(error.to_string())
 }
@@ -3584,7 +3603,7 @@ mod tests {
         FILE_EDIT_CAPABILITY_ID, FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID,
         FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, MAXIMUM_TOOL_RESULT_BYTES,
         SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_FETCH_CAPABILITY_ID,
-        WEB_SEARCH_CAPABILITY_ID,
+        WEB_EXTRACT_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
     };
     use aworkit_capability_host::{
         McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
@@ -4214,7 +4233,7 @@ mod tests {
                         aworkit_capability_host::WebSearchConfigurationV1::default(),
                     )
                     .expect("web-search configuration"),
-                    WEB_FETCH_CAPABILITY_ID => json!({
+                    WEB_FETCH_CAPABILITY_ID | WEB_EXTRACT_CAPABILITY_ID => json!({
                         "maximumDownloadBytes":WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1,
                         "maximumExtractBytes":WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
                     }),
@@ -5045,6 +5064,38 @@ mod tests {
     }
 
     #[test]
+    fn new_execution_does_not_decode_an_unrelated_incompatible_history_record() {
+        let root = TempDir::new().expect("root");
+        let (pipeline, _credential_store, metadata, calls, _) =
+            setup(&root, ScriptedBehavior::Succeed);
+        let legacy_request_id =
+            stable("command.legacy-incompatible").expect("legacy request ID");
+        pipeline
+            .records
+            .append_record_without_lock(
+                "pipeline.execution-prepared",
+                &legacy_request_id,
+                json!({
+                    "requestId": legacy_request_id,
+                    "snapshot": {
+                        "chatId": "chat.legacy-incompatible",
+                        "runId": "run.legacy-incompatible",
+                    },
+                    "toolBindings": [{
+                        "limit": {"kind":"web_search","unsupported_legacy_field":true}
+                    }],
+                }),
+            )
+            .expect("legacy history fixture");
+
+        let result = pipeline
+            .execute(request(metadata))
+            .expect("unrelated new execution");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn request_identity_cannot_be_reused_with_changed_messages() {
         let root = TempDir::new().expect("root");
         let (pipeline, _credential_store, metadata, calls, _) =
@@ -5684,7 +5735,7 @@ mod tests {
                 FILE_GREP_CAPABILITY_ID,
                 TODO_CAPABILITY_ID,
                 WEB_SEARCH_CAPABILITY_ID,
-                WEB_FETCH_CAPABILITY_ID,
+                WEB_EXTRACT_CAPABILITY_ID,
             ],
         );
         // The seeded production workflow: Input -> Plan -> Agent -> Output -> Wait.

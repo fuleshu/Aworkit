@@ -588,6 +588,8 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Hermes-compatible multi-provider search with an anonymous failover ring, explicit free or paid tiers, SearXNG and DuckDuckGo, retries, one-shot rescue, request coalescing, caching, and optional DeepSeek search.",
   "tool.web_fetch":
     "Fetches one HTTPS page and extracts bounded plain text.",
+  "tool.web_extract":
+    "Fetches up to ten search-result URLs independently and returns live, timestamped page text for freshness verification.",
   "tool.subagent":
     "Delegates a bounded read-only subtask to a fresh child agent; approval required per call.",
 };

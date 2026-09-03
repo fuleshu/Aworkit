@@ -454,6 +454,15 @@ const webSearchSettingsState = verifyWebSearchSettings
       }
       const maximumResults = document.getElementById('tool.web_search-maximum-results');
       const keylessRescue = document.getElementById('tool.web_search-keyless-rescue');
+      const freshnessValidation = document.getElementById(
+        'tool.web_search-freshness-validation',
+      );
+      const freshnessMaximumAge = document.getElementById(
+        'tool.web_search-freshness-maximum-age',
+      );
+      const freshnessBypassCache = document.getElementById(
+        'tool.web_search-freshness-bypass-cache',
+      );
       const deepseekUrl = document.getElementById('tool.web_search-deepseek-url');
       const deepseekModel = document.getElementById('tool.web_search-deepseek-model');
       const deepseekOutputTokens = document.getElementById(
@@ -472,6 +481,9 @@ const webSearchSettingsState = verifyWebSearchSettings
         maximumResultsValue: maximumResults?.value ?? null,
         maximumResultsMaximum: maximumResults?.max ?? null,
         keylessRescuePresent: keylessRescue !== null,
+        freshnessValidationChecked: freshnessValidation?.checked ?? null,
+        freshnessMaximumAgeValue: freshnessMaximumAge?.value ?? null,
+        freshnessBypassCacheChecked: freshnessBypassCache?.checked ?? null,
         deepseekUrlValue: deepseekUrl?.value ?? null,
         deepseekModelValue: deepseekModel?.value ?? null,
         deepseekOutputTokensValue: deepseekOutputTokens?.value ?? null,
@@ -480,6 +492,9 @@ const webSearchSettingsState = verifyWebSearchSettings
           backend,
           maximumResults,
           keylessRescue,
+          freshnessValidation,
+          freshnessMaximumAge,
+          freshnessBypassCache,
           deepseekUrl,
           deepseekModel,
           deepseekOutputTokens,
@@ -632,6 +647,12 @@ if (verifyWebSearchSettings) {
     failures.push("Web-search maximum-result defaults or bounds are incorrect");
   if (!settings?.keylessRescuePresent)
     failures.push("Web-search one-shot keyless rescue control was not rendered");
+  if (
+    settings?.freshnessValidationChecked !== true ||
+    settings?.freshnessMaximumAgeValue !== "45" ||
+    settings?.freshnessBypassCacheChecked !== true
+  )
+    failures.push("Web-search freshness controls were not rendered with safe defaults");
   if (
     settings?.deepseekUrlValue !== "https://api.deepseek.com" ||
     settings?.deepseekModelValue !== "deepseek-v4-flash" ||
