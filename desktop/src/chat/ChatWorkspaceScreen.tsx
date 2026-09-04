@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
-import { projectSemanticTimeline } from "./activityProjection";
+import {
+  hasOpenSemanticSpan,
+  projectSemanticTimeline,
+} from "./activityProjection";
 import type { ChatCorePort, RuntimeSnapshot } from "./corePort";
 import {
   ChatComposer,
@@ -92,6 +95,7 @@ export function ChatWorkspaceScreen({
   >(null);
   const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
     useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
   const handledNewChatRequest = useRef(0);
   const handledHistoryActionRequest = useRef(0);
   const wasActive = useRef(active);
@@ -101,6 +105,10 @@ export function ChatWorkspaceScreen({
   const timelineItems = useMemo(
     () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
     [snapshot, runtime.events],
+  );
+  const liveTurnRunning = useMemo(
+    () => snapshot !== null && hasOpenSemanticSpan(runtime.events),
+    [runtime.events, snapshot],
   );
   const errorNotices = useChatErrorNotices(
     runtime.events,
@@ -199,7 +207,11 @@ export function ChatWorkspaceScreen({
   }, [onRecoveryPendingChange, projectedRecoveryPending]);
   useEffect(() => {
     setSelectedTimelineId(null);
+    setStopRequested(false);
   }, [projectedChatId]);
+  useEffect(() => {
+    if (!liveTurnRunning) setStopRequested(false);
+  }, [liveTurnRunning]);
   useEffect(() => {
     if (
       newChatRequest <= handledNewChatRequest.current ||
@@ -269,8 +281,16 @@ export function ChatWorkspaceScreen({
       </>
     );
   const chat = snapshot.chat;
+  const visibleChat = liveTurnRunning
+    ? { ...chat, phase: "running" as const }
+    : chat;
   const control = (type: "cancel") => {
-    void runtime.dispatch(commandIds.createIntent(type));
+    setStopRequested(true);
+    void runtime
+      .dispatch(commandIds.createIntent(type, chat.chatId))
+      .then((accepted) => {
+        if (!accepted) setStopRequested(false);
+      });
   };
   const cardAction = (
     action: NonNullable<TimelineItem["action"]>,
@@ -316,23 +336,25 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
           <div className="run-actions">
-            <span className={`run-status ${chat.phase}`}>
+            <span className={`run-status ${visibleChat.phase}`}>
               <i />
-              {label(chat.phase)}
+              {label(visibleChat.phase)}
             </span>
-            {controlsFor(chat).includes("cancel") && (
+            {controlsFor(visibleChat).includes("cancel") && (
               <button
                 className="danger-action"
-                disabled={chat.recoveryPending}
+                disabled={chat.recoveryPending || stopRequested}
                 title={
                   chat.recoveryPending
-                    ? "Resume the interrupted command before cancelling the Run"
-                    : "Cancel the Run; completed workspace effects are not undone"
+                    ? "Resume the interrupted command before stopping the Run"
+                    : stopRequested
+                      ? "Stopping the current response"
+                    : "Stop the current response; completed workspace effects are not undone and the Chat remains open"
                 }
                 type="button"
                 onClick={() => control("cancel")}
               >
-                ■&nbsp; Cancel
+                ■&nbsp; {stopRequested ? "Stopping…" : "Stop"}
               </button>
             )}
             <button
@@ -351,7 +373,7 @@ export function ChatWorkspaceScreen({
               <strong>Interrupted command requires an explicit decision.</strong>
               <p>
                 Aworkit preserved the exact staged command. Resume replays that
-                command; normal input, New Chat, and Cancel remain locked.
+                command; normal input, New Chat, and Stop remain locked.
               </p>
             </div>
             <div className="recovery-actions">
@@ -471,7 +493,7 @@ export function ChatWorkspaceScreen({
       )}
       {inspectorOpen && (
         <RunDetailsInspector
-          chat={chat}
+          chat={visibleChat}
           events={runtime.events}
           items={timelineItems}
           records={snapshot.evidence}

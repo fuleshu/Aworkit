@@ -63,7 +63,8 @@ use super::{
 
 pub(crate) const FILE_TOOL_ADAPTER_VERSION: &str = "1.0.0";
 const TODO_TOOL_ADAPTER_VERSION: &str = "1.1.0";
-const WEB_SEARCH_TOOL_ADAPTER_VERSION: &str = "2.0.0";
+const WEB_SEARCH_TOOL_ADAPTER_VERSION: &str = "2.1.0";
+const WEB_SEARCH_API_KEY_SECRET_SLOT: &str = "api_key";
 pub(crate) const FILE_READ_CAPABILITY_ID: &str = "tool.files.read";
 pub(crate) const FILE_SEARCH_CAPABILITY_ID: &str = "tool.files.search";
 pub(crate) const FILE_LIST_CAPABILITY_ID: &str = "tool.files.list";
@@ -323,7 +324,16 @@ pub(crate) struct StoredFileToolBindingV1 {
     pub configuration_hash: String,
     #[serde(deserialize_with = "deserialize_stored_file_tool_limit")]
     pub limit: StoredFileToolLimitV1,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Secret-free lease metadata used only to materialize one invocation.
+    /// The durable field name deliberately remains neutral so semantic
+    /// history can reject actual `secret` payloads without rejecting this
+    /// permitted opaque reference.
+    #[serde(
+        default,
+        rename = "opaqueBinding",
+        alias = "secret",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub secret: Option<StoredToolSecretBindingV1>,
     #[serde(default)]
     pub requires_approval: bool,
@@ -568,6 +578,11 @@ pub(crate) fn file_tool_descriptors()
         descriptor.guarantees_same_id_deduplication = false;
         descriptor.supports_cancellation = true;
         descriptor.allowed_scopes = vec![scope.to_owned()];
+        if capability_id == WEB_SEARCH_CAPABILITY_ID {
+            // Credentialed providers redeem one invocation-scoped API key.
+            // Keyless routes use the same descriptor with no lease handle.
+            descriptor.secret_slots = vec![WEB_SEARCH_API_KEY_SECRET_SLOT.to_owned()];
+        }
         descriptor.requires_workspace = workspace;
         descriptor.maximum_concurrency = 8;
         descriptor.max_input_bytes = MAXIMUM_TOOL_PAYLOAD_BYTES;
@@ -1135,6 +1150,14 @@ impl FileToolAuthorityRuntimeV1 {
             context,
             run_events,
         }
+    }
+
+    /// Replaces the production web runtime only for deterministic pipeline
+    /// tests that must cross the real capability-host boundary without making
+    /// an external network request.
+    #[cfg(test)]
+    pub(crate) fn set_web_tools_for_test(&mut self, web: WebTools) {
+        self.web = web;
     }
 
     /// Latest durable Run task list recorded by the todo tool, if any.
@@ -1732,12 +1755,21 @@ impl BoundFileToolAuthorityV1 {
         let _ = broker.deliver_worker_results(&CommittedToolResultAckV1);
         let Some(outcome) = outcome else {
             if is_definitely_not_started_settlement_v1(&outcome_hash, uncertain) {
-                let detail = if current_epoch_millis() >= self.context.deadline_epoch_millis {
-                    "tool invocation deadline elapsed before execution started"
-                } else {
-                    "tool invocation was rejected before execution started"
-                };
-                return Err(WorkflowPipelineError::Host(detail.into()));
+                if current_epoch_millis() >= self.context.deadline_epoch_millis {
+                    return Err(WorkflowPipelineError::Host(
+                        "tool invocation deadline elapsed before execution started".into(),
+                    ));
+                }
+                // A definite pre-execution rejection has no possible side
+                // effect and is durably settled by the broker. Return it as a
+                // failed tool result so the model can recover or explain it;
+                // uncertain and incomplete settlements remain fatal below.
+                return Ok(definitely_not_started_tool_result(
+                    call,
+                    invocation_id,
+                    outcome_hash,
+                    replayed,
+                ));
             }
             return Err(WorkflowPipelineError::IncompleteEvidence);
         };
@@ -1863,6 +1895,35 @@ impl BoundFileToolAuthorityV1 {
         broker
             .settle(invocation_id, canonical_hash(&outcome)?, false)
             .map_err(broker_error)
+    }
+}
+
+fn definitely_not_started_tool_result(
+    call: &ModelToolCallV1,
+    invocation_id: StableId,
+    outcome_hash: String,
+    replayed: bool,
+) -> SettledModelToolCallV1 {
+    const DETAIL: &str = "Tool invocation was rejected before execution started.";
+    SettledModelToolCallV1 {
+        result: ModelToolResultV1 {
+            call_id: call.call_id.clone(),
+            content: json!({
+                "error": "tool_not_started",
+                "detail": DETAIL,
+            }),
+            is_error: true,
+        },
+        activity: WorkflowToolActivityV1 {
+            call_id: call.call_id.clone(),
+            invocation_id,
+            capability_id: call.capability_id.clone(),
+            path: String::new(),
+            status: "failed".into(),
+            summary: DETAIL.into(),
+            outcome_hash,
+            replayed,
+        },
     }
 }
 
@@ -4017,7 +4078,7 @@ mod tests {
         authority: &BoundFileToolAuthorityV1,
         outer_invocation_id: &StableId,
         call: &ModelToolCallV1,
-    ) -> StableId {
+    ) -> (StableId, StableId) {
         let binding = authority.context.bindings.first().expect("tool binding");
         let manifest_binding = authority
             .context
@@ -4030,6 +4091,7 @@ mod tests {
         let record = authority
             .prepare_invocation_record(outer_invocation_id, 1, call, binding, manifest_binding)
             .expect("invocation record");
+        let proposal_id = record.proposal.proposal_id.clone();
         authority
             .runtime
             .records
@@ -4047,7 +4109,7 @@ mod tests {
             )
             .expect("authorize pending invocation")
         {
-            BrokerDecisionV1::DispatchReady(dispatch) => dispatch.invocation_id,
+            BrokerDecisionV1::DispatchReady(dispatch) => (dispatch.invocation_id, proposal_id),
             other => panic!("unexpected pending decision: {other:?}"),
         }
     }
@@ -4159,7 +4221,7 @@ mod tests {
         let call_a = read_call("call.tool-run-a", "notes.txt");
         let call_b = read_call("call.tool-run-b", "notes.txt");
 
-        let pending_a = stage_pending(&authority_a, &outer_a, &call_a);
+        let (pending_a, _) = stage_pending(&authority_a, &outer_a, &call_a);
         let settled_b = authority_b
             .invoke_v1(&outer_b, 1, &call_b, &CancellationToken::default())
             .expect("second Run drains both manifests");
@@ -4249,7 +4311,7 @@ mod tests {
         });
         let outer_c = stable("invocation.outer-tool-run-c").expect("outer C");
         let call_c = read_call("call.tool-run-c", "notes.txt");
-        let pending_c = stage_pending(&authority_c, &outer_c, &call_c);
+        let (pending_c, proposal_c) = stage_pending(&authority_c, &outer_c, &call_c);
         std::fs::write(
             workspace_c.join(".git/HEAD"),
             b"ref: refs/heads/feature/drifted\n",
@@ -4276,6 +4338,33 @@ mod tests {
                 .is_none(),
             "host must reject branch drift before the file adapter executes"
         );
+        let record_c = runtime
+            .records
+            .invocation(&proposal_c)
+            .expect("rejected invocation read")
+            .expect("rejected invocation");
+        let replay_decision = broker
+            .propose(
+                &legacy_manifest(&authority_c.context.manifest),
+                record_c.proposal,
+                current_epoch_millis(),
+            )
+            .expect("replay rejected proposal");
+        let rejected = authority_c
+            .complete_broker_decision(
+                broker,
+                &proposal_c,
+                replay_decision,
+                true,
+                &call_c,
+                &CancellationToken::default(),
+                false,
+            )
+            .expect("definite pre-start rejection must return to the model");
+        assert!(rejected.result.is_error);
+        assert_eq!(rejected.result.content["error"], "tool_not_started");
+        assert_eq!(rejected.activity.status, "failed");
+        assert!(rejected.activity.replayed);
         assert!(
             authority_c
                 .invoke_v1(
@@ -4399,6 +4488,15 @@ mod tests {
         ] {
             assert!(validate_call_arguments(&binding, &invalid).is_err());
         }
+        let descriptor = file_tool_descriptors()
+            .expect("descriptors")
+            .remove(WEB_SEARCH_CAPABILITY_ID)
+            .expect("web-search descriptor");
+        assert_eq!(descriptor.version, WEB_SEARCH_TOOL_ADAPTER_VERSION);
+        assert_eq!(
+            descriptor.secret_slots,
+            vec![WEB_SEARCH_API_KEY_SECRET_SLOT.to_owned()]
+        );
     }
 
     #[test]

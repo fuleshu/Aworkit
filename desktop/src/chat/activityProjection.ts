@@ -88,6 +88,31 @@ export function projectSemanticTimeline(
   );
 }
 
+/**
+ * Reports whether the canonical stream contains a started span that has not
+ * received a terminal fact yet. Snapshot refreshes are intentionally blocked
+ * while a native command is running, so this live event-derived signal is the
+ * authoritative way for the UI to expose Stop during that interval.
+ */
+export function hasOpenSemanticSpan(events: readonly RuntimeEvent[]): boolean {
+  const started = new Set<string>();
+  const terminal = new Set<string>();
+  for (const event of events) {
+    const fact = payload(event);
+    const spanId = event.spanId ?? string(fact.spanId);
+    if (spanId === undefined) continue;
+    if (event.kind === "span.started") started.add(spanId);
+    if (
+      event.kind === "span.completed" ||
+      event.kind === "span.failed" ||
+      event.kind === "span.cancelled"
+    )
+      terminal.add(spanId);
+  }
+  for (const spanId of started) if (!terminal.has(spanId)) return true;
+  return false;
+}
+
 function reduceSpan(
   spans: Map<string, SpanProjection>,
   event: RuntimeEvent,

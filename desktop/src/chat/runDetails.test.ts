@@ -142,6 +142,108 @@ describe("Run details projection", () => {
     expect(rawRunDetailsJson(view)).not.toContain("must-not-leak");
     expect(rawRunDetailsJson(view)).toContain("redacted; value unavailable");
   });
+
+  it("shows paid search token usage once and labels unavailable monetary cost", () => {
+    const search = item("span.tool.search", "tool", "Web search", 2, {
+      spanId: "span.tool.search",
+      status: "completed",
+    });
+    const events = [
+      spanEvent(1, "span.started", "span.tool.search", {
+        capabilityId: "tool.web_search",
+        createdAt: "1000",
+      }),
+      spanEvent(2, "span.completed", "span.tool.search", {
+        capabilityId: "tool.web_search",
+        createdAt: "1100",
+        output: {
+          content: {
+            attempts: [
+              {
+                backend: "deepseek",
+                status: "completed",
+                usage: {
+                  provider: "deepseek",
+                  model: "deepseek-v4-flash",
+                  inputTokens: 120,
+                  cachedInputTokens: 20,
+                  outputTokens: 30,
+                  reasoningOutputTokens: 7,
+                  totalTokens: 150,
+                },
+              },
+            ],
+          },
+        },
+      }),
+      // A later model span can embed the tool output, but it must not be
+      // counted as another paid request.
+      spanEvent(3, "span.started", "span.model.2", {
+        input: { exchanges: [{ results: [{ totalTokens: 150 }] }] },
+      }),
+    ];
+
+    const run = projectRunDetails({ chat, items: [search], events, records: [], selectedId: null });
+    const section = run.sections.find(
+      (candidate) => candidate.kind === "fields" && candidate.title === "Paid search usage",
+    );
+    expect(section).toEqual(
+      expect.objectContaining({
+        kind: "fields",
+        fields: expect.arrayContaining([
+          { label: "DeepSeek search requests", value: "1" },
+          { label: "DeepSeek search total tokens", value: "150" },
+          {
+            label: "DeepSeek search reported cost",
+            value: "Not returned by provider",
+            status: "unsupported",
+          },
+        ]),
+      }),
+    );
+
+    const selected = projectRunDetails({
+      chat,
+      items: [search],
+      events,
+      records: [],
+      selectedId: search.id,
+    });
+    expect(selected.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fields",
+          title: "Tool execution",
+          fields: expect.arrayContaining([
+            { label: "DeepSeek search input tokens", value: "120" },
+          ]),
+        }),
+      ]),
+    );
+
+    const failed = projectRunDetails({
+      chat,
+      items: [{ ...search, status: "failed" }],
+      events: events.map((candidate) =>
+        candidate.sequence === 2
+          ? { ...candidate, kind: "span.failed" }
+          : candidate,
+      ),
+      records: [],
+      selectedId: null,
+    });
+    expect(failed.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fields",
+          title: "Paid search usage",
+          fields: expect.arrayContaining([
+            { label: "DeepSeek search total tokens", value: "150" },
+          ]),
+        }),
+      ]),
+    );
+  });
 });
 
 function item(

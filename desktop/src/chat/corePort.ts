@@ -378,7 +378,7 @@ export class PreviewChatCorePort implements ChatCorePort {
     if (intent.type === "abandon_recovery")
       this.chat = { ...this.chat, phase: "failed", recoveryPending: false };
     if (intent.type === "cancel")
-      this.chat = { ...this.chat, phase: "cancelled" };
+      this.chat = { ...this.chat, phase: "waiting_input" };
     if (intent.type === "enqueue")
       this.chat = {
         ...this.chat,

@@ -62,6 +62,18 @@ interface RunDetailsInput {
   readonly selectedId: string | null;
 }
 
+interface PaidSearchUsage {
+  readonly provider: string;
+  readonly model: string;
+  readonly requests: number;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+  readonly totalTokens: number;
+  readonly reportedCosts: ReadonlyMap<string, number>;
+}
+
 /** Builds one truthful human-facing view from the canonical semantic stream. */
 export function projectRunDetails(input: RunDetailsInput): RunDetailsView {
   const selected = input.items.find(({ id }) => id === input.selectedId);
@@ -137,6 +149,14 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
       ]),
     });
   }
+  const searchUsage = paidSearchUsage(input.events);
+  if (searchUsage.length > 0) {
+    sections.push({
+      kind: "fields",
+      title: "Paid search usage",
+      fields: searchUsage.flatMap(paidSearchUsageFields),
+    });
+  }
   sections.push({ kind: "fields", title: "Activity", fields: activityFields });
   sections.push({
     kind: "log",
@@ -186,6 +206,7 @@ function projectItem(
   const usage = selectedUsage(scopeEvents, relatedRecords);
   const modelFields = modelDetailFields(selected, scopeEvents, relatedRecords, usage);
   const toolFields = toolDetailFields(selected, scopeEvents, relatedRecords);
+  const searchUsageFields = paidSearchUsage(scopeEvents).flatMap(paidSearchUsageFields);
   const descendants = scopeItems.filter(({ id }) => id !== selected.id);
   const sections: RunDetailsSection[] = [];
   const summary = (selected.body ?? "").trim();
@@ -197,8 +218,12 @@ function projectItem(
   }
   if (modelFields.length > 0)
     sections.push({ kind: "fields", title: "Model and usage", fields: modelFields });
-  if (toolFields.length > 0)
-    sections.push({ kind: "fields", title: "Tool execution", fields: toolFields });
+  if (toolFields.length + searchUsageFields.length > 0)
+    sections.push({
+      kind: "fields",
+      title: "Tool execution",
+      fields: [...toolFields, ...searchUsageFields],
+    });
   if (selected.input !== undefined)
     sections.push({ kind: "data", title: "Input", value: selected.input });
   if (selected.output !== undefined)
@@ -285,6 +310,87 @@ function toolDetailFields(
           replay === true ? "available" : "opaque",
         )
       : undefined,
+  ]);
+}
+
+/** Reads billing evidence only from terminal web-search spans. Model exchange
+ * snapshots may embed earlier tool outputs, so recursively scanning all event
+ * payloads would count the same paid request many times. */
+function paidSearchUsage(events: readonly RuntimeEvent[]): PaidSearchUsage[] {
+  const aggregated = new Map<string, PaidSearchUsage>();
+  for (const event of events) {
+    const payload = asRecord(event.payload);
+    if (
+      (event.kind !== "span.completed" && event.kind !== "span.failed") ||
+      payload.capabilityId !== "tool.web_search"
+    )
+      continue;
+    const output = asRecord(payload.output);
+    const content = asRecord(output.content);
+    const attempts = Array.isArray(content.attempts) ? content.attempts : [];
+    for (const candidate of attempts) {
+      const usage = asRecord(asRecord(candidate).usage);
+      const provider = stringAt(usage, "provider");
+      const model = stringAt(usage, "model");
+      if (provider === undefined || model === undefined) continue;
+      const key = `${provider}\u0000${model}`;
+      const previous = aggregated.get(key);
+      const costs = new Map(previous?.reportedCosts ?? []);
+      const costMicros = numberAt(usage, "reportedCostMicros");
+      const currency = stringAt(usage, "reportedCostCurrency");
+      if (costMicros > 0 && currency !== undefined)
+        costs.set(currency, (costs.get(currency) ?? 0) + costMicros);
+      aggregated.set(key, {
+        provider,
+        model,
+        requests: (previous?.requests ?? 0) + 1,
+        inputTokens: (previous?.inputTokens ?? 0) + numberAt(usage, "inputTokens"),
+        cachedInputTokens:
+          (previous?.cachedInputTokens ?? 0) + numberAt(usage, "cachedInputTokens"),
+        outputTokens:
+          (previous?.outputTokens ?? 0) + numberAt(usage, "outputTokens"),
+        reasoningOutputTokens:
+          (previous?.reasoningOutputTokens ?? 0) +
+          numberAt(usage, "reasoningOutputTokens"),
+        totalTokens: (previous?.totalTokens ?? 0) + numberAt(usage, "totalTokens"),
+        reportedCosts: costs,
+      });
+    }
+  }
+  return [...aggregated.values()];
+}
+
+function paidSearchUsageFields(usage: PaidSearchUsage): RunDetailField[] {
+  const prefix = usage.provider === "deepseek" ? "DeepSeek search" : `${usage.provider} search`;
+  const costs = [...usage.reportedCosts].map(([currency, micros]) =>
+    `${(micros / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${currency}`,
+  );
+  return compactFields([
+    field(`${prefix} model`, usage.model),
+    field(`${prefix} requests`, usage.requests.toLocaleString()),
+    usage.inputTokens > 0
+      ? field(`${prefix} input tokens`, usage.inputTokens.toLocaleString())
+      : undefined,
+    usage.cachedInputTokens > 0
+      ? field(`${prefix} cached input tokens`, usage.cachedInputTokens.toLocaleString())
+      : undefined,
+    usage.outputTokens > 0
+      ? field(`${prefix} output tokens`, usage.outputTokens.toLocaleString())
+      : undefined,
+    usage.reasoningOutputTokens > 0
+      ? field(
+          `${prefix} reasoning tokens`,
+          usage.reasoningOutputTokens.toLocaleString(),
+        )
+      : undefined,
+    usage.totalTokens > 0
+      ? field(`${prefix} total tokens`, usage.totalTokens.toLocaleString())
+      : undefined,
+    field(
+      `${prefix} reported cost`,
+      costs.length > 0 ? costs.join(", ") : "Not returned by provider",
+      costs.length > 0 ? "available" : "unsupported",
+    ),
   ]);
 }
 
@@ -484,6 +590,13 @@ function findNamedValue(
 function numberAt(value: unknown, key: string): number {
   const candidate = asRecord(value)[key];
   return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
+}
+
+function stringAt(value: unknown, key: string): string | undefined {
+  const candidate = asRecord(value)[key];
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : undefined;
 }
 
 function timeBounds(events: readonly RuntimeEvent[]): {

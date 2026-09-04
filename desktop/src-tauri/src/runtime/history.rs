@@ -60,9 +60,17 @@ pub(crate) struct FrozenToolBindingV1 {
     pub tool_id: String,
     pub tool_hash: String,
     pub tool_snapshot: BuiltInToolConfigurationV2,
-    /// Credential metadata frozen with the tool. Values remain solely in the
-    /// operating-system credential store and are never part of Chat history.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Opaque credential-lease metadata frozen with the tool. Values remain
+    /// solely in the operating-system credential store and are never part of
+    /// Chat history. The durable field deliberately avoids a secret-bearing
+    /// name so the semantic-history guard can continue rejecting actual
+    /// credential material without rejecting these permitted references.
+    #[serde(
+        default,
+        rename = "opaqueBindings",
+        alias = "credentials",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub credentials: Vec<FrozenCredentialBindingV1>,
     /// Exact model-facing definition discovered at freeze for dynamic tools
     /// (MCP). Absent for compile-time owned built-ins.
@@ -463,7 +471,44 @@ impl ChatHistory {
         if current.iter().any(|event| event.kind == "execution.failed") {
             return Err("the current Chat already failed and cannot be cancelled".into());
         }
+        let open_spans = current
+            .iter()
+            .filter(|event| event.kind == "span.started")
+            .filter(|started| {
+                let span_id = started.payload.get("spanId").and_then(Value::as_str);
+                !current.iter().any(|terminal| {
+                    matches!(
+                        terminal.kind.as_str(),
+                        "span.completed" | "span.failed" | "span.cancelled"
+                    ) && terminal.payload.get("spanId").and_then(Value::as_str) == span_id
+                })
+            })
+            .count();
+        let open_approval = current
+            .iter()
+            .filter(|event| event.kind == "approval.requested")
+            .any(|requested| {
+                let decision_id = requested
+                    .payload
+                    .get("decisionId")
+                    .and_then(Value::as_str);
+                !current.iter().any(|resolved| {
+                    resolved.kind == "approval.resolved"
+                        && resolved.payload.get("decisionId").and_then(Value::as_str)
+                            == decision_id
+                })
+            });
+        if open_spans == 0 && !open_approval {
+            return Err("the current Chat has no running turn to stop".into());
+        }
         Ok(())
+    }
+
+    pub(crate) fn was_stopped_by(&self, command_id: &str) -> Result<bool, String> {
+        Ok(self.events()?.iter().any(|event| {
+            event.kind == "chat.turn_stopped"
+                && event.payload.get("stopCommandId").and_then(Value::as_str) == Some(command_id)
+        }))
     }
 
     pub(crate) fn current_frozen_context(
@@ -562,7 +607,10 @@ impl ChatHistory {
             let settled = chat_events.iter().any(|event| {
                 matches!(
                     event.kind.as_str(),
-                    "message.assistant" | "approval.requested" | "execution.failed"
+                    "message.assistant"
+                        | "approval.requested"
+                        | "execution.failed"
+                        | "chat.turn_stopped"
                 ) && event
                     .payload
                     .get("settlesCommandId")
@@ -588,7 +636,10 @@ impl ChatHistory {
                 let settled = chat_events.iter().any(|event| {
                     matches!(
                         event.kind.as_str(),
-                        "message.assistant" | "approval.requested" | "execution.failed"
+                        "message.assistant"
+                            | "approval.requested"
+                            | "execution.failed"
+                            | "chat.turn_stopped"
                     ) && event
                         .payload
                         .get("settlesCommandId")
@@ -1511,6 +1562,11 @@ fn projected_phase(events: &[Event]) -> &'static str {
         });
     if has_open_approval {
         "awaiting_approval"
+    } else if events
+        .iter()
+        .any(|event| event.kind == "chat.turn_stopped")
+    {
+        "waiting_input"
     } else if events.iter().any(|event| event.kind == "message.assistant") {
         "waiting_input"
     } else {

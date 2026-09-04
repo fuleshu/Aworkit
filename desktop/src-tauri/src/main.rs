@@ -22,6 +22,7 @@ use aworkit_desktop::runtime::{
     ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput, ProviderTestResult,
     RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, SettingsV2CommitInput,
     SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2, UiCommandInput, UiCommandReceipt,
+    WorkflowCancellationController,
     WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
     WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
@@ -131,17 +132,34 @@ async fn desktop_snapshot(
 #[tauri::command]
 async fn desktop_command(
     runtime: tauri::State<'_, SharedRuntime>,
+    cancellation: tauri::State<'_, WorkflowCancellationController>,
     command: UiCommandInput,
 ) -> Result<UiCommandReceipt, String> {
+    let stop_command_id = if command.action == "cancel" {
+        let target = command
+            .target_id
+            .as_deref()
+            .ok_or_else(|| "Stop requires the exact active Chat target".to_owned())?;
+        cancellation.request_stop(target, &command.command_id)?;
+        Some(command.command_id.clone())
+    } else {
+        None
+    };
+    let cancellation = cancellation.inner().clone();
     let runtime = Arc::clone(runtime.inner());
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         runtime
             .lock()
             .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
             .command(command)
     })
     .await
-    .map_err(|error| format!("desktop command worker failed: {error}"))?
+    .map_err(|error| format!("desktop command worker failed: {error}"))
+    .and_then(|result| result);
+    if let Some(command_id) = stop_command_id {
+        cancellation.discard_request(&command_id);
+    }
+    result
 }
 
 #[tauri::command]
@@ -585,6 +603,7 @@ fn main() {
             )
             .map_err(std::io::Error::other)?
             .with_management_repair(management);
+            app.manage(runtime.cancellation_controller());
             app.manage(Arc::new(Mutex::new(runtime)));
             Ok(())
         })

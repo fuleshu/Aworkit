@@ -23,6 +23,7 @@ use crate::management::{
 };
 
 use super::{
+    cancellation::WorkflowCancellationController,
     credential_journal::{
         CredentialCrashPointV1, CredentialOperationJournal, CredentialOperationKindV1,
         random_credential_ref,
@@ -182,6 +183,7 @@ pub struct DesktopRuntime {
     legacy_provider_warning: Option<String>,
     management_repair: ManagementRepairGateway,
     processed: HashMap<String, ProcessedCommand>,
+    cancellation_controller: WorkflowCancellationController,
 }
 
 impl DesktopRuntime {
@@ -240,12 +242,14 @@ impl DesktopRuntime {
         let credential_journal = CredentialOperationJournal::open(&data_root);
         let history = ChatHistory::open_with_committed_events(&data_root, committed_events)?;
         let event_committer: Arc<dyn SemanticEventCommitter> = Arc::new(history.clone());
+        let cancellation_controller = WorkflowCancellationController::default();
         let pipeline = WorkflowExecutionPipeline::open_with_credential_store_and_event_committer(
             &data_root,
             store,
             event_committer,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .with_cancellation_controller(cancellation_controller.clone());
         Self::compose(
             data_root,
             documents,
@@ -254,6 +258,7 @@ impl DesktopRuntime {
             credential_journal,
             provider,
             Arc::new(pipeline),
+            cancellation_controller,
         )
     }
 
@@ -265,6 +270,7 @@ impl DesktopRuntime {
         credential_journal: CredentialOperationJournal,
         provider: Arc<dyn ProviderPort>,
         pipeline: Arc<dyn WorkflowPipelinePort>,
+        cancellation_controller: WorkflowCancellationController,
     ) -> Result<Self, String> {
         let provider_health =
             ProviderHealthRegistry::open(&data_root, &documents.settings().providers)?;
@@ -282,6 +288,7 @@ impl DesktopRuntime {
             legacy_provider_warning: None,
             management_repair: ManagementRepairGateway::default(),
             processed: HashMap::new(),
+            cancellation_controller,
         };
         let mut warnings = runtime
             .credential_journal
@@ -292,6 +299,13 @@ impl DesktopRuntime {
         warnings.extend(runtime.reconcile_pending_credential_operations());
         runtime.project_credential_warnings(&warnings);
         Ok(runtime)
+    }
+
+    /// Cloneable reserved control path used by the Tauri host without taking
+    /// the runtime mutex currently owned by workflow execution.
+    #[must_use]
+    pub fn cancellation_controller(&self) -> WorkflowCancellationController {
+        self.cancellation_controller.clone()
     }
 
     /// Replays one explicitly resumed durable effect command after a process
@@ -611,6 +625,23 @@ impl DesktopRuntime {
                 self.abandon_pending_effect(&input.command_id, &fingerprint, input.expected_version)
             }
             "cancel" => {
+                // A running workflow receives cancellation through the
+                // reserved controller before this command can acquire the
+                // runtime mutex. Its execution worker records
+                // `chat.turn_stopped`; this command then only adds its own
+                // idempotent acknowledgement at the current durable head.
+                if self.history.was_stopped_by(&input.command_id)? {
+                    let head = self.history.head()?;
+                    return self.history.append(
+                        &input.command_id,
+                        &fingerprint,
+                        head,
+                        vec![(
+                            "chat.stop_acknowledged",
+                            json!({"createdAt":now_label(),"stopCommandId":input.command_id}),
+                        )],
+                    );
+                }
                 self.history.ensure_expected(input.expected_version)?;
                 self.history.ensure_cancellable()?;
                 let created_at = now_label();
@@ -624,7 +655,14 @@ impl DesktopRuntime {
                     .into_iter()
                     .map(|fact| ("span.cancelled", fact))
                     .collect::<Vec<_>>();
-                facts.push(("chat.cancelled", json!({"createdAt":created_at})));
+                facts.push((
+                    "chat.turn_stopped",
+                    json!({
+                        "createdAt":created_at,
+                        "stopCommandId":input.command_id,
+                        "body":"Response stopped by the user."
+                    }),
+                ));
                 self.history.append(
                     &input.command_id,
                     &fingerprint,
@@ -1009,6 +1047,9 @@ impl DesktopRuntime {
             )?;
         }
         let result = self.pipeline.execute(execution_request)?;
+        if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
+            return Ok(receipt);
+        }
         let created_at = now_label();
         let mut facts = Vec::new();
         match result.status {
@@ -1168,6 +1209,48 @@ impl DesktopRuntime {
             .append(&input.command_id, &fingerprint, self.history.head()?, facts)
     }
 
+    /// Converts a controller-requested cancellation into a non-terminal Chat
+    /// turn boundary. Provider/tool outcome evidence already committed before
+    /// cancellation remains visible; no partial assistant message is invented.
+    fn settle_requested_stop(
+        &mut self,
+        input: &UiCommandInput,
+        fingerprint: &str,
+        result: &WorkflowExecutionResultV1,
+    ) -> Result<Option<UiCommandReceipt>, String> {
+        let Some(stop) = self.cancellation_controller.take_request(
+            result.chat_id.as_str(),
+            result.run_id.as_str(),
+        ) else {
+            return Ok(None);
+        };
+        let created_at = now_label();
+        let mut facts = self
+            .history
+            .open_span_terminal_facts(
+                "cancelled",
+                "Response stopped by the user.",
+                &created_at,
+            )?
+            .into_iter()
+            .map(|fact| ("span.cancelled", fact))
+            .collect::<Vec<_>>();
+        facts.push((
+            "chat.turn_stopped",
+            json!({
+                "createdAt": created_at,
+                "stopCommandId": stop.command_id,
+                "commandId": input.command_id,
+                "chatId": stop.chat_id,
+                "runId": stop.run_id,
+                "body": "Response stopped by the user."
+            }),
+        ));
+        self.history
+            .append(input.command_id.as_str(), fingerprint, self.history.head()?, facts)
+            .map(Some)
+    }
+
     /// Applies one committed approval decision to a durably suspended graph
     /// pass. Approve/reject resume the exact frozen pass from its stored
     /// prefix; the command is idempotent by command ID and recoverable through
@@ -1239,6 +1322,9 @@ impl DesktopRuntime {
             .pipeline
             .resume_approval(&decision_id, approved)
             .map_err(|error| error.to_string())?;
+        if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
+            return Ok(receipt);
+        }
         let created_at = now_label();
         let context = &frozen.context;
         let mut facts = Vec::new();
@@ -3931,11 +4017,14 @@ mod tests {
         fs,
         path::Path,
         sync::{
-            Arc, Mutex,
+            Arc, Condvar, Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
+        thread,
+        time::Duration,
     };
 
+    use aworkit_capability_host::CancellationToken;
     use aworkit_local_store::{DocumentKind, DocumentRepository, JsonDocument, RepositoryRoot};
     use aworkit_trusted_core::{
         CredentialReadAuthorizationV1, CredentialRef, CredentialSecretV1, MemoryCredentialStore,
@@ -3952,6 +4041,8 @@ mod tests {
         ProjectConfigurationV2, ProviderCommitInput, ProviderConfigurationV2,
         ProviderSettingsSnapshot, WorkspaceConfigurationV2, WorkspaceKindV2,
     };
+
+    mod credentialed_web_search;
 
     struct FixtureProvider {
         calls: AtomicUsize,
@@ -4082,6 +4173,55 @@ mod tests {
                 input_units: completion.input_units,
                 output_units: completion.output_units,
                 model_turns: 1,
+                tool_calls: 0,
+                tool_activity: Vec::new(),
+                node_activity: Vec::new(),
+                approval: None,
+                replayed: false,
+            })
+        }
+    }
+
+    struct StopAwareWorkflowPipeline {
+        cancellation_controller: WorkflowCancellationController,
+        started: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl WorkflowPipelinePort for StopAwareWorkflowPipeline {
+        fn execute(
+            &self,
+            request: WorkflowExecutionRequestV1,
+        ) -> Result<WorkflowExecutionResultV1, String> {
+            let cancellation = CancellationToken::default();
+            let _active = self.cancellation_controller.register(
+                request.chat_id.as_str(),
+                request.run_id.as_str(),
+                cancellation.clone(),
+            )?;
+            let (started, ready) = &*self.started;
+            *started.lock().unwrap() = true;
+            ready.notify_all();
+            while !cancellation.is_cancelled() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Ok(WorkflowExecutionResultV1 {
+                request_id: request.request_id,
+                chat_id: request.chat_id,
+                run_id: request.run_id,
+                snapshot_id: fixture_id("snapshot.stopped")?,
+                snapshot_hash: format!("sha256:{}", "8".repeat(64)),
+                authority_manifest_id: fixture_id("manifest.stopped")?,
+                worker_invocation_id: fixture_id("invocation.worker.stopped")?,
+                broker_invocation_id: fixture_id("invocation.broker.stopped")?,
+                outcome_hash: format!("sha256:{}", "9".repeat(64)),
+                status: WorkflowExecutionStatusV1::OutcomeUncertain,
+                assistant_text: None,
+                reasoning: None,
+                error: Some("provider execution was cancelled".into()),
+                model: request.provider.model,
+                input_units: 0,
+                output_units: 0,
+                model_turns: 0,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
                 node_activity: Vec::new(),
@@ -5049,7 +5189,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_lifecycle_rejects_draft_cancel_stale_targets_and_post_cancel_input() {
+    fn chat_lifecycle_rejects_draft_stop_and_allows_input_after_a_stopped_turn() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
@@ -5083,11 +5223,35 @@ mod tests {
         assert!(stale.contains("stale"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
+        let run_id = runtime.snapshot(0).unwrap().chat.run_id;
+        runtime
+            .history
+            .append(
+                "chat.lifecycle.open-span",
+                "fixture-open-span",
+                6,
+                vec![(
+                    "span.started",
+                    json!({
+                        "schemaVersion":1,
+                        "requestId":"chat.lifecycle.turn",
+                        "runId":run_id,
+                        "spanId":"span.run.lifecycle-turn",
+                        "parentSpanId":Value::Null,
+                        "spanKind":"run",
+                        "semanticRole":"run",
+                        "status":"running",
+                        "createdAt":now_label()
+                    }),
+                )],
+            )
+            .unwrap();
+
         runtime
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.cancel".into(),
-                expected_version: 6,
+                expected_version: 7,
                 action: "cancel".into(),
                 target_id: Some(selected_chat),
                 payload: json!({}),
@@ -5097,26 +5261,99 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.cancel-again".into(),
-                expected_version: 7,
+                expected_version: 9,
                 action: "cancel".into(),
                 target_id: None,
                 payload: json!({}),
             })
             .unwrap_err();
-        assert!(repeated.contains("already cancelled"));
-        let enqueue = runtime
+        assert!(repeated.contains("no running turn"));
+        runtime
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.after-cancel".into(),
-                expected_version: 7,
+                expected_version: 9,
                 action: "enqueue".into(),
                 target_id: None,
-                payload: json!({"input":"must not run"}),
+                payload: json!({"input":"continue after stop"}),
             })
-            .unwrap_err();
-        assert!(enqueue.contains("cancelled"));
+            .unwrap();
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(runtime.snapshot(0).unwrap().chat.phase, "waiting_input");
+    }
+
+    #[test]
+    fn out_of_band_stop_interrupts_the_active_command_and_keeps_chat_open() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+        let controller = runtime.cancellation_controller();
+        let started = Arc::new((Mutex::new(false), Condvar::new()));
+        runtime.pipeline = Arc::new(StopAwareWorkflowPipeline {
+            cancellation_controller: controller.clone(),
+            started: started.clone(),
+        });
+        let chat_id = runtime.snapshot(0).unwrap().chat.chat_id;
+        let runtime = Arc::new(Mutex::new(runtime));
+        let command_runtime = runtime.clone();
+        let command = thread::spawn(move || {
+            command_runtime
+                .lock()
+                .unwrap()
+                .command(send("chat.stop.active-turn", 0, "keep working"))
+        });
+
+        let (started_lock, ready) = &*started;
+        let (started_guard, wait) = ready
+            .wait_timeout_while(
+                started_lock.lock().unwrap(),
+                Duration::from_secs(2),
+                |started| !*started,
+            )
+            .unwrap();
+        assert!(*started_guard && !wait.timed_out(), "workflow did not start");
+        assert!(
+            controller
+                .request_stop(&chat_id, "chat.stop.request")
+                .expect("request stop")
+        );
+        command.join().expect("command thread").expect("settled stop");
+
+        let mut runtime = runtime.lock().unwrap();
+        let stopped = runtime.snapshot(0).unwrap();
+        assert_eq!(stopped.chat.phase, "waiting_input");
+        assert!(
+            stopped
+                .events
+                .iter()
+                .any(|event| event.kind == "chat.turn_stopped")
+        );
+        assert!(
+            stopped
+                .events
+                .iter()
+                .all(|event| event.kind != "execution.failed")
+        );
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.stop.request".into(),
+                expected_version: 0,
+                action: "cancel".into(),
+                target_id: Some(chat_id),
+                payload: json!({}),
+            })
+            .expect("idempotent stop acknowledgement");
+        runtime.pipeline = Arc::new(FixtureWorkflowPipeline {
+            provider: provider.clone(),
+        });
+        let version = runtime.snapshot(0).unwrap().version;
+        runtime
+            .command(send("chat.after-stop", version, "continue here"))
+            .expect("follow-up after stop");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(runtime.snapshot(0).unwrap().chat.phase, "cancelled");
+        assert_eq!(runtime.snapshot(0).unwrap().chat.phase, "waiting_input");
     }
 
     #[test]

@@ -19,7 +19,7 @@ mod search;
 pub use freshness::{WebSearchFreshnessModeV1, WebSearchFreshnessV1};
 pub use search::{
     WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1, WebSearchOutcomeV1,
-    WebSearchProviderTierV1,
+    WebSearchProviderTierV1, WebSearchProviderUsageV1,
 };
 
 pub(super) const MAXIMUM_SEARCH_RESULTS: usize = 100;
@@ -180,6 +180,7 @@ impl WebTools {
                 attempt: 1,
                 status: "completed".into(),
                 error: None,
+                usage: None,
             }],
             rescued_from: None,
             backend_error: None,

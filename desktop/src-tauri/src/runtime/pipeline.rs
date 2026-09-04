@@ -56,6 +56,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use super::{
+    cancellation::WorkflowCancellationController,
     documents::validate_v1_executable_catalog,
     graph_pass::{
         GraphApprovalRequestV1, GraphNodeActivityV1, GraphPassBudgetV1, GraphPassStatusV1,
@@ -339,6 +340,7 @@ pub struct WorkflowExecutionPipeline {
     credential_store: Arc<dyn PlatformCredentialStorePort>,
     provider_factory: Arc<dyn ProviderFactoryV1>,
     event_committer: Arc<dyn SemanticEventCommitter>,
+    cancellation_controller: WorkflowCancellationController,
 }
 
 impl WorkflowExecutionPipeline {
@@ -455,7 +457,16 @@ impl WorkflowExecutionPipeline {
             credential_store,
             provider_factory,
             event_committer,
+            cancellation_controller: WorkflowCancellationController::default(),
         })
+    }
+
+    pub(crate) fn with_cancellation_controller(
+        mut self,
+        cancellation_controller: WorkflowCancellationController,
+    ) -> Self {
+        self.cancellation_controller = cancellation_controller;
+        self
     }
 
     /// Performs every deterministic validation and constructs the exact
@@ -690,6 +701,7 @@ impl WorkflowExecutionPipeline {
                 provider_factory: self.provider_factory.clone(),
                 file_tool_authority: self.file_tool_authority.clone(),
                 event_committer: self.event_committer.clone(),
+                cancellation_controller: self.cancellation_controller.clone(),
             };
             // The broker commits DispatchAttempted before this call. A transport
             // error or an old attempted dispatch is conservatively settled by
@@ -922,6 +934,14 @@ impl WorkflowExecutionPipeline {
             .create(descriptor, &prepared.provider, api_key)
             .map_err(|error| WorkflowPipelineError::Store(redact_error(&materialized, &error)))?;
         let cancellation = CancellationToken::default();
+        let _active_workflow = self
+            .cancellation_controller
+            .register(
+                prepared.snapshot.chat_id.as_str(),
+                prepared.snapshot.run_id.as_str(),
+                cancellation.clone(),
+            )
+            .map_err(WorkflowPipelineError::Host)?;
         let run_events = Arc::new(RunEventStream::new(
             prepared.request_id.to_string(),
             prepared.snapshot.run_id.to_string(),
@@ -1866,6 +1886,7 @@ struct PipelineHostPort {
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
     event_committer: Arc<dyn SemanticEventCommitter>,
+    cancellation_controller: WorkflowCancellationController,
 }
 
 impl ApprovedHostDispatchPortV1 for PipelineHostPort {
@@ -1964,6 +1985,7 @@ impl ApprovedHostDispatchPortV1 for PipelineHostPort {
             provider_factory: self.provider_factory.clone(),
             file_tool_authority: self.file_tool_authority.clone(),
             event_committer: self.event_committer.clone(),
+            cancellation_controller: self.cancellation_controller.clone(),
         };
         match self
             .host
@@ -2005,6 +2027,7 @@ struct ModelInvocationDispatcher {
     provider_factory: Arc<dyn ProviderFactoryV1>,
     file_tool_authority: FileToolAuthorityRuntimeV1,
     event_committer: Arc<dyn SemanticEventCommitter>,
+    cancellation_controller: WorkflowCancellationController,
 }
 
 impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
@@ -2016,6 +2039,14 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
         _admission: &AdmissionReceipt,
         cancellation: &CancellationToken,
     ) -> Self::Output {
+        let _active_workflow = self
+            .cancellation_controller
+            .register(
+                self.prepared.snapshot.chat_id.as_str(),
+                self.prepared.snapshot.run_id.as_str(),
+                cancellation.clone(),
+            )
+            .map_err(WorkflowPipelineError::Host)?;
         let workspace_valid = self.prepared.workspace.as_ref().is_some_and(|workspace| {
             self.projects.revalidate_workspace_v1(workspace).is_ok()
                 && revalidate_optional_project_branch(
@@ -3617,6 +3648,8 @@ mod tests {
 
     use super::*;
 
+    mod credentialed_web_search;
+
     type ToolPipelineSetupV1 = (
         WorkflowExecutionPipeline,
         Arc<MemoryCredentialStore>,
@@ -3729,6 +3762,7 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum ToolScriptV1 {
+        WebSearch,
         ReadAndSearch,
         ReadOnly,
         ReadLoop,
@@ -3825,6 +3859,16 @@ mod tests {
             }
             if request.exchanges.is_empty() {
                 match self.script {
+                    ToolScriptV1::WebSearch => emit(tool_call(
+                        "call.web-search",
+                        WEB_SEARCH_CAPABILITY_ID,
+                        "aworkit_web_search",
+                        json!({
+                            "query": "current product price",
+                            "limit": 5,
+                            "freshness": "current",
+                        }),
+                    ))?,
                     ToolScriptV1::ReadAndSearch => {
                         emit(tool_call(
                             "call.read",

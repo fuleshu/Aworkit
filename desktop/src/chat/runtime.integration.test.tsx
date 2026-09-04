@@ -664,7 +664,7 @@ describe("Chat native-port recovery contracts", () => {
       await screen.findByText(/Interrupted command requires an explicit decision/),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Cancel/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Queue" })).toBeDisabled();
     const resume = screen.getByRole("button", {
       name: "Resume interrupted command",
@@ -1453,8 +1453,13 @@ describe("Chat native-port recovery contracts", () => {
     const port: ChatCorePort = {
       snapshot() {
         snapshotCalls += 1;
-        if (snapshotCalls === 1)
-          return Promise.resolve(snapshot(1, "Reactive Chat", [{ sequence: 1 }]));
+        if (snapshotCalls === 1) {
+          const initial = snapshot(1, "Reactive Chat", [{ sequence: 1 }]);
+          return Promise.resolve({
+            ...initial,
+            chat: { ...initial.chat, phase: "draft" as const },
+          });
+        }
         return new Promise(() => undefined);
       },
       command(intent) {
@@ -1468,6 +1473,7 @@ describe("Chat native-port recovery contracts", () => {
     };
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={20} />);
     await screen.findByRole("heading", { name: "Reactive Chat" });
+    expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
     await user.click(screen.getByRole("button", { name: "Queue" }));
     await waitFor(() => expect(commandId).not.toBe(""));
@@ -1487,6 +1493,8 @@ describe("Chat native-port recovery contracts", () => {
     expect(
       await screen.findByText("Arrived while snapshot ownership is unavailable"),
     ).toBeVisible();
+    expect(screen.getByText("Running", { selector: ".run-status" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeEnabled();
     await new Promise((resolve) => window.setTimeout(resolve, 80));
     expect(snapshotCalls).toBe(2);
   });

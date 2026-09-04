@@ -1,8 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { projectSemanticTimeline } from "./activityProjection";
+import {
+  hasOpenSemanticSpan,
+  projectSemanticTimeline,
+} from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
 
 describe("canonical semantic timeline projection", () => {
+  it("derives live running state from started spans until their terminal fact", () => {
+    const started = span(1, "span.started", "span.run.live", {
+      spanKind: "run",
+      semanticRole: "run",
+      title: "Run",
+    });
+    expect(hasOpenSemanticSpan([started])).toBe(true);
+    expect(
+      hasOpenSemanticSpan([
+        started,
+        span(2, "span.cancelled", "span.run.live", {
+          status: "cancelled",
+        }),
+      ]),
+    ).toBe(false);
+  });
+
   it("renders model-tool-model in committed order with hierarchical spans", () => {
     const events = [
       event(1, "message.user", { body: "List files", createdAt: "1" }),

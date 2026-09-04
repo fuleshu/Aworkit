@@ -23,8 +23,23 @@ use std::{
 use super::super::WebSearchResultV1;
 use super::{
     WebSearchBackendV1, WebSearchConfigurationV1, WebSearchProviderTierV1,
-    search::SearchExecutorPort,
+    WebSearchProviderUsageV1, search::SearchExecutorPort,
 };
+
+#[derive(Clone, Debug)]
+pub(super) struct ProviderSearchOutcome {
+    pub(super) results: Vec<WebSearchResultV1>,
+    pub(super) usage: Option<WebSearchProviderUsageV1>,
+}
+
+impl ProviderSearchOutcome {
+    pub(super) fn without_usage(results: Vec<WebSearchResultV1>) -> Self {
+        Self {
+            results,
+            usage: None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum SearchProviderV1 {
@@ -87,6 +102,7 @@ impl SearchProviderV1 {
 pub(super) struct SearchFailure {
     pub(super) message: String,
     pub(super) retryable: bool,
+    pub(super) usage: Option<WebSearchProviderUsageV1>,
 }
 
 impl SearchFailure {
@@ -94,6 +110,7 @@ impl SearchFailure {
         Self {
             message: bounded_text(&message.into(), 1_024),
             retryable: true,
+            usage: None,
         }
     }
 
@@ -101,7 +118,13 @@ impl SearchFailure {
         Self {
             message: bounded_text(&message.into(), 1_024),
             retryable: false,
+            usage: None,
         }
+    }
+
+    pub(super) fn with_usage(mut self, usage: Option<WebSearchProviderUsageV1>) -> Self {
+        self.usage = usage;
+        self
     }
 }
 
@@ -184,7 +207,7 @@ impl SearchExecutorPort for ProductionSearchExecutor {
         query: &str,
         maximum_results: usize,
         api_key: Option<&str>,
-    ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+    ) -> Result<ProviderSearchOutcome, SearchFailure> {
         let timeout = Duration::from_secs(configuration.request_timeout_seconds);
         let override_url = configuration.provider_base_url.trim();
         let require_key = || {
@@ -194,7 +217,7 @@ impl SearchExecutorPort for ProductionSearchExecutor {
                     SearchFailure::terminal(format!("{} API key is missing", provider.as_str()))
                 })
         };
-        match provider {
+        let results = match provider {
             SearchProviderV1::Keyless => Err(SearchFailure::terminal(
                 "internal web-search error: unresolved keyless route",
             )),
@@ -289,16 +312,19 @@ impl SearchExecutorPort for ProductionSearchExecutor {
                 require_key()?,
                 timeout,
             ),
-            SearchProviderV1::Deepseek => deepseek::search(
-                &configuration.deepseek_base_url,
-                &configuration.deepseek_model,
-                configuration.deepseek_maximum_output_tokens,
-                query,
-                maximum_results,
-                require_key()?,
-                timeout,
-            ),
-        }
+            SearchProviderV1::Deepseek => {
+                return deepseek::search(
+                    &configuration.deepseek_base_url,
+                    &configuration.deepseek_model,
+                    configuration.deepseek_maximum_output_tokens,
+                    query,
+                    maximum_results,
+                    require_key()?,
+                    timeout,
+                );
+            }
+        }?;
+        Ok(ProviderSearchOutcome::without_usage(results))
     }
 }
 

@@ -2,11 +2,13 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, mpsc},
+    thread,
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use super::freshness::{
     FreshnessLedger, FreshnessPolicy, WebSearchFreshnessModeV1, WebSearchFreshnessV1,
@@ -178,6 +180,30 @@ pub struct WebSearchAttemptV1 {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Provider-reported billing units for this exact network attempt. Cache
+    /// hits and coalesced callers intentionally omit usage because they do not
+    /// issue another paid request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<WebSearchProviderUsageV1>,
+}
+
+/// Billing evidence returned by a paid search provider. Token counts are exact
+/// provider values; monetary cost remains absent unless the API itself reports
+/// it, so Aworkit never presents a mutable pricing-table estimate as an invoice.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebSearchProviderUsageV1 {
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+    pub reasoning_output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_cost_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_cost_currency: Option<String>,
 }
 
 /// Settled search result with routing and cache evidence.
@@ -205,7 +231,7 @@ pub(super) trait SearchExecutorPort: Send + Sync {
         query: &str,
         maximum_results: usize,
         api_key: Option<&str>,
-    ) -> Result<Vec<WebSearchResultV1>, SearchFailure>;
+    ) -> Result<super::providers::ProviderSearchOutcome, SearchFailure>;
 }
 
 #[derive(Clone)]
@@ -307,6 +333,7 @@ impl WebSearchRuntime {
             if cache_allowed && let Some(entry) = state.cache.get(&key) {
                 let mut cached = entry.outcome.clone();
                 cached.cached = true;
+                clear_attempt_usage(&mut cached);
                 return Ok(slice_outcome(cached, requested_results));
             }
             if let Some(flight) = state.flights.get(&key) {
@@ -539,20 +566,25 @@ impl WebSearchRuntime {
             if let Err(error) = check_cancelled(cancellation) {
                 return Err(SearchFailure::terminal(error.to_string()));
             }
-            match self
-                .executor
-                .search(provider, configuration, query, maximum_results, api_key)
-            {
-                Ok(mut results) => {
-                    results.truncate(maximum_results);
-                    bound_results_payload(&mut results);
+            match self.execute_provider_cancellable(
+                provider,
+                configuration,
+                query,
+                maximum_results,
+                api_key,
+                cancellation,
+            ) {
+                Ok(mut outcome) => {
+                    outcome.results.truncate(maximum_results);
+                    bound_results_payload(&mut outcome.results);
                     attempts.push(WebSearchAttemptV1 {
                         backend: provider.as_str().into(),
                         attempt,
                         status: "completed".into(),
                         error: None,
+                        usage: outcome.usage,
                     });
-                    return Ok(results);
+                    return Ok(outcome.results);
                 }
                 Err(error) => {
                     attempts.push(WebSearchAttemptV1 {
@@ -560,6 +592,7 @@ impl WebSearchRuntime {
                         attempt,
                         status: "failed".into(),
                         error: Some(error.message.clone()),
+                        usage: error.usage.clone(),
                     });
                     if !error.retryable || attempt == maximum_attempts {
                         return Err(error);
@@ -568,6 +601,56 @@ impl WebSearchRuntime {
             }
         }
         Err(SearchFailure::terminal("web-search retry loop exhausted"))
+    }
+
+    /// Blocking provider clients run on a bounded detached worker so the
+    /// workflow can observe Stop within one polling slice. The abandoned
+    /// read-only request retains no authority to mutate user data and still
+    /// terminates at the configured HTTP timeout. API-key copies are zeroized
+    /// when that worker exits.
+    fn execute_provider_cancellable(
+        &self,
+        provider: SearchProviderV1,
+        configuration: &WebSearchConfigurationV1,
+        query: &str,
+        maximum_results: usize,
+        api_key: Option<&str>,
+        cancellation: &CancellationToken,
+    ) -> Result<super::providers::ProviderSearchOutcome, SearchFailure> {
+        let executor = self.executor.clone();
+        let configuration = configuration.clone();
+        let query = query.to_owned();
+        let api_key = api_key.map(|value| Zeroizing::new(value.to_owned()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name(format!("web-search-{}", provider.as_str()))
+            .spawn(move || {
+                let result = executor.search(
+                    provider,
+                    &configuration,
+                    &query,
+                    maximum_results,
+                    api_key.as_ref().map(|value| value.as_str()),
+                );
+                let _ = sender.send(result);
+            })
+            .map_err(|error| {
+                SearchFailure::terminal(format!("cannot start web-search request: {error}"))
+            })?;
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(SearchFailure::terminal("web request was cancelled"));
+            }
+            match receiver.recv_timeout(FLIGHT_WAIT_SLICE) {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(SearchFailure::retryable(
+                        "web-search provider worker ended without a result",
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -766,6 +849,7 @@ fn wait_for_flight(
         if let Some(settled) = result.as_ref() {
             let mut outcome = settled.clone().map_err(WebToolError::Transport)?;
             outcome.coalesced = true;
+            clear_attempt_usage(&mut outcome);
             return Ok(slice_outcome(outcome, requested_results));
         }
         let (next, _) = flight
@@ -773,6 +857,12 @@ fn wait_for_flight(
             .wait_timeout(result, FLIGHT_WAIT_SLICE)
             .map_err(|_| WebToolError::Transport("web-search flight lock poisoned".into()))?;
         result = next;
+    }
+}
+
+fn clear_attempt_usage(outcome: &mut WebSearchOutcomeV1) {
+    for attempt in &mut outcome.attempts {
+        attempt.usage = None;
     }
 }
 
@@ -920,6 +1010,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::web::providers::ProviderSearchOutcome;
 
     struct FakeExecutor {
         calls: AtomicUsize,
@@ -934,16 +1025,18 @@ mod tests {
             _query: &str,
             _maximum_results: usize,
             _api_key: Option<&str>,
-        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if provider == SearchProviderV1::Deepseek && self.fail_deepseek {
                 return Err(SearchFailure::terminal("DeepSeek authentication rejected"));
             }
-            Ok(vec![WebSearchResultV1 {
-                title: provider.as_str().into(),
-                url: "https://example.com/result".into(),
-                snippet: "result".into(),
-            }])
+            Ok(ProviderSearchOutcome::without_usage(vec![
+                WebSearchResultV1 {
+                    title: provider.as_str().into(),
+                    url: "https://example.com/result".into(),
+                    snippet: "result".into(),
+                },
+            ]))
         }
     }
 
@@ -1088,16 +1181,18 @@ mod tests {
             _query: &str,
             _maximum_results: usize,
             _api_key: Option<&str>,
-        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if provider == SearchProviderV1::Duckduckgo {
-                return Ok(vec![WebSearchResultV1 {
-                    title: "DuckDuckGo fallback".into(),
-                    url: "https://example.com/fallback".into(),
-                    snippet: "fallback result".into(),
-                }]);
+                return Ok(ProviderSearchOutcome::without_usage(vec![
+                    WebSearchResultV1 {
+                        title: "DuckDuckGo fallback".into(),
+                        url: "https://example.com/fallback".into(),
+                        snippet: "fallback result".into(),
+                    },
+                ]));
             }
-            Ok(Vec::new())
+            Ok(ProviderSearchOutcome::without_usage(Vec::new()))
         }
     }
 
@@ -1139,7 +1234,7 @@ mod tests {
             _query: &str,
             _maximum_results: usize,
             _api_key: Option<&str>,
-        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
             let (title, snippet) = if provider == SearchProviderV1::ExaKeyless {
                 (
                     "September 2026 prices",
@@ -1151,11 +1246,13 @@ mod tests {
                     "Price and availability on the live page",
                 )
             };
-            Ok(vec![WebSearchResultV1 {
-                title: title.into(),
-                url: format!("https://example.com/{}", provider.as_str()),
-                snippet: snippet.into(),
-            }])
+            Ok(ProviderSearchOutcome::without_usage(vec![
+                WebSearchResultV1 {
+                    title: title.into(),
+                    url: format!("https://example.com/{}", provider.as_str()),
+                    snippet: snippet.into(),
+                },
+            ]))
         }
     }
 
@@ -1212,16 +1309,18 @@ mod tests {
             _query: &str,
             maximum_results: usize,
             _api_key: Option<&str>,
-        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.requested.lock().unwrap().push(maximum_results);
-            Ok((0..maximum_results)
-                .map(|index| WebSearchResultV1 {
-                    title: format!("Result {index}"),
-                    url: format!("https://example.com/{index}"),
-                    snippet: String::new(),
-                })
-                .collect())
+            Ok(ProviderSearchOutcome::without_usage(
+                (0..maximum_results)
+                    .map(|index| WebSearchResultV1 {
+                        title: format!("Result {index}"),
+                        url: format!("https://example.com/{index}"),
+                        snippet: String::new(),
+                    })
+                    .collect(),
+            ))
         }
     }
 
@@ -1283,15 +1382,42 @@ mod tests {
             _query: &str,
             _maximum_results: usize,
             _api_key: Option<&str>,
-        ) -> Result<Vec<WebSearchResultV1>, SearchFailure> {
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.gate.wait();
             thread::sleep(Duration::from_millis(50));
-            Ok(vec![WebSearchResultV1 {
-                title: provider.as_str().into(),
-                url: "https://example.com/flight".into(),
-                snippet: String::new(),
-            }])
+            Ok(ProviderSearchOutcome::without_usage(vec![
+                WebSearchResultV1 {
+                    title: provider.as_str().into(),
+                    url: "https://example.com/flight".into(),
+                    snippet: String::new(),
+                },
+            ]))
+        }
+    }
+
+    struct StopExecutor {
+        gate: Barrier,
+    }
+
+    impl SearchExecutorPort for StopExecutor {
+        fn search(
+            &self,
+            provider: SearchProviderV1,
+            _configuration: &WebSearchConfigurationV1,
+            _query: &str,
+            _maximum_results: usize,
+            _api_key: Option<&str>,
+        ) -> Result<ProviderSearchOutcome, SearchFailure> {
+            self.gate.wait();
+            thread::sleep(Duration::from_millis(500));
+            Ok(ProviderSearchOutcome::without_usage(vec![
+                WebSearchResultV1 {
+                    title: provider.as_str().into(),
+                    url: "https://example.com/late".into(),
+                    snippet: String::new(),
+                },
+            ]))
         }
     }
 
@@ -1327,5 +1453,40 @@ mod tests {
         let first = first.join().unwrap();
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
         assert!(first.coalesced || second.coalesced || second.cached);
+    }
+
+    #[test]
+    fn cancellation_releases_a_search_without_waiting_for_blocking_http_work() {
+        let executor = Arc::new(StopExecutor {
+            gate: Barrier::new(2),
+        });
+        let runtime = WebSearchRuntime::new(executor.clone());
+        let configuration = WebSearchConfigurationV1 {
+            maximum_retries: 0,
+            ..WebSearchConfigurationV1::default()
+        };
+        let cancellation = CancellationToken::default();
+        let worker_runtime = runtime.clone();
+        let worker_configuration = configuration.clone();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || {
+            worker_runtime.search(
+                "cancel this search",
+                &worker_configuration,
+                None,
+                &worker_cancellation,
+            )
+        });
+
+        executor.gate.wait();
+        let started = Instant::now();
+        cancellation.cancel();
+        let error = worker.join().expect("search worker").unwrap_err();
+
+        assert!(error.to_string().contains("cancelled"));
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "cancellation waited for the detached provider request"
+        );
     }
 }

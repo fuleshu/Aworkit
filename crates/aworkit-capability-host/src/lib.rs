@@ -146,5 +146,6 @@ pub use tools::{
 pub use web::{
     WebExtractPageV1, WebFetchResultV1, WebSearchAttemptV1, WebSearchBackendV1,
     WebSearchConfigurationV1, WebSearchFreshnessModeV1, WebSearchFreshnessV1, WebSearchOutcomeV1,
-    WebSearchProviderTierV1, WebSearchResultV1, WebToolError, WebTools, WebTransportPort,
+    WebSearchProviderTierV1, WebSearchProviderUsageV1, WebSearchResultV1, WebToolError, WebTools,
+    WebTransportPort,
 };
