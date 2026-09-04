@@ -49,6 +49,12 @@ describe("typed V1 node catalog", () => {
     expect(portKindsConnect("route", "flow")).toBe(true);
     expect(portKindsConnect("route", "text")).toBe(false);
   });
+
+  it("does not expose or create an aggregate Agent run timeout", () => {
+    const agent = catalogEntryForType("agent");
+    expect(agent?.fields.some((field) => field.key === "timeoutSeconds")).toBe(false);
+    expect(agent?.defaultConfiguration).not.toHaveProperty("timeoutSeconds");
+  });
 });
 
 describe("workflow connection and cycle validation", () => {

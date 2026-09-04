@@ -4,10 +4,7 @@
 //! trusted-core port before the exact result is sent back on the next model
 //! turn. This module owns neither workspace authority nor tool execution.
 
-use std::{
-    collections::BTreeMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
@@ -137,7 +134,6 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub maximum_tool_output_bytes: usize,
     pub maximum_timeout_recoveries: u32,
     pub maximum_tokens: u64,
-    pub deadline_epoch_millis: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,8 +173,9 @@ pub(crate) struct ModelToolLoopFailureV1 {
 }
 
 /// Runs the exact frozen model/tool loop until the model returns a final
-/// assistant message or a real authority, deadline, context, or token error is
-/// reached. There is deliberately no model-turn or aggregate tool-call cap.
+/// assistant message or a real authority, context, or token error is reached.
+/// There is deliberately no elapsed-time, model-turn, or aggregate tool-call
+/// cap. Provider requests and individual tools retain their own timeouts.
 pub(crate) fn execute_model_tool_loop_v1(
     gateway: &FrozenModelGateway,
     request: ModelToolLoopRequestV1<'_>,
@@ -206,17 +203,6 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut turn = 1_u32;
 
     loop {
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
         let evidence = execute_tool_turn_with_timeout_recovery(
             gateway,
             &plan,
@@ -230,17 +216,6 @@ pub(crate) fn execute_model_tool_loop_v1(
         .map_err(|error| {
             failure(
                 error.into(),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -301,17 +276,6 @@ pub(crate) fn execute_model_tool_loop_v1(
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
-            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-                failure(
-                    error,
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
             let settled = authority
                 .invoke(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -417,7 +381,6 @@ fn execute_tool_turn_with_timeout_recovery(
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
     let mut retry_notice = runtime_notice;
     loop {
-        enforce_deadline(request.deadline_epoch_millis)?;
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
         let provider_request = ModelToolRequestV1 {
             input: request.input.clone(),
@@ -479,33 +442,6 @@ fn model_facing_tool_result(result: &ModelToolResultV1, maximum_bytes: usize) ->
     }
 }
 
-fn enforce_deadline(deadline_epoch_millis: u64) -> Result<(), ModelToolLoopErrorV1> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(u64::MAX, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        });
-    if now >= deadline_epoch_millis {
-        Err(ModelToolLoopErrorV1::Budget("Run deadline"))
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod deadline_tests {
-    use super::*;
-
-    #[test]
-    fn expired_deadline_is_a_budget_failure_before_provider_or_tool_work() {
-        assert!(matches!(
-            enforce_deadline(0),
-            Err(ModelToolLoopErrorV1::Budget("Run deadline"))
-        ));
-        enforce_deadline(u64::MAX).expect("maximum deadline remains open");
-    }
-}
-
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation
 /// tool binding suspends the loop with a durable prefix instead of failing.
 pub(crate) fn execute_model_tool_loop_approval_v1(
@@ -535,17 +471,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut turn = 1_u32;
 
     loop {
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
         let evidence = execute_tool_turn_with_timeout_recovery(
             gateway,
             &plan,
@@ -559,17 +484,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         .map_err(|error| {
             failure(
                 error.into(),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -629,17 +543,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
-            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-                failure(
-                    error,
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -782,17 +685,6 @@ pub(crate) fn resume_model_tool_loop_v1(
         approved,
         now_epoch_millis,
     };
-    enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-        failure(
-            error,
-            input_tokens,
-            output_tokens,
-            attempted_model_turns,
-            settled_tool_calls,
-            &exchanges,
-            &activities,
-        )
-    })?;
     let settled = authority
         .resolve(
             request.outer_invocation_id,
@@ -859,17 +751,6 @@ pub(crate) fn resume_model_tool_loop_v1(
 
     let mut turn = pending.turn.saturating_add(1);
     loop {
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
         let evidence = execute_tool_turn_with_timeout_recovery(
             gateway,
             &plan,
@@ -883,17 +764,6 @@ pub(crate) fn resume_model_tool_loop_v1(
         .map_err(|error| {
             failure(
                 error.into(),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
-        enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-            failure(
-                error,
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -953,17 +823,6 @@ pub(crate) fn resume_model_tool_loop_v1(
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
-            enforce_deadline(request.deadline_epoch_millis).map_err(|error| {
-                failure(
-                    error,
-                    input_tokens,
-                    output_tokens,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                )
-            })?;
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {

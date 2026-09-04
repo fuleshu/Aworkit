@@ -19,8 +19,7 @@
             "position": { "x": 245, "y": 205 },
             "configuration": {
               "modelTierId": "tier:balanced",
-              "toolIds": [],
-              "timeoutSeconds": 120
+              "toolIds": []
             }
           },
           { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 470, "y": 205 } },
@@ -71,7 +70,6 @@
                 "tool.web_search",
                 "tool.web_extract"
               ],
-              "timeoutSeconds": 900,
               "instructions": "You are Aworkit's standard agent. Keep the todo list current and inspect project evidence with the file tools. Use web_search for discovery. When its freshness evidence requires extraction—or before making any current price, availability, news, score, weather, schedule, or other live-data claim—call web_extract on the best candidate URLs and base the claim on the live extracted pages. Produce a final answer with citations and do not claim tool results you did not receive."
             }
           },

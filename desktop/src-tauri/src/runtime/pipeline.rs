@@ -30,7 +30,7 @@ use aworkit_local_store::{
 };
 use aworkit_protocol::{
     AttestedExtensionSetV1, HistoryBackendV1, ProcessGeneration, SchemaVersion, StableId,
-    WorkerBudgetV1, WorkerExecutorKindV1,
+    WorkerBudgetV1, WorkerExecutorKindV1, MAX_SAFE_WIRE_INTEGER,
     WorkerInvocationProposalV1 as WorkerInvocationProposalContractV1, WorkerNodeV1, WorkerPortV1,
     WorkerTransitionV1, attested_extension_set_hash_v1,
 };
@@ -87,7 +87,12 @@ const MAXIMUM_PREPARED_RECORD_BYTES: usize = 768 * 1024;
 const MAXIMUM_PROVIDER_OUTCOME_BYTES: usize = 896 * 1024;
 const MAXIMUM_ERROR_BYTES: usize = 16 * 1024;
 const APPROVAL_TTL_MILLIS: u64 = 60_000;
-const DEFAULT_WORKFLOW_DEADLINE_MILLIS: u64 = 10 * 60_000;
+/// The authority protocol requires a positive absolute deadline on every
+/// invocation. Internal Agent workflows intentionally have no aggregate run
+/// deadline, so they use the largest JSON-safe epoch value as a compatibility
+/// sentinel. Provider requests and individual tools retain their own bounded
+/// transport/execution timeouts.
+pub(crate) const NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS: u64 = MAX_SAFE_WIRE_INTEGER;
 const LEASE_TTL: Duration = Duration::from_secs(2 * 60);
 const PIPELINE_CHAT_ID: &str = "pipeline.execution";
 const BROKER_CHAT_ID: &str = "broker.invocations";
@@ -230,8 +235,7 @@ impl WorkflowExecutionRequestV1 {
             workflow_snapshot: Value::Null,
             messages,
             now_epoch_millis,
-            deadline_epoch_millis: now_epoch_millis
-                .saturating_add(DEFAULT_WORKFLOW_DEADLINE_MILLIS),
+            deadline_epoch_millis: NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS,
             mcp_servers: Vec::new(),
             budget: WorkerBudgetV1 {
                 turns: 1,
@@ -243,16 +247,11 @@ impl WorkflowExecutionRequestV1 {
                 depth: 0,
                 fanout: 1,
                 parallel: 1,
-                deadline_ms: DEFAULT_WORKFLOW_DEADLINE_MILLIS,
+                // Stable compatibility marker, not an elapsed duration. This
+                // keeps idempotent replays independent of observation time.
+                deadline_ms: NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS,
             },
         }
-    }
-
-    /// Replaces the bounded constructor's default with the exact duration
-    /// frozen from the selected workflow.
-    pub fn set_deadline_millis(&mut self, deadline_millis: u64) {
-        self.deadline_epoch_millis = self.now_epoch_millis.saturating_add(deadline_millis);
-        self.budget.deadline_ms = deadline_millis;
     }
 }
 
@@ -3301,12 +3300,16 @@ fn validate_request(
             "workflow provider and tool limits do not match the frozen JSON bindings".to_owned(),
         ));
     }
-    if request.messages.is_empty()
-        || request.deadline_epoch_millis <= request.now_epoch_millis
-        || request.deadline_epoch_millis
-            != request
+    let no_aggregate_deadline = request.deadline_epoch_millis
+        == NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
+        && request.budget.deadline_ms == NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS;
+    let bounded_deadline = request.deadline_epoch_millis > request.now_epoch_millis
+        && request.deadline_epoch_millis
+            == request
                 .now_epoch_millis
-                .saturating_add(request.budget.deadline_ms)
+                .saturating_add(request.budget.deadline_ms);
+    if request.messages.is_empty()
+        || (!no_aggregate_deadline && !bounded_deadline)
         || request.budget.turns == 0
         || request.budget.attempts == 0
         || request.budget.tokens == 0
@@ -3314,7 +3317,7 @@ fn validate_request(
         || request.budget.deadline_ms == 0
     {
         return Err(WorkflowPipelineError::InvalidInput(
-            "messages, deadline, and model budget must be non-empty".to_owned(),
+            "messages, authority deadline marker, and model budget must be non-empty".to_owned(),
         ));
     }
     if !is_sha256(&request.frozen_context_hash) {

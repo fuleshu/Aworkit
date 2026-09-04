@@ -175,7 +175,7 @@ export function assessNativeWorkflow(
       if (configuration === null) {
         issues.push({
           code: "native_node_configuration",
-          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
+          message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, and the ignored legacy timeoutSeconds field.`,
         });
       } else {
         const keys = new Set(Object.keys(configuration));
@@ -194,7 +194,7 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking.`,
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, and the ignored legacy timeoutSeconds field.`,
           });
         if (!validTierReference(configuration.modelTierId))
           issues.push({
@@ -240,7 +240,7 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_agent_timeout",
-            message: `Workflow node '${id}' agent timeoutSeconds must be 30..=3600.`,
+            message: `Workflow node '${id}' legacy timeoutSeconds must be 30..=3600 when present.`,
           });
         instructionsIssue(id, configuration.instructions, issues);
         modelReasoningIssues(id, configuration, issues);

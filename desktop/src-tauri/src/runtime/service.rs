@@ -91,9 +91,7 @@ struct ProcessedCommand {
 // body at half the full message-context budget leaves deterministic room for
 // Agent instructions and durable envelopes before that first context commit.
 const WORKFLOW_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
-const DEFAULT_AGENT_TIMEOUT_SECONDS: u64 = 600;
 const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
-const MAXIMUM_WORKFLOW_TIMEOUT_MILLIS: u64 = 60 * 60 * 1_000;
 
 trait WorkflowPipelinePort: Send + Sync {
     fn preflight(&self, _request: &WorkflowExecutionRequestV1) -> Result<(), String> {
@@ -951,12 +949,13 @@ impl DesktopRuntime {
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = context.workflow_snapshot.clone();
         // One outer graph execution is brokered. Agent-internal provider and
-        // tool calls are telemetry, not termination budgets.
+        // tool calls are telemetry, not termination budgets. The authority
+        // deadline fields carry the pipeline's no-aggregate-deadline sentinel;
+        // per-request and per-tool timeouts remain independently bounded.
         execution_request.budget.turns = 1;
         execution_request.budget.attempts = 1;
         execution_request.budget.tool_calls = 0;
         execution_request.budget.actions = 1;
-        execution_request.set_deadline_millis(context.run_deadline_millis);
         if serde_json::to_vec(&execution_request.messages)
             .map_err(|error| format!("cannot encode Chat message context: {error}"))?
             .len()
@@ -3198,7 +3197,8 @@ struct FrozenWorkflowAgentV1 {
     tools: Vec<FrozenToolBindingV1>,
 }
 
-/// Freezes the tool subset and deadline for a catalog-valid graph workflow:
+/// Freezes the tool subset for a catalog-valid graph workflow. The retained
+/// run-deadline value is legacy frozen-context metadata and is not enforced.
 /// the union of every agent/tool node's bindings, resolved only against saved
 /// enabled Settings records. Only tools this build can execute survive the
 /// pipeline freeze; a node binding anything else fails closed.
@@ -3248,7 +3248,6 @@ fn freeze_graph_bindings(
         .get("nodes")
         .and_then(Value::as_array)
         .ok_or_else(|| "workflow nodes are missing".to_owned())?;
-    let mut run_deadline_millis = 0_u64;
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
     for node in nodes {
@@ -3276,22 +3275,6 @@ fn freeze_graph_bindings(
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        if node_type == "agent" {
-            let timeout_seconds = configuration
-                .and_then(|config| config.get("timeoutSeconds"))
-                .map(|value| {
-                    value.as_u64().ok_or_else(|| {
-                        format!("workflow node '{node_id}' timeoutSeconds is out of range")
-                    })
-                })
-                .transpose()?
-                .unwrap_or(DEFAULT_AGENT_TIMEOUT_SECONDS);
-            run_deadline_millis =
-                run_deadline_millis.saturating_add(timeout_seconds.saturating_mul(1_000));
-        } else if node_type == "model_call" {
-            run_deadline_millis = run_deadline_millis
-                .saturating_add(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000));
-        }
         for tool_id in tool_ids {
             if !seen.insert(tool_id.clone()) {
                 continue;
@@ -3374,9 +3357,9 @@ fn freeze_graph_bindings(
         }
     }
     Ok(FrozenWorkflowAgentV1 {
-        run_deadline_millis: run_deadline_millis
-            .max(DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000))
-            .min(MAXIMUM_WORKFLOW_TIMEOUT_MILLIS),
+        // Preserve the durable field for old Chat records without deriving
+        // execution behavior from the removed Agent timeoutSeconds setting.
+        run_deadline_millis: DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000),
         tools,
     })
 }
@@ -4646,7 +4629,14 @@ mod tests {
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
         let requests = provider.execution_requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].budget.deadline_ms, 1_020_000);
+        assert_eq!(
+            requests[0].deadline_epoch_millis,
+            crate::runtime::pipeline::NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
+        );
+        assert_eq!(
+            requests[0].budget.deadline_ms,
+            crate::runtime::pipeline::NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
+        );
         assert_eq!(
             requests[0].model_parameters.get("enableThinking"),
             Some(&Value::Bool(true))
@@ -4916,10 +4906,13 @@ mod tests {
         assert_eq!(requests[0].provider.request_timeout_seconds, 300);
         assert_eq!(requests[0].provider.maximum_tool_output_bytes, 65_536);
         assert_eq!(requests[0].budget.tool_calls, 0);
-        assert_eq!(requests[0].budget.deadline_ms, 120_000);
+        assert_eq!(
+            requests[0].budget.deadline_ms,
+            crate::runtime::pipeline::NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
+        );
         assert_eq!(
             requests[0].deadline_epoch_millis,
-            requests[0].now_epoch_millis.saturating_add(120_000)
+            crate::runtime::pipeline::NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
         );
         assert_eq!(
             requests[1].tools[0].configuration["maximumBytes"],

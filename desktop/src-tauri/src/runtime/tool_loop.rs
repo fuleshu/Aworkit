@@ -1755,11 +1755,6 @@ impl BoundFileToolAuthorityV1 {
         let _ = broker.deliver_worker_results(&CommittedToolResultAckV1);
         let Some(outcome) = outcome else {
             if is_definitely_not_started_settlement_v1(&outcome_hash, uncertain) {
-                if current_epoch_millis() >= self.context.deadline_epoch_millis {
-                    return Err(WorkflowPipelineError::Host(
-                        "tool invocation deadline elapsed before execution started".into(),
-                    ));
-                }
                 // A definite pre-execution rejection has no possible side
                 // effect and is durably settled by the broker. Return it as a
                 // failed tool result so the model can recover or explain it;
@@ -2794,10 +2789,9 @@ impl FileToolDispatcherV1 {
     /// Runs a subagent child loop: a fresh model/tool conversation
     /// over the same frozen gateway with the read-only, approval-free child
     /// tool subset. The child cannot delegate further (the subagent tool is
-    /// excluded from its definitions and port) and every interaction is fenced
-    /// by the frozen Run deadline. The child's own tool calls still settle
-    /// through the durable broker; its model turns are covered by the parent
-    /// pass-level settlement like any other model work.
+    /// excluded from its definitions and port). The child's own tool calls
+    /// still settle through the durable broker; its model turns are covered by
+    /// the parent pass-level settlement like any other model work.
     fn run_subagent(
         &self,
         envelope: &ApprovedInvocationEnvelopeV1,
@@ -2813,9 +2807,6 @@ impl FileToolDispatcherV1 {
             .get("context")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if subagent_deadline_expired(self.record.deadline_epoch_millis) {
-            return Err("subagent deadline exceeded before the child run started".to_owned());
-        }
         let gateway = self
             .context
             .model_gateway
@@ -2844,7 +2835,6 @@ impl FileToolDispatcherV1 {
                 context: self.context.clone(),
                 run_events: self.run_events.clone(),
             },
-            deadline_epoch_millis: self.record.deadline_epoch_millis,
         };
         let child_input = json!({"messages":[{
             "role":"user",
@@ -2864,7 +2854,6 @@ impl FileToolDispatcherV1 {
                 maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
                 maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
                 maximum_tokens: SUBAGENT_MAXIMUM_TOKENS,
-                deadline_epoch_millis: self.record.deadline_epoch_millis,
             },
             &child_authority,
             cancellation,
@@ -2893,10 +2882,9 @@ impl FileToolDispatcherV1 {
 
 /// Read-only, approval-free tool port for subagent children. The allowed set
 /// excludes the subagent tool itself (capping v1 depth at one) and every
-/// approval-requiring tool; the frozen Run deadline fences each interaction.
+/// approval-requiring tool.
 struct SubagentToolPortV1<'a> {
     inner: &'a BoundFileToolAuthorityV1,
-    deadline_epoch_millis: u64,
 }
 
 impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
@@ -2939,7 +2927,6 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
         turn: u32,
         exchange: &ModelToolExchangeV1,
     ) -> Result<(), String> {
-        self.guard_deadline()?;
         self.inner
             .commit_exchange(outer_invocation_id, turn, exchange)
     }
@@ -2949,13 +2936,6 @@ impl SubagentToolPortV1<'_> {
     fn guard(&self, call: &ModelToolCallV1) -> Result<(), String> {
         if !SUBAGENT_CHILD_TOOL_IDS.contains(&call.capability_id.as_str()) {
             return Err("tool is not available to subagent children".to_owned());
-        }
-        self.guard_deadline()
-    }
-
-    fn guard_deadline(&self) -> Result<(), String> {
-        if subagent_deadline_expired(self.deadline_epoch_millis) {
-            return Err("subagent deadline exceeded".to_owned());
         }
         Ok(())
     }
@@ -3952,12 +3932,6 @@ fn current_epoch_millis() -> u64 {
         })
 }
 
-/// Fails closed once the frozen Run deadline has passed; every subagent
-/// child interaction is fenced through this predicate.
-fn subagent_deadline_expired(deadline_epoch_millis: u64) -> bool {
-    current_epoch_millis() >= deadline_epoch_millis
-}
-
 fn canonical_hash<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
     let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
@@ -4268,20 +4242,15 @@ mod tests {
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });
-        let expired_error = expired_authority
+        let expired_result = expired_authority
             .invoke_v1(
                 &stable("invocation.outer-tool-run-expired").expect("expired outer"),
                 1,
                 &read_call("call.tool-run-expired", "notes.txt"),
                 &CancellationToken::default(),
             )
-            .expect_err("expired dispatch must fail before execution");
-        assert!(matches!(expired_error, WorkflowPipelineError::Host(_)));
-        assert!(
-            expired_error
-                .to_string()
-                .contains("deadline elapsed before execution started")
-        );
+            .expect("legacy finite deadline must not terminate an Agent tool call");
+        assert!(expired_result.result.is_error);
 
         let workspace_c = root.path().join("workspace-c");
         std::fs::create_dir_all(workspace_c.join(".git")).expect("workspace C Git metadata");
@@ -4561,16 +4530,6 @@ mod tests {
         let canonical = serde_json::to_value(restored).expect("canonical binding");
         assert!(canonical["limit"].get("configuration").is_some());
         assert!(canonical["limit"].get("maximum_results").is_none());
-    }
-
-    #[test]
-    fn subagent_deadline_predicate_fails_closed_once_the_run_deadline_passes() {
-        assert!(!subagent_deadline_expired(
-            current_epoch_millis().saturating_add(60_000)
-        ));
-        assert!(subagent_deadline_expired(
-            current_epoch_millis().saturating_sub(1)
-        ));
     }
 
     #[test]

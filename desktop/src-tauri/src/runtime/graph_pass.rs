@@ -10,10 +10,7 @@
 //! with a durably restorable prefix so a later decision resumes without
 //! recomputing completed model work.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use aworkit_capability_host::{
     CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1,
@@ -381,7 +378,6 @@ struct PassMachine<'a> {
     model_version_hash: &'a str,
     budget: GraphPassBudgetV1,
     now_epoch_millis: u64,
-    deadline_epoch_millis: u64,
     conversation: Vec<WorkflowMessageV1>,
     values: BTreeMap<String, Value>,
     completed: Vec<String>,
@@ -439,12 +435,6 @@ impl<'a> PassMachine<'a> {
             }
             if cancellation.is_cancelled() {
                 return self.failed_outcome("graph pass was cancelled".to_owned());
-            }
-            if deadline_elapsed(self.deadline_epoch_millis) {
-                return self.failed_outcome(format!(
-                    "workflow Run deadline elapsed before node '{}' started",
-                    node.id
-                ));
             }
             if let Err(error) = self.check_budget() {
                 return self.failed_outcome(error);
@@ -783,12 +773,6 @@ impl<'a> PassMachine<'a> {
         let parameters = node_model_parameters(&node.configuration);
         match self.execute_text_turn(&plan, ModelRequestV1 { input, parameters }, cancellation) {
             Ok(evidence) => {
-                if deadline_elapsed(self.deadline_epoch_millis) {
-                    return Err(format!(
-                        "workflow Run deadline elapsed during model_call node '{}' provider turn",
-                        node.id
-                    ));
-                }
                 let turn = project_model_events(&evidence.events);
                 let text = turn.assistant_text;
                 let units = (turn.input_tokens, turn.output_tokens);
@@ -873,12 +857,6 @@ impl<'a> PassMachine<'a> {
                 cancellation,
             ) {
                 Ok(evidence) => {
-                    if deadline_elapsed(self.deadline_epoch_millis) {
-                        return Err(format!(
-                            "workflow Run deadline elapsed during agent node '{}' provider turn",
-                            node.id
-                        ));
-                    }
                     let turn = project_model_events(&evidence.events);
                     let text = turn.assistant_text;
                     let units = (turn.input_tokens, turn.output_tokens);
@@ -913,7 +891,6 @@ impl<'a> PassMachine<'a> {
                     .maximum_timeout_recoveries
                     .saturating_sub(self.timeout_recoveries),
                 maximum_tokens: self.budget.tokens,
-                deadline_epoch_millis: self.deadline_epoch_millis,
             },
             self.tool_authority,
             cancellation,
@@ -976,11 +953,6 @@ impl<'a> PassMachine<'a> {
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         loop {
-            if deadline_elapsed(self.deadline_epoch_millis) {
-                return Err(ProviderError::Failed(
-                    "workflow Run deadline elapsed before provider retry".to_owned(),
-                ));
-            }
             self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
             match self
                 .gateway
@@ -1051,7 +1023,6 @@ impl<'a> PassMachine<'a> {
                 .maximum_timeout_recoveries
                 .saturating_sub(self.timeout_recoveries),
             maximum_tokens: self.budget.tokens,
-            deadline_epoch_millis: self.deadline_epoch_millis,
         };
         match resume_model_tool_loop_v1(
             self.gateway,
@@ -1275,7 +1246,7 @@ pub(crate) fn execute_graph_pass_observed(
     model_binding_id: &str,
     model_version_hash: &str,
     now_epoch_millis: u64,
-    deadline_epoch_millis: u64,
+    _deadline_epoch_millis: u64,
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
     cancellation: &CancellationToken,
@@ -1293,7 +1264,6 @@ pub(crate) fn execute_graph_pass_observed(
         model_version_hash,
         budget,
         now_epoch_millis,
-        deadline_epoch_millis,
         conversation: conversation.to_vec(),
         values: BTreeMap::new(),
         completed: Vec::new(),
@@ -1313,14 +1283,6 @@ pub(crate) fn execute_graph_pass_observed(
         activity_observer,
     };
     machine.run(pending, approval_decision, cancellation)
-}
-
-fn deadline_elapsed(deadline_epoch_millis: u64) -> bool {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(true, |duration| {
-            u64::try_from(duration.as_millis()).map_or(true, |now| now >= deadline_epoch_millis)
-        })
 }
 
 fn append_retry_notice(input: &mut Value) -> Result<(), ProviderError> {

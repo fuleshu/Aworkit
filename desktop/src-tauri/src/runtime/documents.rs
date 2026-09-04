@@ -727,8 +727,8 @@ fn load_or_create_workflows(
         let migrated = if editable {
             let rescue_migrated = migrate_rescue_model_node(&mut document);
             let plan_migrated = migrate_standard_agent_plan_contract(&mut document);
-            let turn_limit_migrated = migrate_agent_turn_limits(&mut document);
-            rescue_migrated || plan_migrated || turn_limit_migrated
+            let aggregate_limits_migrated = migrate_agent_aggregate_limits(&mut document);
+            rescue_migrated || plan_migrated || aggregate_limits_migrated
         } else {
             false
         };
@@ -1198,10 +1198,11 @@ fn migrate_standard_agent_plan_contract(document: &mut Value) -> bool {
     true
 }
 
-/// Removes the obsolete Agent turn-limit setting. Agent loops now continue
+/// Removes obsolete Agent aggregate-limit settings. Agent loops now continue
 /// until the model answers, the user cancels, or a real runtime limit (such as
-/// deadline or context capacity) is reached.
-fn migrate_agent_turn_limits(document: &mut Value) -> bool {
+/// context capacity) is reached. Agent runs have no aggregate elapsed-time
+/// deadline; provider and individual tool calls remain independently bounded.
+fn migrate_agent_aggregate_limits(document: &mut Value) -> bool {
     let Some(nodes) = document.get_mut("nodes").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -1210,12 +1211,12 @@ fn migrate_agent_turn_limits(document: &mut Value) -> bool {
         if node.get("type").and_then(Value::as_str) != Some("agent") {
             continue;
         }
-        if node
+        if let Some(configuration) = node
             .get_mut("configuration")
             .and_then(Value::as_object_mut)
-            .is_some_and(|configuration| configuration.remove("maxTurns").is_some())
         {
-            changed = true;
+            changed |= configuration.remove("maxTurns").is_some();
+            changed |= configuration.remove("timeoutSeconds").is_some();
         }
     }
     changed
@@ -1447,7 +1448,7 @@ fn validate_agent_configuration(
     ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, and optional timeoutSeconds, instructions, reasoningEffort, and enableThinking"
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, and the ignored legacy timeoutSeconds field"
         ));
     }
     if config
@@ -1487,11 +1488,11 @@ fn validate_agent_configuration(
     }
     if let Some(timeout_seconds) = config.get("timeoutSeconds") {
         let timeout_seconds = timeout_seconds.as_u64().ok_or_else(|| {
-            format!("workflow node '{node_id}' agent timeoutSeconds must be an integer")
+            format!("workflow node '{node_id}' legacy timeoutSeconds must be an integer")
         })?;
         if !(30..=3_600).contains(&timeout_seconds) {
             return Err(format!(
-                "workflow node '{node_id}' agent timeoutSeconds must be 30..=3600"
+                "workflow node '{node_id}' legacy timeoutSeconds must be 30..=3600 when present"
             ));
         }
     }
@@ -2555,7 +2556,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_agent_turn_limit_is_removed_without_changing_other_configuration() {
+    fn legacy_agent_aggregate_limits_are_removed_without_changing_other_configuration() {
         let mut workflow = json!({
             "schemaVersion": 1,
             "nodes": [{
@@ -2565,22 +2566,28 @@ mod tests {
                     "modelTierId": "tier:balanced",
                     "toolIds": ["tool.todo"],
                     "maxTurns": 8,
+                    "timeoutSeconds": 30,
                     "instructions": "Keep working until done."
                 }
             }],
             "edges": []
         });
 
-        assert!(migrate_agent_turn_limits(&mut workflow));
+        assert!(migrate_agent_aggregate_limits(&mut workflow));
         assert!(
             workflow["nodes"][0]["configuration"]
                 .get("maxTurns")
+                .is_none()
+        );
+        assert!(
+            workflow["nodes"][0]["configuration"]
+                .get("timeoutSeconds")
                 .is_none()
         );
         assert_eq!(
             workflow["nodes"][0]["configuration"]["instructions"],
             "Keep working until done."
         );
-        assert!(!migrate_agent_turn_limits(&mut workflow));
+        assert!(!migrate_agent_aggregate_limits(&mut workflow));
     }
 }
