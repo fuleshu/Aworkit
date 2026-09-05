@@ -1,9 +1,10 @@
 import type { ChatIntent, ChatProjection } from "./types";
+import type { ImageAttachment } from "./images";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
 
 export interface ComposerState {
   readonly draft: string;
-  readonly attachments: readonly string[];
+  readonly attachments: readonly ImageAttachment[];
   readonly workflowId: string;
   readonly projectId: string | null;
   readonly imeComposing: boolean;
@@ -38,21 +39,22 @@ export function canSubmit(
   if (chat.recoveryPending)
     return "Resume the interrupted command before composing another input.";
   if (state.imeComposing) return "Finish IME composition before sending.";
-  if (state.draft.trim() === "") return "Enter a message before sending.";
+  if (state.draft.trim() === "" && state.attachments.length === 0)
+    return "Enter a message or add an image before sending.";
   if (chat.disabledReason !== undefined) return chat.disabledReason;
   if (["cancelled", "completed", "failed"].includes(chat.phase))
     return "This Chat is terminal. Start a new Chat to send another message.";
   if (!chat.lockedWorkflow) {
     if (state.workflowId === "")
       return "Select a saved workflow before sending.";
-    if (readiness.workflowReadinessError !== null && readiness.workflowReadinessError !== undefined)
+    if (
+      readiness.workflowReadinessError !== null &&
+      readiness.workflowReadinessError !== undefined
+    )
       return readiness.workflowReadinessError;
     if (readiness.workflowRequiresProject === null)
       return "Checking the saved workflow before sending.";
-    if (
-      readiness.workflowRequiresProject === true &&
-      state.projectId === null
-    )
+    if (readiness.workflowRequiresProject === true && state.projectId === null)
       return "Select a saved project before sending because the selected workflow binds project file tools.";
   }
   return null;
@@ -67,14 +69,21 @@ export function submitIntent(
   const reason = canSubmit(state, chat, readiness);
   if (reason !== null) throw new Error(reason);
   return chat.lockedWorkflow
-    ? { type: "enqueue", commandId, input: state.draft }
+    ? {
+        type: "enqueue",
+        commandId,
+        input: state.draft,
+        ...(state.attachments.length > 0
+          ? { attachments: state.attachments }
+          : {}),
+      }
     : {
         type: "start",
         commandId,
         workflowId: state.workflowId,
         projectId: state.projectId,
         input: state.draft,
-        attachments: [],
+        attachments: state.attachments,
       };
 }
 

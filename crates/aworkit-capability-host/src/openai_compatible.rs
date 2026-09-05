@@ -548,6 +548,18 @@ fn first_u64(metadata: &BTreeMap<String, Value>, keys: &[&str]) -> Option<u64> {
 
 fn metadata_capabilities(metadata: &BTreeMap<String, Value>) -> Vec<String> {
     let mut capabilities = Vec::new();
+    let input_modalities = metadata.get("input_modalities").or_else(|| {
+        metadata
+            .get("architecture")
+            .and_then(|value| value.get("input_modalities"))
+    });
+    if metadata.get("supports_vision").and_then(Value::as_bool) == Some(true)
+        || input_modalities
+            .and_then(Value::as_array)
+            .is_some_and(|values| values.iter().any(|value| value.as_str() == Some("image")))
+    {
+        capabilities.push("vision".into());
+    }
     if let Some(value) = metadata.get("capabilities") {
         match value {
             Value::Array(values) => capabilities.extend(
@@ -690,41 +702,32 @@ fn valid_model(value: &str) -> bool {
 }
 
 fn normalize_messages(input: &Value) -> Result<Value, OpenAiCompatibleProviderError> {
-    let messages = match input {
-        Value::String(text) if !text.is_empty() => serde_json::json!([{
-            "role": "user",
-            "content": text,
-        }]),
-        Value::Array(messages) if !messages.is_empty() => Value::Array(messages.clone()),
-        Value::Object(object) => {
-            if let Some(Value::Array(messages)) = object.get("messages") {
-                if messages.is_empty() {
-                    return Err(OpenAiCompatibleProviderError::InvalidRequest);
-                }
-                Value::Array(messages.clone())
-            } else if object.contains_key("role") && object.contains_key("content") {
-                Value::Array(vec![input.clone()])
-            } else {
-                return Err(OpenAiCompatibleProviderError::InvalidRequest);
-            }
-        }
-        _ => return Err(OpenAiCompatibleProviderError::InvalidRequest),
-    };
-    let Value::Array(entries) = &messages else {
-        return Err(OpenAiCompatibleProviderError::InvalidRequest);
-    };
-    if entries.iter().any(|entry| {
-        !entry.as_object().is_some_and(|entry| {
-            entry.get("role").and_then(Value::as_str).is_some() && entry.contains_key("content")
-        })
-    }) {
-        return Err(OpenAiCompatibleProviderError::InvalidRequest);
-    }
-    Ok(messages)
+    use crate::model_tools::{ModelInputRoleV1, normalize_model_input};
+    let messages =
+        normalize_model_input(input).map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
+    messages.into_iter().map(|message| {
+        let content = crate::model_images::image_content(&message.content, &message.images, "openai")
+            .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
+        Ok(serde_json::json!({"role": match message.role {
+            ModelInputRoleV1::System => "system", ModelInputRoleV1::User => "user", ModelInputRoleV1::Assistant => "assistant",
+        }, "content":content}))
+    }).collect::<Result<Vec<_>, _>>().map(Value::Array)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn vision_discovery_uses_advertised_input_modalities() {
+        for metadata in [
+            serde_json::json!({"supports_vision":true}),
+            serde_json::json!({"input_modalities":["text","image"]}),
+            serde_json::json!({"architecture":{"input_modalities":["image"]}}),
+        ] {
+            let metadata = serde_json::from_value(metadata).unwrap();
+            assert!(super::metadata_capabilities(&metadata).contains(&"vision".to_owned()));
+        }
+        assert!(super::metadata_capabilities(&Default::default()).is_empty());
+    }
     use std::collections::BTreeMap;
     use std::io::{Read as _, Write as _};
     use std::net::{TcpListener, TcpStream};

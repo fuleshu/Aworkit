@@ -223,6 +223,7 @@ pub struct ModelDispatchEvidenceV1 {
 pub struct FrozenModelGateway {
     providers: Vec<Box<dyn ProviderEnginePortV1>>,
     observer: Option<Arc<dyn ModelEventObserverV1>>,
+    image_resolver: Option<Arc<dyn crate::model_images::ModelImageResolver>>,
 }
 
 impl FrozenModelGateway {
@@ -231,7 +232,17 @@ impl FrozenModelGateway {
         Self {
             providers,
             observer: None,
+            image_resolver: None,
         }
+    }
+
+    /// Supplies the profile-local image store for already approved references.
+    pub fn with_image_resolver(
+        mut self,
+        resolver: Arc<dyn crate::model_images::ModelImageResolver>,
+    ) -> Self {
+        self.image_resolver = Some(resolver);
+        self
     }
 
     /// Adds a non-authoritative live observer while preserving the exact
@@ -303,7 +314,13 @@ impl FrozenModelGateway {
                 events.push(event);
                 Ok(())
             };
-            let acceptance = provider.execute_cancellable(request, cancellation, &mut emit)?;
+            let mut materialized = request.clone();
+            materialized.input = crate::model_images::materialize_images(
+                &request.input,
+                self.image_resolver.as_deref(),
+            )?;
+            let acceptance =
+                provider.execute_cancellable(&materialized, cancellation, &mut emit)?;
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     if events
@@ -384,8 +401,13 @@ impl FrozenModelGateway {
                 events.push(event);
                 Ok(())
             };
+            let mut materialized = request.clone();
+            materialized.input = crate::model_images::materialize_images(
+                &request.input,
+                self.image_resolver.as_deref(),
+            )?;
             let acceptance =
-                provider.execute_tool_turn_cancellable(request, cancellation, &mut emit)?;
+                provider.execute_tool_turn_cancellable(&materialized, cancellation, &mut emit)?;
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     validate_tool_events(request, &events)?;

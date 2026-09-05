@@ -40,7 +40,7 @@ describe("Milestone 08 Chat and Run details experience", () => {
   it("creates first-send and queued-input intents while retaining drafts until a receipt", () => {
     const draft = updateComposer(emptyComposer, {
       draft: "hello",
-      attachments: ["brief.md"],
+      attachments: [],
       projectId: "project.atlas",
     });
     expect(submitIntent(draft, draftChat, "chat.1")).toEqual({

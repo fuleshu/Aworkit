@@ -753,11 +753,17 @@ impl<'a> PassMachine<'a> {
         let mut messages = Vec::new();
         if !instructions.trim().is_empty() {
             messages.push(WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "system".into(),
                 content: instructions.to_owned(),
             });
         }
         messages.push(WorkflowMessageV1 {
+            images: self
+                .conversation
+                .iter()
+                .flat_map(|message| message.images.clone())
+                .collect(),
             role: "user".into(),
             content: context_text,
         });
@@ -828,6 +834,7 @@ impl<'a> PassMachine<'a> {
                 system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
             }
             messages.push(WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "system".into(),
                 content: system,
             });
@@ -997,6 +1004,7 @@ impl<'a> PassMachine<'a> {
                 system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
             }
             messages.push(WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "system".into(),
                 content: system,
             });

@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
 import { ActorBubble } from "./ActorBubble";
+import { ImageAttachments } from "./ImageAttachments";
 import { toConversationCard } from "./conversation";
 import {
   isModelCallSpan,
@@ -204,6 +205,7 @@ export function TimelineCard({
         aria-label={`${item.title} message`}
       >
         <div className="message-body user-speech-bubble">
+          <ImageAttachments images={item.attachments ?? []} />
           <p>{item.body}</p>
           <div className="message-byline">
             <small>{item.title} · {item.createdAt}</small>

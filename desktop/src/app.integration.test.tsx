@@ -47,11 +47,11 @@ describe("honest JSON-workflow desktop slice", () => {
       }),
     ).toHaveValue("workflow.standard-agent");
     expect(
-      screen.getByRole("button", { name: "Add attachment references" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "Add attachment" }),
+    ).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: "Add attachment references" }),
-    ).toHaveAttribute("title", "Attachments are unsupported in this build");
+      screen.getByRole("button", { name: "Add attachment" }),
+    ).toHaveAttribute("title", "Add images");
     expect(screen.getByText(/No messages yet/)).toBeVisible();
     const runDetails = screen.getByRole("complementary", {
       name: "Run details",

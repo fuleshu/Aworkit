@@ -29,8 +29,8 @@ use aworkit_local_store::{
     CommitBatch, Deduplication, Event, LocalHistoryStore, OutboxEntry, StoreError,
 };
 use aworkit_protocol::{
-    AttestedExtensionSetV1, HistoryBackendV1, ProcessGeneration, SchemaVersion, StableId,
-    WorkerBudgetV1, WorkerExecutorKindV1, MAX_SAFE_WIRE_INTEGER,
+    AttestedExtensionSetV1, HistoryBackendV1, MAX_SAFE_WIRE_INTEGER, ProcessGeneration,
+    SchemaVersion, StableId, WorkerBudgetV1, WorkerExecutorKindV1,
     WorkerInvocationProposalV1 as WorkerInvocationProposalContractV1, WorkerNodeV1, WorkerPortV1,
     WorkerTransitionV1, attested_extension_set_hash_v1,
 };
@@ -162,6 +162,8 @@ impl ProviderProtocolV1 {
 pub struct WorkflowMessageV1 {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<aworkit_capability_host::model_images::ImageAttachmentV1>,
 }
 
 /// Frozen binding for an installed native provider protocol.
@@ -690,6 +692,7 @@ impl WorkflowExecutionPipeline {
         if self.ledger.settlement(&broker_invocation_id)?.is_none() {
             self.prepare_pending_leases(&broker, &lease_authority)?;
             let host_port = PipelineHostPort {
+                images: super::images::ChatImageStore::new(&self.root),
                 host: self.host.clone(),
                 projects: self.projects.clone(),
                 records: self.records.clone(),
@@ -951,8 +954,11 @@ impl WorkflowExecutionPipeline {
             .ensure_healthy()
             .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
-        let gateway =
-            Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
+        let gateway = Arc::new(
+            FrozenModelGateway::new(vec![provider])
+                .with_image_resolver(Arc::new(super::images::ChatImageStore::new(&self.root)))
+                .with_observer(model_observer.clone()),
+        );
         let workflow = prepared
             .worker_proposal
             .payload
@@ -1875,6 +1881,7 @@ impl InvocationLeasePortV1 for PreparedLeaseIssuer {
 }
 
 struct PipelineHostPort {
+    images: super::images::ChatImageStore,
     host: Arc<CapabilityHost>,
     projects: ProjectCoordinator,
     records: Arc<PipelineRecordStore>,
@@ -1973,6 +1980,7 @@ impl ApprovedHostDispatchPortV1 for PipelineHostPort {
             .sign(self.core_key.as_slice())
             .map_err(|_| BrokerError::Unavailable)?;
         let dispatcher = ModelInvocationDispatcher {
+            images: self.images.clone(),
             projects: self.projects.clone(),
             records: self.records.clone(),
             descriptor: descriptor.clone(),
@@ -2017,6 +2025,7 @@ impl ApprovedHostDispatchPortV1 for PipelineHostPort {
 }
 
 struct ModelInvocationDispatcher {
+    images: super::images::ChatImageStore,
     projects: ProjectCoordinator,
     records: Arc<PipelineRecordStore>,
     descriptor: CapabilityDescriptor,
@@ -2236,8 +2245,11 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             .ensure_healthy()
             .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
-        let gateway =
-            Arc::new(FrozenModelGateway::new(vec![provider]).with_observer(model_observer.clone()));
+        let gateway = Arc::new(
+            FrozenModelGateway::new(vec![provider])
+                .with_image_resolver(Arc::new(self.images.clone()))
+                .with_observer(model_observer.clone()),
+        );
         let workflow = envelope
             .payload
             .get("config")
@@ -2444,9 +2456,7 @@ impl PipelineRecordStore {
             .lock()
             .map_err(|_| WorkflowPipelineError::Store("record lock poisoned".into()))?;
         for value in self.execution_values()? {
-            if value.get("requestId").and_then(Value::as_str)
-                == Some(record.request_id.as_str())
-            {
+            if value.get("requestId").and_then(Value::as_str) == Some(record.request_id.as_str()) {
                 let existing = decode_execution(value)?;
                 return if existing == *record {
                     Ok(true)
@@ -2593,10 +2603,10 @@ impl PipelineRecordStore {
         run_id: &StableId,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
         for value in self.execution_values()? {
-            let chat_matches = value.pointer("/snapshot/chatId").and_then(Value::as_str)
-                == Some(chat_id.as_str());
-            let run_matches = value.pointer("/snapshot/runId").and_then(Value::as_str)
-                == Some(run_id.as_str());
+            let chat_matches =
+                value.pointer("/snapshot/chatId").and_then(Value::as_str) == Some(chat_id.as_str());
+            let run_matches =
+                value.pointer("/snapshot/runId").and_then(Value::as_str) == Some(run_id.as_str());
             if chat_matches || run_matches {
                 let record = decode_execution(value)?;
                 if record.snapshot.chat_id != *chat_id || record.snapshot.run_id != *run_id {
@@ -3338,7 +3348,8 @@ fn validate_request(
     }
     if request.messages.iter().any(|message| {
         !matches!(message.role.as_str(), "system" | "user" | "assistant")
-            || message.content.is_empty()
+            || (message.content.is_empty() && message.images.is_empty())
+            || (!message.images.is_empty() && message.role != "user")
             || message.content.contains('\0')
     }) || request
         .messages
@@ -3349,6 +3360,14 @@ fn validate_request(
             "messages require supported roles, non-empty content, and a final user turn".to_owned(),
         ));
     }
+    aworkit_capability_host::model_images::validate_image_attachments(
+        &request
+            .messages
+            .iter()
+            .flat_map(|message| message.images.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|e| WorkflowPipelineError::InvalidInput(e.to_string()))?;
     // Node instructions belong to the frozen workflow JSON. Conversation
     // history cannot inject a competing provider system layer.
     if request
@@ -3636,8 +3655,8 @@ mod tests {
     use crate::runtime::tool_loop::{
         FILE_EDIT_CAPABILITY_ID, FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID,
         FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, MAXIMUM_TOOL_RESULT_BYTES,
-        SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_FETCH_CAPABILITY_ID,
-        WEB_EXTRACT_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
+        SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_EXTRACT_CAPABILITY_ID,
+        WEB_FETCH_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
     };
     use aworkit_capability_host::{
         McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
@@ -3652,6 +3671,7 @@ mod tests {
     use super::*;
 
     mod credentialed_web_search;
+    mod image_chat;
 
     type ToolPipelineSetupV1 = (
         WorkflowExecutionPipeline,
@@ -4190,6 +4210,7 @@ mod tests {
                 credential: Some(metadata),
             },
             vec![WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "user".to_owned(),
                 content: "Please prove the pipeline works.".to_owned(),
             }],
@@ -4414,10 +4435,12 @@ mod tests {
         follow_up.request_id = stable("command.pipeline-tool-follow-up").expect("follow-up");
         follow_up.messages.extend([
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "assistant".into(),
                 content: "tool loop complete".into(),
             },
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "user".into(),
                 content: "read it again".into(),
             },
@@ -4678,16 +4701,19 @@ mod tests {
             .flat_map(|ordinal| {
                 [
                     WorkflowMessageV1 {
+                        images: Vec::new(),
                         role: "user".into(),
                         content: format!("{ordinal}:{}", "u".repeat(31 * 1024)),
                     },
                     WorkflowMessageV1 {
+                        images: Vec::new(),
                         role: "assistant".into(),
                         content: "a".repeat(31 * 1024),
                     },
                 ]
             })
             .chain(std::iter::once(WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "user".into(),
                 content: "final".into(),
             }))
@@ -4920,14 +4946,17 @@ mod tests {
         follow_up.frozen_context_hash = first_request.frozen_context_hash.clone();
         follow_up.messages = vec![
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "user".into(),
                 content: "Please prove the pipeline works.".into(),
             },
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "assistant".into(),
                 content: "working answer".into(),
             },
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "user".into(),
                 content: "follow up".into(),
             },
@@ -5115,8 +5144,7 @@ mod tests {
         let root = TempDir::new().expect("root");
         let (pipeline, _credential_store, metadata, calls, _) =
             setup(&root, ScriptedBehavior::Succeed);
-        let legacy_request_id =
-            stable("command.legacy-incompatible").expect("legacy request ID");
+        let legacy_request_id = stable("command.legacy-incompatible").expect("legacy request ID");
         pipeline
             .records
             .append_record_without_lock(
@@ -5203,6 +5231,7 @@ mod tests {
         mismatched.messages.insert(
             0,
             WorkflowMessageV1 {
+                images: Vec::new(),
                 role: "system".into(),
                 content: "different system layer".into(),
             },

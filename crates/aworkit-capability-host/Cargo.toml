@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22"
 aworkit-process = { path = "../aworkit-process" }
 aworkit-protocol = { path = "../aworkit-protocol" }
 cap-std = "4.0.3"

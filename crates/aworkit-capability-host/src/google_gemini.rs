@@ -439,13 +439,6 @@ struct ModelEntry {
     supported_generation_methods: Vec<String>,
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InputMessage {
-    role: String,
-    content: String,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateContentRequest {
@@ -472,6 +465,12 @@ struct GeminiContent {
 struct GeminiPart {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    #[serde(
+        default,
+        rename = "inlineData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    inline_data: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -504,60 +503,39 @@ struct NormalizedCompletion {
 fn normalize_messages(
     input: &Value,
 ) -> Result<(Option<GeminiContent>, Vec<GeminiContent>), GoogleGeminiProviderError> {
-    let messages = input_messages(input)?;
+    use crate::model_tools::{ModelInputRoleV1, normalize_model_input};
+    let messages =
+        normalize_model_input(input).map_err(|_| GoogleGeminiProviderError::InvalidRequest)?;
     let mut system = Vec::new();
     let mut contents = Vec::new();
-    let mut saw_conversation = false;
     for message in messages {
-        if message.content.is_empty() {
-            return Err(GoogleGeminiProviderError::InvalidRequest);
+        if message.role == ModelInputRoleV1::System {
+            system.push(message.content);
+            continue;
         }
-        match message.role.as_str() {
-            "system" if !saw_conversation => system.push(message.content),
-            "user" | "assistant" => {
-                saw_conversation = true;
-                contents.push(GeminiContent {
-                    role: Some(if message.role == "assistant" {
-                        "model".to_owned()
-                    } else {
-                        "user".to_owned()
-                    }),
-                    parts: vec![GeminiPart {
-                        text: Some(message.content),
-                    }],
-                });
-            }
-            _ => return Err(GoogleGeminiProviderError::InvalidRequest),
-        }
-    }
-    if contents.is_empty()
-        || contents.last().and_then(|content| content.role.as_deref()) != Some("user")
-    {
-        return Err(GoogleGeminiProviderError::InvalidRequest);
+        let parts = crate::model_images::image_content(&message.content, &message.images, "gemini")
+            .map_err(|_| GoogleGeminiProviderError::InvalidRequest)?;
+        contents.push(GeminiContent {
+            role: Some(
+                if message.role == ModelInputRoleV1::User {
+                    "user"
+                } else {
+                    "model"
+                }
+                .into(),
+            ),
+            parts: serde_json::from_value(parts)
+                .map_err(|_| GoogleGeminiProviderError::InvalidRequest)?,
+        });
     }
     let system_instruction = (!system.is_empty()).then(|| GeminiContent {
         role: None,
         parts: vec![GeminiPart {
             text: Some(system.join("\n\n")),
+            inline_data: None,
         }],
     });
     Ok((system_instruction, contents))
-}
-
-fn input_messages(input: &Value) -> Result<Vec<InputMessage>, GoogleGeminiProviderError> {
-    let value = match input {
-        Value::String(text) => serde_json::json!([{"role":"user","content":text}]),
-        Value::Array(_) => input.clone(),
-        Value::Object(object) if object.contains_key("messages") => object
-            .get("messages")
-            .cloned()
-            .ok_or(GoogleGeminiProviderError::InvalidRequest)?,
-        Value::Object(object) if object.contains_key("role") && object.contains_key("content") => {
-            Value::Array(vec![input.clone()])
-        }
-        _ => return Err(GoogleGeminiProviderError::InvalidRequest),
-    };
-    serde_json::from_value(value).map_err(|_| GoogleGeminiProviderError::InvalidRequest)
 }
 
 fn valid_identity(value: &str) -> bool {

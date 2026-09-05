@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from "./corePort";
+import { imageAttachmentsSchema } from "./images";
 import type { TimelineItem, TimelineKind } from "./types";
 
 type FactPayload = Record<string, unknown>;
@@ -398,6 +399,7 @@ function projectFact(
     return baseItem(event, fact, {
       kind: "message",
       title: event.kind === "message.user" ? "You" : "Aworkit",
+      attachments: imageAttachmentsSchema.parse(fact.attachments ?? []),
       status: "completed",
     });
   }
@@ -506,6 +508,7 @@ function baseItem(
   event: RuntimeEvent,
   fact: FactPayload,
   display: {
+    readonly attachments?: TimelineItem["attachments"];
     readonly kind: TimelineKind;
     readonly title: string;
     readonly status: string;
@@ -515,6 +518,7 @@ function baseItem(
     id: event.eventId,
     sequence: event.sequence,
     kind: display.kind,
+    attachments: display.attachments,
     actor:
       event.kind === "message.assistant" || event.kind.startsWith("model.")
         ? "model"

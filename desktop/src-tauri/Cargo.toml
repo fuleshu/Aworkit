@@ -9,6 +9,9 @@ edition = "2024"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+tempfile = "3"
 aworkit-capability-host = { path = "../../crates/aworkit-capability-host" }
 aworkit-local-store = { path = "../../crates/aworkit-local-store" }
 aworkit-process = { path = "../../crates/aworkit-process" }

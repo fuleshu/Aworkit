@@ -1,0 +1,110 @@
+.image-attachment-menu {
+  position: relative;
+  align-self: end;
+}
+.image-attachment-popup {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  min-width: 170px;
+  padding: 5px;
+  border: 1px solid var(--aw-control);
+  border-radius: 10px;
+  background: var(--aw-panel);
+  box-shadow: 0 8px 24px #0004;
+}
+.image-attachment-popup button {
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+}
+.image-file-picker {
+  display: none;
+}
+.chat-image-list {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  max-height: 230px;
+  overflow-y: auto;
+}
+.chat-image-thumbnail {
+  position: relative;
+  width: 112px;
+  flex: 0 0 112px;
+}
+.chat-image-open {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  width: 100%;
+  height: 108px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+.chat-image-open img {
+  width: 100%;
+  height: 78px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.chat-image-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.chat-image-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--aw-panel);
+}
+.chat-image-error {
+  color: var(--aw-danger);
+  font-size: 12px;
+  margin: 3px 0;
+}
+.chat-image-dialog {
+  max-width: 94vw;
+  max-height: 94vh;
+  padding: 12px;
+  border: 1px solid var(--aw-control);
+  border-radius: 12px;
+  color: inherit;
+  background: var(--aw-panel);
+}
+.chat-image-dialog::backdrop {
+  background: #000a;
+}
+.chat-image-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 8px;
+}
+.chat-image-dialog img {
+  display: block;
+  max-width: 88vw;
+  max-height: 80vh;
+  object-fit: contain;
+}
+.image-attachment-menu > button {
+  width: 28px;
+  padding: 3px;
+  border: 0;
+  background: transparent;
+}
+.chat-image-remove {
+  min-height: 23px;
+}

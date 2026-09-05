@@ -5,30 +5,30 @@ use serde_json::{Map, Value, json};
 use crate::{
     ModelAssistantContentV1, ModelToolDefinitionV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderError,
-    model_tools::{TextMessageRoleV1, normalize_text_input, normalize_tool_call},
+    model_tools::{ModelInputRoleV1, normalize_model_input, normalize_tool_call},
 };
 
 pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value, ProviderError> {
-    let base = normalize_text_input(&request.input)?;
+    let base = normalize_model_input(&request.input)?;
     let system_parts = base
         .iter()
-        .filter(|message| message.role == TextMessageRoleV1::System)
+        .filter(|message| message.role == ModelInputRoleV1::System)
         .map(|message| json!({"text":message.content}))
         .collect::<Vec<_>>();
     let mut contents = base
         .into_iter()
-        .filter(|message| message.role != TextMessageRoleV1::System)
+        .filter(|message| message.role != ModelInputRoleV1::System)
         .map(|message| {
-            json!({
+            Ok(json!({
                 "role": match message.role {
-                    TextMessageRoleV1::User => "user",
-                    TextMessageRoleV1::Assistant => "model",
-                    TextMessageRoleV1::System => unreachable!("system messages were filtered"),
+                    ModelInputRoleV1::User => "user",
+                    ModelInputRoleV1::Assistant => "model",
+                    ModelInputRoleV1::System => unreachable!("system messages were filtered"),
                 },
-                "parts": [{"text":message.content}],
-            })
+                "parts": crate::model_images::image_content(&message.content, &message.images, "gemini")?,
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ProviderError>>()?;
 
     for exchange in &request.exchanges {
         let model_parts = exchange

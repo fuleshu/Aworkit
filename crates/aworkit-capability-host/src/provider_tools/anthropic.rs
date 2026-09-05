@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     ModelAssistantContentV1, ModelToolDefinitionV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderError,
-    model_tools::{TextMessageRoleV1, normalize_text_input, normalize_tool_call, result_text},
+    model_tools::{ModelInputRoleV1, normalize_model_input, normalize_tool_call, result_text},
 };
 
 pub(crate) fn anthropic_tool_request(
@@ -13,27 +13,27 @@ pub(crate) fn anthropic_tool_request(
     maximum_output_tokens: u32,
     request: &ModelToolRequestV1,
 ) -> Result<Value, ProviderError> {
-    let base = normalize_text_input(&request.input)?;
+    let base = normalize_model_input(&request.input)?;
     let system = base
         .iter()
-        .filter(|message| message.role == TextMessageRoleV1::System)
+        .filter(|message| message.role == ModelInputRoleV1::System)
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
     let mut messages = base
         .into_iter()
-        .filter(|message| message.role != TextMessageRoleV1::System)
+        .filter(|message| message.role != ModelInputRoleV1::System)
         .map(|message| {
-            json!({
+            Ok(json!({
                 "role": match message.role {
-                    TextMessageRoleV1::User => "user",
-                    TextMessageRoleV1::Assistant => "assistant",
-                    TextMessageRoleV1::System => unreachable!("system messages were filtered"),
+                    ModelInputRoleV1::User => "user",
+                    ModelInputRoleV1::Assistant => "assistant",
+                    ModelInputRoleV1::System => unreachable!("system messages were filtered"),
                 },
-                "content": message.content,
-            })
+                "content": crate::model_images::image_content(&message.content, &message.images, "anthropic")?,
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ProviderError>>()?;
 
     for exchange in &request.exchanges {
         let assistant = exchange

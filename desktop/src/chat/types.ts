@@ -1,3 +1,4 @@
+import type { ImageAttachment } from "./images";
 /** Aworkit-owned, immutable models consumed by the desktop Chat features. */
 export type RunPhase =
   | "draft"
@@ -73,6 +74,7 @@ export type TimelineKind =
 export type TimelineActor = "model" | "subagent";
 
 export interface TimelineItem {
+  readonly attachments?: readonly ImageAttachment[];
   readonly id: string;
   /** First canonical sequence represented by this item. */
   readonly sequence?: number;
@@ -136,12 +138,13 @@ export type ChatIntent =
       readonly workflowId: string;
       readonly projectId: string | null;
       readonly input: string;
-      readonly attachments: readonly string[];
+      readonly attachments: readonly ImageAttachment[];
     }
   | {
       readonly type: "enqueue";
       readonly commandId: string;
       readonly input: string;
+      readonly attachments?: readonly ImageAttachment[];
     }
   | {
       readonly type:

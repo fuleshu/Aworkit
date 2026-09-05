@@ -159,6 +159,7 @@ pub(crate) struct PendingChatCommandV1 {
 pub(crate) struct ConversationMessage {
     pub role: String,
     pub content: String,
+    pub images: Vec<aworkit_capability_host::model_images::ImageAttachmentV1>,
 }
 
 #[derive(Clone)]
@@ -432,14 +433,14 @@ impl ChatHistory {
 
     pub(crate) fn conversation(&self) -> Result<Vec<ConversationMessage>, String> {
         let events = self.events()?;
-        Ok(events
+        events
             .into_iter()
             .filter_map(|event| match event.kind.as_str() {
-                "message.user" => message_from_event(event, "user"),
-                "message.assistant" => message_from_event(event, "assistant"),
+                "message.user" => Some(message_from_event(event, "user")),
+                "message.assistant" => Some(message_from_event(event, "assistant")),
                 _ => None,
             })
-            .collect())
+            .collect()
     }
 
     pub(crate) fn current_chat_identity(&self) -> Result<Option<ChatIdentityV1>, String> {
@@ -488,14 +489,10 @@ impl ChatHistory {
             .iter()
             .filter(|event| event.kind == "approval.requested")
             .any(|requested| {
-                let decision_id = requested
-                    .payload
-                    .get("decisionId")
-                    .and_then(Value::as_str);
+                let decision_id = requested.payload.get("decisionId").and_then(Value::as_str);
                 !current.iter().any(|resolved| {
                     resolved.kind == "approval.resolved"
-                        && resolved.payload.get("decisionId").and_then(Value::as_str)
-                            == decision_id
+                        && resolved.payload.get("decisionId").and_then(Value::as_str) == decision_id
                 })
             });
         if open_spans == 0 && !open_approval {
@@ -1562,10 +1559,7 @@ fn projected_phase(events: &[Event]) -> &'static str {
         });
     if has_open_approval {
         "awaiting_approval"
-    } else if events
-        .iter()
-        .any(|event| event.kind == "chat.turn_stopped")
-    {
+    } else if events.iter().any(|event| event.kind == "chat.turn_stopped") {
         "waiting_input"
     } else if events.iter().any(|event| event.kind == "message.assistant") {
         "waiting_input"
@@ -1695,16 +1689,8 @@ fn validate_frozen_context_record(
         return Err("stored frozen Chat context failed integrity validation".into());
     }
     if let Some(command) = &context.pending_start_command {
-        let input = command
-            .payload
-            .get("input")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty());
-        let attachments_are_empty = match command.payload.get("attachments") {
-            None => true,
-            Some(Value::Array(values)) => values.is_empty(),
-            Some(_) => false,
-        };
+        let input = super::images::command_text(&command.payload).ok();
+        let attachments_are_valid = super::images::command_images(&command.payload).is_ok();
         let selected_project_id = match command.payload.get("projectId") {
             None | Some(Value::Null) => None,
             Some(Value::String(value)) if !value.trim().is_empty() => Some(value.as_str()),
@@ -1719,7 +1705,7 @@ fn validate_frozen_context_record(
             || input
                 .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
                 .unwrap_or(true)
-            || !attachments_are_empty
+            || !attachments_are_valid
             || selected_project_id
                 != context
                     .project
@@ -1798,16 +1784,8 @@ fn validate_frozen_context_record(
 
 fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), String> {
     let command = &record.command;
-    let input = command
-        .payload
-        .get("input")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty());
-    let attachments_are_empty = match command.payload.get("attachments") {
-        None => true,
-        Some(Value::Array(values)) => values.is_empty(),
-        Some(_) => false,
-    };
+    let input = super::images::command_text(&command.payload).ok();
+    let attachments_are_valid = super::images::command_images(&command.payload).is_ok();
     let action_shape_is_valid = match command.action.as_str() {
         "start" => {
             command
@@ -1835,7 +1813,7 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         || input
             .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
             .unwrap_or(true)
-        || !attachments_are_empty
+        || !attachments_are_valid
     {
         return Err("stored pending Chat command failed integrity validation".into());
     }
@@ -1865,15 +1843,21 @@ fn is_sha256(value: &str) -> bool {
         && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn message_from_event(event: Event, role: &str) -> Option<ConversationMessage> {
-    event
+fn message_from_event(event: Event, role: &str) -> Result<ConversationMessage, String> {
+    let body = event
         .payload
         .get("body")
         .and_then(Value::as_str)
-        .map(|body| ConversationMessage {
-            role: role.into(),
-            content: body.into(),
-        })
+        .ok_or("Stored Chat message has no text body")?;
+    let images = super::images::command_images(&event.payload)?;
+    if role != "user" && !images.is_empty() {
+        return Err("Stored assistant message contains user attachments".into());
+    }
+    Ok(ConversationMessage {
+        role: role.into(),
+        content: body.into(),
+        images,
+    })
 }
 
 #[cfg(test)]

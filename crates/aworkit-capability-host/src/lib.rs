@@ -48,6 +48,7 @@ mod isolation;
 mod materialize;
 mod mcp;
 mod model;
+pub mod model_images;
 mod model_result;
 mod model_tools;
 mod normalize;

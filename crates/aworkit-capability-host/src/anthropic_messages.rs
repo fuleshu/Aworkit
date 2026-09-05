@@ -428,7 +428,7 @@ struct ModelEntry {
 #[serde(deny_unknown_fields)]
 struct InputMessage {
     role: String,
-    content: String,
+    content: Value,
 }
 
 #[derive(Serialize)]
@@ -475,43 +475,32 @@ struct NormalizedCompletion {
 fn normalize_messages(
     input: &Value,
 ) -> Result<(Option<String>, Vec<InputMessage>), AnthropicMessagesProviderError> {
-    let messages = input_messages(input)?;
+    use crate::model_tools::{ModelInputRoleV1, normalize_model_input};
+    let messages =
+        normalize_model_input(input).map_err(|_| AnthropicMessagesProviderError::InvalidRequest)?;
     let mut system = Vec::new();
     let mut wire = Vec::new();
-    let mut saw_conversation = false;
     for message in messages {
-        if message.content.is_empty() {
-            return Err(AnthropicMessagesProviderError::InvalidRequest);
+        if message.role == ModelInputRoleV1::System {
+            system.push(message.content);
+            continue;
         }
-        match message.role.as_str() {
-            "system" if !saw_conversation => system.push(message.content),
-            "user" | "assistant" => {
-                saw_conversation = true;
-                wire.push(message);
+        wire.push(InputMessage {
+            role: if message.role == ModelInputRoleV1::User {
+                "user"
+            } else {
+                "assistant"
             }
-            _ => return Err(AnthropicMessagesProviderError::InvalidRequest),
-        }
-    }
-    if wire.is_empty() || wire.last().is_none_or(|message| message.role != "user") {
-        return Err(AnthropicMessagesProviderError::InvalidRequest);
+            .into(),
+            content: crate::model_images::image_content(
+                &message.content,
+                &message.images,
+                "anthropic",
+            )
+            .map_err(|_| AnthropicMessagesProviderError::InvalidRequest)?,
+        });
     }
     Ok(((!system.is_empty()).then(|| system.join("\n\n")), wire))
-}
-
-fn input_messages(input: &Value) -> Result<Vec<InputMessage>, AnthropicMessagesProviderError> {
-    let value = match input {
-        Value::String(text) => serde_json::json!([{"role":"user","content":text}]),
-        Value::Array(_) => input.clone(),
-        Value::Object(object) if object.contains_key("messages") => object
-            .get("messages")
-            .cloned()
-            .ok_or(AnthropicMessagesProviderError::InvalidRequest)?,
-        Value::Object(object) if object.contains_key("role") && object.contains_key("content") => {
-            Value::Array(vec![input.clone()])
-        }
-        _ => return Err(AnthropicMessagesProviderError::InvalidRequest),
-    };
-    serde_json::from_value(value).map_err(|_| AnthropicMessagesProviderError::InvalidRequest)
 }
 
 fn valid_identity(value: &str) -> bool {

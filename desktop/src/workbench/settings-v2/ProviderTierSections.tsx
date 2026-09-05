@@ -612,6 +612,12 @@ function ModelEditor({
         />
         Model enabled
       </label>
+      <label className="switch-label" htmlFor={`${provider.id}-${model.id}-vision`}>
+        <input id={`${provider.id}-${model.id}-vision`} type="checkbox" checked={model.capabilities.includes("vision")}
+          title="Enable only if this model supports image input. New Chats can send attached images with the message."
+          onChange={(event) => onChange({ ...model, capabilities: event.target.checked ? [...new Set([...model.capabilities, "vision"])] : model.capabilities.filter((capability) => capability !== "vision") })} />
+        Vision (image input)
+      </label>
       <JsonObjectField
         id={`${provider.id}-${model.id}-parameters`}
         label="Provider parameters"
@@ -955,7 +961,9 @@ function mergeDiscoveredModels(
       enabled: existing >= 0 ? result[existing]!.enabled : false,
       contextWindow: remote.contextWindow,
       maxOutputTokens: remote.maxOutputTokens,
-      capabilities: [...remote.capabilities],
+      // Catalogs such as vLLM often omit modality metadata. Keep an explicit
+      // saved Vision selection when refreshing that incomplete catalog.
+      capabilities: [...new Set([...remote.capabilities, ...(existing >= 0 && result[existing]!.capabilities.includes("vision") ? ["vision"] : [])])],
       parameters: existing >= 0 ? result[existing]!.parameters : {},
     };
     if (existing >= 0) result[existing] = next;

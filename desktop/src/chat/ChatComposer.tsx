@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ImageAttachmentMenu, ImageAttachments } from "./ImageAttachments";
+import { useChatImages } from "./useChatImages";
 import {
   canSubmit,
   emptyComposer,
@@ -66,11 +68,11 @@ export function ChatComposer({
     ...emptyComposer,
     workflowId: chat.lockedWorkflow
       ? (chat.workflowId ?? "")
-      : defaultWorkflowId ??
+      : (defaultWorkflowId ??
         (workflows === undefined
           ? bundledDefaultWorkflowId
           : workflowOptions[0]?.id) ??
-        "",
+        ""),
   }));
   useEffect(() => {
     onWorkflowChange?.(state.workflowId);
@@ -80,19 +82,26 @@ export function ChatComposer({
     typeof submitIntent
   > | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const commandPending = pending || submitting;
   const edit = (patch: Parameters<typeof updateComposer>[1]) => {
     setRetryIntent(null);
     setState((current) => updateComposer(current, patch));
   };
+  const {
+    addFiles,
+    importing,
+    error: imageError,
+  } = useChatImages(state.attachments, (attachments) => edit({ attachments }));
+  const commandPending = pending || submitting || importing;
   const disabledReason = stale
     ? "Reconnect and resynchronize before sending."
-    : commandPending
-      ? "The previous command is awaiting a committed core event."
-      : canSubmit(state, chat, {
-          workflowRequiresProject,
-          workflowReadinessError,
-        });
+    : importing
+      ? "Adding images…"
+      : commandPending
+        ? "The previous command is awaiting a committed core event."
+        : canSubmit(state, chat, {
+            workflowRequiresProject,
+            workflowReadinessError,
+          });
   const send = async () => {
     if (commandPending) return;
     setSubmitting(true);
@@ -127,7 +136,19 @@ export function ChatComposer({
     ? "Resume the interrupted command before composing another input."
     : null;
   return (
-    <section className="composer-shell" aria-label="Chat composer">
+    <section
+      className="composer-shell"
+      aria-label="Chat composer"
+      onPaste={(event) => {
+        if (chat.recoveryPending || commandPending) return;
+        const files = Array.from(event.clipboardData.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        const text = event.clipboardData.getData("text/plain");
+        if (text) edit({ draft: state.draft + text });
+        void addFiles(files);
+      }}
+    >
       <div className="composer-meta">
         <label>
           Workflow
@@ -154,11 +175,10 @@ export function ChatComposer({
                 {workflow.name}
               </option>
             ))}
-            {state.workflowId !== "" && !visibleWorkflowOptions.some(
-              (workflow) => workflow.id === state.workflowId,
-            ) && (
-              <option value={state.workflowId}>{state.workflowId}</option>
-            )}
+            {state.workflowId !== "" &&
+              !visibleWorkflowOptions.some(
+                (workflow) => workflow.id === state.workflowId,
+              ) && <option value={state.workflowId}>{state.workflowId}</option>}
           </select>
         </label>
         <label>
@@ -172,7 +192,8 @@ export function ChatComposer({
             }
             onChange={(event) =>
               edit({
-                projectId: event.target.value === "" ? null : event.target.value,
+                projectId:
+                  event.target.value === "" ? null : event.target.value,
               })
             }
           >
@@ -197,15 +218,27 @@ export function ChatComposer({
         )}
         <span className="queue-count">{chat.queuedInputs.length} queued</span>
       </div>
+      <ImageAttachments
+        images={state.attachments}
+        disabled={chat.recoveryPending || commandPending}
+        onRemove={(index) =>
+          edit({
+            attachments: state.attachments.filter(
+              (_, candidate) => candidate !== index,
+            ),
+          })
+        }
+      />
+      {imageError !== null && (
+        <p className="chat-image-error" role="alert">
+          {imageError}
+        </p>
+      )}
       <div className="composer-input">
-        <button
-          aria-label="Add attachment references"
-          disabled
-          title="Attachments are unsupported in this build"
-          type="button"
-        >
-          ＋
-        </button>
+        <ImageAttachmentMenu
+          disabled={chat.recoveryPending || commandPending}
+          onFiles={(files) => void addFiles(files)}
+        />
         <textarea
           aria-label="Chat input"
           placeholder="Message Aworkit"
@@ -256,7 +289,7 @@ export function ChatComposer({
         <span>
           {disabledReason ??
             (retryIntent === null
-              ? "Enter to send · Shift+Enter for a new line"
+              ? "Enter to send · Shift+Enter for a new line · Paste to add images"
               : "Retry will reuse the same idempotent command ID")}
         </span>
         <span>{state.draft.length} characters</span>

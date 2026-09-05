@@ -151,7 +151,7 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
       input: intent.input,
       attachments: intent.attachments,
     };
-  if (intent.type === "enqueue") return { input: intent.input };
+  if (intent.type === "enqueue") return { input: intent.input, ...(intent.attachments === undefined ? {} : { attachments: intent.attachments }) };
   if (intent.type === "approval")
     return {
       decisionId: intent.decisionId,

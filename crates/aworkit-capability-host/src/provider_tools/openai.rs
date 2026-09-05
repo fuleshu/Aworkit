@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     ModelAssistantContentV1, ModelToolRequestV1, ProviderError,
-    model_tools::{TextMessageRoleV1, normalize_text_input, result_text},
+    model_tools::{ModelInputRoleV1, normalize_model_input, result_text},
 };
 
 pub(crate) fn openai_tool_request(
@@ -14,19 +14,19 @@ pub(crate) fn openai_tool_request(
     request: &ModelToolRequestV1,
     parameters: &OpenAiRequestParametersV1,
 ) -> Result<Value, ProviderError> {
-    let mut messages = normalize_text_input(&request.input)?
+    let mut messages = normalize_model_input(&request.input)?
         .into_iter()
         .map(|message| {
-            json!({
+            Ok(json!({
                 "role": match message.role {
-                    TextMessageRoleV1::System => "system",
-                    TextMessageRoleV1::User => "user",
-                    TextMessageRoleV1::Assistant => "assistant",
+                    ModelInputRoleV1::System => "system",
+                    ModelInputRoleV1::User => "user",
+                    ModelInputRoleV1::Assistant => "assistant",
                 },
-                "content": message.content,
-            })
+                "content": crate::model_images::image_content(&message.content, &message.images, "openai")?,
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ProviderError>>()?;
 
     for exchange in &request.exchanges {
         let mut text = String::new();

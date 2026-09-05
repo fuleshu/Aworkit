@@ -22,9 +22,9 @@ use aworkit_desktop::runtime::{
     ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput, ProviderTestResult,
     RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, SettingsV2CommitInput,
     SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2, UiCommandInput, UiCommandReceipt,
-    WorkflowCancellationController,
-    WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
-    WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
+    WorkflowCancellationController, WorkflowCommitInput, WorkflowCreateInput,
+    WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot, WorkflowRenameInput,
+    WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
 use tauri::{Emitter, Manager};
@@ -127,6 +127,41 @@ async fn desktop_snapshot(
         move |runtime| runtime.snapshot(after_sequence),
     )
     .await
+}
+
+/// Thumbnail I/O must not wait for an active model request's runtime mutex.
+#[tauri::command]
+async fn chat_image_import(
+    store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
+    name: String,
+    data: String,
+) -> Result<aworkit_capability_host::model_images::ImageAttachmentV1, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.import(name, data))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn chat_image_preview(
+    store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
+    image: aworkit_capability_host::model_images::ImageAttachmentV1,
+) -> Result<String, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.preview(&image))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn chat_image_thumbnail(
+    store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
+    image: aworkit_capability_host::model_images::ImageAttachmentV1,
+) -> Result<String, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.thumbnail(&image))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -587,6 +622,11 @@ fn main() {
                 .path()
                 .app_data_dir()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            // Debug-only profile isolation for native WebView regression QA.
+            #[cfg(debug_assertions)]
+            let app_data_root = std::env::var_os("AWORKIT_QA_PROFILE")
+                .map(PathBuf::from)
+                .unwrap_or(app_data_root);
             let repair_root = app_data_root.join("repair");
             let ledger = Arc::new(
                 LocalRepairLedgerAdapter::for_store_root(repair_root, RedactionSet::default())
@@ -604,10 +644,14 @@ fn main() {
             .map_err(std::io::Error::other)?
             .with_management_repair(management);
             app.manage(runtime.cancellation_controller());
+            app.manage(runtime.image_store());
             app.manage(Arc::new(Mutex::new(runtime)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            chat_image_import,
+            chat_image_preview,
+            chat_image_thumbnail,
             desktop_snapshot,
             desktop_command,
             settings_snapshot,

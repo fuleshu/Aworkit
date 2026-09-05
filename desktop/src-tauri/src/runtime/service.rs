@@ -170,6 +170,7 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
 /// Native composition root for the currently supported desktop workflow.
 pub struct DesktopRuntime {
+    images: super::images::ChatImageStore,
     documents: CanonicalDocuments,
     history: ChatHistory,
     credentials: CredentialVault,
@@ -185,6 +186,10 @@ pub struct DesktopRuntime {
 }
 
 impl DesktopRuntime {
+    /// Independent immutable image-store handle for nonblocking renderer I/O.
+    pub fn image_store(&self) -> super::images::ChatImageStore {
+        self.images.clone()
+    }
     /// Opens one durable desktop profile using the operating-system credential store.
     pub fn open(data_root: impl AsRef<Path>) -> Result<Self, String> {
         let store: Arc<dyn PlatformCredentialStorePort> = Arc::new(NativeCredentialStore::new());
@@ -275,6 +280,7 @@ impl DesktopRuntime {
         let project_coordinator = ProjectCoordinator::open(data_root.join("core").join("projects"))
             .map_err(|error| format!("cannot open project coordination state: {error}"))?;
         let mut runtime = Self {
+            images: super::images::ChatImageStore::new(&data_root),
             documents,
             history,
             credentials,
@@ -795,8 +801,12 @@ impl DesktopRuntime {
         } else if input.payload.get("projectId").is_some() {
             return Err("projectId can be supplied only by the first Chat start command".into());
         }
-        validate_attachments(&input.payload)?;
-        let user_input = string_field(&input.payload, "input")?;
+        let images = super::images::command_images(&input.payload)?;
+        let user_input = super::images::command_text(&input.payload)?;
+        for image in &images {
+            aworkit_capability_host::model_images::ModelImageResolver::read(&self.images, image)
+                .map_err(|e| e.to_string())?;
+        }
         if user_input.len() > WORKFLOW_MAX_USER_INPUT_BYTES || user_input.contains('\0') {
             return Err(format!(
                 "Chat input is empty, exceeds the durable {} KiB bound, or contains NUL",
@@ -862,17 +872,33 @@ impl DesktopRuntime {
             conversation.push(ConversationMessage {
                 role: "user".into(),
                 content: user_input.clone(),
+                images: images.clone(),
             });
         }
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
+        if conversation
+            .iter()
+            .any(|message| !message.images.is_empty())
+            && !context
+                .model_snapshot
+                .capabilities
+                .iter()
+                .any(|capability| capability == "vision")
+        {
+            return Err(format!(
+                "Model '{}' is not configured for vision. Enable Vision in Settings for a compatible model, then start a New Chat.",
+                context.model_name
+            ));
+        }
         let provider_runtime_limits = context.provider_snapshot.runtime_limits()?;
         let provider_messages = conversation
             .iter()
             .map(|message| WorkflowMessageV1 {
                 role: message.role.clone(),
                 content: message.content.clone(),
+                images: message.images.clone(),
             })
             .collect();
         let mut execution_request = WorkflowExecutionRequestV1::bounded(
@@ -1010,6 +1036,9 @@ impl DesktopRuntime {
             }
             let mut user_fact = message_fact(&user_input, &created_at, None, None, None);
             if let Some(object) = user_fact.as_object_mut() {
+                if !images.is_empty() {
+                    object.insert("attachments".into(), json!(images));
+                }
                 object.insert("requestId".into(), Value::String(input.command_id.clone()));
                 object.insert(
                     "runId".into(),
@@ -1217,20 +1246,16 @@ impl DesktopRuntime {
         fingerprint: &str,
         result: &WorkflowExecutionResultV1,
     ) -> Result<Option<UiCommandReceipt>, String> {
-        let Some(stop) = self.cancellation_controller.take_request(
-            result.chat_id.as_str(),
-            result.run_id.as_str(),
-        ) else {
+        let Some(stop) = self
+            .cancellation_controller
+            .take_request(result.chat_id.as_str(), result.run_id.as_str())
+        else {
             return Ok(None);
         };
         let created_at = now_label();
         let mut facts = self
             .history
-            .open_span_terminal_facts(
-                "cancelled",
-                "Response stopped by the user.",
-                &created_at,
-            )?
+            .open_span_terminal_facts("cancelled", "Response stopped by the user.", &created_at)?
             .into_iter()
             .map(|fact| ("span.cancelled", fact))
             .collect::<Vec<_>>();
@@ -1246,7 +1271,12 @@ impl DesktopRuntime {
             }),
         ));
         self.history
-            .append(input.command_id.as_str(), fingerprint, self.history.head()?, facts)
+            .append(
+                input.command_id.as_str(),
+                fingerprint,
+                self.history.head()?,
+                facts,
+            )
             .map(Some)
     }
 
@@ -3835,15 +3865,6 @@ fn require_provider_fields(base_url: &str, model: &str) -> Result<(), String> {
     }
 }
 
-fn validate_attachments(payload: &Value) -> Result<(), String> {
-    match payload.get("attachments") {
-        None => Ok(()),
-        Some(Value::Array(values)) if values.is_empty() => Ok(()),
-        Some(Value::Array(_)) => Err("attachments are not implemented in the Chat runtime".into()),
-        Some(_) => Err("attachments must be an array of references".into()),
-    }
-}
-
 fn string_field(payload: &Value, name: &str) -> Result<String, String> {
     payload
         .get(name)
@@ -4026,6 +4047,7 @@ mod tests {
     };
 
     mod credentialed_web_search;
+    mod image_chat;
 
     struct FixtureProvider {
         calls: AtomicUsize,
@@ -4128,6 +4150,7 @@ mod tests {
                 .messages
                 .iter()
                 .map(|message| ConversationMessage {
+                    images: message.images.clone(),
                     role: message.role.clone(),
                     content: message.content.clone(),
                 })
@@ -4248,6 +4271,7 @@ mod tests {
                 .messages
                 .iter()
                 .map(|message| ConversationMessage {
+                    images: message.images.clone(),
                     role: message.role.clone(),
                     content: message.content.clone(),
                 })
@@ -5291,10 +5315,11 @@ mod tests {
         let runtime = Arc::new(Mutex::new(runtime));
         let command_runtime = runtime.clone();
         let command = thread::spawn(move || {
-            command_runtime
-                .lock()
-                .unwrap()
-                .command(send("chat.stop.active-turn", 0, "keep working"))
+            command_runtime.lock().unwrap().command(send(
+                "chat.stop.active-turn",
+                0,
+                "keep working",
+            ))
         });
 
         let (started_lock, ready) = &*started;
@@ -5305,13 +5330,19 @@ mod tests {
                 |started| !*started,
             )
             .unwrap();
-        assert!(*started_guard && !wait.timed_out(), "workflow did not start");
+        assert!(
+            *started_guard && !wait.timed_out(),
+            "workflow did not start"
+        );
         assert!(
             controller
                 .request_stop(&chat_id, "chat.stop.request")
                 .expect("request stop")
         );
-        command.join().expect("command thread").expect("settled stop");
+        command
+            .join()
+            .expect("command thread")
+            .expect("settled stop");
 
         let mut runtime = runtime.lock().unwrap();
         let stopped = runtime.snapshot(0).unwrap();

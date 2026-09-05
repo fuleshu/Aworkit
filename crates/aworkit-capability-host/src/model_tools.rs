@@ -117,7 +117,7 @@ pub struct ModelToolExchangeV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelToolRequestV1 {
-    /// Existing text conversation in the same accepted shapes as `ModelRequestV1`.
+    /// Text and user image references in the same accepted shapes as `ModelRequestV1`.
     pub input: Value,
     /// Closed request overrides supplied by the active workflow node.
     #[serde(default)]
@@ -163,26 +163,30 @@ pub struct ModelToolDispatchEvidenceV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TextMessageRoleV1 {
+pub(crate) enum ModelInputRoleV1 {
     System,
     User,
     Assistant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TextMessageV1 {
-    pub role: TextMessageRoleV1,
+pub(crate) struct ModelInputMessageV1 {
+    pub role: ModelInputRoleV1,
     pub content: String,
+    pub images: Vec<crate::model_images::ModelImageV1>,
 }
 
-pub(crate) fn normalize_text_input(input: &Value) -> Result<Vec<TextMessageV1>, ProviderError> {
+pub(crate) fn normalize_model_input(
+    input: &Value,
+) -> Result<Vec<ModelInputMessageV1>, ProviderError> {
     if let Value::String(text) = input {
         if text.is_empty() || text.len() > MAX_TEXT_CONTENT_BYTES {
             return Err(invalid_tool_request());
         }
-        return Ok(vec![TextMessageV1 {
-            role: TextMessageRoleV1::User,
+        return Ok(vec![ModelInputMessageV1 {
+            role: ModelInputRoleV1::User,
             content: text.clone(),
+            images: Vec::new(),
         }]);
     }
     let entries = match input {
@@ -203,37 +207,56 @@ pub(crate) fn normalize_text_input(input: &Value) -> Result<Vec<TextMessageV1>, 
     let mut messages = Vec::with_capacity(entries.len());
     let mut saw_conversation = false;
     let mut text_bytes = 0_usize;
+    let mut image_references = Vec::new();
     for entry in entries {
         let object = entry.as_object().ok_or_else(invalid_tool_request)?;
-        if object.len() != 2 {
+        if object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "role" | "content" | "images"))
+        {
             return Err(invalid_tool_request());
         }
         let role = match object.get("role").and_then(Value::as_str) {
-            Some("system") if !saw_conversation => TextMessageRoleV1::System,
+            Some("system") if !saw_conversation => ModelInputRoleV1::System,
             Some("user") => {
                 saw_conversation = true;
-                TextMessageRoleV1::User
+                ModelInputRoleV1::User
             }
             Some("assistant") => {
                 saw_conversation = true;
-                TextMessageRoleV1::Assistant
+                ModelInputRoleV1::Assistant
             }
             _ => return Err(invalid_tool_request()),
         };
+        let images: Vec<crate::model_images::ModelImageV1> = object
+            .get("images")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()
+            .map_err(|_| invalid_tool_request())?
+            .unwrap_or_default();
+        image_references.extend(images.iter().map(|image| image.attachment.clone()));
+        crate::model_images::validate_image_attachments(&image_references)?;
+        if !images.is_empty() && role != ModelInputRoleV1::User {
+            return Err(invalid_tool_request());
+        }
         let content = object
             .get("content")
             .and_then(Value::as_str)
-            .filter(|content| !content.is_empty())
+            .filter(|content| !content.is_empty() || !images.is_empty())
             .ok_or_else(invalid_tool_request)?
             .to_owned();
         text_bytes = text_bytes.saturating_add(content.len());
         if text_bytes > MAX_TEXT_CONTENT_BYTES {
             return Err(invalid_tool_request());
         }
-        messages.push(TextMessageV1 { role, content });
+        messages.push(ModelInputMessageV1 {
+            role,
+            content,
+            images,
+        });
     }
     if !saw_conversation
-        || messages.last().map(|message| message.role) != Some(TextMessageRoleV1::User)
+        || messages.last().map(|message| message.role) != Some(ModelInputRoleV1::User)
     {
         return Err(invalid_tool_request());
     }
@@ -241,7 +264,7 @@ pub(crate) fn normalize_text_input(input: &Value) -> Result<Vec<TextMessageV1>, 
 }
 
 pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), ProviderError> {
-    normalize_text_input(&request.input)?;
+    normalize_model_input(&request.input)?;
     if request.tools.is_empty()
         || request.tools.len() > MAX_TOOL_DEFINITIONS
         || request.retry_notice.as_ref().is_some_and(|notice| {
