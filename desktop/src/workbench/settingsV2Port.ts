@@ -716,6 +716,7 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
       },
       projects: [],
       appearance: { mode: "system", fontScale: 1 },
+      approvals: { defaultMode: "ask_for_approval" },
     },
     providerHealth: [],
   };

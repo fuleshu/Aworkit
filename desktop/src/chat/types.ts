@@ -12,6 +12,7 @@ export type RunPhase =
   | "failed";
 
 export interface ChatProjection {
+  readonly approvalMode?: import("./approvals").ApprovalMode;
   readonly chatId: string;
   readonly runId: string;
   readonly title: string;
@@ -132,6 +133,7 @@ export interface EvidenceRecord {
 }
 
 export type ChatIntent =
+  | { readonly type: "approval_mode"; readonly commandId: string; readonly targetId: string; readonly mode: import("./approvals").ApprovalMode }
   | {
       readonly type: "start";
       readonly commandId: string;
@@ -175,4 +177,6 @@ export type ChatIntent =
       /** Exact durable approval decision, not a Chat navigation target. */
       readonly decisionId: string;
       readonly approved: boolean;
+      readonly choice?: import("./approvals").ApprovalChoice;
+      readonly reason?: string;
     };

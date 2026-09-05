@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+import { approvalModeSchema } from "./approvals";
 import type {
   ChatIntent,
   ChatHistoryEntry,
@@ -10,6 +11,7 @@ import type {
 } from "./types";
 
 const chatProjectionSchema = z.object({
+  approvalMode: approvalModeSchema.default("ask_for_approval"),
   chatId: z.string(),
   runId: z.string(),
   title: z.string(),
@@ -144,6 +146,7 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
 
 /** Projects a typed renderer intent into the exact native IPC payload. */
 export function chatIntentPayload(intent: ChatIntent): unknown {
+  if (intent.type === "approval_mode") return { mode: intent.mode };
   if (intent.type === "start")
     return {
       workflowId: intent.workflowId,
@@ -156,6 +159,8 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
     return {
       decisionId: intent.decisionId,
       approved: intent.approved,
+      ...(intent.choice === undefined ? {} : { choice: intent.choice }),
+      ...(intent.reason === undefined ? {} : { reason: intent.reason }),
     };
   if (intent.type === "set_chat_pinned") return { pinned: intent.pinned };
   return {};
@@ -333,6 +338,7 @@ export class PreviewChatCorePort implements ChatCorePort {
         };
       }
     }
+    if (intent.type === "approval_mode") this.chat = { ...this.chat, approvalMode: intent.mode };
     if (intent.type === "set_chat_pinned")
       this.history = this.history.map((entry) =>
         entry.chatId === intent.targetId

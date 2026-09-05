@@ -539,7 +539,7 @@ pre {
 }
 .chat-main {
   display: grid;
-  grid-template-rows: 48px auto minmax(0, 1fr) auto;
+  grid-template-rows: 48px auto minmax(0, 1fr) auto auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -557,8 +557,9 @@ pre {
   grid-row: 3;
 }
 .chat-main > .composer-shell {
-  grid-row: 4;
+  grid-row: 5;
 }
+.chat-main > .chat-approval-control { grid-row: 4; }
 .chat-title-line {
   align-items: baseline;
   display: flex;

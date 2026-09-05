@@ -10,6 +10,8 @@ import {
 } from "./ModelCallBlock";
 import { prettyJson } from "./jsonPresentation";
 import type { TimelineItem } from "./types";
+import { ApprovalActions } from "./ApprovalActions";
+import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
 
 interface ConversationTimelineProps {
@@ -21,6 +23,7 @@ interface ConversationTimelineProps {
   readonly onAction: (
     action: NonNullable<TimelineItem["action"]>,
     id: string,
+    details?: ApprovalActionDetails,
   ) => void;
 }
 
@@ -473,32 +476,9 @@ export function TimelineCard({
       </button>
       <ActivityData item={item} />
       {item.kind === "approval" && item.action === "approve" ? (
-        <div className="activity-actions">
-          <button
-            disabled={actionsDisabled}
-            type="button"
-            title={
-              actionsDisabled
-                ? "Wait for the current Chat command to settle"
-                : "Approve this requested action"
-            }
-            onClick={() => onAction("approve", item.id)}
-          >
-            Approve
-          </button>
-          <button
-            disabled={actionsDisabled}
-            type="button"
-            title={
-              actionsDisabled
-                ? "Wait for the current Chat command to settle"
-                : "Reject this requested action"
-            }
-            onClick={() => onAction("reject", item.id)}
-          >
-            Reject
-          </button>
-        </div>
+        <ApprovalActions disabled={actionsDisabled}
+          projectScope={typeof metadataOf(item).projectScope === "string" ? metadataOf(item).projectScope as string : undefined}
+          onDecision={details => onAction(details.choice === "deny" ? "reject" : "approve", item.id, details)} />
       ) : card.action !== undefined ? (
         <button
           type="button"

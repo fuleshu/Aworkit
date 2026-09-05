@@ -558,9 +558,9 @@ export function ToolsSection({
                     id={`${tool.id}-configuration`}
                     label="Tool configuration"
                     title="Non-secret bounded tool settings such as authority mode, timeout, write access, and output limits"
-                    value={tool.configuration}
+                    value={Object.fromEntries(Object.entries(tool.configuration).filter(([key]) => key !== "requiresApproval"))}
                     onChange={(configuration) =>
-                      updateTool({ ...tool, configuration })
+                      updateTool({ ...tool, configuration: { ...(tool.configuration.requiresApproval === undefined ? {} : { requiresApproval: tool.configuration.requiresApproval }), ...configuration } })
                     }
                   />
                 </>
@@ -582,13 +582,13 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "tool.files.list": "Lists project files matching a bounded glob.",
   "tool.files.grep": "Regex-searches text files beneath the project root.",
   "tool.files.edit":
-    "Replaces one exact text range in a project file; approval required per call.",
+    "Replaces one exact text range in a project file; follows the selected approval mode.",
   "tool.files.write":
-    "Creates or replaces a project file with exact content; approval required per call.",
+    "Creates or replaces a project file with exact content; follows the selected approval mode.",
   "tool.shell.host":
-    "Runs one bounded host shell command; approval required per call.",
+    "Runs one bounded host shell command; follows the selected approval mode.",
   "tool.python.host":
-    "Runs one bounded host Python script; approval required per call.",
+    "Runs one bounded host Python script; follows the selected approval mode.",
   "tool.todo": "Replaces the Run task list; rendered as a live plan card.",
   "tool.web_search":
     "Hermes-compatible multi-provider search with an anonymous failover ring, explicit free or paid tiers, SearXNG and DuckDuckGo, retries, one-shot rescue, request coalescing, caching, and optional DeepSeek search.",
@@ -597,7 +597,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "tool.web_extract":
     "Fetches up to ten search-result URLs independently and returns live, timestamped page text for freshness verification.",
   "tool.subagent":
-    "Delegates a bounded read-only subtask to a fresh child agent; approval required per call.",
+    "Delegates a bounded read-only subtask to a fresh child agent; follows the selected approval mode.",
 };
 
 function toolDescription(toolId: string): string {

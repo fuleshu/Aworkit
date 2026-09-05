@@ -131,6 +131,32 @@ async fn desktop_snapshot(
 
 /// Thumbnail I/O must not wait for an active model request's runtime mutex.
 #[tauri::command]
+async fn approval_project_grants(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<Vec<aworkit_desktop::runtime::ProjectApprovalGrant>, String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "project approvals",
+        |runtime| runtime.project_approval_grants(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn approval_revoke_project_grant(
+    runtime: tauri::State<'_, SharedRuntime>,
+    id: String,
+) -> Result<(), String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "revoke project approval",
+        move |runtime| runtime.revoke_project_approval(&id),
+    )
+    .await
+}
+
+/// Thumbnail I/O must not wait for an active model request's runtime mutex.
+#[tauri::command]
 async fn chat_image_import(
     store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
     name: String,
@@ -654,6 +680,8 @@ fn main() {
             chat_image_thumbnail,
             desktop_snapshot,
             desktop_command,
+            approval_project_grants,
+            approval_revoke_project_grant,
             settings_snapshot,
             settings_commit,
             settings_test_provider,

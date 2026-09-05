@@ -93,7 +93,18 @@ struct ProcessedCommand {
 const WORKFLOW_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
 const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
 
+pub(crate) mod approval_control;
+use approval_control::parse_approval_resolution;
+
 trait WorkflowPipelinePort: Send + Sync {
+    fn validate_approval_target(
+        &self,
+        _decision_id: &str,
+        _chat_id: &str,
+        _resolution: &super::approvals::ApprovalResolution,
+    ) -> Result<(), String> {
+        Ok(())
+    }
     fn preflight(&self, _request: &WorkflowExecutionRequestV1) -> Result<(), String> {
         Ok(())
     }
@@ -106,7 +117,7 @@ trait WorkflowPipelinePort: Send + Sync {
     fn resume_approval(
         &self,
         _decision_id: &str,
-        _approved: bool,
+        _resolution: &super::approvals::ApprovalResolution,
     ) -> Result<WorkflowExecutionResultV1, String> {
         Err("approval resume is not available from this pipeline".into())
     }
@@ -130,6 +141,17 @@ trait WorkflowPipelinePort: Send + Sync {
 }
 
 impl WorkflowPipelinePort for WorkflowExecutionPipeline {
+    fn validate_approval_target(
+        &self,
+        decision_id: &str,
+        chat_id: &str,
+        resolution: &super::approvals::ApprovalResolution,
+    ) -> Result<(), String> {
+        WorkflowExecutionPipeline::validate_approval_target(self, decision_id, chat_id)
+            .map_err(|error| error.to_string())?;
+        WorkflowExecutionPipeline::validate_approval_choice(self, decision_id, resolution)
+            .map_err(|error| error.to_string())
+    }
     fn preflight(&self, request: &WorkflowExecutionRequestV1) -> Result<(), String> {
         WorkflowExecutionPipeline::preflight(self, request).map_err(|error| error.to_string())
     }
@@ -144,9 +166,9 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
     fn resume_approval(
         &self,
         decision_id: &str,
-        approved: bool,
+        resolution: &super::approvals::ApprovalResolution,
     ) -> Result<WorkflowExecutionResultV1, String> {
-        WorkflowExecutionPipeline::resume_approval(self, decision_id, approved)
+        WorkflowExecutionPipeline::resume_approval_choice(self, decision_id, resolution)
             .map_err(|error| error.to_string())
     }
 
@@ -170,6 +192,7 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
 /// Native composition root for the currently supported desktop workflow.
 pub struct DesktopRuntime {
+    approvals: super::approvals::ApprovalStore,
     images: super::images::ChatImageStore,
     documents: CanonicalDocuments,
     history: ChatHistory,
@@ -281,6 +304,11 @@ impl DesktopRuntime {
             .map_err(|error| format!("cannot open project coordination state: {error}"))?;
         let mut runtime = Self {
             images: super::images::ChatImageStore::new(&data_root),
+            approvals: super::approvals::ApprovalStore::open(
+                &data_root
+                    .join("history")
+                    .join("aworkit-invocations.sqlite3"),
+            )?,
             documents,
             history,
             credentials,
@@ -450,6 +478,12 @@ impl DesktopRuntime {
     pub fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
         let mut snapshot = self.history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
+        let fallback_mode = self
+            .history
+            .current_frozen_context()?
+            .and_then(|record| record.context.approval_mode)
+            .unwrap_or(self.documents.settings().approvals.default_mode);
+        snapshot.chat.approval_mode = self.approvals.mode(&snapshot.chat.chat_id, fallback_mode)?;
         let history_head = self.history.head()?;
         let pending = self
             .history
@@ -578,6 +612,7 @@ impl DesktopRuntime {
                 | "abandon_recovery"
                 | "cancel"
                 | "approval"
+                | "approval_mode"
         ) {
             self.ensure_current_chat_target(input.target_id.as_deref())?;
         }
@@ -622,6 +657,7 @@ impl DesktopRuntime {
             "fork" => self.fork_chat(input, fingerprint),
             "start" | "enqueue" => self.complete_workflow_input(input, fingerprint),
             "approval" => self.complete_approval(input, fingerprint),
+            "approval_mode" => self.change_approval_mode(input, fingerprint),
             "resume" => {
                 self.recover_pending_effect(&input.command_id, &fingerprint, input.expected_version)
             }
@@ -924,6 +960,17 @@ impl DesktopRuntime {
             current_epoch_millis()?,
         );
         execution_request.frozen_context_hash = frozen.context_hash.clone();
+        execution_request.approvals = super::approvals::ApprovalContext {
+            mode: context.approval_mode.unwrap_or_default(),
+            chat_id: context.identity.chat_id.to_string(),
+            project_key: context.project.as_ref().map(|project| {
+                super::approvals::digest(&(project.project_id.as_str(), &project.workspace_binding))
+            }),
+            project_name: context
+                .project
+                .as_ref()
+                .map(|project| project.project_name.clone()),
+        };
         execution_request.model_parameters = context.model_snapshot.parameters.clone();
         execution_request.workspace = context
             .project
@@ -1178,6 +1225,7 @@ impl DesktopRuntime {
                         "nodeId": approval.node_id,
                         "title": approval.title,
                         "body": approval.message,
+                        "projectScope": approval.project_scope,
                         "frozenContextHash": frozen.context_hash,
                         "invocationId": result.broker_invocation_id,
                     }),
@@ -1294,28 +1342,24 @@ impl DesktopRuntime {
             self.history.ensure_expected(input.expected_version)?;
         }
         let decision_id = string_field(&input.payload, "decisionId")?;
-        let approved = match input.payload.get("approved") {
-            Some(Value::Bool(approved)) => *approved,
-            _ => return Err("approval command requires a boolean approved field".into()),
-        };
+        let resolution = parse_approval_resolution(&input.payload)?;
+        let approved = resolution.approved();
         let frozen = self.history.current_frozen_context()?.ok_or_else(|| {
             "the current Chat has no durable frozen execution context for approval".to_owned()
         })?;
-        if self
-            .history
-            .pending_effect_command_at_head(self.history.head()?)?
-            .is_some_and(|pending| {
-                pending.command.command_id != input.command_id
-                    || pending.command_hash != fingerprint
-            })
-        {
-            self.history.stage_effect_command(PendingChatCommandV1 {
-                schema_version: 1,
-                frozen_context_hash: frozen.context_hash.clone(),
-                command_hash: fingerprint.clone(),
-                command: input.clone(),
-            })?;
+        if !command_started {
+            self.pipeline.validate_approval_target(
+                &decision_id,
+                frozen.context.identity.chat_id.as_str(),
+                &resolution,
+            )?;
         }
+        self.history.stage_effect_command(PendingChatCommandV1 {
+            schema_version: 1,
+            frozen_context_hash: frozen.context_hash.clone(),
+            command_hash: fingerprint.clone(),
+            command: input.clone(),
+        })?;
         if !command_started {
             let created_at = now_label();
             self.history.begin_effect_command(
@@ -1341,6 +1385,8 @@ impl DesktopRuntime {
                             "runId": frozen.context.identity.run_id,
                             "decisionId": decision_id,
                             "approved": approved,
+                            "choice": resolution.choice,
+                            "reason": resolution.reason,
                             "frozenContextHash": frozen.context_hash,
                         }),
                     ),
@@ -1349,7 +1395,7 @@ impl DesktopRuntime {
         }
         let result = self
             .pipeline
-            .resume_approval(&decision_id, approved)
+            .resume_approval(&decision_id, &resolution)
             .map_err(|error| error.to_string())?;
         if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
             return Ok(receipt);
@@ -1455,6 +1501,7 @@ impl DesktopRuntime {
                         "nodeId": approval.node_id,
                         "title": approval.title,
                         "body": approval.message,
+                        "projectScope": approval.project_scope,
                         "frozenContextHash": frozen.context_hash,
                         "invocationId": result.broker_invocation_id,
                     }),
@@ -1686,6 +1733,10 @@ impl DesktopRuntime {
                 revision: metadata.revision,
             });
         let context = FrozenChatExecutionContextV1 {
+            approval_mode: Some(self.approvals.mode(
+                identity.chat_id.as_str(),
+                self.documents.settings().approvals.default_mode,
+            )?),
             schema_version: 1,
             identity,
             history_base_head,

@@ -62,6 +62,8 @@ const BUILTIN_TOOL_IDS: [&str; 13] = [
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsConfigurationV2 {
+    #[serde(default)]
+    pub approvals: super::approvals::ApprovalSettings,
     pub schema_version: u16,
     pub providers: Vec<ProviderConfigurationV2>,
     pub model_tiers: Vec<ModelTierConfigurationV2>,
@@ -79,6 +81,7 @@ impl Default for SettingsConfigurationV2 {
     fn default() -> Self {
         Self {
             schema_version: SETTINGS_SCHEMA_VERSION_V2,
+            approvals: super::approvals::ApprovalSettings::default(),
             providers: Vec::new(),
             model_tiers: standard_model_tiers(),
             credentials: Vec::new(),

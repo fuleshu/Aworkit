@@ -17,6 +17,8 @@ export class ChatWorkspaceController {
     if (type === "enqueue") return { type, commandId, input: "" };
     if (type === "approval")
       return { type, commandId, decisionId: targetId ?? "", approved: false };
+    if (type === "approval_mode")
+      return { type, commandId, targetId: targetId ?? "", mode: "ask_for_approval" };
     if (type === "select_chat" || type === "delete_chat" || type === "fork")
       return { type, commandId, targetId: targetId ?? "" };
     if (type === "set_chat_pinned")

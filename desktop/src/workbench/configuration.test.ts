@@ -10,6 +10,7 @@ import { settingsDraftIssues } from "./settings-v2/settingsDraft";
 function configuration(): SettingsConfigurationV2 {
   return {
     schemaVersion: 2,
+    approvals: { defaultMode: "ask_for_approval" },
     providers: [
       {
         id: "provider.local",

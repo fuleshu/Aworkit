@@ -22,6 +22,7 @@ export type SettingsUiIssue = SettingsValidationIssue & {
 };
 
 export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
+  { id: "approvals", label: "Approvals", description: "Default approval mode and saved project permissions" },
   {
     id: "providers",
     label: "Providers & models",
@@ -75,6 +76,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
 ];
 
 const sectionFields = {
+  approvals: "approvals",
   providers: "providers",
   model_tiers: "modelTiers",
   credentials: "credentials",
@@ -469,6 +471,7 @@ function sectionFromSchemaPath(
     case "externalAgents":
       return "external_agents";
     case "credentials":
+    case "approvals":
     case "tools":
     case "extensions":
     case "data":

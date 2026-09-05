@@ -84,6 +84,8 @@ pub(crate) struct FrozenToolBindingV1 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FrozenChatExecutionContextV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<super::approvals::ApprovalMode>,
     pub schema_version: u16,
     pub identity: ChatIdentityV1,
     pub history_base_head: u64,
@@ -1161,6 +1163,7 @@ impl ChatHistory {
             .unwrap_or_else(|| "New Chat".into());
         let phase = projected_phase(&current);
         let chat = ChatProjectionDto {
+            approval_mode: Default::default(),
             chat_id: identity.chat_id.to_string(),
             run_id: identity.run_id.to_string(),
             title,
@@ -1787,6 +1790,15 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
     let input = super::images::command_text(&command.payload).ok();
     let attachments_are_valid = super::images::command_images(&command.payload).is_ok();
     let action_shape_is_valid = match command.action.as_str() {
+        "approval" => {
+            command
+                .payload
+                .get("decisionId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| StableId::parse(id.to_owned()).is_ok())
+                && super::service::approval_control::parse_approval_resolution(&command.payload)
+                    .is_ok()
+        }
         "start" => {
             command
                 .payload
@@ -1810,9 +1822,10 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         || command.schema_version != 1
         || StableId::parse(command.command_id.clone()).is_err()
         || !action_shape_is_valid
-        || input
-            .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
-            .unwrap_or(true)
+        || (command.action != "approval"
+            && input
+                .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
+                .unwrap_or(true))
         || !attachments_are_valid
     {
         return Err("stored pending Chat command failed integrity validation".into());

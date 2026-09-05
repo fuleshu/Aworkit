@@ -50,6 +50,8 @@ pub struct CredentialMutationOutcomeV2 {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatProjectionDto {
+    #[serde(default)]
+    pub approval_mode: super::approvals::ApprovalMode,
     pub chat_id: String,
     pub run_id: String,
     pub title: String,

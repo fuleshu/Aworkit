@@ -22,6 +22,7 @@ getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_jcs = "0.2"
 serde_json = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
 semver = "1"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }

@@ -181,6 +181,7 @@ pub struct WorkflowProviderBindingV1 {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkflowExecutionRequestV1 {
+    pub(crate) approvals: super::approvals::ApprovalContext,
     pub request_id: StableId,
     pub chat_id: StableId,
     pub run_id: StableId,
@@ -229,6 +230,7 @@ impl WorkflowExecutionRequestV1 {
             run_id,
             provider,
             model_parameters: BTreeMap::new(),
+            approvals: Default::default(),
             frozen_context_hash: DEFAULT_FROZEN_CONTEXT_HASH.to_owned(),
             workspace: None,
             project_branch: None,
@@ -327,6 +329,8 @@ pub enum WorkflowPipelineError {
 }
 
 /// Long-lived service seam. It owns no editable settings representation.
+mod approval_control;
+
 pub struct WorkflowExecutionPipeline {
     root: PathBuf,
     projects: ProjectCoordinator,
@@ -608,6 +612,7 @@ impl WorkflowExecutionPipeline {
             || existing.secret != secret
             || existing.tool_bindings != tools
             || existing.project_branch != request.project_branch
+            || existing.approvals != request.approvals
             || existing.snapshot.budget != request.budget
             || stored_messages != request_messages
             || !workspace_matches
@@ -749,6 +754,10 @@ impl WorkflowExecutionPipeline {
                 tool_activity: pending.tool_activity.clone(),
                 node_activity: pending.activity.clone(),
                 approval: Some(GraphApprovalRequestV1 {
+                    project_scope: pending
+                        .agent_loop
+                        .as_ref()
+                        .and_then(|agent| agent.pending.challenge.project_scope.clone()),
                     decision_id: pending.decision_id.clone(),
                     node_id: pending.pending_node_id.clone(),
                     title: pending.title.clone(),
@@ -832,7 +841,7 @@ impl WorkflowExecutionPipeline {
     /// reject fails the pass. The terminal outcome is recorded and the outer
     /// invocation settled exactly like a fresh dispatch, so replaying the same
     /// decision is idempotent and no model or tool work is recomputed.
-    pub fn resume_approval(
+    fn resume_approval_committed(
         &self,
         decision_id: &str,
         approved: bool,
@@ -970,6 +979,8 @@ impl WorkflowExecutionPipeline {
             .map_err(WorkflowPipelineError::InvalidInput)?;
         let authority = self.file_tool_authority.bind_with_run_events(
             FrozenFileToolAuthorityContextV1 {
+                approvals: prepared.approvals.clone(),
+                review_messages: pending.conversation.clone(),
                 manifest: prepared.manifest.clone(),
                 run_id: prepared.snapshot.run_id.clone(),
                 request_id: prepared.request_id.clone(),
@@ -1023,7 +1034,7 @@ impl WorkflowExecutionPipeline {
         let reasoning = model_observer
             .reasoning_snapshot()
             .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
-        match pass.status {
+        let result = match pass.status {
             GraphPassStatusV1::AwaitingApproval => {
                 let mut next = pass
                     .pending_state
@@ -1031,7 +1042,6 @@ impl WorkflowExecutionPipeline {
                     .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 next.reasoning_body = reasoning.as_ref().map(|item| item.body.clone());
                 next.reasoning_category = reasoning.as_ref().map(|item| item.category.clone());
-                self.records.mark_approval_resolved(&decision)?;
                 self.records.store_pending_approval(&next)?;
                 Ok(WorkflowExecutionResultV1 {
                     request_id: prepared.request_id,
@@ -1099,7 +1109,6 @@ impl WorkflowExecutionPipeline {
                     .settlement(&broker_invocation_id)?
                     .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
                 let _ = broker.deliver_worker_results(&CommittedWorkerAck);
-                self.records.mark_approval_resolved(&decision)?;
                 Ok(WorkflowExecutionResultV1 {
                     request_id: prepared.request_id,
                     chat_id: prepared.snapshot.chat_id.clone(),
@@ -1125,7 +1134,13 @@ impl WorkflowExecutionPipeline {
                     replayed: false,
                 })
             }
-        }
+        }?;
+        self.file_tool_authority
+            .approvals
+            .save_result(decision_id, &result)
+            .map_err(WorkflowPipelineError::Store)?;
+        self.records.mark_approval_resolved(&decision)?;
+        Ok(result)
     }
 
     /// Installs a scripted MCP peer for tests. Fails closed when a peer is
@@ -1381,6 +1396,7 @@ impl WorkflowExecutionPipeline {
             payload_hash,
         };
         let prepared = PreparedExecutionRecordV1 {
+            approvals: request.approvals.clone(),
             schema_version: 1,
             request_id: request.request_id.clone(),
             snapshot,
@@ -1517,6 +1533,8 @@ impl StoredSecretBindingV1 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreparedExecutionRecordV1 {
+    #[serde(default)]
+    approvals: super::approvals::ApprovalContext,
     schema_version: u16,
     request_id: StableId,
     snapshot: aworkit_protocol::WorkerFrozenRunSnapshotV1,
@@ -2275,6 +2293,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
             let authority = self.file_tool_authority.bind_with_run_events(
                 FrozenFileToolAuthorityContextV1 {
+                    approvals: self.prepared.approvals.clone(),
+                    review_messages: conversation.clone(),
                     manifest: self.prepared.manifest.clone(),
                     run_id: self.prepared.snapshot.run_id.clone(),
                     request_id: self.prepared.request_id.clone(),
@@ -3641,6 +3661,7 @@ fn broker_error(error: BrokerError) -> WorkflowPipelineError {
 
 #[cfg(test)]
 mod tests {
+    mod approval_modes;
     use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
@@ -3795,6 +3816,9 @@ mod tests {
         Malformed,
         ReadThenProviderFailure,
         Edit,
+        ReviewApprove,
+        ReviewDeny,
+        ReviewUnavailable,
         EditLoop,
         Todo,
         Subagent,
@@ -3850,7 +3874,22 @@ mod tests {
             // Plain model calls (plan/model_call nodes) answer with fixed text;
             // the tool loop is driven through `execute_tool_turn_cancellable`.
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let output = if request.input.to_string().contains("openQuestions") {
+            let output = if request
+                .input
+                .to_string()
+                .contains("independent approval reviewer")
+            {
+                assert!(request.input.to_string().contains("proposedAction"));
+                match self.script {
+                    ToolScriptV1::ReviewApprove => {
+                        r#"{"decision":"approve","reason":"The user requested this bounded project edit."}"#
+                    }
+                    ToolScriptV1::ReviewDeny => {
+                        r#"{"decision":"deny","reason":"The user said to preserve the original file."}"#
+                    }
+                    _ => "not a valid decision",
+                }
+            } else if request.input.to_string().contains("openQuestions") {
                 r#"{"goal":"Complete the requested project task","openQuestions":[],"evidenceNeeded":["Project files"],"toolOrder":["Read the project files","Search for relevant content"]}"#
             } else {
                 "working answer"
@@ -3948,7 +3987,11 @@ mod tests {
                         "aworkit_read_project_file",
                         json!({"path":"notes.txt"}),
                     ))?,
-                    ToolScriptV1::Edit | ToolScriptV1::EditLoop => {
+                    ToolScriptV1::Edit
+                    | ToolScriptV1::EditLoop
+                    | ToolScriptV1::ReviewApprove
+                    | ToolScriptV1::ReviewDeny
+                    | ToolScriptV1::ReviewUnavailable => {
                         emit(ModelToolEventV1::ReasoningRaw {
                             text: "I need to request approval before editing.\n".into(),
                         })?;
@@ -6377,6 +6420,7 @@ mod tests {
         metadata: CredentialMetadataV1,
     ) -> WorkflowExecutionRequestV1 {
         let mut request = request(metadata);
+        request.approvals.mode = super::super::approvals::ApprovalMode::FullAccess;
         request.request_id = stable("command.pipeline-mcp-test").expect("request");
         request.chat_id = stable("chat.pipeline-mcp-test").expect("chat");
         request.run_id = stable("run.pipeline-mcp-test").expect("run");
@@ -6447,7 +6491,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_tool_settles_in_the_agent_loop_approval_free() {
+    fn mcp_tool_settles_without_review_in_full_access() {
         let root = TempDir::new().expect("temporary directory");
         let (pipeline, metadata, peer_calls, observed_arguments, observed_results) =
             setup_mcp_pipeline(&root, ScriptedMcpBehavior::Echo);

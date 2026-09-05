@@ -403,6 +403,9 @@ function projectFact(
       status: "completed",
     });
   }
+  if (event.kind === "approval.reviewed") {
+    return { ...baseItem(event, fact, { kind: "approval", title: "Automatic approval review", status: fact.decision === "approve" ? "approved" : fact.decision === "deny" ? "denied" : "needs review" }), body: string(fact.reason) ?? "" };
+  }
   if (event.kind === "approval.requested") {
     const decisionId = string(fact.decisionId);
     const approved =

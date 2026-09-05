@@ -125,7 +125,9 @@ describe("Settings v2 workbench", () => {
     const navigation = screen.getByRole("navigation", {
       name: "Settings sections",
     });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(10);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(11);
+    await user.click(within(navigation).getByRole("button", { name: /Approvals/ }));
+    await user.selectOptions(screen.getByLabelText("Default approval mode"), "approve_for_me");
     expect(screen.queryByText(/unsupported in this build/i)).toBeNull();
     const save = screen.getByRole("button", { name: "Save configuration" });
     expect(save).toBeEnabled();
@@ -135,6 +137,7 @@ describe("Settings v2 workbench", () => {
     expect(port.commits[0]).toMatchObject({
       expectedVersion: 1,
       settings: {
+        approvals: { defaultMode: "approve_for_me" },
         schemaVersion: 2,
         providers: [
           expect.objectContaining({ baseUrl: "https://changed.example/v1" }),
@@ -2462,6 +2465,7 @@ function snapshot(): SettingsV2Snapshot {
 
 function configuration(): SettingsConfigurationV2 {
   return {
+    approvals: { defaultMode: "ask_for_approval" },
     schemaVersion: 2,
     providers: [
       {

@@ -150,6 +150,12 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
     });
   }
   const searchUsage = paidSearchUsage(input.events);
+  const reviews = input.events.filter(event => event.kind === "approval.reviewed");
+  if (reviews.length > 0) {
+    const reviewInput = reviews.reduce((sum, event) => sum + numberAt(event.payload, "inputTokens"), 0);
+    const reviewOutput = reviews.reduce((sum, event) => sum + numberAt(event.payload, "outputTokens"), 0);
+    sections.push({ kind: "fields", title: "Approval review usage", fields: [field("Reviews", String(reviews.length)), field("Input tokens", reviewInput.toLocaleString()), field("Output tokens", reviewOutput.toLocaleString())] });
+  }
   if (searchUsage.length > 0) {
     sections.push({
       kind: "fields",

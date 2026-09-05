@@ -3,6 +3,7 @@
 //! The desktop no longer boots a sample projection. It opens canonical local
 //! configuration, editable JSON workflows, and semantic Chat history.
 
+mod approvals;
 mod cancellation;
 mod credential_journal;
 mod credentials;
@@ -42,6 +43,7 @@ pub(crate) const WEB_SEARCH_MAXIMUM_RESULTS_V1: u64 = 100;
 pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 
+pub use approvals::{ApprovalMode, ApprovalResolution, ApprovalSettings, ProjectApprovalGrant};
 pub use cancellation::WorkflowCancellationController;
 pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};

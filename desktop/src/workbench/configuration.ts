@@ -478,6 +478,7 @@ export const appearanceConfigurationSchema = z
 
 export const settingsConfigurationV2Schema = z
   .object({
+    approvals: z.object({ defaultMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).default("ask_for_approval") }).strict().default({ defaultMode: "ask_for_approval" }),
     schemaVersion: z.literal(2),
     providers: z.array(providerConfigurationSchema),
     modelTiers: z.array(modelTierConfigurationSchema),
@@ -560,6 +561,7 @@ export const STANDARD_TIER_IDS = [
 
 export type SettingsValidationIssue = {
   readonly section:
+    | "approvals"
     | "providers"
     | "model_tiers"
     | "credentials"

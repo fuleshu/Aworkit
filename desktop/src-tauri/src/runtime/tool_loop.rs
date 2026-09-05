@@ -13,6 +13,8 @@ use std::{
     time::Duration,
 };
 
+pub(crate) mod approval_policy;
+
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
     BuiltInProcessTools, CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind,
@@ -120,7 +122,9 @@ const TOOL_WORKER_DESTINATION: &str = "aworkit.workflow-worker.tools";
 const STORE_BRANCH_ID: &str = "main";
 #[cfg(test)]
 const TOOL_NODE_TYPE: &str = "agent";
-const TOOL_APPROVAL_TTL_MILLIS: u64 = 60_000;
+// A human decision can survive an overnight pause. Tool execution still uses
+// its own frozen timeout and revalidates workspace/arguments at dispatch.
+const TOOL_APPROVAL_TTL_MILLIS: u64 = 24 * 60 * 60 * 1000;
 const MAXIMUM_TOOL_PAYLOAD_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_TOOL_RESULT_BYTES: usize = 512 * 1024;
 const MAXIMUM_FILE_SEARCH_QUERY_BYTES: usize = 16 * 1024;
@@ -198,6 +202,8 @@ pub struct WorkflowToolCredentialBindingV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ToolApprovalChallengeV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_scope: Option<String>,
     pub decision_id: String,
     pub invocation_id: String,
     pub nonce: String,
@@ -216,6 +222,7 @@ fn tool_approval_challenge(
 ) -> ToolApprovalChallengeV1 {
     let (title, summary) = tool_approval_copy(call);
     ToolApprovalChallengeV1 {
+        project_scope: None,
         decision_id: challenge.invocation_id.to_string(),
         invocation_id: challenge.invocation_id.to_string(),
         nonce: challenge.nonce.to_string(),
@@ -724,7 +731,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             FILE_EDIT_CAPABILITY_ID => (
                 FILE_EDIT_PROVIDER_NAME.to_owned(),
-                "Replace one exact text range in a project file atomically; approval required.".to_owned(),
+                "Replace one exact text range in a project file atomically; follows the selected approval mode.".to_owned(),
                 file_edit_schema(),
                 StoredFileToolLimitV1::Edit {
                     maximum_bytes: *freeze_configuration(
@@ -742,7 +749,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             FILE_WRITE_CAPABILITY_ID => (
                 FILE_WRITE_PROVIDER_NAME.to_owned(),
-                "Create or replace a project file with exact content; approval required.".to_owned(),
+                "Create or replace a project file with exact content; follows the selected approval mode.".to_owned(),
                 file_write_schema(),
                 StoredFileToolLimitV1::Write {
                     maximum_bytes: *freeze_configuration(
@@ -760,7 +767,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             SHELL_CAPABILITY_ID => (
                 SHELL_PROVIDER_NAME.to_owned(),
-                "Run one bounded host shell command; the working directory is not a sandbox. Approval required.".to_owned(),
+                "Run one bounded host shell command; the working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
                 shell_schema(),
                 StoredFileToolLimitV1::Shell {
                     timeout_seconds: *freeze_configuration(
@@ -793,7 +800,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             PYTHON_CAPABILITY_ID => (
                 PYTHON_PROVIDER_NAME.to_owned(),
-                "Run one bounded isolated-interpreter Python script on the host; approval required.".to_owned(),
+                "Run one bounded isolated-interpreter Python script on the host; follows the selected approval mode.".to_owned(),
                 python_schema(),
                 StoredFileToolLimitV1::Python {
                     timeout_seconds: *freeze_configuration(
@@ -903,7 +910,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             SUBAGENT_CAPABILITY_ID => (
                 SUBAGENT_PROVIDER_NAME.to_owned(),
-                "Delegate one read-only subtask to a fresh subagent context; approval required.".to_owned(),
+                "Delegate one read-only subtask to a fresh subagent context; follows the selected approval mode.".to_owned(),
                 subagent_schema(),
                 StoredFileToolLimitV1::Subagent {
                     legacy_maximum_turns: {
@@ -937,8 +944,7 @@ pub(crate) fn freeze_file_tool_bindings(
             configuration: requested.configuration.clone(),
             limit,
             secret,
-            requires_approval: !requested.capability_id.starts_with(MCP_CAPABILITY_PREFIX)
-                && !approval_free_tool_ids().contains(requested.capability_id.as_str()),
+            requires_approval: !approval_free_tool_ids().contains(requested.capability_id.as_str()),
             internal_id,
         });
     }
@@ -1084,6 +1090,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
 
 #[derive(Clone)]
 pub(crate) struct FileToolAuthorityRuntimeV1 {
+    pub(crate) approvals: super::approvals::ApprovalStore,
     projects: ProjectCoordinator,
     records: Arc<ToolRecordStore>,
     ledger: Arc<LocalInvocationLedger>,
@@ -1109,6 +1116,8 @@ impl FileToolAuthorityRuntimeV1 {
         Ok(Self {
             projects,
             records: Arc::new(ToolRecordStore::open(database)?),
+            approvals: super::approvals::ApprovalStore::open(database)
+                .map_err(WorkflowPipelineError::Store)?,
             ledger: Arc::new(LocalInvocationLedger::open_scoped(
                 database,
                 TOOL_BROKER_CHAT_ID,
@@ -1347,6 +1356,8 @@ fn tool_lease_id(
 
 #[derive(Clone)]
 pub(crate) struct FrozenFileToolAuthorityContextV1 {
+    pub approvals: super::approvals::ApprovalContext,
+    pub review_messages: Vec<super::pipeline::WorkflowMessageV1>,
     pub manifest: AuthorityManifestV1,
     pub run_id: StableId,
     pub request_id: StableId,
@@ -1478,9 +1489,9 @@ impl BoundFileToolAuthorityV1 {
             )
             .map_err(broker_error)?;
         match decision {
-            BrokerDecisionV1::AwaitingApproval(challenge) => Err(
-                WorkflowPipelineError::ToolApproval(tool_approval_challenge(&challenge, call)),
-            ),
+            BrokerDecisionV1::AwaitingApproval(challenge) => {
+                self.review_tool_approval(outer_invocation_id, turn, call, challenge, cancellation)
+            }
             _ => self.complete_broker_decision(
                 broker,
                 &proposal_id,
@@ -1539,12 +1550,13 @@ impl BoundFileToolAuthorityV1 {
             BrokerDecisionV1::Denied => {
                 // The rejection is durably recorded by the broker; the model
                 // receives an explicit denial result.
+                let reason = self.denial_reason(&response.invocation_id)?;
                 let denied = SettledModelToolCallV1 {
                     result: ModelToolResultV1 {
                         call_id: call.call_id.clone(),
                         content: json!({
                             "error": "user_rejected",
-                            "detail": "The user rejected this tool invocation."
+                            "detail": reason,
                         }),
                         is_error: true,
                     },
@@ -1554,12 +1566,17 @@ impl BoundFileToolAuthorityV1 {
                         capability_id: call.capability_id.clone(),
                         path: String::new(),
                         status: "denied".into(),
-                        summary: "Tool invocation was rejected by the user.".into(),
+                        summary: reason,
                         outcome_hash: String::new(),
                         replayed: false,
                     },
                 };
-                self.records_denied_outcome(&response.invocation_id, call)?;
+                self.records_denied_outcome(
+                    &response.invocation_id,
+                    call,
+                    &denied.result.content,
+                    &denied.activity.summary,
+                )?;
                 Ok(denied)
             }
             _ => self.complete_broker_decision(
@@ -1590,7 +1607,7 @@ impl BoundFileToolAuthorityV1 {
                 self.run_events.publish_tool_waiting(
                     call,
                     challenge.summary.clone(),
-                    serde_json::to_value(challenge).unwrap_or(Value::Null),
+                    Value::Null,
                 );
             }
             Err(error) => self.run_events.publish_tool_terminal(
@@ -1606,6 +1623,8 @@ impl BoundFileToolAuthorityV1 {
         &self,
         invocation_id: &StableId,
         call: &ModelToolCallV1,
+        result: &Value,
+        summary: &str,
     ) -> Result<(), WorkflowPipelineError> {
         if self.runtime.records.outcome(invocation_id)?.is_some() {
             return Ok(());
@@ -1618,9 +1637,9 @@ impl BoundFileToolAuthorityV1 {
                 call_id: call.call_id.clone(),
                 capability_id: call.capability_id.clone(),
                 path: String::new(),
-                result: json!({"error": "user_rejected"}),
+                result: result.clone(),
                 is_error: true,
-                summary: "Tool invocation was rejected by the user.".into(),
+                summary: summary.to_owned(),
             })
             .map(|_| ())
     }
@@ -3284,9 +3303,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
-        StoredFileToolLimitV1::WebSearch { .. } => {
-            BTreeSet::from(["query", "limit", "freshness"])
-        }
+        StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit", "freshness"]),
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
         {
@@ -4153,6 +4170,8 @@ mod tests {
         )
         .expect("capability binding");
         let authority_a = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            approvals: Default::default(),
+            review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-a", capability_binding.clone())
                 .expect("manifest A"),
             run_id: stable("run.tool-run-a").expect("run A"),
@@ -4172,6 +4191,8 @@ mod tests {
             cancellation: CancellationToken::default(),
         });
         let authority_b = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            approvals: Default::default(),
+            review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-b", capability_binding.clone())
                 .expect("manifest B"),
             run_id: stable("run.tool-run-b").expect("run B"),
@@ -4224,6 +4245,8 @@ mod tests {
         );
 
         let expired_authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            approvals: Default::default(),
+            review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-expired", capability_binding.clone())
                 .expect("expired manifest"),
             run_id: stable("run.tool-run-expired").expect("expired run"),
@@ -4261,6 +4284,8 @@ mod tests {
         )
         .expect("frozen HEAD");
         let authority_c = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            approvals: Default::default(),
+            review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-c", capability_binding).expect("manifest C"),
             run_id: stable("run.tool-run-c").expect("run C"),
             request_id: stable("command.tool-run-c").expect("request C"),
@@ -4488,9 +4513,7 @@ mod tests {
             &json!({"urls":["https://example.com","https://example.org"],"char_limit":4096}),
         )
         .expect("multi-page extract");
-        assert!(
-            validate_call_arguments(&extract, &json!({"url":"https://example.com"})).is_err()
-        );
+        assert!(validate_call_arguments(&extract, &json!({"url":"https://example.com"})).is_err());
 
         let fetch = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
             capability_id: WEB_FETCH_CAPABILITY_ID.into(),
@@ -4594,8 +4617,8 @@ mod tests {
         assert_eq!(binding.capability_id, "mcp://serv.fixture/echo");
         assert_eq!(binding.provider_name, "mcp__serv_fixture__echo");
         assert!(
-            !binding.requires_approval,
-            "MCP tools never suspend for approval"
+            binding.requires_approval,
+            "MCP tools follow the same approval policy as host tools"
         );
         assert_eq!(
             binding.limit,

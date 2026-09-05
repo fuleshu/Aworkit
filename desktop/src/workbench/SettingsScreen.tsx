@@ -13,6 +13,7 @@ import type {
   SettingsV2Snapshot,
 } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
+import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
 import {
   CredentialsSection,
   ToolsSection,
@@ -888,6 +889,7 @@ export function SettingsScreen({
                 />
               </SettingsPanel>
               <SettingsPanel id="tools" selected={section}>
+                {section === "tools" && <p className="settings-field-help">Tool approvals follow the mode selected in Chat. Manage defaults and saved project approvals under Approvals.</p>}
                 <ToolsSection
                   tools={draft.tools}
                   credentials={draft.credentials}
@@ -1070,6 +1072,10 @@ export function SettingsScreen({
                     }))
                   }
                 />
+              </SettingsPanel>
+              <SettingsPanel id="approvals" selected={section}>
+                {section === "approvals" && <ApprovalsSection mode={draft.approvals.defaultMode}
+                  onChange={defaultMode => updateRenderedDraft(current => ({ ...current, approvals: { defaultMode } }))} />}
               </SettingsPanel>
               <SettingsPanel id="appearance" selected={section}>
                 <AppearanceSection

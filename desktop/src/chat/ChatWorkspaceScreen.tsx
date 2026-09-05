@@ -11,6 +11,8 @@ import {
   type WorkflowOption,
 } from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
+import { ApprovalModeSelect } from "./ApprovalModeSelect";
+import type { ApprovalActionDetails } from "./approvals";
 import { controlsFor } from "./composer";
 import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
@@ -109,8 +111,9 @@ export function ChatWorkspaceScreen({
     [snapshot, runtime.events],
   );
   const liveTurnRunning = useMemo(
-    () => snapshot !== null && hasOpenSemanticSpan(runtime.events),
-    [runtime.events, snapshot],
+    () => snapshot !== null && hasOpenSemanticSpan(runtime.events)
+      && (snapshot.chat.phase !== "awaiting_approval" || runtime.pendingCommandIds.size > 0),
+    [runtime.events, snapshot, runtime.pendingCommandIds.size],
   );
   const inspect = () => {
     const reveal = () => { setSelectedTimelineId(null); setInspectorOpen(true); };
@@ -304,6 +307,7 @@ export function ChatWorkspaceScreen({
   const cardAction = (
     action: NonNullable<TimelineItem["action"]>,
     targetId: string,
+    details?: ApprovalActionDetails,
   ) => {
     const intent = timelineActionIntent(
       action,
@@ -311,6 +315,7 @@ export function ChatWorkspaceScreen({
       commandIds.createIntent(
         action === "approve" || action === "reject" ? "approval" : action,
       ).commandId,
+      details,
     );
     void runtime.dispatch(intent);
   };
@@ -462,6 +467,9 @@ export function ChatWorkspaceScreen({
           onSelect={selectTimelineItem}
           onAction={cardAction}
         />
+        <div className="chat-approval-control"><ApprovalModeSelect value={chat.approvalMode ?? "ask_for_approval"}
+          disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
+          onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} /></div>
         <ChatComposer
           key={chat.chatId + (defaultWorkflowId ?? "")}
           chat={chat}
@@ -508,6 +516,7 @@ export function timelineActionIntent(
   action: NonNullable<TimelineItem["action"]>,
   targetId: string,
   commandId: string,
+  details?: import("./approvals").ApprovalActionDetails,
 ): ChatIntent {
   return action === "approve" || action === "reject"
     ? {
@@ -515,6 +524,7 @@ export function timelineActionIntent(
         commandId,
         decisionId: targetId,
         approved: action === "approve",
+        ...(details ?? {}),
       }
     : { type: action, commandId, targetId };
 }

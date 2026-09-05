@@ -975,8 +975,10 @@ describe("Chat native-port recovery contracts", () => {
         }
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Approve" }));
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: "Approve once" }));
+    await user.click(screen.getByRole("button", { name: "Deny and give reason" }));
+    await user.type(screen.getByRole("textbox", { name: "Reason for denial" }), "Keep the original files");
+    await user.click(screen.getByRole("button", { name: "Deny action" }));
     expect(actions).toEqual([
       { action: "approve", id: "approval.lease.1" },
       { action: "reject", id: "approval.lease.1" },

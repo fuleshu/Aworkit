@@ -44,6 +44,22 @@ pub(crate) struct RunEventStream {
 }
 
 impl RunEventStream {
+    /// Review rationale and usage are separate from assistant messages/reasoning.
+    pub(crate) fn publish_approval_review(
+        &self,
+        call: &aworkit_capability_host::ModelToolCallV1,
+        review: &super::approvals::reviewer::ReviewDecision,
+    ) {
+        self.publish(SemanticEventDraft::new(
+            "approval.reviewed",
+            json!({
+                "requestId":self.request_id,"runId":self.run_id,"createdAt":now_label(),
+                "callId":call.call_id,"capabilityId":call.capability_id,
+                "decision":review.decision,"reason":review.reason,
+                "inputTokens":review.input_tokens,"outputTokens":review.output_tokens,
+            }),
+        ));
+    }
     pub(crate) fn new(
         request_id: String,
         run_id: String,

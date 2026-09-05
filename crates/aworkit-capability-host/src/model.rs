@@ -267,6 +267,27 @@ impl FrozenModelGateway {
         request: &ModelRequestV1,
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
+        self.execute_with_observer(plan, request, cancellation, self.observer.as_deref())
+    }
+
+    /// Runs an independent reviewer without attributing its output or reasoning
+    /// to the acting assistant. The caller records review evidence separately.
+    pub fn execute_review_cancellable(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
+        self.execute_with_observer(plan, request, cancellation, None)
+    }
+
+    fn execute_with_observer(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelRequestV1,
+        cancellation: &CancellationToken,
+        observer: Option<&dyn ModelEventObserverV1>,
+    ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         let identities: BTreeSet<_> = plan
             .candidates
             .iter()
@@ -283,10 +304,10 @@ impl FrozenModelGateway {
         {
             return Err(ProviderError::InvalidPlan);
         }
-        if let Some(observer) = &self.observer {
+        if let Some(observer) = observer {
             observer.model_turn_started(&request.input);
         }
-        let mut turn_completion = ModelTurnCompletion::new(self.observer.as_deref());
+        let mut turn_completion = ModelTurnCompletion::new(observer);
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
             if cancellation.is_cancelled() {
@@ -308,7 +329,7 @@ impl FrozenModelGateway {
                 if output_bytes > plan.maximum_output_bytes {
                     return Err(ProviderError::OutputBound);
                 }
-                if let Some(observer) = &self.observer {
+                if let Some(observer) = observer {
                     observer.model_event(&event);
                 }
                 events.push(event);
