@@ -2,12 +2,12 @@
 import {
   cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { render } from "../test/renderWithNotifications";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { projectAppearancePreference } from "./appearance";
 import type {
@@ -17,6 +17,7 @@ import type {
 } from "./configuration";
 import { SettingsScreen } from "./SettingsScreen";
 import { ToolsSection } from "./settings-v2/CredentialsToolsSection";
+import type { SettingsLeaveGuard } from "../shell/settingsNavigation";
 import type {
   CredentialDeleteCommand,
   CredentialStoreCommand,
@@ -45,6 +46,51 @@ afterEach(() => {
 });
 
 describe("Settings v2 workbench", () => {
+  it.each(["conflict", "receipt", "snapshot", "content"])("Save and return preserves the draft after a %s failure", async failure => {
+    const port = new RecordingSettingsV2Port();
+    if (failure === "conflict") port.conflictOnce = true;
+    if (failure === "receipt") port.mutationReceiptCommandIdOverride = "wrong-command";
+    if (failure === "content") port.mutationSnapshotContentMismatch = true;
+    if (failure === "snapshot") {
+      port.mutationSnapshotVersionOffset = -1;
+      port.mutationSnapshotFaultCount = 2;
+    }
+    let guard: SettingsLeaveGuard | null = null;
+    const onLeave = vi.fn();
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} registerLeaveGuard={value => { guard = value; }} onBack={() => guard?.(onLeave)} returnLabel="Back to Chat" />);
+    const url = await screen.findByLabelText("Base URL");
+    await user.clear(url);
+    await user.type(url, "https://changed.example/v1");
+    await user.click(screen.getByRole("button", { name: "Back to Chat" }));
+    await user.click(screen.getByRole("button", { name: "Save and return" }));
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stay in Settings" })).toBeEnabled());
+    expect(onLeave).not.toHaveBeenCalled();
+    expect(url).toHaveValue("https://changed.example/v1");
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("Back waits for the existing Save and its canonical refresh before leaving", async () => {
+    const port = new RecordingSettingsV2Port();
+    const gate = deferred();
+    port.commitGate = gate.promise;
+    let guard: SettingsLeaveGuard | null = null;
+    const onLeave = vi.fn();
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} registerLeaveGuard={value => { guard = value; }} onBack={() => guard?.(onLeave)} returnLabel="Back to Chat" />);
+    await user.type(await screen.findByLabelText("Base URL"), "/changed");
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(screen.getByRole("button", { name: "Back to Chat" }));
+    expect(onLeave).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(port.commits).toHaveLength(1);
+    gate.resolve();
+    await waitFor(() => expect(onLeave).toHaveBeenCalledOnce());
+    expect(port.commits).toHaveLength(1);
+    expect(port.snapshotCalls).toBeGreaterThan(1);
+  });
+
   it("picks an MCP executable and does not expose a working-directory field", async () => {
     const port = new RecordingSettingsV2Port();
     const picker = presentation({
@@ -1780,6 +1826,7 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public mutationReceiptCommandIdOverride: string | null = null;
   public mutationSnapshotVersionOffset = 0;
   public mutationSnapshotFaultCount = 0;
+  public mutationSnapshotContentMismatch = false;
   public credentialConflictOnce = false;
   public credentialLostResponseOnce = false;
   public credentialMismatchedReceiptOnce = false;
@@ -1824,6 +1871,9 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
       throw new Error("settings snapshot response was lost");
     }
     const latest = structuredClone(this.state);
+    if (this.mutationSnapshotContentMismatch && this.commits.length > 0) {
+      latest.settings.appearance = { mode: "dark", fontScale: 1.5 };
+    }
     const snapshotGate = this.snapshotGateOnce;
     if (snapshotGate !== null) {
       this.snapshotGateOnce = null;

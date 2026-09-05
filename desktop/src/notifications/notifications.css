@@ -1,0 +1,25 @@
+/* The dock participates in shell layout; neither messages nor details cover a pane. */
+.desktop-status-dock { grid-column: 1 / -1; grid-row: 2; min-width: 0; min-height: 0; background: var(--aw-panel); }
+.desktop-status-bar { display: flex; align-items: center; gap: 8px; height: calc(32px * var(--aw-font-scale, 1)); min-height: 32px; padding: 1px 8px; border-top: 1px solid var(--aw-divider); font-size: calc(12px * var(--aw-font-scale, 1)); }
+.notification-primary { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.notification-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notification-symbol { flex-shrink: 0; font-weight: 600; }
+.severity-error .notification-symbol, .severity-action .notification-symbol { color: var(--aw-danger); }
+.severity-warning .notification-symbol { color: var(--aw-warning); }
+.severity-success .notification-symbol { color: var(--aw-success); }
+.desktop-status-bar button { min-height: 24px; padding: 1px 6px; flex-shrink: 0; background: transparent; border-color: transparent; }
+.desktop-status-bar button:hover { background: var(--aw-hover); }
+.notification-list-toggle { display: flex; align-items: center; gap: 6px; }
+.notification-details { border-top: 1px solid var(--aw-divider); padding: 10px 14px; max-height: min(280px, 40vh); overflow: auto; scrollbar-gutter: stable; }
+.notification-details header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.notification-details h2, .notification-details h3 { font-size: 1rem; margin: 0 0 8px; }
+.notification-details ul { padding: 0; margin: 0 0 12px; list-style: none; }
+.notification-details li { padding: 8px 0; border-bottom: 1px solid var(--aw-divider); overflow-wrap: anywhere; }
+.notification-details p { margin: 4px 0; white-space: pre-wrap; }
+.notification-details small, .notification-empty { color: var(--aw-secondary); }
+.notification-detail-title { display: flex; gap: 8px; }
+.notification-item-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.notification-timing { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.notification-details summary { cursor: pointer; }
+@media (max-width: 700px) { .notification-list-label, .notification-primary-action { display: none; } }
+@media (forced-colors: active) { .notification-symbol { color: CanvasText !important; } }

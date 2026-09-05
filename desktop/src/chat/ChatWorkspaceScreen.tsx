@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
+import { useProjectedNotification } from "../notifications/NotificationContext";
 import {
   hasOpenSemanticSpan,
   projectSemanticTimeline,
@@ -11,7 +12,6 @@ import {
 } from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { controlsFor } from "./composer";
-import { ErrorDialog } from "./ErrorDialog";
 import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
@@ -31,6 +31,7 @@ interface ChatWorkspaceScreenProps {
   readonly newChatRequest?: number;
   readonly historyActionRequest?: ChatHistoryActionRequest | null;
   readonly active?: boolean;
+  readonly onReveal?: (after: () => void) => void;
   readonly workflowPort?: Pick<WorkflowCorePort, "snapshot">;
   readonly libraryPort?: WorkflowLibraryPort;
   readonly onRecoveryPendingChange?: (pending: boolean) => void;
@@ -58,6 +59,7 @@ export function ChatWorkspaceScreen({
   newChatRequest = 0,
   historyActionRequest = null,
   active = true,
+  onReveal,
   workflowPort,
   libraryPort,
   onRecoveryPendingChange,
@@ -110,20 +112,29 @@ export function ChatWorkspaceScreen({
     () => snapshot !== null && hasOpenSemanticSpan(runtime.events),
     [runtime.events, snapshot],
   );
-  const errorNotices = useChatErrorNotices(
+  const inspect = () => {
+    const reveal = () => { setSelectedTimelineId(null); setInspectorOpen(true); };
+    if (onReveal) onReveal(reveal); else reveal();
+  };
+  useChatErrorNotices(
     runtime.events,
     snapshot !== null,
     projectedChatId ?? null,
-    runtime.error,
-    runtime.dismissError,
+    runtime.stale ? null : runtime.error,
+    runtime.pendingCommandIds.size > 0,
+    inspect,
   );
-  const errorDialog =
-    errorNotices.notice === null ? null : (
-      <ErrorDialog
-        notice={errorNotices.notice}
-        onDismiss={errorNotices.dismiss}
-      />
-    );
+  useProjectedNotification("Chat", "chat-connection", "connection", !runtime.stale ? null : {
+    route: "chat", summary: "Projection disconnected.", detail: runtime.error?.message ?? "The last known state remains visible. Changes are disabled until resynchronized.", severity: "warning", lifetime: { kind: "condition", conditionId: "chat-projection" },
+    action: { label: "Resync", disabled: runtime.pendingCommandIds.size > 0, run: () => void runtime.resynchronize() },
+  });
+  useProjectedNotification("Chat", "chat-recovery", "recovery", !projectedRecoveryPending ? null : {
+    route: "chat", summary: "Interrupted command requires an explicit decision.", severity: "action", lifetime: { kind: "condition", conditionId: `chat-recovery:${projectedChatId}` },
+    action: { label: "Review", run: () => { const reveal = () => chatLayoutRef.current?.querySelector<HTMLButtonElement>(".recovery-actions button")?.focus(); if (onReveal) onReveal(reveal); else reveal(); } },
+  });
+  useProjectedNotification("Chat", `chat:${projectedChatId ?? "startup"}`, "command", runtime.stale || runtime.pendingCommandIds.size === 0 ? null : {
+    route: "chat", summary: "Waiting for the Chat command to commit…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
+  });
 
   // Load the saved-workflow library once so the composer can list and default
   // to the profile default workflow.
@@ -261,7 +272,6 @@ export function ChatWorkspaceScreen({
         <section className="route-loading" role="status">
           Connecting to the trusted core…
         </section>
-        {errorDialog}
       </>
     );
   if (snapshot === null)
@@ -277,7 +287,6 @@ export function ChatWorkspaceScreen({
             Retry
           </button>
         </section>
-        {errorDialog}
       </>
     );
   const chat = snapshot.chat;
@@ -370,7 +379,7 @@ export function ChatWorkspaceScreen({
         {chat.recoveryPending ? (
           <div className="recovery-banner" role="status">
             <div>
-              <strong>Interrupted command requires an explicit decision.</strong>
+              <strong>Choose how to recover this command.</strong>
               <p>
                 Aworkit preserved the exact staged command. Resume replays that
                 command; normal input, New Chat, and Stop remain locked.
@@ -444,20 +453,9 @@ export function ChatWorkspaceScreen({
               </button>
             </div>
           </div>
-        ) : runtime.stale ? (
-          <div className="stale-banner" role="status">
-            <strong>Projection disconnected.</strong> Last contiguous state is
-            frozen; changes are disabled.
-            <button
-              title="Request a fresh trusted-core snapshot"
-              type="button"
-              onClick={() => void runtime.resynchronize()}
-            >
-              Resync
-            </button>
-          </div>
         ) : null}
         <ConversationTimeline
+          active={active}
           items={timelineItems}
           selectedId={selectedTimelineId}
           actionsDisabled={runtime.pendingCommandIds.size > 0}
@@ -502,7 +500,6 @@ export function ChatWorkspaceScreen({
           onClose={() => setInspectorOpen(false)}
         />
       )}
-      {errorDialog}
     </section>
   );
 }

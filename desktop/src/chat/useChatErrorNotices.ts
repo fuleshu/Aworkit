@@ -1,95 +1,43 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useNotificationPublisher } from "../notifications/NotificationContext";
 import type { RuntimeEvent } from "./corePort";
-import type { ErrorDialogNotice } from "./ErrorDialog";
 import type { RuntimeErrorNotice } from "./useChatRuntime";
 
-interface QueuedErrorNotice extends ErrorDialogNotice {
-  readonly runtimeErrorId?: number;
-}
-
-/**
- * Queues command failures and newly committed terminal execution failures.
- * Replayed events are keyed by their canonical event ID, so polling or span
- * re-projection cannot reopen an acknowledged dialog.
- */
+/** New failures become non-modal notices. Stream hydration and replay never reopen old errors. */
 export function useChatErrorNotices(
-  events: readonly RuntimeEvent[],
-  eventsReady: boolean,
-  chatId: string | null,
-  runtimeError: RuntimeErrorNotice | null,
-  dismissRuntimeError: () => void,
-): {
-  readonly notice: ErrorDialogNotice | null;
-  dismiss(): void;
-} {
-  const [queue, setQueue] = useState<readonly QueuedErrorNotice[]>([]);
-  const knownKeysRef = useRef(new Set<string>());
-  const hydratedChatIdRef = useRef<string | null>(null);
-
-  const enqueue = useCallback((notice: QueuedErrorNotice): void => {
-    if (knownKeysRef.current.has(notice.key)) return;
-    knownKeysRef.current.add(notice.key);
-    setQueue((current) => [...current, notice]);
-  }, []);
-
+  events: readonly RuntimeEvent[], eventsReady: boolean, chatId: string | null,
+  runtimeError: RuntimeErrorNotice | null, pending: boolean, inspect: () => void,
+): void {
+  const notifications = useNotificationPublisher("Chat", `chat:${chatId ?? "startup"}`, "chat");
+  const seenCommand = useRef<number | null>(null);
+  const stream = useRef<string | null>(null);
+  const through = useRef(0);
+  const inspectRef = useRef(inspect);
+  inspectRef.current = inspect;
   useEffect(() => {
-    if (runtimeError === null) return;
-    enqueue({
-      key: `runtime-error.${runtimeError.id}`,
-      title: "Aworkit error",
-      body: runtimeError.message,
-      runtimeErrorId: runtimeError.id,
+    if (pending || runtimeError === null) { notifications.resolve("command-error"); return; }
+    if (runtimeError.id === seenCommand.current) return;
+    seenCommand.current = runtimeError.id;
+    notifications.publish("command-error", {
+      summary: runtimeError.message, severity: "error", lifetime: { kind: "transient" },
+      action: { label: "Inspect", run: () => inspectRef.current() },
     });
-  }, [enqueue, runtimeError]);
-
+  }, [notifications, pending, runtimeError]);
   useEffect(() => {
-    if (!eventsReady || chatId === null) return;
-    // Snapshot and event state are published together, but guard the boundary
-    // explicitly so a concurrent render can never associate the previous
-    // Chat's envelopes with the newly selected Chat.
-    if (events.some((event) => event.streamId !== chatId)) return;
-    const failures = events.filter(
-      (event) => event.kind === "execution.failed",
-    );
-    if (hydratedChatIdRef.current !== chatId) {
-      for (const event of failures)
-        knownKeysRef.current.add(`execution-error.${event.eventId}`);
-      hydratedChatIdRef.current = chatId;
-      return;
-    }
-    for (const event of failures) {
-      const payload = record(event.payload);
-      enqueue({
-        key: `execution-error.${event.eventId}`,
-        title: string(payload.title) ?? "Execution failed",
-        body:
-          string(payload.body) ??
-          "The run failed without a detailed error message. Inspect Run details for the source record.",
+    if (!eventsReady || chatId === null || events.some(event => event.streamId !== chatId)) return;
+    const head = events.at(-1)?.sequence ?? 0;
+    if (stream.current !== chatId) { stream.current = chatId; through.current = head; return; }
+    for (const event of events) {
+      if (event.sequence <= through.current || event.kind !== "execution.failed") continue;
+      const payload = event.payload as { title?: unknown; body?: unknown };
+      const title = typeof payload.title === "string" ? payload.title : "Execution failed";
+      const body = typeof payload.body === "string" ? payload.body : "Inspect Run details for the source record.";
+      notifications.publish("execution-error", {
+        summary: `${title}: ${body}`, severity: "error", lifetime: { kind: "transient" },
+        action: { label: "Inspect Run details", run: () => inspectRef.current() },
       });
     }
-  }, [chatId, enqueue, events, eventsReady]);
-
-  const dismiss = useCallback((): void => {
-    const current = queue[0];
-    if (
-      current?.runtimeErrorId !== undefined &&
-      runtimeError?.id === current.runtimeErrorId
-    )
-      dismissRuntimeError();
-    setQueue((items) => items.slice(1));
-  }, [dismissRuntimeError, queue, runtimeError]);
-
-  return { notice: queue[0] ?? null, dismiss };
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function string(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
+    through.current = Math.max(through.current, head);
+  }, [notifications, chatId, events, eventsReady]);
+  useEffect(() => () => notifications.clear(), [notifications]);
 }

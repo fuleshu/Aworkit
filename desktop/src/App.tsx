@@ -21,6 +21,10 @@ import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
+import { useSettingsNavigation } from "./shell/settingsNavigation";
+import { NotificationStore } from "./notifications/NotificationStore";
+import { NotificationProvider } from "./notifications/NotificationContext";
+import { DesktopStatusBar } from "./notifications/DesktopStatusBar";
 import { bundledDefaultWorkflow } from "./workbench/bundledWorkflows";
 import { createWorkflowLibraryPort } from "./workbench/corePort";
 const SettingsScreen = lazy(() =>
@@ -43,11 +47,15 @@ const starterWorkflow = bundledDefaultWorkflow;
 
 /** Persistent compact desktop workbench. Feature views own no canonical state. */
 export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX.Element {
-  const [route, setRoute] = useState<Route>("chat");
+  const [store] = useState(() => new NotificationStore());
+  useEffect(() => () => store.dispose(), [store]);
+  return <NotificationProvider store={store}><DesktopApp adapters={adapters} managementRepairCorePort={managementRepairCorePort} store={store} /></NotificationProvider>;
+}
+
+function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { readonly store: NotificationStore }): React.JSX.Element {
+  const mainRef = useRef<HTMLElement>(null);
+  const { route, mountedRoutes, visit, navigate, back, registerLeaveGuard, returnLabel } = useSettingsNavigation(mainRef, store);
   const workflowLibraryPort = useMemo(() => createWorkflowLibraryPort(), []);
-  const [mountedRoutes, setMountedRoutes] = useState<ReadonlySet<Route>>(
-    new Set(["chat"]),
-  );
   const [navigationWidth, setNavigationWidth] = useState(208);
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
@@ -62,24 +70,18 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
   const [chatRecoveryPending, setChatRecoveryPending] = useState<
     boolean | null
   >(null);
-  const [notification, setNotification] = useState<Extract<
-    NativePresentationRequest,
-    { kind: "notification" }
-  > | null>(null);
+  const setNotification = useCallback((request: Extract<NativePresentationRequest, { kind: "notification" }>) => {
+    store.publish(`native:${request.title}`, "application", store.nextOccurrence(), {
+      summary: request.title, detail: request.body, source: "Aworkit", severity: "info", lifetime: { kind: "transient" },
+    });
+  }, [store]);
   const [confirmation, setConfirmation] = useState<Extract<
     NativePresentationRequest,
     { kind: "confirmation" }
   > | null>(null);
-  const mainRef = useRef<HTMLElement>(null);
-  const navigate = useCallback((next: Route) => {
-    setMountedRoutes((current) => new Set([...current, next]));
-    setRoute(next);
-    window.requestAnimationFrame(() => mainRef.current?.focus());
-  }, []);
   const openNewChat = useCallback(() => {
     if (chatRecoveryPending !== false) return;
-    navigate("chat");
-    setNewChatRequest((request) => request + 1);
+    navigate("chat", () => setNewChatRequest((request) => request + 1));
   }, [chatRecoveryPending, navigate]);
   const requestHistoryAction = useCallback(
     (
@@ -156,7 +158,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
         // Browser and denied-native-event runs keep keyboard navigation.
       });
     return () => dispose?.();
-  }, [navigate, openNewChat]);
+  }, [navigate, openNewChat, setNotification]);
   useEffect(() => {
     const receive = (event: Event) => {
       const request = (event as CustomEvent<NativePresentationRequest>).detail;
@@ -165,7 +167,19 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
     };
     window.addEventListener(nativePresentationEvent, receive);
     return () => window.removeEventListener(nativePresentationEvent, receive);
-  }, []);
+  }, [setNotification]);
+  useEffect(() => {
+    if (route !== "settings") return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      if ([...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [aria-haspopup][aria-expanded="true"]')]
+        .some(element => !element.closest("[hidden]"))) return;
+      event.preventDefault();
+      back();
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [route, back]);
   return (
     <div
       className="desktop-shell"
@@ -204,16 +218,15 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
                   : null
         }
         onSelectChat={(chatId) => {
-          navigate("chat");
-          if (chatId !== chatRuntimeState?.snapshot.chat.chatId)
-            requestHistoryAction("select_chat", chatId);
+          navigate("chat", () => {
+            if (chatId !== chatRuntimeState?.snapshot.chat.chatId) requestHistoryAction("select_chat", chatId);
+          });
         }}
         onSetChatPinned={(chatId, pinned) =>
           requestHistoryAction("set_chat_pinned", chatId, pinned)
         }
         onForkChat={(chatId) => {
-          navigate("chat");
-          requestHistoryAction("fork", chatId);
+          navigate("chat", () => requestHistoryAction("fork", chatId));
         }}
         onDeleteChat={(chatId) => {
           const entry = chatRuntimeState?.snapshot.history.find(
@@ -226,8 +239,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             )
             .then((confirmed) => {
               if (!confirmed) return;
-              navigate("chat");
-              requestHistoryAction("delete_chat", chatId);
+              navigate("chat", () => requestHistoryAction("delete_chat", chatId));
             });
         }}
       />
@@ -247,9 +259,10 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
           fallback={<div className="route-loading">Loading surface…</div>}
         >
           {mountedRoutes.has("chat") && (
-            <div className="route-surface" hidden={route !== "chat"}>
+            <div className="route-surface" data-route="chat" hidden={route !== "chat"}>
               <ChatWorkspaceScreen
                 active={route === "chat"}
+                onReveal={after => navigate("chat", after)}
                 confirmRecoveryAbandon={(title, body) =>
                   adapters.nativePresentation.confirm(title, body)
                 }
@@ -261,8 +274,9 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             </div>
           )}
           {mountedRoutes.has("workflows") && (
-            <div className="route-surface" hidden={route !== "workflows"}>
+            <div className="route-surface" data-route="workflows" hidden={route !== "workflows"}>
               <WorkflowEditorScreen
+                active={route === "workflows"}
                 document={starterWorkflow}
                 libraryPort={workflowLibraryPort}
                 onOpenSettings={() => navigate("settings")}
@@ -278,13 +292,14 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
             </div>
           )}
           {mountedRoutes.has("settings") && (
-            <div className="route-surface" hidden={route !== "settings"}>
-              <SettingsScreen presentation={adapters.nativePresentation} />
+            <div className="route-surface" data-route="settings" hidden={route !== "settings"}>
+              <SettingsScreen presentation={adapters.nativePresentation} active={route === "settings"} visit={visit} onBack={back} returnLabel={returnLabel} registerLeaveGuard={registerLeaveGuard} />
             </div>
           )}
           {mountedRoutes.has("management") && (
-            <div className="route-surface" hidden={route !== "management"}>
+            <div className="route-surface" data-route="management" hidden={route !== "management"}>
               <ManagementScreen
+                active={route === "management"}
                 confirmDecision={(title, body) =>
                   adapters.nativePresentation.confirm(title, body)
                 }
@@ -298,22 +313,7 @@ export function App({ adapters, managementRepairCorePort }: AppProps): React.JSX
         {adapters.components.name} · {adapters.graph.name} ·{" "}
         {adapters.collections.name}
       </span>
-      {notification !== null && (
-        <section className="workbench-notification" role="status">
-          <div>
-            <strong>{notification.title}</strong>
-            <p>{notification.body}</p>
-          </div>
-          <button
-            aria-label="Dismiss notification"
-            title="Dismiss notification"
-            type="button"
-            onClick={() => setNotification(null)}
-          >
-            ×
-          </button>
-        </section>
-      )}
+      <DesktopStatusBar store={store} route={route} />
       {confirmation !== null && (
         <ConfirmationDialog
           request={confirmation}

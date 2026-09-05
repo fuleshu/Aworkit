@@ -10,6 +10,7 @@
     "generate:protocol": "node ../protocol/generate-runtime-schema.mjs",
     "test": "vitest run",
     "test:native-chat": "node scripts/native-chat-smoke.mjs",
+    "test:native-notifications": "node scripts/native-notifications-smoke.mjs",
     "dev": "vite",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"

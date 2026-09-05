@@ -128,10 +128,56 @@ describe("honest JSON-workflow desktop slice", () => {
     );
     expect(document.documentElement.dataset.appearance).toBe("dark");
 
-    await user.click(screen.getByRole("button", { name: /Workflows/ }));
+    await user.click(screen.getByRole("button", { name: "Back to Workflows" }));
     await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Input" })).toBe(inputNode);
+    await user.click(screen.getByRole("button", { name: /Undo/ }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   }, 10_000);
+
+  it("Back restores the exact Chat draft, caret, focus and inspector after repeated Settings entry", async () => {
+    const user = userEvent.setup();
+    render(<App adapters={defaultDesktopAdapters} />);
+    const composer = await screen.findByRole("textbox", { name: "Chat input" }) as HTMLTextAreaElement;
+    await user.type(composer, "an unsent draft with a selected word");
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize Run details" }), { key: "ArrowLeft" });
+    composer.focus();
+    composer.setSelectionRange(3, 9);
+    fireEvent.keyDown(composer, { key: ",", ctrlKey: true });
+    await screen.findByRole("button", { name: "Back to Chat" }, lazyRouteWait);
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Back to Chat" }));
+    await waitFor(() => expect(composer).toHaveFocus());
+    expect(composer).toHaveValue("an unsent draft with a selected word");
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([3, 9]);
+    expect(screen.getByRole("separator", { name: "Resize Run details" })).toHaveAttribute("aria-valuenow", "328");
+    expect(screen.getByRole("textbox", { name: "Chat input" })).toBe(composer);
+  });
+
+  it("Escape closes notification details first, then guards dirty Settings until Discard", async () => {
+    const user = userEvent.setup();
+    render(<App adapters={defaultDesktopAdapters} />);
+    await screen.findByRole("textbox", { name: "Chat input" });
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    await screen.findByRole("button", { name: "Back to Chat" }, lazyRouteWait);
+    await user.click(screen.getByRole("button", { name: /Appearance/ }));
+    await user.click(screen.getByRole("radio", { name: /Dark/ }));
+    const list = screen.getByRole("button", { name: /Notifications, / });
+    await user.click(list);
+    fireEvent.keyDown(list, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Notification details" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    const stay = screen.getByRole("button", { name: "Stay in Settings" });
+    fireEvent.keyDown(stay, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("radio", { name: /Dark/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Back to Chat" }));
+    await user.click(screen.getByRole("button", { name: "Discard and return" }));
+    expect(await screen.findByRole("textbox", { name: "Chat input" })).toBeVisible();
+    expect(document.documentElement.dataset.appearance).toBe("light");
+  });
 
   it("opens the starter graph declared as default in the JSON bundle", async () => {
     const user = userEvent.setup();
@@ -175,7 +221,7 @@ describe("honest JSON-workflow desktop slice", () => {
     ).toHaveAttribute("aria-valuenow", "328");
   });
 
-  it("preserves a complete unsaved provider draft across route handoff", async () => {
+  it("guards Settings navigation and preserves a complete unsaved provider draft", async () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Settings/ }));
@@ -194,9 +240,14 @@ describe("honest JSON-workflow desktop slice", () => {
       screen.getByRole("button", { name: "Save configuration" }),
     ).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "New Chat" }));
+    await user.click(await screen.findByRole("button", { name: "Stay in Settings" }));
+    expect(screen.getByLabelText("Base URL")).toHaveValue("http://localhost:11434/v1");
+    expect(screen.getByLabelText("Remote model ID")).toHaveValue("qwen3");
+    await user.click(screen.getByRole("button", { name: "Back to Chat" }));
+    await user.click(await screen.findByRole("button", { name: "Save and return" }));
     await screen.findByRole("heading", { name: "New Chat" });
     await user.click(screen.getByRole("button", { name: /Settings/ }));
-    expect(screen.getByLabelText("Base URL")).toHaveValue(
+    expect(await screen.findByLabelText("Base URL")).toHaveValue(
       "http://localhost:11434/v1",
     );
     expect(screen.getByLabelText("Remote model ID")).toHaveValue("qwen3");

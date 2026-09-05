@@ -13,8 +13,8 @@ export const defaultDesktopAdapters: DesktopAdapters = {
   nativePresentation: {
     name: "tauri-native-presentation-facade",
     async notify(title, body): Promise<void> {
-      if (await invokeNative("native_notify", { title, body })) return;
       dispatch({ kind: "notification", title, body });
+      if (document.hidden) await invokeNative("native_notify", { title, body });
     },
     async confirm(title, body): Promise<boolean> {
       const native = await invokeNativeResult<boolean>("native_confirm", {
@@ -27,7 +27,6 @@ export const defaultDesktopAdapters: DesktopAdapters = {
       );
     },
     async message(title, body): Promise<void> {
-      if (await invokeNative("native_message", { title, body })) return;
       dispatch({ kind: "notification", title, body });
     },
     async pickFile(): Promise<string | null> {

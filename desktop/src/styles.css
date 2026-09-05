@@ -141,21 +141,6 @@ pre {
 .skip-link:focus {
   top: 8px;
 }
-.workbench-notification {
-  align-items: flex-start;
-  background: var(--aw-panel);
-  border: 1px solid var(--aw-divider);
-  bottom: 16px;
-  box-shadow: 0 12px 36px rgb(0 0 0 / 18%);
-  display: flex;
-  gap: 16px;
-  max-width: 360px;
-  padding: 10px 12px;
-  position: fixed;
-  right: 16px;
-  z-index: 80;
-}
-.workbench-notification p,
 .workbench-dialog p {
   color: var(--aw-secondary);
   margin-top: 5px;
@@ -184,11 +169,6 @@ pre {
   justify-content: flex-end;
   margin-top: 16px;
 }
-.error-dialog p {
-  max-height: min(50vh, 420px);
-  overflow: auto;
-  white-space: pre-wrap;
-}
 
 /* Persistent desktop shell */
 .desktop-shell {
@@ -196,7 +176,7 @@ pre {
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   width: 100%;
 }
@@ -1547,72 +1527,11 @@ pre {
   min-height: 0;
   position: relative;
 }
-.workflow-editor > .command-banner,
-.settings-workspace > .command-banner {
-  left: 0;
-  position: absolute;
-  right: 0;
-  top: 48px;
-  z-index: 15;
-}
 .workflow-body {
   display: grid;
   grid-template-columns: 196px minmax(0, 1fr) 300px;
   min-height: 0;
   position: relative;
-}
-.dependency-banner {
-  align-items: center;
-  background: var(--aw-warning-surface);
-  border-color: var(--aw-warning);
-  box-shadow: 0 4px 18px rgb(0 0 0 / 10%);
-  color: var(--aw-text);
-  display: flex;
-  gap: 8px;
-  left: 208px;
-  max-width: 620px;
-  overflow: hidden;
-  position: absolute;
-  right: 312px;
-  text-align: left;
-  text-overflow: ellipsis;
-  top: 10px;
-  white-space: nowrap;
-  z-index: 6;
-}
-.dependency-banner > span {
-  align-items: center;
-  background: var(--aw-warning);
-  border-radius: 50%;
-  color: var(--aw-on-warning, #17130a);
-  display: inline-flex;
-  font-weight: 700;
-  height: 18px;
-  justify-content: center;
-  min-width: 18px;
-}
-.workflow-runtime-banner {
-  align-items: flex-start;
-  background: var(--aw-warning-surface);
-  border: 1px solid var(--aw-warning);
-  border-radius: 5px;
-  box-shadow: 0 4px 18px rgb(0 0 0 / 10%);
-  display: grid;
-  gap: 2px;
-  left: 208px;
-  max-width: 680px;
-  padding: 7px 10px;
-  position: absolute;
-  right: 312px;
-  top: 10px;
-  z-index: 6;
-}
-.workflow-runtime-banner span {
-  color: var(--aw-secondary);
-  font-size: 10px;
-}
-.workflow-runtime-banner + .dependency-banner {
-  top: 70px;
 }
 .dependency-resolution {
   background: var(--aw-warning-surface);
@@ -2205,18 +2124,8 @@ pre {
 .settings-validation-summary li span {
   color: var(--aw-secondary);
 }
-.settings-banner.success {
-  background: var(--aw-success-surface);
-  border-color: var(--aw-success);
-}
-.settings-banner.warning {
-  background: var(--aw-warning-surface);
-  border-color: var(--aw-warning);
-}
-.settings-banner.error {
-  background: var(--aw-danger-surface);
-  border-color: var(--aw-danger);
-}
+.settings-title-actions { display: flex; align-items: center; gap: 12px; }
+.settings-leave-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .settings-loading {
   align-content: center;
   display: grid;
@@ -2558,14 +2467,6 @@ pre {
   .workflow-body {
     grid-template-columns: 184px minmax(0, 1fr);
   }
-  .dependency-banner {
-    left: 196px;
-    right: 312px;
-  }
-  .workflow-runtime-banner {
-    left: 196px;
-    right: 312px;
-  }
   .properties-pane {
     bottom: 0;
     max-width: 360px;
@@ -2601,14 +2502,6 @@ pre {
   .node-palette {
     display: none;
   }
-  .dependency-banner {
-    left: 10px;
-    right: 312px;
-  }
-  .workflow-runtime-banner {
-    left: 10px;
-    right: 312px;
-  }
   .chat-title-line > span {
     display: none;
   }
@@ -2624,14 +2517,6 @@ pre {
   }
 }
 @media (max-width: 640px) {
-  .dependency-banner {
-    left: 10px;
-    right: 10px;
-  }
-  .workflow-runtime-banner {
-    left: 10px;
-    right: 10px;
-  }
   .properties-pane {
     width: min(300px, calc(100% - 16px));
   }
@@ -2783,9 +2668,6 @@ pre {
 .workflow-library-bar button {
   min-height: 0;
   padding: 3px 8px;
-}
-.workflow-editor.with-library > .command-banner {
-  top: 92px;
 }
 
 /* Timeline activity cards (plan, web results, todo, subagent) */

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   BuiltInToolConfiguration,
   CredentialMetadataConfiguration,
@@ -29,12 +29,14 @@ export function CredentialsSection({
   onStore,
   onDelete,
   confirm,
+  onDirtyChange,
 }: {
   readonly credentials: readonly CredentialMetadataConfiguration[];
   readonly providers: readonly ProviderConfiguration[];
   readonly onStore: (draft: CredentialWriteDraft) => Promise<void>;
   readonly onDelete: (credentialRef: string) => Promise<void>;
   readonly confirm: (title: string, body: string) => Promise<boolean>;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }): React.JSX.Element {
   const [editing, setEditing] = useState<CredentialMetadataConfiguration | "new" | null>(null);
   const [label, setLabel] = useState("");
@@ -45,6 +47,10 @@ export function CredentialsSection({
   ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    onDirtyChange?.(editing !== null && (fields.some(field => field.value !== "") || label.trim() !== ""));
+    return () => onDirtyChange?.(false);
+  }, [editing, fields, label, onDirtyChange]);
 
   const openEditor = (
     target: CredentialMetadataConfiguration | "new",
@@ -545,8 +551,8 @@ export function ToolsSection({
                 />
               ) : (
                 <>
-                  <p className="field-warning">
-                    This built-in adapter does not accept credential injection.
+                  <p className="settings-field-help">
+                    Credentials are not required by this built-in adapter.
                   </p>
                   <JsonObjectField
                     id={`${tool.id}-configuration`}

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NativePresentationAdapter } from "../adapters/contracts";
+import type { SettingsLeaveGuard } from "../shell/settingsNavigation";
+import { useSettingsFeedback } from "./settings-v2/useSettingsFeedback";
+import { useSettingsDiagnostics } from "./settings-v2/useSettingsDiagnostics";
+import { settingsSaveContentIssue } from "./settings-v2/settingsSavePostcondition";
+import { useSettingsLeave } from "./settings-v2/useSettingsLeave";
+import { SettingsLeaveDialog } from "./settings-v2/SettingsLeaveDialog";
 import { projectAppearancePreference } from "./appearance";
 import type {
   ExtensionConfiguration,
@@ -55,11 +61,6 @@ type SettingsPresentation = Pick<
   "confirm" | "pickFile" | "pickFolder"
 >;
 
-type Banner = {
-  readonly tone: "error" | "success" | "warning";
-  readonly message: string;
-};
-
 type SettingsDraftReconciler = (
   rebasedDraft: SettingsConfigurationV2,
   previousCanonical: SettingsConfigurationV2,
@@ -74,9 +75,19 @@ type SettingsSnapshotPostcondition = (
 export function SettingsScreen({
   settingsPort,
   presentation,
+  active = true,
+  visit = 0,
+  onBack,
+  returnLabel = "Back to Chat",
+  registerLeaveGuard,
 }: {
   readonly settingsPort?: SettingsV2CorePort;
   readonly presentation?: SettingsPresentation;
+  readonly active?: boolean;
+  readonly visit?: number;
+  readonly onBack?: () => void;
+  readonly returnLabel?: string;
+  readonly registerLeaveGuard?: (guard: SettingsLeaveGuard | null) => void;
 }): React.JSX.Element {
   const port = useMemo(
     () => settingsPort ?? createSettingsV2CorePort(),
@@ -91,18 +102,28 @@ export function SettingsScreen({
   >({});
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [credentialDiagnosticEpoch, setCredentialDiagnosticEpoch] = useState(0);
-  const [banner, setBanner] = useState<Banner | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<
     "save" | "discard" | "credential" | "extension" | null
   >(null);
+  const setBanner = useSettingsFeedback(`settings:${visit}`, active, busy);
+  const mutationVerified = useRef(false);
+  const [credentialDirty, setCredentialDirty] = useState(false);
   const [retryCommandId, setRetryCommandId] = useState<string | null>(null);
   const snapshotRef = useRef<SettingsV2Snapshot | null>(null);
   const draftRef = useRef<SettingsConfigurationV2 | null>(null);
   const draftGenerationRef = useRef(0);
   const renderedDraftGeneration = draftGenerationRef.current;
   const credentialMutationGenerationRef = useRef(0);
+  const runDiagnostic = useSettingsDiagnostics(`settings:${visit}`, active, JSON.stringify([draft, credentialDiagnosticEpoch]), renderedDraftGeneration);
   const settingsMutationInFlightRef = useRef(false);
+  useEffect(() => {
+    if (!active) {
+      draftGenerationRef.current += 1;
+      setEditorEpoch(value => value + 1);
+    }
+    return () => { draftGenerationRef.current += 1; };
+  }, [active]);
 
   const runDraftScoped = useCallback(
     async <Result,>(
@@ -199,28 +220,29 @@ export function SettingsScreen({
     } finally {
       setLoading(false);
     }
-  }, [applySnapshot, port]);
+  }, [applySnapshot, port, setBanner]);
 
   useEffect(() => {
-    let active = true;
+    if (!active) return;
+    let current = true;
     setLoading(true);
     void port
       .snapshot()
       .then((latest) => {
-        if (!active) return;
+        if (!current) return;
         if (applySnapshot(latest, false)) setBanner(null);
       })
       .catch((failure: unknown) => {
-        if (!active) return;
+        if (!current) return;
         setBanner({ tone: "error", message: failureMessage(failure) });
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (current) setLoading(false);
       });
     return () => {
-      active = false;
+      current = false;
     };
-  }, [applySnapshot, port]);
+  }, [applySnapshot, port, setBanner, visit, active]);
 
   const dirtySections = useMemo(
     () =>
@@ -258,7 +280,7 @@ export function SettingsScreen({
       draftRef.current = next;
       setDraft(next);
     },
-    [],
+    [setBanner],
   );
 
   const updateRenderedDraft = useCallback(
@@ -289,13 +311,14 @@ export function SettingsScreen({
         settingsSnapshotVersionPostconditionIssue(latest, receipt);
       if (postconditionIssue !== null) throw new Error(postconditionIssue);
       applySnapshot(latest, preserveDraft, reconcileDraft);
+      mutationVerified.current = true;
       setRetryCommandId(null);
       setBanner({
         tone: receipt.reason === null ? "success" : "warning",
-        message: receipt.reason ?? "Canonical settings were updated.",
+        message: receipt.reason ?? "Settings saved.",
       });
     },
-    [applySnapshot, port],
+    [applySnapshot, port, setBanner],
   );
 
   const reconcileFailure = useCallback(
@@ -318,6 +341,7 @@ export function SettingsScreen({
           sameSettings(latest.settings, attemptedSettings)
         ) {
           applySnapshot(latest, false);
+          mutationVerified.current = true;
           setRetryCommandId(null);
           setBanner({
             tone: "success",
@@ -346,20 +370,21 @@ export function SettingsScreen({
       });
       return false;
     },
-    [applySnapshot, port],
+    [applySnapshot, port, setBanner],
   );
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     const currentDraft = draftRef.current;
     const currentSnapshot = snapshotRef.current;
-    if (!canSave || currentDraft === null || currentSnapshot === null) return;
+    if (!canSave || currentDraft === null || currentSnapshot === null) return false;
     const commandId = retryCommandId ?? nextSettingsV2CommandId();
     const command = {
       commandId,
       expectedVersion: currentSnapshot.version,
       settings: structuredClone(currentDraft),
     };
-    if (settingsMutationInFlightRef.current) return;
+    if (settingsMutationInFlightRef.current) return false;
+    mutationVerified.current = false;
     settingsMutationInFlightRef.current = true;
     setRetryCommandId(commandId);
     setBusy("save");
@@ -379,11 +404,12 @@ export function SettingsScreen({
             tone: "error",
             message: `${receiptIssue} Your complete unsaved draft remains available.`,
           });
-          return;
+          return false;
         }
         acceptedReceipt = receipt;
       }
-      await refreshAfterMutation(receipt, false);
+      await refreshAfterMutation(receipt, false, undefined, latest =>
+        settingsSnapshotVersionPostconditionIssue(latest, receipt) ?? settingsSaveContentIssue(latest.settings, command.settings));
     } catch (failure) {
       const receiptToRecover = acceptedReceipt;
       await reconcileFailure(
@@ -397,44 +423,45 @@ export function SettingsScreen({
               settingsSnapshotVersionPostconditionIssue(
                 latest,
                 receiptToRecover,
-              ),
+              ) ?? settingsSaveContentIssue(latest.settings, command.settings),
       );
     } finally {
       settingsMutationInFlightRef.current = false;
       setBusy(null);
     }
+    return mutationVerified.current;
   };
 
-  const discard = async () => {
-    if (snapshotRef.current === null || draftRef.current === null) return;
-    if (settingsMutationInFlightRef.current) return;
+  const discard = async (confirm = true): Promise<boolean> => {
+    if (snapshotRef.current === null || draftRef.current === null) return false;
+    if (settingsMutationInFlightRef.current) return false;
+    mutationVerified.current = false;
     settingsMutationInFlightRef.current = true;
     setBusy("discard");
     try {
-      const accepted = await nativePresentation.confirm(
+      const accepted = !confirm || await nativePresentation.confirm(
         "Discard unsaved settings?",
         "Every local settings edit, including invalid JSON text, will be restored to the latest canonical version.",
       );
-      if (!accepted) return;
-      draftGenerationRef.current += 1;
-      const canonical = structuredClone(snapshotRef.current.settings);
-      draftRef.current = canonical;
-      setDraft(canonical);
-      setJsonErrors({});
-      setEditorEpoch((value) => value + 1);
+      if (!accepted) return false;
+      const latest = await port.snapshot();
+      if (!applySnapshot(latest, false)) throw new Error("The latest Settings version could not be confirmed. Your draft was preserved.");
       setRetryCommandId(null);
       setBanner(null);
-      projectAppearancePreference(
-        canonical.appearance.mode,
-        canonical.appearance.fontScale,
-      );
+      mutationVerified.current = true;
     } catch (failure) {
       setBanner({ tone: "error", message: failureMessage(failure) });
     } finally {
       settingsMutationInFlightRef.current = false;
       setBusy(null);
     }
+    return mutationVerified.current;
   };
+
+  const leave = useSettingsLeave({
+    dirty: dirtySections.size > 0 || Object.keys(jsonErrors).length > 0 || credentialDirty,
+    busy: busy !== null, mutationVerified: mutationVerified.current, save, discard,
+  }, registerLeaveGuard);
 
   const storeCredential = async (secretDraft: CredentialWriteDraft) => {
     const currentSnapshot = snapshotRef.current;
@@ -447,6 +474,7 @@ export function SettingsScreen({
       ...secretDraft,
     };
     settingsMutationInFlightRef.current = true;
+    mutationVerified.current = false;
     credentialMutationGenerationRef.current += 1;
     setBusy("credential");
     setCredentialDiagnosticEpoch((value) => value + 1);
@@ -529,6 +557,7 @@ export function SettingsScreen({
       credentialRef,
     };
     settingsMutationInFlightRef.current = true;
+    mutationVerified.current = false;
     credentialMutationGenerationRef.current += 1;
     setBusy("credential");
     setCredentialDiagnosticEpoch((value) => value + 1);
@@ -602,6 +631,7 @@ export function SettingsScreen({
     if (settingsMutationInFlightRef.current)
       throw new Error("Another Settings mutation is already in progress.");
     settingsMutationInFlightRef.current = true;
+    mutationVerified.current = false;
     setBusy("extension");
     let acceptedReceipt: SettingsV2Receipt | null = null;
     let receiptProofIssue: string | null = null;
@@ -665,9 +695,12 @@ export function SettingsScreen({
   return (
     <section className="settings-workspace">
       <header className="surface-toolbar">
-        <div>
+        <div className="settings-title-actions">
+          {onBack && <button type="button" title={returnLabel} aria-label={returnLabel} onClick={onBack}>← Back</button>}
+          <div>
           <p className="eyebrow">AWORKIT</p>
           <h1>Settings</h1>
+          </div>
         </div>
         <div className="toolbar-actions settings-toolbar-actions">
           <span>
@@ -695,14 +728,7 @@ export function SettingsScreen({
           </button>
         </div>
       </header>
-      {banner !== null && (
-        <div
-          className={`command-banner settings-banner ${banner.tone}`}
-          role={banner.tone === "error" ? "alert" : "status"}
-        >
-          {banner.message}
-        </div>
-      )}
+      {active && leave.prompt && <SettingsLeaveDialog busy={leave.deciding || busy !== null} canSave={canSave && !credentialDirty} onSave={() => void leave.decide("save")} onDiscard={() => void leave.decide("discard")} onStay={leave.stay} />}
       <div className="settings-body settings-v2-body">
         <nav aria-label="Settings sections">
           {SETTINGS_SECTIONS.map((item) => {
@@ -778,7 +804,7 @@ export function SettingsScreen({
                     }))
                   }
                   onDiscover={(provider) =>
-                    runDraftScoped(async () => {
+                    runDiagnostic("Model discovery", () => runDraftScoped(async () => {
                       const credentialGeneration =
                         credentialMutationGenerationRef.current;
                       const fingerprint = providerDraftFingerprint(provider);
@@ -802,9 +828,9 @@ export function SettingsScreen({
                           "The native discovery result did not match this provider draft.",
                         );
                       return result;
-                    })
+                    }))
                   }
-                  onProbe={async (provider, modelId) => {
+                  onProbe={(provider, modelId) => runDiagnostic("Provider test", async () => {
                     const credentialGeneration =
                       credentialMutationGenerationRef.current;
                     const fingerprint = providerDraftFingerprint(provider);
@@ -836,7 +862,7 @@ export function SettingsScreen({
                     );
                     applySnapshot(latest, true);
                     return result;
-                  }}
+                  })}
                 />
               </SettingsPanel>
               <SettingsPanel id="model_tiers" selected={section}>
@@ -853,6 +879,7 @@ export function SettingsScreen({
               </SettingsPanel>
               <SettingsPanel id="credentials" selected={section}>
                 <CredentialsSection
+                  onDirtyChange={setCredentialDirty}
                   credentials={draft.credentials}
                   providers={snapshot.settings.providers}
                   confirm={draftScopedConfirm}
@@ -871,7 +898,7 @@ export function SettingsScreen({
                       tools: [...tools],
                     }))
                   }
-                  onProbe={async (tool, project) => {
+                  onProbe={(tool, project) => runDiagnostic("Tool test", async () => {
                     const fingerprint = settingsRecordFingerprint({ tool, project });
                     const result = await port.probeTool({
                       tool,
@@ -889,7 +916,7 @@ export function SettingsScreen({
                         "The native tool result did not match this tool/project draft.",
                       );
                     return result;
-                  }}
+                  })}
                 />
               </SettingsPanel>
               <SettingsPanel id="extensions" selected={section}>
@@ -930,7 +957,7 @@ export function SettingsScreen({
                       mcpServers: [...mcpServers],
                     }))
                   }
-                  onProbe={async (server) => {
+                  onProbe={(server) => runDiagnostic("MCP test", async () => {
                     const fingerprint = mcpDraftFingerprint(server);
                     const result = await port.probeMcp({
                       server,
@@ -953,7 +980,7 @@ export function SettingsScreen({
                         ...result.promptNames.map((name) => `Prompt: ${name}`),
                       ],
                     };
-                  }}
+                  })}
                 />
               </SettingsPanel>
               <SettingsPanel id="external_agents" selected={section}>
@@ -968,7 +995,7 @@ export function SettingsScreen({
                       externalAgents: [...externalAgents],
                     }))
                   }
-                  onProbe={async (agent) => {
+                  onProbe={(agent) => runDiagnostic("External agent test", async () => {
                     const fingerprint = settingsRecordFingerprint(agent);
                     const result = await port.probeExternalAgent({
                       agent,
@@ -1003,7 +1030,7 @@ export function SettingsScreen({
                       ],
                       capabilities: result.capabilities,
                     };
-                  }}
+                  })}
                 />
               </SettingsPanel>
               <SettingsPanel id="data" selected={section}>
@@ -1019,7 +1046,7 @@ export function SettingsScreen({
                   projects={draft.projects}
                   pickFolder={draftScopedPickFolder}
                   confirm={draftScopedConfirm}
-                  onProbe={async (project) => {
+                  onProbe={(project) => runDiagnostic("Project test", async () => {
                     const fingerprint = settingsRecordFingerprint(project);
                     const result = await port.probeProject({
                       project,
@@ -1035,7 +1062,7 @@ export function SettingsScreen({
                         "The native project result did not match this project draft.",
                       );
                     return result;
-                  }}
+                  })}
                   onChange={(updateProjects) =>
                     updateRenderedDraft((current) => ({
                       ...current,

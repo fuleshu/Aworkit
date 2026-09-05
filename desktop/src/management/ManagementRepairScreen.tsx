@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useProjectedNotification } from "../notifications/NotificationContext";
 import type { ManagementRepairCorePort } from "./corePort";
 import { ManagementSidebar } from "./ManagementSidebar";
 import { activeCandidateForGroup, repairCandidateKey } from "./repair";
@@ -8,6 +9,7 @@ import { useManagementRepair } from "./useManagementRepair";
 import "./management-layout.css";
 
 interface ManagementRepairScreenProps {
+  readonly active?: boolean;
   readonly corePort?: ManagementRepairCorePort;
   readonly pollIntervalMs?: number;
   readonly confirmDecision?: (title: string, body: string) => Promise<boolean>;
@@ -18,6 +20,7 @@ export function ManagementRepairScreen({
   corePort,
   pollIntervalMs,
   confirmDecision = async () => false,
+  active = true,
 }: ManagementRepairScreenProps): React.JSX.Element {
   const runtime = useManagementRepair(corePort, pollIntervalMs);
   const [selectedErrorId, setSelectedErrorId] = useState<string | null>(null);
@@ -31,6 +34,16 @@ export function ManagementRepairScreen({
   const detailRef = useRef<HTMLElement>(null);
   const priorRecoveryState = useRef<string | null>(null);
   const snapshot = runtime.snapshot;
+  useProjectedNotification("Management", "management", "connection", !runtime.stale ? null : {
+    route: "management", summary: "Management projection disconnected.", detail: "The last known state remains visible. Changes are disabled until resynchronized.", severity: "warning", lifetime: { kind: "condition", conditionId: "management-connection" },
+    action: { label: "Resync", disabled: runtime.pendingCommandIds.size > 0, run: () => void runtime.resynchronize() },
+  });
+  useProjectedNotification("Management", "management", "command-error", runtime.stale || runtime.error === null ? null : {
+    route: "management", summary: runtime.error, severity: "error", lifetime: { kind: "transient" },
+  });
+  useProjectedNotification("Management", "management", "command", runtime.pendingCommandIds.size === 0 || runtime.stale ? null : {
+    route: "management", summary: "Updating Management…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
+  });
 
   useEffect(() => {
     if (snapshot === null) return;
@@ -67,10 +80,10 @@ export function ManagementRepairScreen({
       state === "rolled_back" ||
       state === "unsupported" ||
       state === "manual_recovery_required";
-    if (terminal && state !== priorRecoveryState.current)
+    if (active && terminal && state !== priorRecoveryState.current)
       window.requestAnimationFrame(() => detailRef.current?.focus());
     priorRecoveryState.current = state;
-  }, [snapshot?.restartRecovery?.state]);
+  }, [snapshot?.restartRecovery?.state, active]);
 
   const selectedCandidate = snapshot?.candidates.find(
     (candidate) => repairCandidateKey(candidate) === selectedCandidateKey,
@@ -126,25 +139,6 @@ export function ManagementRepairScreen({
         </div>
       </header>
 
-      {runtime.stale && (
-        <div className="stale-banner" role="status">
-          <strong>Management projection disconnected.</strong> Last contiguous
-          state is frozen; investigate, reject, enroll, and activate actions are
-          disabled.
-          <button
-            title="Request a fresh trusted-core Management snapshot"
-            type="button"
-            onClick={() => void runtime.resynchronize()}
-          >
-            Resync
-          </button>
-        </div>
-      )}
-      {runtime.error !== null && !runtime.stale && (
-        <div className="command-banner" role="status">
-          {runtime.error}
-        </div>
-      )}
       {snapshot.restartRecovery !== null && (
         <RestartRecoveryStatus recovery={snapshot.restartRecovery} />
       )}

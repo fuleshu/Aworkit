@@ -10,8 +10,10 @@ import {
 } from "./ModelCallBlock";
 import { prettyJson } from "./jsonPresentation";
 import type { TimelineItem } from "./types";
+import { useTimelineReturn } from "./useTimelineReturn";
 
 interface ConversationTimelineProps {
+  readonly active?: boolean;
   readonly items: readonly TimelineItem[];
   readonly selectedId: string | null;
   readonly actionsDisabled?: boolean;
@@ -27,11 +29,13 @@ export function ConversationTimeline({
   items,
   selectedId,
   actionsDisabled = false,
+  active = true,
   onSelect,
   onAction,
 }: ConversationTimelineProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToEnd = useRef(true);
+  const measuredHeights = useRef(new Map<string, number>());
   const presentedItems = useMemo(() => presentTimelineItems(items), [items]);
   const presentedSelectedId = useMemo(
     () => presentedSelectionId(items, selectedId),
@@ -53,8 +57,18 @@ export function ConversationTimeline({
     getItemKey: (index) => presentedItems[index]?.id ?? index,
     estimateSize: (index) => estimate(presentedItems[index]),
     overscan: 6,
+    measureElement: (element, entry) => {
+      const index = Number((element as HTMLElement).dataset.index);
+      const id = presentedItems[index]?.id ?? String(index);
+      const height = entry?.borderBoxSize?.[0]?.blockSize ?? element.getBoundingClientRect().height;
+      if (active && height > 0) measuredHeights.current.set(id, height);
+      return measuredHeights.current.get(id) ?? estimate(presentedItems[index]);
+    },
   });
+  const restoring = useTimelineReturn(active, scrollRef, presentedItems.map(item => item.id), pinnedToEnd,
+    index => virtualizer.scrollToIndex(index, { align: "start" }));
   useEffect(() => {
+    if (!active) return;
     let scrollFrame: number | null = null;
     const measurementFrame = window.requestAnimationFrame(() => {
       const scroll = scrollRef.current;
@@ -75,8 +89,9 @@ export function ConversationTimeline({
       window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [presentedItems.length, layoutRevision, virtualizer]);
+  }, [active, presentedItems.length, layoutRevision, virtualizer]);
   useEffect(() => {
+    if (!active) return;
     const scroll = scrollRef.current;
     if (scroll === null) return;
     const pendingRows = new Set<HTMLElement>();
@@ -123,18 +138,21 @@ export function ConversationTimeline({
         window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [presentedItems.length, virtualizer]);
+  }, [active, presentedItems.length, virtualizer]);
   return (
     <div
-      aria-live="polite"
+      aria-live={active ? "polite" : "off"}
       aria-relevant="additions text"
       className="timeline-scroll"
       ref={scrollRef}
+      data-follow-latest={pinnedToEnd.current}
       role="log"
       onScroll={(event) => {
+        if (!active || restoring.current) return;
         const target = event.currentTarget;
         pinnedToEnd.current =
           target.scrollHeight - target.scrollTop - target.clientHeight < 48;
+        target.dataset.followLatest = String(pinnedToEnd.current);
       }}
     >
       {items.length === 0 ? (
@@ -156,6 +174,7 @@ export function ConversationTimeline({
             <div
               className="virtual-row"
               data-index={row.index}
+              data-timeline-id={item.id}
               key={item.id}
               ref={virtualizer.measureElement}
               style={{

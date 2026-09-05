@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useProjectedNotification } from "../notifications/NotificationContext";
+import { useNotificationMessage } from "../notifications/useNotificationMessage";
 import type { SettingsV2Snapshot } from "./configuration";
 import { createSettingsV2CorePort } from "./settingsV2Port";
 import {
@@ -45,6 +47,7 @@ import { assessNativeWorkflow } from "./workflowExecution";
 import { projectNodeRunStatus, type NodeRunFact } from "./runStatus";
 
 interface WorkflowEditorScreenProps {
+  readonly active?: boolean;
   readonly document: WorkflowDocument;
   readonly workflowPort?: WorkflowCorePort;
   readonly libraryPort?: WorkflowLibraryPort;
@@ -65,6 +68,7 @@ export function WorkflowEditorScreen({
   onOpenSettings,
   onRun,
   runBlockedReason,
+  active = true,
 }: WorkflowEditorScreenProps): React.JSX.Element {
   const port = useMemo(
     () => workflowPort ?? createWorkflowCorePort(document),
@@ -74,20 +78,20 @@ export function WorkflowEditorScreen({
     settingsProp,
   );
   useEffect(() => {
-    if (settingsProp !== undefined || !("__TAURI_INTERNALS__" in window)) return;
-    let active = true;
+    if (settingsProp !== undefined || !active || !("__TAURI_INTERNALS__" in window)) return;
+    let current = true;
     void createSettingsV2CorePort()
       .snapshot()
       .then((snapshot) => {
-        if (active) setSettings(snapshot);
+        if (current) setSettings(snapshot);
       })
       .catch(() => {
         // The typed property forms fall back to standard tiers without Settings.
       });
     return () => {
-      active = false;
+      current = false;
     };
-  }, [settingsProp]);
+  }, [settingsProp, active]);
   const [editor, setEditor] = useState(() => createSelectedEditor(document));
   const [savedFingerprint, setSavedFingerprint] = useState(() =>
     serializeWorkflow(document),
@@ -98,13 +102,13 @@ export function WorkflowEditorScreen({
   );
   const [saving, setSaving] = useState(false);
   const [pendingPropertyDraft, setPendingPropertyDraft] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError, errorOccurrence] = useNotificationMessage();
+  const [notice, setNotice, noticeOccurrence] = useNotificationMessage();
   const [retryCommandId, setRetryCommandId] = useState<string | null>(null);
   const [library, setLibrary] = useState<WorkflowLibrarySnapshot | null>(null);
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   const [libraryBusy, setLibraryBusy] = useState(false);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [libraryError, setLibraryError, libraryErrorOccurrence] = useNotificationMessage();
   const graph = useMemo(() => new WorkflowGraphSurfaceAdapter(), []);
 
   /** Applies a freshly loaded workflow snapshot to the editor surface. */
@@ -193,6 +197,39 @@ export function WorkflowEditorScreen({
     storedEditable && editor.document.schemaVersion === 1;
   const fingerprint = serializeWorkflow(editor.document);
   const dirty = fingerprint !== savedFingerprint;
+  const notificationScope = `workflow:${activeWorkflowId ?? "draft"}`;
+  useProjectedNotification("Workflows", notificationScope, "error", error === null ? null : {
+    route: "workflows", summary: error, detail: "The complete local document remains available for Undo or Export.", severity: "error", lifetime: { kind: "transient" },
+  }, true, errorOccurrence);
+  useProjectedNotification("Workflow library", notificationScope, "library-error", libraryError === null ? null : {
+    route: "workflows", summary: libraryError, severity: "error", lifetime: { kind: "transient" },
+  }, true, libraryErrorOccurrence);
+  useProjectedNotification("Workflows", notificationScope, "notice", error !== null || notice === null ? null : {
+    route: "workflows", summary: notice, severity: "success", lifetime: { kind: "transient" },
+  }, true, noticeOccurrence);
+  useProjectedNotification("Workflows", notificationScope, "saving", !saving && !libraryBusy ? null : {
+    route: "workflows", summary: saving ? "Saving workflow…" : "Updating workflow library…", severity: "progress", lifetime: { kind: "operation", operationId: retryCommandId ?? "library" },
+  });
+  useProjectedNotification("Workflows", notificationScope, "dependency", missingIssue === undefined ? null : {
+    route: "workflows", summary: `Missing dependency: ${missingIssue.message}`, severity: "warning", lifetime: { kind: "condition", conditionId: `${activeWorkflowId}:${missingIssue.itemId}` },
+    action: { label: "Inspect dependency", run: () => setEditor(state => selectWorkflowItem(state, missingIssue.itemId)) },
+  }, active);
+  useProjectedNotification("Workflows", notificationScope, "compatibility", documentEditable && compatibility.executable ? null : {
+    route: "workflows", severity: "info", lifetime: { kind: "condition", conditionId: "workflow-compatibility" },
+    summary: !documentEditable ? "Read-only workflow document." : "Editable document; native execution is limited.",
+    detail: !documentEditable ? "This stored or future schema is preserved for inspection and lossless export; this build will not overwrite it." : compatibility.issues[0]?.message,
+  }, active);
+  const previousFeedback = useRef({ fingerprint, noticeOccurrence, errorOccurrence });
+  useEffect(() => {
+    const previous = previousFeedback.current;
+    if (previous.fingerprint !== fingerprint) {
+      // Preserve feedback produced by the same transaction (for example Import).
+      if (previous.noticeOccurrence === noticeOccurrence) setNotice(null);
+      if (previous.errorOccurrence === errorOccurrence) setError(null);
+    }
+    previousFeedback.current = { fingerprint, noticeOccurrence, errorOccurrence };
+  }, [fingerprint, noticeOccurrence, errorOccurrence, setNotice, setError]);
+  useEffect(() => { if (!active) { setNotice(null); setError(null); setLibraryError(null); } }, [active]);
   const validationCount =
     issues.length + (compatibility.executable ? 0 : compatibility.issues.length);
   const workflowName =
@@ -212,6 +249,8 @@ export function WorkflowEditorScreen({
     const commandId = retryCommandId ?? nextWorkbenchCommandId("workflow");
     setRetryCommandId(commandId);
     setSaving(true);
+    setError(null);
+    setNotice(null);
     try {
       const receipt = await port.commit({
         commandId,
@@ -452,53 +491,7 @@ export function WorkflowEditorScreen({
           onSetDefault={setDefaultWorkflow}
         />
       )}
-      {libraryError !== null && (
-        <div className="command-banner error-banner" role="alert">
-          {libraryError}
-        </div>
-      )}
-      {error !== null && (
-        <div className="command-banner error-banner" role="alert">
-          {error} The complete local document remains available for Undo or
-          Export.
-        </div>
-      )}
-      {error === null && notice !== null && (
-        <div className="command-banner" role="status">
-          {notice}
-        </div>
-      )}
       <div className="workflow-body">
-        {!documentEditable ? (
-          <div className="workflow-runtime-banner" role="status">
-            <strong>Read-only workflow document.</strong>
-            <span>
-              This stored or future schema is preserved for inspection and
-              lossless export; this build will not overwrite it.
-            </span>
-          </div>
-        ) : !compatibility.executable ? (
-          <div className="workflow-runtime-banner" role="status">
-            <strong>Editable document; native execution is limited.</strong>
-            <span>{compatibility.issues[0]?.message}</span>
-          </div>
-        ) : null}
-        {missingIssue !== undefined && (
-          <button
-            className="dependency-banner"
-            title="Select the unresolved workflow dependency"
-            type="button"
-            onClick={() =>
-              setEditor((state) =>
-                selectWorkflowItem(state, missingIssue.itemId),
-              )
-            }
-          >
-            <span>!</span>
-            <strong>Missing dependency</strong>
-            {missingIssue.message}
-          </button>
-        )}
         <WorkflowPalette
           document={editor.document}
           editable={documentEditable}

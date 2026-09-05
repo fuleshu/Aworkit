@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render as renderApp, screen, waitFor } from "@testing-library/react";
+import { render } from "../test/renderWithNotifications";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -277,7 +278,7 @@ describe("Management repair review", () => {
   });
 
   it("marks Management Chat unsupported in the rescue navigation", () => {
-    render(
+    renderApp(
       <App
         adapters={defaultDesktopAdapters}
         managementRepairCorePort={new PreviewManagementRepairCorePort()}

@@ -2,12 +2,12 @@
 import {
   cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { render } from "../test/renderWithNotifications";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -674,6 +674,7 @@ describe("Chat native-port recovery contracts", () => {
     await waitFor(() => expect(commands).toHaveLength(1));
     expect(commands[0]).toMatchObject({ type: "resume" });
     expect(commands[0]!.commandId).toMatch(/^(?:desktop\.)?chat\./u);
+    await user.click(screen.getByRole("button", { name: /Notifications, / }));
     expect(
       await screen.findByText(/fixture keeps recovery pending/),
     ).toBeVisible();
@@ -998,7 +999,7 @@ describe("Chat native-port recovery contracts", () => {
     });
   });
 
-  it("keeps a rejected command error in an acknowledged modal", async () => {
+  it("reports a rejected command in the status bar without taking focus", async () => {
     const user = userEvent.setup();
     const initial = snapshot(1, "Rejected command", [{ sequence: 1 }]);
     const port: ChatCorePort = {
@@ -1020,16 +1021,14 @@ describe("Chat native-port recovery contracts", () => {
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
     await user.click(screen.getByRole("button", { name: "Queue" }));
 
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Aworkit error",
-    });
-    expect(within(dialog).getByText(/invoke\.pending/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "OK" })).toHaveFocus();
-    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invoke\.pending/);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Dismiss notification" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
-  it("opens one modal for a terminal failure instead of every failed span", async () => {
+  it("reports one terminal failure and never rearms it for replayed events", async () => {
     const user = userEvent.setup();
     let listener: ((event: CoreEventEnvelope) => void) | undefined;
     const port: ChatCorePort = {
@@ -1074,12 +1073,9 @@ describe("Chat native-port recovery contracts", () => {
       }),
     );
 
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Execution failed",
-    });
-    expect(within(dialog).getByText("provider transport failed")).toBeVisible();
-    expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
-    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("provider transport failed");
+    expect(screen.getByRole("button", { name: "Notifications, 1 active" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Dismiss notification" }));
     listener?.(
       canonicalEvent(4, "execution.failed", {
         body: "provider transport failed",
@@ -1087,6 +1083,7 @@ describe("Chat native-port recovery contracts", () => {
       }),
     );
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Notifications, 0 active" })).toBeVisible();
   });
 
   it("hydrates a failed historical Chat without replaying its failure dialog", async () => {
