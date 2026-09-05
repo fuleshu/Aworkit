@@ -31,6 +31,7 @@ mod service;
 mod settings_diagnostics;
 mod settings_v2;
 mod tool_loop;
+mod web_documents;
 
 /// Canonical persistence-safe built-in project-tool limits. Settings, runtime
 /// freezing, renderer defaults, and native QA must expose these exact values.
@@ -40,7 +41,7 @@ pub(crate) const PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1: u64 = 1000;
 pub(crate) const PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1: u64 = 512;
 pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_SEARCH_MAXIMUM_RESULTS_V1: u64 = 100;
-pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 1024 * 1024;
+pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 
 pub use approvals::{ApprovalMode, ApprovalResolution, ApprovalSettings, ProjectApprovalGrant};

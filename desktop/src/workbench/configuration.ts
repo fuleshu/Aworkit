@@ -178,7 +178,10 @@ export const builtInToolConfigurationSchema = z
   })
   .strict()
   .superRefine((tool, context) => {
-    const expected = BUILT_IN_TOOL_CONFIGURATION_KEYS[tool.id];
+    const baseExpected = BUILT_IN_TOOL_CONFIGURATION_KEYS[tool.id];
+    const isWebExtraction = tool.id === "tool.web_fetch" || tool.id === "tool.web_extract";
+    const expected = isWebExtraction && tool.configuration.renderWhenNeeded !== undefined
+      ? [...(baseExpected ?? []), "renderWhenNeeded"] : baseExpected;
     if (expected === undefined) return;
     const actual = Object.keys(tool.configuration).sort();
     if (
@@ -211,7 +214,12 @@ export const builtInToolConfigurationSchema = z
             value.maximumResults <= 512
           : tool.id === "tool.web_search"
             ? webSearchConfigurationIsValid(tool)
-            : true;
+            : isWebExtraction
+              ? tool.requiresProject === false &&
+                (value.renderWhenNeeded === undefined || typeof value.renderWhenNeeded === "boolean") &&
+                typeof value.maximumDownloadBytes === "number" && Number.isInteger(value.maximumDownloadBytes) && value.maximumDownloadBytes >= 1 && value.maximumDownloadBytes <= 8_388_608 &&
+                typeof value.maximumExtractBytes === "number" && Number.isInteger(value.maximumExtractBytes) && value.maximumExtractBytes >= 1 && value.maximumExtractBytes <= 32_768
+              : true;
     if (!validImplementedContract)
       context.addIssue({
         code: z.ZodIssueCode.custom,

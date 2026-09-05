@@ -12,7 +12,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::CancellationToken;
 
+mod document;
+#[cfg(test)]
+mod document_tests;
+mod extraction;
 mod freshness;
+mod retrieval;
+pub use document::*;
 mod providers;
 mod search;
 
@@ -24,7 +30,7 @@ pub use search::{
 
 pub(super) const MAXIMUM_SEARCH_RESULTS: usize = 100;
 const MAXIMUM_QUERY_BYTES: usize = 16 * 1024;
-const MAXIMUM_DOWNLOAD_BYTES: usize = 1024 * 1024;
+const MAXIMUM_DOWNLOAD_BYTES: usize = MAXIMUM_WEB_DOCUMENT_BYTES;
 const MAXIMUM_EXTRACT_BYTES: usize = 32 * 1024;
 const MAXIMUM_EXTRACT_URLS: usize = 10;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -44,6 +50,8 @@ pub struct WebFetchResultV1 {
     pub title: String,
     pub text: String,
     pub bytes_downloaded: u64,
+    pub metadata: WebDocumentMetadataV1,
+    pub preview_truncated: bool,
 }
 
 /// One independently settled page in a multi-URL `web_extract` call.
@@ -56,6 +64,10 @@ pub struct WebExtractPageV1 {
     pub raw_content: String,
     pub bytes_downloaded: u64,
     pub fetched_at_epoch_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<WebDocumentMetadataV1>,
+    #[serde(default)]
+    pub preview_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -71,12 +83,31 @@ pub trait WebTransportPort: Send + Sync {
         url: &str,
         maximum_download_bytes: usize,
     ) -> Result<(String, String, u64), String>;
+
+    fn fetch_document(
+        &self,
+        url: &str,
+        maximum: usize,
+        _cancellation: &CancellationToken,
+    ) -> Result<WebSourceV1, String> {
+        let (title, body, bytes_downloaded) = self.fetch(url, maximum)?;
+        Ok(WebSourceV1 {
+            final_url: url.into(),
+            body,
+            content_type: "text/plain".into(),
+            bytes_downloaded,
+            truncated: false,
+            warning: None,
+            title: Some(title),
+        })
+    }
 }
 
 #[derive(Clone)]
 pub struct WebTools {
     transport: Arc<dyn WebTransportPort>,
     search_runtime: Option<search::WebSearchRuntime>,
+    renderer: Option<Arc<dyn WebRendererPort>>,
 }
 
 impl WebTools {
@@ -84,6 +115,7 @@ impl WebTools {
     pub fn production() -> Self {
         Self {
             transport: Arc::new(ProductionWebTransport),
+            renderer: None,
             search_runtime: Some(search::WebSearchRuntime::production()),
         }
     }
@@ -93,6 +125,7 @@ impl WebTools {
         Self {
             transport,
             search_runtime: None,
+            renderer: None,
         }
     }
 
@@ -195,6 +228,106 @@ impl WebTools {
         })
     }
 
+    /// Native composition installs an optional renderer; the caller freezes permission per invocation.
+    pub fn with_renderer(mut self, renderer: Arc<dyn WebRendererPort>) -> Self {
+        self.renderer = Some(renderer);
+        self
+    }
+
+    /// Retrieves a full bounded document before any model-preview truncation.
+    pub fn document_v1(
+        &self,
+        url: &str,
+        maximum_download_bytes: usize,
+        allow_render: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<WebDocumentV1, WebToolError> {
+        let url = parse_https_url(url)?;
+        if maximum_download_bytes == 0 || maximum_download_bytes > MAXIMUM_DOWNLOAD_BYTES {
+            return Err(WebToolError::InvalidBound);
+        }
+        check_cancelled(cancellation)?;
+        let source = self
+            .transport
+            .fetch_document(&url, maximum_download_bytes, cancellation);
+        check_cancelled(cancellation)?;
+        let source = source.map_err(WebToolError::Transport)?;
+        let mut extracted = extraction::extract(&source).map_err(WebToolError::Transport)?;
+        let mut metadata = WebDocumentMetadataV1 {
+            final_url: source.final_url.clone(),
+            method: extracted.method.into(),
+            quality: extracted.quality.clone(),
+            download_truncated: source.truncated,
+            snapshot_truncated: false,
+            snapshot_bytes: None,
+            render_settled: None,
+            document_truncated: false,
+            fetched_at_epoch_ms: now_epoch_ms(),
+            warnings: source.warning.into_iter().collect(),
+        };
+        if source.truncated {
+            metadata.warnings.push("Download was incomplete; content later in the source may be missing. Rendering was not attempted.".into());
+        }
+        if !source.truncated && matches!(extracted.quality, WebExtractionQualityV1::NeedsRendering)
+        {
+            if let Some(renderer) = self.renderer.as_ref().filter(|_| allow_render) {
+                let rendered =
+                    renderer.render(&source.final_url, MAXIMUM_WEB_DOCUMENT_BYTES, cancellation);
+                check_cancelled(cancellation)?;
+                match rendered {
+                    Ok(snapshot) => {
+                        parse_https_url(&snapshot.final_url)?;
+                        let rendered_source = WebSourceV1 {
+                            final_url: snapshot.final_url.clone(),
+                            body: document::prefix(&snapshot.html, MAXIMUM_WEB_DOCUMENT_BYTES)
+                                .into(),
+                            content_type: "text/html".into(),
+                            bytes_downloaded: 0,
+                            truncated: snapshot.truncated
+                                || snapshot.html.len() > MAXIMUM_WEB_DOCUMENT_BYTES,
+                            warning: None,
+                            title: None,
+                        };
+                        match extraction::extract(&rendered_source) {
+                            Ok(candidate) if candidate.quality == WebExtractionQualityV1::Usable && !candidate.text.is_empty() => {
+                                extracted = candidate;
+                                metadata.final_url = snapshot.final_url;
+                                metadata.method = format!("webview/{}", extracted.method);
+                                metadata.snapshot_truncated = rendered_source.truncated;
+                                metadata.snapshot_bytes = Some(rendered_source.body.len() as u64);
+                                metadata.render_settled = Some(snapshot.settled);
+                                if !snapshot.settled { metadata.warnings.push("Rendered DOM did not settle before the deadline.".into()); }
+                                if rendered_source.truncated { metadata.warnings.push("Rendered HTML snapshot was truncated.".into()); }
+                            },
+                            _ => metadata.warnings.push("Rendering did not produce usable content; kept the HTTP extraction.".into()),
+                        }
+                    }
+                    Err(error) => metadata.warnings.push(format!(
+                        "Rendering failed; kept HTTP extraction: {}",
+                        document::prefix(&error, 512)
+                    )),
+                }
+            } else {
+                metadata.warnings.push("This page appears to need JavaScript; native rendering is disabled or unavailable.".into());
+            }
+        }
+        check_cancelled(cancellation)?;
+        metadata.quality = extracted.quality;
+        metadata.document_truncated = extracted.text.len() > MAXIMUM_WEB_DOCUMENT_BYTES;
+        if metadata.document_truncated {
+            metadata
+                .warnings
+                .push("Extracted document exceeded its retention limit.".into());
+        }
+        Ok(WebDocumentV1 {
+            url,
+            title: document::prefix(&extracted.title, 512).into(),
+            text: document::prefix(&extracted.text, MAXIMUM_WEB_DOCUMENT_BYTES).into(),
+            bytes_downloaded: source.bytes_downloaded,
+            metadata,
+        })
+    }
+
     pub fn fetch_v1(
         &self,
         url: &str,
@@ -202,25 +335,17 @@ impl WebTools {
         maximum_extract_bytes: usize,
         cancellation: &CancellationToken,
     ) -> Result<WebFetchResultV1, WebToolError> {
-        let parsed = parse_https_url(url)?;
-        if maximum_download_bytes == 0
-            || maximum_download_bytes > MAXIMUM_DOWNLOAD_BYTES
-            || maximum_extract_bytes == 0
-            || maximum_extract_bytes > MAXIMUM_EXTRACT_BYTES
-        {
+        if maximum_extract_bytes == 0 || maximum_extract_bytes > MAXIMUM_EXTRACT_BYTES {
             return Err(WebToolError::InvalidBound);
         }
-        check_cancelled(cancellation)?;
-        let (title, text, bytes_downloaded) = self
-            .transport
-            .fetch(parsed.as_str(), maximum_download_bytes)
-            .map_err(WebToolError::Transport)?;
-        let text = truncate_utf8(text, maximum_extract_bytes);
+        let document = self.document_v1(url, maximum_download_bytes, false, cancellation)?;
         Ok(WebFetchResultV1 {
-            url: parsed,
-            title: truncate_utf8(title, 512),
-            text,
-            bytes_downloaded,
+            url: document.url,
+            title: document.title,
+            preview_truncated: document.text.len() > maximum_extract_bytes,
+            text: document::prefix(&document.text, maximum_extract_bytes).into(),
+            bytes_downloaded: document.bytes_downloaded,
+            metadata: document.metadata,
         })
     }
 
@@ -257,6 +382,8 @@ impl WebTools {
                     raw_content: fetched.text.clone(),
                     content: fetched.text,
                     bytes_downloaded: fetched.bytes_downloaded,
+                    metadata: Some(fetched.metadata),
+                    preview_truncated: fetched.preview_truncated,
                     fetched_at_epoch_ms: now_epoch_ms(),
                     error: None,
                 }),
@@ -267,6 +394,8 @@ impl WebTools {
                     content: String::new(),
                     raw_content: String::new(),
                     bytes_downloaded: 0,
+                    metadata: None,
+                    preview_truncated: false,
                     fetched_at_epoch_ms: now_epoch_ms(),
                     error: Some(error.to_string()),
                 }),
@@ -287,7 +416,11 @@ fn parse_https_url(url: &str) -> Result<String, WebToolError> {
         return Err(WebToolError::InvalidUrl);
     }
     let parsed = reqwest::Url::parse(url).map_err(|_| WebToolError::InvalidUrl)?;
-    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
         return Err(WebToolError::InvalidUrl);
     }
     Ok(parsed.to_string())
@@ -318,162 +451,20 @@ impl WebTransportPort for ProductionWebTransport {
         url: &str,
         maximum_download_bytes: usize,
     ) -> Result<(String, String, u64), String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .user_agent("Aworkit/1.0 web-fetch")
-            .build()
-            .map_err(|error| format!("web client unavailable: {error}"))?;
-        let response = client
-            .get(url)
-            .send()
-            .map_err(|error| format!("web fetch failed: {error}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("web fetch failed: HTTP {status}"));
-        }
-        let mut body = Vec::new();
-        let mut reader = response;
-        loop {
-            let mut chunk = [0_u8; 8192];
-            let count = std::io::Read::read(&mut reader, &mut chunk)
-                .map_err(|error| format!("web fetch stream failed: {error}"))?;
-            if count == 0 {
-                break;
-            }
-            if body.len().saturating_add(count) > maximum_download_bytes {
-                return Err(format!(
-                    "web fetch exceeded the {} KiB download bound",
-                    maximum_download_bytes / 1024
-                ));
-            }
-            body.extend_from_slice(&chunk[..count]);
-        }
-        let bytes_downloaded = body.len() as u64;
-        let text = String::from_utf8_lossy(&body).into_owned();
-        Ok((
-            extract_title(&text),
-            extract_plain_text(&text),
-            bytes_downloaded,
-        ))
+        let source =
+            retrieval::retrieve(url, maximum_download_bytes, &CancellationToken::default())?;
+        let extracted = extraction::extract(&source)?;
+        Ok((extracted.title, extracted.text, source.bytes_downloaded))
     }
-}
 
-fn extract_title(html: &str) -> String {
-    html.find("<title")
-        .and_then(|start| {
-            let content = html[start..].find('>')? + start + 1;
-            let end = html[content..].find("</title>")?;
-            Some(strip_tags(&html[content..content + end]))
-        })
-        .unwrap_or_default()
-}
-
-fn extract_plain_text(html: &str) -> String {
-    let without_blocks = strip_blocks(html);
-    let mut text = String::with_capacity(without_blocks.len());
-    let mut in_tag = false;
-    for character in without_blocks.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            other if !in_tag => text.push(other),
-            _ => {}
-        }
+    fn fetch_document(
+        &self,
+        url: &str,
+        maximum: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<WebSourceV1, String> {
+        retrieval::retrieve(url, maximum, cancellation)
     }
-    decode_entities(&collapse_whitespace(&text))
-}
-
-fn strip_blocks(html: &str) -> String {
-    let mut output = String::with_capacity(html.len());
-    let mut remaining = html;
-    while let Some(start) = remaining.find('<') {
-        output.push_str(&remaining[..start]);
-        let tag_end = remaining[start..]
-            .find('>')
-            .map(|end| start + end + 1)
-            .unwrap_or(remaining.len());
-        let tag = &remaining[start..tag_end];
-        let lower = tag.to_ascii_lowercase();
-        let block_name = if lower.starts_with("<script") {
-            Some("script")
-        } else if lower.starts_with("<style") {
-            Some("style")
-        } else {
-            None
-        };
-        if let Some(name) = block_name {
-            let after = &remaining[tag_end..];
-            let needle = format!("</{name}");
-            let lower_after = after.to_ascii_lowercase();
-            match lower_after.find(&needle) {
-                Some(offset) => {
-                    let close_end = after[offset..]
-                        .find('>')
-                        .map(|end| offset + end + 1)
-                        .unwrap_or(after.len());
-                    remaining = &after[close_end..];
-                    continue;
-                }
-                None => break,
-            }
-        }
-        output.push(' ');
-        remaining = &remaining[tag_end..];
-    }
-    output.push_str(remaining);
-    output
-}
-
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn decode_entities(text: &str) -> String {
-    let mut decoded = text.replace("&amp;", "&");
-    for (entity, replacement) in [
-        ("&quot;", "\""),
-        ("&#39;", "'"),
-        ("&apos;", "'"),
-        ("&lt;", "<"),
-        ("&gt;", ">"),
-        ("&nbsp;", " "),
-        ("&ndash;", "–"),
-        ("&mdash;", "—"),
-    ] {
-        decoded = decoded.replace(entity, replacement);
-    }
-    decoded
-}
-
-fn strip_tags(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut in_tag = false;
-    for character in text.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            other if !in_tag => output.push(other),
-            _ => {}
-        }
-    }
-    decode_entities(output.trim())
-}
-
-fn truncate_utf8(mut value: String, maximum_bytes: usize) -> String {
-    while value.len() > maximum_bytes {
-        let mut boundary = maximum_bytes;
-        while !value.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        value.truncate(boundary);
-        value.push('…');
-        if value.len() <= maximum_bytes {
-            break;
-        }
-        value.pop();
-    }
-    value
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<(), WebToolError> {
@@ -661,17 +652,6 @@ mod tests {
             Some("web request failed: fixture page failed")
         );
         assert!(pages[0].fetched_at_epoch_ms > 0);
-    }
-
-    #[test]
-    fn plain_text_extraction_drops_blocks_and_decodes_entities() {
-        assert_eq!(
-            extract_plain_text(
-                "<html><head><title>T</title><style>.x{color:red}</style></head>\
-                 <body><p>Hello &amp; goodbye</p><script>alert(1)</script></body></html>"
-            ),
-            "T Hello & goodbye"
-        );
     }
 
     #[test]

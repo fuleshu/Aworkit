@@ -1094,7 +1094,14 @@ impl BuiltInToolConfigurationV2 {
                 Ok(())
             }
             "tool.web_fetch" | "tool.web_extract" => {
-                require_exact_config_keys(self, &["maximumDownloadBytes", "maximumExtractBytes"])?;
+                let mut keys = vec!["maximumDownloadBytes", "maximumExtractBytes"];
+                if let Some(value) = self.configuration.get("renderWhenNeeded") {
+                    if !value.is_boolean() {
+                        return Err("renderWhenNeeded must be boolean".into());
+                    }
+                    keys.push("renderWhenNeeded");
+                }
+                require_exact_config_keys(self, &keys)?;
                 require_tool_project_scope(self, false)?;
                 require_config_u64(
                     self,
@@ -1949,6 +1956,7 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             "Web page fetch",
             false,
             BTreeMap::from([
+                ("renderWhenNeeded".into(), Value::Bool(true)),
                 (
                     "maximumDownloadBytes".into(),
                     Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
@@ -1964,6 +1972,7 @@ fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
             "Web page extract",
             false,
             BTreeMap::from([
+                ("renderWhenNeeded".into(), Value::Bool(true)),
                 (
                     "maximumDownloadBytes".into(),
                     Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),

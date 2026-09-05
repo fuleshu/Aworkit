@@ -11,6 +11,7 @@ import {
   JsonObjectField,
 } from "./SettingsFields";
 import { WebSearchSettingsEditor } from "./WebSearchSettingsEditor";
+import { WebExtractionSettingsEditor } from "./WebExtractionSettingsEditor";
 
 export interface CredentialWriteDraft {
   readonly replaceCredentialRef: string | null;
@@ -549,6 +550,8 @@ export function ToolsSection({
                   credentials={credentials}
                   onChange={updateTool}
                 />
+              ) : tool.id === "tool.web_fetch" || tool.id === "tool.web_extract" ? (
+                <WebExtractionSettingsEditor tool={tool} onChange={updateTool} />
               ) : (
                 <>
                   <p className="settings-field-help">
@@ -593,9 +596,9 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "tool.web_search":
     "Hermes-compatible multi-provider search with an anonymous failover ring, explicit free or paid tiers, SearXNG and DuckDuckGo, retries, one-shot rescue, request coalescing, caching, and optional DeepSeek search.",
   "tool.web_fetch":
-    "Fetches one HTTPS page and extracts bounded plain text.",
+    "Reads one HTTPS page with local extraction, optional JavaScript rendering, and saved-document continuation.",
   "tool.web_extract":
-    "Fetches up to ten search-result URLs independently and returns live, timestamped page text for freshness verification.",
+    "Reads up to ten HTTPS pages independently and preserves useful partial content with source and truncation details.",
   "tool.subagent":
     "Delegates a bounded read-only subtask to a fresh child agent; follows the selected approval mode.",
 };

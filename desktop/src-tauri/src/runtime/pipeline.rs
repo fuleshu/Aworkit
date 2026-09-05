@@ -466,6 +466,16 @@ impl WorkflowExecutionPipeline {
         })
     }
 
+    pub(crate) fn with_web_renderer(
+        mut self,
+        renderer: Option<Arc<dyn aworkit_capability_host::WebRendererPort>>,
+    ) -> Self {
+        if let Some(renderer) = renderer {
+            self.file_tool_authority.set_web_renderer(renderer);
+        }
+        self
+    }
+
     pub(crate) fn with_cancellation_controller(
         mut self,
         cancellation_controller: WorkflowCancellationController,
@@ -3693,6 +3703,7 @@ mod tests {
 
     mod credentialed_web_search;
     mod image_chat;
+    mod web_extraction;
 
     type ToolPipelineSetupV1 = (
         WorkflowExecutionPipeline,

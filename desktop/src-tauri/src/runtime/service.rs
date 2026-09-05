@@ -231,6 +231,7 @@ impl DesktopRuntime {
             store,
             production_provider(),
             committed_events,
+            None,
         )
     }
 
@@ -252,6 +253,22 @@ impl DesktopRuntime {
             store,
             provider,
             noop_committed_event_port(),
+            None,
+        )
+    }
+
+    /// Composes the optional native renderer without granting a global browser capability.
+    pub fn open_with_web_renderer(
+        data_root: impl AsRef<Path>,
+        committed_events: Arc<dyn CommittedChatEventPort>,
+        renderer: Arc<dyn aworkit_capability_host::WebRendererPort>,
+    ) -> Result<Self, String> {
+        Self::open_with_store_and_committed_events(
+            data_root.as_ref(),
+            Arc::new(NativeCredentialStore::new()),
+            production_provider(),
+            committed_events,
+            Some(renderer),
         )
     }
 
@@ -260,6 +277,7 @@ impl DesktopRuntime {
         store: Arc<dyn PlatformCredentialStorePort>,
         provider: Arc<dyn ProviderPort>,
         committed_events: Arc<dyn CommittedChatEventPort>,
+        renderer: Option<Arc<dyn aworkit_capability_host::WebRendererPort>>,
     ) -> Result<Self, String> {
         let data_root = prepare_root(data_root)?;
         let documents = CanonicalDocuments::open(&data_root)?;
@@ -275,7 +293,8 @@ impl DesktopRuntime {
             event_committer,
         )
         .map_err(|error| error.to_string())?
-        .with_cancellation_controller(cancellation_controller.clone());
+        .with_cancellation_controller(cancellation_controller.clone())
+        .with_web_renderer(renderer);
         Self::compose(
             data_root,
             documents,

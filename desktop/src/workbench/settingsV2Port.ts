@@ -701,8 +701,9 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
           requiresProject: false,
           credentialBindings: [],
           configuration: {
-            maximumDownloadBytes: 1_048_576,
+            maximumDownloadBytes: 8_388_608,
             maximumExtractBytes: 32_768,
+            renderWhenNeeded: true,
           },
         },
       ],

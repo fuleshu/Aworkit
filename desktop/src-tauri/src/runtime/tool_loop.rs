@@ -6,6 +6,8 @@
 //! authenticated capability-host gateway. Read/search outcomes are durably
 //! settled before they can be returned to the provider.
 
+mod web;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -132,7 +134,7 @@ const MAXIMUM_ACTIVITY_TEXT_BYTES: usize = 512;
 pub(crate) const PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1: u64 = 1000;
 pub(crate) const PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1: u64 = 512;
 pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
-pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 1024 * 1024;
+pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
 const SUBAGENT_PROVIDER_NAME: &str = "aworkit_spawn_subagent";
@@ -398,6 +400,8 @@ pub(crate) enum StoredFileToolLimitV1 {
     WebFetch {
         maximum_download_bytes: usize,
         maximum_extract_bytes: usize,
+        #[serde(default, skip_serializing_if = "web::rendering_disabled")]
+        render_when_needed: bool,
     },
     Subagent {
         /// Compatibility sink for bindings frozen before child turn caps were
@@ -856,57 +860,15 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             WEB_FETCH_CAPABILITY_ID => (
                 WEB_FETCH_PROVIDER_NAME.to_owned(),
-                "Fetch one HTTPS page and return its extracted plain text within strict bounds.".to_owned(),
+                "Fetch one HTTPS page as structured text; render JavaScript only when needed. Partial results include documentId and nextOffset; read more using those fields and the same URL without re-fetching.".to_owned(),
                 web_fetch_schema(),
-                StoredFileToolLimitV1::WebFetch {
-                    maximum_download_bytes: *freeze_configuration(
-                        &requested.configuration,
-                        &[],
-                        &[
-                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                        ],
-                    )?
-                    .get("maximumDownloadBytes")
-                    .expect("frozen maximumDownloadBytes"),
-                    maximum_extract_bytes: *freeze_configuration(
-                        &requested.configuration,
-                        &[],
-                        &[
-                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                        ],
-                    )?
-                    .get("maximumExtractBytes")
-                    .expect("frozen maximumExtractBytes"),
-                },
+                web::freeze_web_configuration(&requested.configuration)?,
             ),
             WEB_EXTRACT_CAPABILITY_ID => (
                 WEB_EXTRACT_PROVIDER_NAME.to_owned(),
-                "Fetch and extract up to ten HTTPS pages independently. Use this after web search before making current price, availability, news, score, or other live-data claims.".to_owned(),
+                "Fetch and extract up to ten HTTPS pages independently, rendering JavaScript when needed. To read more, pass documentId, offset=nextOffset, and exactly the same single URL. Use this after web search before making current price, availability, news, score, or other live-data claims.".to_owned(),
                 web_extract_schema(),
-                StoredFileToolLimitV1::WebFetch {
-                    maximum_download_bytes: *freeze_configuration(
-                        &requested.configuration,
-                        &[],
-                        &[
-                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                        ],
-                    )?
-                    .get("maximumDownloadBytes")
-                    .expect("frozen maximumDownloadBytes"),
-                    maximum_extract_bytes: *freeze_configuration(
-                        &requested.configuration,
-                        &[],
-                        &[
-                            ("maximumDownloadBytes", 1, WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                            ("maximumExtractBytes", 1, WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                        ],
-                    )?
-                    .get("maximumExtractBytes")
-                    .expect("frozen maximumExtractBytes"),
-                },
+                web::freeze_web_configuration(&requested.configuration)?,
             ),
             SUBAGENT_CAPABILITY_ID => (
                 SUBAGENT_PROVIDER_NAME.to_owned(),
@@ -1097,6 +1059,7 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     host: Arc<CapabilityHost>,
     descriptors: BTreeMap<String, CapabilityDescriptor>,
     web: WebTools,
+    web_documents: super::web_documents::WebDocumentStore,
     lease_authority: Arc<ToolLeaseAuthority>,
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
     generation: ProcessGeneration,
@@ -1104,6 +1067,13 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
 }
 
 impl FileToolAuthorityRuntimeV1 {
+    pub(crate) fn set_web_renderer(
+        &mut self,
+        renderer: Arc<dyn aworkit_capability_host::WebRendererPort>,
+    ) {
+        self.web = self.web.clone().with_renderer(renderer);
+    }
+
     pub(crate) fn open(
         database: &Path,
         projects: ProjectCoordinator,
@@ -1127,6 +1097,12 @@ impl FileToolAuthorityRuntimeV1 {
             host,
             descriptors,
             web: WebTools::production(),
+            web_documents: super::web_documents::WebDocumentStore::new(
+                database
+                    .parent()
+                    .ok_or_else(|| invalid_tool("web document root unavailable"))?
+                    .join("web-documents"),
+            ),
             lease_authority: Arc::new(ToolLeaseAuthority::new(generation, credential_store)),
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
             generation,
@@ -1604,11 +1580,8 @@ impl BoundFileToolAuthorityV1 {
                 serde_json::to_value(&settled.result).unwrap_or(Value::Null),
             ),
             Err(WorkflowPipelineError::ToolApproval(challenge)) => {
-                self.run_events.publish_tool_waiting(
-                    call,
-                    challenge.summary.clone(),
-                    Value::Null,
-                );
+                self.run_events
+                    .publish_tool_waiting(call, challenge.summary.clone(), Value::Null);
             }
             Err(error) => self.run_events.publish_tool_terminal(
                 call,
@@ -2586,65 +2559,13 @@ impl FileToolDispatcherV1 {
                 StoredFileToolLimitV1::WebFetch {
                     maximum_download_bytes,
                     maximum_extract_bytes,
-                } => {
-                    if self.record.binding.provider_name == WEB_EXTRACT_PROVIDER_NAME {
-                        let urls = self.record.call.arguments["urls"]
-                            .as_array()
-                            .ok_or_else(|| "urls is invalid".to_owned())?
-                            .iter()
-                            .map(|url| {
-                                url.as_str()
-                                    .map(str::to_owned)
-                                    .ok_or_else(|| "urls is invalid".to_owned())
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let requested_extract_bytes = self.record.call.arguments["char_limit"]
-                            .as_u64()
-                            .and_then(|value| usize::try_from(value).ok())
-                            .unwrap_or(*maximum_extract_bytes)
-                            .min(*maximum_extract_bytes);
-                        let pages = self
-                            .web
-                            .extract_v1(
-                                &urls,
-                                *maximum_download_bytes,
-                                *maximum_extract_bytes,
-                                requested_extract_bytes,
-                                cancellation,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        let completed = pages.iter().filter(|page| page.error.is_none()).count();
-                        let failed = pages.len().saturating_sub(completed);
-                        let value = json!({"results": pages});
-                        enforce_result_bound(&value)?;
-                        return Ok((
-                            value,
-                            format!(
-                                "Extracted {completed} live page(s); {failed} page(s) failed independently."
-                            ),
-                        ));
-                    }
-                    let url = self.record.call.arguments["url"]
-                        .as_str()
-                        .ok_or_else(|| "url is invalid".to_owned())?;
-                    let fetched = self
-                        .web
-                        .fetch_v1(
-                            url,
-                            *maximum_download_bytes,
-                            *maximum_extract_bytes,
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = json!({
-                        "url": fetched.url,
-                        "title": fetched.title,
-                        "text": fetched.text,
-                        "bytesDownloaded": fetched.bytes_downloaded,
-                    });
-                    enforce_result_bound(&value)?;
-                    Ok((value, format!("Fetched {} from the web.", fetched.url)))
-                }
+                    render_when_needed,
+                } => self.run_web(
+                    *maximum_download_bytes,
+                    *maximum_extract_bytes,
+                    *render_when_needed,
+                    cancellation,
+                ),
                 StoredFileToolLimitV1::Mcp {
                     server_id,
                     tool_name,
@@ -2660,8 +2581,11 @@ impl FileToolDispatcherV1 {
                 call_id: self.record.call.call_id.clone(),
                 capability_id: self.record.call.capability_id.clone(),
                 path,
+                is_error: matches!(
+                    self.record.binding.limit,
+                    StoredFileToolLimitV1::WebFetch { .. }
+                ) && web::unavailable(&result),
                 result,
-                is_error: false,
                 summary,
             },
             Err(error) => ToolOutcomeRecordV1 {
@@ -2674,7 +2598,7 @@ impl FileToolDispatcherV1 {
                     "error": bounded_activity_text(redact_tool_error(&materialized, &error))
                 }),
                 is_error: true,
-                summary: "Tool operation was denied or failed within its frozen authority.".into(),
+                summary: bounded_activity_text(redact_tool_error(&materialized, &error)),
             },
         }
     }
@@ -2745,7 +2669,7 @@ impl FileToolDispatcherV1 {
             path,
             result: json!({"error": error}),
             is_error: true,
-            summary: "Tool operation was denied or failed within its frozen authority.".into(),
+            summary: bounded_activity_text(error.clone()),
         }
     }
 
@@ -3307,9 +3231,9 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
         {
-            BTreeSet::from(["urls", "char_limit"])
+            BTreeSet::from(["urls", "char_limit", "documentId", "offset"])
         }
-        StoredFileToolLimitV1::WebFetch { .. } => BTreeSet::from(["url"]),
+        StoredFileToolLimitV1::WebFetch { .. } => BTreeSet::from(["url", "documentId", "offset"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         // MCP argument shapes are server-defined; the frozen validator only
         // bounds the payload. The session layer enforces the exact discovered
@@ -3331,6 +3255,9 @@ fn validate_call_arguments(
             if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
         {
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("urls")
+        }
+        StoredFileToolLimitV1::WebFetch { .. } => {
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("url")
         }
         _ => observed_keys == expected_keys,
     };
@@ -3471,6 +3398,7 @@ fn validate_call_arguments(
             }
         }
         StoredFileToolLimitV1::WebFetch { .. } => {
+            web::validate_continuation(arguments)?;
             if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME {
                 let urls = object
                     .get("urls")
@@ -3820,7 +3748,9 @@ fn web_fetch_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "url": {"type":"string","minLength":1,"maxLength":4096}
+            "url": {"type":"string","minLength":1,"maxLength":4096},
+            "documentId": {"type":"string","minLength":68,"maxLength":68,"description":"Saved immutable document from this Run; reads never re-fetch."},
+            "offset": {"type":"integer","minimum":0,"maximum":8388608,"description":"UTF-8 byte offset; use nextOffset from the previous result."}
         },
         "required": ["url"]
     })
@@ -3838,12 +3768,14 @@ fn web_extract_schema() -> Value {
                 "items":{"type":"string","minLength":1,"maxLength":4096},
                 "description":"Candidate HTTPS result URLs to fetch and verify against their live page content."
             },
+            "documentId": {"type":"string","minLength":68,"maxLength":68,"description":"Saved immutable document; provide exactly the same single URL."},
+            "offset": {"type":"integer","minimum":0,"maximum":8388608,"description":"UTF-8 byte offset; use nextOffset from the previous result."},
             "char_limit": {
                 "type":"integer",
                 "minimum":1,
                 "maximum":32768,
                 "default":32768,
-                "description":"Maximum extracted characters returned per page; frozen Settings may reduce it."
+                "description":"Maximum UTF-8 bytes returned per page (legacy argument name); frozen Settings and model budget may reduce it."
             }
         },
         "required": ["urls"]

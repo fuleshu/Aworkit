@@ -639,10 +639,27 @@ fn main() {
         return;
     }
     prepare_graphical_backend();
+    #[cfg(debug_assertions)]
+    let qa_report = std::env::args()
+        .skip_while(|arg| arg != "--web-extraction-qa")
+        .nth(1)
+        .map(PathBuf::from);
+    let mut context = tauri::generate_context!();
+    #[cfg(debug_assertions)]
+    if qa_report.is_some() || std::env::var("AWORKIT_QA_HIDE_WINDOW").as_deref() == Ok("1") {
+        for window in &mut context.config_mut().app.windows {
+            window.visible = false;
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
+        .setup(move |app| {
+            #[cfg(debug_assertions)]
+            if let Some(report) = qa_report {
+                aworkit_desktop::web_renderer::qa::start(app.handle().clone(), report);
+                return Ok(());
+            }
             aworkit_desktop::presentation::install_application_menu(app.handle())?;
             let app_data_root = app
                 .path()
@@ -663,9 +680,12 @@ fn main() {
                 Arc::new(TauriCommittedChatEvents {
                     app: app.handle().clone(),
                 });
-            let runtime = DesktopRuntime::open_with_committed_events(
+            let runtime = DesktopRuntime::open_with_web_renderer(
                 app_data_root.join("runtime"),
                 committed_events,
+                Arc::new(aworkit_desktop::web_renderer::NativeWebRenderer::new(
+                    app.handle().clone(),
+                )),
             )
             .map_err(std::io::Error::other)?
             .with_management_repair(management);
@@ -674,50 +694,61 @@ fn main() {
             app.manage(Arc::new(Mutex::new(runtime)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            chat_image_import,
-            chat_image_preview,
-            chat_image_thumbnail,
-            desktop_snapshot,
-            desktop_command,
-            approval_project_grants,
-            approval_revoke_project_grant,
-            settings_snapshot,
-            settings_commit,
-            settings_test_provider,
-            settings_v2_snapshot,
-            settings_v2_commit,
-            settings_v2_store_credential,
-            settings_v2_delete_credential,
-            settings_v2_test_provider,
-            settings_v2_discover_models,
-            settings_v2_probe_mcp,
-            settings_v2_probe_external_agent,
-            settings_v2_probe_project,
-            settings_v2_probe_tool,
-            settings_v2_inspect_extension,
-            settings_v2_register_extension,
-            workflow_snapshot,
-            workflow_library,
-            workflow_commit,
-            workflow_create,
-            workflow_duplicate,
-            workflow_delete,
-            workflow_rename,
-            workflow_set_default,
-            management_repair_snapshot,
-            management_repair_command,
-            native_presentation_capabilities,
-            native_set_appearance,
-            native_window_action,
-            native_notify,
-            native_confirm,
-            native_message,
-            native_pick_file,
-            native_pick_folder
-        ])
+        .invoke_handler(|invoke| {
+            // Remote extraction pages must never invoke application commands, even
+            // if future capability configuration accidentally includes their labels.
+            if invoke.message.webview().label() != "main" {
+                invoke
+                    .resolver
+                    .reject("Application commands are unavailable to extraction pages");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                chat_image_import,
+                chat_image_preview,
+                chat_image_thumbnail,
+                desktop_snapshot,
+                desktop_command,
+                approval_project_grants,
+                approval_revoke_project_grant,
+                settings_snapshot,
+                settings_commit,
+                settings_test_provider,
+                settings_v2_snapshot,
+                settings_v2_commit,
+                settings_v2_store_credential,
+                settings_v2_delete_credential,
+                settings_v2_test_provider,
+                settings_v2_discover_models,
+                settings_v2_probe_mcp,
+                settings_v2_probe_external_agent,
+                settings_v2_probe_project,
+                settings_v2_probe_tool,
+                settings_v2_inspect_extension,
+                settings_v2_register_extension,
+                workflow_snapshot,
+                workflow_library,
+                workflow_commit,
+                workflow_create,
+                workflow_duplicate,
+                workflow_delete,
+                workflow_rename,
+                workflow_set_default,
+                management_repair_snapshot,
+                management_repair_command,
+                native_presentation_capabilities,
+                native_set_appearance,
+                native_window_action,
+                native_notify,
+                native_confirm,
+                native_message,
+                native_pick_file,
+                native_pick_folder
+            ];
+            handler(invoke)
+        })
         .on_menu_event(aworkit_desktop::presentation::forward_menu_event)
         .plugin(tauri_plugin_opener::init())
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running the Aworkit desktop shell");
 }
