@@ -1,3 +1,5 @@
+mod tool_plugins;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
@@ -192,6 +194,7 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
 /// Native composition root for the currently supported desktop workflow.
 pub struct DesktopRuntime {
+    tool_plugin_directory: std::path::PathBuf,
     approvals: super::approvals::ApprovalStore,
     images: super::images::ChatImageStore,
     documents: CanonicalDocuments,
@@ -321,7 +324,11 @@ impl DesktopRuntime {
             ProviderHealthRegistry::open(&data_root, &documents.settings().providers)?;
         let project_coordinator = ProjectCoordinator::open(data_root.join("core").join("projects"))
             .map_err(|error| format!("cannot open project coordination state: {error}"))?;
+        let tool_plugin_directory = data_root.join("tool-plugins");
+        std::fs::create_dir_all(&tool_plugin_directory)
+            .map_err(|error| format!("Cannot create tool plugin folder: {error}"))?;
         let mut runtime = Self {
+            tool_plugin_directory,
             images: super::images::ChatImageStore::new(&data_root),
             approvals: super::approvals::ApprovalStore::open(
                 &data_root
@@ -568,18 +575,25 @@ impl DesktopRuntime {
                 }
             }
             let has_project = !selectable_projects(&self.documents.settings().projects).is_empty();
+            let mcp_definitions =
+                preview_mcp_definitions(&workflow.document, self.documents.settings())?;
             let agent = freeze_graph_bindings(
                 &workflow.document,
                 self.documents.settings(),
                 has_project,
-                &BTreeMap::new(),
+                &mcp_definitions,
             )?;
             let model = resolved
                 .as_ref()
                 .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
             validate_model_capabilities(&model.provider, &model.model, !agent.tools.is_empty())?;
             validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
-            if !agent.tools.is_empty() && !has_project {
+            if agent
+                .tools
+                .iter()
+                .any(|tool| tool.tool_snapshot.requires_project)
+                && !has_project
+            {
                 return Err(
                     "the saved Agent uses project tools, but Settings has no eligible local project"
                         .into(),
@@ -1004,6 +1018,7 @@ impl DesktopRuntime {
             .iter()
             .map(|tool| {
                 Ok(WorkflowToolBindingV1 {
+                    options: tool.tool_snapshot.options.clone(),
                     capability_id: tool.tool_id.clone(),
                     configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
                         .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
@@ -1037,7 +1052,7 @@ impl DesktopRuntime {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        execution_request.mcp_servers = context.mcp_manifests.values().cloned().collect();
+        execution_request.mcp_servers = self.restore_frozen_mcp(context)?;
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = context.workflow_snapshot.clone();
         // One outer graph execution is brokered. Agent-internal provider and
@@ -1372,6 +1387,11 @@ impl DesktopRuntime {
                 frozen.context.identity.chat_id.as_str(),
                 &resolution,
             )?;
+        }
+        if approved {
+            // A persisted approval may be resolved in a new app generation.
+            // Reconnect only the Chat's frozen endpoints before accepting work.
+            self.restore_frozen_mcp(&frozen.context)?;
         }
         self.history.stage_effect_command(PendingChatCommandV1 {
             schema_version: 1,
@@ -1752,6 +1772,10 @@ impl DesktopRuntime {
                 revision: metadata.revision,
             });
         let context = FrozenChatExecutionContextV1 {
+            mcp_configurations: tool_plugins::freeze_mcp_configurations(
+                self.documents.settings(),
+                &mcp_manifests,
+            ),
             approval_mode: Some(self.approvals.mode(
                 identity.chat_id.as_str(),
                 self.documents.settings().approvals.default_mode,
@@ -1821,12 +1845,30 @@ impl DesktopRuntime {
         }
     }
 
-    fn active_frozen_credential_ref(&self) -> Result<Option<String>, String> {
-        Ok(self
-            .history
-            .current_frozen_context()?
-            .and_then(|record| record.context.credential)
-            .map(|credential| credential.credential_ref.to_string()))
+    fn active_frozen_credential_refs(&self) -> Result<BTreeSet<String>, String> {
+        let Some(frozen) = self.history.current_frozen_context()? else {
+            return Ok(BTreeSet::new());
+        };
+        let mut references = BTreeSet::new();
+        if let Some(credential) = frozen.context.credential {
+            references.insert(credential.credential_ref.to_string());
+        }
+        for tool in frozen.context.tools {
+            references.extend(
+                tool.credentials
+                    .into_iter()
+                    .map(|credential| credential.credential_ref.to_string()),
+            );
+        }
+        for connection in frozen.context.mcp_configurations {
+            references.extend(
+                connection
+                    .credentials
+                    .into_iter()
+                    .map(|credential| credential.credential_ref),
+            );
+        }
+        Ok(references)
     }
 
     /// Reconciles every interrupted cross-store operation from authoritative
@@ -1844,7 +1886,7 @@ impl DesktopRuntime {
             .iter()
             .map(|credential| credential.credential_ref.as_str())
             .collect::<BTreeSet<_>>();
-        let active = match self.active_frozen_credential_ref() {
+        let active = match self.active_frozen_credential_refs() {
             Ok(active) => active,
             Err(error) => {
                 return vec![format!(
@@ -1859,7 +1901,7 @@ impl DesktopRuntime {
                 if configured.contains(reference.as_str()) {
                     continue;
                 }
-                if active.as_deref() == Some(reference.as_str()) {
+                if active.contains(reference.as_str()) {
                     remains_pending = true;
                     continue;
                 }
@@ -2006,6 +2048,8 @@ impl DesktopRuntime {
             })
             .collect();
         SettingsV2Snapshot {
+            tool_plugin_directory: self.tool_plugin_directory.to_string_lossy().into_owned(),
+            tool_plugins: super::tool_registry::discovery::discover(&self.tool_plugin_directory),
             version: self.settings_snapshot().version,
             schema_version: SETTINGS_SCHEMA_VERSION_V2,
             settings: self.documents.settings().clone(),
@@ -2121,7 +2165,7 @@ impl DesktopRuntime {
         input.provider.model = input.provider.model.trim().to_owned();
         let previous = self.documents.settings().clone();
         let previous_provider = self.documents.legacy_provider();
-        let frozen_credential_ref = self.active_frozen_credential_ref()?;
+        let frozen_credential_refs = self.active_frozen_credential_refs()?;
         let configured = !input.provider.base_url.is_empty() || !input.provider.model.is_empty();
         if configured {
             require_provider_fields(&input.provider.base_url, &input.provider.model)?;
@@ -2237,7 +2281,9 @@ impl DesktopRuntime {
         next_settings.data.portable_history_enabled = input.portable_history_enabled;
         let preserves_frozen_credential = old_credential_ref.is_some()
             && old_credential_ref.as_deref() != provider.credential_ref.as_deref()
-            && old_credential_ref.as_deref() == frozen_credential_ref.as_deref();
+            && old_credential_ref
+                .as_deref()
+                .is_some_and(|reference| frozen_credential_refs.contains(reference));
         if old_credential_ref.as_deref() != provider.credential_ref.as_deref()
             && !preserves_frozen_credential
         {
@@ -2340,6 +2386,13 @@ impl DesktopRuntime {
         }
         input.settings.validate()?;
         input.settings.validate_installed_runtime_consumers()?;
+        for server in &input.settings.mcp_servers {
+            if server.enabled {
+                if let Some(pin) = &server.plugin {
+                    super::tool_registry::discovery::verify(pin)?;
+                }
+            }
+        }
         let previous = self.documents.settings().clone();
         validate_credential_metadata_update(&previous, &input.settings)?;
         validate_extension_lifecycle_update(&previous, &input.settings)?;
@@ -2400,7 +2453,7 @@ impl DesktopRuntime {
         input.label = input.label.trim().to_owned();
         input.kind = input.kind.trim().to_owned();
         let previous = self.documents.settings().clone();
-        let frozen_credential_ref = self.active_frozen_credential_ref()?;
+        let frozen_credential_refs = self.active_frozen_credential_refs()?;
         if let Some(reference) = input.replace_credential_ref.as_deref()
             && previous.credential(reference).is_none()
         {
@@ -2443,7 +2496,7 @@ impl DesktopRuntime {
         let mut next = previous;
         if let Some(old_reference) = input.replace_credential_ref.as_deref() {
             replace_credential_references(&mut next, old_reference, &new_reference);
-            if frozen_credential_ref.as_deref() != Some(old_reference) {
+            if !frozen_credential_refs.contains(old_reference) {
                 next.credentials
                     .retain(|credential| credential.credential_ref != old_reference);
             }
@@ -2469,7 +2522,7 @@ impl DesktopRuntime {
         }
         let provider_health_warning = self.reconcile_provider_health();
         let retention_warning = match input.replace_credential_ref.as_deref() {
-            Some(reference) if frozen_credential_ref.as_deref() == Some(reference) => Some(
+            Some(reference) if frozen_credential_refs.contains(reference) => Some(
                 "The previous credential remains stored because the active Chat is frozen to it; start a New Chat before deleting that now-unreferenced credential."
                     .to_owned(),
             ),
@@ -2529,7 +2582,10 @@ impl DesktopRuntime {
                 input.expected_version
             ));
         }
-        if self.active_frozen_credential_ref()?.as_deref() == Some(&input.credential_ref) {
+        if self
+            .active_frozen_credential_refs()?
+            .contains(&input.credential_ref)
+        {
             return Err(
                 "credential is retained by the active Chat's frozen execution context; start a New Chat before deleting it"
                     .into(),
@@ -3338,6 +3394,23 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
     ids
 }
 
+/// Readiness is inert; live discovery replaces these definitions when a Run starts.
+fn preview_mcp_definitions(
+    workflow: &Value,
+    settings: &SettingsConfigurationV2,
+) -> Result<BTreeMap<String, ModelToolDefinitionV1>, String> {
+    graph_mcp_tool_ids(workflow).into_iter().map(|id| {
+        let (server_id, name) = split_mcp_capability(&id).map_err(|error| error.to_string())?;
+        let server = settings.mcp_servers.iter().find(|server| server.id == server_id && server.enabled)
+            .ok_or_else(|| format!("MCP server '{server_id}' is missing or disabled in Settings"))?;
+        let tool = server.tools.iter().find(|tool| tool.name == name && tool.enabled)
+            .ok_or_else(|| format!("MCP tool '{id}' is missing or disabled; discover and enable it in Settings → MCP"))?;
+        Ok((id.clone(), ModelToolDefinitionV1 { capability_id: id.clone(), name: mcp_provider_name(server_id, name),
+            description: if tool.description.is_empty() { format!("Call MCP tool '{name}'.") } else { tool.description.clone() },
+            input_schema: tool.input_schema.clone() }))
+    }).collect()
+}
+
 fn freeze_graph_bindings(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
@@ -3384,7 +3457,22 @@ fn freeze_graph_bindings(
                     format!("workflow MCP tool '{tool_id}' has no frozen definition")
                 })?;
                 let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
+                let saved_tool = settings
+                    .mcp_servers
+                    .iter()
+                    .find(|server| server.id == server_id)
+                    .and_then(|server| server.tools.iter().find(|entry| entry.name == tool));
+                if saved_tool.is_some_and(|entry| !entry.enabled) {
+                    return Err(format!("MCP tool '{tool_id}' is disabled in Settings"));
+                }
+                let mut options = saved_tool
+                    .map(|entry| entry.options.clone())
+                    .unwrap_or_default();
+                if options.instructions.is_none() {
+                    options.instructions = Some(definition.description.clone());
+                }
                 let snapshot = BuiltInToolConfigurationV2 {
+                    options,
                     id: tool_id.clone(),
                     name: mcp_provider_name(server_id, tool),
                     enabled: true,
@@ -3420,10 +3508,11 @@ fn freeze_graph_bindings(
                     "workflow tool '{tool_id}' requires selecting a saved project before the first input"
                 ));
             }
+            let snapshot = super::tool_registry::freeze_settings(configured)?;
             tools.push(FrozenToolBindingV1 {
                 tool_id,
-                tool_hash: canonical_hash(configured)?,
-                tool_snapshot: configured.clone(),
+                tool_hash: canonical_hash(&snapshot)?,
+                tool_snapshot: snapshot,
                 credentials: freeze_tool_credentials(configured, settings)?,
                 definition: None,
             });
@@ -3447,10 +3536,11 @@ fn freeze_graph_bindings(
                 continue;
             }
             seen.insert(child_id.to_owned());
+            let snapshot = super::tool_registry::freeze_settings(configured)?;
             tools.push(FrozenToolBindingV1 {
                 tool_id: child_id.to_owned(),
-                tool_hash: canonical_hash(configured)?,
-                tool_snapshot: configured.clone(),
+                tool_hash: canonical_hash(&snapshot)?,
+                tool_snapshot: snapshot,
                 credentials: freeze_tool_credentials(configured, settings)?,
                 definition: None,
             });
@@ -5770,6 +5860,81 @@ mod tests {
     }
 
     #[test]
+    fn mcp_readiness_uses_saved_discovery_without_connecting_or_requiring_a_project() {
+        let root = TempDir::new().unwrap();
+        let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));
+        configure(&mut runtime);
+        runtime
+            .documents
+            .set_default_workflow("workflow.simple-chat")
+            .unwrap();
+        let mut settings = runtime.settings_v2_snapshot().settings;
+        for provider in &mut settings.providers {
+            for model in &mut provider.models {
+                model.capabilities = vec!["text".into(), "tools".into()];
+            }
+        }
+        settings.mcp_servers.push(McpServerConfigurationV2 {
+            id: "mcp.preview".into(),
+            name: "Preview".into(),
+            enabled: true,
+            auto_connect: false,
+            plugin: None,
+            transport: IntegrationTransportV2::Stdio {
+                command: "does-not-exist".into(),
+                args: vec![],
+                cwd: None,
+                env: vec![],
+            },
+            tools: vec![super::super::tool_registry::McpToolConfiguration {
+                name: "echo".into(),
+                description: "Echo".into(),
+                input_schema: json!({"type":"object"}),
+                enabled: true,
+                options: Default::default(),
+            }],
+        });
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.mcp.preview".into(),
+                expected_version: runtime.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
+        workflow.document["nodes"][1]["configuration"]["toolIds"] =
+            json!(["mcp://mcp.preview/echo"]);
+        runtime
+            .workflow_commit(WorkflowCommitInput {
+                command_id: "workflow.mcp.preview".into(),
+                expected_version: workflow.version,
+                document: workflow.document,
+                workflow_id: Some("workflow.simple-chat".into()),
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.workflow_start_disabled_reason(),
+            None,
+            "Readiness never starts the unavailable executable"
+        );
+        let mut settings = runtime.settings_v2_snapshot().settings;
+        settings.mcp_servers[0].tools[0].enabled = false;
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.mcp.disabled".into(),
+                expected_version: runtime.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+        assert!(
+            runtime
+                .workflow_start_disabled_reason()
+                .unwrap()
+                .contains("disabled")
+        );
+    }
+
+    #[test]
     fn simple_chat_preflight_requires_text_capability_and_adapter_credential_field() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
@@ -5922,6 +6087,8 @@ mod tests {
             configuration: BTreeMap::new(),
         });
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.catalog".into(),
             name: "Catalog MCP".into(),
             enabled: false,
@@ -6032,6 +6199,8 @@ mod tests {
 
         let mut attempted_mcp = runtime.settings_v2_snapshot().settings;
         attempted_mcp.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.unavailable".into(),
             name: "Unavailable MCP".into(),
             enabled: true,
@@ -6042,15 +6211,15 @@ mod tests {
             },
         });
         let mcp_version = runtime.settings_v2_snapshot().version;
-        let error = runtime
+        runtime
             .settings_v2_commit(SettingsV2CommitInput {
-                command_id: "settings.unavailable.enable-mcp".into(),
+                command_id: "settings.available.enable-mcp".into(),
                 expected_version: mcp_version,
                 settings: attempted_mcp,
             })
-            .unwrap_err();
-        assert!(error.contains("MCP server 'mcp.unavailable' cannot be enabled"));
-        assert_eq!(runtime.settings_v2_snapshot().version, mcp_version);
+            .expect("MCP tools may be enabled");
+        assert_eq!(runtime.settings_v2_snapshot().version, mcp_version + 1);
+        assert!(runtime.settings_v2_snapshot().settings.mcp_servers[0].enabled);
 
         let mut attempted_agent = runtime.settings_v2_snapshot().settings;
         attempted_agent
@@ -6107,6 +6276,8 @@ mod tests {
         // off.
         let mut legacy_enabled = runtime.settings_v2_snapshot().settings;
         legacy_enabled.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.legacy".into(),
             name: "Legacy MCP".into(),
             enabled: true,

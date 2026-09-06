@@ -1,3 +1,4 @@
+import { findNativeTool, nativeTools } from "./toolRegistry";
 import { z } from "zod";
 
 const stableIdSchema = z
@@ -117,58 +118,28 @@ export const credentialMetadataConfigurationSchema = z
   })
   .strict();
 
-const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> = {
-  "tool.files.read": ["authorityMode", "effect", "maximumBytes"],
-  "tool.files.search": ["authorityMode", "effect", "maximumResults"],
-  "tool.files.edit": [
-    "authorityMode",
-    "effect",
-    "maximumBytes",
-    "requiresApproval",
-  ],
-  "tool.shell.host": [
-    "authorityMode",
-    "maximumOutputBytes",
-    "requiresApproval",
-    "timeoutSeconds",
-  ],
-  "tool.python.host": [
-    "authorityMode",
-    "isolatedInterpreter",
-    "maximumOutputBytes",
-    "requiresApproval",
-    "timeoutSeconds",
-  ],
-  "tool.web_search": [
-    "backend",
-    "cacheEnabled",
-    "cacheTtlMinutes",
-    "credentialBackend",
-    "deepseekBaseUrl",
-    "deepseekMaximumOutputTokens",
-    "deepseekModel",
-    "keylessFallback",
-    "keylessRescue",
-    "freshnessBypassCache",
-    "freshnessMaximumAgeDays",
-    "freshnessValidation",
-    "maximumResults",
-    "maximumRetries",
-    "parallelSearchMode",
-    "providerBaseUrl",
-    "providerTier",
-    "requestTimeoutSeconds",
-    "searxngBaseUrl",
-    "xaiAllowedDomains",
-    "xaiExcludedDomains",
-    "xaiModel",
-  ],
-  "tool.web_fetch": ["maximumDownloadBytes", "maximumExtractBytes"],
-  "tool.web_extract": ["maximumDownloadBytes", "maximumExtractBytes"],
-};
+const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> =
+  Object.fromEntries(nativeTools.map(tool => [tool.id, Object.keys(tool.configuration).filter(key => key !== "renderWhenNeeded")]));
+
+export const toolOptionsSchema = z.object({
+  instructions: z.string().refine(value => new TextEncoder().encode(value).length <= 32768 && !value.includes("\0"), "Instructions must be at most 32 KiB and contain no NUL characters.").optional(),
+  executable: z.string().min(1).max(4096).refine(runtimePathIsAbsolute, "Use an absolute executable path.").optional(),
+  approvalMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).optional(),
+}).strict();
+export type ToolOptions = z.infer<typeof toolOptionsSchema>;
+
+export const mcpToolConfigurationSchema = z.object({
+  name: z.string().min(1).max(256),
+  description: z.string().max(32768),
+  inputSchema: z.record(z.string(), z.unknown()),
+  enabled: z.boolean(),
+  options: toolOptionsSchema.optional(),
+}).strict();
+export type McpToolConfiguration = z.infer<typeof mcpToolConfigurationSchema>;
 
 export const builtInToolConfigurationSchema = z
   .object({
+    options: toolOptionsSchema.optional(),
     id: stableIdSchema,
     name: z.string().trim().min(1).max(256),
     enabled: z.boolean(),
@@ -178,6 +149,9 @@ export const builtInToolConfigurationSchema = z
   })
   .strict()
   .superRefine((tool, context) => {
+    const manifest = findNativeTool(tool.id);
+    if (tool.options?.executable !== undefined && manifest?.execution !== "shell" && manifest?.execution !== "python")
+      context.addIssue({ code: "custom", path: ["options", "executable"], message: "This tool uses a native executor; it does not launch a configurable program." });
     const baseExpected = BUILT_IN_TOOL_CONFIGURATION_KEYS[tool.id];
     const isWebExtraction = tool.id === "tool.web_fetch" || tool.id === "tool.web_extract";
     const expected = isWebExtraction && tool.configuration.renderWhenNeeded !== undefined
@@ -418,6 +392,8 @@ export const connectionConfigurationSchema = z.discriminatedUnion("transport", [
 
 export const mcpServerConfigurationSchema = z
   .object({
+    plugin: z.object({ manifestPath: z.string(), contentHash: z.string(), version: z.string() }).strict().optional(),
+    tools: z.array(mcpToolConfigurationSchema).max(2048).optional(),
     id: stableIdSchema,
     name: z.string().trim().min(1).max(256),
     enabled: z.boolean(),
@@ -518,6 +494,8 @@ export const providerHealthSnapshotV2Schema = z
 
 export const settingsV2SnapshotSchema = z
   .object({
+    toolPluginDirectory: z.string().optional(),
+    toolPlugins: z.array(z.object({ path: z.string(), server: mcpServerConfigurationSchema.nullable(), error: z.string().nullable() }).strict()).optional(),
     version: z.number().int().positive(),
     schemaVersion: z.literal(2),
     settings: settingsConfigurationV2Schema,
@@ -1067,6 +1045,8 @@ function validateConnection(
     return;
   }
   if (options.mcp === true) {
+    if (connection.cwd != null && !runtimePathIsAbsolute(connection.cwd))
+      issues.push({ section, path: path + ".cwd", message: "MCP working directory must be absolute when configured." });
     if (!runtimePathIsAbsolute(unquoteRuntimePath(connection.command)) && !runtimePathIsBareCommand(unquoteRuntimePath(connection.command))) {
       issues.push({
         section,

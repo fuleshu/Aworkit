@@ -375,7 +375,7 @@ export function ConnectionEditor({
                     onClick={() => {
                       void onPickCommand().then((command) => {
                         if (command === null) return;
-                        onChange({ ...value, command, cwd: null });
+                        onChange({ ...value, command });
                       });
                     }}
                   >

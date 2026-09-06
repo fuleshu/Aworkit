@@ -18,12 +18,12 @@ use aworkit_capability_host::{
     AnthropicMessagesProvider, AnthropicMessagesProviderConfig, ApprovedInvocationEnvelopeV1,
     CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind, FrozenModelGateway,
     GoogleGeminiLimitsV1, GoogleGeminiProvider, GoogleGeminiProviderConfig, InjectionTargetV1,
-    McpCapabilitySnapshotV1, McpPeerPort, McpPeerTransportConfigV1, McpServerManifestV1,
-    ModelToolExchangeV1, OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider,
-    OpenAiCompatibleProviderConfig, ProductionMcpPeer, ProviderEnginePortV1,
-    RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1, SecretDeliveryV1 as HostSecretDeliveryV1,
-    SecretFieldPlanV1, SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
-    SecretMaterializationPlanV1, SecretMaterializer, SideEffectClass,
+    McpCapabilitySnapshotV1, McpPeerPort, McpServerManifestV1, ModelToolExchangeV1,
+    OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
+    ProviderEnginePortV1, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
+    SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
+    SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
+    SecretMaterializer, SideEffectClass,
 };
 use aworkit_local_store::{
     CommitBatch, Deduplication, Event, LocalHistoryStore, OutboxEntry, StoreError,
@@ -1159,8 +1159,8 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority.mcp.install_scripted_peer(peer)
     }
 
-    /// Prepares production MCP sessions for one frozen Run: installs the
-    /// production peer on first use, stages every server's materialized
+    /// Prepares production MCP sessions for one frozen Run: installs that
+    /// Run's production peer on first use, stages every server's materialized
     /// credential slots, opens the exact core-attested sessions, and returns
     /// their discovery snapshots. Binding drift fails closed without touching
     /// an active session.
@@ -1169,29 +1169,14 @@ impl WorkflowExecutionPipeline {
         run_id: &StableId,
         servers: &mut [McpRunServerPreparationV1],
     ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
-        let needs_install = self.file_tool_authority.mcp.needs_install()?;
-        if needs_install && !servers.is_empty() {
-            let configs = servers
-                .iter()
-                .map(|server| McpPeerTransportConfigV1 {
-                    server_id: server.manifest.server_id.clone(),
-                    binding_hash: server.manifest.binding_hash.clone(),
-                    endpoint: server.endpoint.clone(),
-                })
-                .collect();
-            let peer = Arc::new(
-                ProductionMcpPeer::with_limits(configs, super::mcp::production_peer_limits())
-                    .map_err(|error| format!("MCP transport configuration is invalid: {error}"))?,
-            );
-            self.file_tool_authority.mcp.install_production_peer(peer)?;
-        }
+        self.file_tool_authority
+            .mcp
+            .prepare_production_run(run_id, servers)?;
         let mut snapshots = Vec::with_capacity(servers.len());
         for server in servers {
-            if let Some(materialization) = server.materialization.take() {
-                self.file_tool_authority
-                    .mcp
-                    .stage_secrets(&server.manifest.server_id, materialization)?;
-            }
+            // This service-owned preparation is attested for the actual live
+            // host generation, not the one-shot Settings probe generation.
+            server.manifest.host_generation = self.generation;
             let snapshot = self
                 .file_tool_authority
                 .mcp
@@ -4328,6 +4313,7 @@ mod tests {
         request.tools = tool_ids
             .iter()
             .map(|tool_id| WorkflowToolBindingV1 {
+                options: Default::default(),
                 capability_id: (*tool_id).into(),
                 configuration: match *tool_id {
                     FILE_READ_CAPABILITY_ID => json!({
@@ -5604,6 +5590,7 @@ mod tests {
         request.budget.tool_calls = 8;
         request.budget.actions = 8;
         request.tools = vec![WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: FILE_EDIT_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode": "project_files",
@@ -5969,6 +5956,7 @@ mod tests {
         request.tools = tool_ids
             .iter()
             .map(|tool_id| WorkflowToolBindingV1 {
+                options: Default::default(),
                 capability_id: (*tool_id).into(),
                 configuration: match *tool_id {
                     FILE_READ_CAPABILITY_ID => json!({
@@ -6440,6 +6428,7 @@ mod tests {
         request.budget.tool_calls = 4;
         request.budget.actions = 8;
         request.tools = vec![WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: MCP_FIXTURE_CAPABILITY.into(),
             configuration: json!({"serverId": MCP_FIXTURE_SERVER, "tool": MCP_FIXTURE_TOOL}),
             credential_bindings: Vec::new(),
@@ -6600,6 +6589,15 @@ mod tests {
             .expect("open frozen session");
         assert_eq!(snapshot.catalog.tools.len(), 1);
 
+        let mut changed = mcp_fixture_manifest(generation);
+        changed.binding_hash = format!("sha256:{}", "f".repeat(64));
+        assert!(
+            runtime
+                .open_frozen(&run_id, &changed)
+                .unwrap_err()
+                .contains("binding drift")
+        );
+
         let token_id = stable("cancel.mcp-scope").expect("token id");
         let token = runtime
             .register_dispatch_token(&token_id)
@@ -6612,7 +6610,7 @@ mod tests {
         // first, so a pre-flight dispatch fails closed.
         assert!(
             runtime
-                .cancel_dispatch(&token_id, &server, &invocation)
+                .cancel_dispatch(&run_id, &token_id, &server, &invocation)
                 .is_err()
         );
         assert!(token.is_cancelled());
@@ -6620,7 +6618,7 @@ mod tests {
         // The scope is gone: a later cancel for the same id cannot target it.
         assert!(
             runtime
-                .cancel_dispatch(&token_id, &server, &invocation)
+                .cancel_dispatch(&run_id, &token_id, &server, &invocation)
                 .is_err()
         );
     }

@@ -42,21 +42,13 @@ const STANDARD_TIERS: [(&str, &str); 4] = [
     ("tier:balanced", "Balanced"),
     ("tier:quality", "Quality"),
 ];
-const BUILTIN_TOOL_IDS: [&str; 13] = [
-    "tool.files.read",
-    "tool.files.search",
-    "tool.files.list",
-    "tool.files.grep",
-    "tool.files.edit",
-    "tool.files.write",
-    "tool.shell.host",
-    "tool.python.host",
-    "tool.todo",
-    "tool.web_search",
-    "tool.web_fetch",
-    "tool.web_extract",
-    "tool.subagent",
-];
+fn builtin_tool_ids() -> Vec<&'static str> {
+    super::tool_registry::native_plugin()
+        .tools
+        .iter()
+        .map(|tool| tool.id.as_str())
+        .collect()
+}
 
 /// Complete canonical configuration persisted as one versioned JSON document.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -143,14 +135,14 @@ impl SettingsConfigurationV2 {
             "project",
             self.projects.iter().map(|project| project.id.as_str()),
         )?;
-        let expected_tool_ids = BUILTIN_TOOL_IDS
+        let expected_tool_ids = builtin_tool_ids()
             .iter()
             .map(|id| (*id).to_owned())
             .collect::<BTreeSet<_>>();
         if tool_ids != expected_tool_ids {
             return Err(format!(
                 "built-in tools must contain exactly the implemented IDs: {}",
-                BUILTIN_TOOL_IDS.join(", ")
+                builtin_tool_ids().join(", ")
             ));
         }
         debug_assert_eq!(extension_ids.len(), self.extensions.len());
@@ -347,7 +339,7 @@ impl SettingsConfigurationV2 {
             .iter()
             .find(|tool| tool.id == "tool.web_fetch")
             .is_some_and(|tool| tool.enabled);
-        for id in BUILTIN_TOOL_IDS {
+        for id in builtin_tool_ids() {
             if !existing.contains(id) {
                 let mut default = default_builtin_tools()
                     .into_iter()
@@ -361,7 +353,7 @@ impl SettingsConfigurationV2 {
             }
         }
         if changed {
-            let order = BUILTIN_TOOL_IDS
+            let order = builtin_tool_ids()
                 .iter()
                 .enumerate()
                 .map(|(index, id)| (*id, index))
@@ -787,6 +779,11 @@ impl NamedCredentialBindingV2 {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuiltInToolConfigurationV2 {
+    #[serde(
+        default,
+        skip_serializing_if = "super::tool_registry::ToolOptions::is_default"
+    )]
+    pub options: super::tool_registry::ToolOptions,
     pub id: String,
     pub name: String,
     pub enabled: bool,
@@ -799,6 +796,9 @@ impl BuiltInToolConfigurationV2 {
     fn validate(&self, credentials: &BTreeMap<String, BTreeSet<String>>) -> Result<(), String> {
         validate_stable_id("tool id", &self.id)?;
         validate_label("tool name", &self.name)?;
+        let plugin = super::tool_registry::native_tool(&self.id)
+            .ok_or_else(|| format!("Tool {} is not registered", self.id))?;
+        self.options.validate(&plugin.execution)?;
         validate_bindings(
             &format!("tool '{}'", self.id),
             &self.credential_bindings,
@@ -1267,25 +1267,6 @@ pub(crate) fn validate_unavailable_executor_enablement_update(
     previous: &SettingsConfigurationV2,
     next: &SettingsConfigurationV2,
 ) -> Result<(), String> {
-    let previous_mcp_enabled = previous
-        .mcp_servers
-        .iter()
-        .map(|server| (server.id.as_str(), server.enabled))
-        .collect::<BTreeMap<_, _>>();
-    for server in &next.mcp_servers {
-        if server.enabled
-            && !previous_mcp_enabled
-                .get(server.id.as_str())
-                .copied()
-                .unwrap_or(false)
-        {
-            return Err(format!(
-                "MCP server '{}' cannot be enabled through generic Settings; MCP execution is unavailable in this build",
-                server.id
-            ));
-        }
-    }
-
     let previous_agent_enabled = previous
         .external_agents
         .iter()
@@ -1305,15 +1286,7 @@ pub(crate) fn validate_unavailable_executor_enablement_update(
         }
     }
 
-    // All eleven built-in tools have installed v1 executors (W4); enabling a
-    // tool through generic Settings is supported. MCP servers and external
-    // agents remain gated until their chat execution paths ship.
-    let _previous_tool_enabled = previous
-        .tools
-        .iter()
-        .map(|tool| (tool.id.as_str(), tool.enabled))
-        .collect::<BTreeMap<_, _>>();
-
+    // Native tool plugins and MCP have supported execution paths.
     Ok(())
 }
 
@@ -1342,6 +1315,10 @@ fn protected_extension_facts(extension: &ExtensionConfigurationV2) -> BTreeMap<&
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpServerConfigurationV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<super::tool_registry::discovery::ToolPluginPin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<super::tool_registry::McpToolConfiguration>,
     pub id: String,
     pub name: String,
     pub enabled: bool,
@@ -1353,6 +1330,7 @@ impl McpServerConfigurationV2 {
     fn validate(&self, credentials: &BTreeMap<String, BTreeSet<String>>) -> Result<(), String> {
         validate_stable_id("MCP server id", &self.id)?;
         validate_label("MCP server name", &self.name)?;
+        super::tool_registry::validate_mcp_catalog(&self.tools)?;
         if self.auto_connect {
             return Err(format!(
                 "MCP server '{}' cannot connect at launch because this build implements only explicit one-shot Discover and Test sessions",
@@ -1430,7 +1408,17 @@ fn validate_mcp_transport_targets(
         IntegrationTransportV2::Http { headers, .. } => {
             validate_http_credential_targets(&owner, headers, true)
         }
-        IntegrationTransportV2::Stdio { command, env, .. } => {
+        IntegrationTransportV2::Stdio {
+            command, env, cwd, ..
+        } => {
+            if cwd
+                .as_ref()
+                .is_some_and(|path| !Path::new(path).is_absolute())
+            {
+                return Err(format!(
+                    "{owner} working directory must be absolute when configured"
+                ));
+            }
             if !launchable_mcp_command(Path::new(unquote_runtime_path(command))) {
                 return Err(format!(
                     "{owner} STDIO executable must be absolute or one bare command name from PATH for the installed MCP adapter"
@@ -1838,207 +1826,14 @@ pub(crate) fn standard_model_tiers() -> Vec<ModelTierConfigurationV2> {
 }
 
 fn default_builtin_tools() -> Vec<BuiltInToolConfigurationV2> {
-    vec![
-        builtin_tool(
-            "tool.files.read",
-            "Project file read",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("read")),
-                (
-                    "maximumBytes".into(),
-                    Value::from(PROJECT_FILE_READ_MAXIMUM_BYTES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.files.search",
-            "Project file search",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("search")),
-                (
-                    "maximumResults".into(),
-                    Value::from(PROJECT_FILE_SEARCH_MAXIMUM_RESULTS_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.files.edit",
-            "Project file edit",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("write")),
-                ("requiresApproval".into(), Value::Bool(true)),
-                ("maximumBytes".into(), Value::from(1_048_576_u64)),
-            ]),
-        ),
-        builtin_tool(
-            "tool.files.list",
-            "Project file list (glob)",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("list")),
-                (
-                    "maximumEntries".into(),
-                    Value::from(crate::runtime::PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.files.grep",
-            "Project file regex search",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("grep")),
-                (
-                    "maximumMatches".into(),
-                    Value::from(crate::runtime::PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.files.write",
-            "Project file write",
-            true,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("project_files")),
-                ("effect".into(), Value::from("write")),
-                ("requiresApproval".into(), Value::Bool(true)),
-                (
-                    "maximumBytes".into(),
-                    Value::from(crate::runtime::PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.shell.host",
-            "Host shell",
-            false,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("host_shell")),
-                ("requiresApproval".into(), Value::Bool(true)),
-                ("timeoutSeconds".into(), Value::from(30_u64)),
-                ("maximumOutputBytes".into(), Value::from(262_144_u64)),
-            ]),
-        ),
-        builtin_tool(
-            "tool.python.host",
-            "Host Python",
-            false,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("host_python")),
-                ("requiresApproval".into(), Value::Bool(true)),
-                ("isolatedInterpreter".into(), Value::Bool(true)),
-                ("timeoutSeconds".into(), Value::from(30_u64)),
-                ("maximumOutputBytes".into(), Value::from(262_144_u64)),
-            ]),
-        ),
-        builtin_tool(
-            "tool.todo",
-            "Run task list",
-            false,
-            BTreeMap::from([("authorityMode".into(), Value::from("run_todo"))]),
-        ),
-        builtin_tool(
-            "tool.web_search",
-            "Web search",
-            false,
-            web_search_default_configuration(),
-        ),
-        builtin_tool(
-            "tool.web_fetch",
-            "Web page fetch",
-            false,
-            BTreeMap::from([
-                ("renderWhenNeeded".into(), Value::Bool(true)),
-                (
-                    "maximumDownloadBytes".into(),
-                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                ),
-                (
-                    "maximumExtractBytes".into(),
-                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.web_extract",
-            "Web page extract",
-            false,
-            BTreeMap::from([
-                ("renderWhenNeeded".into(), Value::Bool(true)),
-                (
-                    "maximumDownloadBytes".into(),
-                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1),
-                ),
-                (
-                    "maximumExtractBytes".into(),
-                    Value::from(crate::runtime::WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1),
-                ),
-            ]),
-        ),
-        builtin_tool(
-            "tool.subagent",
-            "Subagent delegation",
-            false,
-            BTreeMap::from([
-                ("authorityMode".into(), Value::from("run_subagent")),
-                ("requiresApproval".into(), Value::Bool(true)),
-            ]),
-        ),
-    ]
+    super::tool_registry::native_defaults()
 }
 
 pub(crate) fn web_search_default_configuration() -> BTreeMap<String, Value> {
-    BTreeMap::from([
-        ("backend".into(), Value::from("automatic")),
-        ("credentialBackend".into(), Value::from("deepseek")),
-        ("providerTier".into(), Value::from("automatic")),
-        ("maximumResults".into(), Value::from(10_u64)),
-        ("requestTimeoutSeconds".into(), Value::from(30_u64)),
-        ("maximumRetries".into(), Value::from(1_u64)),
-        ("keylessFallback".into(), Value::Bool(true)),
-        ("keylessRescue".into(), Value::Bool(true)),
-        ("cacheEnabled".into(), Value::Bool(true)),
-        ("cacheTtlMinutes".into(), Value::from(20_u64)),
-        ("freshnessValidation".into(), Value::Bool(true)),
-        ("freshnessMaximumAgeDays".into(), Value::from(45_u64)),
-        ("freshnessBypassCache".into(), Value::Bool(true)),
-        ("searxngBaseUrl".into(), Value::from("")),
-        ("providerBaseUrl".into(), Value::from("")),
-        ("parallelSearchMode".into(), Value::from("agentic")),
-        ("xaiModel".into(), Value::from("grok-build-0.1")),
-        ("xaiAllowedDomains".into(), Value::Array(Vec::new())),
-        ("xaiExcludedDomains".into(), Value::Array(Vec::new())),
-        (
-            "deepseekBaseUrl".into(),
-            Value::from("https://api.deepseek.com"),
-        ),
-        ("deepseekModel".into(), Value::from("deepseek-v4-flash")),
-        ("deepseekMaximumOutputTokens".into(), Value::from(4_096_u64)),
-    ])
-}
-
-fn builtin_tool(
-    id: &str,
-    name: &str,
-    requires_project: bool,
-    configuration: BTreeMap<String, Value>,
-) -> BuiltInToolConfigurationV2 {
-    BuiltInToolConfigurationV2 {
-        id: id.into(),
-        name: name.into(),
-        enabled: false,
-        requires_project,
-        credential_bindings: Vec::new(),
-        configuration,
-    }
+    super::tool_registry::native_tool("tool.web_search")
+        .expect("installed web search tool")
+        .configuration
+        .clone()
 }
 
 fn validate_tiers(
@@ -2955,6 +2750,8 @@ mod tests {
         settings.tools[3].enabled = true;
         settings.tools[3].credential_bindings = vec![binding.clone()];
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.fixture".into(),
             name: "Fixture MCP".into(),
             enabled: true,
@@ -3139,6 +2936,8 @@ mod tests {
 
         settings.extensions.clear();
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.invalid".into(),
             name: "Invalid".into(),
             enabled: true,
@@ -3155,6 +2954,8 @@ mod tests {
     fn inactive_runtime_controls_fail_closed_and_legacy_values_normalize_once() {
         let mut settings = configured();
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.inactive".into(),
             name: "Inactive".into(),
             enabled: false,
@@ -3239,6 +3040,8 @@ mod tests {
 
         let mut scoped_mcp = configured();
         scoped_mcp.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.scoped".into(),
             name: "Scoped".into(),
             enabled: false,
@@ -3278,6 +3081,8 @@ mod tests {
                 configuration: BTreeMap::new(),
             });
         ignored_external.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.future".into(),
             name: "Future".into(),
             enabled: false,
@@ -3303,6 +3108,8 @@ mod tests {
         let mut settings = configured();
         add_integration_credential(&mut settings);
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.targets".into(),
             name: "Targets".into(),
             enabled: false,
@@ -3376,10 +3183,12 @@ mod tests {
     }
 
     #[test]
-    fn installed_mcp_stdio_contract_accepts_quoted_paths_and_ignores_cwd() {
+    fn installed_mcp_stdio_contract_accepts_quoted_paths_and_validates_cwd() {
         let mut settings = configured();
         add_integration_credential(&mut settings);
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.stdio".into(),
             name: "STDIO".into(),
             enabled: false,
@@ -3412,9 +3221,20 @@ mod tests {
             .into_owned();
         *command = format!("\"{executable}\"");
         *cwd = Some("relative/workspace".into());
+        assert!(
+            settings
+                .validate_installed_runtime_consumers()
+                .unwrap_err()
+                .contains("working directory must be absolute")
+        );
+        let IntegrationTransportV2::Stdio { cwd, .. } = &mut settings.mcp_servers[0].transport
+        else {
+            unreachable!()
+        };
+        *cwd = Some(std::env::temp_dir().to_string_lossy().into_owned());
         settings
             .validate_installed_runtime_consumers()
-            .expect("quoted executable and ignored MCP cwd are accepted");
+            .expect("quoted executable and absolute cwd are accepted");
 
         let IntegrationTransportV2::Stdio { cwd: _, env, .. } =
             &mut settings.mcp_servers[0].transport
@@ -3740,6 +3560,8 @@ mod tests {
     fn unavailable_executors_cannot_gain_enabled_state_through_generic_settings() {
         let mut previous = SettingsConfigurationV2::default();
         previous.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.fixture".into(),
             name: "Fixture MCP".into(),
             enabled: false,
@@ -3755,11 +3577,8 @@ mod tests {
 
         let mut enabled_mcp = previous.clone();
         enabled_mcp.mcp_servers[0].enabled = true;
-        assert!(
-            validate_unavailable_executor_enablement_update(&previous, &enabled_mcp)
-                .unwrap_err()
-                .contains("MCP server 'mcp.fixture' cannot be enabled")
-        );
+        validate_unavailable_executor_enablement_update(&previous, &enabled_mcp)
+            .expect("MCP tools have a supported execution path");
 
         let mut enabled_agent = previous.clone();
         enabled_agent.external_agents[0].enabled = true;
@@ -3771,7 +3590,7 @@ mod tests {
 
         // Every built-in tool now has an installed v1 executor, so generic
         // Settings may enable any of them.
-        for tool_id in BUILTIN_TOOL_IDS {
+        for tool_id in builtin_tool_ids() {
             let mut enabled_tool = previous.clone();
             enabled_tool
                 .tools

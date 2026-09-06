@@ -2,8 +2,8 @@
 
 use std::{fs, path::Path};
 
-use aworkit_capability_host::{WebSearchResultV1, WebTools, WebTransportPort};
 use crate::runtime::tool_loop::WorkflowToolCredentialBindingV1;
+use aworkit_capability_host::{WebSearchResultV1, WebTools, WebTransportPort};
 
 use super::*;
 
@@ -19,10 +19,7 @@ fn credentialed_search_crosses_host_returns_failure_to_model_and_replays_opaquel
     let tool_credential = broker
         .put_credential(
             CredentialRef(stable("credential.web-search-pipeline-test").expect("credential ID")),
-            BTreeMap::from([(
-                API_KEY_FIELD.to_owned(),
-                b"tool-search-secret".to_vec(),
-            )]),
+            BTreeMap::from([(API_KEY_FIELD.to_owned(), b"tool-search-secret".to_vec())]),
         )
         .expect("tool credential");
 
@@ -31,6 +28,7 @@ fn credentialed_search_crosses_host_returns_failure_to_model_and_replays_opaquel
     configuration.credential_backend = aworkit_capability_host::WebSearchBackendV1::Deepseek;
     let mut execution = request(provider_credential);
     execution.tools = vec![WorkflowToolBindingV1 {
+        options: Default::default(),
         capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
         configuration: serde_json::to_value(configuration).expect("web-search configuration"),
         credential_bindings: vec![WorkflowToolCredentialBindingV1 {

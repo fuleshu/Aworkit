@@ -172,6 +172,10 @@ pub struct ProviderHealthSnapshotV2 {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsV2Snapshot {
+    #[serde(default)]
+    pub tool_plugin_directory: String,
+    #[serde(default)]
+    pub tool_plugins: Vec<super::tool_registry::discovery::DiscoveredToolPlugin>,
     pub version: u64,
     pub schema_version: u16,
     pub settings: SettingsConfigurationV2,
@@ -302,6 +306,8 @@ pub struct McpProbeFeaturesV2 {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpProbeResultV2 {
+    #[serde(default)]
+    pub tools: Vec<super::tool_registry::McpToolConfiguration>,
     pub server_id: String,
     pub protocol_version: String,
     pub features: McpProbeFeaturesV2,

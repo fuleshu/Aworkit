@@ -1,12 +1,8 @@
 //! Frozen per-Run MCP tool runtime used by the desktop Agent tool loop.
 //!
-//! The runtime owns the capability-host session manager plus one replaceable
-//! transport peer. Production installs a `ProductionMcpPeer` whose transports
-//! are built from saved Settings at first freeze; tests install a scripted
-//! peer. Sessions are keyed by the core-attested manifest, so a changed server
-//! binding fails closed with binding drift instead of hot-replacing an active
-//! Run's session. Each Run additionally freezes the exact discovery snapshot
-//! it opened so later Runs cannot observe a silently mutated catalog.
+//! Each production Run owns a transport set from its frozen Settings. New Chats
+//! can use updated plugins while existing Chats retain their exact connections
+//! and discovery snapshots. Tests may install a single scripted peer.
 
 use std::{collections::BTreeMap, sync::Mutex};
 
@@ -62,9 +58,6 @@ pub(crate) fn split_mcp_capability(capability_id: &str) -> Result<(&str, &str), 
     Ok((server, tool))
 }
 
-type McpSecretStager =
-    dyn Fn(&StableId, SecretMaterializationV1) -> Result<(), String> + Send + Sync;
-
 /// One frozen-Run server preparation handed from the owning service to the
 /// pipeline: the core-attested manifest, the exact transport endpoint used to
 /// build the production peer, and the already-materialized credential slots.
@@ -79,7 +72,7 @@ pub(crate) struct McpRunServerPreparationV1 {
 struct McpToolRuntimeStateV1 {
     peer: Option<Arc<dyn McpPeerPort>>,
     manager: Option<Arc<McpSessionManager>>,
-    stager: Option<Arc<McpSecretStager>>,
+    production_runs: BTreeMap<String, Arc<McpSessionManager>>,
     /// Run-frozen discovery snapshots: run id -> server id -> snapshot.
     frozen: BTreeMap<String, BTreeMap<String, McpCapabilitySnapshotV1>>,
     /// Dispatch-scoped cancellation tokens keyed by the broker's scoped token
@@ -87,9 +80,7 @@ struct McpToolRuntimeStateV1 {
     dispatch_tokens: BTreeMap<String, CancellationToken>,
 }
 
-/// Session manager plus per-Run freeze state. The peer is installed exactly
-/// once per application generation; a second differing installation fails
-/// closed rather than swapping sessions under an active Run.
+/// Per-Run production sessions and frozen catalog state, plus a scripted test port.
 pub(crate) struct McpToolRuntimeV1 {
     generation: ProcessGeneration,
     state: Mutex<McpToolRuntimeStateV1>,
@@ -106,28 +97,13 @@ impl McpToolRuntimeV1 {
         }
     }
 
-    /// Installs a production peer and wires credential staging through it.
-    /// Fails closed when a peer is already installed for this generation.
-    pub(crate) fn install_production_peer(
-        &self,
-        peer: Arc<ProductionMcpPeer>,
-    ) -> Result<(), String> {
-        let stager: Arc<McpSecretStager> = Arc::new({
-            let peer = peer.clone();
-            move |server_id: &StableId, materialization: SecretMaterializationV1| {
-                peer.stage_materialized_secrets(server_id, materialization)
-                    .map_err(|error| format!("MCP credential binding could not be staged: {error}"))
-            }
-        });
-        self.install(peer, Some(stager))
-    }
-
     /// Installs a scripted/test peer with no secret staging.
     pub(crate) fn install_scripted_peer(&self, peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
-        self.install(peer, None)
+        self.install(peer)
     }
 
     /// Whether no transport peer has been installed for this generation yet.
+    #[cfg(test)]
     pub(crate) fn needs_install(&self) -> Result<bool, String> {
         Ok(self
             .state
@@ -137,11 +113,7 @@ impl McpToolRuntimeV1 {
             .is_none())
     }
 
-    fn install(
-        &self,
-        peer: Arc<dyn McpPeerPort>,
-        stager: Option<Arc<McpSecretStager>>,
-    ) -> Result<(), String> {
+    fn install(&self, peer: Arc<dyn McpPeerPort>) -> Result<(), String> {
         let mut state = self
             .state
             .lock()
@@ -154,7 +126,45 @@ impl McpToolRuntimeV1 {
         let manager = Arc::new(McpSessionManager::new(self.generation, peer.clone()));
         state.peer = Some(peer);
         state.manager = Some(manager);
-        state.stager = stager;
+        Ok(())
+    }
+
+    /// A new Chat gets its own transport set, so edited Settings cannot replace
+    /// sessions belonging to another frozen Chat. Scripted peers remain test-only.
+    pub(crate) fn prepare_production_run(
+        &self,
+        run_id: &StableId,
+        servers: &mut [McpRunServerPreparationV1],
+    ) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "MCP tool runtime lock poisoned")?;
+        if state.peer.is_some() || state.production_runs.contains_key(run_id.as_str()) {
+            return Ok(());
+        }
+        let configs = servers
+            .iter()
+            .map(|server| aworkit_capability_host::McpPeerTransportConfigV1 {
+                server_id: server.manifest.server_id.clone(),
+                binding_hash: server.manifest.binding_hash.clone(),
+                endpoint: server.endpoint.clone(),
+            })
+            .collect();
+        let peer = Arc::new(
+            ProductionMcpPeer::with_limits(configs, super::mcp::production_peer_limits())
+                .map_err(|e| e.to_string())?,
+        );
+        for server in servers {
+            if let Some(materialization) = server.materialization.take() {
+                peer.stage_materialized_secrets(&server.manifest.server_id, materialization)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        state.production_runs.insert(
+            run_id.to_string(),
+            Arc::new(McpSessionManager::new(self.generation, peer)),
+        );
         Ok(())
     }
 
@@ -177,11 +187,21 @@ impl McpToolRuntimeV1 {
             .get(&run_key)
             .and_then(|sessions| sessions.get(&server_key))
         {
+            if snapshot.binding_hash != manifest.binding_hash
+                || snapshot.host_generation != manifest.host_generation
+            {
+                return Err("MCP binding drift within a frozen Run".into());
+            }
             return Ok(snapshot.clone());
         }
-        let manager = state.manager.clone().ok_or_else(|| {
-            "no MCP transport peer is installed for this application generation".to_owned()
-        })?;
+        let manager = state
+            .production_runs
+            .get(&run_key)
+            .or(state.manager.as_ref())
+            .cloned()
+            .ok_or_else(|| {
+                "no MCP transport peer is installed for this application generation".to_owned()
+            })?;
         let snapshot = manager
             .open(manifest.clone())
             .map_err(|error| format!("MCP session for '{server_key}' failed: {error}"))?;
@@ -193,37 +213,24 @@ impl McpToolRuntimeV1 {
         Ok(snapshot)
     }
 
-    /// Stages invocation-scoped credential material on the installed peer.
-    pub(crate) fn stage_secrets(
-        &self,
-        server_id: &StableId,
-        materialization: SecretMaterializationV1,
-    ) -> Result<(), String> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| "MCP tool runtime lock poisoned".to_owned())?;
-        let stager = state.stager.clone().ok_or_else(|| {
-            "the installed MCP peer does not accept credential staging".to_owned()
-        })?;
-        stager(server_id, materialization)
-    }
-
     /// Invokes exactly one discovered operation on the frozen session.
     pub(crate) fn invoke(
         &self,
+        run_id: &StableId,
         server_id: &StableId,
         call: &McpCallV1,
     ) -> Result<McpCallOutcomeV1, String> {
-        let manager = self
+        let state = self
             .state
             .lock()
-            .map_err(|_| "MCP tool runtime lock poisoned".to_owned())?
-            .manager
-            .clone()
-            .ok_or_else(|| {
-                "no MCP transport peer is installed for this application generation".to_owned()
-            })?;
+            .map_err(|_| "MCP tool runtime lock poisoned")?;
+        let manager = state
+            .production_runs
+            .get(run_id.as_str())
+            .or(state.manager.as_ref())
+            .cloned()
+            .ok_or("no MCP transport peer is installed for this Run")?;
+        drop(state);
         manager
             .invoke(server_id, call)
             .map_err(|error| format!("MCP call failed: {error}"))
@@ -261,6 +268,7 @@ impl McpToolRuntimeV1 {
     /// session manager's receipts.
     pub(crate) fn cancel_dispatch(
         &self,
+        run_id: &StableId,
         token_id: &StableId,
         server_id: &StableId,
         invocation_id: &StableId,
@@ -271,9 +279,15 @@ impl McpToolRuntimeV1 {
                 .lock()
                 .map_err(|_| "MCP tool runtime lock poisoned".to_owned())?;
             (
-                state.manager.clone().ok_or_else(|| {
-                    "no MCP transport peer is installed for this application generation".to_owned()
-                })?,
+                state
+                    .production_runs
+                    .get(run_id.as_str())
+                    .or(state.manager.as_ref())
+                    .cloned()
+                    .ok_or_else(|| {
+                        "no MCP transport peer is installed for this application generation"
+                            .to_owned()
+                    })?,
                 state
                     .dispatch_tokens
                     .get(token_id.as_str())

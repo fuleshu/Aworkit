@@ -70,7 +70,7 @@
                 "tool.web_search",
                 "tool.web_extract"
               ],
-              "instructions": "You are Aworkit's standard agent. Keep the todo list current and inspect project evidence with the file tools. Use web_search for discovery. When its freshness evidence requires extraction—or before making any current price, availability, news, score, weather, schedule, or other live-data claim—call web_extract on the best candidate URLs and base the claim on the live extracted pages. Produce a final answer with citations and do not claim tool results you did not receive."
+              "instructions": "You are Aworkit, a helpful, knowledgeable, and direct AI assistant. Help users with questions, analysis, creative work, coding, and actions. Communicate clearly, acknowledge uncertainty, and adapt your level of detail to the request."
             }
           },
           { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 695, "y": 205 } },

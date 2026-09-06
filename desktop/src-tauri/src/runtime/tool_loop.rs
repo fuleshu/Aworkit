@@ -176,6 +176,11 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowToolBindingV1 {
+    #[serde(
+        default,
+        skip_serializing_if = "super::tool_registry::ToolOptions::is_default"
+    )]
+    pub options: super::tool_registry::ToolOptions,
     pub capability_id: String,
     pub configuration: Value,
     /// Secret-free metadata for exact credential fields frozen with the Run.
@@ -325,6 +330,11 @@ pub struct WorkflowToolActivityV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StoredFileToolBindingV1 {
+    #[serde(
+        default,
+        skip_serializing_if = "super::tool_registry::ToolOptions::is_default"
+    )]
+    pub options: super::tool_registry::ToolOptions,
     pub capability_id: String,
     pub provider_name: String,
     pub description: String,
@@ -660,11 +670,13 @@ pub(crate) fn freeze_file_tool_bindings(
         if !seen.insert(requested.capability_id.as_str()) {
             return Err(invalid_tool("duplicate tool binding"));
         }
-        let (provider_name, description, input_schema, limit) = match requested
-            .capability_id
-            .as_str()
-        {
-            FILE_READ_CAPABILITY_ID => (
+        let native = super::tool_registry::native_tool(&requested.capability_id);
+        requested
+            .options
+            .validate(native.map_or("mcp", |tool| tool.execution.as_str()))
+            .map_err(|error| invalid_tool(&error))?;
+        let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
+            "files.read" => (
                 FILE_READ_PROVIDER_NAME.to_owned(),
                 "Read one UTF-8 text file relative to the frozen project root.".to_owned(),
                 file_read_schema(),
@@ -681,7 +693,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     )?,
                 },
             ),
-            FILE_SEARCH_CAPABILITY_ID => (
+            "files.search" => (
                 FILE_SEARCH_PROVIDER_NAME.to_owned(),
                 "Find exact UTF-8 text matches in one file relative to the frozen project root.".to_owned(),
                 file_search_schema(),
@@ -698,7 +710,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     )?,
                 },
             ),
-            FILE_LIST_CAPABILITY_ID => (
+            "files.list" => (
                 FILE_LIST_PROVIDER_NAME.to_owned(),
                 "List project files matching a bounded glob (supports *, **, ?), newest first.".to_owned(),
                 file_list_schema(),
@@ -715,7 +727,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     )?,
                 },
             ),
-            FILE_GREP_CAPABILITY_ID => (
+            "files.grep" => (
                 FILE_GREP_PROVIDER_NAME.to_owned(),
                 "Regex-search text files beneath the frozen project root with line context.".to_owned(),
                 file_grep_schema(),
@@ -733,7 +745,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     maximum_files: 128,
                 },
             ),
-            FILE_EDIT_CAPABILITY_ID => (
+            "files.edit" => (
                 FILE_EDIT_PROVIDER_NAME.to_owned(),
                 "Replace one exact text range in a project file atomically; follows the selected approval mode.".to_owned(),
                 file_edit_schema(),
@@ -751,7 +763,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumBytes"),
                 },
             ),
-            FILE_WRITE_CAPABILITY_ID => (
+            "files.write" => (
                 FILE_WRITE_PROVIDER_NAME.to_owned(),
                 "Create or replace a project file with exact content; follows the selected approval mode.".to_owned(),
                 file_write_schema(),
@@ -769,7 +781,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumBytes"),
                 },
             ),
-            SHELL_CAPABILITY_ID => (
+            "shell.host" => (
                 SHELL_PROVIDER_NAME.to_owned(),
                 "Run one bounded host shell command; the working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
                 shell_schema(),
@@ -802,7 +814,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumOutputBytes"),
                 },
             ),
-            PYTHON_CAPABILITY_ID => (
+            "python.host" => (
                 PYTHON_PROVIDER_NAME.to_owned(),
                 "Run one bounded isolated-interpreter Python script on the host; follows the selected approval mode.".to_owned(),
                 python_schema(),
@@ -837,7 +849,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumOutputBytes"),
                 },
             ),
-            TODO_CAPABILITY_ID => {
+            "todo" => {
                 freeze_configuration(
                     &requested.configuration,
                     &[("authorityMode", Value::String("run_todo".into()))],
@@ -850,7 +862,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     StoredFileToolLimitV1::Todo,
                 )
             }
-            WEB_SEARCH_CAPABILITY_ID => (
+            "web_search" => (
                 WEB_SEARCH_PROVIDER_NAME.to_owned(),
                 "Search the web with frozen provider routing, retry, cache, and keyless-rescue settings; return a requested number of bounded title/snippet/url results.".to_owned(),
                 web_search_schema(),
@@ -858,19 +870,19 @@ pub(crate) fn freeze_file_tool_bindings(
                     configuration: freeze_web_search_configuration(requested)?,
                 },
             ),
-            WEB_FETCH_CAPABILITY_ID => (
+            "web_fetch" => (
                 WEB_FETCH_PROVIDER_NAME.to_owned(),
                 "Fetch one HTTPS page as structured text; render JavaScript only when needed. Partial results include documentId and nextOffset; read more using those fields and the same URL without re-fetching.".to_owned(),
                 web_fetch_schema(),
                 web::freeze_web_configuration(&requested.configuration)?,
             ),
-            WEB_EXTRACT_CAPABILITY_ID => (
+            "web_extract" => (
                 WEB_EXTRACT_PROVIDER_NAME.to_owned(),
                 "Fetch and extract up to ten HTTPS pages independently, rendering JavaScript when needed. To read more, pass documentId, offset=nextOffset, and exactly the same single URL. Use this after web search before making current price, availability, news, score, or other live-data claims.".to_owned(),
                 web_extract_schema(),
                 web::freeze_web_configuration(&requested.configuration)?,
             ),
-            SUBAGENT_CAPABILITY_ID => (
+            "subagent" => (
                 SUBAGENT_PROVIDER_NAME.to_owned(),
                 "Delegate one read-only subtask to a fresh subagent context; follows the selected approval mode.".to_owned(),
                 subagent_schema(),
@@ -896,8 +908,42 @@ pub(crate) fn freeze_file_tool_bindings(
         } else {
             String::new()
         };
+        let provider_name = native.map_or(provider_name, |tool| tool.provider_name.clone());
         let secret = freeze_tool_secret(requested, &limit)?;
+        let description = if requested.options.instructions.is_some() {
+            super::tool_registry::native_tool(&requested.capability_id)
+                .map_or(description, |tool| tool.description.clone())
+        } else {
+            description
+        };
+        let mut options = requested.options.clone();
+        if options.instructions.is_some() && options.executable.is_none() {
+            options.executable = match requested.capability_id.as_str() {
+                SHELL_CAPABILITY_ID => Some(
+                    shell_program()
+                        .map_err(|error| invalid_tool(&error))?
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                PYTHON_CAPABILITY_ID => Some(
+                    python_program()
+                        .map_err(|error| invalid_tool(&error))?
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                _ => None,
+            };
+        }
+        if let Some(executable) = &options.executable {
+            options.executable = Some(
+                stable_executable(PathBuf::from(executable), "tool executable")
+                    .map_err(|error| invalid_tool(&error))?
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
         bindings.push(StoredFileToolBindingV1 {
+            options,
             capability_id: requested.capability_id.clone(),
             provider_name,
             description,
@@ -906,7 +952,8 @@ pub(crate) fn freeze_file_tool_bindings(
             configuration: requested.configuration.clone(),
             limit,
             secret,
-            requires_approval: !approval_free_tool_ids().contains(requested.capability_id.as_str()),
+            requires_approval: requested.options.approval_mode.is_some()
+                || !approval_free_tool_ids().contains(requested.capability_id.as_str()),
             internal_id,
         });
     }
@@ -2165,12 +2212,16 @@ impl FileToolHostPortV1 {
             let scoped_done = cancellation.clone();
             let token_id = cancellation_token.clone();
             let invocation_id = dispatch.invocation_id.clone();
+            let run_id = dispatcher.record.proposal.run_id.clone();
             std::thread::spawn(move || {
                 loop {
                     if pass_cancellation.is_cancelled() {
-                        let _ = runtime
-                            .mcp
-                            .cancel_dispatch(&token_id, &server_id, &invocation_id);
+                        let _ = runtime.mcp.cancel_dispatch(
+                            &run_id,
+                            &token_id,
+                            &server_id,
+                            &invocation_id,
+                        );
                         return;
                     }
                     if scoped_done.is_cancelled() {
@@ -2434,7 +2485,15 @@ impl FileToolDispatcherV1 {
                         .execute_shell(
                             &ShellInvocationV1 {
                                 mode: ToolAuthorityModeV1::HostShell,
-                                shell_program: shell_program()?,
+                                shell_program: self
+                                    .record
+                                    .binding
+                                    .options
+                                    .executable
+                                    .as_ref()
+                                    .map(PathBuf::from)
+                                    .map(Ok)
+                                    .unwrap_or_else(shell_program)?,
                                 command_text: command.to_owned(),
                                 working_directory: Some(self.record.workspace.root.clone()),
                                 environment: BTreeMap::new(),
@@ -2469,7 +2528,15 @@ impl FileToolDispatcherV1 {
                         .execute_python(
                             &PythonInvocationV1 {
                                 mode: ToolAuthorityModeV1::HostPython,
-                                interpreter: python_program()?,
+                                interpreter: self
+                                    .record
+                                    .binding
+                                    .options
+                                    .executable
+                                    .as_ref()
+                                    .map(PathBuf::from)
+                                    .map(Ok)
+                                    .unwrap_or_else(python_program)?,
                                 script: script.to_owned(),
                                 arguments: Vec::new(),
                                 working_directory: Some(self.record.workspace.root.clone()),
@@ -2693,14 +2760,20 @@ impl FileToolDispatcherV1 {
         let manifest = self.context.mcp_manifests.get(server_id).ok_or_else(|| {
             format!("MCP server '{server_id}' has no frozen manifest for this Run")
         })?;
+        // Approval checkpoints retain the original host generation. The core
+        // has restored the exact frozen transport in the current generation;
+        // rebind only this ephemeral host identity, keeping its binding hash.
+        let mut manifest = manifest.clone();
+        manifest.host_generation = self.runtime.generation;
         self.runtime
             .mcp
-            .open_frozen(&self.record.proposal.run_id, manifest)
+            .open_frozen(&self.record.proposal.run_id, &manifest)
             .map_err(|error| error.to_string())?;
         let outcome = self
             .runtime
             .mcp
             .invoke(
+                &self.record.proposal.run_id,
                 &server,
                 &McpCallV1 {
                     invocation_id: envelope.invocation_id.clone(),
@@ -2779,10 +2852,21 @@ impl FileToolDispatcherV1 {
                 run_events: self.run_events.clone(),
             },
         };
-        let child_input = json!({"messages":[{
-            "role":"user",
-            "content": format!("{task}\n\nRelevant context:\n{context_text}"),
-        }]});
+        let guidance = super::tool_registry::instruction_block(
+            self.context
+                .bindings
+                .iter()
+                .filter(|binding| SUBAGENT_CHILD_TOOL_IDS.contains(&binding.capability_id.as_str()))
+                .map(|binding| (binding.capability_id.as_str(), &binding.options)),
+        );
+        let mut messages = Vec::new();
+        if !guidance.is_empty() {
+            messages.push(json!({"role":"system","content":guidance}));
+        }
+        messages.push(
+            json!({"role":"user","content":format!("{task}\n\nRelevant context:\n{context_text}")}),
+        );
+        let child_input = json!({"messages":messages});
         match execute_model_tool_loop_v1(
             gateway,
             ModelToolLoopRequestV1 {
@@ -3606,192 +3690,109 @@ fn freeze_configuration(
 }
 
 fn file_read_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "path": {"type":"string","minLength":1,"maxLength":4096}
-        },
-        "required": ["path"]
-    })
+    super::tool_registry::native_tool("tool.files.read")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn file_search_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "path": {"type":"string","minLength":1,"maxLength":4096},
-            "query": {"type":"string","minLength":1,"maxLength":16384}
-        },
-        "required": ["path", "query"]
-    })
+    super::tool_registry::native_tool("tool.files.search")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn file_list_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "pattern": {"type":"string","minLength":1,"maxLength":4096}
-        },
-        "required": ["pattern"]
-    })
+    super::tool_registry::native_tool("tool.files.list")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn file_grep_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "pattern": {"type":"string","minLength":1,"maxLength":16384}
-        },
-        "required": ["pattern"]
-    })
+    super::tool_registry::native_tool("tool.files.grep")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn file_edit_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "path": {"type":"string","minLength":1,"maxLength":4096},
-            "old_string": {"type":"string","minLength":1,"maxLength":262144},
-            "new_string": {"type":"string","maxLength":262144}
-        },
-        "required": ["path", "old_string", "new_string"]
-    })
+    super::tool_registry::native_tool("tool.files.edit")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn file_write_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "path": {"type":"string","minLength":1,"maxLength":4096},
-            "content": {"type":"string","minLength":1,"maxLength":1048576}
-        },
-        "required": ["path", "content"]
-    })
+    super::tool_registry::native_tool("tool.files.write")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
+}
+
+/// Resolves the host executable when the Chat freezes its settings snapshot.
+pub(crate) fn resolve_tool_executable(
+    id: &str,
+    configured: Option<&str>,
+) -> Result<String, String> {
+    let path = if let Some(path) = configured {
+        stable_executable(PathBuf::from(path), "tool executable")?
+    } else if id == SHELL_CAPABILITY_ID {
+        shell_program()?
+    } else {
+        python_program()?
+    };
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn shell_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "command": {"type":"string","minLength":1,"maxLength":262144}
-        },
-        "required": ["command"]
-    })
+    super::tool_registry::native_tool("tool.shell.host")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn python_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "script": {"type":"string","minLength":1,"maxLength":262144}
-        },
-        "required": ["script"]
-    })
+    super::tool_registry::native_tool("tool.python.host")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn todo_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "todos": {
-                "type": "array",
-                "maxItems": 64,
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "content": {"type":"string","minLength":1,"maxLength":4096},
-                        "status": {"enum":["pending","in_progress","completed"]}
-                    },
-                    "required": ["content","status"]
-                }
-            }
-        },
-        "required": ["todos"]
-    })
+    super::tool_registry::native_tool("tool.todo")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn web_search_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "query": {"type":"string","minLength":1,"maxLength":16384},
-            "limit": {
-                "type":"integer",
-                "minimum":1,
-                "maximum":100,
-                "default":5,
-                "description":"Maximum results requested for this search; the frozen Settings maximum may reduce it."
-            },
-            "freshness": {
-                "enum":["auto","current","any"],
-                "default":"auto",
-                "description":"Use current for live prices, availability, scores, news, weather, and similar time-sensitive facts. Auto detects those intents; any permits historical results."
-            }
-        },
-        "required": ["query"]
-    })
+    super::tool_registry::native_tool("tool.web_search")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn web_fetch_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "url": {"type":"string","minLength":1,"maxLength":4096},
-            "documentId": {"type":"string","minLength":68,"maxLength":68,"description":"Saved immutable document from this Run; reads never re-fetch."},
-            "offset": {"type":"integer","minimum":0,"maximum":8388608,"description":"UTF-8 byte offset; use nextOffset from the previous result."}
-        },
-        "required": ["url"]
-    })
+    super::tool_registry::native_tool("tool.web_fetch")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn web_extract_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "urls": {
-                "type":"array",
-                "minItems":1,
-                "maxItems":10,
-                "items":{"type":"string","minLength":1,"maxLength":4096},
-                "description":"Candidate HTTPS result URLs to fetch and verify against their live page content."
-            },
-            "documentId": {"type":"string","minLength":68,"maxLength":68,"description":"Saved immutable document; provide exactly the same single URL."},
-            "offset": {"type":"integer","minimum":0,"maximum":8388608,"description":"UTF-8 byte offset; use nextOffset from the previous result."},
-            "char_limit": {
-                "type":"integer",
-                "minimum":1,
-                "maximum":32768,
-                "default":32768,
-                "description":"Maximum UTF-8 bytes returned per page (legacy argument name); frozen Settings and model budget may reduce it."
-            }
-        },
-        "required": ["urls"]
-    })
+    super::tool_registry::native_tool("tool.web_extract")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn subagent_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "task": {"type":"string","minLength":1,"maxLength":16384},
-            "context": {"type":"string","maxLength":32768}
-        },
-        "required": ["task"]
-    })
+    super::tool_registry::native_tool("tool.subagent")
+        .expect("installed native tool")
+        .input_schema
+        .clone()
 }
 
 fn enforce_result_bound(value: &Value) -> Result<(), String> {
@@ -4083,6 +4084,7 @@ mod tests {
         )
         .expect("tool authority");
         let tool = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: FILE_READ_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"project_files",
@@ -4308,6 +4310,7 @@ mod tests {
     #[test]
     fn search_contract_keeps_one_worst_case_exchange_persistence_safe() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: FILE_SEARCH_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"project_files",
@@ -4357,6 +4360,7 @@ mod tests {
     #[test]
     fn todo_contract_advertises_and_accepts_in_progress() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: TODO_CAPABILITY_ID.into(),
             configuration: json!({"authorityMode":"run_todo"}),
             credential_bindings: Vec::new(),
@@ -4383,6 +4387,7 @@ mod tests {
     #[test]
     fn web_search_contract_accepts_bounded_limit_and_freshness_controls() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
             configuration: serde_json::to_value(WebSearchConfigurationV1::default())
                 .expect("web-search configuration"),
@@ -4432,6 +4437,7 @@ mod tests {
             "maximumExtractBytes":WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1,
         });
         let extract = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: WEB_EXTRACT_CAPABILITY_ID.into(),
             configuration: configuration.clone(),
             credential_bindings: Vec::new(),
@@ -4448,6 +4454,7 @@ mod tests {
         assert!(validate_call_arguments(&extract, &json!({"url":"https://example.com"})).is_err());
 
         let fetch = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: WEB_FETCH_CAPABILITY_ID.into(),
             configuration,
             credential_bindings: Vec::new(),
@@ -4462,6 +4469,7 @@ mod tests {
     #[test]
     fn legacy_web_search_limit_decodes_as_canonical_v2_configuration() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: WEB_SEARCH_CAPABILITY_ID.into(),
             configuration: serde_json::to_value(WebSearchConfigurationV1::default())
                 .expect("web-search configuration"),
@@ -4490,6 +4498,7 @@ mod tests {
     #[test]
     fn subagent_binding_freezes_the_exact_approval_contract() {
         let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: SUBAGENT_CAPABILITY_ID.into(),
             configuration: json!({
                 "authorityMode":"run_subagent",
@@ -4509,6 +4518,7 @@ mod tests {
         assert!(binding.requires_approval);
         assert!(matches!(
             freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+                options: Default::default(),
                 capability_id: SUBAGENT_CAPABILITY_ID.into(),
                 configuration: json!({
                     "authorityMode":"run_subagent",
@@ -4522,6 +4532,7 @@ mod tests {
 
     fn mcp_binding_request(definition: Option<ModelToolDefinitionV1>) -> WorkflowToolBindingV1 {
         WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: "mcp://serv.fixture/echo".into(),
             configuration: json!({"serverId":"serv.fixture","tool":"echo"}),
             credential_bindings: Vec::new(),

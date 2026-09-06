@@ -1,5 +1,7 @@
+import { nativeToolDefaults } from "./toolRegistry";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+import { mcpToolConfigurationSchema } from "./configuration";
 import { createDurableCommandId } from "../commandId";
 import {
   extensionConfigurationSchema,
@@ -69,6 +71,7 @@ const modelDiscoverySchema = z
 
 const mcpProbeSchema = z
   .object({
+    tools: z.array(mcpToolConfigurationSchema).optional(),
     serverId: z.string().min(1),
     protocolVersion: z.string().min(1),
     features: z
@@ -238,6 +241,7 @@ export interface McpProbeRequest {
 }
 
 export interface McpProbeResult {
+  readonly tools?: readonly import("./configuration").McpToolConfiguration[];
   readonly serverId: string;
   readonly protocolVersion: string;
   readonly features: {
@@ -598,115 +602,7 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
         }),
       ),
       credentials: [],
-      tools: [
-        {
-          id: "tool.files.read",
-          name: "Project file read",
-          enabled: false,
-          requiresProject: true,
-          credentialBindings: [],
-          configuration: {
-            authorityMode: "project_files",
-            effect: "read",
-            maximumBytes: 65_536,
-          },
-        },
-        {
-          id: "tool.files.search",
-          name: "Project file search",
-          enabled: false,
-          requiresProject: true,
-          credentialBindings: [],
-          configuration: {
-            authorityMode: "project_files",
-            effect: "search",
-            maximumResults: 512,
-          },
-        },
-        {
-          id: "tool.files.edit",
-          name: "Project file edit",
-          enabled: false,
-          requiresProject: true,
-          credentialBindings: [],
-          configuration: {
-            authorityMode: "project_files",
-            effect: "write",
-            requiresApproval: true,
-            maximumBytes: 1_048_576,
-          },
-        },
-        {
-          id: "tool.shell.host",
-          name: "Host shell",
-          enabled: false,
-          requiresProject: false,
-          credentialBindings: [],
-          configuration: {
-            authorityMode: "host_shell",
-            requiresApproval: true,
-            timeoutSeconds: 30,
-            maximumOutputBytes: 262_144,
-          },
-        },
-        {
-          id: "tool.python.host",
-          name: "Host Python",
-          enabled: false,
-          requiresProject: false,
-          credentialBindings: [],
-          configuration: {
-            authorityMode: "host_python",
-            requiresApproval: true,
-            isolatedInterpreter: true,
-            timeoutSeconds: 30,
-            maximumOutputBytes: 262_144,
-          },
-        },
-        {
-          id: "tool.web_search",
-          name: "Web search",
-          enabled: false,
-          requiresProject: false,
-          credentialBindings: [],
-          configuration: {
-            backend: "automatic",
-            credentialBackend: "deepseek",
-            providerTier: "automatic",
-            maximumResults: 10,
-            requestTimeoutSeconds: 30,
-            maximumRetries: 1,
-            keylessFallback: true,
-            keylessRescue: true,
-            cacheEnabled: true,
-            cacheTtlMinutes: 20,
-            freshnessValidation: true,
-            freshnessMaximumAgeDays: 45,
-            freshnessBypassCache: true,
-            searxngBaseUrl: "",
-            providerBaseUrl: "",
-            parallelSearchMode: "agentic",
-            xaiModel: "grok-build-0.1",
-            xaiAllowedDomains: [],
-            xaiExcludedDomains: [],
-            deepseekBaseUrl: "https://api.deepseek.com",
-            deepseekModel: "deepseek-v4-flash",
-            deepseekMaximumOutputTokens: 4_096,
-          },
-        },
-        {
-          id: "tool.web_extract",
-          name: "Web page extract",
-          enabled: false,
-          requiresProject: false,
-          credentialBindings: [],
-          configuration: {
-            maximumDownloadBytes: 8_388_608,
-            maximumExtractBytes: 32_768,
-            renderWhenNeeded: true,
-          },
-        },
-      ],
+      tools: nativeToolDefaults(),
       extensions: [],
       mcpServers: [],
       externalAgents: [],

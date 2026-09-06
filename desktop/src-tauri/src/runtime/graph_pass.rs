@@ -841,6 +841,23 @@ impl<'a> PassMachine<'a> {
                 content: system,
             });
         }
+        let guidance = super::tool_registry::instruction_block(
+            node.tool_bindings
+                .iter()
+                .map(|tool| (tool.capability_id.as_str(), &tool.options)),
+        );
+        if !guidance.is_empty() {
+            if let Some(system) = messages.iter_mut().find(|message| message.role == "system") {
+                system.content.push_str("\n\n");
+                system.content.push_str(&guidance);
+            } else {
+                messages.push(WorkflowMessageV1 {
+                    role: "system".into(),
+                    content: guidance,
+                    images: Vec::new(),
+                });
+            }
+        }
         messages.extend(self.conversation.iter().cloned());
         let context = json!({"messages": messages});
         let definitions = node
@@ -1010,6 +1027,23 @@ impl<'a> PassMachine<'a> {
                 role: "system".into(),
                 content: system,
             });
+        }
+        let guidance = super::tool_registry::instruction_block(
+            node.tool_bindings
+                .iter()
+                .map(|tool| (tool.capability_id.as_str(), &tool.options)),
+        );
+        if !guidance.is_empty() {
+            if let Some(system) = messages.iter_mut().find(|message| message.role == "system") {
+                system.content.push_str("\n\n");
+                system.content.push_str(&guidance);
+            } else {
+                messages.push(WorkflowMessageV1 {
+                    role: "system".into(),
+                    content: guidance,
+                    images: Vec::new(),
+                });
+            }
         }
         messages.extend(self.conversation.iter().cloned());
         let context = json!({"messages": messages});

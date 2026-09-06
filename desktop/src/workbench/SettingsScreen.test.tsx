@@ -91,7 +91,7 @@ describe("Settings v2 workbench", () => {
     expect(port.snapshotCalls).toBeGreaterThan(1);
   });
 
-  it("picks an MCP executable and does not expose a working-directory field", async () => {
+  it("picks an MCP executable and exposes its working directory", async () => {
     const port = new RecordingSettingsV2Port();
     const picker = presentation({
       pickFile: async () => "C:\\Program Files\\MCP Server\\server.exe",
@@ -102,7 +102,7 @@ describe("Settings v2 workbench", () => {
     await screen.findByLabelText("Base URL");
     await user.click(screen.getByRole("button", { name: /MCP servers/ }));
     await user.click(screen.getByRole("button", { name: "Add server" }));
-    expect(screen.queryByLabelText("Working directory")).toBeNull();
+    expect(screen.getByLabelText("Working directory")).toHaveValue("");
 
     await user.click(screen.getByRole("button", { name: /Browse/ }));
     expect(picker.pickFile).toHaveBeenCalledTimes(1);
@@ -2126,6 +2126,7 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
         cancellation: true,
       },
       toolNames: ["fixture.read"],
+      tools: [{ name: "fixture.read", description: "Read fixture content.", inputSchema: { type: "object" }, enabled: true }],
       resourceNames: ["fixture://resource"],
       promptNames: ["fixture-prompt"],
       bindingHash: `sha256:${"1".repeat(64)}`,

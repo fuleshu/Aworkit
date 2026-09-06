@@ -14,6 +14,7 @@ import type {
 } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
 import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
+import { ToolPluginLibrary } from "./settings-v2/ToolPluginLibrary";
 import {
   CredentialsSection,
   ToolsSection,
@@ -889,8 +890,15 @@ export function SettingsScreen({
                 />
               </SettingsPanel>
               <SettingsPanel id="tools" selected={section}>
-                {section === "tools" && <p className="settings-field-help">Tool approvals follow the mode selected in Chat. Manage defaults and saved project approvals under Approvals.</p>}
+                <ToolPluginLibrary snapshot={snapshot} servers={draft.mcpServers}
+                  onRefresh={async () => {
+                    const latest = await runDraftScoped(() => port.snapshot());
+                    setSnapshot(current => current ? { ...current, toolPlugins: latest.toolPlugins, toolPluginDirectory: latest.toolPluginDirectory } : current);
+                  }}
+                  onAdd={server => updateRenderedDraft(current => ({ ...current, mcpServers: [...current.mcpServers.filter(entry => entry.id !== server.id), server] }))} />
+                {section === "tools" && <p className="settings-field-help">Tools inherit the Chat approval mode unless an individual tool overrides it. Manage defaults and saved project approvals under Approvals.</p>}
                 <ToolsSection
+                  onPickCommand={draftScopedPickFile}
                   tools={draft.tools}
                   credentials={draft.credentials}
                   projects={draft.projects}
@@ -971,6 +979,7 @@ export function SettingsScreen({
                         "The native MCP result did not match this server draft.",
                       );
                     return {
+                      tools: result.tools,
                       ok: result.protocolVersion !== "unavailable",
                       message: `${result.message} (${result.latencyMillis} ms)`,
                       draftFingerprint: result.draftFingerprint,

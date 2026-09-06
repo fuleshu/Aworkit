@@ -727,7 +727,9 @@ fn load_or_create_workflows(
         let migrated = if editable {
             let rescue_migrated = migrate_rescue_model_node(&mut document);
             let plan_migrated = migrate_standard_agent_plan_contract(&mut document);
-            let aggregate_limits_migrated = migrate_agent_aggregate_limits(&mut document);
+            let persona_migrated = super::tool_registry::migrate_persona(&mut document);
+            let aggregate_limits_migrated =
+                migrate_agent_aggregate_limits(&mut document) || persona_migrated;
             rescue_migrated || plan_migrated || aggregate_limits_migrated
         } else {
             false
@@ -1211,10 +1213,7 @@ fn migrate_agent_aggregate_limits(document: &mut Value) -> bool {
         if node.get("type").and_then(Value::as_str) != Some("agent") {
             continue;
         }
-        if let Some(configuration) = node
-            .get_mut("configuration")
-            .and_then(Value::as_object_mut)
-        {
+        if let Some(configuration) = node.get_mut("configuration").and_then(Value::as_object_mut) {
             changed |= configuration.remove("maxTurns").is_some();
             changed |= configuration.remove("timeoutSeconds").is_some();
         }
@@ -1937,6 +1936,8 @@ mod tests {
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
         let mut settings = SettingsConfigurationV2::default();
         settings.mcp_servers.push(McpServerConfigurationV2 {
+            plugin: None,
+            tools: Vec::new(),
             id: "mcp.legacy".into(),
             name: "Legacy MCP".into(),
             enabled: true,

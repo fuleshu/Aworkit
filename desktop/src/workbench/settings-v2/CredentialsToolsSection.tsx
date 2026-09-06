@@ -7,9 +7,8 @@ import type {
 } from "../configuration";
 import type { ToolProbeResult } from "../settingsV2Port";
 import { settingsRecordFingerprint } from "./settingsDraft";
-import {
-  JsonObjectField,
-} from "./SettingsFields";
+import { ToolConfigurationEditor } from "./ToolConfigurationEditor";
+import { findNativeTool } from "../toolRegistry";
 import { WebSearchSettingsEditor } from "./WebSearchSettingsEditor";
 import { WebExtractionSettingsEditor } from "./WebExtractionSettingsEditor";
 
@@ -333,12 +332,14 @@ export function CredentialsSection({
 }
 
 export function ToolsSection({
+  onPickCommand,
   tools,
   credentials,
   projects,
   onChange,
   onProbe,
 }: {
+  readonly onPickCommand?: () => Promise<string | null>;
   readonly tools: readonly BuiltInToolConfiguration[];
   readonly credentials: readonly CredentialMetadataConfiguration[];
   readonly projects: readonly ProjectConfiguration[];
@@ -361,10 +362,8 @@ export function ToolsSection({
   return (
     <div className="settings-section-stack">
       <p className="section-intro">
-        Built-in tools are plugins available to workflows. Enable a tool to
-        make it bindable in workflow agent and tool nodes; the workflow
-        definition decides which tools it uses. Workflows never reference
-        specific tools here.
+        Enable the tools you want available, then select them in a workflow.
+        Each selected tool contributes its instructions to the agent.
       </p>
       {tools.length === 0 ? (
         <p className="settings-empty">
@@ -544,30 +543,10 @@ export function ToolsSection({
                   </button>
                 </div>
               )}
-              {tool.id === "tool.web_search" ? (
-                <WebSearchSettingsEditor
-                  tool={tool}
-                  credentials={credentials}
-                  onChange={updateTool}
-                />
-              ) : tool.id === "tool.web_fetch" || tool.id === "tool.web_extract" ? (
-                <WebExtractionSettingsEditor tool={tool} onChange={updateTool} />
-              ) : (
-                <>
-                  <p className="settings-field-help">
-                    Credentials are not required by this built-in adapter.
-                  </p>
-                  <JsonObjectField
-                    id={`${tool.id}-configuration`}
-                    label="Tool configuration"
-                    title="Non-secret bounded tool settings such as authority mode, timeout, write access, and output limits"
-                    value={Object.fromEntries(Object.entries(tool.configuration).filter(([key]) => key !== "requiresApproval"))}
-                    onChange={(configuration) =>
-                      updateTool({ ...tool, configuration: { ...(tool.configuration.requiresApproval === undefined ? {} : { requiresApproval: tool.configuration.requiresApproval }), ...configuration } })
-                    }
-                  />
-                </>
-              )}
+              <ToolConfigurationEditor tool={tool} onPickCommand={onPickCommand} onChange={updateTool}
+                configuration={!["tool.web_search", "tool.web_fetch", "tool.web_extract"].includes(tool.id)} />
+              {tool.id === "tool.web_search" && <WebSearchSettingsEditor tool={tool} credentials={credentials} onChange={updateTool} />}
+              {(tool.id === "tool.web_fetch" || tool.id === "tool.web_extract") && <WebExtractionSettingsEditor tool={tool} onChange={updateTool} />}
               </section>
             );
           })}
@@ -577,37 +556,8 @@ export function ToolsSection({
   );
 }
 
-const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  "tool.files.read":
-    "Reads one project file (≤ 64 KiB) beneath the frozen workspace root.",
-  "tool.files.search":
-    "Finds bounded text occurrences in one project file.",
-  "tool.files.list": "Lists project files matching a bounded glob.",
-  "tool.files.grep": "Regex-searches text files beneath the project root.",
-  "tool.files.edit":
-    "Replaces one exact text range in a project file; follows the selected approval mode.",
-  "tool.files.write":
-    "Creates or replaces a project file with exact content; follows the selected approval mode.",
-  "tool.shell.host":
-    "Runs one bounded host shell command; follows the selected approval mode.",
-  "tool.python.host":
-    "Runs one bounded host Python script; follows the selected approval mode.",
-  "tool.todo": "Replaces the Run task list; rendered as a live plan card.",
-  "tool.web_search":
-    "Hermes-compatible multi-provider search with an anonymous failover ring, explicit free or paid tiers, SearXNG and DuckDuckGo, retries, one-shot rescue, request coalescing, caching, and optional DeepSeek search.",
-  "tool.web_fetch":
-    "Reads one HTTPS page with local extraction, optional JavaScript rendering, and saved-document continuation.",
-  "tool.web_extract":
-    "Reads up to ten HTTPS pages independently and preserves useful partial content with source and truncation details.",
-  "tool.subagent":
-    "Delegates a bounded read-only subtask to a fresh child agent; follows the selected approval mode.",
-};
-
 function toolDescription(toolId: string): string {
-  return (
-    TOOL_DESCRIPTIONS[toolId] ??
-    "Available to workflows that bind this tool."
-  );
+  return findNativeTool(toolId)?.description ?? "Tool plugin unavailable.";
 }
 
 function replaceAt<T>(values: readonly T[], index: number, value: T): T[] {

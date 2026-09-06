@@ -60,6 +60,7 @@ impl BoundFileToolAuthorityV1 {
             .iter()
             .find(|binding| binding.capability_id == call.capability_id)
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+        let mode = binding.options.approval_mode.unwrap_or(mode);
         let grant = project_grant(&self.context.approvals, binding, call);
         let grants = store.grants().map_err(WorkflowPipelineError::Store)?;
         let saved = grant.as_ref().is_some_and(|expected| {

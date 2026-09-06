@@ -259,14 +259,33 @@ fn probe_host_shell(tool: &BuiltInToolConfigurationV2) -> Result<(String, String
     if !health.available || !health.process_tree_cleanup {
         return Err("Native process adapter cannot guarantee process-tree cleanup.".into());
     }
-    let shell = native_shell().ok_or_else(|| "No supported host shell was found.".to_owned())?;
+    let shell = tool
+        .options
+        .executable
+        .as_ref()
+        .map(PathBuf::from)
+        .or_else(native_shell)
+        .ok_or_else(|| "No supported host shell was found.".to_owned())?;
+    let noop = if shell
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "powershell" | "pwsh" | "sh" | "bash" | "zsh"
+            )
+        }) {
+        "exit 0"
+    } else {
+        shell_noop()
+    };
     let tools = BuiltInProcessTools::new(platform);
     let result = tools
         .execute_shell(
             &ShellInvocationV1 {
                 mode: ToolAuthorityModeV1::HostShell,
                 shell_program: shell,
-                command_text: shell_noop().into(),
+                command_text: noop.into(),
                 working_directory: None,
                 environment: BTreeMap::new(),
                 limits: tool_limits(tool)?,
@@ -292,7 +311,12 @@ fn probe_host_python(tool: &BuiltInToolConfigurationV2) -> Result<(String, Strin
     if !health.available || !health.process_tree_cleanup {
         return Err("Native process adapter cannot guarantee process-tree cleanup.".into());
     }
-    let interpreter = find_executable(python_names())
+    let interpreter = tool
+        .options
+        .executable
+        .as_ref()
+        .map(PathBuf::from)
+        .or_else(|| find_executable(python_names()))
         .ok_or_else(|| "No Python interpreter was found on PATH.".to_owned())?;
     let tools = BuiltInProcessTools::new(platform);
     let result = tools
@@ -407,6 +431,7 @@ mod tests {
 
     fn file_tool(id: &str) -> BuiltInToolConfigurationV2 {
         BuiltInToolConfigurationV2 {
+            options: Default::default(),
             id: id.into(),
             name: "Project file".into(),
             enabled: true,
@@ -540,6 +565,7 @@ mod tests {
         // The run-local todo adapter needs no project and no network.
         let todo_result = probe_tool(ToolProbeRequestV2 {
             tool: BuiltInToolConfigurationV2 {
+                options: Default::default(),
                 id: "tool.todo".into(),
                 name: "Run task list".into(),
                 enabled: true,
@@ -555,6 +581,7 @@ mod tests {
         // The subagent adapter is built into the frozen model gateway.
         let subagent_result = probe_tool(ToolProbeRequestV2 {
             tool: BuiltInToolConfigurationV2 {
+                options: Default::default(),
                 id: "tool.subagent".into(),
                 name: "Subagent delegation".into(),
                 enabled: true,

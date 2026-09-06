@@ -168,6 +168,7 @@ fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_down
             .unwrap();
         }
         execution.tools = vec![WorkflowToolBindingV1 {
+            options: Default::default(),
             capability_id: CAPABILITY.into(),
             configuration: json!({"maximumDownloadBytes":8192,"maximumExtractBytes":32768,"renderWhenNeeded":true}),
             credential_bindings: vec![],

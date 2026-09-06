@@ -112,12 +112,28 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
             return Err(ToolAdapterError::InputBound);
         }
         #[cfg(windows)]
-        let arguments = vec![
-            "/D".to_owned(),
-            "/S".to_owned(),
-            "/C".to_owned(),
-            invocation.command_text.clone(),
-        ];
+        let arguments = match invocation
+            .shell_program
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("powershell" | "pwsh") => vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                invocation.command_text.clone(),
+            ],
+            Some("sh" | "bash" | "zsh") => vec!["-c".into(), invocation.command_text.clone()],
+            _ => vec![
+                "/D".into(),
+                "/S".into(),
+                "/C".into(),
+                invocation.command_text.clone(),
+            ],
+        };
         #[cfg(not(windows))]
         let arguments = vec!["-c".to_owned(), invocation.command_text.clone()];
         self.execute(

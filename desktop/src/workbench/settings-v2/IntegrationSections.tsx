@@ -1,3 +1,4 @@
+import { McpToolOptions } from "./McpToolOptions";
 import { useRef, useState } from "react";
 import type {
   CredentialMetadataConfiguration,
@@ -20,6 +21,7 @@ export interface IntegrationProbeResult {
   readonly draftFingerprint: string;
   readonly details?: readonly string[];
   readonly capabilities?: ExternalAgentConfiguration["capabilities"];
+  readonly tools?: readonly import("../configuration").McpToolConfiguration[];
 }
 
 export function McpServersSection({
@@ -38,6 +40,8 @@ export function McpServersSection({
   const integrationCredentials = credentials.filter(isIntegrationCredential);
   const [probes, setProbes] = useState<Readonly<Record<string, IntegrationProbeResult>>>({});
   const [probing, setProbing] = useState<string | null>(null);
+  const latestServers = useRef(servers);
+  latestServers.current = servers;
   const addServer = () =>
     onChange([
       ...servers,
@@ -104,19 +108,20 @@ export function McpServersSection({
                   }
                 />
               </div>
+              <label className="checkbox-row"><input type="checkbox" checked={server.enabled}
+                title="Allow workflows to invoke this server's selected tools using the configured approval policy"
+                onChange={event => updateServer({ ...server, enabled: event.target.checked })} />Enabled for workflows</label>
+              {server.plugin && <p className="settings-field-help">Tool plugin version {server.plugin.version} · {server.plugin.manifestPath}</p>}
               <ConnectionEditor
                 id={server.id}
                 value={server.transport}
                 credentials={integrationCredentials}
-                showWorkingDirectory={false}
+                showWorkingDirectory
                 onPickCommand={onPickCommand}
                 onChange={(transport) =>
                   updateServer({
                     ...server,
-                    transport:
-                      transport.transport === "stdio"
-                        ? { ...transport, cwd: null }
-                        : transport,
+                    transport,
                   })
                 }
               />
@@ -129,9 +134,22 @@ export function McpServersSection({
                   const requestedFingerprint = mcpDraftFingerprint(server);
                   setProbing(server.id);
                   void onProbe(server)
-                    .then((result) =>
-                      setProbes((current) => ({ ...current, [server.id]: result })),
-                    )
+                    .then((result) => {
+                      const currentServers = latestServers.current;
+                      const currentIndex = currentServers.findIndex(entry => entry.id === server.id);
+                      const currentServer = currentServers[currentIndex];
+                      if (!currentServer || mcpDraftFingerprint(currentServer) !== requestedFingerprint) return;
+                      if (result.ok && result.tools) {
+                        const previous = new Map((currentServer.tools ?? []).map(tool => [tool.name, tool]));
+                        const tools = result.tools.map(tool => ({ ...tool, enabled: previous.get(tool.name)?.enabled ?? true,
+                          options: previous.get(tool.name)?.options }));
+                        const next = { ...currentServer, tools };
+                        onChange(replaceAt(currentServers, currentIndex, next));
+                        setProbes(current => ({ ...current, [server.id]: { ...result, draftFingerprint: mcpDraftFingerprint(next) } }));
+                      } else {
+                        setProbes(current => ({ ...current, [server.id]: result }));
+                      }
+                    })
                     .catch((failure: unknown) =>
                       setProbes((current) => ({
                         ...current,
@@ -148,6 +166,7 @@ export function McpServersSection({
                     .finally(() => setProbing(null));
                 }}
               />
+              <McpToolOptions server={server} onChange={tools => updateServer({ ...server, tools })} />
             </section>
             );
           })}

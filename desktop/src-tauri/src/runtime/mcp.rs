@@ -69,6 +69,9 @@ pub(crate) fn prepare_mcp_server(
     server: &super::settings_v2::McpServerConfigurationV2,
     credentials: &[CredentialMetadataConfigurationV2],
 ) -> Result<PreparedMcpServerV1, String> {
+    if let Some(pin) = &server.plugin {
+        super::tool_registry::discovery::verify(pin)?;
+    }
     let server_id = stable(&server.id, "MCP server id")?;
     let (endpoint, bindings) = prepare_transport(&server.transport, credentials)?;
     let binding_hash = binding_hash(&server_id, &endpoint, &bindings)?;
@@ -188,12 +191,17 @@ pub(crate) fn probe_mcp_server(
     credentials: &[CredentialMetadataConfigurationV2],
     request: McpProbeRequestV2,
 ) -> Result<McpProbeResultV2, String> {
+    if let Some(pin) = &request.server.plugin {
+        super::tool_registry::discovery::verify(pin)?;
+    }
     validate_text("MCP server name", &request.server.name, true)?;
-    validate_text(
-        "MCP probe draft fingerprint",
-        &request.draft_fingerprint,
-        true,
-    )?;
+    // The exact draft includes its saved catalog and instruction overrides.
+    if request.draft_fingerprint.is_empty()
+        || request.draft_fingerprint.len() > 8 * 1024 * 1024
+        || request.draft_fingerprint.contains('\0')
+    {
+        return Err("MCP probe draft fingerprint is empty or exceeds 8 MiB".into());
+    }
     let server_id = stable(&request.server.id, "MCP server id")?;
     let (endpoint, bindings) = prepare_transport(&request.server.transport, credentials)?;
     let binding_hash = binding_hash(&server_id, &endpoint, &bindings)?;
@@ -253,6 +261,18 @@ pub(crate) fn probe_mcp_server(
         .saturating_add(prompt_names.len());
     let latency_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Ok(McpProbeResultV2 {
+        tools: snapshot
+            .catalog
+            .tools
+            .iter()
+            .map(|tool| super::tool_registry::McpToolConfiguration {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                input_schema: tool.input_schema.clone(),
+                enabled: true,
+                options: Default::default(),
+            })
+            .collect(),
         server_id: request.server.id,
         protocol_version: protocol_version.into(),
         features: McpProbeFeaturesV2 {
@@ -298,7 +318,7 @@ pub(crate) fn prepare_transport(
         IntegrationTransportV2::Stdio {
             command,
             args,
-            cwd: _,
+            cwd,
             env,
         } => {
             validate_text("MCP STDIO command", command, true)?;
@@ -317,13 +337,17 @@ pub(crate) fn prepare_transport(
             for argument in args {
                 validate_secret_free_stdio_argument("MCP STDIO argument", argument)?;
             }
+            if let Some(directory) = cwd {
+                validate_text("MCP working directory", directory, true)?;
+                if !std::path::Path::new(directory).is_absolute() {
+                    return Err("MCP working directory must be absolute".into());
+                }
+            }
             (
                 McpTransportEndpointV1::Stdio(McpStdioTransportConfigV1 {
                     executable,
                     arguments: args.clone(),
-                    // MCP servers use the app's inherited directory. The generic
-                    // integration schema keeps `cwd` for external agents only.
-                    working_directory: None,
+                    working_directory: cwd.as_ref().map(PathBuf::from),
                     public_environment: BTreeMap::new(),
                 }),
                 env,

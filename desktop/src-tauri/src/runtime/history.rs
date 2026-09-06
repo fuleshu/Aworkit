@@ -84,6 +84,8 @@ pub(crate) struct FrozenToolBindingV1 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FrozenChatExecutionContextV1 {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_configurations: Vec<FrozenMcpConfigurationV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<super::approvals::ApprovalMode>,
     pub schema_version: u16,
@@ -143,6 +145,20 @@ pub(crate) struct FrozenChatExecutionContextV1 {
 pub(crate) struct FrozenChatExecutionRecordV1 {
     pub context: FrozenChatExecutionContextV1,
     pub context_hash: String,
+}
+
+/// Secret-free MCP connection and exact credential metadata for reconnection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FrozenMcpConfigurationV1 {
+    pub server: super::settings_v2::McpServerConfigurationV2,
+    /// Only opaque references, field names and revisions; never secret values.
+    #[serde(
+        default,
+        rename = "opaqueBindings",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub credentials: Vec<super::settings_v2::CredentialMetadataConfigurationV2>,
 }
 
 /// Exact effect-bearing Chat command durably staged before the authority

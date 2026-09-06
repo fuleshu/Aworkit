@@ -1,0 +1,993 @@
+{
+  "schemaVersion": 1,
+  "id": "aworkit.native-tools",
+  "name": "Aworkit tools",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "id": "tool.files.read",
+      "name": "Project file read",
+      "description": "Read one UTF-8 text file relative to the project root.",
+      "instructions": "Read files when their contents are relevant to the task. Use returned content as evidence; respect partial-content notices.",
+      "executor": "files.read",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "read",
+        "maximumBytes": 65536
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "maximumBytes",
+          "label": "Maximum file bytes",
+          "help": "Upper bound for this tool: maximum file bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 65536
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "providerName": "aworkit_read_project_file"
+    },
+    {
+      "id": "tool.files.search",
+      "name": "Project file search",
+      "description": "Find exact text matches in one project file.",
+      "instructions": "Use exact text search when you know the file and text to locate.",
+      "executor": "files.search",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "search",
+        "maximumResults": 512
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "maximumResults",
+          "label": "Maximum results",
+          "help": "Upper bound for this tool: maximum results.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 512
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "path",
+          "query"
+        ]
+      },
+      "providerName": "aworkit_search_project_file"
+    },
+    {
+      "id": "tool.files.edit",
+      "name": "Project file edit",
+      "description": "Replace one exact text range in a project file.",
+      "instructions": "Read relevant content before editing. Apply changes within the requested scope and verify the resulting behavior when appropriate.",
+      "executor": "files.edit",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "write",
+        "requiresApproval": true,
+        "maximumBytes": 1048576
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "maximumBytes",
+          "label": "Maximum file bytes",
+          "help": "Upper bound for this tool: maximum file bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "old_string": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144
+          },
+          "new_string": {
+            "type": "string",
+            "maxLength": 262144
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ]
+      },
+      "providerName": "aworkit_edit_project_file"
+    },
+    {
+      "id": "tool.files.list",
+      "name": "Project file list (glob)",
+      "description": "List project files matching a glob.",
+      "instructions": "Use file listing to discover relevant paths. Narrow the glob when results are truncated.",
+      "executor": "files.list",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "list",
+        "maximumEntries": 1000
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "maximumEntries",
+          "label": "Maximum entries",
+          "help": "Upper bound for this tool: maximum entries.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 1000
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      },
+      "providerName": "aworkit_list_project_files"
+    },
+    {
+      "id": "tool.files.grep",
+      "name": "Project file regex search",
+      "description": "Regex-search project files with line context.",
+      "instructions": "Use repository search to find relevant definitions or references. Refine the query if results are incomplete.",
+      "executor": "files.grep",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "grep",
+        "maximumMatches": 512
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "maximumMatches",
+          "label": "Maximum matches",
+          "help": "Upper bound for this tool: maximum matches.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 512
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      },
+      "providerName": "aworkit_grep_project_files"
+    },
+    {
+      "id": "tool.files.write",
+      "name": "Project file write",
+      "description": "Create or replace a project file with exact content.",
+      "instructions": "Write complete requested content. Inspect an existing file before replacing it unless its replacement was explicitly requested.",
+      "executor": "files.write",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files",
+        "effect": "write",
+        "requiresApproval": true,
+        "maximumBytes": 1048576
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "effect",
+          "label": "Operation",
+          "help": "The kind of project operation implemented by this tool.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "maximumBytes",
+          "label": "Maximum file bytes",
+          "help": "Upper bound for this tool: maximum file bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1048576
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "providerName": "aworkit_write_project_file"
+    },
+    {
+      "id": "tool.shell.host",
+      "name": "Host shell",
+      "description": "Execute a bounded command on the host.",
+      "instructions": "Use shell commands to perform requested actions or obtain evidence. Commands run with host authority; the working directory is not a sandbox. Assess the actual exit status and output.",
+      "executor": "shell.host",
+      "requiresProject": false,
+      "execution": "shell",
+      "configuration": {
+        "authorityMode": "host_shell",
+        "requiresApproval": true,
+        "timeoutSeconds": 30,
+        "maximumOutputBytes": 262144
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "timeoutSeconds",
+          "label": "Timeout (seconds)",
+          "help": "Upper bound for this tool: timeout (seconds).",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 300
+        },
+        {
+          "key": "maximumOutputBytes",
+          "label": "Maximum output bytes",
+          "help": "Upper bound for this tool: maximum output bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 262144
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "providerName": "aworkit_host_shell"
+    },
+    {
+      "id": "tool.python.host",
+      "name": "Host Python",
+      "description": "Execute a bounded Python script on the host.",
+      "instructions": "Use Python when computation or scripting helps accomplish the task. Report actual execution results. Interpreter isolation does not sandbox filesystem or network access.",
+      "executor": "python.host",
+      "requiresProject": false,
+      "execution": "python",
+      "configuration": {
+        "authorityMode": "host_python",
+        "requiresApproval": true,
+        "isolatedInterpreter": true,
+        "timeoutSeconds": 30,
+        "maximumOutputBytes": 262144
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "isolatedInterpreter",
+          "label": "Isolated Python environment",
+          "help": "Python ignores user site packages and environment variables; this is not OS security isolation.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "timeoutSeconds",
+          "label": "Timeout (seconds)",
+          "help": "Upper bound for this tool: timeout (seconds).",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 300
+        },
+        {
+          "key": "maximumOutputBytes",
+          "label": "Maximum output bytes",
+          "help": "Upper bound for this tool: maximum output bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 262144
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "script": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144
+          }
+        },
+        "required": [
+          "script"
+        ]
+      },
+      "providerName": "aworkit_host_python"
+    },
+    {
+      "id": "tool.todo",
+      "name": "Run task list",
+      "description": "Maintain an ordered task checklist.",
+      "instructions": "Use a task list when multiple steps benefit from progress tracking. Keep it current and mark items complete only after their work is done.",
+      "executor": "todo",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_todo"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "todos": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ]
+                }
+              },
+              "required": [
+                "content",
+                "status"
+              ]
+            }
+          }
+        },
+        "required": [
+          "todos"
+        ]
+      },
+      "providerName": "aworkit_todo"
+    },
+    {
+      "id": "tool.web_search",
+      "name": "Web search",
+      "description": "Discover relevant web sources.",
+      "instructions": "Use search when you need to discover sources or information. A known URL can be retrieved directly. Search snippets may be incomplete or stale; inspect relevant pages when their content is needed to support the answer. Cite sources you actually used.",
+      "executor": "web_search",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "backend": "automatic",
+        "credentialBackend": "deepseek",
+        "providerTier": "automatic",
+        "maximumResults": 10,
+        "requestTimeoutSeconds": 30,
+        "maximumRetries": 1,
+        "keylessFallback": true,
+        "keylessRescue": true,
+        "cacheEnabled": true,
+        "cacheTtlMinutes": 20,
+        "freshnessValidation": true,
+        "freshnessMaximumAgeDays": 45,
+        "freshnessBypassCache": true,
+        "searxngBaseUrl": "",
+        "providerBaseUrl": "",
+        "parallelSearchMode": "agentic",
+        "xaiModel": "grok-build-0.1",
+        "xaiAllowedDomains": [],
+        "xaiExcludedDomains": [],
+        "deepseekBaseUrl": "https://api.deepseek.com",
+        "deepseekModel": "deepseek-v4-flash",
+        "deepseekMaximumOutputTokens": 4096
+      },
+      "fields": [
+        {
+          "key": "backend",
+          "label": "backend",
+          "help": "backend as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "credentialBackend",
+          "label": "credentialBackend",
+          "help": "credentialBackend as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "providerTier",
+          "label": "providerTier",
+          "help": "providerTier as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "maximumResults",
+          "label": "Maximum results",
+          "help": "Upper bound for this tool: maximum results.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 512
+        },
+        {
+          "key": "requestTimeoutSeconds",
+          "label": "requestTimeoutSeconds",
+          "help": "requestTimeoutSeconds as required by the installed execution adapter.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 30
+        },
+        {
+          "key": "maximumRetries",
+          "label": "maximumRetries",
+          "help": "maximumRetries as required by the installed execution adapter.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 1
+        },
+        {
+          "key": "keylessFallback",
+          "label": "keylessFallback",
+          "help": "keylessFallback as required by the installed execution adapter.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "keylessRescue",
+          "label": "keylessRescue",
+          "help": "keylessRescue as required by the installed execution adapter.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "cacheEnabled",
+          "label": "cacheEnabled",
+          "help": "cacheEnabled as required by the installed execution adapter.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "cacheTtlMinutes",
+          "label": "cacheTtlMinutes",
+          "help": "cacheTtlMinutes as required by the installed execution adapter.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 20
+        },
+        {
+          "key": "freshnessValidation",
+          "label": "freshnessValidation",
+          "help": "freshnessValidation as required by the installed execution adapter.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "freshnessMaximumAgeDays",
+          "label": "freshnessMaximumAgeDays",
+          "help": "freshnessMaximumAgeDays as required by the installed execution adapter.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 45
+        },
+        {
+          "key": "freshnessBypassCache",
+          "label": "freshnessBypassCache",
+          "help": "freshnessBypassCache as required by the installed execution adapter.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "searxngBaseUrl",
+          "label": "searxngBaseUrl",
+          "help": "searxngBaseUrl as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "providerBaseUrl",
+          "label": "providerBaseUrl",
+          "help": "providerBaseUrl as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "parallelSearchMode",
+          "label": "parallelSearchMode",
+          "help": "parallelSearchMode as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "xaiModel",
+          "label": "xaiModel",
+          "help": "xaiModel as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "xaiAllowedDomains",
+          "label": "xaiAllowedDomains",
+          "help": "xaiAllowedDomains as required by the installed execution adapter.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "xaiExcludedDomains",
+          "label": "xaiExcludedDomains",
+          "help": "xaiExcludedDomains as required by the installed execution adapter.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "deepseekBaseUrl",
+          "label": "deepseekBaseUrl",
+          "help": "deepseekBaseUrl as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "deepseekModel",
+          "label": "deepseekModel",
+          "help": "deepseekModel as required by the installed execution adapter.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "deepseekMaximumOutputTokens",
+          "label": "deepseekMaximumOutputTokens",
+          "help": "deepseekMaximumOutputTokens as required by the installed execution adapter.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 4096
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 5,
+            "description": "Maximum results requested for this search; the frozen Settings maximum may reduce it."
+          },
+          "freshness": {
+            "enum": [
+              "auto",
+              "current",
+              "any"
+            ],
+            "default": "auto",
+            "description": "Use current for live prices, availability, scores, news, weather, and similar time-sensitive facts. Auto detects those intents; any permits historical results."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "providerName": "aworkit_web_search"
+    },
+    {
+      "id": "tool.web_fetch",
+      "name": "Web page fetch",
+      "description": "Read one HTTPS page with local extraction and optional rendering.",
+      "instructions": "Retrieve a specific URL when its content is needed. Assess the returned content and completeness before deciding on another action. Use documentId and nextOffset to read retained text without fetching again. Download truncation means some source content was never retained. Cite the URL when using the content.",
+      "executor": "web_fetch",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "renderWhenNeeded": true,
+        "maximumDownloadBytes": 8388608,
+        "maximumExtractBytes": 32768
+      },
+      "fields": [
+        {
+          "key": "renderWhenNeeded",
+          "label": "Render JavaScript when needed",
+          "help": "Upper bound for this tool: render javascript when needed.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "maximumDownloadBytes",
+          "label": "Maximum download bytes",
+          "help": "Upper bound for this tool: maximum download bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        {
+          "key": "maximumExtractBytes",
+          "label": "Maximum preview bytes",
+          "help": "Upper bound for this tool: maximum preview bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 32768
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "documentId": {
+            "type": "string",
+            "minLength": 68,
+            "maxLength": 68,
+            "description": "Saved immutable document from this Run; reads never re-fetch."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8388608,
+            "description": "UTF-8 byte offset; use nextOffset from the previous result."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "providerName": "aworkit_web_fetch"
+    },
+    {
+      "id": "tool.web_extract",
+      "name": "Web page extract",
+      "description": "Read up to ten HTTPS pages independently.",
+      "instructions": "Retrieve the supplied URLs and assess each result independently. Use documentId and nextOffset with the same single URL to continue reading retained text. Distinguish partial source downloads from shortened previews. Cite pages whose content supports the answer.",
+      "executor": "web_extract",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "renderWhenNeeded": true,
+        "maximumDownloadBytes": 8388608,
+        "maximumExtractBytes": 32768
+      },
+      "fields": [
+        {
+          "key": "renderWhenNeeded",
+          "label": "Render JavaScript when needed",
+          "help": "Upper bound for this tool: render javascript when needed.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "maximumDownloadBytes",
+          "label": "Maximum download bytes",
+          "help": "Upper bound for this tool: maximum download bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        {
+          "key": "maximumExtractBytes",
+          "label": "Maximum preview bytes",
+          "help": "Upper bound for this tool: maximum preview bytes.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 32768
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "urls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "description": "Candidate HTTPS result URLs to fetch and verify against their live page content."
+          },
+          "documentId": {
+            "type": "string",
+            "minLength": 68,
+            "maxLength": 68,
+            "description": "Saved immutable document; provide exactly the same single URL."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8388608,
+            "description": "UTF-8 byte offset; use nextOffset from the previous result."
+          },
+          "char_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32768,
+            "default": 32768,
+            "description": "Maximum UTF-8 bytes returned per page (legacy argument name); frozen Settings and model budget may reduce it."
+          }
+        },
+        "required": [
+          "urls"
+        ]
+      },
+      "providerName": "aworkit_web_extract"
+    },
+    {
+      "id": "tool.subagent",
+      "name": "Subagent delegation",
+      "description": "Delegate a bounded independent task to a child agent.",
+      "instructions": "Delegate when an independent subtask benefits from a separate agent. Give the child a concrete objective and sufficient context. Assess its returned evidence before using the result.",
+      "executor": "subagent",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "requiresApproval": true
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "context": {
+            "type": "string",
+            "maxLength": 32768
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "providerName": "aworkit_spawn_subagent"
+    }
+  ]
+}

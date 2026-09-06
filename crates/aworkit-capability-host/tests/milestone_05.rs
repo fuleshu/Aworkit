@@ -463,6 +463,36 @@ fn controlled(stdout: &[u8]) -> ControlledProcessResult {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn configured_powershell_receives_powershell_arguments_without_shell_interpolation() {
+    let platform = HermeticProcessPort::default();
+    platform
+        .push(HermeticProcessStep::Result(controlled(b"ok")))
+        .unwrap();
+    let invocation = ShellInvocationV1 {
+        mode: ToolAuthorityModeV1::HostShell,
+        shell_program: "C:\\Tools\\pwsh.exe".into(),
+        command_text: "Write-Output 'quoted text; $literal'".into(),
+        working_directory: None,
+        environment: BTreeMap::new(),
+        limits: HostToolLimitsV1::default(),
+    };
+    BuiltInProcessTools::new(platform.clone())
+        .execute_shell(&invocation, &CancellationToken::default())
+        .unwrap();
+    assert_eq!(
+        platform.observed().unwrap()[0].arguments,
+        vec![
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Write-Output 'quoted text; $literal'"
+        ]
+    );
+}
+
 #[test]
 fn process_port_and_builtin_tools_preserve_exact_authority_and_lifecycle_facts() {
     let platform = HermeticProcessPort::default();
@@ -486,10 +516,7 @@ fn process_port_and_builtin_tools_preserve_exact_authority_and_lifecycle_facts()
         b"ok"
     );
     let observed = platform.observed().unwrap();
-    #[cfg(unix)]
     assert_eq!(observed[0].arguments, vec!["-c", "printf ok"]);
-    #[cfg(windows)]
-    assert_eq!(observed[0].arguments, vec!["/D", "/S", "/C", "printf ok"]);
     assert!(platform.health().unwrap().process_tree_cleanup);
 
     let wrong_mode = ArgumentVectorInvocationV1 {

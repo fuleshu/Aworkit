@@ -31,6 +31,7 @@ mod service;
 mod settings_diagnostics;
 mod settings_v2;
 mod tool_loop;
+pub mod tool_registry;
 mod web_documents;
 
 /// Canonical persistence-safe built-in project-tool limits. Settings, runtime

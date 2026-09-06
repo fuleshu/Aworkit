@@ -1,3 +1,4 @@
+import { selectableTools } from "./toolRegistry";
 import { useEffect, useMemo, useState } from "react";
 import type { SettingsV2Snapshot } from "./configuration";
 import {
@@ -78,9 +79,7 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
     settings.settings.modelTiers.length > 0
       ? settings.settings.modelTiers.map(({ id, name }) => ({ value: id, label: name }))
       : FALLBACK_TIERS;
-  const tools = settings.settings.tools
-    .filter((tool) => tool.enabled)
-    .map(({ id, name }) => ({ value: id, label: name }));
+  const tools = selectableTools(settings.settings);
   const mcpServers = settings.settings.mcpServers
     .filter((server) => server.enabled)
     .map(({ id, name }) => ({ value: id, label: name }));
@@ -387,18 +386,11 @@ function ToolMultiField({
   const selected = stringArrayValue(configuration[field.key]);
   const known = new Set(options.tools.map(({ value }) => value));
   const extras = selected.filter((id) => !known.has(id));
-  const [freeEntry, setFreeEntry] = useState("");
   const toggle = (toolId: string) => {
     const next = selected.includes(toolId)
       ? selected.filter((id) => id !== toolId)
       : [...selected, toolId];
     onChange({ [field.key]: next });
-  };
-  const addFreeEntry = () => {
-    const id = freeEntry.trim();
-    if (id === "" || selected.includes(id)) return;
-    onChange({ [field.key]: [...selected, id] });
-    setFreeEntry("");
   };
   return (
     <fieldset className="tool-multi-field">
@@ -433,32 +425,7 @@ function ToolMultiField({
           </span>
         </label>
       ))}
-      <div className="config-field-stack">
-        <label>
-          Add MCP tool
-          <input
-            disabled={!editable}
-            placeholder="mcp://server/tool"
-            title="Enter an mcp:// tool id from an enabled MCP server and add it"
-            value={freeEntry}
-            onChange={(event) => setFreeEntry(event.target.value)}
-          />
-        </label>
-        <button
-          disabled={!editable || freeEntry.trim() === ""}
-          title="Add the entered MCP tool id to the agent bindings"
-          type="button"
-          onClick={addFreeEntry}
-        >
-          Add tool
-        </button>
-      </div>
-      {options.mcpServers.length > 0 && (
-        <small className="config-help">
-          Enabled MCP servers:{" "}
-          {options.mcpServers.map(({ value, label }) => `${label} (${value})`).join(", ")}
-        </small>
-      )}
+      {options.mcpServers.length > 0 && <small className="config-help">Discover tools in Settings → MCP to include them here.</small>}
     </fieldset>
   );
 }

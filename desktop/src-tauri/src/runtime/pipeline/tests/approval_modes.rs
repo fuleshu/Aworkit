@@ -49,6 +49,42 @@ fn full_access_executes_once_without_a_reviewer_or_prompt() {
 }
 
 #[test]
+fn frozen_tool_approval_override_takes_precedence_over_chat_mode() {
+    for (chat_mode, tool_mode, expected, content) in [
+        (
+            ApprovalMode::FullAccess,
+            ApprovalMode::AskForApproval,
+            WorkflowExecutionStatusV1::AwaitingApproval,
+            "alpha",
+        ),
+        (
+            ApprovalMode::AskForApproval,
+            ApprovalMode::FullAccess,
+            WorkflowExecutionStatusV1::Succeeded,
+            "beta",
+        ),
+    ] {
+        let root = TempDir::new().unwrap();
+        let project = edit_approval_project(&root);
+        let (pipeline, _, metadata, _, _) = setup_tool_pipeline(&root, ToolScriptV1::Edit);
+        let mut request = scoped_request(&pipeline, metadata, &project, chat_mode);
+        request
+            .tools
+            .iter_mut()
+            .find(|tool| tool.capability_id == "tool.files.edit")
+            .unwrap()
+            .options
+            .approval_mode = Some(tool_mode);
+        let result = pipeline.execute(request).unwrap();
+        assert_eq!(result.status, expected, "{:?}", result.error);
+        assert_eq!(
+            fs::read_to_string(project.join("notes.txt")).unwrap(),
+            content
+        );
+    }
+}
+
+#[test]
 fn automatic_review_approves_denies_or_falls_back_to_a_person() {
     for (script, expected, content, count) in [
         (
