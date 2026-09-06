@@ -1,4 +1,6 @@
 :root {
+  /* Preserve the 13/16 compact baseline while respecting the platform default.
+     All feature typography uses rem so both text scales apply exactly once. */
   color: var(--aw-text, #1e2228);
   background: var(--aw-window, #f7f8fa);
   font-family:
@@ -8,8 +10,8 @@
     "Segoe UI",
     "Noto Sans",
     sans-serif;
-  font-size: calc(13px * var(--aw-font-scale, 1));
-  line-height: 18px;
+  font-size: calc(81.25% * var(--aw-font-scale, 1) * var(--aw-system-text-scale, 1));
+  line-height: calc(18rem / 13);
   font-synthesis: none;
 }
 html[data-appearance="dark"] {
@@ -27,6 +29,7 @@ body,
   height: 100%;
 }
 body {
+  font: inherit;
   background: var(--aw-window);
   color: var(--aw-text);
   margin: 0;
@@ -90,32 +93,32 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 16px;
+  font-size: calc(16rem / 13);
   font-weight: 600;
-  line-height: 20px;
+  line-height: calc(20rem / 13);
 }
 h2 {
-  font-size: 14px;
+  font-size: calc(14rem / 13);
   font-weight: 600;
-  line-height: 20px;
+  line-height: calc(20rem / 13);
 }
 h3 {
-  font-size: 13px;
+  font-size: calc(13rem / 13);
   font-weight: 600;
 }
 code,
 pre {
   font-family:
     ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 17px;
+  font-size: calc(12rem / 13);
+  line-height: calc(17rem / 13);
 }
 .eyebrow {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 600;
   letter-spacing: 0.08em;
-  line-height: 14px;
+  line-height: calc(14rem / 13);
 }
 .primary-action {
   background: var(--aw-accent);
@@ -223,7 +226,7 @@ pre {
 .navigation-pane .brand-row {
   align-items: center;
   display: flex;
-  height: 30px;
+  min-height: calc(30rem / 13);
   padding: 0 2px;
 }
 .brand-mark {
@@ -232,11 +235,11 @@ pre {
   border-radius: 4px;
   color: var(--aw-on-accent);
   display: inline-flex;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   font-weight: 600;
-  height: 18px;
+  height: calc(18rem / 13);
   justify-content: center;
-  min-width: 18px;
+  min-width: calc(18rem / 13);
 }
 .brand-row strong {
   margin-left: 8px;
@@ -267,7 +270,7 @@ pre {
 }
 .nav-section-label {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 600;
   letter-spacing: 0.1em;
   margin: 9px 6px 3px;
@@ -444,7 +447,7 @@ pre {
   background: var(--aw-panel);
   border-bottom: 1px solid var(--aw-divider);
   display: flex;
-  height: 48px;
+  min-height: calc(48rem / 13);
   justify-content: space-between;
   padding: 5px 12px 5px 16px;
 }
@@ -459,7 +462,7 @@ pre {
 }
 .toolbar-actions > span {
   color: var(--aw-secondary);
-  font-size: 11px;
+  font-size: calc(11rem / 13);
 }
 .status {
   align-items: center;
@@ -467,10 +470,10 @@ pre {
   border-radius: 999px;
   color: var(--aw-opaque);
   display: inline-flex;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   font-weight: 600;
   gap: 4px;
-  line-height: 18px;
+  line-height: calc(18rem / 13);
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -502,7 +505,7 @@ pre {
 .count-warning,
 .count-success {
   border-radius: 8px;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   padding: 1px 5px;
 }
 .count-warning {
@@ -539,7 +542,7 @@ pre {
 }
 .chat-main {
   display: grid;
-  grid-template-rows: 48px auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -567,13 +570,13 @@ pre {
 }
 .chat-title-line > span {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .run-status {
   align-items: center;
   color: var(--aw-info);
   display: inline-flex;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   font-weight: 600;
   gap: 7px;
   margin-right: 6px;
@@ -651,7 +654,7 @@ pre {
 }
 .timeline-date {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-bottom: 8px;
 }
 .timeline-empty {
@@ -694,7 +697,7 @@ pre {
 .message-body small {
   color: var(--aw-muted);
   display: block;
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-top: 5px;
 }
 .message-row.selected .user-speech-bubble {
@@ -717,7 +720,7 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   min-height: 22px;
   padding: 1px 5px;
 }
@@ -741,7 +744,7 @@ pre {
   border-radius: 50%;
   color: var(--aw-accent);
   display: inline-flex;
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 800;
   height: 30px;
   justify-content: center;
@@ -854,21 +857,21 @@ pre {
 }
 .bubble-heading-copy small {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 400;
   margin-top: 1px;
 }
 .bubble-heading > .status {
-  font-size: 9px;
+  font-size: calc(9rem / 13);
 }
 .bubble-byline {
   color: var(--aw-muted);
   display: block;
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-top: 7px;
 }
 .bubble-markdown {
-  font-size: 11px;
+  font-size: calc(11rem / 13);
   line-height: 1.55;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -902,7 +905,7 @@ pre {
 .bubble-markdown h2,
 .bubble-markdown h3,
 .bubble-markdown h4 {
-  font-size: 12px;
+  font-size: calc(12rem / 13);
   line-height: 1.35;
   margin: 10px 0 5px;
 }
@@ -914,7 +917,7 @@ pre {
 .bubble-markdown code {
   background: var(--aw-inset);
   border-radius: 3px;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   padding: 1px 4px;
 }
 .bubble-markdown pre {
@@ -961,7 +964,7 @@ pre {
 .bubble-data-details > summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .bubble-data-details > .activity-data {
   border: 0;
@@ -999,11 +1002,11 @@ pre {
 }
 .model-call-heading-copy small {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-top: 1px;
 }
 .model-call-heading > .status {
-  font-size: 9px;
+  font-size: calc(9rem / 13);
 }
 .model-call-status-mark {
   align-items: center;
@@ -1045,7 +1048,7 @@ pre {
 .model-call-data > summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   padding: 7px 0;
 }
 .model-call-data > pre {
@@ -1130,7 +1133,7 @@ pre {
 .reasoning-label {
   color: var(--aw-muted);
   display: block;
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-top: 2px;
 }
 .activity-actions {
@@ -1147,7 +1150,7 @@ pre {
 .activity-raw summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .activity-raw pre {
   background: var(--aw-inset);
@@ -1172,7 +1175,7 @@ pre {
 }
 .activity-data dt {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   font-weight: 700;
   letter-spacing: 0.04em;
   margin-bottom: 3px;
@@ -1223,7 +1226,7 @@ pre {
 }
 .activity-heading > span:last-child {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   margin-left: auto;
 }
 .progress-track {
@@ -1245,7 +1248,7 @@ pre {
 }
 .plan-card li {
   color: var(--aw-secondary);
-  font-size: 11px;
+  font-size: calc(11rem / 13);
 }
 .plan-card li.done {
   color: var(--aw-text);
@@ -1263,7 +1266,7 @@ pre {
   align-items: center;
   color: var(--aw-muted);
   display: flex;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   justify-content: space-between;
 }
 .composer-meta label {
@@ -1284,7 +1287,7 @@ pre {
 }
 .queued-input-preview {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .queued-input-preview summary {
   cursor: pointer;
@@ -1332,7 +1335,7 @@ pre {
   background: var(--aw-navigation);
   border-left: 1px solid var(--aw-divider);
   display: grid;
-  grid-template-rows: 48px 34px auto minmax(0, 1fr);
+  grid-template-rows: minmax(calc(48rem / 13), auto) minmax(calc(34rem / 13), auto) auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -1429,7 +1432,7 @@ pre {
   padding-top: 11px;
 }
 .run-details-section h3 {
-  font-size: 11px;
+  font-size: calc(11rem / 13);
   margin: 0 0 9px;
 }
 .run-details-prose,
@@ -1497,7 +1500,7 @@ pre {
 }
 .run-details-log small {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   margin-top: 2px;
 }
 .run-details-raw-note {
@@ -1523,7 +1526,7 @@ pre {
 .settings-workspace,
 .management-screen {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   position: relative;
@@ -1563,8 +1566,8 @@ pre {
 }
 .structure-lock-copy,
 .workflow-help-copy {
-  font-size: 10px;
-  line-height: 15px;
+  font-size: calc(10rem / 13);
+  line-height: calc(15rem / 13);
   margin: 0 0 10px;
 }
 .node-palette section {
@@ -1574,7 +1577,7 @@ pre {
 }
 .node-palette section > small {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 600;
   letter-spacing: 0.08em;
 }
@@ -1589,10 +1592,10 @@ pre {
   align-items: center;
   background: var(--aw-inset);
   display: inline-flex;
-  font-size: 9px;
-  height: 20px;
+  font-size: calc(9rem / 13);
+  min-height: calc(20rem / 13);
   justify-content: center;
-  min-width: 22px;
+  min-width: calc(22rem / 13);
 }
 .node-palette section button .node-palette-label {
   background: transparent;
@@ -1602,7 +1605,7 @@ pre {
 }
 .node-palette section button small {
   color: var(--aw-warning);
-  font-size: 8px;
+  font-size: calc(8rem / 13);
 }
 .node-palette .node-type-grid button {
   cursor: grab;
@@ -1644,7 +1647,7 @@ pre {
 }
 .workflow-outline ol li {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1659,7 +1662,7 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   min-width: 0;
   overflow: hidden;
   padding: 2px 5px;
@@ -1680,7 +1683,7 @@ pre {
 }
 .outline-connect label {
   display: grid;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   gap: 2px;
 }
 .graph-surface {
@@ -1690,6 +1693,17 @@ pre {
 }
 .graph-surface .react-flow__node {
   border-radius: 6px;
+}
+/* React Flow ships pixel-sized text outside Aworkit's custom node content. */
+.react-flow__node-default,
+.react-flow__node-input,
+.react-flow__node-output,
+.react-flow__node-group {
+  font-size: calc(12rem / 13);
+}
+.react-flow__edge-text,
+.react-flow__attribution {
+  font-size: calc(10rem / 13);
 }
 .graph-surface .react-flow__controls,
 .graph-surface .react-flow__minimap {
@@ -1719,17 +1733,17 @@ pre {
   background: var(--aw-inset);
   border-radius: 4px;
   display: flex;
-  font-size: 10px;
-  height: 28px;
+  font-size: calc(10rem / 13);
+  height: calc(28rem / 13);
   justify-content: center;
-  width: 28px;
+  width: calc(28rem / 13);
 }
 .node-copy {
   display: grid;
 }
 .node-copy span {
   color: var(--aw-muted);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .properties-pane {
   background: var(--aw-navigation);
@@ -1742,7 +1756,7 @@ pre {
   background: var(--aw-panel);
   border-bottom: 1px solid var(--aw-divider);
   display: flex;
-  height: 48px;
+  min-height: calc(48rem / 13);
   justify-content: space-between;
   padding: 6px 10px;
 }
@@ -1785,7 +1799,7 @@ pre {
 }
 .property-content textarea[spellcheck="false"] {
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
+  font-size: calc(11rem / 13);
 }
 .property-content dl {
   display: grid;
@@ -1825,7 +1839,7 @@ pre {
 .raw-workflow-fields summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .raw-workflow-fields pre {
   margin-top: 6px;
@@ -1861,8 +1875,8 @@ pre {
 .settings-body > nav button small {
   color: var(--aw-muted);
   display: block;
-  font-size: 9px;
-  line-height: 12px;
+  font-size: calc(9rem / 13);
+  line-height: calc(12rem / 13);
 }
 .settings-body > main {
   padding: 20px 24px;
@@ -1892,7 +1906,7 @@ pre {
 }
 .settings-nav-state {
   color: var(--aw-warning);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   font-weight: 700;
 }
 .settings-v2-body > main {
@@ -1940,7 +1954,7 @@ pre {
 .settings-field {
   color: var(--aw-secondary);
   display: grid;
-  font-size: 11px;
+  font-size: calc(11rem / 13);
   gap: 5px;
   min-width: 0;
 }
@@ -2005,7 +2019,7 @@ pre {
   padding: 12px;
 }
 .settings-subsection > h4 {
-  font-size: 12px;
+  font-size: calc(12rem / 13);
   margin: 0;
 }
 .web-search-settings {
@@ -2048,7 +2062,7 @@ pre {
 .settings-path {
   color: var(--aw-muted);
   display: block;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   margin-top: 3px;
   overflow-wrap: anywhere;
 }
@@ -2183,8 +2197,8 @@ pre {
   background: var(--aw-panel);
   border: 1px solid var(--aw-divider);
   color: var(--aw-secondary);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: calc(12rem / 13);
+  line-height: calc(18rem / 13);
   margin: 0;
   padding: 9px 10px;
 }
@@ -2260,7 +2274,7 @@ pre {
 .setting-list article span,
 .setting-list article small {
   color: var(--aw-secondary);
-  font-size: 11px;
+  font-size: calc(11rem / 13);
 }
 .setting-list .status {
   color: inherit;
@@ -2302,7 +2316,7 @@ pre {
 .provider-fields label > span,
 .provider-detail {
   color: var(--aw-secondary);
-  font-size: 11px;
+  font-size: calc(11rem / 13);
 }
 .provider-card-heading p {
   margin-top: 3px;
@@ -2336,7 +2350,7 @@ pre {
 }
 .provider-detail {
   flex: 1;
-  line-height: 17px;
+  line-height: calc(17rem / 13);
   text-align: right;
 }
 .provider-detail > span,
@@ -2401,7 +2415,7 @@ pre {
   border: 1px solid var(--aw-divider);
   display: grid;
   gap: 10px;
-  grid-template-columns: auto 52px 110px 1fr;
+  grid-template-columns: auto 52px minmax(min-content, calc(110rem / 13)) 1fr;
   padding: 10px;
 }
 .appearance-options small {
@@ -2605,7 +2619,7 @@ pre {
 }
 .node-config-form legend {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   font-weight: 600;
   padding: 0 4px;
 }
@@ -2619,8 +2633,8 @@ pre {
 }
 .config-help {
   color: var(--aw-muted);
-  font-size: 9px;
-  line-height: 13px;
+  font-size: calc(9rem / 13);
+  line-height: calc(13rem / 13);
 }
 .tool-multi-field .checkbox-row {
   align-items: center;
@@ -2632,7 +2646,7 @@ pre {
   margin: 0;
 }
 .tool-multi-field .checkbox-row span {
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 .tool-multi-field .checkbox-row code,
 .config-help code {
@@ -2644,7 +2658,7 @@ pre {
 
 /* Workflow library strip */
 .workflow-editor.with-library {
-  grid-template-rows: 48px 44px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 .workflow-library-bar {
   align-items: center;
@@ -2659,7 +2673,7 @@ pre {
 .workflow-library-bar label {
   align-items: center;
   display: flex;
-  font-size: 10px;
+  font-size: calc(10rem / 13);
   gap: 5px;
 }
 .workflow-library-bar select,
@@ -2679,8 +2693,8 @@ pre {
 .plan-call-body,
 .subagent-body {
   color: var(--aw-secondary);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: calc(11rem / 13);
+  line-height: calc(16rem / 13);
   margin: 8px 0 0;
   white-space: pre-wrap;
 }
@@ -2693,7 +2707,7 @@ pre {
 }
 .todo-list li {
   color: var(--aw-secondary);
-  font-size: 11px;
+  font-size: calc(11rem / 13);
   padding-left: 18px;
   position: relative;
 }
@@ -2733,7 +2747,7 @@ pre {
   border-radius: 50%;
   display: inline-flex;
   flex: none;
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   height: 16px;
   justify-content: center;
   margin-left: auto;

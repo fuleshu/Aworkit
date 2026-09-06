@@ -25,7 +25,7 @@
 
 .management-title-line > span {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 
 .management-repair-body {
@@ -64,7 +64,7 @@
 .management-master-section > header > span:not(.status),
 .management-master-section > small {
   color: var(--aw-muted);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 
 .master-button-list,
@@ -111,7 +111,7 @@
 .master-button-list small,
 .evidence-button-list small {
   color: var(--aw-secondary);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 
 .master-button-list .status {
@@ -158,7 +158,7 @@
 
 .evidence-selection > label > span {
   color: var(--aw-muted);
-  font-size: 10px;
+  font-size: calc(10rem / 13);
 }
 
 .evidence-selection input {
@@ -200,7 +200,7 @@
 
 .selected-repair-evidence dt {
   color: var(--aw-muted);
-  font-size: 9px;
+  font-size: calc(9rem / 13);
   text-transform: uppercase;
 }
 

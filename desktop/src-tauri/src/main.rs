@@ -72,6 +72,13 @@ fn native_presentation_capabilities() -> NativePresentationCapabilitiesV1 {
 }
 
 #[tauri::command]
+fn native_system_text_scale(
+    scale: tauri::State<'_, aworkit_desktop::system_text_scale::SystemTextScale>,
+) -> f64 {
+    scale.current()
+}
+
+#[tauri::command]
 fn native_set_appearance(
     window: tauri::WebviewWindow,
     appearance: NativeAppearanceV1,
@@ -661,6 +668,7 @@ fn main() {
                 return Ok(());
             }
             aworkit_desktop::presentation::install_application_menu(app.handle())?;
+            app.manage(aworkit_desktop::system_text_scale::SystemTextScale::observe(app.handle()));
             let app_data_root = app
                 .path()
                 .app_data_dir()
@@ -737,6 +745,7 @@ fn main() {
                 management_repair_snapshot,
                 management_repair_command,
                 native_presentation_capabilities,
+                native_system_text_scale,
                 native_set_appearance,
                 native_window_action,
                 native_notify,

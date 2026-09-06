@@ -47,7 +47,7 @@ export function AppearanceSection({
         Text size
         <select
           id="appearance-font-scale"
-          title="Preview the application text scale; 100% is the default"
+          title="Scale all application text in addition to your operating-system text size; 100% follows the system baseline"
           value={String(value.fontScale)}
           onChange={(event) =>
             update({ ...value, fontScale: Number(event.target.value) })

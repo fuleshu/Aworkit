@@ -8,6 +8,7 @@ import {
   projectAppearancePreference,
 } from "./workbench/appearance";
 import { createSettingsV2CorePort } from "./workbench/settingsV2Port";
+import { initializeSystemTextScale } from "./workbench/systemTextScale";
 import "@mantine/core/styles.css";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
@@ -17,6 +18,11 @@ if (root === null) {
   throw new Error("Aworkit presentation root is missing");
 }
 async function revealDesktop(): Promise<void> {
+  try {
+    await initializeSystemTextScale();
+  } catch (error) {
+    console.warn("Operating-system text scaling is unavailable", error);
+  }
   try {
     const settings = (await createSettingsV2CorePort().snapshot()).settings;
     projectAppearancePreference(
