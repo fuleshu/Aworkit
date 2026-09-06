@@ -1,5 +1,6 @@
 import { ActorBubble } from "./ActorBubble";
 import { prettyJson } from "./jsonPresentation";
+import { isSelectionClick } from "./selectionClick";
 import type { TimelineActor, TimelineItem } from "./types";
 
 interface ModelCallBlockProps {
@@ -56,7 +57,9 @@ export function ModelCallBlock({
       role="group"
       tabIndex={0}
       title={`Show Run details for ${node.name}`}
-      onClick={() => onSelect(item.id)}
+      onClick={(event) => {
+        if (isSelectionClick(event)) onSelect(item.id);
+      }}
       onKeyDown={(event) => {
         if (
           event.currentTarget === event.target &&

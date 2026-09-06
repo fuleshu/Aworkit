@@ -1,5 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MarkdownLink } from "./MarkdownLink";
 
 const renderedElements = [
   "p",
@@ -45,11 +46,7 @@ export function MarkdownContent({
     <div className={className}>
       <ReactMarkdown
         allowedElements={[...renderedElements]}
-        components={{
-          a: ({ node: _node, ...properties }) => (
-            <a {...properties} rel="noreferrer" target="_blank" />
-          ),
-        }}
+        components={{ a: MarkdownLink }}
         remarkPlugins={[remarkGfm]}
         unwrapDisallowed
         urlTransform={defaultUrlTransform}

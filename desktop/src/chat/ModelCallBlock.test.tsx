@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { presentTimelineItems } from "./ConversationTimeline";
 import { ModelCallBlock } from "./ModelCallBlock";
 import type { TimelineItem } from "./types";
+
+afterEach(cleanup);
 
 describe("ModelCallBlock", () => {
   it("keeps the model lifecycle coherent while preserving thought and speech bubbles", () => {
@@ -36,6 +39,25 @@ describe("ModelCallBlock", () => {
 
     fireEvent.click(within(speech).getByText("Hello there!"));
     expect(onSelect).toHaveBeenCalledWith("span.model.2");
+  });
+
+  it("expands and collapses Input and Output without selecting Run details", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<ModelCallBlock item={modelCall()} selected={false} onSelect={onSelect} />);
+    for (const label of ["Input", "Output"]) {
+      const summary = screen.getByText(label);
+      const details = summary.closest("details");
+      await user.click(summary);
+      expect(details).toHaveAttribute("open");
+      await user.click(summary);
+      expect(details).not.toHaveAttribute("open");
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+    const block = screen.getByRole("group", { name: "Model call: Friendly responder" });
+    block.focus();
+    await user.keyboard("{Enter} ");
+    expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
   it("removes only the separately committed assistant message mirrored by the stream", () => {
