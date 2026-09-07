@@ -11,29 +11,22 @@ pub(crate) fn project_grant(
     call: &ModelToolCallV1,
 ) -> Option<ProjectApprovalGrant> {
     let project_key = context.project_key.as_ref()?;
-    let (scope, action_hash) = approvals::action_scope(&call.capability_id, &call.arguments);
     let binding_hash = approvals::digest(binding);
-    let action_summary = if action_hash == "project_files" {
-        format!(
-            "All {} calls within this project's file boundary.",
-            call.capability_id
-        )
-    } else {
-        tool_approval_copy(call).1.chars().take(4096).collect()
-    };
-    Some(ProjectApprovalGrant {
-        id: approvals::digest(&(project_key, &binding_hash, &action_hash)),
+    let mut grant = ProjectApprovalGrant {
+        id: String::new(),
         project_key: project_key.clone(),
         project_name: context
             .project_name
             .clone()
             .unwrap_or_else(|| "Project".into()),
         capability_id: call.capability_id.clone(),
-        scope,
-        action_summary,
+        scope: String::new(),
+        action_summary: String::new(),
         binding_hash,
-        action_hash,
-    })
+        action_hash: String::new(),
+    };
+    grant.set_tool_scope();
+    Some(grant)
 }
 
 impl BoundFileToolAuthorityV1 {
@@ -67,6 +60,7 @@ impl BoundFileToolAuthorityV1 {
             grants.iter().any(|grant| {
                 grant.id == expected.id
                     && grant.project_key == expected.project_key
+                    && grant.capability_id == expected.capability_id
                     && grant.binding_hash == expected.binding_hash
                     && grant.action_hash == expected.action_hash
             })

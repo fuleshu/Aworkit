@@ -11,7 +11,6 @@ pub(crate) use reviewer::review_action;
 pub(crate) use store::ApprovalStore;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -100,16 +99,30 @@ pub struct ProjectApprovalGrant {
     pub action_hash: String,
 }
 
-/// File tools are confined to the selected project; other tools retain exact
-/// arguments. In particular, shell and Python never receive wildcard grants.
-pub(crate) fn action_scope(capability: &str, arguments: &Value) -> (String, String) {
-    if matches!(capability, "tool.files.edit" | "tool.files.write") {
-        ("Files in this project".into(), "project_files".into())
-    } else {
-        (
-            "This exact action in this project".into(),
-            digest(arguments),
-        )
+impl ProjectApprovalGrant {
+    /// A project approval remembers the tool, not one invocation's arguments.
+    /// The project/workspace and complete frozen tool binding still match exactly.
+    pub(crate) fn set_tool_scope(&mut self) {
+        let (scope, action_hash) = match self.capability_id.as_str() {
+            "tool.files.edit" | "tool.files.write" => ("Files in this project", "project_files"),
+            "tool.python.host" => ("Python scripts in this project", "project_tool"),
+            "tool.shell.host" => ("Shell commands in this project", "project_tool"),
+            _ => ("This tool in this project", "project_tool"),
+        };
+        self.scope = scope.into();
+        self.action_hash = action_hash.into();
+        self.action_summary = if action_hash == "project_files" {
+            format!(
+                "All {} calls within this project's file boundary.",
+                self.capability_id
+            )
+        } else {
+            format!(
+                "All {} calls in this project, including different arguments.",
+                self.capability_id
+            )
+        };
+        self.id = digest(&(&self.project_key, &self.binding_hash, &self.action_hash));
     }
 }
 

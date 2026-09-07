@@ -20,13 +20,15 @@ impl ApprovalStore {
         let store = Self {
             database: database.to_owned(),
         };
-        store.connection()?.execute_batch("
+        let mut connection = store.connection()?;
+        connection.execute_batch("
             CREATE TABLE IF NOT EXISTS approval_chat_modes (chat_id TEXT PRIMARY KEY, mode TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_project_grants (id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_resolutions (decision_id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_reviews (invocation_id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_results (decision_id TEXT PRIMARY KEY, body TEXT NOT NULL);
         ").map_err(error)?;
+        migrate_project_grants(&mut connection)?;
         Ok(store)
     }
 
@@ -203,6 +205,49 @@ impl ApprovalStore {
             .map_err(error)?;
         Ok(())
     }
+}
+
+/// Upgrade only extant legacy project grants, never approval receipts. Revoked
+/// grants stay revoked, and several exact-script grants collapse to one tool rule.
+fn migrate_project_grants(connection: &mut Connection) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(error)?;
+    let rows = {
+        let mut statement = transaction
+            .prepare("SELECT id, body FROM approval_project_grants")
+            .map_err(error)?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(error)?
+    };
+    for (id, body) in rows {
+        let mut grant: ProjectApprovalGrant = serde_json::from_str(&body).map_err(error)?;
+        if grant.scope != "This exact action in this project"
+            || grant.action_hash.len() != 64
+            || !grant
+                .action_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || grant.id != id
+            || id != super::digest(&(&grant.project_key, &grant.binding_hash, &grant.action_hash))
+        {
+            continue;
+        }
+        grant.set_tool_scope();
+        transaction
+            .execute("DELETE FROM approval_project_grants WHERE id=?1", [&id])
+            .map_err(error)?;
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO approval_project_grants VALUES (?1,?2)",
+                params![grant.id, serde_json::to_string(&grant).map_err(error)?],
+            )
+            .map_err(error)?;
+    }
+    transaction.commit().map_err(error)
 }
 
 fn error(error: impl std::fmt::Display) -> String {

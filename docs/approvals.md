@@ -23,14 +23,18 @@ An approval card offers **Approve once**, **Always approve in project**, and
 reason and an instruction not to retry or bypass it. Projectless calls and
 explicit workflow approval steps cannot create project tool permissions.
 
-Project grants bind the saved project and native workspace identity, exact tool
-binding/configuration, and action scope. File edit/write grants cover that
-particular file tool within the project's enforced file boundary. Shell, Python,
-MCP and other tools retain the exact arguments; a different command, script,
-server binding or arguments asks again. Matching uses canonical JSON, including
-nested objects. The card displays the scope before it is saved; Settings shows
-the action and supports immediate revocation. Grants apply across chats in the
-same project and survive restarts.
+Project grants bind the saved project and native workspace identity and exact
+tool binding/configuration. **Always approve in project** covers subsequent calls
+to that tool, including different Python scripts, shell commands or MCP arguments.
+It also applies to later calls in the current run. A different project or changed
+tool binding still asks again. File tools retain their enforced project boundary;
+shell and Python retain host execution semantics. The card displays the scope
+before it is saved; Settings shows the tool permission and supports immediate
+revocation. Grants apply across chats in the same project and survive restarts.
+
+On startup, existing exact-action project grants are upgraded to tool permissions
+for the same project and frozen binding. Revoked grants are never recreated.
+Approve once continues to authorize only the exact invocation.
 
 Read/search/list/grep, task-list and existing web tools keep their ordinary
 approval-free contracts. File writes, shell, Python, subagents and MCP tools use
@@ -54,7 +58,7 @@ constraints.
 
 ## Verification
 
-- Native Rust coverage: mode isolation, canonical exact-action matching,
+- Native Rust coverage: mode isolation, tool/project grant matching and migration,
   manual/automatic/full-access execution, review failure fallback, denial reason
   propagation, project grant persistence/isolation/revocation, MCP admission,
   conflicting decisions, and recovery after a lost approval receipt.
@@ -64,6 +68,10 @@ constraints.
   profile, local streaming provider fixture, real file effects, all three modes,
   all three decisions, cross-chat grant reuse and Settings revocation. It writes
   screenshots and a result record under `desktop/src-tauri/target/native-approvals-*`.
+- `desktop/scripts/native-project-approval-smoke.mjs`: three different Python
+  scripts in one run, approve-once versus project approval, reuse in another chat,
+  migration of old exact-script grants across restart, and revocation. Verifies
+  twelve actual Python file effects with a local provider and isolated profile.
 
 Run the smoke from `desktop` with `node scripts/native-approval-smoke.mjs` after
 building `desktop/dist` and the native executable. The fixture uses no remote
