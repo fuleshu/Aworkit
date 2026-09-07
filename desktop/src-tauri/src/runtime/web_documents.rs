@@ -168,6 +168,7 @@ mod tests {
             text: "αβγ immutable evidence".into(),
             bytes_downloaded: 99,
             metadata: WebDocumentMetadataV1 {
+                feed: None,
                 final_url: "https://example.com/".into(),
                 method: "text".into(),
                 quality: WebExtractionQualityV1::Usable,

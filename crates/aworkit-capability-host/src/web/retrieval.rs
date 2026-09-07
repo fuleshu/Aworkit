@@ -80,12 +80,23 @@ pub(super) fn retrieve(
                         .expect("static charset pattern")
                 });
             let head = String::from_utf8_lossy(&body[..body.len().min(1024)]);
+            static XML_ENCODING: std::sync::LazyLock<regex::Regex> =
+                std::sync::LazyLock::new(|| {
+                    regex::Regex::new(
+                        r#"(?i)^\s*<\?xml\b[^>]*encoding\s*=\s*["']([a-z0-9_-]+)["']"#,
+                    )
+                    .expect("static XML encoding pattern")
+                });
+            let xml_encoding = XML_ENCODING
+                .captures(&head)
+                .and_then(|c| encoding_rs::Encoding::for_label(c[1].as_bytes()));
             let meta_charset = META_CHARSET
                 .captures(&head)
                 .and_then(|c| encoding_rs::Encoding::for_label(c[1].as_bytes()));
             let encoding = encoding_rs::Encoding::for_bom(&body)
                 .map(|(encoding, _)| encoding)
                 .or(charset)
+                .or(xml_encoding)
                 .or(meta_charset)
                 .unwrap_or(encoding_rs::UTF_8);
             if truncated && encoding == encoding_rs::UTF_8 {

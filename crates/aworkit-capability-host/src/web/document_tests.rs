@@ -200,11 +200,40 @@ fn live_spiegel_extracts_with_explicit_completeness() {
 }
 
 #[test]
-fn feed_media_types_preserve_xml_and_partial_evidence_without_rendering() {
+fn feed_encoding_is_decoded_once_before_parsing() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+    };
+    for mime in [
+        "application/rss+xml",
+        "application/rss+xml; charset=iso-8859-1",
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let body = b"<?xml version='1.0' encoding='iso-8859-1'?><rss version='2.0'><channel><title>Caf\xe9</title><item><title>Gr\xfc\xdfe</title></item></channel></rss>";
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request);
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let source = retrieval::retrieve(&url, 8192, &CancellationToken::default()).unwrap();
+        let extracted = extraction::extract(&source).unwrap();
+        assert_eq!(extracted.title, "Café");
+        assert!(extracted.text.contains("Grüße"));
+        assert!(extracted.warnings.is_empty());
+        worker.join().unwrap();
+    }
+}
+
+#[test]
+fn feed_media_types_return_compact_entries_and_partial_evidence_without_rendering() {
     for (mime, xml) in [
         (
             "application/rss+xml; charset=UTF-8",
-            "<rss><channel><title>News αβγ</title><item><title>Story</title><link>https://example.com/story</link><description><![CDATA[<b>Useful</b> content]]></description></item></channel></rss>",
+            "<rss version='2.0'><channel><title>News αβγ</title><item><title>Story</title><link>https://example.com/story</link><description><![CDATA[<b>Useful</b> content]]></description></item></channel></rss>",
         ),
         (
             " Application/Atom+XML ; charset=utf-8",
@@ -213,7 +242,10 @@ fn feed_media_types_preserve_xml_and_partial_evidence_without_rendering() {
     ] {
         for truncated in [false, true] {
             let xml = if truncated {
-                &xml[..xml.len() - 10]
+                &xml[..xml
+                    .rfind("</channel>")
+                    .or_else(|| xml.rfind("</feed>"))
+                    .unwrap()]
             } else {
                 xml
             };
@@ -229,16 +261,19 @@ fn feed_media_types_preserve_xml_and_partial_evidence_without_rendering() {
             let document = tools
                 .document_v1("https://example.com/feed", 8192, true, &cancellation)
                 .unwrap();
-            assert_eq!(document.text, xml);
+            assert!(document.text.contains("Story"));
+            assert!(!document.text.contains("<rss"));
+            assert!(!document.text.contains("CDATA"));
+            assert_eq!(document.metadata.feed.as_ref().unwrap().entries, 1);
             assert_eq!(document.metadata.quality, WebExtractionQualityV1::Usable);
-            assert_eq!(document.metadata.method, "text");
+            assert_eq!(document.metadata.method, "feed");
             assert_eq!(document.metadata.download_truncated, truncated);
             assert_eq!(renderer.calls.load(Ordering::SeqCst), 0);
 
             let fetched = tools
                 .fetch_v1("https://example.com/feed", 8192, 64, &cancellation)
                 .unwrap();
-            assert!(xml.starts_with(&fetched.text));
+            assert!(document.text.starts_with(&fetched.text));
             assert!(!fetched.text.is_empty());
             assert!(fetched.preview_truncated);
             assert_eq!(fetched.metadata.download_truncated, truncated);

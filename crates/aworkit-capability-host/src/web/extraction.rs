@@ -10,9 +10,18 @@ pub(super) struct Extraction {
     pub text: String,
     pub quality: Quality,
     pub method: &'static str,
+    pub feed: Option<super::WebFeedMetadataV1>,
+    pub warnings: Vec<String>,
 }
 
 pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
+    extract_with_feed_content(source, super::WebFeedContentV1::Metadata)
+}
+
+pub(super) fn extract_with_feed_content(
+    source: &WebSourceV1,
+    content: super::WebFeedContentV1,
+) -> Result<Extraction, String> {
     let mime = source
         .content_type
         .split(';')
@@ -21,6 +30,9 @@ pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
         .trim()
         .to_ascii_lowercase();
     let mime = mime.as_str();
+    if let Some(feed) = super::feed::extract(source, mime, content)? {
+        return Ok(feed);
+    }
     if mime != "text/html" && mime != "application/xhtml+xml" {
         if mime.starts_with("text/")
             || matches!(
@@ -32,8 +44,6 @@ pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
                     | "application/atom+xml"
             )
         {
-            // Preserve feed XML verbatim, including useful incomplete download prefixes.
-            // No XML parsing or external-entity resolution is needed for text extraction.
             let text = source.body.trim().to_owned();
             let quality = if text.is_empty() {
                 Quality::Empty
@@ -45,6 +55,8 @@ pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
                 text,
                 quality,
                 method: "text",
+                feed: None,
+                warnings: Vec::new(),
             });
         }
         return Err(format!(
@@ -101,6 +113,8 @@ pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
         text: broad.trim().to_owned(),
         quality: Quality::Usable,
         method: "structuredHtml",
+        feed: None,
+        warnings: Vec::new(),
     };
     if article_shape && document.select("*").length() <= 50_000 {
         let config = Config {

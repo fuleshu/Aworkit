@@ -3315,9 +3315,11 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
         {
-            BTreeSet::from(["urls", "char_limit", "documentId", "offset"])
+            BTreeSet::from(["urls", "char_limit", "documentId", "offset", "feedContent"])
         }
-        StoredFileToolLimitV1::WebFetch { .. } => BTreeSet::from(["url", "documentId", "offset"]),
+        StoredFileToolLimitV1::WebFetch { .. } => {
+            BTreeSet::from(["url", "documentId", "offset", "feedContent"])
+        }
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         // MCP argument shapes are server-defined; the frozen validator only
         // bounds the payload. The session layer enforces the exact discovered
@@ -4464,6 +4466,25 @@ mod tests {
         .remove(0);
         validate_call_arguments(&fetch, &json!({"url":"https://example.com"}))
             .expect("legacy single-page fetch");
+        for mode in ["metadata", "full"] {
+            validate_call_arguments(
+                &fetch,
+                &json!({"url":"https://example.com/feed", "feedContent":mode}),
+            )
+            .unwrap();
+            validate_call_arguments(
+                &extract,
+                &json!({"urls":["https://example.com/feed"], "feedContent":mode}),
+            )
+            .unwrap();
+        }
+        assert!(
+            validate_call_arguments(
+                &fetch,
+                &json!({"url":"https://example.com/feed", "feedContent":"invalid"})
+            )
+            .is_err()
+        );
     }
 
     #[test]

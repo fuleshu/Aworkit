@@ -146,8 +146,9 @@ pub use tools::{
 };
 pub use web::{
     MAXIMUM_WEB_DOCUMENT_BYTES, WebDocumentMetadataV1, WebDocumentV1, WebExtractPageV1,
-    WebExtractionQualityV1, WebFetchResultV1, WebRenderSnapshotV1, WebRendererPort,
-    WebSearchAttemptV1, WebSearchBackendV1, WebSearchConfigurationV1, WebSearchFreshnessModeV1,
-    WebSearchFreshnessV1, WebSearchOutcomeV1, WebSearchProviderTierV1, WebSearchProviderUsageV1,
-    WebSearchResultV1, WebSourceV1, WebToolError, WebTools, WebTransportPort,
+    WebExtractionQualityV1, WebFeedContentV1, WebFeedMetadataV1, WebFetchResultV1,
+    WebRenderSnapshotV1, WebRendererPort, WebSearchAttemptV1, WebSearchBackendV1,
+    WebSearchConfigurationV1, WebSearchFreshnessModeV1, WebSearchFreshnessV1, WebSearchOutcomeV1,
+    WebSearchProviderTierV1, WebSearchProviderUsageV1, WebSearchResultV1, WebSourceV1,
+    WebToolError, WebTools, WebTransportPort,
 };

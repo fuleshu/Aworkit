@@ -16,6 +16,7 @@ mod document;
 #[cfg(test)]
 mod document_tests;
 mod extraction;
+mod feed;
 mod freshness;
 mod retrieval;
 pub use document::*;
@@ -242,6 +243,24 @@ impl WebTools {
         allow_render: bool,
         cancellation: &CancellationToken,
     ) -> Result<WebDocumentV1, WebToolError> {
+        self.document_with_feed_content_v1(
+            url,
+            maximum_download_bytes,
+            allow_render,
+            WebFeedContentV1::Metadata,
+            cancellation,
+        )
+    }
+
+    /// Selects compact feed metadata or readable article bodies before retaining/previewing.
+    pub fn document_with_feed_content_v1(
+        &self,
+        url: &str,
+        maximum_download_bytes: usize,
+        allow_render: bool,
+        feed_content: WebFeedContentV1,
+        cancellation: &CancellationToken,
+    ) -> Result<WebDocumentV1, WebToolError> {
         let url = parse_https_url(url)?;
         if maximum_download_bytes == 0 || maximum_download_bytes > MAXIMUM_DOWNLOAD_BYTES {
             return Err(WebToolError::InvalidBound);
@@ -252,7 +271,8 @@ impl WebTools {
             .fetch_document(&url, maximum_download_bytes, cancellation);
         check_cancelled(cancellation)?;
         let source = source.map_err(WebToolError::Transport)?;
-        let mut extracted = extraction::extract(&source).map_err(WebToolError::Transport)?;
+        let mut extracted = extraction::extract_with_feed_content(&source, feed_content)
+            .map_err(WebToolError::Transport)?;
         let mut metadata = WebDocumentMetadataV1 {
             final_url: source.final_url.clone(),
             method: extracted.method.into(),
@@ -264,7 +284,9 @@ impl WebTools {
             document_truncated: false,
             fetched_at_epoch_ms: now_epoch_ms(),
             warnings: source.warning.into_iter().collect(),
+            feed: extracted.feed.clone(),
         };
+        metadata.warnings.append(&mut extracted.warnings);
         if source.truncated {
             metadata.warnings.push("Download was incomplete; content later in the source may be missing. Rendering was not attempted.".into());
         }
@@ -319,6 +341,7 @@ impl WebTools {
                 .warnings
                 .push("Extracted document exceeded its retention limit.".into());
         }
+        metadata.document_truncated |= metadata.feed.as_ref().is_some_and(|feed| feed.incomplete);
         Ok(WebDocumentV1 {
             url,
             title: document::prefix(&extracted.title, 512).into(),

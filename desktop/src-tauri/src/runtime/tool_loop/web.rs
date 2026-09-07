@@ -2,7 +2,7 @@
 // The shared workflow error contract contains durable approval state; keep that contract intact.
 #![allow(clippy::result_large_err)]
 use super::*;
-use aworkit_capability_host::{WebDocumentV1, WebExtractionQualityV1};
+use aworkit_capability_host::{WebDocumentV1, WebExtractionQualityV1, WebFeedContentV1};
 
 impl FileToolDispatcherV1 {
     pub(super) fn run_web(
@@ -15,6 +15,10 @@ impl FileToolDispatcherV1 {
         let scope = WebCancellation::new(cancellation, self.context.deadline_epoch_millis);
         let cancellation = &scope.token;
         let args = &self.record.call.arguments;
+        let feed_content = match args["feedContent"].as_str() {
+            Some("full") => WebFeedContentV1::Full,
+            _ => WebFeedContentV1::Metadata,
+        };
         let multi = self.record.binding.provider_name == WEB_EXTRACT_PROVIDER_NAME;
         let urls: Vec<&str> = if multi {
             args["urls"]
@@ -55,7 +59,13 @@ impl FileToolDispatcherV1 {
                     .read(&self.context.run_id, url, id),
                 None => self
                     .web
-                    .document_v1(url, maximum_download, allow_render, cancellation)
+                    .document_with_feed_content_v1(
+                        url,
+                        maximum_download,
+                        allow_render,
+                        feed_content,
+                        cancellation,
+                    )
                     .map_err(|e| e.to_string()),
             };
             if cancellation.is_cancelled() {
@@ -68,6 +78,16 @@ impl FileToolDispatcherV1 {
             });
             let mut page = match fetched {
                 Ok(mut document) => {
+                    if document_id.is_some()
+                        && args.get("feedContent").is_some()
+                        && document
+                            .metadata
+                            .feed
+                            .as_ref()
+                            .is_some_and(|feed| feed.content != feed_content)
+                    {
+                        return Err("Saved feed has a different feedContent projection; omit documentId to fetch the requested projection.".into());
+                    }
                     let retained = match document_id {
                         Some(id) => Some(id.to_owned()),
                         None => {
@@ -245,6 +265,9 @@ fn preview(
             "snapshotTruncated":document.metadata.snapshot_truncated,"documentTruncated":document.metadata.document_truncated,
             "renderSettled":document.metadata.render_settled,"method":document.metadata.method,"fetchedAtEpochMs":document.metadata.fetched_at_epoch_ms,
             "content":content,"continuationAvailable":id.is_some()});
+        if let Some(feed) = &document.metadata.feed {
+            value["feed"] = json!(feed);
+        }
         if !compact {
             value["url"] = json!(document.url);
             value["title"] = json!(document.title);
@@ -315,6 +338,12 @@ pub(super) fn rendering_disabled(value: &bool) -> bool {
 }
 
 pub(super) fn validate_continuation(arguments: &Value) -> Result<(), WorkflowPipelineError> {
+    if arguments
+        .get("feedContent")
+        .is_some_and(|value| !matches!(value.as_str(), Some("metadata" | "full")))
+    {
+        return Err(invalid_tool("feedContent must be metadata or full"));
+    }
     if let Some(id) = arguments.get("documentId") {
         if !id
             .as_str()

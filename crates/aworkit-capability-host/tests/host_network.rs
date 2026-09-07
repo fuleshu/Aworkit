@@ -95,11 +95,32 @@ print('host-python-rss-ok')"#
     let fetched = tools
         .fetch_v1(url, 1024 * 1024, 8192, &cancellation)
         .unwrap();
-    assert!(fetched.text.contains("<rss"));
+    assert_eq!(fetched.metadata.method, "feed");
+    assert!(fetched.metadata.feed.as_ref().unwrap().entries > 0);
+    assert!(!fetched.text.contains("<rss"));
+    assert!(fetched.text.len() < 8192);
+    assert!(!fetched.preview_truncated);
+    println!(
+        "Feed download: {} bytes; compact listing: {} bytes; entries: {}",
+        fetched.bytes_downloaded,
+        fetched.text.len(),
+        fetched.metadata.feed.as_ref().unwrap().entries
+    );
     let pages = tools
         .extract_v1(&[url.into()], 1024 * 1024, 8192, 8192, &cancellation)
         .unwrap();
     assert!(pages[0].error.is_none(), "{:?}", pages[0].error);
-    assert!(pages[0].content.contains("<rss"));
+    assert_eq!(pages[0].metadata.as_ref().unwrap().method, "feed");
+    let full = tools
+        .document_with_feed_content_v1(
+            url,
+            1024 * 1024,
+            false,
+            aworkit_capability_host::WebFeedContentV1::Full,
+            &cancellation,
+        )
+        .unwrap();
+    assert!(full.text.len() > fetched.text.len());
+    assert!(!full.text.contains("<iframe"));
     println!("Host Python HTTPS, web_fetch RSS, and web_extract RSS succeeded.");
 }

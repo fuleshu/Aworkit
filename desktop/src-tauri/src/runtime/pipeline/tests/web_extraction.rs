@@ -26,7 +26,13 @@ impl WebTransportPort for Fixture {
         }
         Ok(WebSourceV1 {
             final_url: url.into(),
-            body: "<item><title>αβγ evidence line.</title></item>\n".repeat(2000),
+            body: if self.content_type.contains("rss") {
+                format!("<rss version='2.0'><channel><title>Fixture</title>{}</channel></rss>", "<item><title>αβγ evidence line.</title><description>Article body marker</description></item>".repeat(2000))
+            } else if self.content_type.contains("atom") {
+                format!("<feed xmlns='http://www.w3.org/2005/Atom'><title>Fixture</title>{}</feed>", "<entry><title>αβγ evidence line.</title><content>Article body marker</content></entry>".repeat(2000))
+            } else {
+                "αβγ evidence line.\n".repeat(2000)
+            },
             content_type: self.content_type.into(),
             bytes_downloaded: 8192,
             truncated: true,
@@ -39,6 +45,7 @@ impl WebTransportPort for Fixture {
 struct Factory {
     observed: Arc<Mutex<Vec<Value>>>,
     many: bool,
+    full: bool,
 }
 impl ProviderFactoryV1 for Factory {
     fn create(
@@ -52,6 +59,7 @@ impl ProviderFactoryV1 for Factory {
             version: descriptor.version_hash.clone(),
             observed: self.observed.clone(),
             many: self.many,
+            full: self.full,
         }))
     }
 }
@@ -60,6 +68,7 @@ struct Provider {
     version: String,
     observed: Arc<Mutex<Vec<Value>>>,
     many: bool,
+    full: bool,
 }
 impl ProviderEnginePortV1 for Provider {
     fn binding_id(&self) -> &str {
@@ -100,7 +109,11 @@ impl ProviderEnginePortV1 for Provider {
                 "call.web.first",
                 CAPABILITY,
                 "aworkit_web_extract",
-                json!({"urls":urls}),
+                if self.full {
+                    json!({"urls":urls,"feedContent":"full"})
+                } else {
+                    json!({"urls":urls})
+                },
             ))?;
         } else if request.exchanges.len() == 1 && !self.many {
             let result = &request.exchanges[0].results[0].content;
@@ -139,13 +152,21 @@ impl ProviderEnginePortV1 for Provider {
 
 #[test]
 fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_download() {
-    for (many, budget, storage_failure, content_type) in [
-        (false, 1024, false, "text/plain"),
-        (true, 1024, false, "text/plain"),
-        (true, 64 * 1024, false, "text/plain"),
-        (true, 1024, true, "text/plain"),
-        (false, 1024, false, "application/rss+xml; charset=UTF-8"),
-        (false, 1024, false, "application/atom+xml"),
+    for (many, budget, storage_failure, content_type, full) in [
+        (false, 1024, false, "text/plain", false),
+        (true, 1024, false, "text/plain", false),
+        (true, 64 * 1024, false, "text/plain", false),
+        (true, 1024, true, "text/plain", false),
+        (
+            false,
+            1024,
+            false,
+            "application/rss+xml; charset=UTF-8",
+            false,
+        ),
+        (false, 1024, false, "application/atom+xml", false),
+        (false, 1024, false, "application/rss+xml", true),
+        (false, 1024, false, "application/atom+xml", true),
     ] {
         let root = TempDir::new().unwrap();
         let (mut pipeline, _, credential, _, _) =
@@ -161,6 +182,7 @@ fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_down
         pipeline.provider_factory = Arc::new(Factory {
             observed: observed.clone(),
             many,
+            full,
         });
         let mut execution = request(credential);
         execution.provider.maximum_tool_output_bytes = budget;
@@ -227,6 +249,15 @@ fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_down
             assert_eq!(first["documentId"], next["documentId"]);
             assert_eq!(first["nextOffset"], next["offset"]);
             assert_eq!(next["downloadTruncated"], true);
+            if content_type != "text/plain" {
+                assert_eq!(first["method"], "feed");
+                assert_eq!(
+                    first["feed"]["content"],
+                    if full { "full" } else { "metadata" }
+                );
+                assert_eq!(first["feed"], next["feed"]);
+                assert!(!first["content"].as_str().unwrap().contains("<item"));
+            }
         }
         let replay = pipeline.execute(execution).unwrap();
         assert!(replay.replayed);

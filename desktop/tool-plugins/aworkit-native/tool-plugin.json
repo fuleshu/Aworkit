@@ -795,8 +795,8 @@
     {
       "id": "tool.web_fetch",
       "name": "Web page fetch",
-      "description": "Read one HTTPS page with local extraction and optional rendering.",
-      "instructions": "Retrieve a specific URL when its content is needed. Assess the returned content and completeness before deciding on another action. Use documentId and nextOffset to read retained text without fetching again. Download truncation means some source content was never retained. Cite the URL when using the content.",
+      "description": "Read one HTTPS page or a compact RSS/Atom feed listing.",
+      "instructions": "Retrieve a specific URL when its content is needed. RSS/Atom returns titles, article URLs, dates and authors by default; request feedContent=full only when article bodies are needed. Use documentId and nextOffset to continue the same retained projection without fetching again; omit documentId to change feedContent. Assess completeness before another action. bytesDownloaded is network input, not model context size. Cite the URL when using the content.",
       "executor": "web_fetch",
       "requiresProject": false,
       "execution": "native",
@@ -847,6 +847,11 @@
             "maxLength": 68,
             "description": "Saved immutable document from this Run; reads never re-fetch."
           },
+          "feedContent": {
+            "type": "string",
+            "enum": ["metadata", "full"],
+            "description": "RSS/Atom projection: metadata (default) lists entries without article bodies; full includes readable bodies. Non-feed pages are unchanged. Saved reads keep their original projection."
+          },
           "offset": {
             "type": "integer",
             "minimum": 0,
@@ -863,8 +868,8 @@
     {
       "id": "tool.web_extract",
       "name": "Web page extract",
-      "description": "Read up to ten HTTPS pages independently.",
-      "instructions": "Retrieve the supplied URLs and assess each result independently. Use documentId and nextOffset with the same single URL to continue reading retained text. Distinguish partial source downloads from shortened previews. Cite pages whose content supports the answer.",
+      "description": "Read up to ten HTTPS pages or compact RSS/Atom feed listings independently.",
+      "instructions": "Retrieve supplied URLs and assess each result independently. RSS/Atom returns titles, article URLs, dates and authors by default; request feedContent=full only when article bodies are needed. Use documentId and nextOffset with the same single URL to continue retained text; omit documentId to change feedContent. Distinguish partial downloads from shortened previews. bytesDownloaded is network input, not model context size. Cite pages whose content supports the answer.",
       "executor": "web_extract",
       "requiresProject": false,
       "execution": "native",
@@ -920,6 +925,11 @@
             "minLength": 68,
             "maxLength": 68,
             "description": "Saved immutable document; provide exactly the same single URL."
+          },
+          "feedContent": {
+            "type": "string",
+            "enum": ["metadata", "full"],
+            "description": "RSS/Atom projection: metadata (default) lists entries without article bodies; full includes readable bodies. Non-feed pages are unchanged. Saved reads keep their original projection."
           },
           "offset": {
             "type": "integer",

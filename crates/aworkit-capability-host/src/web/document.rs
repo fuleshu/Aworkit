@@ -5,6 +5,25 @@ use serde::{Deserialize, Serialize};
 
 pub const MAXIMUM_WEB_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
+/// A call-level projection of feed entries; both modes share the same byte limits.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WebFeedContentV1 {
+    #[default]
+    Metadata,
+    Full,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebFeedMetadataV1 {
+    pub format: String,
+    pub entries: usize,
+    pub content: WebFeedContentV1,
+    /// Parsing recovered only complete entries from an incomplete or malformed feed.
+    pub incomplete: bool,
+}
+
 /// Transport input to the same extractor used for HTTP and rendered DOMs.
 #[derive(Clone, Debug)]
 pub struct WebSourceV1 {
@@ -41,6 +60,8 @@ pub struct WebDocumentMetadataV1 {
     pub document_truncated: bool,
     pub fetched_at_epoch_ms: u64,
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<WebFeedMetadataV1>,
 }
 
 /// Full bounded extraction retained by the caller before previewing it.
