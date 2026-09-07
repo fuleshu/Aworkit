@@ -8,6 +8,7 @@ import { initializeSystemTextScale, projectSystemTextScale } from "./systemTextS
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), unlisten: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: native.listen }));
+vi.mock("./nativeMenuTypography", () => ({ projectNativeMenuTypography: vi.fn() }));
 
 beforeEach(() => {
   vi.clearAllMocks();

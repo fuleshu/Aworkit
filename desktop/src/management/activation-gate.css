@@ -45,7 +45,7 @@
 .capability-report-details summary {
   color: var(--aw-muted);
   cursor: pointer;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   width: fit-content;
 }
 
@@ -85,7 +85,7 @@
 }
 
 .activation-decision legend {
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
   font-weight: 600;
   margin-bottom: 2px;
 }
@@ -113,7 +113,7 @@
 .activation-gate-status,
 .activation-unavailable-reason {
   color: var(--aw-warning);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 
 .activation-actions {

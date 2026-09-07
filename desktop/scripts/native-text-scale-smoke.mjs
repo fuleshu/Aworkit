@@ -35,7 +35,7 @@ let nativeLog = "", view;
 child.stdout.on("data", chunk => { nativeLog += chunk; });
 child.stderr.on("data", chunk => { nativeLog += chunk; });
 const delay = () => new Promise(resolve => setTimeout(resolve, 100));
-const report = { screens: [] };
+const report = { screens: [], baselines: [] };
 try {
   for (let attempt = 0; attempt < 300; attempt++) {
     try { view = await connectNativeWebView(endpoint); break; } catch { await delay(); }
@@ -53,6 +53,11 @@ try {
   report.devicePixelRatio = await view.evaluate("window.devicePixelRatio");
   assert.equal(await view.evaluate("Number(document.documentElement.style.getPropertyValue('--aw-system-text-scale'))"), report.nativeSystemScale);
   assert.ok(!nativeLog.includes("Windows text scaling is unavailable"), nativeLog);
+  // Non-client menu geometry is materialized only when the window is shown.
+  await view.evaluate("window.__TAURI_INTERNALS__.invoke('native_window_action', { action: 'show' })");
+  await delay();
+  report.menu100 = await view.evaluate("window.__TAURI_INTERNALS__.invoke('native_menu_font_metrics')");
+  assert.ok(Math.abs(report.menu100.fontSize - 13 * report.nativeSystemScale) < 0.01);
   await view.evaluate(`(async () => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     const settings = await invoke('settings_snapshot');
@@ -91,6 +96,15 @@ try {
     await view.evaluate("document.documentElement.style.setProperty('--aw-font-scale', '1')");
     const before = await capture();
     assert.ok(before.length > 15, `${name} has rendered text`);
+    const tooSmall = before.filter(item => item.size < 12 * report.nativeSystemScale - 0.01);
+    const tooLarge = before.filter(item => item.size > 16 * report.nativeSystemScale + 0.01);
+    assert.deepEqual(tooSmall, [], `${name}: no text below the 12px caption baseline`);
+    assert.deepEqual(tooLarge, [], `${name}: UI headings stay within the 16px title baseline`);
+    report.baselines.push({ name, min: Math.min(...before.map(item => item.size)), max: Math.max(...before.map(item => item.size)) });
+    if (name === 'chat') {
+      report.chatBody = await view.evaluate("parseFloat(getComputedStyle(document.querySelector('.bubble-markdown p')).fontSize)");
+      assert.ok(Math.abs(report.chatBody - 14 * report.nativeSystemScale) < 0.01);
+    }
     await view.screenshot(resolve(root, `${name}-100.png`));
     await view.evaluate("document.documentElement.style.setProperty('--aw-font-scale', '1.3')");
     await delay();
@@ -121,18 +135,32 @@ try {
   })()`);
   await delay();
   await compare("Settings selector preview", beforePreview, 1.3);
+  report.menu130 = await view.evaluate("window.__TAURI_INTERNALS__.invoke('native_menu_font_metrics')");
+  assert.ok(Math.abs(report.menu130.fontSize / report.menu100.fontSize - 1.3) < 0.01, "Native menu follows the actual Settings preview");
+  assert.ok(report.menu130.items.every((item, i) => item.height > report.menu100.items[i].height), "Native menu bar remeasures its height");
+  assert.ok(report.menu130.items.every((item, i) => item.width > report.menu100.items[i].width && item.width > 30), "Native menu labels keep their full measured width");
   await button("Save configuration");
   await waitFor("document.querySelector('.notification-message')?.textContent === 'Settings saved.'");
   await view.command("Page.reload");
   await waitFor("document.documentElement.dataset.appearanceReady === 'true'");
   assert.equal(await view.evaluate("document.documentElement.style.getPropertyValue('--aw-font-scale')"), "1.3", "Saved scale survives native reload");
+  report.menuReload = await view.evaluate("window.__TAURI_INTERNALS__.invoke('native_menu_font_metrics')");
+  assert.equal(report.menuReload.fontSize, report.menu130.fontSize, "Native menu restores the saved scale");
   await view.evaluate("[...document.querySelectorAll('nav[aria-label=\"Primary navigation\"] button')].find(b => b.textContent.includes('Workflows')).click()");
   await waitFor("Boolean(document.querySelector('.react-flow'))");
   await checkScreen("workflows");
   report.ok = true;
   await writeFile(resolve(root, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ root, ...report }, null, 2));
+  if (process.env.AWORKIT_QA_KEEP_OPEN === '1') {
+    await view.command("Page.reload");
+    await waitFor("document.documentElement.dataset.appearanceReady === 'true'");
+    await view.evaluate("window.__TAURI_INTERNALS__.invoke('native_window_action', { action: 'show' })");
+    console.log('Native typography QA window ready for visual and keyboard checks. Close this test window to finish.');
+    await once(child, 'exit');
+  }
 } finally {
+  await writeFile(resolve(root, "report.json"), JSON.stringify(report, null, 2));
   await writeFile(resolve(root, "native.log"), nativeLog);
   view?.close();
   child.kill();

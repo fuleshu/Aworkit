@@ -58,7 +58,7 @@
 
 .repair-card > header > span:not(.status) {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 
 .repair-card > p {

@@ -324,7 +324,8 @@ fn probe_host_python(tool: &BuiltInToolConfigurationV2) -> Result<(String, Strin
             &PythonInvocationV1 {
                 mode: ToolAuthorityModeV1::HostPython,
                 interpreter,
-                script: "import sys; sys.stdout.write('aworkit-python-ok')".into(),
+                // Exercise OS name resolution without depending on Internet availability.
+                script: "import socket, sys; socket.getaddrinfo('localhost', 443, type=socket.SOCK_STREAM); sys.stdout.write('aworkit-python-ok')".into(),
                 arguments: Vec::new(),
                 working_directory: None,
                 environment: BTreeMap::new(),
@@ -338,8 +339,7 @@ fn probe_host_python(tool: &BuiltInToolConfigurationV2) -> Result<(String, Strin
     }
     Ok((
         health.adapter,
-        "Python started in isolated interpreter mode through the bounded native process-group adapter."
-            .into(),
+        "Python started in isolated interpreter mode and resolved localhost successfully.".into(),
     ))
 }
 

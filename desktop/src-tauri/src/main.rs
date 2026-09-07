@@ -79,6 +79,18 @@ fn native_system_text_scale(
 }
 
 #[tauri::command]
+fn native_set_menu_font(window: tauri::WebviewWindow, font_size: f64, dark: bool) -> Result<(), String> {
+    aworkit_desktop::menu_typography::project(&window, font_size, dark)
+}
+
+#[cfg(all(debug_assertions, target_os = "windows"))]
+#[tauri::command]
+async fn native_menu_font_metrics(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || aworkit_desktop::menu_typography::metrics(&window))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn native_set_appearance(
     window: tauri::WebviewWindow,
     appearance: NativeAppearanceV1,
@@ -668,6 +680,9 @@ fn main() {
                 return Ok(());
             }
             aworkit_desktop::presentation::install_application_menu(app.handle())?;
+            if let Some(window) = app.get_webview_window("main") {
+                aworkit_desktop::menu_typography::install(&window).map_err(std::io::Error::other)?;
+            }
             app.manage(aworkit_desktop::system_text_scale::SystemTextScale::observe(app.handle()));
             let app_data_root = app
                 .path()
@@ -746,6 +761,9 @@ fn main() {
                 management_repair_command,
                 native_presentation_capabilities,
                 native_system_text_scale,
+                native_set_menu_font,
+                #[cfg(all(debug_assertions, target_os = "windows"))]
+                native_menu_font_metrics,
                 native_set_appearance,
                 native_window_action,
                 native_notify,

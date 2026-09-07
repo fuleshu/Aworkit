@@ -1,5 +1,5 @@
 .chat-approval-control { padding: 0 14px 6px; }
-.approval-mode-select { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+.approval-mode-select { display: flex; align-items: center; gap: 8px; font-size: var(--aw-font-ui); }
 .approval-mode-select select { width: auto; min-width: 160px; }
 .approval-actions { display: grid; gap: 8px; padding-top: 8px; }
 .approval-actions .activity-actions { display: flex; flex-wrap: wrap; gap: 6px; }

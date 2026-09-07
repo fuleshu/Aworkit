@@ -4,6 +4,7 @@ Approved scope: direct HTTP retrieval, local structured extraction and assessmen
 
 ## Responsibilities
 
+- RSS (`application/rss+xml`) and Atom (`application/atom+xml`) are accepted as XML text by both web tools. Media types are matched case-insensitively and may include charset parameters. Feed XML stays intact; incomplete XML prefixes remain usable with the existing download/preview flags and saved-document continuation. No XML entities are resolved and feeds do not require browser rendering.
 - Capability host web transport downloads a bounded decoded response, preserving its prefix on overflow. HTTP errors, unsupported media, cancellation and permission failures remain explicit. Exact-limit EOF is complete; discarded bytes indicate truncation. A download cap never grants permission to fetch more using a browser.
 - The local extractor uses a maintained Readability implementation for article pages and structured Markdown conversion for general pages. It preserves headings, links, lists, tables and code. It assesses usable content, JavaScript shells and empty extraction using several signals; short legitimate pages and headline collections are valid. Assessment never claims semantic completeness.
 - The web runtime starts with HTTP and invokes the optional renderer at most once when assessment says rendering is needed and the download is complete. It reruns the same extractor on rendered HTML, retains the better useful candidate, and records fallback failures without discarding useful text. Cancellation always propagates.

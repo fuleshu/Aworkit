@@ -198,3 +198,87 @@ fn live_spiegel_extracts_with_explicit_completeness() {
         assert!(!page.text.is_empty());
     }
 }
+
+#[test]
+fn feed_media_types_preserve_xml_and_partial_evidence_without_rendering() {
+    for (mime, xml) in [
+        (
+            "application/rss+xml; charset=UTF-8",
+            "<rss><channel><title>News αβγ</title><item><title>Story</title><link>https://example.com/story</link><description><![CDATA[<b>Useful</b> content]]></description></item></channel></rss>",
+        ),
+        (
+            " Application/Atom+XML ; charset=utf-8",
+            "<feed xmlns='http://www.w3.org/2005/Atom'><title>News αβγ</title><entry><title>Story</title><link href='https://example.com/story'/></entry></feed>",
+        ),
+    ] {
+        for truncated in [false, true] {
+            let xml = if truncated {
+                &xml[..xml.len() - 10]
+            } else {
+                xml
+            };
+            let mut feed = source(xml, truncated);
+            feed.content_type = mime.into();
+            let renderer = Arc::new(Renderer {
+                calls: AtomicUsize::new(0),
+                body: None,
+                cancel: false,
+            });
+            let tools = WebTools::new(Arc::new(Source(feed))).with_renderer(renderer.clone());
+            let cancellation = CancellationToken::default();
+            let document = tools
+                .document_v1("https://example.com/feed", 8192, true, &cancellation)
+                .unwrap();
+            assert_eq!(document.text, xml);
+            assert_eq!(document.metadata.quality, WebExtractionQualityV1::Usable);
+            assert_eq!(document.metadata.method, "text");
+            assert_eq!(document.metadata.download_truncated, truncated);
+            assert_eq!(renderer.calls.load(Ordering::SeqCst), 0);
+
+            let fetched = tools
+                .fetch_v1("https://example.com/feed", 8192, 64, &cancellation)
+                .unwrap();
+            assert!(xml.starts_with(&fetched.text));
+            assert!(!fetched.text.is_empty());
+            assert!(fetched.preview_truncated);
+            assert_eq!(fetched.metadata.download_truncated, truncated);
+            let pages = tools
+                .extract_v1(
+                    &["https://example.com/feed".into()],
+                    8192,
+                    64,
+                    64,
+                    &cancellation,
+                )
+                .unwrap();
+            assert!(pages[0].error.is_none());
+            assert_eq!(pages[0].content, fetched.text);
+            assert_eq!(
+                pages[0].metadata.as_ref().unwrap().download_truncated,
+                truncated
+            );
+        }
+    }
+}
+
+#[test]
+fn feed_support_does_not_accept_binary_documents_as_text() {
+    for mime in ["application/pdf", "image/png", "application/octet-stream"] {
+        let mut binary = source("binary fixture", false);
+        binary.content_type = mime.into();
+        let tools = WebTools::new(Arc::new(Source(binary)));
+        let error = tools
+            .document_v1(
+                "https://example.com/file",
+                8192,
+                true,
+                &CancellationToken::default(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("unsupported web content type: {mime}"))
+        );
+    }
+}

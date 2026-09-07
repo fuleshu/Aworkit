@@ -12,6 +12,7 @@ import { initializeSystemTextScale } from "./workbench/systemTextScale";
 import "@mantine/core/styles.css";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
+import "./typography.css";
 
 const root = document.getElementById("root");
 if (root === null) {

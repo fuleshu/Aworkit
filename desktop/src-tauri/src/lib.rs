@@ -2,6 +2,7 @@
 
 pub mod live_qa;
 pub mod management;
+pub mod menu_typography;
 pub mod presentation;
 pub mod runtime;
 pub mod system_text_scale;

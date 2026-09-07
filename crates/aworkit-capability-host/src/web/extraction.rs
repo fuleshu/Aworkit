@@ -13,14 +13,27 @@ pub(super) struct Extraction {
 }
 
 pub(super) fn extract(source: &WebSourceV1) -> Result<Extraction, String> {
-    let mime = source.content_type.split(';').next().unwrap_or("").trim();
+    let mime = source
+        .content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let mime = mime.as_str();
     if mime != "text/html" && mime != "application/xhtml+xml" {
         if mime.starts_with("text/")
             || matches!(
                 mime,
-                "application/json" | "application/xml" | "application/javascript"
+                "application/json"
+                    | "application/xml"
+                    | "application/javascript"
+                    | "application/rss+xml"
+                    | "application/atom+xml"
             )
         {
+            // Preserve feed XML verbatim, including useful incomplete download prefixes.
+            // No XML parsing or external-entity resolution is needed for text extraction.
             let text = source.body.trim().to_owned();
             let quality = if text.is_empty() {
                 Quality::Empty

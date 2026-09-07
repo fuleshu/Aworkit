@@ -1,6 +1,5 @@
 :root {
-  /* Preserve the 13/16 compact baseline while respecting the platform default.
-     All feature typography uses rem so both text scales apply exactly once. */
+  /* 14px reading baseline at the standard 16px platform default. */
   color: var(--aw-text, #1e2228);
   background: var(--aw-window, #f7f8fa);
   font-family:
@@ -10,8 +9,8 @@
     "Segoe UI",
     "Noto Sans",
     sans-serif;
-  font-size: calc(81.25% * var(--aw-font-scale, 1) * var(--aw-system-text-scale, 1));
-  line-height: calc(18rem / 13);
+  font-size: calc(87.5% * var(--aw-font-scale, 1) * var(--aw-system-text-scale, 1));
+  line-height: 1.5;
   font-synthesis: none;
 }
 html[data-appearance="dark"] {
@@ -93,32 +92,38 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: calc(16rem / 13);
+  font-size: var(--aw-font-title);
   font-weight: 600;
-  line-height: calc(20rem / 13);
+  line-height: 1.5;
 }
 h2 {
-  font-size: calc(14rem / 13);
+  font-size: var(--aw-font-heading);
   font-weight: 600;
-  line-height: calc(20rem / 13);
+  line-height: 1.5;
 }
 h3 {
-  font-size: calc(13rem / 13);
+  font-size: var(--aw-font-body);
   font-weight: 600;
+}
+h4,
+h5,
+h6 {
+  font-size: var(--aw-font-body);
+  line-height: 1.5;
 }
 code,
 pre {
   font-family:
     ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: calc(12rem / 13);
-  line-height: calc(17rem / 13);
+  font-size: var(--aw-font-ui);
+  line-height: 1.5;
 }
 .eyebrow {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   letter-spacing: 0.08em;
-  line-height: calc(14rem / 13);
+  line-height: 1.5;
 }
 .primary-action {
   background: var(--aw-accent);
@@ -235,7 +240,7 @@ pre {
   border-radius: 4px;
   color: var(--aw-on-accent);
   display: inline-flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   height: calc(18rem / 13);
   justify-content: center;
@@ -270,7 +275,7 @@ pre {
 }
 .nav-section-label {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   letter-spacing: 0.1em;
   margin: 9px 6px 3px;
@@ -462,7 +467,7 @@ pre {
 }
 .toolbar-actions > span {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .status {
   align-items: center;
@@ -470,10 +475,10 @@ pre {
   border-radius: 999px;
   color: var(--aw-opaque);
   display: inline-flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   gap: 4px;
-  line-height: calc(18rem / 13);
+  line-height: 1.5;
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -505,7 +510,7 @@ pre {
 .count-warning,
 .count-success {
   border-radius: 8px;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   padding: 1px 5px;
 }
 .count-warning {
@@ -570,13 +575,13 @@ pre {
 }
 .chat-title-line > span {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .run-status {
   align-items: center;
   color: var(--aw-info);
   display: inline-flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   gap: 7px;
   margin-right: 6px;
@@ -654,7 +659,7 @@ pre {
 }
 .timeline-date {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-bottom: 8px;
 }
 .timeline-empty {
@@ -697,7 +702,7 @@ pre {
 .message-body small {
   color: var(--aw-muted);
   display: block;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 5px;
 }
 .message-row.selected .user-speech-bubble {
@@ -720,7 +725,7 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   min-height: 22px;
   padding: 1px 5px;
 }
@@ -744,7 +749,7 @@ pre {
   border-radius: 50%;
   color: var(--aw-accent);
   display: inline-flex;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 800;
   height: 30px;
   justify-content: center;
@@ -857,27 +862,27 @@ pre {
 }
 .bubble-heading-copy small {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 400;
   margin-top: 1px;
 }
 .bubble-heading > .status {
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .bubble-byline {
   color: var(--aw-muted);
   display: block;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 7px;
 }
 .bubble-markdown {
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-body);
   line-height: 1.55;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .thinking-bubble .bubble-markdown {
-  color: var(--aw-secondary);
+  color: var(--aw-text);
   margin-top: 6px;
 }
 .bubble-markdown > :first-child {
@@ -904,8 +909,10 @@ pre {
 .bubble-markdown h1,
 .bubble-markdown h2,
 .bubble-markdown h3,
-.bubble-markdown h4 {
-  font-size: calc(12rem / 13);
+.bubble-markdown h4,
+.bubble-markdown h5,
+.bubble-markdown h6 {
+  font-size: var(--aw-font-heading);
   line-height: 1.35;
   margin: 10px 0 5px;
 }
@@ -917,7 +924,7 @@ pre {
 .bubble-markdown code {
   background: var(--aw-inset);
   border-radius: 3px;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-body);
   padding: 1px 4px;
 }
 .bubble-markdown pre {
@@ -964,7 +971,7 @@ pre {
 .bubble-data-details > summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .bubble-data-details > .activity-data {
   border: 0;
@@ -1002,11 +1009,11 @@ pre {
 }
 .model-call-heading-copy small {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 1px;
 }
 .model-call-heading > .status {
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .model-call-status-mark {
   align-items: center;
@@ -1048,7 +1055,7 @@ pre {
 .model-call-data > summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   padding: 7px 0;
 }
 .model-call-data > pre {
@@ -1133,7 +1140,7 @@ pre {
 .reasoning-label {
   color: var(--aw-muted);
   display: block;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 2px;
 }
 .activity-actions {
@@ -1150,7 +1157,7 @@ pre {
 .activity-raw summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .activity-raw pre {
   background: var(--aw-inset);
@@ -1175,7 +1182,7 @@ pre {
 }
 .activity-data dt {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 700;
   letter-spacing: 0.04em;
   margin-bottom: 3px;
@@ -1226,7 +1233,7 @@ pre {
 }
 .activity-heading > span:last-child {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   margin-left: auto;
 }
 .progress-track {
@@ -1248,7 +1255,7 @@ pre {
 }
 .plan-card li {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .plan-card li.done {
   color: var(--aw-text);
@@ -1266,7 +1273,7 @@ pre {
   align-items: center;
   color: var(--aw-muted);
   display: flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   justify-content: space-between;
 }
 .composer-meta label {
@@ -1287,7 +1294,7 @@ pre {
 }
 .queued-input-preview {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .queued-input-preview summary {
   cursor: pointer;
@@ -1432,7 +1439,7 @@ pre {
   padding-top: 11px;
 }
 .run-details-section h3 {
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
   margin: 0 0 9px;
 }
 .run-details-prose,
@@ -1500,7 +1507,7 @@ pre {
 }
 .run-details-log small {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 2px;
 }
 .run-details-raw-note {
@@ -1566,8 +1573,8 @@ pre {
 }
 .structure-lock-copy,
 .workflow-help-copy {
-  font-size: calc(10rem / 13);
-  line-height: calc(15rem / 13);
+  font-size: var(--aw-font-caption);
+  line-height: 1.5;
   margin: 0 0 10px;
 }
 .node-palette section {
@@ -1577,7 +1584,7 @@ pre {
 }
 .node-palette section > small {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   letter-spacing: 0.08em;
 }
@@ -1592,7 +1599,7 @@ pre {
   align-items: center;
   background: var(--aw-inset);
   display: inline-flex;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   min-height: calc(20rem / 13);
   justify-content: center;
   min-width: calc(22rem / 13);
@@ -1605,7 +1612,7 @@ pre {
 }
 .node-palette section button small {
   color: var(--aw-warning);
-  font-size: calc(8rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .node-palette .node-type-grid button {
   cursor: grab;
@@ -1647,7 +1654,7 @@ pre {
 }
 .workflow-outline ol li {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1662,7 +1669,7 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   min-width: 0;
   overflow: hidden;
   padding: 2px 5px;
@@ -1683,7 +1690,7 @@ pre {
 }
 .outline-connect label {
   display: grid;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   gap: 2px;
 }
 .graph-surface {
@@ -1699,11 +1706,11 @@ pre {
 .react-flow__node-input,
 .react-flow__node-output,
 .react-flow__node-group {
-  font-size: calc(12rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .react-flow__edge-text,
 .react-flow__attribution {
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .graph-surface .react-flow__controls,
 .graph-surface .react-flow__minimap {
@@ -1733,7 +1740,7 @@ pre {
   background: var(--aw-inset);
   border-radius: 4px;
   display: flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   height: calc(28rem / 13);
   justify-content: center;
   width: calc(28rem / 13);
@@ -1743,7 +1750,7 @@ pre {
 }
 .node-copy span {
   color: var(--aw-muted);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .properties-pane {
   background: var(--aw-navigation);
@@ -1799,7 +1806,7 @@ pre {
 }
 .property-content textarea[spellcheck="false"] {
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .property-content dl {
   display: grid;
@@ -1839,7 +1846,7 @@ pre {
 .raw-workflow-fields summary {
   color: var(--aw-secondary);
   cursor: pointer;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .raw-workflow-fields pre {
   margin-top: 6px;
@@ -1875,8 +1882,8 @@ pre {
 .settings-body > nav button small {
   color: var(--aw-muted);
   display: block;
-  font-size: calc(9rem / 13);
-  line-height: calc(12rem / 13);
+  font-size: var(--aw-font-caption);
+  line-height: 1.5;
 }
 .settings-body > main {
   padding: 20px 24px;
@@ -1906,7 +1913,7 @@ pre {
 }
 .settings-nav-state {
   color: var(--aw-warning);
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 700;
 }
 .settings-v2-body > main {
@@ -1954,7 +1961,7 @@ pre {
 .settings-field {
   color: var(--aw-secondary);
   display: grid;
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
   gap: 5px;
   min-width: 0;
 }
@@ -2019,7 +2026,7 @@ pre {
   padding: 12px;
 }
 .settings-subsection > h4 {
-  font-size: calc(12rem / 13);
+  font-size: var(--aw-font-ui);
   margin: 0;
 }
 .web-search-settings {
@@ -2062,7 +2069,7 @@ pre {
 .settings-path {
   color: var(--aw-muted);
   display: block;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   margin-top: 3px;
   overflow-wrap: anywhere;
 }
@@ -2197,8 +2204,8 @@ pre {
   background: var(--aw-panel);
   border: 1px solid var(--aw-divider);
   color: var(--aw-secondary);
-  font-size: calc(12rem / 13);
-  line-height: calc(18rem / 13);
+  font-size: var(--aw-font-ui);
+  line-height: 1.5;
   margin: 0;
   padding: 9px 10px;
 }
@@ -2274,7 +2281,7 @@ pre {
 .setting-list article span,
 .setting-list article small {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .setting-list .status {
   color: inherit;
@@ -2316,7 +2323,7 @@ pre {
 .provider-fields label > span,
 .provider-detail {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .provider-card-heading p {
   margin-top: 3px;
@@ -2350,7 +2357,7 @@ pre {
 }
 .provider-detail {
   flex: 1;
-  line-height: calc(17rem / 13);
+  line-height: 1.5;
   text-align: right;
 }
 .provider-detail > span,
@@ -2619,7 +2626,7 @@ pre {
 }
 .node-config-form legend {
   color: var(--aw-secondary);
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   font-weight: 600;
   padding: 0 4px;
 }
@@ -2633,8 +2640,8 @@ pre {
 }
 .config-help {
   color: var(--aw-muted);
-  font-size: calc(9rem / 13);
-  line-height: calc(13rem / 13);
+  font-size: var(--aw-font-caption);
+  line-height: 1.5;
 }
 .tool-multi-field .checkbox-row {
   align-items: center;
@@ -2646,7 +2653,7 @@ pre {
   margin: 0;
 }
 .tool-multi-field .checkbox-row span {
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
 }
 .tool-multi-field .checkbox-row code,
 .config-help code {
@@ -2673,7 +2680,7 @@ pre {
 .workflow-library-bar label {
   align-items: center;
   display: flex;
-  font-size: calc(10rem / 13);
+  font-size: var(--aw-font-caption);
   gap: 5px;
 }
 .workflow-library-bar select,
@@ -2693,8 +2700,8 @@ pre {
 .plan-call-body,
 .subagent-body {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
-  line-height: calc(16rem / 13);
+  font-size: var(--aw-font-ui);
+  line-height: 1.5;
   margin: 8px 0 0;
   white-space: pre-wrap;
 }
@@ -2707,7 +2714,7 @@ pre {
 }
 .todo-list li {
   color: var(--aw-secondary);
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
   padding-left: 18px;
   position: relative;
 }
@@ -2747,7 +2754,7 @@ pre {
   border-radius: 50%;
   display: inline-flex;
   flex: none;
-  font-size: calc(9rem / 13);
+  font-size: var(--aw-font-caption);
   height: 16px;
   justify-content: center;
   margin-left: auto;

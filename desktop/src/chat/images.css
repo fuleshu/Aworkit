@@ -57,7 +57,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(11rem / 13);
+  font-size: var(--aw-font-ui);
 }
 .chat-image-remove {
   position: absolute;
@@ -71,7 +71,7 @@
 }
 .chat-image-error {
   color: var(--aw-danger);
-  font-size: calc(12rem / 13);
+  font-size: var(--aw-font-ui);
   margin: 3px 0;
 }
 .chat-image-dialog {

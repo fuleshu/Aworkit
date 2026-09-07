@@ -1,0 +1,36 @@
+/* Reading text is the baseline; hierarchy relies on weight before size.
+   At 100%: captions 12, controls 13, reading 14, headings 15, titles 16 CSS px.
+   rem keeps OS text size and application scaling consistent for every role. */
+:root {
+  --aw-font-caption: calc(12rem / 14);
+  --aw-font-ui: calc(13rem / 14);
+  --aw-font-body: 1rem;
+  --aw-font-heading: calc(15rem / 14);
+  --aw-font-title: calc(16rem / 14);
+}
+
+small,
+sub,
+sup {
+  font-size: var(--aw-font-caption);
+}
+
+.navigation-pane,
+.surface-toolbar,
+.chat-view-header,
+.run-details-inspector,
+.node-palette,
+.property-content,
+.settings-body,
+.management-screen,
+.desktop-status-bar {
+  font-size: var(--aw-font-ui);
+}
+
+.composer-input,
+.bubble-markdown,
+.plan-call-body,
+.subagent-body,
+.todo-list li {
+  font-size: var(--aw-font-body);
+}

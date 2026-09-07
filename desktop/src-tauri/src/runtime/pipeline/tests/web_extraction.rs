@@ -5,6 +5,7 @@ const CAPABILITY: &str = "tool.web_extract";
 
 struct Fixture {
     downloads: Arc<AtomicUsize>,
+    content_type: &'static str,
 }
 impl WebTransportPort for Fixture {
     fn search(&self, _: &str, _: usize) -> Result<Vec<WebSearchResultV1>, String> {
@@ -25,8 +26,8 @@ impl WebTransportPort for Fixture {
         }
         Ok(WebSourceV1 {
             final_url: url.into(),
-            body: "αβγ evidence line.\n".repeat(2000),
-            content_type: "text/plain".into(),
+            body: "<item><title>αβγ evidence line.</title></item>\n".repeat(2000),
+            content_type: self.content_type.into(),
             bytes_downloaded: 8192,
             truncated: true,
             warning: None,
@@ -138,11 +139,13 @@ impl ProviderEnginePortV1 for Provider {
 
 #[test]
 fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_download() {
-    for (many, budget, storage_failure) in [
-        (false, 1024, false),
-        (true, 1024, false),
-        (true, 64 * 1024, false),
-        (true, 1024, true),
+    for (many, budget, storage_failure, content_type) in [
+        (false, 1024, false, "text/plain"),
+        (true, 1024, false, "text/plain"),
+        (true, 64 * 1024, false, "text/plain"),
+        (true, 1024, true, "text/plain"),
+        (false, 1024, false, "application/rss+xml; charset=UTF-8"),
+        (false, 1024, false, "application/atom+xml"),
     ] {
         let root = TempDir::new().unwrap();
         let (mut pipeline, _, credential, _, _) =
@@ -152,6 +155,7 @@ fn web_extraction_small_model_budget_keeps_continuation_and_replay_does_not_down
             .file_tool_authority
             .set_web_tools_for_test(WebTools::new(Arc::new(Fixture {
                 downloads: downloads.clone(),
+                content_type,
             })));
         let observed = Arc::new(Mutex::new(vec![]));
         pipeline.provider_factory = Arc::new(Factory {

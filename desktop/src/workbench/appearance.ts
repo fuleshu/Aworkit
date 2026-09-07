@@ -1,4 +1,5 @@
 /** Canonical compact-desktop appearance roles shared by every feature surface. */
+import { projectNativeMenuTypography } from "./nativeMenuTypography";
 export type AppearancePreference = "system" | "light" | "dark";
 export type ResolvedAppearance = Exclude<AppearancePreference, "system">;
 let projectedAppearance: AppearancePreference = "system";
@@ -89,6 +90,7 @@ export function applyAppearance(
   root.dataset.appearance = resolved;
   root.dataset.forcedColors = String(environment.forcedColors);
   root.dataset.reducedMotion = String(environment.reducedMotion);
+  projectNativeMenuTypography();
   return resolved;
 }
 

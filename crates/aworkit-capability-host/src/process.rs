@@ -36,7 +36,7 @@ pub struct ProcessRequest {
     pub timeout: Duration,
 }
 
-/// Complete hermetic command specification.
+/// Explicit command environment, plus the Windows SystemRoot needed by OS services.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProcessSpecV1 {
     pub program: PathBuf,
@@ -251,9 +251,15 @@ impl ProcessRunner {
         let executable = ExecutableIdentityV1::open(&executable_path)
             .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
         let mut command = Command::new(&executable.canonical_path);
+        command.env_clear();
+        // Winsock name resolution needs SystemRoot even for an absolute executable.
+        // Keep the OS baseline without inheriting PATH, credentials, or app variables.
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
         command
             .args(&request.arguments)
-            .env_clear()
             .envs(&request.environment)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
