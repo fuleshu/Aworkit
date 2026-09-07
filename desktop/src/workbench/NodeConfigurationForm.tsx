@@ -1,6 +1,7 @@
 import { selectableTools } from "./toolRegistry";
+import { McpServerSelection } from "./McpServerSelection";
 import { useEffect, useMemo, useState } from "react";
-import type { SettingsV2Snapshot } from "./configuration";
+import type { McpServerConfiguration, SettingsV2Snapshot } from "./configuration";
 import {
   catalogEntryForType,
   type ConfigurationField,
@@ -64,6 +65,7 @@ interface FieldOptions {
   readonly tiers: readonly { readonly value: string; readonly label: string }[];
   readonly tools: readonly { readonly value: string; readonly label: string }[];
   readonly mcpServers: readonly { readonly value: string; readonly label: string }[];
+  readonly mcpConfigurations: readonly McpServerConfiguration[];
   readonly modelCapabilitiesByTier: Readonly<Record<string, readonly string[]>>;
 }
 
@@ -73,6 +75,7 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
       tiers: FALLBACK_TIERS,
       tools: [],
       mcpServers: [],
+      mcpConfigurations: [],
       modelCapabilitiesByTier: {},
     };
   const tiers =
@@ -96,7 +99,7 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
       return model === undefined ? [] : [[tier.id, model.capabilities]];
     }),
   );
-  return { tiers, tools, mcpServers, modelCapabilitiesByTier };
+  return { tiers, tools, mcpServers, mcpConfigurations: settings.settings.mcpServers, modelCapabilitiesByTier };
 }
 
 function ConfigurationFieldInput({
@@ -384,8 +387,11 @@ function ToolMultiField({
   readonly onChange: (patch: JsonObject) => void;
 }): React.JSX.Element {
   const selected = stringArrayValue(configuration[field.key]);
-  const known = new Set(options.tools.map(({ value }) => value));
-  const extras = selected.filter((id) => !known.has(id));
+  const native = options.tools.filter(({ value }) => !value.startsWith("mcp:"));
+  const known = new Set(native.map(({ value }) => value));
+  const extras = selected.filter((id) => !known.has(id) && !options.mcpConfigurations.some(
+    server => id === `mcp:${server.id}` || id.startsWith(`mcp://${server.id}/`),
+  ));
   const toggle = (toolId: string) => {
     const next = selected.includes(toolId)
       ? selected.filter((id) => id !== toolId)
@@ -395,7 +401,7 @@ function ToolMultiField({
   return (
     <fieldset className="tool-multi-field">
       <legend>{field.label}</legend>
-      {options.tools.map(({ value, label }) => (
+      {native.map(({ value, label }) => (
         <label className="checkbox-row" key={value}>
           <input
             checked={selected.includes(value)}
@@ -409,6 +415,12 @@ function ToolMultiField({
           </span>
         </label>
       ))}
+      {options.mcpConfigurations.length > 0 && <>
+        <p className="config-help">MCP servers</p>
+        {options.mcpConfigurations.map(server => <McpServerSelection key={server.id}
+          server={server} selected={selected} editable={editable}
+          onChange={next => onChange({ [field.key]: next })} />)}
+      </>}
       {extras.map((id) => (
         <label className="checkbox-row" key={id}>
           <input
@@ -425,7 +437,7 @@ function ToolMultiField({
           </span>
         </label>
       ))}
-      {options.mcpServers.length > 0 && <small className="config-help">Discover tools in Settings → MCP to include them here.</small>}
+      {options.mcpConfigurations.length > 0 && <small className="config-help">Each server includes all functions enabled in Settings → MCP. Changes apply to new Chats.</small>}
     </fieldset>
   );
 }

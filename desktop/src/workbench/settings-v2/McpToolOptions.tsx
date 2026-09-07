@@ -8,7 +8,7 @@ export function McpToolOptions({ server, onChange }: {
 }): React.JSX.Element {
   const tools = server.tools ?? [];
   return <div className="settings-section-stack">
-    {tools.length > 0 && <h4>Tools</h4>}
+    {tools.length > 0 && <h4>Function settings</h4>}
     {tools.map((tool, index) => <details key={tool.name} className="settings-record">
       <summary>{tool.name}{!tool.enabled && " (disabled)"}</summary>
       <p>{tool.description}</p>

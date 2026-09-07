@@ -1,3 +1,4 @@
+mod mcp_selection;
 mod tool_plugins;
 
 use std::{
@@ -557,7 +558,11 @@ impl DesktopRuntime {
             let library = self.documents.workflow_library();
             self.documents
                 .require_executable_workflow(&library.default_workflow_id)?;
-            let workflow = self.documents.workflow_snapshot();
+            let mut workflow = self.documents.workflow_snapshot();
+            workflow.document = mcp_selection::expand_server_selections(
+                &workflow.document,
+                self.documents.settings(),
+            )?;
             let mut resolved: Option<ResolvedWorkflowModel> = None;
             for tier_id in graph_model_tier_ids(&workflow.document) {
                 let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)?;
@@ -1623,7 +1628,7 @@ impl DesktopRuntime {
             };
         }
         let workflow_id = string_field(&command.payload, "workflowId")?;
-        let workflow = self.documents.workflow_snapshot_for(&workflow_id);
+        let mut workflow = self.documents.workflow_snapshot_for(&workflow_id);
         if workflow.document.is_null() {
             return Err(format!(
                 "workflow '{workflow_id}' does not exist in the workflow library"
@@ -1642,6 +1647,8 @@ impl DesktopRuntime {
             &self.documents.settings().projects,
             selected_project_id,
         )?;
+        workflow.document =
+            mcp_selection::expand_server_selections(&workflow.document, self.documents.settings())?;
         // MCP resolution: every mcp:// tool id must name an enabled saved MCP
         // server whose exact manifest is opened, credential-staged, and
         // discovered at freeze. The discovery snapshot supplies the exact

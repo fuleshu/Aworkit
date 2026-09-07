@@ -47,7 +47,7 @@ it("merges discovered MCP tools without overwriting overrides or another edited 
     return <McpServersSection servers={servers} credentials={[]} onPickCommand={async () => null} onChange={setServers} onProbe={probe} />;
   }
   render(<Editor />);
-  fireEvent.click(screen.getAllByRole("button", { name: "Discover and test" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh functions" }));
   fireEvent.change(screen.getAllByLabelText("Server name")[1], { target: { value: "Edited while discovering" } });
   finish({ ok: true, message: "Discovered", tools: [
     { name: "echo", description: "New description", inputSchema: { type: "object", properties: { text: { type: "string" } } }, enabled: true },
@@ -56,13 +56,15 @@ it("merges discovered MCP tools without overwriting overrides or another edited 
   await waitFor(() => expect(latest[0].tools).toHaveLength(2));
   expect(latest[1].name).toBe("Edited while discovering");
   expect(latest[0].tools![0]).toMatchObject({ description: "New description", enabled: false, options: base.tools![0].options });
-  expect(screen.getByText("Discovered")).toBeVisible();
+  expect(screen.getByText(/Connection successful/)).toBeVisible();
   expect(selectableTools({ tools: [], mcpServers: latest })).toEqual([{ value: "mcp://mcp.test/read", label: "Test · read" }]);
 });
 
 it("the shared registry supplies every native tool and keeps MCP identifiers in the same selection list", () => {
   const tools = nativeToolDefaults().map(tool => ({ ...tool, enabled: true }));
-  expect(new Set(selectableTools({ tools, mcpServers: [] }).map(tool => tool.value)).size).toBe(13);
+  const ids = new Set(selectableTools({ tools, mcpServers: [] }).map(tool => tool.value));
+  expect(ids.size).toBe(14);
+  expect(ids.has("tool.skill")).toBe(true);
   // All defaults are the same values consumed by native Settings validation.
   for (const tool of tools) expect(tool.configuration).toEqual(findNativeTool(tool.id)!.configuration);
 });

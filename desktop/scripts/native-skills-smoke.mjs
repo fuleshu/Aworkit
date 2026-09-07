@@ -87,7 +87,7 @@ try {
     const skill=v.settings.tools.find(t=>t.id==='tool.skill');skill.enabled=true;skill.configuration.aworkitHome=${JSON.stringify(globalHome)};skill.configuration.agentsHome=${JSON.stringify(resolve(root, "shared"))};
     v.settings.projects=[{id:'project.skills',name:'Skills fixture',workspace:{kind:'local_directory',location:${JSON.stringify(project)}},defaultWorkflowId:'workflow.simple-chat',portableHistoryEnabled:false}];
     await invoke('settings_v2_commit',{command:{commandId:'skills.tools',expectedVersion:v.version,settings:v.settings}});
-    const w=await invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'});w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=['tool.skill'];
+    const w=await invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'});w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=[];
     await invoke('workflow_commit',{command:{commandId:'skills.workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
   await view.command("Page.reload");
   await click("Settings"); await click("Tools");
@@ -96,6 +96,20 @@ try {
   await view.evaluate("document.getElementById('tool.skill-aworkitHome').closest('.settings-record').scrollIntoView({block:'start'})");
   await view.screenshot(resolve(root, "settings.png"));
   await click("Back to Chat");
+  // Bind and validate in the actual editor, so frontend/native catalog drift fails here.
+  await click("Workflows");
+  await setValue('.workflow-library-bar select', "workflow.simple-chat");
+  await waitFor("document.querySelector('.workflow-library-bar select')?.value === 'workflow.simple-chat' && document.body.innerText.includes('Version 2')");
+  await view.evaluate("[...document.querySelectorAll('[aria-label=\"Workflow nodes\"] button')].find(b=>b.textContent==='Agent').click()");
+  await waitFor("Boolean(document.querySelector('input[title=\"Bind Skills to this agent\"]'))");
+  await view.evaluate("document.querySelector('input[title=\"Bind Skills to this agent\"]').click()");
+  await click("Validate");
+  await waitFor("document.body.innerText.includes('Validation passed: this workflow document is executable.')");
+  assert.ok(!await view.evaluate("document.body.innerText.includes('no installed executor')"));
+  await view.screenshot(resolve(root, "workflow-validation.png"));
+  await click("Save");
+  await waitFor("window.__TAURI_INTERNALS__.invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'}).then(w=>w.document.nodes.find(n=>n.type==='agent').configuration.toolIds.includes('tool.skill'))");
+  await click("Run");
   await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.simple-chat");
   await setValue('select[aria-label="Project for the first Chat input"]', "project.skills");
   await setValue('textarea[aria-label="Chat input"]', "Use /manual /manual and load example skills."); await click("Send");
@@ -103,7 +117,7 @@ try {
   assert.deepEqual(failures, []); assert.equal(requests.length, 5);
   await view.screenshot(resolve(root, "chat.png"));
   await writeFile(resolve(root, "requests.json"), JSON.stringify(requests, null, 2));
-  const report = { ok: true, root, requests: requests.length, cases: ["native Settings controls and tooltips", "project precedence", "ignored .dsh", "deduplicated human-only gesture", "lazy body reload", "append-only catalog replacement", "model invocation rejected", "unknown skill rejected", "empty catalog retirement"] };
+  const report = { ok: true, root, requests: requests.length, cases: ["native Settings controls and tooltips", "workflow Skills selection, validation, save and Run", "project precedence", "ignored .dsh", "deduplicated human-only gesture", "lazy body reload", "append-only catalog replacement", "model invocation rejected", "unknown skill rejected", "empty catalog retirement"] };
   await writeFile(resolve(root, "result.json"), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   view?.close(); if (child.exitCode === null) { const exited = once(child, "exit"); child.kill(); await exited; }

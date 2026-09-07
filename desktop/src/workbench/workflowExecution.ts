@@ -1,4 +1,5 @@
 import { stableIdSchema } from "../protocol/schema";
+import { nativeTools } from "./toolRegistry";
 import type { JsonObject, WorkflowDocument } from "./workflow";
 
 export interface WorkflowExecutionIssue {
@@ -42,22 +43,8 @@ const CATALOG_NODE_TYPES = new Set([
   "completion",
 ]);
 
-/** Must remain equal to the native builtin_tool_binding_ids contract. */
-const BUILTIN_TOOL_BINDING_IDS = new Set([
-  "tool.files.read",
-  "tool.files.search",
-  "tool.files.list",
-  "tool.files.grep",
-  "tool.files.edit",
-  "tool.files.write",
-  "tool.shell.host",
-  "tool.python.host",
-  "tool.todo",
-  "tool.web_search",
-  "tool.web_fetch",
-  "tool.web_extract",
-  "tool.subagent",
-]);
+/** Use the bundled registry; native validation remains the execution authority. */
+const BUILTIN_TOOL_BINDING_IDS = new Set(nativeTools.map(({ id }) => id));
 
 const MAXIMUM_MODEL_CALL_TOKENS = 8192;
 const MAXIMUM_INSTRUCTIONS_BYTES = 64 * 1024;

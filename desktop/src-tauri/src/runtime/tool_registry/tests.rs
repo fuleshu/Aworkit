@@ -5,6 +5,15 @@ use serde_json::json;
 #[test]
 fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
     let defaults = native_defaults();
+    // The frontend validates bindings from this manifest; keep native admission aligned.
+    assert_eq!(
+        native_plugin()
+            .tools
+            .iter()
+            .map(|tool| tool.id.clone())
+            .collect::<BTreeSet<_>>(),
+        super::super::documents::builtin_tool_binding_ids()
+    );
     let mut names = BTreeSet::new();
     for entry in &native_plugin().tools {
         assert!(names.insert(&entry.provider_name));

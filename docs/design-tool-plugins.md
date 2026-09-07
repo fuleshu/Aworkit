@@ -15,12 +15,20 @@ contracts; editing a manifest cannot invent an implementation or sandbox.
 
 External tool plugins use MCP over stdio (an executable plus arguments) or
 streamable HTTP (a server endpoint). Folder scans never execute code. The explicit
-Discover and test action opens a temporary connection, including for a disabled
-draft; enabling makes its tools available to workflows. MCP is the external tool
+Enable MCP server checkbox (or Connect and enable button) opens a temporary
+connection and loads functions before enabling the draft. Failed connections and
+empty catalogs show a setup error. Save configuration publishes the result to
+workflows. Changing the transport disables the draft until it is connected again.
+MCP is the external tool
 protocol; Aworkit does not introduce a second tool wire protocol.
 
 The registry exposes the same tool identity/description/instructions contract
-for native and MCP tools. Workflow tool selection lists both. Unavailable
+for native and MCP tools. Agent nodes show one checkbox per MCP server. A saved
+`mcp:<server>` selection resolves to all enabled functions from the saved catalog
+at first input; the frozen workflow contains exact `mcp://<server>/<tool>` bindings.
+Later catalog edits affect only new Chats. Individual function bindings in older
+workflows remain unchanged until the user selects the whole server. Tool nodes
+still select one function because they execute one invocation. Unavailable
 references remain visible and fail explicitly instead of being dropped.
 
 ## Settings

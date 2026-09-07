@@ -16,6 +16,27 @@ import type { WorkflowDocument } from "./workflow";
 afterEach(cleanup);
 
 describe("lossless workflow editor", () => {
+  it("validates, saves, and runs an Agent after binding Skills", async () => {
+    const user = userEvent.setup();
+    const onRun = vi.fn();
+    const port = new RecordingWorkflowPort(simpleChat());
+    render(<WorkflowEditorScreen document={simpleChat()} onRun={onRun} workflowPort={port} />);
+    await screen.findByText("Version 7");
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.change(screen.getByLabelText("Configuration JSON"), {
+      target: { value: JSON.stringify({ modelTierId: "tier:balanced", toolIds: ["tool.skill"] }) },
+    });
+    await user.click(screen.getByRole("button", { name: "Apply configuration" }));
+    await user.click(screen.getByRole("button", { name: /^Validate/ }));
+    expect(screen.getByText("Validation passed: this workflow document is executable.")).toBeVisible();
+    expect(screen.queryByText(/no installed executor/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    expect(port.commits[0]?.document.nodes[1]?.configuration).toMatchObject({ toolIds: ["tool.skill"] });
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(onRun).toHaveBeenCalled();
+  });
+
   it("creates and deletes nodes and transitions without claiming they can run", async () => {
     const user = userEvent.setup();
     const { container } = render(

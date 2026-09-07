@@ -453,12 +453,12 @@ describe("Settings v2 workbench", () => {
       await user.click(screen.getByRole("button", { name: /MCP servers/ }));
       await user.click(screen.getByRole("button", { name: "Add server" }));
       await user.type(screen.getByLabelText("Command"), "fixture-mcp");
-      await user.click(screen.getByRole("button", { name: "Discover and test" }));
+      await user.click(screen.getByRole("button", { name: "Connect and enable" }));
       expect(
-        await screen.findByText(/Connected using MCP 2026-07-28/),
+        await screen.findByText(/Connection successful/),
       ).toBeVisible();
       await user.type(screen.getByLabelText("Server name"), " changed");
-      expect(screen.queryByText(/Connected using MCP 2026-07-28/)).toBeNull();
+      expect(screen.queryByText(/Connection successful/)).toBeNull();
 
       await user.click(screen.getByRole("button", { name: /External agents/ }));
       await user.click(screen.getByRole("button", { name: "Add agent" }));
@@ -667,8 +667,8 @@ describe("Settings v2 workbench", () => {
       );
       await user.click(screen.getByRole("button", { name: "Add server" }));
       await user.type(screen.getByLabelText("Command"), "fixture-mcp");
-      await user.click(screen.getByRole("button", { name: "Discover and test" }));
-      expect(await screen.findByText(/Connected using MCP 2026-07-28/)).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Connect and enable" }));
+      expect(await screen.findByText(/Connection successful/)).toBeVisible();
 
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
@@ -695,7 +695,7 @@ describe("Settings v2 workbench", () => {
       await user.click(
         within(navigation).getByRole("button", { name: /MCP servers/ }),
       );
-      expect(screen.queryByText(/Connected using MCP 2026-07-28/)).toBeNull();
+      expect(screen.queryByText(/Connection successful/)).toBeNull();
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
       );
@@ -711,8 +711,8 @@ describe("Settings v2 workbench", () => {
       await user.click(
         within(navigation).getByRole("button", { name: /MCP servers/ }),
       );
-      await user.click(screen.getByRole("button", { name: "Discover and test" }));
-      await screen.findByText(/Connected using MCP 2026-07-28/);
+      await user.click(screen.getByRole("button", { name: "Refresh functions" }));
+      await screen.findByText(/Connection successful/);
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
       );
@@ -731,7 +731,7 @@ describe("Settings v2 workbench", () => {
       await user.click(
         within(navigation).getByRole("button", { name: /MCP servers/ }),
       );
-      expect(screen.queryByText(/Connected using MCP 2026-07-28/)).toBeNull();
+      expect(screen.queryByText(/Connection successful/)).toBeNull();
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
       );
@@ -1365,9 +1365,9 @@ describe("Settings v2 workbench", () => {
       }),
     ).toBeNull();
     expect(screen.queryByText(/Diagnostic only/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Discover and test" }));
+    await user.click(screen.getByRole("button", { name: "Connect and enable" }));
     expect(
-      await screen.findByText(/Connected using MCP 2026-07-28/),
+      await screen.findByText(/Connection successful/),
     ).toBeVisible();
     expect(port.mcpProbes).toHaveLength(1);
 

@@ -1,4 +1,4 @@
-import { McpToolOptions } from "./McpToolOptions";
+import { McpServerSetup } from "./McpServerSetup";
 import { useRef, useState } from "react";
 import type {
   CredentialMetadataConfiguration,
@@ -11,7 +11,6 @@ import {
   CredentialBindingsEditor,
 } from "./SettingsFields";
 import {
-  mcpDraftFingerprint,
   settingsRecordFingerprint,
 } from "./settingsDraft";
 
@@ -38,8 +37,6 @@ export function McpServersSection({
   readonly onProbe: (server: McpServerConfiguration) => Promise<IntegrationProbeResult>;
 }): React.JSX.Element {
   const integrationCredentials = credentials.filter(isIntegrationCredential);
-  const [probes, setProbes] = useState<Readonly<Record<string, IntegrationProbeResult>>>({});
-  const [probing, setProbing] = useState<string | null>(null);
   const latestServers = useRef(servers);
   latestServers.current = servers;
   const addServer = () =>
@@ -63,8 +60,8 @@ export function McpServersSection({
     <div className="settings-section-stack">
       <div className="section-heading-row">
         <p className="section-intro">
-          Configure MCP tool, resource, and prompt servers. Discover and test
-          validates the exact current server configuration.
+          Enable a server to connect and load its functions, then save configuration.
+          Select the server once in an Agent node to use all its enabled functions.
         </p>
         <button
           title="Add a secret-free MCP transport configuration"
@@ -79,13 +76,10 @@ export function McpServersSection({
       ) : (
         <div className="settings-record-list">
           {servers.map((server, index) => {
-            const draftFingerprint = mcpDraftFingerprint(server);
-            const probe = probes[server.id];
-            const currentProbe =
-              probe?.draftFingerprint === draftFingerprint ? probe : undefined;
             const updateServer = (next: McpServerConfiguration) => {
-              setProbes((current) => withoutRecord(current, server.id));
-              onChange(replaceAt(servers, index, next));
+              const current = latestServers.current;
+              const currentIndex = current.findIndex(entry => entry.id === server.id);
+              if (currentIndex >= 0) onChange(replaceAt(current, currentIndex, next));
             };
             return (
             <section className="settings-record" key={server.id}>
@@ -93,7 +87,6 @@ export function McpServersSection({
                 id={server.id}
                 name={server.name}
                 onRemove={() => {
-                  setProbes((current) => withoutRecord(current, server.id));
                   onChange(removeAt(servers, index));
                 }}
               />
@@ -101,16 +94,13 @@ export function McpServersSection({
                 <TextField
                   id={`${server.id}-name`}
                   label="Server name"
-                  title="Name shown for this MCP transport record; enable the server to make its tools bindable in workflows"
+                  title="Name shown for this MCP server in Settings and Agent workflow selection"
                   value={server.name}
                   onChange={(name) =>
                     updateServer({ ...server, name })
                   }
                 />
               </div>
-              <label className="checkbox-row"><input type="checkbox" checked={server.enabled}
-                title="Allow workflows to invoke this server's selected tools using the configured approval policy"
-                onChange={event => updateServer({ ...server, enabled: event.target.checked })} />Enabled for workflows</label>
               {server.plugin && <p className="settings-field-help">Tool plugin version {server.plugin.version} · {server.plugin.manifestPath}</p>}
               <ConnectionEditor
                 id={server.id}
@@ -122,51 +112,11 @@ export function McpServersSection({
                   updateServer({
                     ...server,
                     transport,
+                    enabled: false,
                   })
                 }
               />
-              <ProbeActions
-                id={server.id}
-                label="Discover and test"
-                probing={probing === server.id}
-                result={currentProbe}
-                onProbe={() => {
-                  const requestedFingerprint = mcpDraftFingerprint(server);
-                  setProbing(server.id);
-                  void onProbe(server)
-                    .then((result) => {
-                      const currentServers = latestServers.current;
-                      const currentIndex = currentServers.findIndex(entry => entry.id === server.id);
-                      const currentServer = currentServers[currentIndex];
-                      if (!currentServer || mcpDraftFingerprint(currentServer) !== requestedFingerprint) return;
-                      if (result.ok && result.tools) {
-                        const previous = new Map((currentServer.tools ?? []).map(tool => [tool.name, tool]));
-                        const tools = result.tools.map(tool => ({ ...tool, enabled: previous.get(tool.name)?.enabled ?? true,
-                          options: previous.get(tool.name)?.options }));
-                        const next = { ...currentServer, tools };
-                        onChange(replaceAt(currentServers, currentIndex, next));
-                        setProbes(current => ({ ...current, [server.id]: { ...result, draftFingerprint: mcpDraftFingerprint(next) } }));
-                      } else {
-                        setProbes(current => ({ ...current, [server.id]: result }));
-                      }
-                    })
-                    .catch((failure: unknown) =>
-                      setProbes((current) => ({
-                        ...current,
-                        [server.id]: {
-                          ok: false,
-                          message:
-                            failure instanceof Error
-                              ? failure.message
-                              : String(failure),
-                          draftFingerprint: requestedFingerprint,
-                        },
-                      })),
-                    )
-                    .finally(() => setProbing(null));
-                }}
-              />
-              <McpToolOptions server={server} onChange={tools => updateServer({ ...server, tools })} />
+              <McpServerSetup server={server} onChange={updateServer} onProbe={onProbe} />
             </section>
             );
           })}
