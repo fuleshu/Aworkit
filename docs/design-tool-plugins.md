@@ -144,3 +144,17 @@ Regression commands: the desktop Rust library tests, capability-host
 and MCP fixtures, verifies provider-bound instructions and an actual tool result,
 then restarts to check persistence. It requires the built Windows executable and
 Python, configurable through `AWORKIT_QA_PYTHON`.
+
+MCP provider aliases fit the portable 64-byte function-name limit. A digest of
+the exact server and tool identifiers disambiguates folded punctuation and long
+shared prefixes; MCP dispatch still uses the original capability and tool name.
+Existing valid frozen aliases remain exact. Invalid aliases from older Chats are
+repaired only in the wire projection, without rewriting history or frozen settings.
+
+`node scripts/native-adashi-chat.mjs` (from `desktop`) verifies the live Adashi
+catalog and one read-only rule lookup through the Standard Agent, using a local
+deterministic provider and an isolated Chat profile. Set `AWORKIT_QA_ADASHI_EXE`
+to the configured stdio executable. `node scripts/native-workflow-canvas.mjs`
+checks initial painting, outline selection, edits, workflow switching and exact
+Settings return in the actual WebView. Both accept `AWORKIT_QA_EXE`; when testing
+a development frontend, set `AWORKIT_QA_PAGE_URL` to its origin.

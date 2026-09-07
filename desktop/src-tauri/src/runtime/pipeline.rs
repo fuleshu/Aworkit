@@ -6196,6 +6196,8 @@ mod tests {
     const MCP_FIXTURE_CAPABILITY: &str = "mcp://serv.fixture/echo";
     const MCP_FIXTURE_NAME: &str = "mcp__serv_fixture__echo";
 
+    mod mcp_name_tests;
+
     fn mcp_echo_schema() -> Value {
         json!({
             "type": "object",
@@ -6388,7 +6390,8 @@ mod tests {
                         call_id: "call.echo".into(),
                         provider_call_id: Some("call.echo".into()),
                         capability_id: MCP_FIXTURE_CAPABILITY.into(),
-                        name: MCP_FIXTURE_NAME.into(),
+                        name: request.tools.iter().find(|tool| tool.capability_id == MCP_FIXTURE_CAPABILITY)
+                            .expect("frozen MCP definition").name.clone(),
                         arguments: json!({"text": "hello"}),
                         provider_context: None,
                     },

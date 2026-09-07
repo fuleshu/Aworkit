@@ -1,11 +1,12 @@
 import { writeFile } from "node:fs/promises";
 
 /** Bounded connection to an actual Tauri WebView for native regression tests. */
-export async function connectNativeWebView(endpoint) {
+export async function connectNativeWebView(endpoint, pageUrlPrefix = "http://tauri.localhost") {
   const response = await fetch(`${endpoint}/json/list`);
   if (!response.ok) throw new Error(`WebView discovery failed: HTTP ${response.status}`);
-  const target = (await response.json()).find(item => item.type === "page" && item.url.startsWith("http://tauri.localhost"));
-  if (!target) throw new Error("No running Aworkit WebView was found");
+  const pages = (await response.json()).filter(item => item.type === "page");
+  const target = pages.find(item => item.url.startsWith(pageUrlPrefix));
+  if (!target) throw new Error("No matching Aworkit WebView was found: " + pages.map(item => item.url).join(", "));
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   const pending = new Map();
   let sequence = 0;

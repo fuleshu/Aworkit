@@ -14,36 +14,14 @@ use aworkit_capability_host::{
 use aworkit_protocol::{ProcessGeneration, StableId};
 use std::sync::Arc;
 
+mod names;
+pub(crate) use names::{mcp_provider_name, portable_frozen_name};
+
 /// The capability-id prefix for MCP tools: `mcp://<server>/<tool>`.
 pub(crate) const MCP_CAPABILITY_PREFIX: &str = "mcp://";
 pub(crate) const MCP_ADAPTER_ID: &str = "adapter.mcp.v1";
 pub(crate) const MCP_ADAPTER_VERSION: &str = "1.0.0";
 pub(crate) const MCP_SCOPE: &str = "mcp.invoke";
-/// A model-facing MCP tool name uses the `mcp__<server>__<tool>` spelling so
-/// provider tool lists stay readable. Provider tool names only admit
-/// `[A-Za-z0-9_-]`; any other character (for example the `.` StableIds allow in
-/// server ids, or tool-name punctuation) is deterministically folded to `_`
-/// so the name always passes provider-side name validation.
-pub(crate) fn mcp_provider_name(server_id: &str, tool: &str) -> String {
-    let sanitize = |value: &str| {
-        value
-            .bytes()
-            .map(|byte| {
-                if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
-                    byte
-                } else {
-                    b'_'
-                }
-            })
-            .collect::<Vec<_>>()
-    };
-    format!(
-        "mcp__{}__{}",
-        String::from_utf8(sanitize(server_id)).expect("sanitized server id"),
-        String::from_utf8(sanitize(tool)).expect("sanitized tool name"),
-    )
-}
-
 /// Split an `mcp://<server>/<tool>` capability id into its two exact parts.
 pub(crate) fn split_mcp_capability(capability_id: &str) -> Result<(&str, &str), String> {
     let remainder = capability_id

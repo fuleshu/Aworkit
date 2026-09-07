@@ -57,7 +57,7 @@ use super::{
     WEB_SEARCH_MAXIMUM_RESULTS_V1,
     mcp_tools::{
         MCP_ADAPTER_ID, MCP_ADAPTER_VERSION, MCP_CAPABILITY_PREFIX, MCP_SCOPE, McpToolRuntimeV1,
-        mcp_provider_name, split_mcp_capability,
+        mcp_provider_name, portable_frozen_name, split_mcp_capability,
     },
     model_tool_loop::{
         ModelToolInvocationPortV1, ModelToolLoopRequestV1, PROVIDER_TIMEOUT_RECOVERIES_V1,
@@ -1034,7 +1034,7 @@ fn freeze_mcp_binding(
     }
     let schema_hash = mcp_schema_hash(&definition.input_schema);
     Ok((
-        definition.name.clone(),
+        portable_frozen_name(server_id, tool, &definition.name),
         definition.description.clone(),
         definition.input_schema.clone(),
         StoredFileToolLimitV1::Mcp {
@@ -4648,7 +4648,7 @@ mod tests {
         .expect("mcp binding")
         .remove(0);
         assert_eq!(binding.capability_id, "mcp://serv.fixture/echo");
-        assert_eq!(binding.provider_name, "mcp__serv_fixture__echo");
+        assert_eq!(binding.provider_name, mcp_provider_name("serv.fixture", "echo"));
         assert!(
             binding.requires_approval,
             "MCP tools follow the same approval policy as host tools"
@@ -4678,7 +4678,7 @@ mod tests {
         let binding = freeze_file_tool_bindings(&[mcp_binding_request(None)])
             .expect("mcp fallback binding")
             .remove(0);
-        assert_eq!(binding.provider_name, "mcp__serv_fixture__echo");
+        assert_eq!(binding.provider_name, mcp_provider_name("serv.fixture", "echo"));
         assert_eq!(
             binding.description,
             "Call MCP tool 'echo' on server 'serv.fixture'."

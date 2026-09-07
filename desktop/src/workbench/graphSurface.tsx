@@ -12,7 +12,8 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import type { JSX } from "react";
+import { useMemo, type JSX } from "react";
+import { useMeasuredWorkflowNodes } from "./useMeasuredWorkflowNodes";
 import { catalogInputPorts, catalogOutputPorts } from "./nodeCatalog";
 import type { NodeRunStatus } from "./runStatus";
 import type { JsonObject, WorkflowEditorState } from "./workflow";
@@ -154,17 +155,19 @@ function WorkflowCanvas({
   readonly callbacks: WorkflowGraphCallbacks;
 }): JSX.Element {
   const { screenToFlowPosition } = useReactFlow();
-  const { nodes, edges } = projectWorkflowSurface(state, callbacks.runStatus);
+  const projected = useMemo(() => projectWorkflowSurface(state, callbacks.runStatus), [state, callbacks.runStatus]);
+  const { nodes, onNodesChange } = useMeasuredWorkflowNodes(projected.nodes);
   const structureLocked = callbacks.structureLocked === true;
   return (
     <ReactFlow
       colorMode="system"
-      edges={edges}
+      edges={projected.edges}
       fitView
       minZoom={0.15}
       maxZoom={2}
       nodes={nodes}
-      nodeTypes={{ aworkit: WorkflowNode }}
+      onNodesChange={onNodesChange}
+      nodeTypes={WORKFLOW_NODE_TYPES}
       nodesConnectable={!structureLocked}
       nodesDraggable={!structureLocked}
       edgesReconnectable={false}
@@ -229,6 +232,8 @@ function WorkflowCanvas({
     </ReactFlow>
   );
 }
+
+const WORKFLOW_NODE_TYPES = { aworkit: WorkflowNode };
 
 /** Deterministic adapter projection kept testable outside React Flow widget state. */
 export function projectWorkflowSurface(
