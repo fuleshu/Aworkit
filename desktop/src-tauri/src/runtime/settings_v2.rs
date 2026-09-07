@@ -813,6 +813,13 @@ impl BuiltInToolConfigurationV2 {
 
     fn validate_implemented_contract(&self) -> Result<(), String> {
         match self.id.as_str() {
+            "tool.skill" => {
+                require_tool_project_scope(self, false)?;
+                super::tool_loop::skills::configuration(
+                    &serde_json::to_value(&self.configuration).map_err(|e| e.to_string())?,
+                )
+                .map(|_| ())
+            }
             "tool.files.read" => {
                 require_exact_config_keys(self, &["authorityMode", "effect", "maximumBytes"])?;
                 require_tool_project_scope(self, true)?;
@@ -2580,7 +2587,8 @@ mod tests {
                 "tool.web_search",
                 "tool.web_fetch",
                 "tool.web_extract",
-                "tool.subagent"
+                "tool.subagent",
+                "tool.skill"
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));

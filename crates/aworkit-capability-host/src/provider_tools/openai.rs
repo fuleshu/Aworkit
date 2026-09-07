@@ -28,7 +28,14 @@ pub(crate) fn openai_tool_request(
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
 
-    for exchange in &request.exchanges {
+    for (index, exchange) in request.exchanges.iter().enumerate() {
+        for context in request
+            .context_messages
+            .iter()
+            .filter(|c| c.after_exchanges == index)
+        {
+            messages.push(json!({"role":"user","content":context.content}));
+        }
         let mut text = String::new();
         let mut calls = Vec::new();
         for content in &exchange.assistant_content {
@@ -73,9 +80,16 @@ pub(crate) fn openai_tool_request(
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call.call_id,
-                "content": result_text(result)?,
+                "content": result_text(result, &call.capability_id)?,
             }));
         }
+    }
+    for context in request
+        .context_messages
+        .iter()
+        .filter(|c| c.after_exchanges == request.exchanges.len())
+    {
+        messages.push(json!({"role":"user","content":context.content}));
     }
     if let Some(notice) = &request.retry_notice {
         messages.push(json!({"role":"user","content":notice}));

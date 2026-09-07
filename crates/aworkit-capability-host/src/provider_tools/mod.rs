@@ -1,6 +1,8 @@
 //! Exact wire translation for client-side provider tools.
 
 mod anthropic;
+#[cfg(test)]
+mod context_tests;
 mod gemini;
 mod openai;
 mod openai_stream;

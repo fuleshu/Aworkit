@@ -6,6 +6,9 @@
 //! authenticated capability-host gateway. Read/search outcomes are durably
 //! settled before they can be returned to the provider.
 
+pub(crate) mod skills;
+#[cfg(test)]
+mod skills_tests;
 mod web;
 
 use std::{
@@ -78,6 +81,7 @@ pub(crate) const FILE_WRITE_CAPABILITY_ID: &str = "tool.files.write";
 pub(crate) const SHELL_CAPABILITY_ID: &str = "tool.shell.host";
 pub(crate) const PYTHON_CAPABILITY_ID: &str = "tool.python.host";
 pub(crate) const TODO_CAPABILITY_ID: &str = "tool.todo";
+pub(crate) const SKILL_CAPABILITY_ID: &str = "tool.skill";
 pub(crate) const WEB_SEARCH_CAPABILITY_ID: &str = "tool.web_search";
 pub(crate) const WEB_FETCH_CAPABILITY_ID: &str = "tool.web_fetch";
 pub(crate) const WEB_EXTRACT_CAPABILITY_ID: &str = "tool.web_extract";
@@ -147,7 +151,8 @@ const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
-pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 8] = [
+pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 9] = [
+    SKILL_CAPABILITY_ID,
     FILE_READ_CAPABILITY_ID,
     FILE_SEARCH_CAPABILITY_ID,
     FILE_LIST_CAPABILITY_ID,
@@ -161,6 +166,7 @@ pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 8] = [
 /// Approval-free tool ids that settle without a user decision.
 pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
     BTreeSet::from([
+        SKILL_CAPABILITY_ID,
         FILE_READ_CAPABILITY_ID,
         FILE_SEARCH_CAPABILITY_ID,
         FILE_LIST_CAPABILITY_ID,
@@ -376,6 +382,9 @@ pub(crate) struct StoredToolSecretBindingV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum StoredFileToolLimitV1 {
+    Skill {
+        configuration: aworkit_capability_host::skills::SkillConfiguration,
+    },
     Read {
         maximum_bytes: usize,
     },
@@ -484,6 +493,14 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
+        (
+            SKILL_CAPABILITY_ID,
+            CapabilityKind::FileRead,
+            "skills.read",
+            skills::schema(),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
         (
             FILE_READ_CAPABILITY_ID,
             CapabilityKind::FileRead,
@@ -676,6 +693,12 @@ pub(crate) fn freeze_file_tool_bindings(
             .validate(native.map_or("mcp", |tool| tool.execution.as_str()))
             .map_err(|error| invalid_tool(&error))?;
         let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
+            "skill" => (
+                "skill".to_owned(),
+                aworkit_capability_host::skills::TOOL_DESCRIPTION.to_owned(),
+                skills::schema(),
+                StoredFileToolLimitV1::Skill { configuration: skills::configuration(&requested.configuration).map_err(|e| invalid_tool(&e))? },
+            ),
             "files.read" => (
                 FILE_READ_PROVIDER_NAME.to_owned(),
                 "Read one UTF-8 text file relative to the frozen project root.".to_owned(),
@@ -1066,6 +1089,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
     Ok(CapabilityBindingV1 {
         capability_id: binding_capability_id,
         adapter_id: stable(match tool.capability_id.as_str() {
+            SKILL_CAPABILITY_ID => "adapter.skills.read",
             FILE_READ_CAPABILITY_ID => FILE_READ_ADAPTER_ID,
             FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_ADAPTER_ID,
             FILE_LIST_CAPABILITY_ID => FILE_LIST_ADAPTER_ID,
@@ -1410,6 +1434,16 @@ pub(crate) struct BoundFileToolAuthorityV1 {
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
+    fn prepare_context(
+        &self,
+        outer: &StableId,
+        after_exchanges: usize,
+        definitions: &[ModelToolDefinitionV1],
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
+        self.skill_context(outer, after_exchanges, definitions, true, cancellation)
+    }
+
     fn invoke(
         &self,
         outer_invocation_id: &StableId,
@@ -2300,6 +2334,22 @@ impl FileToolDispatcherV1 {
             )
             .map_err(|error| error.to_string())?;
             match &self.record.binding.limit {
+                StoredFileToolLimitV1::Skill { configuration } => {
+                    let name = self.record.call.arguments["name"]
+                        .as_str()
+                        .ok_or("skill name must be a string")?;
+                    let content = aworkit_capability_host::skills::load(
+                        configuration,
+                        Some(&self.record.workspace.root),
+                        name,
+                        false,
+                        cancellation,
+                    )?
+                    .ok_or_else(|| format!("skill \"{name}\" is unknown or no longer available"))?;
+                    let value = serde_json::to_value(content).map_err(|e| e.to_string())?;
+                    enforce_result_bound(&value)?;
+                    Ok((value, format!("Loaded skill {name}.")))
+                }
                 StoredFileToolLimitV1::Read { maximum_bytes } => {
                     let read = files
                         .read_v1(
@@ -2915,6 +2965,17 @@ struct SubagentToolPortV1<'a> {
 }
 
 impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
+    fn prepare_context(
+        &self,
+        outer: &StableId,
+        after_exchanges: usize,
+        definitions: &[ModelToolDefinitionV1],
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
+        self.inner
+            .skill_context(outer, after_exchanges, definitions, false, cancellation)
+    }
+
     fn invoke(
         &self,
         outer_invocation_id: &StableId,
@@ -3302,6 +3363,7 @@ fn validate_call_arguments(
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
     let expected_keys: BTreeSet<&str> = match binding.limit {
+        StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
         StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
         StoredFileToolLimitV1::List { .. } => BTreeSet::from(["pattern"]),
@@ -3364,6 +3426,12 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
+        StoredFileToolLimitV1::Skill { .. } => {
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_tool("skill name must be a string"))?;
+        }
         StoredFileToolLimitV1::Search { .. } => {
             object
                 .get("query")
@@ -3848,6 +3916,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         SHELL_CAPABILITY_ID => SHELL_SCOPE,
         PYTHON_CAPABILITY_ID => PYTHON_SCOPE,
         TODO_CAPABILITY_ID => TODO_SCOPE,
+        SKILL_CAPABILITY_ID => "skills.read",
         WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_SCOPE,
         WEB_FETCH_CAPABILITY_ID => WEB_FETCH_SCOPE,
         WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_SCOPE,

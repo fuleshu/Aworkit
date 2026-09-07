@@ -67,6 +67,7 @@
                 "tool.files.list",
                 "tool.files.grep",
                 "tool.todo",
+                "tool.skill",
                 "tool.web_search",
                 "tool.web_extract"
               ],

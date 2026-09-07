@@ -55,6 +55,7 @@ fn request(schema: serde_json::Value) -> ModelToolRequestV1 {
         tools: vec![tool(schema)],
         exchanges: Vec::new(),
         retry_notice: None,
+        context_messages: Vec::new(),
     }
 }
 

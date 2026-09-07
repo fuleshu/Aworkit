@@ -4316,6 +4316,13 @@ mod tests {
                 options: Default::default(),
                 capability_id: (*tool_id).into(),
                 configuration: match *tool_id {
+                    super::super::tool_loop::SKILL_CAPABILITY_ID => serde_json::to_value(
+                        super::super::tool_registry::native_tool("tool.skill")
+                            .unwrap()
+                            .configuration
+                            .clone(),
+                    )
+                    .unwrap(),
                     FILE_READ_CAPABILITY_ID => json!({
                         "authorityMode":"project_files",
                         "effect":"read",
@@ -5851,6 +5858,7 @@ mod tests {
                 FILE_LIST_CAPABILITY_ID,
                 FILE_GREP_CAPABILITY_ID,
                 TODO_CAPABILITY_ID,
+                super::super::tool_loop::SKILL_CAPABILITY_ID,
                 WEB_SEARCH_CAPABILITY_ID,
                 WEB_EXTRACT_CAPABILITY_ID,
             ],

@@ -30,7 +30,14 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
 
-    for exchange in &request.exchanges {
+    for (index, exchange) in request.exchanges.iter().enumerate() {
+        for context in request
+            .context_messages
+            .iter()
+            .filter(|c| c.after_exchanges == index)
+        {
+            contents.push(json!({"role":"user","parts":[{"text":context.content}]}));
+        }
         let model_parts = exchange
             .assistant_content
             .iter()
@@ -97,6 +104,13 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
         contents.push(json!({"role":"user","parts":result_parts}));
+    }
+    for context in request
+        .context_messages
+        .iter()
+        .filter(|c| c.after_exchanges == request.exchanges.len())
+    {
+        contents.push(json!({"role":"user","parts":[{"text":context.content}]}));
     }
     if let Some(notice) = &request.retry_notice {
         contents.push(json!({"role":"user","parts":[{"text":notice}]}));

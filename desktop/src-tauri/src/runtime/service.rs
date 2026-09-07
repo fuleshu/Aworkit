@@ -4768,6 +4768,7 @@ mod tests {
                     | "tool.files.list"
                     | "tool.files.grep"
                     | "tool.todo"
+                    | "tool.skill"
                     | "tool.web_search"
                     | "tool.web_fetch"
                     | "tool.web_extract"
@@ -6143,7 +6144,7 @@ mod tests {
         let settings = reopened.settings_v2_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION_V2);
-        assert_eq!(settings.settings.tools.len(), 13);
+        assert_eq!(settings.settings.tools.len(), 14);
         assert!(
             settings
                 .settings

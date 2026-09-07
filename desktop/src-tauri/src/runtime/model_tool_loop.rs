@@ -31,6 +31,17 @@ pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the p
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    /// Refresh and durably record injected context before a provider request.
+    fn prepare_context(
+        &self,
+        _outer: &StableId,
+        _after_exchanges: usize,
+        _definitions: &[ModelToolDefinitionV1],
+        _cancellation: &CancellationToken,
+    ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
+        Ok(Vec::new())
+    }
+
     fn invoke(
         &self,
         outer_invocation_id: &StableId,
@@ -207,6 +218,7 @@ pub(crate) fn execute_model_tool_loop_v1(
             gateway,
             &plan,
             &request,
+            authority,
             &exchanges,
             pending_runtime_notice.take(),
             cancellation,
@@ -291,6 +303,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 })?;
             results.push(model_facing_tool_result(
                 &settled.result,
+                &call.capability_id,
                 request.maximum_tool_output_bytes,
             ));
             activities.push(settled.activity);
@@ -373,16 +386,26 @@ fn execute_tool_turn_with_timeout_recovery(
     gateway: &FrozenModelGateway,
     plan: &ModelResolutionPlanV1,
     request: &ModelToolLoopRequestV1<'_>,
+    authority: &dyn ModelToolInvocationPortV1,
     exchanges: &[ModelToolExchangeV1],
     runtime_notice: Option<String>,
     cancellation: &CancellationToken,
     attempted_model_turns: &mut u32,
     timeout_recoveries: &mut u32,
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
+    let context_messages = authority
+        .prepare_context(
+            request.outer_invocation_id,
+            exchanges.len(),
+            &request.definitions,
+            cancellation,
+        )
+        .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
     let mut retry_notice = runtime_notice;
     loop {
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
         let provider_request = ModelToolRequestV1 {
+            context_messages: context_messages.clone(),
             input: request.input.clone(),
             parameters: request.parameters.clone(),
             tools: request.definitions.clone(),
@@ -417,7 +440,12 @@ fn append_runtime_notices(target: &mut Option<String>, notices: Vec<String>) {
     }
 }
 
-fn model_facing_tool_result(result: &ModelToolResultV1, maximum_bytes: usize) -> ModelToolResultV1 {
+fn model_facing_tool_result(
+    result: &ModelToolResultV1,
+    capability_id: &str,
+    maximum_bytes: usize,
+) -> ModelToolResultV1 {
+    let result = super::tool_loop::skills::model_result(result, capability_id);
     let rendered = match &result.content {
         Value::String(text) => text.clone(),
         value => serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned()),
@@ -475,6 +503,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             gateway,
             &plan,
             &request,
+            authority,
             &exchanges,
             pending_runtime_notice.take(),
             cancellation,
@@ -560,6 +589,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 ToolInvokeV1::Settled(settled) => {
                     results.push(model_facing_tool_result(
                         &settled.result,
+                        &call.capability_id,
                         request.maximum_tool_output_bytes,
                     ));
                     activities.push(settled.activity);
@@ -710,6 +740,7 @@ pub(crate) fn resume_model_tool_loop_v1(
         }],
         results: vec![model_facing_tool_result(
             &settled.result,
+            &pending.call.capability_id,
             request.maximum_tool_output_bytes,
         )],
     };
@@ -755,6 +786,7 @@ pub(crate) fn resume_model_tool_loop_v1(
             gateway,
             &plan,
             &request,
+            authority,
             &exchanges,
             pending_runtime_notice.take(),
             cancellation,
@@ -840,6 +872,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 ToolInvokeV1::Settled(settled) => {
                     results.push(model_facing_tool_result(
                         &settled.result,
+                        &call.capability_id,
                         request.maximum_tool_output_bytes,
                     ));
                     activities.push(settled.activity);

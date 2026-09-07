@@ -169,6 +169,7 @@ fn images_reach_all_protocols_in_plain_and_tool_turns() {
                     }],
                     exchanges: Vec::new(),
                     retry_notice: None,
+                    context_messages: Vec::new(),
                 },
             )
             .unwrap();

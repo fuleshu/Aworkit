@@ -35,7 +35,14 @@ pub(crate) fn anthropic_tool_request(
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
 
-    for exchange in &request.exchanges {
+    for (index, exchange) in request.exchanges.iter().enumerate() {
+        for context in request
+            .context_messages
+            .iter()
+            .filter(|c| c.after_exchanges == index)
+        {
+            messages.push(json!({"role":"user","content":context.content}));
+        }
         let assistant = exchange
             .assistant_content
             .iter()
@@ -80,12 +87,19 @@ pub(crate) fn anthropic_tool_request(
                 Ok(json!({
                     "type": "tool_result",
                     "tool_use_id": call.call_id,
-                    "content": result_text(result)?,
+                    "content": result_text(result, &call.capability_id)?,
                     "is_error": result.is_error,
                 }))
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
         messages.push(json!({"role":"user","content":results}));
+    }
+    for context in request
+        .context_messages
+        .iter()
+        .filter(|c| c.after_exchanges == request.exchanges.len())
+    {
+        messages.push(json!({"role":"user","content":context.content}));
     }
     if let Some(notice) = &request.retry_notice {
         messages.push(json!({"role":"user","content":notice}));

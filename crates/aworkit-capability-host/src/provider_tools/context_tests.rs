@@ -1,0 +1,102 @@
+//! Context must stay between complete exchanges on every provider wire.
+use super::{
+    anthropic::anthropic_tool_request,
+    gemini::gemini_tool_request,
+    openai::{OpenAiRequestParametersV1, openai_tool_request},
+};
+use crate::{
+    ModelAssistantContentV1, ModelToolCallV1, ModelToolContextV1, ModelToolDefinitionV1,
+    ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1,
+};
+use serde_json::json;
+
+#[test]
+fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
+    let call = ModelToolCallV1 {
+        call_id: "call.1".into(),
+        provider_call_id: Some("call.1".into()),
+        capability_id: "tool.skill".into(),
+        name: "skill".into(),
+        arguments: json!({"name":"test"}),
+        provider_context: None,
+    };
+    let request = ModelToolRequestV1 {
+        input: json!({"messages":[{"role":"user","content":"direct input"}]}),
+        parameters: Default::default(),
+        retry_notice: None,
+        tools: vec![ModelToolDefinitionV1 {
+            capability_id: "tool.skill".into(),
+            name: "skill".into(),
+            description: "Load skill".into(),
+            input_schema: json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}),
+        }],
+        exchanges: vec![ModelToolExchangeV1 {
+            assistant_content: vec![ModelAssistantContentV1::ToolCall { call }],
+            results: vec![ModelToolResultV1 {
+                call_id: "call.1".into(),
+                content: json!("loaded body"),
+                is_error: false,
+            }],
+        }],
+        context_messages: vec![
+            ModelToolContextV1 {
+                after_exchanges: 0,
+                content: "initial catalog".into(),
+            },
+            ModelToolContextV1 {
+                after_exchanges: 0,
+                content: "explicit invocation".into(),
+            },
+            ModelToolContextV1 {
+                after_exchanges: 1,
+                content: "replacement catalog".into(),
+            },
+        ],
+    };
+    crate::model_tools::validate_tool_request(&request).unwrap();
+    let openai =
+        openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap();
+    let anthropic = anthropic_tool_request("fixture", 100, &request).unwrap();
+    let gemini = gemini_tool_request(&request).unwrap();
+    for body in [openai, anthropic] {
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[1]["content"], "initial catalog");
+        assert_eq!(messages[2]["content"], "explicit invocation");
+        assert_eq!(messages[3]["role"], "assistant");
+        assert_eq!(messages[5]["content"], "replacement catalog");
+    }
+    assert_eq!(gemini["contents"][1]["parts"][0]["text"], "initial catalog");
+    assert_eq!(
+        gemini["contents"][2]["parts"][0]["text"],
+        "explicit invocation"
+    );
+    assert_eq!(gemini["contents"][3]["role"], "model");
+    assert_eq!(
+        gemini["contents"][5]["parts"][0]["text"],
+        "replacement catalog"
+    );
+    let mut error_request = request.clone();
+    error_request.exchanges[0].results[0].is_error = true;
+    error_request.exchanges[0].results[0].content =
+        json!("Error: skill \"missing\" is unknown or no longer available");
+    let openai = openai_tool_request(
+        "fixture",
+        &error_request,
+        &OpenAiRequestParametersV1::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        openai["messages"][4]["content"],
+        error_request.exchanges[0].results[0].content
+    );
+    let anthropic = anthropic_tool_request("fixture", 100, &error_request).unwrap();
+    assert_eq!(
+        anthropic["messages"][4]["content"][0]["content"],
+        error_request.exchanges[0].results[0].content
+    );
+    assert_eq!(anthropic["messages"][4]["content"][0]["is_error"], true);
+    let mut invalid = request;
+    invalid.context_messages[0].after_exchanges = 2;
+    assert!(crate::model_tools::validate_tool_request(&invalid).is_err());
+}

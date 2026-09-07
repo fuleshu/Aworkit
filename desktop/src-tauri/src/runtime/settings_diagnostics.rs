@@ -105,6 +105,29 @@ pub(crate) fn probe_tool_with_api_key(
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.skill" => (|| {
+                let config = super::tool_loop::skills::configuration(
+                    &serde_json::to_value(&request.tool.configuration)
+                        .map_err(|e| e.to_string())?,
+                )?;
+                let project = request.project.as_ref().map(inspect_project).transpose()?;
+                let snapshot = aworkit_capability_host::skills::discover(
+                    &config,
+                    project.as_deref(),
+                    &CancellationToken::default(),
+                )?;
+                if !snapshot.complete {
+                    return Err(snapshot.warnings.join("\n"));
+                }
+                Ok((
+                    "adapter.skills.read".into(),
+                    format!(
+                        "Found {} skills. {} malformed or duplicate entries skipped.",
+                        snapshot.skills.len(),
+                        snapshot.warnings.len()
+                    ),
+                ))
+            })(),
             "tool.subagent" => probe_subagent_tool(&request.tool),
             "tool.web_search" => probe_web_search_tool(&request.tool, api_key),
             "tool.web_fetch" | "tool.web_extract" => probe_web_fetch_tool(&request.tool),

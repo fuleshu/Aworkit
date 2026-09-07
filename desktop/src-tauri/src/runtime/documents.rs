@@ -1376,6 +1376,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
 /// prefix and are resolved to an enabled, core-attested server at freeze.
 pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
     [
+        "tool.skill",
         "tool.files.read",
         "tool.files.search",
         "tool.files.list",
@@ -1913,7 +1914,7 @@ mod tests {
             migrated.settings.projects[0].workspace.location,
             "/workspace/atlas"
         );
-        assert_eq!(migrated.settings.tools.len(), 13);
+        assert_eq!(migrated.settings.tools.len(), 14);
         assert!(migrated.settings.tools.iter().all(|tool| !tool.enabled));
         let canonical = repository
             .export_lossless(DocumentKind::Configuration, SETTINGS_ID)
@@ -1993,10 +1994,10 @@ mod tests {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
         let mut settings = SettingsConfigurationV2::default();
-        // Simulate a document written before tool.subagent existed: drop that
+        // Simulate a document written before tool.skill existed: drop that
         // built-in entry while preserving one user-enabled entry.
-        settings.tools.retain(|tool| tool.id != "tool.subagent");
-        assert_eq!(settings.tools.len(), 12);
+        settings.tools.retain(|tool| tool.id != "tool.skill");
+        assert_eq!(settings.tools.len(), 13);
         settings.tools[3].enabled = true;
         repository
             .save(
@@ -2009,19 +2010,19 @@ mod tests {
 
         let repaired = CanonicalDocuments::open(root.path()).unwrap();
         assert_eq!(repaired.settings_version, 2);
-        assert_eq!(repaired.settings.tools.len(), 13);
+        assert_eq!(repaired.settings.tools.len(), 14);
         assert!(
             repaired
                 .settings
                 .tools
                 .iter()
-                .any(|tool| tool.id == "tool.subagent" && !tool.enabled)
+                .any(|tool| tool.id == "tool.skill" && !tool.enabled)
         );
         assert!(repaired.settings.tools.iter().any(|tool| tool.enabled));
         drop(repaired);
 
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.settings.tools.len(), 13);
+        assert_eq!(reopened.settings.tools.len(), 14);
     }
 
     #[test]

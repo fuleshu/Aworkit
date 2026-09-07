@@ -58,6 +58,7 @@ mod process;
 mod provider_tools;
 mod provider_transport;
 mod registry;
+pub mod skills;
 mod tools;
 mod web;
 pub use anthropic_messages::{
@@ -101,9 +102,9 @@ pub use model_result::{
     ModelResultEventV1, ModelTurnProjectionV1, project_model_events, project_model_tool_events,
 };
 pub use model_tools::{
-    ModelAssistantContentV1, ModelProviderContextV1, ModelToolCallV1, ModelToolDefinitionV1,
-    ModelToolDispatchEvidenceV1, ModelToolEventV1, ModelToolExchangeV1, ModelToolRequestV1,
-    ModelToolResultV1,
+    ModelAssistantContentV1, ModelProviderContextV1, ModelToolCallV1, ModelToolContextV1,
+    ModelToolDefinitionV1, ModelToolDispatchEvidenceV1, ModelToolEventV1, ModelToolExchangeV1,
+    ModelToolRequestV1, ModelToolResultV1,
 };
 pub use normalize::{
     CapabilityOutcome, CapabilityOutcomeV1, DispatchEvidenceV1, EffectEvidenceV1,

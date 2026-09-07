@@ -117,6 +117,9 @@ pub struct ModelToolExchangeV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelToolRequestV1 {
+    /// Durable user-role context at an exact boundary between tool exchanges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_messages: Vec<ModelToolContextV1>,
     /// Text and user image references in the same accepted shapes as `ModelRequestV1`.
     pub input: Value,
     /// Closed request overrides supplied by the active workflow node.
@@ -128,6 +131,13 @@ pub struct ModelToolRequestV1 {
     /// records recovery or advisory policy without fabricating model output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_notice: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelToolContextV1 {
+    pub after_exchanges: usize,
+    pub content: String,
 }
 
 /// Provider-neutral events emitted by a tool-capable model turn.
@@ -265,6 +275,15 @@ pub(crate) fn normalize_model_input(
 
 pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), ProviderError> {
     normalize_model_input(&request.input)?;
+    if request.context_messages.iter().any(|message| {
+        message.after_exchanges > request.exchanges.len() || message.content.is_empty()
+    }) || serde_json::to_vec(&request.context_messages)
+        .map_err(|_| invalid_tool_request())?
+        .len()
+        > MAX_TEXT_CONTENT_BYTES
+    {
+        return Err(invalid_tool_request());
+    }
     if request.tools.is_empty()
         || request.tools.len() > MAX_TOOL_DEFINITIONS
         || request.retry_notice.as_ref().is_some_and(|notice| {
@@ -494,8 +513,12 @@ pub(crate) fn tool_event_bytes(event: &ModelToolEventV1) -> usize {
     }
 }
 
-pub(crate) fn result_text(result: &ModelToolResultV1) -> Result<String, ProviderError> {
-    if result.is_error {
+pub(crate) fn result_text(
+    result: &ModelToolResultV1,
+    capability_id: &str,
+) -> Result<String, ProviderError> {
+    // The skill renderer already owns the reference tool's literal Error: text.
+    if result.is_error && capability_id != "tool.skill" {
         return serde_json::to_string(&serde_json::json!({"error": result.content}))
             .map_err(|_| invalid_tool_request());
     }

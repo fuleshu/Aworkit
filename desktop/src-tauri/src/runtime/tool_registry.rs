@@ -221,6 +221,12 @@ pub(crate) fn freeze_settings(
     tool: &BuiltInToolConfigurationV2,
 ) -> Result<BuiltInToolConfigurationV2, String> {
     let mut frozen = tool.clone();
+    if tool.id == "tool.skill" {
+        let resolved = super::tool_loop::skills::freeze_settings(
+            &serde_json::to_value(&tool.configuration).map_err(|e| e.to_string())?,
+        )?;
+        frozen.configuration = serde_json::from_value(resolved).map_err(|e| e.to_string())?;
+    }
     if frozen.options.instructions.is_none() {
         frozen.options.instructions = native_tool(&tool.id).map(|entry| entry.instructions.clone());
     }

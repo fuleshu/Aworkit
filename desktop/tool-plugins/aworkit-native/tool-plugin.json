@@ -998,6 +998,83 @@
         ]
       },
       "providerName": "aworkit_spawn_subagent"
+    },
+    {
+      "id": "tool.skill",
+      "name": "Skills",
+      "description": "Load the full instructions for an available skill. Call this with the exact skill name from the session skill catalog before acting on a task that names or clearly matches that skill.",
+      "instructions": "",
+      "executor": "skill",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "includeDefaultRoots": true,
+        "aworkitHome": "",
+        "agentsHome": "",
+        "customSkillDirs": [],
+        "bundledSkillDir": "",
+        "catalogDescriptionMaxLength": 500
+      },
+      "fields": [
+        {
+          "key": "includeDefaultRoots",
+          "label": "Discover project and user skills",
+          "help": "Scan .aworkit/skills and .agents/skills in the nearest Git project and in your user home.",
+          "kind": "boolean",
+          "readOnly": false
+        },
+        {
+          "key": "aworkitHome",
+          "label": "Aworkit skill home",
+          "help": "Directory containing the global skills folder. Blank uses ~/.aworkit; resolved when a new Chat starts.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "agentsHome",
+          "label": "Shared agent skill home",
+          "help": "Directory containing shared global skills. Blank uses ~/.agents.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "customSkillDirs",
+          "label": "Additional skill folders",
+          "help": "Absolute skill folders, in priority order. Project skills take precedence; these folders precede global skills.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "bundledSkillDir",
+          "label": "Bundled skill folder",
+          "help": "Optional absolute folder scanned after project, additional, and user skills. Blank disables it.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "catalogDescriptionMaxLength",
+          "label": "Catalog description length",
+          "help": "Maximum normalized description length in UTF-16 units, including an ellipsis when truncated. Minimum 3.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 3,
+          "maximum": 1000000
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The exact skill name from the available skills list."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "providerName": "skill"
     }
   ]
 }
