@@ -20,6 +20,7 @@ await writeFile(manifestPath, JSON.stringify({
 }, null, 2));
 
 const requests = [];
+let approvalBatch = false;
 const provider = createServer(async (request, response) => {
   if (request.url === "/v1/models") return response.end(JSON.stringify({ data: [{ id: "tool-fixture" }] }));
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -28,12 +29,15 @@ const provider = createServer(async (request, response) => {
   const name = body.tools?.find(tool => tool.function.name.endsWith("__echo"))?.function.name;
   const message = !name ? { role: "assistant", content: JSON.stringify({ goal: "Echo requested text", openQuestions: [], evidenceNeeded: [], toolOrder: ["Call echo"] }) }
     : toolResult ? { role: "assistant", content: "Native MCP plugin returned the requested echo." }
-    : { role: "assistant", content: null, tool_calls: [{ id: "fixture.echo." + requests.length, type: "function",
+    : { role: "assistant", content: approvalBatch ? "Fixture MCP is available in my tool list." : null, tool_calls: [{ id: "fixture.echo." + requests.length, type: "function",
       function: { name, arguments: JSON.stringify({ message: "native-plugin-proof" }) } }] };
+  if (approvalBatch && message.tool_calls) message.tool_calls.unshift({ id: "fixture.describe." + requests.length, type: "function",
+    function: { name: body.tools.find(t=>t.function.name.endsWith("__describe")).function.name,
+      arguments: JSON.stringify({message:"native-plugin-context"}) } });
   const usage = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 };
   if (body.stream) {
     response.setHeader("Content-Type", "text/event-stream");
-    const delta = message.tool_calls ? { role: "assistant", tool_calls: message.tool_calls.map((call, index) => ({ index, ...call })) } : message;
+    const delta = message.tool_calls ? { role: "assistant", content: message.content, tool_calls: message.tool_calls.map((call, index) => ({ index, ...call })) } : message;
     for (const chunk of [
       { choices: [{ index: 0, delta, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] },
@@ -46,14 +50,15 @@ const provider = createServer(async (request, response) => {
 provider.listen(0, "127.0.0.1"); await once(provider, "listening");
 const origin = "http://127.0.0.1:" + provider.address().port;
 const port = 9252;
-const launch = () => spawn(resolve("src-tauri/target/debug/aworkit-desktop.exe"), [], {
+const launch = () => spawn(resolve(process.env.AWORKIT_QA_EXE ?? "src-tauri/target/debug/aworkit-desktop.exe"), [], {
   windowsHide: true, stdio: "ignore", env: { ...process.env, AWORKIT_QA_PROFILE: root,
+    WEBVIEW2_USER_DATA_FOLDER: resolve(root, "webview"),
     AWORKIT_QA_HIDE_WINDOW: "1", WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + port },
 });
 let child = launch(), view;
 async function connect() {
   for (let i = 0; i < 100; i++) {
-    try { return await connectNativeWebView("http://127.0.0.1:" + port); } catch {}
+    try { return await connectNativeWebView("http://127.0.0.1:" + port, process.env.AWORKIT_QA_PAGE_URL ?? "http://tauri.localhost"); } catch {}
     await new Promise(resolve => setTimeout(resolve, 150));
   }
   throw new Error("Native WebView did not start");
@@ -180,11 +185,40 @@ try {
   await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='waiting_input')");
   assert.equal(requests.length, 12, "Approval resume executes the pending MCP call without replaying the model");
   assert.ok(requests[11].messages.some(m=>m.role==='tool' && m.content.includes('native-plugin-proof')));
+  // A completed call and the model's own availability statement precede the
+  // approval in one response. Denial after restart must retain both of them.
+  approvalBatch = true;
+  await evaluate("(async()=>{const invoke=window.__TAURI_INTERNALS__.invoke;const s=await invoke('settings_v2_snapshot');s.settings.mcpServers[0].tools.find(t=>t.name==='describe').options={approvalMode:'full_access'};await invoke('settings_v2_commit',{command:{commandId:'plugin.qa.denial-context',expectedVersion:s.version,settings:s.settings}});})()");
+  await click("New Chat");
+  await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='draft')");
+  await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.standard-agent");
+  await setValue('textarea[aria-label="Chat input"]', "Can you see the Fixture MCP tools?");
+  await click("Send");
+  await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Approve once'&&!b.disabled)");
+  assert.equal(requests.length,14);
+  view.close(); view = undefined;
+  const denialExit = once(child, "exit"); child.kill(); await denialExit;
+  child = launch(); view = await connect();
+  await click("Deny and give reason");
+  await setValue('textarea[aria-label="Reason for denial"]', "Just answer whether the tools are available.");
+  await click("Deny action");
+  await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='waiting_input')");
+  assert.equal(requests.length,15,"Denial resumes the same response without repeating the model or completed call");
+  assert.deepEqual(requests[14].tools,requests[13].tools,"MCP definitions remain identical after denial");
+  const continued = requests[14].messages.find(m=>m.tool_calls?.length);
+  assert.equal(continued.content,"Fixture MCP is available in my tool list.");
+  assert.equal(continued.tool_calls.length,2);
+  const results = requests[14].messages.filter(m=>m.role==='tool');
+  assert.equal(results.length,2);
+  assert.ok(results[0].content.includes('native-plugin-context'));
+  assert.ok(results[1].content.includes('user_rejected') && results[1].content.includes('Just answer whether the tools are available.'));
+  await view.screenshot(resolve(root,"denial-context.png"));
   const report = { ok: true, root, providerCalls: requests.length, cases: [
     "inert folder discovery", "typed instructions and executable settings", "live MCP discovery",
     "shared workflow selector", "per-tool approval override", "selected instructions only",
     "real MCP invocation", "new Chat uses updated connection", "restart persistence and reconnection",
     "frozen connection and instructions survive Settings edits", "MCP approval resume after restart",
+    "MCP denial preserves assistant text, completed result and tool definitions after restart",
   ] };
   await writeFile(resolve(root, "report.json"), JSON.stringify(report, null, 2));
   await writeFile(resolve(root, "provider-requests.json"), JSON.stringify(requests, null, 2));

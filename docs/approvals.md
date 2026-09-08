@@ -56,6 +56,15 @@ recovered without repeating a settled provider or tool effect. Human approval
 challenges last 24 hours; dispatch revalidates the frozen workspace and tool
 constraints.
 
+Approval checkpoints retain the complete assistant response, the tool results
+already settled in that response, and its remaining requests. Resuming does not
+drop preceding text or repeat completed calls. Another approval in the same
+response pauses at that exact call before the model continues. Denial retains
+the user's reason and marks later requests in that batch as not executed, so
+the model can reconsider them. Tool availability is unchanged by a decision.
+Older single-call checkpoints remain readable; content they never stored cannot
+be reconstructed by the checkpoint alone.
+
 ## Verification
 
 - Native Rust coverage: mode isolation, tool/project grant matching and migration,
@@ -64,6 +73,9 @@ constraints.
   conflicting decisions, and recovery after a lost approval receipt.
 - Frontend coverage: decision payloads, required denial reason, projectless
   behavior, Settings save, and existing Chat/Settings regression suites.
+- `desktop/scripts/native-tool-plugins.mjs` also checks MCP approval and denial
+  after restart, including assistant text, a preceding completed tool result,
+  matching call/result IDs, and unchanged provider tool definitions.
 - `desktop/scripts/native-approval-smoke.mjs`: the built Windows WebView, isolated
   profile, local streaming provider fixture, real file effects, all three modes,
   all three decisions, cross-chat grant reuse and Settings revocation. It writes

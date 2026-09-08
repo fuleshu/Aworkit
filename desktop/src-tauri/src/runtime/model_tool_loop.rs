@@ -23,6 +23,8 @@ use super::{
     tool_loop::{ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
+mod approval_turn;
+
 const MAXIMUM_TOOL_CALLS_PER_TURN: usize = 8;
 const MAXIMUM_DURABLE_EXCHANGE_BYTES: usize = 512 * 1024;
 pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 1;
@@ -101,6 +103,10 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub call: ModelToolCallV1,
     pub challenge: ToolApprovalChallengeV1,
     pub exchanges: Vec<ModelToolExchangeV1>,
+    /// Full assistant turn and already settled results at the approval boundary.
+    /// Older checkpoints omitted this and can only restore their single call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_exchange: Option<ModelToolExchangeV1>,
     pub activities: Vec<WorkflowToolActivityV1>,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -600,23 +606,24 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                     );
                 }
                 ToolInvokeV1::Approval(challenge) => {
-                    return Ok(ModelToolLoopRunV1::Suspended {
-                        challenge: challenge.clone(),
-                        pending: ModelToolLoopPendingV1 {
-                            turn,
-                            call: call.clone(),
-                            challenge,
-                            exchanges,
-                            activities,
-                            input_tokens,
-                            output_tokens,
-                            attempted_model_turns,
-                            settled_tool_calls,
-                            _legacy_total_calls: None,
-                            timeout_recoveries,
-                            repeat_tool_reminder,
-                            pending_runtime_notice,
-                        },
+                    return approval_turn::suspend(ModelToolLoopPendingV1 {
+                        turn,
+                        call: call.clone(),
+                        challenge,
+                        exchanges,
+                        pending_exchange: Some(ModelToolExchangeV1 {
+                            assistant_content: turn_output.assistant_content.clone(),
+                            results,
+                        }),
+                        activities,
+                        input_tokens,
+                        output_tokens,
+                        attempted_model_turns,
+                        settled_tool_calls,
+                        _legacy_total_calls: None,
+                        timeout_recoveries,
+                        repeat_tool_reminder,
+                        pending_runtime_notice,
                     });
                 }
             }
@@ -679,106 +686,29 @@ pub(crate) fn resume_model_tool_loop_v1(
         maximum_input_bytes: request.maximum_input_bytes,
         maximum_output_bytes: request.maximum_output_bytes,
     };
-    let mut exchanges = pending.exchanges.clone();
-    let mut activities = pending.activities.clone();
+    let mut pending = pending.clone();
+    if !approval_turn::resume_pending_turn(
+        &request,
+        authority,
+        &mut pending,
+        approved,
+        now_epoch_millis,
+        cancellation,
+    )? {
+        return Ok(ModelToolLoopRunV1::Suspended {
+            challenge: pending.challenge.clone(),
+            pending,
+        });
+    }
+    let mut exchanges = pending.exchanges;
+    let mut activities = pending.activities;
     let mut input_tokens = pending.input_tokens;
     let mut output_tokens = pending.output_tokens;
     let mut attempted_model_turns = pending.attempted_model_turns;
     let mut settled_tool_calls = pending.settled_tool_calls;
     let mut timeout_recoveries = pending.timeout_recoveries;
-    let mut repeat_tool_reminder = pending.repeat_tool_reminder.clone();
-    let mut pending_runtime_notice = pending.pending_runtime_notice.clone();
-
-    let response = ApprovalResponseV1 {
-        invocation_id: StableId::parse(pending.challenge.invocation_id.clone()).map_err(|_| {
-            failure(
-                ModelToolLoopErrorV1::ToolAuthority("invalid approval invocation identity".into()),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?,
-        nonce: StableId::parse(pending.challenge.nonce.clone()).map_err(|_| {
-            failure(
-                ModelToolLoopErrorV1::ToolAuthority("invalid approval nonce".into()),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?,
-        approved,
-        now_epoch_millis,
-    };
-    let settled = authority
-        .resolve(
-            request.outer_invocation_id,
-            pending.turn,
-            &pending.call,
-            &response,
-            cancellation,
-        )
-        .map_err(|error| {
-            failure(
-                ModelToolLoopErrorV1::ToolAuthority(error),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
-    let exchange = ModelToolExchangeV1 {
-        assistant_content: vec![ModelAssistantContentV1::ToolCall {
-            call: pending.call.clone(),
-        }],
-        results: vec![model_facing_tool_result(
-            &settled.result,
-            &pending.call.capability_id,
-            request.maximum_tool_output_bytes,
-        )],
-    };
-    let mut durable_exchanges = exchanges.clone();
-    durable_exchanges.push(exchange.clone());
-    if serde_json::to_vec(&durable_exchanges)
-        .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
-    {
-        return Err(failure(
-            ModelToolLoopErrorV1::Budget("durable model/tool history byte limit"),
-            input_tokens,
-            output_tokens,
-            attempted_model_turns,
-            settled_tool_calls,
-            &exchanges,
-            &activities,
-        ));
-    }
-    authority
-        .commit_exchange(request.outer_invocation_id, pending.turn, &exchange)
-        .map_err(|error| {
-            failure(
-                ModelToolLoopErrorV1::ToolAuthority(error),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            )
-        })?;
-    exchanges.push(exchange);
-    activities.push(settled.activity);
-    settled_tool_calls = settled_tool_calls.saturating_add(1);
-    append_runtime_notices(
-        &mut pending_runtime_notice,
-        repeat_tool_reminder.observe_calls(std::slice::from_ref(&pending.call)),
-    );
+    let mut repeat_tool_reminder = pending.repeat_tool_reminder;
+    let mut pending_runtime_notice = pending.pending_runtime_notice;
 
     let mut turn = pending.turn.saturating_add(1);
     loop {
@@ -883,23 +813,24 @@ pub(crate) fn resume_model_tool_loop_v1(
                     );
                 }
                 ToolInvokeV1::Approval(challenge) => {
-                    return Ok(ModelToolLoopRunV1::Suspended {
-                        challenge: challenge.clone(),
-                        pending: ModelToolLoopPendingV1 {
-                            turn,
-                            call: call.clone(),
-                            challenge,
-                            exchanges,
-                            activities,
-                            input_tokens,
-                            output_tokens,
-                            attempted_model_turns,
-                            settled_tool_calls,
-                            _legacy_total_calls: None,
-                            timeout_recoveries,
-                            repeat_tool_reminder,
-                            pending_runtime_notice,
-                        },
+                    return approval_turn::suspend(ModelToolLoopPendingV1 {
+                        turn,
+                        call: call.clone(),
+                        challenge,
+                        exchanges,
+                        pending_exchange: Some(ModelToolExchangeV1 {
+                            assistant_content: turn_output.assistant_content.clone(),
+                            results,
+                        }),
+                        activities,
+                        input_tokens,
+                        output_tokens,
+                        attempted_model_turns,
+                        settled_tool_calls,
+                        _legacy_total_calls: None,
+                        timeout_recoveries,
+                        repeat_tool_reminder,
+                        pending_runtime_notice,
                     });
                 }
             }
