@@ -515,6 +515,7 @@ impl BoundFileToolAuthorityV1 {
             }
         }
         metadata.policy.validate(metadata.context_window)?;
+        self.register_compression_scope(&owner, outer, request)?;
         let mut outcome = c::Preparation {
             durable: true,
             max_overflow_retries: metadata.policy.max_overflow_retries,

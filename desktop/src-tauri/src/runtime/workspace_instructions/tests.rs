@@ -1,6 +1,8 @@
 //! Exercise production preparation, native file effects and durable replay.
 #[path = "../compaction/integration_tests.rs"]
 mod compaction_integration;
+#[path = "../compression/integration_tests.rs"]
+mod compression_integration;
 use super::*;
 use crate::runtime::pipeline::WorkflowMessageV1;
 use crate::runtime::semantic_events::{

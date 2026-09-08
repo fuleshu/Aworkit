@@ -1376,26 +1376,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
 /// The tool binding ids this build can execute. MCP tools match the mcp:
 /// prefix and are resolved to an enabled, core-attested server at freeze.
 pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
-    [
-        "tool.skill",
-        "tool.workspace_instructions",
-        "tool.files.read",
-        "tool.files.search",
-        "tool.files.list",
-        "tool.files.grep",
-        "tool.files.edit",
-        "tool.files.write",
-        "tool.shell.host",
-        "tool.python.host",
-        "tool.todo",
-        "tool.web_search",
-        "tool.web_fetch",
-        "tool.web_extract",
-        "tool.subagent",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+    super::tool_registry::native_plugin().tools.iter().map(|tool|tool.id.clone()).collect()
 }
 
 fn is_tool_binding_id(value: &str) -> bool {

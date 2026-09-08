@@ -906,6 +906,15 @@ impl DesktopRuntime {
                 }
             }
             facts.push(("context.fork-source",json!({"nodeId":node,"ownerKey":owner_key,"parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"instructionSources":sources})));
+            // A deliberate fork copies only this selected node's parent archive.
+            // References keep their identity, but authority becomes child-owned.
+            let parent_owner = super::compaction::hash(&json!({"chat":parent.chat_id,"branch":parent_context.as_ref().and_then(|c|c.context.project.as_ref()).and_then(|p|p.branch.as_ref())}));
+            for event in parent_events.iter().filter(|e|e.kind=="context.compression" && e.payload["nodeId"]==node && e.payload["child"].is_null() && e.payload["ownerKey"]==parent_owner) {
+                let mut payload=event.payload.clone();
+                payload["ownerKey"]=json!(owner_key);
+                payload["parentChatId"]=json!(parent.chat_id);
+                facts.push(("context.compression",payload));
+            }
             facts.push(("context.compacted",json!({"nodeId":node,"ownerKey":owner_key,"child":null,"strategy":"fork","parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"body":"Context selection inherited from the parent Chat."})));
             let snapshot = super::compaction::Snapshot {
                 node_id: node.into(),
@@ -1892,7 +1901,13 @@ impl DesktopRuntime {
                 }
             }
         }
-        let resolved = resolved.expect("at least one model tier is resolved");
+        let mut resolved = resolved.expect("at least one model tier is resolved");
+        // Missing compression in old frozen Chats remains disabled. New Chats
+        // explicitly snapshot the default without changing the saved Settings.
+        let policy = resolved.model.compaction.get_or_insert_with(|| json!({}));
+        if policy.get("compression").is_none() {
+            policy["compression"] = serde_json::to_value(aworkit_capability_host::context_compression::Policy::default()).map_err(|e|e.to_string())?;
+        }
         let workflow_name = workflow
             .document
             .get("name")

@@ -1101,6 +1101,32 @@
         {"key":"maxBytes","label":"Context byte budget","help":"Maximum UTF-8 bytes per instruction batch. Broader files are omitted first. Zero disables injection.","kind":"integer","readOnly":false,"minimum":0,"maximum":65536},
         {"key":"maxSourceBytes","label":"Source file byte limit","help":"Maximum bytes read from one instruction file, enforced during streaming.","kind":"integer","readOnly":false,"minimum":1,"maximum":1048576}
       ]
+    },
+    {
+      "id": "tool.context",
+      "name": "Context retrieval",
+      "description": "Read and search original compressed tool results in the current context, and inspect compression savings.",
+      "instructions": "Compressed results may omit relevant information. Use read or search with their reference to inspect the original before exact counts, quotes, code edits, or conclusions about omitted content. Search without a reference to recover evidence after a summary; it scans paginated archives. Follow nextOffset to continue. Read offsets and match positions are original UTF-8 bytes; search offsets page ranked matches with a reference, archives without one. References cannot access another Chat, node or child context.",
+      "executor": "context",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {"authorityMode":"context_read","maximumBytes":16384},
+      "fields": [
+        {"key":"authorityMode","label":"Authority boundary","help":"Read only immutable evidence belonging to the current context.","kind":"string","readOnly":true},
+        {"key":"maximumBytes","label":"Maximum retrieval bytes","help":"Maximum serialized page size; the Agent output limit also applies.","kind":"integer","readOnly":false,"minimum":256,"maximum":65536}
+      ],
+      "inputSchema": {
+        "type":"object","additionalProperties":false,
+        "properties":{
+          "operation":{"type":"string","enum":["read","search","stats"]},
+          "reference":{"type":"string","minLength":64,"maxLength":64},
+          "pointer":{"type":"string","maxLength":4096,"description":"Optional JSON pointer into the original result, such as /stdout or /content."},
+          "offset":{"type":"integer","minimum":0},
+          "limit":{"type":"integer","minimum":256,"maximum":65536},
+          "query":{"type":"string","maxLength":4096}
+        },"required":["operation"]
+      },
+      "providerName":"aworkit_context"
     }
   ]
 }

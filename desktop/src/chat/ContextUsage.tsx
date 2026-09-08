@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { RuntimeEvent } from "./corePort";
 import { ContextPanel } from "./ContextPanel";
+import { CompressionUsage } from "./CompressionUsage";
 import { compactTokens, contextModel, contextUsage, projectContexts, type ContextDocument, type ContextModel, type ContextSelection } from "./contextProjection";
 import "./context.css";
 
@@ -60,6 +61,7 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
         {!capacity && " This model has no configured context limit."}</p>
       {selection?.inputTokens !== null && selection?.inputTokens !== undefined && <p className="context-usage-note">Last request reported {compactTokens(selection.inputTokens)} input / {compactTokens(selection.outputTokens ?? 0)} output tokens.</p>}
       {model && <p className="context-model-name">{model.name}</p>}
+      <CompressionUsage events={events} nodeId={selection?.nodeId} />
       <button type="button" className="context-display-button" disabled={!selection} title="Open the complete raw model context"
         onClick={() => { if (selection) { setPanel(selection); setOpen(false); } }}>Display Context</button>
       {onCompact && <button type="button" className="context-compact-button" disabled={!selection || Boolean(editDisabledReason)} title={editDisabledReason ?? "Summarize earlier context now, retaining recent work and the original Chat history"}

@@ -40,6 +40,7 @@
 //! Core-approved, generation-fenced capability execution.
 mod anthropic_messages;
 mod codex_app_server;
+pub mod context_compression;
 mod external_agent;
 mod files;
 mod gateway;

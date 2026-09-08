@@ -61,6 +61,8 @@ pub(crate) struct Preparation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Policy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<aworkit_capability_host::context_compression::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summarization_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summarization_model: Option<String>,
@@ -115,6 +117,7 @@ impl Default for Policy {
 }
 impl Policy {
     pub(crate) fn validate(&self, capacity: Option<u64>) -> Result<(), String> {
+        if let Some(policy) = &self.compression { policy.validate()?; }
         if self.summarization_provider.is_some() != self.summarization_model.is_some()
             || self
                 .summarization_provider

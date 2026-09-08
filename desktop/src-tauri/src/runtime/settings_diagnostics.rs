@@ -105,6 +105,7 @@ pub(crate) fn probe_tool_with_api_key(
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.context" => request.tool.validate_implemented_contract().map(|()|("adapter.context.read".into(), "Context retrieval is available for immutable evidence in the current Chat node and child scope. No external connection is needed.".into())),
             "tool.workspace_instructions" => (|| {
                 let config = super::tool_loop::workspace_instructions::configuration(
                     &serde_json::to_value(&request.tool.configuration).map_err(|e| e.to_string())?,

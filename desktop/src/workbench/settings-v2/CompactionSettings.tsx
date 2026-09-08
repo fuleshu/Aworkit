@@ -1,4 +1,5 @@
 import type { ModelConfiguration, ProviderConfiguration } from "../configuration";
+import { CompressionSettings } from "./CompressionSettings";
 
 export function CompactionSettings({model,providers,onChange}:{model:ModelConfiguration;providers:readonly ProviderConfiguration[];onChange:(model:ModelConfiguration)=>void}) {
   const policy = model.compaction ?? {};
@@ -7,7 +8,7 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
     {label}<input type="number" title={title} min={min} max={max} step="1" value={Number(policy[key] ?? fallback)*scale}
       onChange={event=> { if(event.target.value!=="") set(key,Number(event.target.value)/scale); }} />
   </label>;
-  return <details className="model-compaction-settings"><summary>Context compaction</summary>
+  return <><CompressionSettings model={model} onChange={onChange} /><details className="model-compaction-settings"><summary>Context compaction</summary>
     <p className="section-intro">Summarize earlier work as this model approaches its context limit. The original Chat history remains available. Changes apply to new Chats.</p>
     <label className="switch-label"><input type="checkbox" checked={policy.auto !== false} onChange={event=>set("auto",event.target.checked)} title="Automatically reduce context before model requests" />Automatic compaction</label>
     <div className="settings-grid two-columns">
@@ -29,5 +30,5 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
       {number("headChars","Keep beginning characters",4096,"Characters preserved from the beginning of a large tool result")}
       {number("tailChars","Keep ending characters",1024,"Characters preserved from the end of a large tool result")}
     </div>
-  </details>;
+  </details></>;
 }

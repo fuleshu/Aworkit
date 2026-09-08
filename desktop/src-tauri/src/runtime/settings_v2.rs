@@ -839,8 +839,15 @@ impl BuiltInToolConfigurationV2 {
         self.validate_implemented_contract()
     }
 
-    fn validate_implemented_contract(&self) -> Result<(), String> {
+    pub(super) fn validate_implemented_contract(&self) -> Result<(), String> {
         match self.id.as_str() {
+            "tool.context" => {
+                require_exact_config_keys(self, &["authorityMode", "maximumBytes"])?;
+                require_tool_project_scope(self, false)?;
+                require_config_string(self, "authorityMode", "context_read")?;
+                if !self.credential_bindings.is_empty() {return Err("Context retrieval does not accept credentials".into());}
+                require_config_u64(self, "maximumBytes", 256, 65536)
+            }
             "tool.workspace_instructions" => {
                 require_tool_project_scope(self, false)?;
                 super::tool_loop::workspace_instructions::configuration(
@@ -2625,7 +2632,8 @@ mod tests {
                 "tool.web_extract",
                 "tool.subagent",
                 "tool.skill",
-                "tool.workspace_instructions"
+                "tool.workspace_instructions",
+                "tool.context"
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));

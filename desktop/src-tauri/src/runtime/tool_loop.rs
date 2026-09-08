@@ -8,6 +8,8 @@
 
 #[path = "compaction/runtime.rs"]
 mod context_compaction;
+#[path = "compression/runtime.rs"]
+mod result_compression;
 pub(crate) mod skills;
 #[cfg(test)]
 mod skills_tests;
@@ -155,7 +157,7 @@ const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
-pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 10] = [
+pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 11] = [
     "tool.workspace_instructions",
     SKILL_CAPABILITY_ID,
     FILE_READ_CAPABILITY_ID,
@@ -166,6 +168,7 @@ pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 10] = [
     WEB_FETCH_CAPABILITY_ID,
     WEB_EXTRACT_CAPABILITY_ID,
     TODO_CAPABILITY_ID,
+    "tool.context",
 ];
 
 /// Approval-free tool ids that settle without a user decision.
@@ -173,6 +176,7 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
     BTreeSet::from([
         "tool.workspace_instructions",
         SKILL_CAPABILITY_ID,
+        "tool.context",
         FILE_READ_CAPABILITY_ID,
         FILE_SEARCH_CAPABILITY_ID,
         FILE_LIST_CAPABILITY_ID,
@@ -388,6 +392,7 @@ pub(crate) struct StoredToolSecretBindingV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum StoredFileToolLimitV1 {
+    Context { maximum_bytes: usize },
     WorkspaceInstructions {
         configuration: aworkit_capability_host::workspace_instructions::Configuration,
     },
@@ -508,6 +513,7 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
+        ("tool.context", CapabilityKind::Plugin, "context.read", result_compression::schema(), SideEffectClass::ReadOnly, false),
         (
             "tool.workspace_instructions",
             CapabilityKind::FileRead,
@@ -716,6 +722,12 @@ pub(crate) fn freeze_file_tool_bindings(
             .validate(native.map_or("mcp", |tool| tool.execution.as_str()))
             .map_err(|error| invalid_tool(&error))?;
         let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
+            "context" => (
+                "aworkit_context".into(),
+                "Read or search original compressed tool output by its reference, or inspect compression statistics. Use originals for exact counts, quotes and edits. Read offsets are UTF-8 bytes; search offsets are ranked matches.".into(),
+                result_compression::schema(),
+                StoredFileToolLimitV1::Context { maximum_bytes: exact_unsigned_configuration(&requested.configuration, &[("authorityMode",json!("context_read"))], "maximumBytes", 256, 65536)? },
+            ),
             "workspace_instructions" => (
                 String::new(), "Automatic workspace instructions".into(), Value::Null,
                 StoredFileToolLimitV1::WorkspaceInstructions {
@@ -1120,6 +1132,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
         adapter_id: stable(match tool.capability_id.as_str() {
             "tool.workspace_instructions" => "adapter.workspace_instructions",
             SKILL_CAPABILITY_ID => "adapter.skills.read",
+            "tool.context" => "adapter.context.read",
             FILE_READ_CAPABILITY_ID => FILE_READ_ADAPTER_ID,
             FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_ADAPTER_ID,
             FILE_LIST_CAPABILITY_ID => FILE_LIST_ADAPTER_ID,
@@ -1619,7 +1632,7 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false);
         self.publish_tool_outcome(call, &result);
-        result
+        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
     }
 
     /// Same broker flow with delivery scoped to exactly this invocation's
@@ -1636,7 +1649,7 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true);
         self.publish_tool_outcome(call, &result);
-        result
+        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
     }
 
     fn invoke_v1_with_delivery(
@@ -1684,7 +1697,7 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.resolve_invoke_v1_inner(outer_invocation_id, turn, call, response, cancellation);
         self.publish_tool_outcome(call, &result);
-        result
+        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
     }
 
     fn resolve_invoke_v1_inner(
@@ -2445,6 +2458,7 @@ impl FileToolDispatcherV1 {
             )
             .map_err(|error| error.to_string())?;
             match &self.record.binding.limit {
+                StoredFileToolLimitV1::Context { maximum_bytes } => self.retrieve_context(*maximum_bytes, cancellation),
                 StoredFileToolLimitV1::WorkspaceInstructions { .. } => Err("automatic context plugins are prepared by the Agent lifecycle and cannot be invoked".into()),
                 StoredFileToolLimitV1::Skill { configuration } => {
                     let name = self.record.call.arguments["name"]
@@ -3534,6 +3548,10 @@ fn validate_call_arguments(
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
     let expected_keys: BTreeSet<&str> = match binding.limit {
+        StoredFileToolLimitV1::Context { .. } => {
+            aworkit_capability_host::context_compression::retrieval::Request::parse(arguments).map_err(|e|invalid_tool(&e))?;
+            return Ok(());
+        },
         StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
             return Err(invalid_tool(
                 "automatic context plugins cannot be called as tools",
@@ -3602,6 +3620,7 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
+        StoredFileToolLimitV1::Context { .. } => {},
         StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
             return Err(invalid_tool(
                 "automatic context plugins cannot be called as tools",
@@ -4099,6 +4118,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         PYTHON_CAPABILITY_ID => PYTHON_SCOPE,
         TODO_CAPABILITY_ID => TODO_SCOPE,
         SKILL_CAPABILITY_ID => "skills.read",
+        "tool.context" => "context.read",
         WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_SCOPE,
         WEB_FETCH_CAPABILITY_ID => WEB_FETCH_SCOPE,
         WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_SCOPE,

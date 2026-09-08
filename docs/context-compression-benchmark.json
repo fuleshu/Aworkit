@@ -1,0 +1,104 @@
+{
+  "iterations": 21,
+  "profile": "release",
+  "results": [
+    {
+      "afterBytes": 7472,
+      "afterTokens": 3627,
+      "beforeBytes": 65396,
+      "beforeTokens": 14004,
+      "case": "JSON event table",
+      "lossy": false,
+      "mode": "lossless",
+      "p50Micros": 5357,
+      "p95Micros": 5854,
+      "savingsPercent": 74.10025706940874
+    },
+    {
+      "afterBytes": 12066,
+      "afterTokens": 4964,
+      "beforeBytes": 55419,
+      "beforeTokens": 19200,
+      "case": "Log templates",
+      "lossy": false,
+      "mode": "lossless",
+      "p50Micros": 8726,
+      "p95Micros": 9266,
+      "savingsPercent": 74.14583333333333
+    },
+    {
+      "afterBytes": 19240,
+      "afterTokens": 8460,
+      "beforeBytes": 19240,
+      "beforeTokens": 8460,
+      "case": "Source exploration",
+      "lossy": false,
+      "mode": "lossless",
+      "p50Micros": 30,
+      "p95Micros": 41,
+      "savingsPercent": 0.0
+    },
+    {
+      "afterBytes": 13429,
+      "afterTokens": 2517,
+      "beforeBytes": 13429,
+      "beforeTokens": 2517,
+      "case": "Retrieved prose",
+      "lossy": false,
+      "mode": "lossless",
+      "p50Micros": 6,
+      "p95Micros": 8,
+      "savingsPercent": 0.0
+    },
+    {
+      "afterBytes": 7472,
+      "afterTokens": 3627,
+      "beforeBytes": 65396,
+      "beforeTokens": 14004,
+      "case": "JSON event table",
+      "lossy": false,
+      "mode": "adaptive",
+      "p50Micros": 5371,
+      "p95Micros": 6182,
+      "savingsPercent": 74.10025706940874
+    },
+    {
+      "afterBytes": 12066,
+      "afterTokens": 4964,
+      "beforeBytes": 55419,
+      "beforeTokens": 19200,
+      "case": "Log templates",
+      "lossy": false,
+      "mode": "adaptive",
+      "p50Micros": 8923,
+      "p95Micros": 10166,
+      "savingsPercent": 74.14583333333333
+    },
+    {
+      "afterBytes": 3101,
+      "afterTokens": 1202,
+      "beforeBytes": 19240,
+      "beforeTokens": 8460,
+      "case": "Source exploration",
+      "lossy": true,
+      "mode": "adaptive",
+      "p50Micros": 4318,
+      "p95Micros": 4600,
+      "savingsPercent": 85.79196217494089
+    },
+    {
+      "afterBytes": 7414,
+      "afterTokens": 1738,
+      "beforeBytes": 13429,
+      "beforeTokens": 2517,
+      "case": "Retrieved prose",
+      "lossy": true,
+      "mode": "adaptive",
+      "p50Micros": 3202,
+      "p95Micros": 3382,
+      "savingsPercent": 30.94954310687326
+    }
+  ],
+  "scope": "synthetic local observations; no model quality or billing measurement",
+  "tokenizer": "o200k_base"
+}

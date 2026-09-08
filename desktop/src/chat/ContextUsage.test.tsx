@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { ContextUsage } from "./ContextUsage";
+import { CompressionUsage } from "./CompressionUsage";
 import { contextUsage, estimateContext, projectContexts } from "./contextProjection";
 import { projectSemanticTimeline } from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
@@ -17,6 +18,15 @@ const events = [
   event(4, "span.usage", { spanId: "model", inputTokens: 800, outputTokens: 100 }),
   event(5, "span.completed", { spanId: "model", output: [{ kind: "assistant_output", text: "The answer" }] }),
 ];
+it("reports local compression separately and excludes other nodes and children",()=>{
+ render(<CompressionUsage nodeId="agent.1" events={[
+  event(1,"context.compression",{nodeId:"agent.1",child:null,metrics:{beforeBytes:10000,afterBytes:2000}}),
+  event(2,"context.compression",{nodeId:"agent.2",child:null,metrics:{beforeBytes:10000,afterBytes:0}}),
+  event(3,"context.retrieved",{nodeId:"agent.1",child:null}),
+  event(4,"context.retrieved",{nodeId:"agent.1",child:"private"}),
+ ]}/>);
+ expect(screen.getByText(/8K bytes saved across 1 result · 1 retrieval/)).toBeTruthy();
+});
 const open = () => {
   fireEvent.click(screen.getByRole("button", { name: /Context usage/ }));
   fireEvent.click(screen.getByRole("button", { name: "Display Context" }));
