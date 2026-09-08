@@ -4,11 +4,11 @@ import {
   formatRunDetailPrimitive,
   humanizeRunDetailLabel,
   projectRunDetails,
-  rawRunDetailsJson,
   type RunDetailsLogEntry,
   type RunDetailsSection,
 } from "./runDetails";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
+import { RawJsonView } from "./RawJsonView";
 
 interface RunDetailsInspectorProps {
   readonly chat: ChatProjection;
@@ -35,7 +35,6 @@ export function RunDetailsInspector({
     () => projectRunDetails({ chat, items, events, records, selectedId }),
     [chat, events, items, records, selectedId],
   );
-  const raw = useMemo(() => rawRunDetailsJson(view), [view]);
   return (
     <aside className="run-details-inspector" aria-label="Run details">
       <header>
@@ -91,19 +90,7 @@ export function RunDetailsInspector({
         {tab === "details" ? (
           <DetailsView sections={view.sections} summary={view.summary} onSelect={onSelect} />
         ) : (
-          <>
-            <p className="run-details-raw-note">
-              Exact redacted records for the currently selected scope.
-            </p>
-            <pre className="run-details-json">{raw}</pre>
-            <button
-              title="Copy the redacted JSON for this Run details scope"
-              type="button"
-              onClick={() => void navigator.clipboard?.writeText(raw)}
-            >
-              Copy JSON
-            </button>
-          </>
+          <RawJsonView key={`${chat.chatId}:${view.breadcrumbs.at(-1)?.id ?? "run"}`} value={view.raw} />
         )}
       </div>
     </aside>

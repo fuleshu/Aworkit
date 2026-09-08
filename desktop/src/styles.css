@@ -1543,6 +1543,26 @@ pre {
 .run-details-json {
   max-height: none;
 }
+.run-details-json-toolbar {
+  align-items: center;
+  background: var(--aw-panel);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  position: sticky;
+  top: -12px;
+}
+.run-details-json-pages,
+.run-details-json-pages label {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+.run-details-json-pages input {
+  width: 5em;
+}
 
 /* Workflow */
 .workflow-editor,
