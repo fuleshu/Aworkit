@@ -77,6 +77,7 @@ fn skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable() {
     let binding = file_tool_capability_binding(&tool, &descriptors[SKILL_CAPABILITY_ID]).unwrap();
     assert!(!tool.requires_approval);
     let mut authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+        chat_id: "chat.skills".into(),
         approvals: Default::default(),
         review_messages: vec![super::super::pipeline::WorkflowMessageV1 {
             role: "user".into(),
@@ -99,6 +100,7 @@ fn skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable() {
         model_gateway: None,
         model_binding_id: None,
         model_version_hash: None,
+        model_context: serde_json::json!({}),
         maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
         mcp_manifests: BTreeMap::new(),
         cancellation: CancellationToken::default(),

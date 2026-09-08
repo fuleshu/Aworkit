@@ -5,12 +5,15 @@ import {
   screen,
   waitFor,
   within,
+  renderHook,
+  act,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "../test/renderWithNotifications";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
+import { useChatRuntime } from "./useChatRuntime";
 import {
   ChatWorkspaceScreen,
   timelineActionIntent,
@@ -64,6 +67,27 @@ const runningChat: ChatProjection = {
 };
 
 describe("Chat native-port recovery contracts", () => {
+  it("queues maintenance inputs FIFO and uses each settled history fence",async()=>{
+    let head=1,release!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve});
+    const calls:Array<{id:string;version:number}>=[];
+    const port:ChatCorePort={async snapshot(){return snapshot(head,"Queue",Array.from({length:head},(_,n)=>({sequence:n+1})))},async command(intent,version){
+      calls.push({id:intent.commandId,version});
+      if(intent.type==="compact_context")await held;
+      head++;
+      return {commandId:intent.commandId,accepted:true,currentVersion:head,reason:null};
+    }};
+    const {result}=renderHook(()=>useChatRuntime(port,60000));
+    await waitFor(()=>expect(result.current.snapshot).not.toBeNull());
+    let maintenance!:Promise<boolean>;
+    act(()=>{maintenance=result.current.dispatch({type:"compact_context",commandId:"compact",nodeId:"agent.1",baseSequence:1,targetId:"chat.test"})});
+    await act(async()=>{await result.current.dispatch({type:"enqueue",commandId:"first",input:"First"});await result.current.dispatch({type:"enqueue",commandId:"second",input:"Second"});});
+    expect(calls).toEqual([{id:"compact",version:1}]);
+    expect(result.current.queuedMaintenanceInputs).toEqual(["First","Second"]);
+    await act(async()=>{release();await maintenance});
+    await waitFor(()=>expect(result.current.queuedMaintenanceInputs).toEqual([]));
+    expect(calls).toEqual([{id:"compact",version:1},{id:"first",version:2},{id:"second",version:3}]);
+  });
   it("remeasures every expanded evidence row together after layout", () => {
     virtualizerMeasure.mockClear();
     virtualizerResizeItem.mockClear();

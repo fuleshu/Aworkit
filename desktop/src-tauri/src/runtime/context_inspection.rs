@@ -25,6 +25,15 @@ pub(crate) struct ContextDocument {
 }
 
 impl ContextDocument {
+    pub(crate) fn from_request(request: &ModelToolRequestV1) -> Self {
+        Self {
+            input: request.input.clone(),
+            tools: request.tools.clone(),
+            exchanges: request.exchanges.clone(),
+            context_messages: request.context_messages.clone(),
+            retry_notice: request.retry_notice.clone(),
+        }
+    }
     pub(crate) fn from_input(input: &Value) -> Result<Self, String> {
         let tool_request = input.get("input").is_some() && input.get("tools").is_some();
         serde_json::from_value(json!({
@@ -130,20 +139,29 @@ pub(crate) fn select_context(
         .iter()
         .rev()
         .find(|event| {
-            (event.kind == "context.edited" && event.payload["nodeId"] == node_id)
+            (matches!(event.kind.as_str(), "context.edited" | "context.checkpoint")
+                && event.payload["nodeId"] == node_id
+                && event.payload["child"].is_null())
                 || (event.kind == "span.started"
                     && event.payload["spanKind"] == "model_call"
                     && model_node(event, events) == Some(node_id))
         })
         .ok_or("No model context is available for this node.")?;
-    let mut document = if source.kind == "context.edited" {
-        serde_json::from_value(source.payload["document"].clone())
-            .map_err(|e| format!("Invalid saved context: {e}"))?
+    let mut document = if matches!(
+        source.kind.as_str(),
+        "context.edited" | "context.checkpoint"
+    ) {
+        serde_json::from_value(if source.kind == "context.checkpoint" {
+            source.payload["snapshot"]["document"].clone()
+        } else {
+            source.payload["document"].clone()
+        })
+        .map_err(|e| format!("Invalid saved context: {e}"))?
     } else {
         ContextDocument::from_input(&source.payload["input"])?
     };
     let mut sequence = source.sequence;
-    if source.kind != "context.edited" {
+    if source.kind == "span.started" {
         if let Some(completed) = events
             .iter()
             .find(|e| e.kind == "span.completed" && e.span_id == source.span_id)

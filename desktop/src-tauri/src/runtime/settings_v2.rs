@@ -191,6 +191,25 @@ impl SettingsConfigurationV2 {
             }
         }
         validate_tiers(&self.model_tiers, &model_refs)?;
+        for model in self.providers.iter().flat_map(|p| &p.models) {
+            let policy: super::compaction::Policy = serde_json::from_value(
+                model
+                    .compaction
+                    .clone()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            )
+            .map_err(|e| e.to_string())?;
+            if let (Some(provider), Some(target)) =
+                (policy.summarization_provider, policy.summarization_model)
+            {
+                if !provider.is_empty() && !model_refs.contains(&(provider, target)) {
+                    return Err(format!(
+                        "Model '{}' references an unavailable summary provider/model",
+                        model.name
+                    ));
+                }
+            }
+        }
         for tool in &self.tools {
             tool.validate(&credential_fields)?;
         }
@@ -609,12 +628,21 @@ pub struct ModelConfigurationV2 {
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<Value>,
     pub capabilities: Vec<String>,
     pub parameters: BTreeMap<String, Value>,
 }
 
 impl ModelConfigurationV2 {
     fn validate(&self) -> Result<(), String> {
+        let policy: super::compaction::Policy = serde_json::from_value(
+            self.compaction
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .map_err(|e| format!("Invalid compaction configuration: {e}"))?;
+        policy.validate(self.context_window)?;
         validate_stable_id("model id", &self.id)?;
         validate_label("model name", &self.name)?;
         validate_nonempty("remote model id", &self.remote_id)?;
@@ -817,7 +845,8 @@ impl BuiltInToolConfigurationV2 {
                 require_tool_project_scope(self, false)?;
                 super::tool_loop::workspace_instructions::configuration(
                     &serde_json::to_value(&self.configuration).map_err(|e| e.to_string())?,
-                ).map(|_| ())
+                )
+                .map(|_| ())
             }
             "tool.skill" => {
                 require_tool_project_scope(self, false)?;
@@ -2490,6 +2519,7 @@ mod tests {
                 enabled: true,
                 context_window: Some(32_768),
                 max_output_tokens: Some(4_096),
+                compaction: None,
                 capabilities: vec!["text".into(), "tools".into()],
                 parameters: BTreeMap::from([("reasoningEffort".into(), Value::from("medium"))]),
             }],

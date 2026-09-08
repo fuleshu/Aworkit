@@ -381,6 +381,7 @@ impl ProviderEnginePortV1 for GoogleGeminiProvider {
 impl From<GoogleGeminiProviderError> for ProviderError {
     fn from(error: GoogleGeminiProviderError) -> Self {
         match error {
+            GoogleGeminiProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             GoogleGeminiProviderError::RequestTimedOut => Self::RequestTimedOut,
             other => Self::Failed(other.to_string()),
         }
@@ -389,6 +390,8 @@ impl From<GoogleGeminiProviderError> for ProviderError {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum GoogleGeminiProviderError {
+    #[error("provider context window exceeded")]
+    ContextWindowExceeded,
     #[error("Gemini provider binding id is invalid")]
     InvalidBindingId,
     #[error("Gemini provider version hash is invalid")]
@@ -591,6 +594,7 @@ fn map_transport_error(error: BoundedJsonError) -> GoogleGeminiProviderError {
         BoundedJsonError::ClientConstruction => GoogleGeminiProviderError::ClientConstruction,
         BoundedJsonError::RequestTimedOut => GoogleGeminiProviderError::RequestTimedOut,
         BoundedJsonError::Transport => GoogleGeminiProviderError::Transport,
+        BoundedJsonError::ContextWindowExceeded => GoogleGeminiProviderError::ContextWindowExceeded,
         BoundedJsonError::HttpStatus(status) => GoogleGeminiProviderError::HttpStatus(status),
         BoundedJsonError::ResponseTooLarge => GoogleGeminiProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => GoogleGeminiProviderError::InvalidJson,

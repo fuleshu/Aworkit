@@ -1,5 +1,5 @@
-mod mcp_selection;
 mod context_edit;
+mod mcp_selection;
 mod tool_plugins;
 
 use std::{
@@ -592,7 +592,14 @@ impl DesktopRuntime {
             let model = resolved
                 .as_ref()
                 .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
-            validate_model_capabilities(&model.provider, &model.model, agent.tools.iter().any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)))?;
+            validate_model_capabilities(
+                &model.provider,
+                &model.model,
+                agent
+                    .tools
+                    .iter()
+                    .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
+            )?;
             validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
             if agent
                 .tools
@@ -653,6 +660,7 @@ impl DesktopRuntime {
                 | "approval"
                 | "approval_mode"
                 | "edit_context"
+                | "compact_context"
         ) {
             self.ensure_current_chat_target(input.target_id.as_deref())?;
         }
@@ -695,7 +703,9 @@ impl DesktopRuntime {
                 )
             }
             "fork" => self.fork_chat(input, fingerprint),
-            "start" | "enqueue" => self.complete_workflow_input(input, fingerprint),
+            "start" | "enqueue" | "compact_context" => {
+                self.complete_workflow_input(input, fingerprint)
+            }
             "approval" => self.complete_approval(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
             "edit_context" => self.edit_context(input, fingerprint),
@@ -841,6 +851,74 @@ impl DesktopRuntime {
                 forked_message_payload(event, &parent.chat_id, &child.run_id),
             ));
         }
+        // Freeze the parent's selected surface at the fork point. Canonical
+        // conversation remains copied above; shadowed tools never execute again.
+        let envelopes: Vec<_> = parent_events
+            .iter()
+            .enumerate()
+            .map(|(index, e)| {
+                super::semantic_events::envelope(
+                    "fork.source",
+                    "main",
+                    index as u64 + 1,
+                    super::semantic_events::SemanticEventDraft::new(&e.kind, e.payload.clone()),
+                )
+            })
+            .collect();
+        let nodes: std::collections::BTreeSet<_> = envelopes
+            .iter()
+            .filter(|e| e.kind == "context.checkpoint" && e.payload["child"].is_null())
+            .filter_map(|e| e.payload["nodeId"].as_str())
+            .collect();
+        let conversation_sequence = facts.len() as u64;
+        let owner_key = super::compaction::hash(
+            &json!({"chat":child.chat_id,"branch":parent_context.as_ref().and_then(|c|c.context.project.as_ref()).and_then(|p|p.branch.as_ref())}),
+        );
+        for node in nodes {
+            let selection = super::context_inspection::select_context(&envelopes, node)?;
+            selection.document.validate()?;
+            let mut sources = Vec::new();
+            for event in &parent_events {
+                if event.kind == "context.fork-source" && event.payload["nodeId"] == node {
+                    sources.extend(
+                        event.payload["instructionSources"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .cloned(),
+                    );
+                }
+                if event.kind == "context.instructions" && event.payload["nodeId"] == node {
+                    let source = &event.payload["event"];
+                    if source["owner"]["context"].as_str().is_some_and(|c| {
+                        c == format!(
+                            "{}:",
+                            parent_context
+                                .as_ref()
+                                .and_then(|c| c.context.project.as_ref())
+                                .and_then(|p| p.branch.as_deref())
+                                .unwrap_or("")
+                        )
+                    }) && source["id"].is_string()
+                    {
+                        sources.push(json!({"id":source["id"],"owner":source["owner"]}));
+                    }
+                }
+            }
+            facts.push(("context.fork-source",json!({"nodeId":node,"ownerKey":owner_key,"parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"instructionSources":sources})));
+            facts.push(("context.compacted",json!({"nodeId":node,"ownerKey":owner_key,"child":null,"strategy":"fork","parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"body":"Context selection inherited from the parent Chat."})));
+            let snapshot = super::compaction::Snapshot {
+                node_id: node.into(),
+                child: None,
+                outer: String::new(),
+                through: 0,
+                conversation_cursor: 0,
+                conversation_sequence: Some(conversation_sequence),
+                document: selection.document,
+                anchor: None,
+            };
+            facts.push(("context.checkpoint",json!({"nodeId":node,"ownerKey":owner_key,"child":null,"pressureTokens":super::compaction::estimate(&snapshot.document.request())?,"pressureReported":false,"snapshot":snapshot})));
+        }
         let child_head =
             self.history
                 .append_fork_content(&child, &input.command_id, &fingerprint, facts)?;
@@ -858,6 +936,36 @@ impl DesktopRuntime {
         input: UiCommandInput,
         fingerprint: String,
     ) -> Result<UiCommandReceipt, String> {
+        let manual = input.action == "compact_context";
+        if manual && !self.history.command_started(&input.command_id)? {
+            let snapshot = self.snapshot(0)?;
+            if snapshot.chat.recovery_pending
+                || !matches!(
+                    snapshot.chat.phase.as_str(),
+                    "waiting_input" | "completed" | "paused"
+                )
+            {
+                return Err("Finish or stop the current turn before compacting context.".into());
+            }
+            if snapshot.events.iter().any(|e| {
+                e.kind == "span.started"
+                    && !snapshot.events.iter().any(|end| {
+                        matches!(
+                            end.kind.as_str(),
+                            "span.completed" | "span.failed" | "span.cancelled"
+                        ) && end.span_id == e.span_id
+                    })
+            }) {
+                return Err(
+                    "Resolve the pending approval or recovery before compacting context.".into(),
+                );
+            }
+            let node = string_field(&input.payload, "nodeId")?;
+            let selection = super::context_inspection::select_context(&snapshot.events, &node)?;
+            if input.payload["baseSequence"].as_u64() != Some(selection.sequence) {
+                return Err("Context changed. Reopen context details before compacting.".into());
+            }
+        }
         let command_started = self.history.command_started(&input.command_id)?;
         if !command_started {
             self.history.ensure_expected(input.expected_version)?;
@@ -879,7 +987,11 @@ impl DesktopRuntime {
             return Err("projectId can be supplied only by the first Chat start command".into());
         }
         let images = super::images::command_images(&input.payload)?;
-        let user_input = super::images::command_text(&input.payload)?;
+        let user_input = if manual {
+            String::new()
+        } else {
+            super::images::command_text(&input.payload)?
+        };
         for image in &images {
             aworkit_capability_host::model_images::ModelImageResolver::read(&self.images, image)
                 .map_err(|e| e.to_string())?;
@@ -930,7 +1042,7 @@ impl DesktopRuntime {
                     )
                 }
             }
-            "enqueue" => {
+            "enqueue" | "compact_context" => {
                 if conversation.is_empty() {
                     return Err("cannot enqueue before the first Chat message".into());
                 }
@@ -945,7 +1057,7 @@ impl DesktopRuntime {
             }
             _ => return Err("Chat accepts only start or enqueue actions".into()),
         };
-        if !command_started {
+        if !command_started && !manual {
             conversation.push(ConversationMessage {
                 role: "user".into(),
                 content: user_input.clone(),
@@ -970,6 +1082,8 @@ impl DesktopRuntime {
             ));
         }
         let provider_runtime_limits = context.provider_snapshot.runtime_limits()?;
+        // Ordinary invocations retain their existing graph input. Oversized
+        // history is restored from the semantic ledger at model admission.
         let provider_messages = conversation
             .iter()
             .map(|message| WorkflowMessageV1 {
@@ -1013,6 +1127,12 @@ impl DesktopRuntime {
                 .map(|project| project.project_name.clone()),
         };
         execution_request.model_parameters = context.model_snapshot.parameters.clone();
+        if context.compaction_version.is_some() {
+            execution_request.model_context = json!({"contextWindow":context.model_snapshot.context_window,"policy":context.model_snapshot.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
+        }
+        if manual {
+            execution_request.compact_node = Some(string_field(&input.payload, "nodeId")?.into());
+        }
         execution_request.workspace = context
             .project
             .as_ref()
@@ -1071,15 +1191,19 @@ impl DesktopRuntime {
         execution_request.budget.attempts = 1;
         execution_request.budget.tool_calls = 0;
         execution_request.budget.actions = 1;
-        if serde_json::to_vec(&execution_request.messages)
-            .map_err(|error| format!("cannot encode Chat message context: {error}"))?
-            .len()
-            > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
+        if manual
+            || serde_json::to_vec(&execution_request.messages)
+                .map_err(|error| format!("cannot encode Chat message context: {error}"))?
+                .len()
+                > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
         {
-            return Err(format!(
-                "the accumulated Chat message context exceeds the durable {} KiB bound; start a New Chat or reduce the input",
-                WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES / 1024
-            ));
+            execution_request.messages = execution_request
+                .messages
+                .into_iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .into_iter()
+                .collect();
         }
         self.pipeline.preflight(&execution_request)?;
         if persist_frozen_context {
@@ -1134,7 +1258,9 @@ impl DesktopRuntime {
                     Value::String(context.identity.run_id.to_string()),
                 );
             }
-            initial_facts.push(("message.user", user_fact));
+            if !manual {
+                initial_facts.push(("message.user", user_fact));
+            }
             initial_facts.push((
                 "span.started",
                 json!({
@@ -1242,7 +1368,12 @@ impl DesktopRuntime {
                         &created_at,
                     ),
                 ));
-                facts.push(("message.assistant", fact));
+                if manual {
+                    fact["nodeId"] = input.payload["nodeId"].clone();
+                    facts.push(("context.manual-completed", fact));
+                } else {
+                    facts.push(("message.assistant", fact));
+                }
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
                 facts.extend(todo_state_fact(
@@ -1302,11 +1433,17 @@ impl DesktopRuntime {
                     ),
                 ));
                 facts.push((
-                    "execution.failed",
+                    if manual {
+                        "context.manual-failed"
+                    } else {
+                        "execution.failed"
+                    },
                     json!({
                         "createdAt": created_at,
                         "commandId": input.command_id,
                         "status": execution_status_name(status),
+                        "inputUnits":result.input_units,
+                        "outputUnits":result.output_units,
                         "body": error,
                         "providerId": context.provider_id,
                         "modelId": context.model_id,
@@ -1768,7 +1905,14 @@ impl DesktopRuntime {
             project.is_some(),
             &mcp_definitions,
         )?;
-        validate_model_capabilities(&resolved.provider, &resolved.model, agent.tools.iter().any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)))?;
+        validate_model_capabilities(
+            &resolved.provider,
+            &resolved.model,
+            agent
+                .tools
+                .iter()
+                .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
+        )?;
         validate_workflow_model_parameters(
             &workflow.document,
             &resolved.provider,
@@ -1783,6 +1927,12 @@ impl DesktopRuntime {
                 revision: metadata.revision,
             });
         let context = FrozenChatExecutionContextV1 {
+            compaction_version: Some(1),
+            summary_target: super::compaction::freeze_summary_target(
+                self.documents.settings(),
+                &resolved.model,
+                !agent.tools.is_empty(),
+            )?,
             mcp_configurations: tool_plugins::freeze_mcp_configurations(
                 self.documents.settings(),
                 &mcp_manifests,
@@ -1861,6 +2011,13 @@ impl DesktopRuntime {
             return Ok(BTreeSet::new());
         };
         let mut references = BTreeSet::new();
+        if let Some(credential) = frozen
+            .context
+            .summary_target
+            .and_then(|target| target.credential)
+        {
+            references.insert(credential.credential_ref.to_string());
+        }
         if let Some(credential) = frozen.context.credential {
             references.insert(credential.credential_ref.to_string());
         }
@@ -3296,6 +3453,7 @@ fn legacy_model(legacy: &ProviderDocument) -> ModelConfigurationV2 {
         enabled: true,
         context_window: None,
         max_output_tokens: None,
+        compaction: None,
         capabilities: vec!["text".into(), "tools".into()],
         parameters: BTreeMap::new(),
     }
@@ -4217,8 +4375,8 @@ mod tests {
         ProviderSettingsSnapshot, WorkspaceConfigurationV2, WorkspaceKindV2,
     };
 
-    mod credentialed_web_search;
     mod context_edit;
+    mod credentialed_web_search;
     mod image_chat;
 
     struct FixtureProvider {
@@ -4684,6 +4842,7 @@ mod tests {
                 enabled: true,
                 context_window: None,
                 max_output_tokens: None,
+                compaction: None,
                 capabilities: vec!["text".into()],
                 parameters: BTreeMap::new(),
             }],
@@ -5346,7 +5505,7 @@ mod tests {
     }
 
     #[test]
-    fn accumulated_context_is_rejected_before_staging_or_provider_effect() {
+    fn large_chat_uses_bounded_admission_without_discarding_canonical_history() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
@@ -5358,24 +5517,35 @@ mod tests {
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
         let oversized_follow_up = "b".repeat(80 * 1024);
-        let error = runtime
+        runtime
             .command(send(
                 "chat.context-bound-follow-up",
                 6,
                 &oversized_follow_up,
             ))
-            .unwrap_err();
-        assert!(error.contains("accumulated Chat message context"));
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+            .unwrap();
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            provider
+                .execution_requests
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
+        assert_eq!(runtime.history.conversation().unwrap().len(), 4);
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);
         drop(runtime);
 
         let mut reopened = self::runtime(&root, provider.clone());
         assert!(!reopened.snapshot(0).unwrap().chat.recovery_pending);
         reopened
-            .command(send("chat.context-bound-small", 6, "small follow-up"))
+            .command(send("chat.context-bound-small", 11, "small follow-up"))
             .unwrap();
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -6156,7 +6326,10 @@ mod tests {
         let settings = reopened.settings_v2_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION_V2);
-        assert_eq!(settings.settings.tools.len(), super::super::tool_registry::native_plugin().tools.len());
+        assert_eq!(
+            settings.settings.tools.len(),
+            super::super::tool_registry::native_plugin().tools.len()
+        );
         assert!(
             settings
                 .settings
@@ -6716,6 +6889,7 @@ mod tests {
                 enabled: true,
                 context_window: None,
                 max_output_tokens: None,
+                compaction: None,
                 capabilities: vec!["text".into()],
                 parameters: BTreeMap::new(),
             }],

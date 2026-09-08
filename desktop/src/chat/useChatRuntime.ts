@@ -14,6 +14,8 @@ export interface ChatRuntimeState {
   readonly loading: boolean;
   readonly error: RuntimeErrorNotice | null;
   readonly pendingCommandIds: ReadonlySet<string>;
+  readonly maintenancePending: boolean;
+  readonly queuedMaintenanceInputs: readonly string[];
   dispatch(intent: ChatIntent, expectedVersion?: number): Promise<boolean>;
   resynchronize(): Promise<boolean>;
   dismissError(): void;
@@ -44,6 +46,11 @@ export function useChatRuntime(
   const initializedRef = useRef(false);
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
   const pendingRef = useRef<Set<string>>(new Set());
+  const maintenanceRef = useRef(false);
+  const drainingRef = useRef(false);
+  const queueRef = useRef<Array<{chatId:string; intent:Extract<ChatIntent,{type:"enqueue"}>}>>([]);
+  const [maintenancePending,setMaintenancePending] = useState(false);
+  const [queueVersion,setQueueVersion] = useState(0);
   const eventReadyRef = useRef<Promise<void>>(Promise.resolve());
   const nextErrorIdRef = useRef(0);
   const lastFailureRef = useRef<string | null>(null);
@@ -225,7 +232,7 @@ export function useChatRuntime(
     };
   }, [pollIntervalMs, refresh]);
 
-  const dispatch = useCallback(
+  const execute = useCallback(
     async (intent: ChatIntent, expectedVersion?: number): Promise<boolean> => {
       const current = snapshotRef.current;
       if (current === null || stale) return false;
@@ -268,6 +275,39 @@ export function useChatRuntime(
     [port, reportError, resynchronize, stale],
   );
 
+  const dispatch = useCallback(async(intent:ChatIntent,expectedVersion?:number):Promise<boolean>=>{
+    if (intent.type === "enqueue" && (maintenanceRef.current || drainingRef.current || queueRef.current.length > 0)) {
+      const current=snapshotRef.current;
+      if (!current || stale || current.chat.recoveryPending) return false;
+      if (!queueRef.current.some(entry=>entry.intent.commandId===intent.commandId)) {
+        queueRef.current.push({chatId:current.chat.chatId,intent});
+        setQueueVersion(v=>v+1);
+      }
+      return true;
+    }
+    if (intent.type !== "compact_context") return execute(intent,expectedVersion);
+    maintenanceRef.current=true;setMaintenancePending(true);
+    try { return await execute(intent,expectedVersion); }
+    finally { maintenanceRef.current=false;setMaintenancePending(false); }
+  },[execute,stale]);
+
+  useEffect(()=>{
+    if (maintenancePending || drainingRef.current || stale || !queueRef.current.length || snapshot?.chat.recoveryPending) return;
+    drainingRef.current=true;
+    void (async()=>{
+      try {
+        while(queueRef.current.length) {
+          const entry=queueRef.current[0],current=snapshotRef.current;
+          if (!current || current.chat.chatId!==entry.chatId || current.chat.recoveryPending) break;
+          // Each command gets the settled predecessor's current history fence.
+          // Failed/uncertain admission retains its original ID and queued text.
+          if (!await execute(entry.intent)) break;
+          queueRef.current.shift();setQueueVersion(v=>v+1);
+        }
+      } finally {drainingRef.current=false;}
+    })();
+  },[maintenancePending,queueVersion,stale,execute,snapshot?.chat.chatId,snapshot?.chat.recoveryPending]);
+
   return {
     snapshot,
     events,
@@ -275,6 +315,8 @@ export function useChatRuntime(
     loading,
     error,
     pendingCommandIds,
+    maintenancePending,
+    queuedMaintenanceInputs:queueRef.current.filter(entry=>entry.chatId===snapshot?.chat.chatId).map(entry=>entry.intent.input),
     dispatch,
     resynchronize,
     dismissError,

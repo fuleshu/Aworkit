@@ -85,7 +85,7 @@ Plugin disposal unregisters lifecycle listeners, cancels its pending probes, and
 
 ## 5. Compaction integration is a required deliverable
 
-The plugin's compaction support must be implemented and tested with the loader. It must not be left as a TODO. The summarization engine and production compaction trigger are separate future work because Aworkit does not have them today.
+The plugin's compaction support must be implemented and tested with the loader. It must not be left as a TODO. The summarization engine and production trigger are now implemented; see [context-compaction.md](context-compaction.md) for the reference audit, implementation and verification evidence (2026-09-08).
 
 ### Contract to implement now
 
@@ -115,7 +115,7 @@ The complete restoration batch shares the 64 KiB default budget. Baseline orderi
 
 Use the production context preparation boundary with an in-memory test projection that removes or replaces instruction events as a compactor would. Verify first-request restoration, unchanged files with warm caches, changed/deleted/offline files, active nested scopes, removal tombstones, partial survival, repeated compaction, budget pressure, cancellation, restart after projection replacement, and parallel owner isolation. A loopback provider fixture must verify the exact restored instruction messages are present in the first request after simulated compaction.
 
-The future compactor cannot be considered integrated until these same cases run through its real context-replacement path. Until then report **loader compaction recovery prepared and tested; automatic conversation compaction not yet implemented**. This integration gate is part of this specification and the formal UML contract, so it cannot be silently dropped from the later compactor implementation.
+The compactor cannot be considered integrated until these same cases run through its real context-replacement path. This gate is now covered by `runtime/compaction/integration_tests.rs`, including actual summary replacement, instruction reconciliation, owner isolation and reopened authority records. Native loopback tests additionally verify restored instructions in the first real provider request after manual compaction, overflow recovery, restart and fork. This integration gate remains part of this specification and the formal UML contract for future changes.
 
 ## 6. Prompt compatibility
 

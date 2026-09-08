@@ -105,11 +105,9 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
             .collect::<Result<Vec<_>, ProviderError>>()?;
         contents.push(json!({"role":"user","parts":result_parts}));
     }
-    for context in request
-        .context_messages
-        .iter()
-        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
-    {
+    for context in request.context_messages.iter().filter(|c| {
+        c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len()
+    }) {
         contents.push(super::context_message(context, "gemini")?);
     }
     if let Some(notice) = &request.retry_notice {
@@ -138,6 +136,13 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
         json!({"functionCallingConfig":{"mode":"AUTO"}}),
     );
     body.insert("generationConfig".to_owned(), json!({"candidateCount":1}));
+    if let Some(cap) = request
+        .parameters
+        .get("maxOutputTokens")
+        .and_then(Value::as_u64)
+    {
+        body["generationConfig"]["maxOutputTokens"] = json!(cap);
+    }
     if request.tools.is_empty() {
         body.remove("tools");
         body.remove("toolConfig");

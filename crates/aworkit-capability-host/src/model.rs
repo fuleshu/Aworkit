@@ -385,15 +385,37 @@ impl FrozenModelGateway {
         request: &ModelToolRequestV1,
         cancellation: &CancellationToken,
     ) -> Result<ModelToolDispatchEvidenceV1, ProviderError> {
+        self.execute_tool_with_observer(plan, request, cancellation, self.observer.as_deref())
+    }
+
+    /// Isolated one-shot checkpoint call. It cannot invoke tools or emit chat
+    /// messages through the acting Agent's observer; the caller records evidence.
+    pub fn execute_compaction_cancellable(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        observer: &dyn ModelEventObserverV1,
+    ) -> Result<ModelToolDispatchEvidenceV1, ProviderError> {
+        self.execute_tool_with_observer(plan, request, cancellation, Some(observer))
+    }
+
+    fn execute_tool_with_observer(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        observer: Option<&dyn ModelEventObserverV1>,
+    ) -> Result<ModelToolDispatchEvidenceV1, ProviderError> {
         validate_tool_request(request)?;
         validate_plan_and_input(
             plan,
             &serde_json::to_value(request).map_err(|_| ProviderError::InvalidPlan)?,
         )?;
-        if let Some(observer) = &self.observer {
+        if let Some(observer) = observer {
             observer.model_turn_started(&serde_json::to_value(request).unwrap_or(Value::Null));
         }
-        let mut turn_completion = ModelTurnCompletion::new(self.observer.as_deref());
+        let mut turn_completion = ModelTurnCompletion::new(observer);
 
         let mut attempted = Vec::new();
         for candidate in &plan.candidates {
@@ -416,7 +438,7 @@ impl FrozenModelGateway {
                 if output_bytes > plan.maximum_output_bytes {
                     return Err(ProviderError::OutputBound);
                 }
-                if let Some(observer) = &self.observer {
+                if let Some(observer) = observer {
                     observer.model_tool_event(&event);
                 }
                 events.push(event);
@@ -526,6 +548,8 @@ fn event_text_bytes(event: &ModelEventV1) -> usize {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum ProviderError {
+    #[error("provider context window exceeded")]
+    ContextWindowExceeded,
     #[error("provider binding drift")]
     BindingDrift,
     #[error("provider output exceeds binding limit")]

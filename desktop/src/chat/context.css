@@ -21,6 +21,7 @@
 .context-usage-note { color: var(--aw-muted); font-size: var(--aw-font-caption); margin: 13px 0 0; }
 .context-model-name { color: var(--aw-muted); font-size: var(--aw-font-caption); margin: 6px 0 0; overflow-wrap: anywhere; }
 .context-display-button { width: 100%; margin-top: 15px; border-radius: 7px; padding: 7px 12px; }
+.context-compact-button { width: 100%; margin-top: 8px; border-radius: 7px; padding: 7px 12px; }
 .context-panel { width: min(1200px, calc(100vw - 48px)); height: calc(100dvh - 64px); max-height: 100dvh; max-width: 100vw; padding: 0; border: 1px solid var(--aw-divider); border-radius: 12px; background: var(--aw-panel); color: var(--aw-text); box-shadow: 0 20px 90px #0005; }
 .context-panel[open] { display: flex; flex-direction: column; }
 .context-panel::backdrop { background: #10182470; }

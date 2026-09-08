@@ -326,9 +326,12 @@ impl OpenAiCompatibleProvider {
         response: Response,
     ) -> Result<Response, OpenAiCompatibleProviderError> {
         if !response.status().is_success() {
-            return Err(OpenAiCompatibleProviderError::HttpStatus(
-                response.status().as_u16(),
-            ));
+            let (status, overflow) = crate::provider_transport::context_overflow_response(response);
+            return Err(if overflow {
+                OpenAiCompatibleProviderError::ContextWindowExceeded
+            } else {
+                OpenAiCompatibleProviderError::HttpStatus(status)
+            });
         }
         if response
             .content_length()
@@ -344,9 +347,12 @@ impl OpenAiCompatibleProvider {
         response: Response,
     ) -> Result<T, OpenAiCompatibleProviderError> {
         if !response.status().is_success() {
-            return Err(OpenAiCompatibleProviderError::HttpStatus(
-                response.status().as_u16(),
-            ));
+            let (status, overflow) = crate::provider_transport::context_overflow_response(response);
+            return Err(if overflow {
+                OpenAiCompatibleProviderError::ContextWindowExceeded
+            } else {
+                OpenAiCompatibleProviderError::HttpStatus(status)
+            });
         }
         if response
             .content_length()
@@ -462,6 +468,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
 impl From<OpenAiCompatibleProviderError> for ProviderError {
     fn from(error: OpenAiCompatibleProviderError) -> Self {
         match error {
+            OpenAiCompatibleProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             OpenAiCompatibleProviderError::RequestTimedOut => Self::RequestTimedOut,
             other => Self::Failed(other.to_string()),
         }
@@ -472,6 +479,8 @@ impl From<OpenAiCompatibleProviderError> for ProviderError {
 /// key, authorization header, response body, or complete request body.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum OpenAiCompatibleProviderError {
+    #[error("provider context window exceeded")]
+    ContextWindowExceeded,
     #[error("provider binding id is invalid")]
     InvalidBindingId,
     #[error("provider version hash is invalid")]

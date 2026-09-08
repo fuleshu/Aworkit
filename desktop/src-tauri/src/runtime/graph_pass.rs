@@ -44,16 +44,28 @@ const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
 
 fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
-    AgentContextV1 { node_id: node.id.clone(),
-        tool_ids: node.tool_bindings.iter().map(|b| b.capability_id.clone()).collect(), child: None }
+    AgentContextV1 {
+        node_id: node.id.clone(),
+        tool_ids: node
+            .tool_bindings
+            .iter()
+            .map(|b| b.capability_id.clone())
+            .collect(),
+        child: None,
+    }
 }
 
 /// New automatic-context Agents isolate their durable tool exchanges by node.
 /// Keep the historical invocation identity for pre-existing frozen workflows.
-fn instruction_agent_outer(outer: &StableId, node: &CompiledGraphNodeV1) -> StableId {
-    if node.tool_bindings.iter().all(|b| b.is_callable()) { return outer.clone(); }
-    StableId::parse(format!("invocation.agent.{:x}", Sha256::digest(format!("{outer}:{}",node.id).as_bytes())))
-        .expect("digest is a valid invocation identity")
+fn instruction_agent_outer(outer: &StableId, node: &CompiledGraphNodeV1, legacy: bool) -> StableId {
+    if legacy && node.tool_bindings.iter().all(|b| b.is_callable()) {
+        return outer.clone();
+    }
+    StableId::parse(format!(
+        "invocation.agent.{:x}",
+        Sha256::digest(format!("{outer}:{}", node.id).as_bytes())
+    ))
+    .expect("digest is a valid invocation identity")
 }
 
 /// Per-node pass budget ceilings derived from the frozen snapshot.
@@ -702,11 +714,16 @@ impl<'a> PassMachine<'a> {
         value: &Value,
         node: &CompiledGraphNodeV1,
     ) -> Result<(), String> {
-        if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > MAXIMUM_NODE_OUTPUT_BYTES) {
+        let limit = if node.node_type == "input" {
+            WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
+        } else {
+            MAXIMUM_NODE_OUTPUT_BYTES
+        };
+        if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > limit) {
             return Err(format!(
                 "node '{}' output exceeds the {} KiB pass bound",
                 node.id,
-                MAXIMUM_NODE_OUTPUT_BYTES / 1024
+                limit / 1024
             ));
         }
         Ok(())
@@ -809,7 +826,12 @@ impl<'a> PassMachine<'a> {
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
         };
         let parameters = node_model_parameters(&node.configuration);
-        match self.execute_text_turn(&plan, ModelRequestV1 { input, parameters }, None, cancellation) {
+        match self.execute_text_turn(
+            &plan,
+            ModelRequestV1 { input, parameters },
+            None,
+            cancellation,
+        ) {
             Ok(evidence) => {
                 let turn = project_model_events(&evidence.events);
                 let text = turn.assistant_text;
@@ -847,7 +869,11 @@ impl<'a> PassMachine<'a> {
         node: &CompiledGraphNodeV1,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
-        let outer = instruction_agent_outer(self.outer_invocation_id, node);
+        let outer = instruction_agent_outer(
+            self.outer_invocation_id,
+            node,
+            self.tool_authority.legacy_context_identity(),
+        );
         let messages = context::agent_messages(
             node,
             value_text(&self.incoming_agent_context(&node.id)),
@@ -978,34 +1004,95 @@ impl<'a> PassMachine<'a> {
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         let mut context = super::context_inspection::ContextDocument::from_input(&request.input)
-            .map_err(ProviderError::Failed)?.request();
-        self.tool_authority.revise_model_context(&mut context).map_err(ProviderError::Failed)?;
-        if let Some(agent) = agent {
-            self.tool_authority.prepare_automatic_context(self.outer_invocation_id, 0, agent, &mut context, cancellation)
-                .map_err(ProviderError::Failed)?;
+            .map_err(ProviderError::Failed)?
+            .request();
+        context.parameters = request.parameters.clone();
+        let preparation = self
+            .tool_authority
+            .manage_model_context(
+                self.gateway,
+                plan,
+                self.outer_invocation_id,
+                0,
+                agent,
+                &mut context,
+                cancellation,
+                super::compaction::Trigger::Pressure,
+            )
+            .map_err(ProviderError::Failed)?;
+        self.input_units = self.input_units.saturating_add(preparation.input_tokens);
+        self.output_units = self.output_units.saturating_add(preparation.output_tokens);
+        if let Some(error) = preparation.error {
+            return Err(ProviderError::Failed(error));
         }
         if !context.exchanges.is_empty() || !context.tools.is_empty() {
-            return Err(ProviderError::Failed("A text-only node cannot accept tool exchanges.".into()));
+            return Err(ProviderError::Failed(
+                "A text-only node cannot accept tool exchanges.".into(),
+            ));
         }
         let mut recorded_context = context.clone();
-        if !context.context_messages.is_empty() {
-            context.input = context.projected_input()?;
-            let messages = context.input.get_mut("messages").and_then(Value::as_array_mut)
-                .ok_or(ProviderError::InvalidPlan)?;
-            messages.extend(context.context_messages.iter().filter(|c| c.after_input_messages.is_none()).map(|c| c.message()));
-        }
-        if let Some(notice) = context.retry_notice {
-            context.input["messages"].as_array_mut().ok_or(ProviderError::InvalidPlan)?
-                .push(json!({"role":"user","content":notice}));
-        }
-        request.input = context.input;
+        let mut overflow_retries = 0;
         loop {
-            self.tool_authority.record_text_context(&request.input, &recorded_context);
+            let mut context = recorded_context.clone();
+            self.check_budget().map_err(ProviderError::Failed)?;
+            if !context.context_messages.is_empty() {
+                context.input = context.projected_input()?;
+                let messages = context
+                    .input
+                    .get_mut("messages")
+                    .and_then(Value::as_array_mut)
+                    .ok_or(ProviderError::InvalidPlan)?;
+                messages.extend(
+                    context
+                        .context_messages
+                        .iter()
+                        .filter(|c| c.after_input_messages.is_none())
+                        .map(|c| c.message()),
+                );
+            }
+            if let Some(notice) = context.retry_notice {
+                context.input["messages"]
+                    .as_array_mut()
+                    .ok_or(ProviderError::InvalidPlan)?
+                    .push(json!({"role":"user","content":notice}));
+            }
+            request.input = context.input;
+            self.tool_authority
+                .record_text_context(&request.input, &recorded_context);
             self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
             match self
                 .gateway
                 .execute_cancellable(plan, &request, cancellation)
             {
+                Err(ProviderError::ContextWindowExceeded)
+                    if overflow_retries < preparation.max_overflow_retries =>
+                {
+                    let recovery = self
+                        .tool_authority
+                        .manage_model_context(
+                            self.gateway,
+                            plan,
+                            self.outer_invocation_id,
+                            0,
+                            agent,
+                            &mut recorded_context,
+                            cancellation,
+                            super::compaction::Trigger::ContextOverflow,
+                        )
+                        .map_err(ProviderError::Failed)?;
+                    self.input_units = self.input_units.saturating_add(recovery.input_tokens);
+                    self.output_units = self.output_units.saturating_add(recovery.output_tokens);
+                    if let Some(error) = recovery.error {
+                        return Err(ProviderError::Failed(error));
+                    }
+                    if cancellation.is_cancelled() {
+                        return Err(ProviderError::Cancelled);
+                    }
+                    if !recovery.changed {
+                        return Err(ProviderError::ContextWindowExceeded);
+                    }
+                    overflow_retries += 1;
+                }
                 Err(ProviderError::RequestTimedOut)
                     if self.timeout_recoveries < self.budget.maximum_timeout_recoveries =>
                 {
@@ -1013,7 +1100,21 @@ impl<'a> PassMachine<'a> {
                     append_retry_notice(&mut request.input)?;
                     recorded_context.retry_notice = Some(PROVIDER_TIMEOUT_NOTICE.into());
                 }
-                result => return result,
+                Ok(evidence) => {
+                    let output = project_model_events(&evidence.events);
+                    self.tool_authority
+                        .record_context_usage(
+                            self.outer_invocation_id,
+                            agent,
+                            &recorded_context,
+                            output.input_tokens,
+                            output.output_tokens,
+                            super::compaction::text_tokens(&output.assistant_text) + 8,
+                        )
+                        .map_err(ProviderError::Failed)?;
+                    return Ok(evidence);
+                }
+                Err(error) => return Err(error),
             }
         }
     }
@@ -1027,7 +1128,11 @@ impl<'a> PassMachine<'a> {
         approved: bool,
         cancellation: &CancellationToken,
     ) -> AgentResumeOutcomeV1 {
-        let outer = instruction_agent_outer(self.outer_invocation_id, node);
+        let outer = instruction_agent_outer(
+            self.outer_invocation_id,
+            node,
+            self.tool_authority.legacy_context_identity(),
+        );
         let messages = context::agent_messages(
             node,
             value_text(&self.incoming_agent_context(&node.id)),

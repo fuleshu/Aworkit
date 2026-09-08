@@ -90,7 +90,12 @@ impl BoundedJsonClient {
             }
         })?;
         if !response.status().is_success() {
-            return Err(BoundedJsonError::HttpStatus(response.status().as_u16()));
+            let (status, overflow) = context_overflow_response(response);
+            return Err(if overflow {
+                BoundedJsonError::ContextWindowExceeded
+            } else {
+                BoundedJsonError::HttpStatus(status)
+            });
         }
         if response
             .content_length()
@@ -114,6 +119,8 @@ impl BoundedJsonClient {
 /// retained in errors.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub(crate) enum BoundedJsonError {
+    #[error("provider context window exceeded")]
+    ContextWindowExceeded,
     #[error("provider base URL is invalid")]
     InvalidBaseUrl,
     #[error("provider HTTP limits are invalid")]
@@ -130,4 +137,74 @@ pub(crate) enum BoundedJsonError {
     ResponseTooLarge,
     #[error("provider response is not valid JSON")]
     InvalidJson,
+}
+
+/// Read only a bounded error body, and return a sanitized canonical class.
+/// An arbitrary 400/413, network error, quota error or output-limit failure is
+/// never proof that shortening conversation can repair the request.
+pub(crate) fn context_overflow_response(response: reqwest::blocking::Response) -> (u16, bool) {
+    let status = response.status().as_u16();
+    if !matches!(status, 400 | 413 | 422) {
+        return (status, false);
+    }
+    let mut bytes = Vec::new();
+    if response
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() > 64 * 1024
+    {
+        return (status, false);
+    }
+    (
+        status,
+        serde_json::from_slice(&bytes)
+            .ok()
+            .is_some_and(|value| is_context_overflow(&value)),
+    )
+}
+
+fn is_context_overflow(value: &serde_json::Value) -> bool {
+    let error = value.get("error").unwrap_or(value);
+    if ["code", "type"].iter().any(|key| {
+        matches!(
+            error[*key].as_str(),
+            Some("context_length_exceeded" | "context_window_exceeded")
+        )
+    }) {
+        return true;
+    }
+    let message = error["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let kind = error["type"].as_str().or_else(|| error["status"].as_str());
+    matches!(kind, Some("invalid_request_error" | "INVALID_ARGUMENT"))
+        && (message.starts_with("prompt is too long")
+            || (message.contains("input token count") && message.contains("exceeds the maximum"))
+            || (message.contains("maximum context length") && message.contains("tokens")))
+}
+
+#[cfg(test)]
+mod compaction_errors {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn recognizes_only_provider_context_overflow() {
+        for error in [
+            json!({"code":"context_length_exceeded"}),
+            json!({"type":"invalid_request_error","message":"prompt is too long: 123 tokens > 100 maximum"}),
+            json!({"status":"INVALID_ARGUMENT","message":"The input token count exceeds the maximum number of tokens allowed"}),
+        ] {
+            assert!(is_context_overflow(&json!({"error":error})));
+        }
+        for error in [
+            json!({"code":"rate_limit_exceeded"}),
+            json!({"type":"invalid_request_error","message":"max_tokens is too large"}),
+            json!({"message":"prompt is too long"}),
+            json!({"type":"authentication_error","message":"prompt is too long"}),
+        ] {
+            assert!(!is_context_overflow(&json!({"error":error})));
+        }
+    }
 }

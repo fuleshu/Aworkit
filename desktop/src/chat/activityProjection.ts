@@ -42,7 +42,7 @@ export function projectSemanticTimeline(
   const approvalResolutions = new Map<string, boolean>();
   const terminalEvents = ordered.filter(
     (event) =>
-      event.kind === "execution.failed" || event.kind === "chat.cancelled",
+      event.kind === "execution.failed" || event.kind === "chat.cancelled" || event.kind === "context.compaction-ended",
   );
 
   for (const event of ordered) {
@@ -397,6 +397,13 @@ function projectFact(
 ): TimelineItem | undefined {
   if (event.kind === "context.edited") {
     return baseItem(event, fact, { kind: "step", title: "Context edited", status: "completed" });
+  }
+  if (event.kind === "context.compacted" && fact.strategy !== "summary") return baseItem(event, fact, { kind: "step", title: "Tool results compacted", status: "completed" });
+  if (event.kind === "context.compaction-warning") return baseItem(event, fact, { kind: "step", title: "Context compaction", status: "warning" });
+  if (event.kind === "context.compaction-started") {
+    const ended = terminalEvents.find(e => e.kind === "context.compaction-ended" && record(e.payload).compactionId === fact.compactionId);
+    const error = ended && string(record(ended.payload).error);
+    return { ...baseItem(event, fact, { kind: "step", title: ended ? "Context compaction" : "Compacting context", status: error ? "failed" : ended ? "completed" : "running" }), body: error || (ended ? "Earlier context summarized; original history remains available." : "Compacting context…") };
   }
   if (event.kind === "message.user" || event.kind === "message.assistant") {
     return baseItem(event, fact, {

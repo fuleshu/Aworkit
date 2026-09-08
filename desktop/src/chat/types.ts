@@ -133,6 +133,7 @@ export interface EvidenceRecord {
 }
 
 export type ChatIntent =
+  | { readonly type: "compact_context"; readonly commandId: string; readonly targetId: string; readonly nodeId: string; readonly baseSequence: number }
   | { readonly type: "edit_context"; readonly commandId: string; readonly targetId: string;
       readonly nodeId: string; readonly baseSequence: number; readonly document: import("./contextProjection").ContextDocument }
   | { readonly type: "approval_mode"; readonly commandId: string; readonly targetId: string; readonly mode: import("./approvals").ApprovalMode }

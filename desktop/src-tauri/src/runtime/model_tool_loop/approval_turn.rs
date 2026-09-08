@@ -153,14 +153,12 @@ fn ensure_bound(
     pending: &ModelToolLoopPendingV1,
     exchange: &ModelToolExchangeV1,
 ) -> Result<(), ModelToolLoopFailureV1> {
-    let mut history: Vec<_> = pending.exchanges.iter().collect();
-    history.push(exchange);
-    if serde_json::to_vec(&history)
+    if serde_json::to_vec(exchange)
         .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
     {
         return Err(pending_failure(
             pending,
-            ModelToolLoopErrorV1::Budget("durable model/tool history byte limit"),
+            ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
         ));
     }
     Ok(())

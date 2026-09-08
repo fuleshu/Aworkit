@@ -63,7 +63,7 @@ it("merges discovered MCP tools without overwriting overrides or another edited 
 it("the shared registry supplies every native tool and keeps MCP identifiers in the same selection list", () => {
   const tools = nativeToolDefaults().map(tool => ({ ...tool, enabled: true }));
   const ids = new Set(selectableTools({ tools, mcpServers: [] }).map(tool => tool.value));
-  expect(ids.size).toBe(14);
+  expect([...ids].sort()).toEqual(tools.map(tool => tool.id).sort());
   expect(ids.has("tool.skill")).toBe(true);
   // All defaults are the same values consumed by native Settings validation.
   for (const tool of tools) expect(tool.configuration).toEqual(findNativeTool(tool.id)!.configuration);

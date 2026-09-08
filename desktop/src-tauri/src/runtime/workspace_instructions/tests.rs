@@ -1,4 +1,6 @@
 //! Exercise production preparation, native file effects and durable replay.
+#[path = "../compaction/integration_tests.rs"]
+mod compaction_integration;
 use super::*;
 use crate::runtime::pipeline::WorkflowMessageV1;
 use crate::runtime::semantic_events::{
@@ -88,6 +90,7 @@ impl Fixture {
         };
         let committer = ephemeral_semantic_event_committer();
         let context = FrozenFileToolAuthorityContextV1 {
+            chat_id: "chat.instructions".into(),
             approvals: super::super::super::approvals::ApprovalContext {
                 chat_id: "chat.instructions".into(),
                 project_key: Some("project.instructions".into()),
@@ -109,6 +112,7 @@ impl Fixture {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            model_context: serde_json::json!({}),
             maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),

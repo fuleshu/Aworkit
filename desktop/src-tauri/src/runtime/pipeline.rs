@@ -5,6 +5,9 @@
 //! provider-neutral settled result. Plaintext credentials are materialized only
 //! inside the authenticated capability-host dispatcher.
 
+#[path = "compaction/provider.rs"]
+mod compaction_provider;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -188,6 +191,8 @@ pub struct WorkflowExecutionRequestV1 {
     pub provider: WorkflowProviderBindingV1,
     /// Closed non-secret model parameters frozen from Settings.
     pub model_parameters: BTreeMap<String, Value>,
+    pub model_context: Value,
+    pub compact_node: Option<String>,
     /// Hash of the complete secret-free Chat/Run context frozen at first send.
     /// It binds saved-workflow and resolution provenance into the authority
     /// snapshot without copying editable Settings into the provider payload.
@@ -230,6 +235,8 @@ impl WorkflowExecutionRequestV1 {
             run_id,
             provider,
             model_parameters: BTreeMap::new(),
+            model_context: json!({}),
+            compact_node: None,
             approvals: Default::default(),
             frozen_context_hash: DEFAULT_FROZEN_CONTEXT_HASH.to_owned(),
             workspace: None,
@@ -550,6 +557,7 @@ impl WorkflowExecutionPipeline {
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
             parameters: request.model_parameters.clone(),
+            model_context: request.model_context.clone(),
             request_timeout_seconds: request.provider.request_timeout_seconds,
             maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
@@ -625,6 +633,7 @@ impl WorkflowExecutionPipeline {
             || existing.approvals != request.approvals
             || existing.snapshot.budget != request.budget
             || stored_messages != request_messages
+            || existing.worker_proposal.payload["compactNode"] != json!(request.compact_node)
             || !workspace_matches
             || !workspace_identity_matches
             || !saved_nodes_match
@@ -914,7 +923,7 @@ impl WorkflowExecutionPipeline {
                 &[lease.clone()],
             )?;
             let materializer = SecretMaterializer::new(CoreSecretLeaseClient {
-                authority: lease_authority,
+                authority: lease_authority.clone(),
             });
             match materializer.materialize(&SecretMaterializationPlanV1 {
                 decision_id: broker_invocation_id.clone(),
@@ -974,9 +983,19 @@ impl WorkflowExecutionPipeline {
             .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway = Arc::new(
-            FrozenModelGateway::new(vec![provider])
-                .with_image_resolver(Arc::new(super::images::ChatImageStore::new(&self.root)))
-                .with_observer(model_observer.clone()),
+            FrozenModelGateway::new(
+                compaction_provider::providers(
+                    provider,
+                    &prepared.provider.model_context,
+                    self.provider_factory.clone(),
+                    lease_authority,
+                    broker_invocation_id.clone(),
+                    prepared.snapshot.run_id.clone(),
+                )
+                .map_err(WorkflowPipelineError::InvalidInput)?,
+            )
+            .with_image_resolver(Arc::new(super::images::ChatImageStore::new(&self.root)))
+            .with_observer(model_observer.clone()),
         );
         let workflow = prepared
             .worker_proposal
@@ -989,6 +1008,7 @@ impl WorkflowExecutionPipeline {
             .map_err(WorkflowPipelineError::InvalidInput)?;
         let authority = self.file_tool_authority.bind_with_run_events(
             FrozenFileToolAuthorityContextV1 {
+                chat_id: prepared.snapshot.chat_id.to_string(),
                 approvals: prepared.approvals.clone(),
                 review_messages: pending.conversation.clone(),
                 manifest: prepared.manifest.clone(),
@@ -1002,6 +1022,7 @@ impl WorkflowExecutionPipeline {
                 model_gateway: Some(gateway.clone()),
                 model_binding_id: Some(descriptor.capability_id.clone()),
                 model_version_hash: Some(descriptor.version_hash.clone()),
+                model_context: prepared.provider.model_context.clone(),
                 maximum_tool_output_bytes: prepared.provider.maximum_tool_output_bytes,
                 mcp_manifests: prepared.mcp_manifests.clone(),
                 cancellation: cancellation.clone(),
@@ -1224,6 +1245,7 @@ impl WorkflowExecutionPipeline {
             base_url: request.provider.base_url.clone(),
             model: request.provider.model.clone(),
             parameters: request.model_parameters.clone(),
+            model_context: request.model_context.clone(),
             request_timeout_seconds: request.provider.request_timeout_seconds,
             maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
@@ -1268,7 +1290,26 @@ impl WorkflowExecutionPipeline {
                 );
             }
         }
-        let mut capability_bindings = vec![model_binding];
+        let mut capability_bindings = vec![model_binding.clone()];
+        let metadata: super::compaction::Metadata =
+            serde_json::from_value(provider.model_context.clone()).map_err(json_error)?;
+        if let Some(target) = metadata.summary_target {
+            let summary_protocol = ProviderProtocolV1::parse(&target.provider.kind)?;
+            if summary_protocol != protocol {
+                let descriptor = self
+                    .descriptors
+                    .get(&summary_protocol)
+                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+                capability_bindings.push(CapabilityBindingV1 {
+                    capability_id: stable(summary_protocol.capability_id())?,
+                    adapter_id: stable(summary_protocol.adapter_id())?,
+                    adapter_version: descriptor.version.clone(),
+                    descriptor_hash: descriptor.version_hash.clone(),
+                    required_isolation_profile: descriptor.required_isolation.clone(),
+                    ..model_binding
+                });
+            }
+        }
         for tool in &tool_bindings {
             let descriptor_key = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
                 &tool.internal_id
@@ -1370,6 +1411,7 @@ impl WorkflowExecutionPipeline {
         let node_id = entry_node_id.ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         let payload = json!({
             "context": context,
+            "compactNode": request.compact_node,
             "config": {"workflow": request.workflow_snapshot},
         });
         let worker_proposal = WorkerInvocationProposalContractV1 {
@@ -1487,10 +1529,22 @@ struct StoredProviderBindingV1 {
     model: String,
     #[serde(default)]
     parameters: BTreeMap<String, Value>,
+    #[serde(
+        default = "empty_context_metadata",
+        skip_serializing_if = "is_empty_context_metadata"
+    )]
+    model_context: Value,
     #[serde(default = "default_provider_request_timeout_seconds")]
     request_timeout_seconds: u64,
     #[serde(default = "default_maximum_tool_output_bytes")]
     maximum_tool_output_bytes: usize,
+}
+
+fn empty_context_metadata() -> Value {
+    json!({})
+}
+fn is_empty_context_metadata(value: &Value) -> bool {
+    value.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2259,9 +2313,19 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway = Arc::new(
-            FrozenModelGateway::new(vec![provider])
-                .with_image_resolver(Arc::new(self.images.clone()))
-                .with_observer(model_observer.clone()),
+            FrozenModelGateway::new(
+                compaction_provider::providers(
+                    provider,
+                    &self.provider.model_context,
+                    self.provider_factory.clone(),
+                    self.secret_client.authority.clone(),
+                    envelope.invocation_id.clone(),
+                    self.prepared.snapshot.run_id.clone(),
+                )
+                .map_err(WorkflowPipelineError::InvalidInput)?,
+            )
+            .with_image_resolver(Arc::new(self.images.clone()))
+            .with_observer(model_observer.clone()),
         );
         let workflow = envelope
             .payload
@@ -2288,6 +2352,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
             let authority = self.file_tool_authority.bind_with_run_events(
                 FrozenFileToolAuthorityContextV1 {
+                    chat_id: self.prepared.snapshot.chat_id.to_string(),
                     approvals: self.prepared.approvals.clone(),
                     review_messages: conversation.clone(),
                     manifest: self.prepared.manifest.clone(),
@@ -2301,6 +2366,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     model_gateway: Some(gateway.clone()),
                     model_binding_id: Some(self.descriptor.capability_id.clone()),
                     model_version_hash: Some(self.descriptor.version_hash.clone()),
+                    model_context: self.prepared.provider.model_context.clone(),
                     maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
                     mcp_manifests: self.prepared.mcp_manifests.clone(),
                     cancellation: cancellation.clone(),
@@ -2315,29 +2381,57 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 }
                 run_events.publish_graph_activity(activity);
             };
-            let pass = execute_graph_pass_observed(
-                &compiled,
-                &conversation,
-                GraphPassBudgetV1 {
-                    tokens: self.prepared.snapshot.budget.tokens,
-                    maximum_timeout_recoveries: self.prepared.maximum_timeout_recoveries,
-                    maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
-                },
-                &gateway,
-                &authority,
-                &envelope.invocation_id,
-                self.prepared.request_id.as_str(),
-                self.prepared.snapshot.chat_id.as_str(),
-                self.prepared.snapshot.run_id.as_str(),
-                &self.descriptor.capability_id,
-                &self.descriptor.version_hash,
-                current_epoch_millis(),
-                self.prepared.deadline_epoch_millis,
-                None,
-                None,
-                cancellation,
-                Some(&graph_observer),
-            );
+            let pass = if let Some(node_id) = envelope.payload["compactNode"].as_str() {
+                let node = compiled
+                    .nodes
+                    .iter()
+                    .find(|n| {
+                        n.id == node_id && matches!(n.node_type.as_str(), "agent" | "model_call")
+                    })
+                    .ok_or_else(|| {
+                        WorkflowPipelineError::InvalidInput(
+                            "Manual compaction target is not a frozen model node".into(),
+                        )
+                    })?;
+                authority.compact_existing(
+                    &gateway,
+                    &aworkit_capability_host::ModelResolutionPlanV1 {
+                        candidates: vec![aworkit_capability_host::ModelCandidateV1 {
+                            binding_id: self.descriptor.capability_id.clone(),
+                            version_hash: self.descriptor.version_hash.clone(),
+                        }],
+                        maximum_input_bytes: super::context_inspection::MAX_CONTEXT_BYTES,
+                        maximum_output_bytes: 128 * 1024,
+                    },
+                    &envelope.invocation_id,
+                    node,
+                    cancellation,
+                )
+            } else {
+                execute_graph_pass_observed(
+                    &compiled,
+                    &conversation,
+                    GraphPassBudgetV1 {
+                        tokens: self.prepared.snapshot.budget.tokens,
+                        maximum_timeout_recoveries: self.prepared.maximum_timeout_recoveries,
+                        maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
+                    },
+                    &gateway,
+                    &authority,
+                    &envelope.invocation_id,
+                    self.prepared.request_id.as_str(),
+                    self.prepared.snapshot.chat_id.as_str(),
+                    self.prepared.snapshot.run_id.as_str(),
+                    &self.descriptor.capability_id,
+                    &self.descriptor.version_hash,
+                    current_epoch_millis(),
+                    self.prepared.deadline_epoch_millis,
+                    None,
+                    None,
+                    cancellation,
+                    Some(&graph_observer),
+                )
+            };
             model_observer.settle(graph_pass_live_status(pass.status));
             run_events
                 .ensure_healthy()
@@ -4685,13 +4779,13 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_tool_context_bound_fails_explicitly_without_journal_failure() {
+    fn aggregate_tool_context_compacts_without_losing_original_evidence() {
         let root = TempDir::new().expect("root");
         let project = root.path().join("project");
         fs::create_dir(&project).expect("project");
         // Each byte is valid UTF-8 but expands to a six-byte JSON escape. One
         // canonical 60 KiB read fits its separate exchange allowance; a second
-        // read exceeds that allowance and fails before exchange journal commit.
+        // read exceeds active-context pressure and triggers durable pruning.
         fs::write(project.join("large.txt"), "\u{1}".repeat(60 * 1024)).expect("large file");
         let (pipeline, _store, metadata, calls, _results) =
             setup_tool_pipeline(&root, ToolScriptV1::LargeAggregate);
@@ -4703,16 +4797,27 @@ mod tests {
 
         let result = pipeline
             .execute(execution_request)
-            .expect("bounded failure remains durably representable");
-        assert_eq!(result.status, WorkflowExecutionStatusV1::FailedKnownStarted);
-        assert!(
-            result.error.as_deref().is_some_and(|error| error.contains("history byte limit")),
+            .expect("compaction remains durably representable");
+        assert_eq!(
+            result.status,
+            WorkflowExecutionStatusV1::Succeeded,
             "{:?}",
             result.error
         );
-        assert_eq!((result.model_turns, result.tool_calls), (2, 2));
+        assert_eq!((result.model_turns, result.tool_calls), (3, 2));
         assert_eq!(result.tool_activity.len(), 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        let events = pipeline.event_committer.committed_events().unwrap();
+        assert!(events.iter().any(
+            |e| e.kind == "context.compacted" && e.payload["strategy"] == "tool-result-pruning"
+        ));
+        let originals = pipeline.file_tool_authority.recorded_exchanges().unwrap();
+        assert_eq!(originals.len(), 2);
+        assert!(originals.iter().all(|e| {
+            e["exchange"]["results"][0]["content"]["content"]
+                .as_str()
+                .is_some_and(|text| text.len() == 60 * 1024)
+        }));
         let outcome = pipeline
             .records
             .outcomes()
@@ -4721,7 +4826,12 @@ mod tests {
             .next()
             .expect("outcome");
         assert!(serialized_len(&outcome).unwrap() <= MAXIMUM_PROVIDER_OUTCOME_BYTES);
-        assert_eq!(outcome.tool_exchanges.len(), 1);
+        assert_eq!(outcome.tool_exchanges.len(), 2);
+        assert!(
+            serde_json::to_string(&outcome.tool_exchanges)
+                .unwrap()
+                .contains("tool result middle pruned")
+        );
     }
 
     #[test]
@@ -6405,8 +6515,13 @@ mod tests {
                         call_id: "call.echo".into(),
                         provider_call_id: Some("call.echo".into()),
                         capability_id: MCP_FIXTURE_CAPABILITY.into(),
-                        name: request.tools.iter().find(|tool| tool.capability_id == MCP_FIXTURE_CAPABILITY)
-                            .expect("frozen MCP definition").name.clone(),
+                        name: request
+                            .tools
+                            .iter()
+                            .find(|tool| tool.capability_id == MCP_FIXTURE_CAPABILITY)
+                            .expect("frozen MCP definition")
+                            .name
+                            .clone(),
                         arguments: json!({"text": "hello"}),
                         provider_context: None,
                     },

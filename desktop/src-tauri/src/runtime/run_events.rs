@@ -45,39 +45,151 @@ pub(crate) struct RunEventStream {
 }
 
 impl RunEventStream {
-    pub(crate) fn record_text_context(&self, input: &Value, context: &aworkit_capability_host::ModelToolRequestV1) {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).prepared_text_context =
-            serde_json::to_value(context).ok().map(|document| (input.clone(), document));
+    pub(crate) fn active_context_node(&self) -> Option<String> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state
+            .active_model_node
+            .as_ref()
+            .and_then(|id| {
+                state
+                    .events
+                    .iter()
+                    .find(|e| e.kind == "span.started" && e.span_id.as_ref() == Some(id))
+            })
+            .and_then(|e| e.payload["nodeId"].as_str())
+            .map(str::to_owned)
+    }
+    pub(crate) fn context_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
+        self.committer.committed_events()
+    }
+    pub(crate) fn context_event(
+        &self,
+        kind: &str,
+        mut payload: Value,
+    ) -> Result<CoreEventEnvelope, String> {
+        payload["requestId"] = json!(self.request_id);
+        payload["runId"] = json!(self.run_id);
+        payload["createdAt"] = json!(now_label());
+        self.publish(SemanticEventDraft::new(kind, payload))
+            .ok_or_else(|| {
+                self.ensure_healthy()
+                    .err()
+                    .unwrap_or_else(|| "Context event was not committed".into())
+            })
+    }
+    pub(crate) fn context_batch(&self, entries: Vec<(&str, Value)>) -> Result<(), String> {
+        let _publish = self.publish_lock.lock().unwrap_or_else(|p| p.into_inner());
+        self.ensure_healthy()?;
+        let drafts = entries
+            .into_iter()
+            .map(|(kind, mut payload)| {
+                payload["requestId"] = json!(self.request_id);
+                payload["runId"] = json!(self.run_id);
+                payload["createdAt"] = json!(now_label());
+                SemanticEventDraft::new(kind, payload)
+            })
+            .collect();
+        match self.committer.commit(drafts) {
+            Ok(events) => {
+                self.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .events
+                    .extend(events);
+                Ok(())
+            }
+            Err(error) => {
+                self.cancellation.cancel();
+                self.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .commit_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+    pub(crate) fn record_text_context(
+        &self,
+        input: &Value,
+        context: &aworkit_capability_host::ModelToolRequestV1,
+    ) {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .prepared_text_context = serde_json::to_value(context)
+            .ok()
+            .map(|document| (input.clone(), document));
     }
     /// Stable selection generation; replacement never rewrites prior requests.
-    pub(crate) fn instruction_context_revision(&self, node: &str) -> Result<String, String> {
-        Ok(self.committer.committed_events()?.iter().rev()
-            .find(|e| e.kind == "context.edited" && e.payload["nodeId"] == node)
+    pub(crate) fn instruction_context_revision_for(
+        &self,
+        node: &str,
+        child: Option<&str>,
+    ) -> Result<String, String> {
+        Ok(self
+            .committer
+            .committed_events()?
+            .iter()
+            .rev()
+            .find(|e| {
+                matches!(e.kind.as_str(), "context.edited" | "context.compacted")
+                    && e.payload["nodeId"] == node
+                    && e.payload["child"].as_str() == child
+            })
             .map_or_else(|| "ordinary".into(), |e| format!("edit:{}", e.sequence)))
     }
 
-    pub(crate) fn publish_instruction_context(&self, node: &str, event: &Value, diagnostics: &[String]) -> Result<(), String> {
+    pub(crate) fn publish_instruction_context(
+        &self,
+        node: &str,
+        event: &Value,
+        diagnostics: &[String],
+    ) -> Result<(), String> {
         let mut metadata = event.clone();
-        if let Some(object) = metadata.as_object_mut() { object.remove("text"); }
-        self.publish(SemanticEventDraft::new("context.instructions", json!({
-            "requestId":self.request_id, "runId":self.run_id, "nodeId":node,
-            "event":metadata, "diagnostics":diagnostics,
-        }))).ok_or_else(|| "instruction context diagnostics could not be committed".to_owned())?;
+        if let Some(object) = metadata.as_object_mut() {
+            object.remove("text");
+        }
+        self.publish(SemanticEventDraft::new(
+            "context.instructions",
+            json!({
+                "requestId":self.request_id, "runId":self.run_id, "nodeId":node,
+                "event":metadata, "diagnostics":diagnostics,
+            }),
+        ))
+        .ok_or_else(|| "instruction context diagnostics could not be committed".to_owned())?;
         Ok(())
     }
     /// Resolve user context revisions through durable history at the core boundary.
     /// Subagents own separate temporary contexts and never inherit a parent edit.
-    pub(crate) fn revise_model_context(&self, request: &mut aworkit_capability_host::ModelToolRequestV1) -> Result<(), String> {
+    pub(crate) fn revise_model_context(
+        &self,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+    ) -> Result<(), String> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.active_subagent_span.as_ref().is_some_and(|id| !state.terminal_spans.contains(id)) {
+        if state
+            .active_subagent_span
+            .as_ref()
+            .is_some_and(|id| !state.terminal_spans.contains(id))
+        {
             return Ok(());
         }
-        let node_id = state.active_model_node.as_ref().and_then(|id| state.events.iter()
-            .find(|event| event.kind == "span.started" && event.span_id.as_ref() == Some(id)))
-            .and_then(|event| event.payload["nodeId"].as_str()).map(str::to_owned);
+        let node_id = state
+            .active_model_node
+            .as_ref()
+            .and_then(|id| {
+                state.events.iter().find(|event| {
+                    event.kind == "span.started" && event.span_id.as_ref() == Some(id)
+                })
+            })
+            .and_then(|event| event.payload["nodeId"].as_str())
+            .map(str::to_owned);
         drop(state);
         if let Some(node_id) = node_id {
-            super::context_inspection::apply_edit(&self.committer.committed_events()?, &node_id, request)?;
+            super::context_inspection::apply_edit(
+                &self.committer.committed_events()?,
+                &node_id,
+                request,
+            )?;
         }
         Ok(())
     }
@@ -697,8 +809,15 @@ impl ModelRunEventObserver {
 
 impl ModelEventObserverV1 for ModelRunEventObserver {
     fn model_turn_started(&self, input: &Value) {
-        let canonical = self.stream.state.lock().unwrap_or_else(|p| p.into_inner())
-            .prepared_text_context.take().filter(|(wire, _)| wire == input).map(|(_, canonical)| canonical);
+        let canonical = self
+            .stream
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .prepared_text_context
+            .take()
+            .filter(|(wire, _)| wire == input)
+            .map(|(_, canonical)| canonical);
         let turn = {
             let mut state = self
                 .state

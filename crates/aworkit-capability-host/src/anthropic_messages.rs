@@ -374,6 +374,7 @@ impl ProviderEnginePortV1 for AnthropicMessagesProvider {
 impl From<AnthropicMessagesProviderError> for ProviderError {
     fn from(error: AnthropicMessagesProviderError) -> Self {
         match error {
+            AnthropicMessagesProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             AnthropicMessagesProviderError::RequestTimedOut => Self::RequestTimedOut,
             other => Self::Failed(other.to_string()),
         }
@@ -382,6 +383,8 @@ impl From<AnthropicMessagesProviderError> for ProviderError {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum AnthropicMessagesProviderError {
+    #[error("provider context window exceeded")]
+    ContextWindowExceeded,
     #[error("Anthropic provider binding id is invalid")]
     InvalidBindingId,
     #[error("Anthropic provider version hash is invalid")]
@@ -553,6 +556,9 @@ fn map_transport_error(error: BoundedJsonError) -> AnthropicMessagesProviderErro
         BoundedJsonError::ClientConstruction => AnthropicMessagesProviderError::ClientConstruction,
         BoundedJsonError::RequestTimedOut => AnthropicMessagesProviderError::RequestTimedOut,
         BoundedJsonError::Transport => AnthropicMessagesProviderError::Transport,
+        BoundedJsonError::ContextWindowExceeded => {
+            AnthropicMessagesProviderError::ContextWindowExceeded
+        }
         BoundedJsonError::HttpStatus(status) => AnthropicMessagesProviderError::HttpStatus(status),
         BoundedJsonError::ResponseTooLarge => AnthropicMessagesProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => AnthropicMessagesProviderError::InvalidJson,

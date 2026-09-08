@@ -58,6 +58,7 @@ export const modelConfigurationSchema = z
     remoteId: z.string().trim().min(1).max(512),
     enabled: z.boolean(),
     contextWindow: z.number().int().positive().nullable().optional(),
+    compaction: z.record(z.string(), z.unknown()).nullable().optional(),
     maxOutputTokens: z.number().int().positive().nullable().optional(),
     capabilities: z.array(stableIdSchema),
     parameters: z.record(z.string(), z.unknown()),

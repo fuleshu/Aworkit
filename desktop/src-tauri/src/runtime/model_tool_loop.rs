@@ -33,11 +33,48 @@ pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the p
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    fn legacy_context_identity(&self) -> bool {
+        true
+    }
+    fn manage_model_context(
+        &self,
+        _gateway: &FrozenModelGateway,
+        _plan: &ModelResolutionPlanV1,
+        outer: &StableId,
+        through: usize,
+        agent: Option<&AgentContextV1>,
+        request: &mut ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        _trigger: super::compaction::Trigger,
+    ) -> Result<super::compaction::Preparation, String> {
+        self.revise_model_context(request)?;
+        if let Some(agent) = agent {
+            self.prepare_automatic_context(outer, through, agent, request, cancellation)?;
+        }
+        Ok(Default::default())
+    }
+    fn record_context_usage(
+        &self,
+        _outer: &StableId,
+        _agent: Option<&AgentContextV1>,
+        _request: &ModelToolRequestV1,
+        _input: u64,
+        _output: u64,
+        _assistant_tokens: u64,
+    ) -> Result<(), String> {
+        Ok(())
+    }
     /// Preserve typed instruction references in ordinary model request history.
     fn record_text_context(&self, _input: &Value, _context: &ModelToolRequestV1) {}
     /// Last Agent preparation step, after any visible-context replacement.
-    fn prepare_automatic_context(&self, _outer: &StableId, _after_exchanges: usize,
-        _agent: &AgentContextV1, _request: &mut ModelToolRequestV1, _cancellation: &CancellationToken) -> Result<(), String> {
+    fn prepare_automatic_context(
+        &self,
+        _outer: &StableId,
+        _after_exchanges: usize,
+        _agent: &AgentContextV1,
+        _request: &mut ModelToolRequestV1,
+        _cancellation: &CancellationToken,
+    ) -> Result<(), String> {
         Ok(())
     }
     /// Apply explicitly saved prompt revisions without changing tool authority.
@@ -254,11 +291,14 @@ pub(crate) fn execute_model_tool_loop_v1(
             &plan,
             &request,
             authority,
-            &exchanges,
+            turn.saturating_sub(1) as usize,
+            &mut exchanges,
             pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
+            &mut input_tokens,
+            &mut output_tokens,
         )
         .map_err(|error| {
             failure(
@@ -352,13 +392,11 @@ pub(crate) fn execute_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        let mut durable_exchanges = exchanges.clone();
-        durable_exchanges.push(exchange.clone());
-        if serde_json::to_vec(&durable_exchanges)
+        if serde_json::to_vec(&exchange)
             .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
         {
             return Err(failure(
-                ModelToolLoopErrorV1::Budget("durable model/tool history byte limit"),
+                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -408,7 +446,10 @@ fn failure(
 fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelToolLoopErrorV1> {
     let automatic_child = request.agent_context.as_ref().is_some_and(|agent| {
         agent.child.is_some()
-            && agent.tool_ids.iter().any(|id| id == "tool.workspace_instructions")
+            && agent
+                .tool_ids
+                .iter()
+                .any(|id| id == "tool.workspace_instructions")
     });
     if (request.definitions.is_empty() && !automatic_child)
         || request.maximum_input_bytes == 0
@@ -427,46 +468,93 @@ fn execute_tool_turn_with_timeout_recovery(
     plan: &ModelResolutionPlanV1,
     request: &ModelToolLoopRequestV1<'_>,
     authority: &dyn ModelToolInvocationPortV1,
-    exchanges: &[ModelToolExchangeV1],
+    through: usize,
+    exchanges: &mut Vec<ModelToolExchangeV1>,
     runtime_notice: Option<String>,
     cancellation: &CancellationToken,
     attempted_model_turns: &mut u32,
     timeout_recoveries: &mut u32,
+    input_tokens: &mut u64,
+    output_tokens: &mut u64,
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
     let context_messages = authority
         .prepare_context(
             request.outer_invocation_id,
-            exchanges.len(),
+            through,
             &request.definitions,
             cancellation,
         )
         .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
     let mut retry_notice = runtime_notice;
+    let mut provider_request = ModelToolRequestV1 {
+        context_messages,
+        input: request.input.clone(),
+        parameters: request.parameters.clone(),
+        tools: request.definitions.clone(),
+        exchanges: exchanges.clone(),
+        retry_notice: retry_notice.clone(),
+    };
+    let preparation = authority
+        .manage_model_context(
+            gateway,
+            plan,
+            request.outer_invocation_id,
+            through,
+            request.agent_context.as_ref(),
+            &mut provider_request,
+            cancellation,
+            super::compaction::Trigger::Pressure,
+        )
+        .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+    *input_tokens = input_tokens.saturating_add(preparation.input_tokens);
+    *output_tokens = output_tokens.saturating_add(preparation.output_tokens);
+    if let Some(error) = preparation.error {
+        return Err(ModelToolLoopErrorV1::ToolAuthority(error));
+    }
+    if preparation.durable {
+        *exchanges = provider_request.exchanges.clone();
+    }
+    let mut overflow_retries = 0;
     loop {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled.into());
+        }
+        if input_tokens.saturating_add(*output_tokens) >= request.maximum_tokens {
+            return Err(ModelToolLoopErrorV1::Budget("token limit"));
+        }
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
-        let mut provider_request = ModelToolRequestV1 {
-            context_messages: context_messages.clone(),
-            input: request.input.clone(),
-            parameters: request.parameters.clone(),
-            tools: request.definitions.clone(),
-            exchanges: Vec::new(),
-            retry_notice: retry_notice.clone(),
-        };
-        if serde_json::to_vec(&provider_request)
-            .map_or(true, |bytes| bytes.len() > request.maximum_input_bytes)
-        {
-            return Err(ModelToolLoopErrorV1::Budget(
-                "model input, tool definitions and injected context exceed the input bound",
-            ));
-        }
-        provider_request.exchanges = exchanges.to_vec();
-        authority.revise_model_context(&mut provider_request)
-            .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
-        if let Some(agent) = &request.agent_context {
-            authority.prepare_automatic_context(request.outer_invocation_id, exchanges.len(), agent, &mut provider_request, cancellation)
-                .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
-        }
         match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
+            Err(ProviderError::ContextWindowExceeded)
+                if overflow_retries < preparation.max_overflow_retries =>
+            {
+                let recovery = authority
+                    .manage_model_context(
+                        gateway,
+                        plan,
+                        request.outer_invocation_id,
+                        through,
+                        request.agent_context.as_ref(),
+                        &mut provider_request,
+                        cancellation,
+                        super::compaction::Trigger::ContextOverflow,
+                    )
+                    .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+                *input_tokens = input_tokens.saturating_add(recovery.input_tokens);
+                *output_tokens = output_tokens.saturating_add(recovery.output_tokens);
+                if let Some(error) = recovery.error {
+                    return Err(ModelToolLoopErrorV1::ToolAuthority(error));
+                }
+                if cancellation.is_cancelled() {
+                    return Err(ProviderError::Cancelled.into());
+                }
+                if !recovery.changed {
+                    return Err(ProviderError::ContextWindowExceeded.into());
+                }
+                if recovery.durable {
+                    *exchanges = provider_request.exchanges.clone();
+                }
+                overflow_retries += 1;
+            }
             Err(ProviderError::RequestTimedOut)
                 if *timeout_recoveries < request.maximum_timeout_recoveries =>
             {
@@ -475,9 +563,27 @@ fn execute_tool_turn_with_timeout_recovery(
                     Some(notice) => format!("{notice}\n\n{PROVIDER_TIMEOUT_NOTICE}"),
                     None => PROVIDER_TIMEOUT_NOTICE.to_owned(),
                 });
+                provider_request.retry_notice = retry_notice.clone();
             }
             Err(error) => return Err(error.into()),
-            Ok(evidence) => return Ok(evidence),
+            Ok(evidence) => {
+                let output = project_model_tool_events(&evidence.events);
+                authority
+                    .record_context_usage(
+                        request.outer_invocation_id,
+                        request.agent_context.as_ref(),
+                        &provider_request,
+                        output.input_tokens,
+                        output.output_tokens,
+                        super::compaction::Unit::Exchange(ModelToolExchangeV1 {
+                            assistant_content: output.assistant_content.clone(),
+                            results: Vec::new(),
+                        })
+                        .tokens(),
+                    )
+                    .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+                return Ok(evidence);
+            }
         }
     }
 }
@@ -560,11 +666,14 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             &plan,
             &request,
             authority,
-            &exchanges,
+            turn.saturating_sub(1) as usize,
+            &mut exchanges,
             pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
+            &mut input_tokens,
+            &mut output_tokens,
         )
         .map_err(|error| {
             failure(
@@ -682,13 +791,11 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        let mut durable_exchanges = exchanges.clone();
-        durable_exchanges.push(exchange.clone());
-        if serde_json::to_vec(&durable_exchanges)
+        if serde_json::to_vec(&exchange)
             .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
         {
             return Err(failure(
-                ModelToolLoopErrorV1::Budget("durable model/tool history byte limit"),
+                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,
@@ -769,11 +876,14 @@ pub(crate) fn resume_model_tool_loop_v1(
             &plan,
             &request,
             authority,
-            &exchanges,
+            turn.saturating_sub(1) as usize,
+            &mut exchanges,
             pending_runtime_notice.take(),
             cancellation,
             &mut attempted_model_turns,
             &mut timeout_recoveries,
+            &mut input_tokens,
+            &mut output_tokens,
         )
         .map_err(|error| {
             failure(
@@ -891,13 +1001,11 @@ pub(crate) fn resume_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        let mut durable_exchanges = exchanges.clone();
-        durable_exchanges.push(exchange.clone());
-        if serde_json::to_vec(&durable_exchanges)
+        if serde_json::to_vec(&exchange)
             .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
         {
             return Err(failure(
-                ModelToolLoopErrorV1::Budget("durable model/tool history byte limit"),
+                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
                 input_tokens,
                 output_tokens,
                 attempted_model_turns,

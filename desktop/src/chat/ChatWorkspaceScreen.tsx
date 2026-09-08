@@ -474,8 +474,9 @@ export function ChatWorkspaceScreen({
           onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} /></div>
         <ChatComposer
           key={chat.chatId + (defaultWorkflowId ?? "")}
-          chat={chat}
+            chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}
           contextUsage={<ContextUsage events={runtime.events} model={snapshot.contextModel}
+            onCompact={selection => runtime.dispatch({type:"compact_context", commandId:commandIds.createIntent("enqueue").commandId,targetId:chat.chatId,nodeId:selection.nodeId,baseSequence:selection.sequence})}
             editDisabledReason={runtime.stale ? "Resynchronize before editing context."
               : chat.recoveryPending ? "Resume or abandon the interrupted turn before editing context."
               : runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.phase === "awaiting_approval"
@@ -492,7 +493,7 @@ export function ChatWorkspaceScreen({
             }} />}
           projects={snapshot.projects}
           stale={runtime.stale}
-          pending={runtime.pendingCommandIds.size > 0}
+            pending={runtime.pendingCommandIds.size > 0 && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0}
           workflows={workflows}
           defaultWorkflowId={defaultWorkflowId}
           workflowRequiresProject={workflowRequiresProject}

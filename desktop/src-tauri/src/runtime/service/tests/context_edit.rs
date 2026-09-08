@@ -2,6 +2,96 @@ use super::*;
 use crate::runtime::context_inspection::{ContextDocument, apply_edit, select_context};
 
 #[test]
+fn manual_compaction_settles_without_conversation_messages_and_fork_keeps_selection() {
+    let root = TempDir::new().unwrap();
+    let provider = Arc::new(FixtureProvider::new());
+    let mut desktop = runtime(&root, provider.clone());
+    configure(&mut desktop);
+    desktop
+        .command(send("compact.first", 0, "Original question"))
+        .unwrap();
+    let before = desktop.snapshot(0).unwrap();
+    let document=ContextDocument::from_input(&json!({"messages":[{"role":"user","content":"<compacted-summary>Established context</compacted-summary>"}]})).unwrap();
+    desktop
+        .history
+        .append(
+            "compact.fixture",
+            "compact.fixture.hash",
+            before.version,
+            vec![(
+                "context.checkpoint",
+                json!({"nodeId":"agent.1","child":null,"snapshot":{"document":document}}),
+            )],
+        )
+        .unwrap();
+    let before = desktop.snapshot(0).unwrap();
+    let selection = select_context(&before.events, "agent.1").unwrap();
+    let command = UiCommandInput {
+        schema_version: 1,
+        command_id: "compact.manual".into(),
+        expected_version: before.version,
+        action: "compact_context".into(),
+        target_id: Some(before.chat.chat_id.clone()),
+        payload: json!({"nodeId":"agent.1","baseSequence":selection.sequence}),
+    };
+    desktop.command(command.clone()).unwrap();
+    desktop.command(command).unwrap();
+    let after = desktop.snapshot(0).unwrap();
+    assert!(!after.chat.recovery_pending);
+    assert_eq!(after.chat.phase, "waiting_input");
+    assert_eq!(
+        after
+            .events
+            .iter()
+            .filter(|e| e.kind == "message.user" || e.kind == "message.assistant")
+            .count(),
+        2
+    );
+    assert_eq!(
+        after
+            .events
+            .iter()
+            .filter(|e| e.kind == "context.manual-completed")
+            .count(),
+        1
+    );
+    let request = provider
+        .execution_requests
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(request.compact_node.as_deref(), Some("agent.1"));
+    assert_eq!(request.messages.last().unwrap().role, "user");
+    desktop
+        .command(UiCommandInput {
+            schema_version: 1,
+            command_id: "compact.fork".into(),
+            expected_version: after.version,
+            action: "fork".into(),
+            target_id: Some(after.chat.chat_id.clone()),
+            payload: json!({}),
+        })
+        .unwrap();
+    let child = desktop.snapshot(0).unwrap();
+    assert_ne!(child.chat.chat_id, after.chat.chat_id);
+    assert_eq!(
+        select_context(&child.events, "agent.1").unwrap().document,
+        document
+    );
+    drop(desktop);
+    let reopened = runtime(&root, provider).snapshot(0).unwrap();
+    assert_eq!(
+        select_context(&reopened.events, "agent.1")
+            .unwrap()
+            .document,
+        document
+    );
+    assert!(!reopened.chat.recovery_pending);
+}
+
+#[test]
 fn context_edit_commits_once_reopens_and_preserves_conversation() {
     let root = TempDir::new().unwrap();
     let provider = Arc::new(FixtureProvider::new());

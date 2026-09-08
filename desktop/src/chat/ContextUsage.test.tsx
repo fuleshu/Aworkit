@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { ContextUsage } from "./ContextUsage";
-import { estimateContext, projectContexts } from "./contextProjection";
+import { contextUsage, estimateContext, projectContexts } from "./contextProjection";
 import { projectSemanticTimeline } from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
 
@@ -87,4 +87,33 @@ it("shows an honest empty state when model context or capacity is unavailable", 
   fireEvent.click(screen.getByRole("button", { name: "Context usage" }));
   expect(screen.getByText(/Context is available after the first model call/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Display Context" })).toHaveProperty("disabled", true);
+});
+
+it("rejects an undercounted provider anchor when estimating occupancy",()=>{
+  const selected=projectContexts(events)[0];
+  const large={...selected,inputTokens:1,outputTokens:1,document:{...selected.document,input:{messages:[{role:"user" as const,content:"large ".repeat(1000)}]}}};
+  expect(contextUsage(large).reported).toBe(false);
+  expect(contextUsage(large).total).toBe(estimateContext(large.document).total);
+});
+
+it("compacts only the selected idle context and displays the committed pressure",async()=>{
+  const compact=vi.fn().mockResolvedValue(true);
+  const checkpoint=event(6,"context.checkpoint",{nodeId:"agent.1",child:null,pressureTokens:120,pressureReported:true,snapshot:{document:{...projectContexts(events)[0].document,input:{messages:[{role:"user",content:"<compacted-summary>checkpoint</compacted-summary>"}]}}}});
+  const selected=projectContexts([...events,checkpoint])[0];
+  expect(contextUsage(selected).total).toBe(120);
+  const view=render(<ContextUsage events={[...events,checkpoint]} editDisabledReason={null} onSave={vi.fn()} onCompact={compact}/>);
+  fireEvent.click(screen.getByRole("button",{name:/Context usage/}));
+  fireEvent.click(screen.getByRole("button",{name:"Compact context"}));
+  await waitFor(()=>expect(compact).toHaveBeenCalledWith(selected));
+  view.rerender(<ContextUsage events={events} editDisabledReason="Finish the current turn." onSave={vi.fn()} onCompact={compact}/>);
+  fireEvent.click(screen.getByRole("button",{name:/Context usage/}));
+  expect(screen.getByRole("button",{name:"Compact context"})).toHaveProperty("disabled",true);
+});
+
+it("settles one compaction activity card and exposes summary failures without Chat messages",()=>{
+  const lifecycle=[event(1,"context.compaction-started",{compactionId:"c1"}),event(2,"context.compacted",{compactionId:"c1",strategy:"summary"}),event(3,"context.compaction-ended",{compactionId:"c1",error:null})];
+  const timeline=projectSemanticTimeline(lifecycle);
+  expect(timeline).toHaveLength(1);expect(timeline[0].status).toBe("completed");
+  const failure=projectSemanticTimeline([lifecycle[0],event(2,"context.compaction-ended",{compactionId:"c1",error:"Summary was truncated"})]);
+  expect(failure[0]).toMatchObject({status:"failed",body:"Summary was truncated"});
 });

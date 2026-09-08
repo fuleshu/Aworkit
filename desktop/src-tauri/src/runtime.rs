@@ -5,6 +5,7 @@
 
 mod approvals;
 mod cancellation;
+mod compaction;
 mod context_inspection;
 mod credential_journal;
 mod credentials;

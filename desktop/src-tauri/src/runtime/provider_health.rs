@@ -362,6 +362,7 @@ mod tests {
                     enabled: true,
                     context_window: None,
                     max_output_tokens: None,
+                    compaction: None,
                     capabilities: vec!["text".into()],
                     parameters: BTreeMap::new(),
                 })

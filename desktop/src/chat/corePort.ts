@@ -149,6 +149,7 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
 
 /** Projects a typed renderer intent into the exact native IPC payload. */
 export function chatIntentPayload(intent: ChatIntent): unknown {
+  if (intent.type === "compact_context") return { nodeId: intent.nodeId, baseSequence: intent.baseSequence };
   if (intent.type === "edit_context") return { nodeId: intent.nodeId, baseSequence: intent.baseSequence, document: intent.document };
   if (intent.type === "approval_mode") return { mode: intent.mode };
   if (intent.type === "start")

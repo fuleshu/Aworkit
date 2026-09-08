@@ -84,11 +84,9 @@ pub(crate) fn openai_tool_request(
             }));
         }
     }
-    for context in request
-        .context_messages
-        .iter()
-        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
-    {
+    for context in request.context_messages.iter().filter(|c| {
+        c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len()
+    }) {
         messages.push(super::context_message(context, "openai")?);
     }
     if let Some(notice) = &request.retry_notice {
@@ -130,6 +128,7 @@ pub(crate) fn openai_tool_request(
 /// OpenAI-compatible Chat Completions adapter.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct OpenAiRequestParametersV1 {
+    max_output_tokens: Option<u64>,
     reasoning_effort: Option<String>,
     enable_thinking: Option<bool>,
     preserve_thinking: Option<bool>,
@@ -140,7 +139,7 @@ impl OpenAiRequestParametersV1 {
         if parameters.keys().any(|key| {
             !matches!(
                 key.as_str(),
-                "reasoningEffort" | "enableThinking" | "preserveThinking"
+                "reasoningEffort" | "enableThinking" | "preserveThinking" | "maxOutputTokens"
             )
         }) {
             return Err(());
@@ -163,6 +162,10 @@ impl OpenAiRequestParametersV1 {
         let enable_thinking = optional_bool(parameters, "enableThinking")?;
         let preserve_thinking = optional_bool(parameters, "preserveThinking")?;
         Ok(Self {
+            max_output_tokens: parameters
+                .get("maxOutputTokens")
+                .map(|v| v.as_u64().filter(|n| *n > 0 && *n <= 1_048_576).ok_or(()))
+                .transpose()?,
             reasoning_effort,
             enable_thinking,
             preserve_thinking,
@@ -175,6 +178,7 @@ impl OpenAiRequestParametersV1 {
     pub(crate) fn with_overrides(&self, overrides: &BTreeMap<String, Value>) -> Result<Self, ()> {
         let overrides = Self::from_settings(overrides)?;
         Ok(Self {
+            max_output_tokens: overrides.max_output_tokens.or(self.max_output_tokens),
             reasoning_effort: overrides
                 .reasoning_effort
                 .or_else(|| self.reasoning_effort.clone()),
@@ -187,6 +191,9 @@ impl OpenAiRequestParametersV1 {
         let Some(body) = body.as_object_mut() else {
             return;
         };
+        if let Some(cap) = self.max_output_tokens {
+            body.insert("max_tokens".into(), json!(cap));
+        }
         if let Some(reasoning_effort) = &self.reasoning_effort {
             body.insert(
                 "reasoning_effort".into(),

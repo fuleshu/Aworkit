@@ -7,6 +7,7 @@ import type {
   ProviderConfiguration,
   ProviderHealthSnapshotV2,
 } from "../configuration";
+import { CompactionSettings } from "./CompactionSettings";
 import {
   DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES,
   DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS,
@@ -452,6 +453,7 @@ export function ProvidersModelsSection({
                 {provider.models.map((model, modelIndex) => (
                   <ModelEditor
                     key={model.id}
+                    providers={providers}
                     provider={provider}
                     model={model}
                     busy={operation !== null}
@@ -514,6 +516,7 @@ export function ProvidersModelsSection({
 }
 
 function ModelEditor({
+  providers,
   provider,
   model,
   busy,
@@ -521,6 +524,7 @@ function ModelEditor({
   onRemove,
   onProbe,
 }: {
+  readonly providers: readonly ProviderConfiguration[];
   readonly provider: ProviderConfiguration;
   readonly model: ModelConfiguration;
   readonly busy: boolean;
@@ -584,6 +588,7 @@ function ModelEditor({
           onChange={(maxOutputTokens) => onChange({ ...model, maxOutputTokens })}
         />
       </div>
+      <CompactionSettings model={model} providers={providers} onChange={onChange} />
       <label className="settings-field" htmlFor={`${provider.id}-${model.id}-capabilities`}>
         Capabilities
         <input

@@ -9,10 +9,11 @@ interface Props {
   readonly model?: ContextModel | null;
   readonly editDisabledReason: string | null;
   readonly onSave: (selection: ContextSelection, document: ContextDocument) => Promise<boolean>;
+  readonly onCompact?: (selection: ContextSelection) => Promise<boolean>;
 }
 
 /** Compact context ring and anchored disclosure, driven by canonical model-call events. */
-export function ContextUsage({ events, model: fallback, editDisabledReason, onSave }: Props): React.JSX.Element {
+export function ContextUsage({ events, model: fallback, editDisabledReason, onSave, onCompact }: Props): React.JSX.Element {
   const selections = useMemo(() => projectContexts(events), [events]);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const selection = selections.find(s => s.nodeId === selectedNode) ?? selections[0];
@@ -61,6 +62,8 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
       {model && <p className="context-model-name">{model.name}</p>}
       <button type="button" className="context-display-button" disabled={!selection} title="Open the complete raw model context"
         onClick={() => { if (selection) { setPanel(selection); setOpen(false); } }}>Display Context</button>
+      {onCompact && <button type="button" className="context-compact-button" disabled={!selection || Boolean(editDisabledReason)} title={editDisabledReason ?? "Summarize earlier context now, retaining recent work and the original Chat history"}
+        onClick={() => { if (selection) { setOpen(false); void onCompact(selection); } }}>Compact context</button>}
     </section>}
     {panel && <ContextPanel selection={panel} editDisabledReason={editDisabledReason} onSave={onSave} onClose={() => { setPanel(null); trigger.current?.focus(); }} />}
   </div>;

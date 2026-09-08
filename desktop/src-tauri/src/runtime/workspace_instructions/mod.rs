@@ -137,7 +137,7 @@ impl BoundFileToolAuthorityV1 {
             return Err("instruction preparation cancelled".into());
         }
         let owner = Owner {
-            chat: self.context.approvals.chat_id.clone(),
+            chat: self.context.chat_id.clone(),
             node: agent.node_id.clone(),
             context: format!(
                 "{}:{}",
@@ -145,12 +145,9 @@ impl BoundFileToolAuthorityV1 {
                 agent.child.as_deref().unwrap_or("")
             ),
         };
-        let revision = if agent.child.is_some() {
-            "ordinary".into()
-        } else {
-            self.run_events
-                .instruction_context_revision(&agent.node_id)?
-        };
+        let revision = self
+            .run_events
+            .instruction_context_revision_for(&agent.node_id, agent.child.as_deref())?;
         let lock = {
             let mut locks = self
                 .runtime
@@ -172,7 +169,7 @@ impl BoundFileToolAuthorityV1 {
         let _guard = lock
             .lock()
             .map_err(|_| "instruction preparation lock poisoned")?;
-        let steps: Vec<Step> = self
+        let mut steps: Vec<Step> = self
             .runtime
             .records
             .events(KIND)
@@ -182,7 +179,35 @@ impl BoundFileToolAuthorityV1 {
             .collect::<Result<Vec<Step>, _>>()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|s| s.owner == owner)
+            .collect();
+        // Only a core-committed fork can delegate an immutable loader record.
+        // The exact owner/id allowlist freezes the fork point; subsequent parent
+        // observations and unrelated nodes/children cannot enter this history.
+        let sources:Vec<Value>=self.run_events.context_events()?.into_iter()
+            .filter(|e|e.kind=="context.fork-source" && e.payload["nodeId"]==agent.node_id && agent.child.is_none()
+                && e.payload["ownerKey"]==crate::runtime::compaction::hash(&json!({"chat":self.context.chat_id,"branch":self.context.project_branch})))
+            .flat_map(|e|e.payload["instructionSources"].as_array().cloned().unwrap_or_default()).collect();
+        steps = steps
+            .into_iter()
+            .filter_map(|mut step| {
+                if step.owner == owner {
+                    return Some(step);
+                }
+                if step.event.as_ref().is_some_and(|event| {
+                    sources.iter().any(|source| {
+                        source["id"] == event.id && source["owner"] == json!(step.owner)
+                    })
+                }) {
+                    step.owner = owner.clone();
+                    if let Some(event) = &mut step.event {
+                        event.owner = owner.clone();
+                    }
+                    step.revision = "inherited-fork".into();
+                    Some(step)
+                } else {
+                    None
+                }
+            })
             .collect();
         let history: Vec<Event> = steps.iter().filter_map(|s| s.event.clone()).collect();
         if let Some(step) = steps.iter().find(|s| {
@@ -441,12 +466,26 @@ fn project(
             message.instruction_event_id = None;
         }
     }
-    request
-        .context_messages
-        .retain(|m| m.instruction_event_id.is_none());
     let mut seen = BTreeSet::new();
+    // Preserve the existing relative order at an exchange boundary. Removing
+    // and re-appending authentic messages could move an old instruction behind
+    // a newer user input and accidentally retain it across compaction.
+    request.context_messages.retain_mut(|message| {
+        let Some(id) = message.instruction_event_id.as_ref() else {
+            return true;
+        };
+        let Some(position) = positions.iter().find(|p| &p.id == id) else {
+            return false;
+        };
+        if !seen.insert(id.clone()) {
+            return false;
+        }
+        message.after_exchanges = position.after_exchanges;
+        message.after_input_messages = position.after_input_messages;
+        true
+    });
     for position in positions {
-        if !seen.insert(&position.id) {
+        if !seen.insert(position.id.clone()) {
             continue;
         }
         let event = history

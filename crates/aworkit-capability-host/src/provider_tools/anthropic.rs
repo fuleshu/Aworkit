@@ -94,11 +94,9 @@ pub(crate) fn anthropic_tool_request(
             .collect::<Result<Vec<_>, ProviderError>>()?;
         messages.push(json!({"role":"user","content":results}));
     }
-    for context in request
-        .context_messages
-        .iter()
-        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
-    {
+    for context in request.context_messages.iter().filter(|c| {
+        c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len()
+    }) {
         messages.push(super::context_message(context, "anthropic")?);
     }
     if let Some(notice) = &request.retry_notice {
@@ -118,7 +116,16 @@ pub(crate) fn anthropic_tool_request(
         .collect::<Vec<_>>();
     let mut body = Map::new();
     body.insert("model".to_owned(), Value::String(model.to_owned()));
-    body.insert("max_tokens".to_owned(), Value::from(maximum_output_tokens));
+    body.insert(
+        "max_tokens".to_owned(),
+        Value::from(
+            request
+                .parameters
+                .get("maxOutputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(maximum_output_tokens as u64),
+        ),
+    );
     body.insert("messages".to_owned(), Value::Array(messages));
     if !tools.is_empty() {
         body.insert("tools".to_owned(), Value::Array(tools));

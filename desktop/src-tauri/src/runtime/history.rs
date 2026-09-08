@@ -84,6 +84,11 @@ pub(crate) struct FrozenToolBindingV1 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FrozenChatExecutionContextV1 {
+    /// Absent in legacy Chats: preserve their original provider authority hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_version: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_target: Option<super::compaction::FrozenSummaryTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_configurations: Vec<FrozenMcpConfigurationV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -623,6 +628,8 @@ impl ChatHistory {
                 matches!(
                     event.kind.as_str(),
                     "message.assistant"
+                        | "context.manual-completed"
+                        | "context.manual-failed"
                         | "approval.requested"
                         | "execution.failed"
                         | "chat.turn_stopped"
@@ -652,6 +659,8 @@ impl ChatHistory {
                     matches!(
                         event.kind.as_str(),
                         "message.assistant"
+                            | "context.manual-completed"
+                            | "context.manual-failed"
                             | "approval.requested"
                             | "execution.failed"
                             | "chat.turn_stopped"
@@ -1834,6 +1843,12 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
             command.payload.get("workflowId").is_none()
                 && command.payload.get("projectId").is_none()
         }
+        "compact_context" => {
+            command.payload["nodeId"]
+                .as_str()
+                .is_some_and(|id| StableId::parse(id.to_owned()).is_ok())
+                && command.payload["baseSequence"].as_u64().is_some()
+        }
         _ => false,
     };
     if record.schema_version != 1
@@ -1842,7 +1857,7 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         || command.schema_version != 1
         || StableId::parse(command.command_id.clone()).is_err()
         || !action_shape_is_valid
-        || (command.action != "approval"
+        || (!matches!(command.action.as_str(), "approval" | "compact_context")
             && input
                 .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
                 .unwrap_or(true))
@@ -2030,19 +2045,20 @@ fn evidence(events: &[Event]) -> Vec<EvidenceRecordDto> {
         .filter(|event| {
             matches!(
                 event.kind.as_str(),
-                "message.assistant" | "execution.failed" | "tool.completed" | "tool.failed"
+                "message.assistant" | "context.manual-completed" | "context.manual-failed" | "execution.failed" | "tool.completed" | "tool.failed"
             )
         })
         .map(|event| EvidenceRecordDto {
             id: format!("evidence.{}", event.event_id),
             category: match event.kind.as_str() {
-                "message.assistant" => "usage",
+                "message.assistant" | "context.manual-completed" => "usage",
                 "tool.completed" | "tool.failed" => "provenance",
                 _ => "error",
             }
             .into(),
             label: match event.kind.as_str() {
                 "message.assistant" => "Authority-checked provider completion",
+                "context.manual-completed" => "Authority-checked context maintenance",
                 "tool.completed" => "Authority-settled project file tool",
                 "tool.failed" => "Denied or failed project file tool",
                 _ => "Authority pipeline failure",

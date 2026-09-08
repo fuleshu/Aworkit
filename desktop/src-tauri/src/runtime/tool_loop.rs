@@ -6,12 +6,14 @@
 //! authenticated capability-host gateway. Read/search outcomes are durably
 //! settled before they can be returned to the provider.
 
+#[path = "compaction/runtime.rs"]
+mod context_compaction;
 pub(crate) mod skills;
-#[path = "workspace_instructions/mod.rs"]
-pub(crate) mod workspace_instructions;
 #[cfg(test)]
 mod skills_tests;
 mod web;
+#[path = "workspace_instructions/mod.rs"]
+pub(crate) mod workspace_instructions;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -484,7 +486,10 @@ where
 
 impl StoredFileToolBindingV1 {
     pub(crate) fn is_callable(&self) -> bool {
-        !matches!(self.limit, StoredFileToolLimitV1::WorkspaceInstructions { .. })
+        !matches!(
+            self.limit,
+            StoredFileToolLimitV1::WorkspaceInstructions { .. }
+        )
     }
     pub(crate) fn definition(&self) -> ModelToolDefinitionV1 {
         ModelToolDefinitionV1 {
@@ -504,9 +509,12 @@ pub(crate) fn file_tool_descriptors()
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
         (
-            "tool.workspace_instructions", CapabilityKind::FileRead, "workspace_instructions.read",
+            "tool.workspace_instructions",
+            CapabilityKind::FileRead,
+            "workspace_instructions.read",
             json!({"type":"object","properties":{},"additionalProperties":false}),
-            SideEffectClass::ReadOnly, false,
+            SideEffectClass::ReadOnly,
+            false,
         ),
         (
             SKILL_CAPABILITY_ID,
@@ -1160,6 +1168,12 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
 }
 
 impl FileToolAuthorityRuntimeV1 {
+    #[cfg(test)]
+    pub(super) fn recorded_exchanges(&self) -> Result<Vec<Value>, String> {
+        self.records
+            .events("pipeline.model-tool-exchange")
+            .map_err(|e| e.to_string())
+    }
     pub(crate) fn set_web_renderer(
         &mut self,
         renderer: Arc<dyn aworkit_capability_host::WebRendererPort>,
@@ -1425,6 +1439,7 @@ fn tool_lease_id(
 
 #[derive(Clone)]
 pub(crate) struct FrozenFileToolAuthorityContextV1 {
+    pub chat_id: String,
     pub approvals: super::approvals::ApprovalContext,
     pub review_messages: Vec<super::pipeline::WorkflowMessageV1>,
     pub manifest: AuthorityManifestV1,
@@ -1440,6 +1455,7 @@ pub(crate) struct FrozenFileToolAuthorityContextV1 {
     pub model_gateway: Option<Arc<FrozenModelGateway>>,
     pub model_binding_id: Option<String>,
     pub model_version_hash: Option<String>,
+    pub model_context: Value,
     pub maximum_tool_output_bytes: usize,
     /// Frozen core-attested MCP manifests bound to this Run, keyed by server
     /// id. Sessions open on demand with exact binding-drift protection.
@@ -1456,15 +1472,66 @@ pub(crate) struct BoundFileToolAuthorityV1 {
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
-    fn record_text_context(&self, input: &Value, context: &aworkit_capability_host::ModelToolRequestV1) {
+    fn legacy_context_identity(&self) -> bool {
+        self.context
+            .model_context
+            .as_object()
+            .is_none_or(|m| m.is_empty())
+    }
+    fn manage_model_context(
+        &self,
+        gateway: &aworkit_capability_host::FrozenModelGateway,
+        plan: &aworkit_capability_host::ModelResolutionPlanV1,
+        outer: &StableId,
+        through: usize,
+        agent: Option<&super::model_tool_loop::AgentContextV1>,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        trigger: super::compaction::Trigger,
+    ) -> Result<super::compaction::Preparation, String> {
+        self.manage_context(
+            gateway,
+            plan,
+            outer,
+            through,
+            agent,
+            request,
+            cancellation,
+            trigger,
+        )
+    }
+    fn record_context_usage(
+        &self,
+        outer: &StableId,
+        agent: Option<&super::model_tool_loop::AgentContextV1>,
+        request: &aworkit_capability_host::ModelToolRequestV1,
+        input: u64,
+        output: u64,
+        assistant_tokens: u64,
+    ) -> Result<(), String> {
+        self.context_usage(outer, agent, request, input, output, assistant_tokens)
+    }
+    fn record_text_context(
+        &self,
+        input: &Value,
+        context: &aworkit_capability_host::ModelToolRequestV1,
+    ) {
         self.run_events.record_text_context(input, context);
     }
-    fn prepare_automatic_context(&self, outer: &StableId, after_exchanges: usize,
-        agent: &super::model_tool_loop::AgentContextV1, request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken) -> Result<(), String> {
+    fn prepare_automatic_context(
+        &self,
+        outer: &StableId,
+        after_exchanges: usize,
+        agent: &super::model_tool_loop::AgentContextV1,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<(), String> {
         self.workspace_context(outer, after_exchanges, agent, request, cancellation)
     }
-    fn revise_model_context(&self, request: &mut aworkit_capability_host::ModelToolRequestV1) -> Result<(), String> {
+    fn revise_model_context(
+        &self,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+    ) -> Result<(), String> {
         self.run_events.revise_model_context(request)
     }
 
@@ -2972,7 +3039,11 @@ impl FileToolDispatcherV1 {
         match execute_model_tool_loop_v1(
             gateway,
             ModelToolLoopRequestV1 {
-                agent_context: Some(child_authority.inner.child_instruction_context(&envelope.invocation_id)?),
+                agent_context: Some(
+                    child_authority
+                        .inner
+                        .child_instruction_context(&envelope.invocation_id)?,
+                ),
                 outer_invocation_id: &envelope.invocation_id,
                 input: child_input,
                 parameters: BTreeMap::new(),
@@ -3018,10 +3089,50 @@ struct SubagentToolPortV1<'a> {
 }
 
 impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
-    fn prepare_automatic_context(&self, outer: &StableId, after_exchanges: usize,
-        agent: &super::model_tool_loop::AgentContextV1, request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken) -> Result<(), String> {
-        self.inner.workspace_context(outer, after_exchanges, agent, request, cancellation)
+    fn manage_model_context(
+        &self,
+        gateway: &aworkit_capability_host::FrozenModelGateway,
+        plan: &aworkit_capability_host::ModelResolutionPlanV1,
+        outer: &StableId,
+        through: usize,
+        agent: Option<&super::model_tool_loop::AgentContextV1>,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        trigger: super::compaction::Trigger,
+    ) -> Result<super::compaction::Preparation, String> {
+        self.inner.manage_context(
+            gateway,
+            plan,
+            outer,
+            through,
+            agent,
+            request,
+            cancellation,
+            trigger,
+        )
+    }
+    fn record_context_usage(
+        &self,
+        outer: &StableId,
+        agent: Option<&super::model_tool_loop::AgentContextV1>,
+        request: &aworkit_capability_host::ModelToolRequestV1,
+        input: u64,
+        output: u64,
+        assistant_tokens: u64,
+    ) -> Result<(), String> {
+        self.inner
+            .context_usage(outer, agent, request, input, output, assistant_tokens)
+    }
+    fn prepare_automatic_context(
+        &self,
+        outer: &StableId,
+        after_exchanges: usize,
+        agent: &super::model_tool_loop::AgentContextV1,
+        request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<(), String> {
+        self.inner
+            .workspace_context(outer, after_exchanges, agent, request, cancellation)
     }
     fn prepare_context(
         &self,
@@ -3423,7 +3534,11 @@ fn validate_call_arguments(
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
     let expected_keys: BTreeSet<&str> = match binding.limit {
-        StoredFileToolLimitV1::WorkspaceInstructions { .. } => return Err(invalid_tool("automatic context plugins cannot be called as tools")),
+        StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
+            return Err(invalid_tool(
+                "automatic context plugins cannot be called as tools",
+            ));
+        }
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
         StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
@@ -3487,7 +3602,11 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
-        StoredFileToolLimitV1::WorkspaceInstructions { .. } => return Err(invalid_tool("automatic context plugins cannot be called as tools")),
+        StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
+            return Err(invalid_tool(
+                "automatic context plugins cannot be called as tools",
+            ));
+        }
         StoredFileToolLimitV1::Skill { .. } => {
             object
                 .get("name")
@@ -4238,6 +4357,7 @@ mod tests {
         )
         .expect("capability binding");
         let authority_a = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-a", capability_binding.clone())
@@ -4254,11 +4374,13 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            model_context: serde_json::json!({}),
             maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
         });
         let authority_b = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-b", capability_binding.clone())
@@ -4275,6 +4397,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            model_context: serde_json::json!({}),
             maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
@@ -4313,6 +4436,7 @@ mod tests {
         );
 
         let expired_authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-expired", capability_binding.clone())
@@ -4329,6 +4453,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            model_context: serde_json::json!({}),
             maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),
@@ -4352,6 +4477,7 @@ mod tests {
         )
         .expect("frozen HEAD");
         let authority_c = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
             manifest: manifest("manifest.tool-run-c", capability_binding).expect("manifest C"),
@@ -4367,6 +4493,7 @@ mod tests {
             model_gateway: None,
             model_binding_id: None,
             model_version_hash: None,
+            model_context: serde_json::json!({}),
             maximum_tool_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
             mcp_manifests: BTreeMap::new(),
             cancellation: CancellationToken::default(),

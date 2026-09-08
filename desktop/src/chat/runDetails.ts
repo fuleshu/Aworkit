@@ -416,11 +416,11 @@ function selectedUsage(
   records: readonly EvidenceRecord[],
 ): { readonly input: number; readonly output: number } {
   const fromEvents = events
-    .filter(({ kind }) => kind === "span.usage")
+    .filter(({ kind }) => kind === "span.usage" || kind === "context.compaction-ended")
     .reduce(
       (sum, event) => ({
-        input: sum.input + numberAt(event.payload, "inputTokens"),
-        output: sum.output + numberAt(event.payload, "outputTokens"),
+        input: sum.input + numberAt(event.kind === "context.compaction-ended" ? asRecord(event.payload).auxiliary : event.payload, "inputTokens"),
+        output: sum.output + numberAt(event.kind === "context.compaction-ended" ? asRecord(event.payload).auxiliary : event.payload, "outputTokens"),
       }),
       { input: 0, output: 0 },
     );
@@ -439,7 +439,7 @@ function runUsage(
   records: readonly EvidenceRecord[],
 ): { readonly input: number; readonly output: number } {
   const assistantUsage = events
-    .filter(({ kind }) => kind === "message.assistant")
+    .filter(({ kind }) => kind === "message.assistant" || kind === "context.manual-completed" || kind === "context.manual-failed" || kind === "execution.failed")
     .reduce(
       (sum, event) => ({
         input: sum.input + numberAt(event.payload, "inputUnits"),
