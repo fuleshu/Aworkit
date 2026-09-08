@@ -1075,6 +1075,32 @@
         ]
       },
       "providerName": "skill"
+    },
+    {
+      "id": "tool.workspace_instructions",
+      "name": "Workspace Instructions",
+      "description": "Automatically load global, project and nested AGENTS.md guidance before Agent requests.",
+      "instructions": "",
+      "executor": "workspace_instructions",
+      "activation": "automatic_context",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "aworkitHome": "",
+        "projectRootMarkers": [".git"],
+        "instructionFileCandidates": ["AGENTS.md", "CLAUDE.md"],
+        "localInstructionFileCandidates": ["AGENTS.local.md", "CLAUDE.local.md"],
+        "maxBytes": 65536,
+        "maxSourceBytes": 1048576
+      },
+      "fields": [
+        {"key":"aworkitHome","label":"Aworkit home","help":"Global AGENTS.md directory. Blank uses your home/.aworkit. Resolved and frozen when a Chat starts.","kind":"string","readOnly":false},
+        {"key":"projectRootMarkers","label":"Project root markers","help":"Ordered directory or file names identifying the nearest project root within the approved workspace.","kind":"list","readOnly":false},
+        {"key":"instructionFileCandidates","label":"Instruction files","help":"Ordered same-directory Markdown filenames. All distinct existing files are loaded.","kind":"list","readOnly":false},
+        {"key":"localInstructionFileCandidates","label":"Local overlays","help":"Ordered local instruction filenames loaded after base files. Empty disables overlays.","kind":"list","readOnly":false},
+        {"key":"maxBytes","label":"Context byte budget","help":"Maximum UTF-8 bytes per instruction batch. Broader files are omitted first. Zero disables injection.","kind":"integer","readOnly":false,"minimum":0,"maximum":65536},
+        {"key":"maxSourceBytes","label":"Source file byte limit","help":"Maximum bytes read from one instruction file, enforced during streaming.","kind":"integer","readOnly":false,"minimum":1,"maximum":1048576}
+      ]
     }
   ]
 }

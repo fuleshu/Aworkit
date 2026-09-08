@@ -133,11 +133,72 @@ pub struct ModelToolRequestV1 {
     pub retry_notice: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelToolContextV1 {
     pub after_exchanges: usize,
+    /// Preserve the position of injected events across later Chat inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_input_messages: Option<usize>,
+    /// Resolved against trusted loader history; prose cannot establish visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_event_id: Option<String>,
     pub content: String,
+    /// Omitted by legacy injected context, which always has the user role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Compact image references; bytes are materialized only at dispatch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Value>,
+}
+
+impl ModelToolContextV1 {
+    pub fn message(&self) -> Value {
+        serde_json::json!({"role": self.role.as_deref().unwrap_or("user"), "content": self.content, "images": self.images})
+    }
+}
+
+impl ModelToolRequestV1 {
+    /// Position historical injections before provider role/image translation.
+    pub fn projected_input(&self) -> Result<Value, ProviderError> {
+        let mut input = self.input.clone();
+        let positioned: Vec<_> = self
+            .context_messages
+            .iter()
+            .filter(|c| c.after_input_messages.is_some())
+            .collect();
+        if positioned.is_empty() {
+            return Ok(input);
+        }
+        let messages = input
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+            .ok_or(ProviderError::InvalidPlan)?;
+        let original = std::mem::take(messages);
+        if positioned
+            .iter()
+            .any(|c| c.after_input_messages.unwrap_or_default() > original.len())
+        {
+            return Err(ProviderError::InvalidPlan);
+        }
+        for index in 0..=original.len() {
+            messages.extend(
+                positioned
+                    .iter()
+                    .filter(|c| c.after_input_messages == Some(index))
+                    .map(|c| c.message()),
+            );
+            if let Some(message) = original.get(index) {
+                messages.push(message.clone());
+            }
+        }
+        Ok(input)
+    }
+
+    /// The desktop context editor uses the same structural validator as dispatch.
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        validate_context_request(self)
+    }
 }
 
 /// Provider-neutral events emitted by a tool-capable model turn.
@@ -188,6 +249,24 @@ pub(crate) struct ModelInputMessageV1 {
 
 pub(crate) fn normalize_model_input(
     input: &Value,
+) -> Result<Vec<ModelInputMessageV1>, ProviderError> {
+    normalize_messages(input, true)
+}
+
+/// Positioned messages may be assistant answers between completed exchanges.
+pub(crate) fn normalize_context_message(
+    input: &Value,
+) -> Result<ModelInputMessageV1, ProviderError> {
+    let mut messages = normalize_messages(input, false)?;
+    if messages.len() != 1 {
+        return Err(invalid_tool_request());
+    }
+    messages.pop().ok_or_else(invalid_tool_request)
+}
+
+fn normalize_messages(
+    input: &Value,
+    require_user_tail: bool,
 ) -> Result<Vec<ModelInputMessageV1>, ProviderError> {
     if let Value::String(text) = input {
         if text.is_empty() || text.len() > MAX_TEXT_CONTENT_BYTES {
@@ -266,7 +345,8 @@ pub(crate) fn normalize_model_input(
         });
     }
     if !saw_conversation
-        || messages.last().map(|message| message.role) != Some(ModelInputRoleV1::User)
+        || (require_user_tail
+            && messages.last().map(|message| message.role) != Some(ModelInputRoleV1::User))
     {
         return Err(invalid_tool_request());
     }
@@ -274,9 +354,33 @@ pub(crate) fn normalize_model_input(
 }
 
 pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), ProviderError> {
-    normalize_model_input(&request.input)?;
+    if request.tools.is_empty() {
+        return Err(invalid_tool_request());
+    }
+    validate_context_request(request)
+}
+
+fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), ProviderError> {
+    let mut images = normalize_model_input(&request.input)?
+        .into_iter()
+        .flat_map(|m| m.images.into_iter().map(|image| image.attachment))
+        .collect::<Vec<_>>();
+    for context in &request.context_messages {
+        if !matches!(context.role.as_deref(), None | Some("user" | "assistant")) {
+            return Err(invalid_tool_request());
+        }
+        images.extend(
+            normalize_context_message(&context.message())?
+                .images
+                .into_iter()
+                .map(|image| image.attachment),
+        );
+    }
+    crate::model_images::validate_image_attachments(&images)?;
+    request.projected_input()?;
     if request.context_messages.iter().any(|message| {
-        message.after_exchanges > request.exchanges.len() || message.content.is_empty()
+        message.after_exchanges > request.exchanges.len()
+            || (message.content.is_empty() && message.images.is_empty())
     }) || serde_json::to_vec(&request.context_messages)
         .map_err(|_| invalid_tool_request())?
         .len()
@@ -284,8 +388,7 @@ pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), 
     {
         return Err(invalid_tool_request());
     }
-    if request.tools.is_empty()
-        || request.tools.len() > MAX_TOOL_DEFINITIONS
+    if request.tools.len() > MAX_TOOL_DEFINITIONS
         || request.retry_notice.as_ref().is_some_and(|notice| {
             notice.is_empty() || notice.len() > MAX_RETRY_NOTICE_BYTES || notice.contains('\0')
         })

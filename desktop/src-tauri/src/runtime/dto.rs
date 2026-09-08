@@ -108,6 +108,8 @@ pub struct EvidenceRecordDto {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
+    /// Frozen model metadata for context inspection, including legacy Chats.
+    pub context_model: Option<ContextModelDto>,
     pub version: u64,
     pub through_sequence: u64,
     pub reducer_version: String,
@@ -117,6 +119,13 @@ pub struct RuntimeSnapshot {
     pub projects: Vec<ProjectChoiceDto>,
     pub evidence: Vec<EvidenceRecordDto>,
     pub events: Vec<CoreEventEnvelope>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextModelDto {
+    pub name: String,
+    pub context_window: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]

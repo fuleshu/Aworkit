@@ -22,6 +22,7 @@ use super::{
 
 #[derive(Default)]
 struct RunEventState {
+    prepared_text_context: Option<(Value, Value)>,
     events: Vec<CoreEventEnvelope>,
     started_spans: BTreeSet<String>,
     terminal_spans: BTreeSet<String>,
@@ -44,6 +45,43 @@ pub(crate) struct RunEventStream {
 }
 
 impl RunEventStream {
+    pub(crate) fn record_text_context(&self, input: &Value, context: &aworkit_capability_host::ModelToolRequestV1) {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).prepared_text_context =
+            serde_json::to_value(context).ok().map(|document| (input.clone(), document));
+    }
+    /// Stable selection generation; replacement never rewrites prior requests.
+    pub(crate) fn instruction_context_revision(&self, node: &str) -> Result<String, String> {
+        Ok(self.committer.committed_events()?.iter().rev()
+            .find(|e| e.kind == "context.edited" && e.payload["nodeId"] == node)
+            .map_or_else(|| "ordinary".into(), |e| format!("edit:{}", e.sequence)))
+    }
+
+    pub(crate) fn publish_instruction_context(&self, node: &str, event: &Value, diagnostics: &[String]) -> Result<(), String> {
+        let mut metadata = event.clone();
+        if let Some(object) = metadata.as_object_mut() { object.remove("text"); }
+        self.publish(SemanticEventDraft::new("context.instructions", json!({
+            "requestId":self.request_id, "runId":self.run_id, "nodeId":node,
+            "event":metadata, "diagnostics":diagnostics,
+        }))).ok_or_else(|| "instruction context diagnostics could not be committed".to_owned())?;
+        Ok(())
+    }
+    /// Resolve user context revisions through durable history at the core boundary.
+    /// Subagents own separate temporary contexts and never inherit a parent edit.
+    pub(crate) fn revise_model_context(&self, request: &mut aworkit_capability_host::ModelToolRequestV1) -> Result<(), String> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.active_subagent_span.as_ref().is_some_and(|id| !state.terminal_spans.contains(id)) {
+            return Ok(());
+        }
+        let node_id = state.active_model_node.as_ref().and_then(|id| state.events.iter()
+            .find(|event| event.kind == "span.started" && event.span_id.as_ref() == Some(id)))
+            .and_then(|event| event.payload["nodeId"].as_str()).map(str::to_owned);
+        drop(state);
+        if let Some(node_id) = node_id {
+            super::context_inspection::apply_edit(&self.committer.committed_events()?, &node_id, request)?;
+        }
+        Ok(())
+    }
+
     /// Review rationale and usage are separate from assistant messages/reasoning.
     pub(crate) fn publish_approval_review(
         &self,
@@ -659,6 +697,8 @@ impl ModelRunEventObserver {
 
 impl ModelEventObserverV1 for ModelRunEventObserver {
     fn model_turn_started(&self, input: &Value) {
+        let canonical = self.stream.state.lock().unwrap_or_else(|p| p.into_inner())
+            .prepared_text_context.take().filter(|(wire, _)| wire == input).map(|(_, canonical)| canonical);
         let turn = {
             let mut state = self
                 .state
@@ -674,7 +714,7 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
             "model_call",
             "model_call",
             format!("Model call {turn}"),
-            Some(input.clone()),
+            Some(canonical.unwrap_or_else(|| input.clone())),
             json!({"turn": turn}),
         );
         self.state

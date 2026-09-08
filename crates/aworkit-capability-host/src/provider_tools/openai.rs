@@ -14,7 +14,7 @@ pub(crate) fn openai_tool_request(
     request: &ModelToolRequestV1,
     parameters: &OpenAiRequestParametersV1,
 ) -> Result<Value, ProviderError> {
-    let mut messages = normalize_model_input(&request.input)?
+    let mut messages = normalize_model_input(&request.projected_input()?)?
         .into_iter()
         .map(|message| {
             Ok(json!({
@@ -32,9 +32,9 @@ pub(crate) fn openai_tool_request(
         for context in request
             .context_messages
             .iter()
-            .filter(|c| c.after_exchanges == index)
+            .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == index)
         {
-            messages.push(json!({"role":"user","content":context.content}));
+            messages.push(super::context_message(context, "openai")?);
         }
         let mut text = String::new();
         let mut calls = Vec::new();
@@ -87,9 +87,9 @@ pub(crate) fn openai_tool_request(
     for context in request
         .context_messages
         .iter()
-        .filter(|c| c.after_exchanges == request.exchanges.len())
+        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
     {
-        messages.push(json!({"role":"user","content":context.content}));
+        messages.push(super::context_message(context, "openai")?);
     }
     if let Some(notice) = &request.retry_notice {
         messages.push(json!({"role":"user","content":notice}));

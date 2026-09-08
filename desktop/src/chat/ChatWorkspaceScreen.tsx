@@ -12,6 +12,7 @@ import {
 } from "./ChatComposer";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
+import { ContextUsage } from "./ContextUsage";
 import type { ApprovalActionDetails } from "./approvals";
 import { controlsFor } from "./composer";
 import { RunDetailsInspector } from "./RunDetailsInspector";
@@ -70,6 +71,7 @@ export function ChatWorkspaceScreen({
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
+  const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(320);
   const chatLayoutRef = useRef<HTMLElement>(null);
@@ -473,6 +475,21 @@ export function ChatWorkspaceScreen({
         <ChatComposer
           key={chat.chatId + (defaultWorkflowId ?? "")}
           chat={chat}
+          contextUsage={<ContextUsage events={runtime.events} model={snapshot.contextModel}
+            editDisabledReason={runtime.stale ? "Resynchronize before editing context."
+              : chat.recoveryPending ? "Resume or abandon the interrupted turn before editing context."
+              : runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.phase === "awaiting_approval"
+                ? "Finish or stop the current turn to enable editing." : null}
+            onSave={(selection, document) => {
+              const fingerprint = JSON.stringify([chat.chatId, selection.nodeId, selection.sequence, document]);
+              if (contextSave.current?.fingerprint !== fingerprint) contextSave.current = {
+                fingerprint, version: snapshot.version, intent: {
+                  type: "edit_context", commandId: commandIds.createIntent("enqueue").commandId, targetId: chat.chatId,
+                  nodeId: selection.nodeId, baseSequence: selection.sequence, document,
+                },
+              };
+              return runtime.dispatch(contextSave.current.intent, contextSave.current.version);
+            }} />}
           projects={snapshot.projects}
           stale={runtime.stale}
           pending={runtime.pendingCommandIds.size > 0}

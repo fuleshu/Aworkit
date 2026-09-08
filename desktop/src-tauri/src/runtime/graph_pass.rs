@@ -27,7 +27,7 @@ mod context;
 use super::{
     documents::validate_v1_executable_catalog,
     model_tool_loop::{
-        ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
+        AgentContextV1, ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
         ModelToolLoopRunV1, PROVIDER_TIMEOUT_NOTICE, execute_model_tool_loop_approval_v1,
         resume_model_tool_loop_v1,
     },
@@ -42,6 +42,19 @@ pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
 const MAXIMUM_NODE_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
 const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
+
+fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
+    AgentContextV1 { node_id: node.id.clone(),
+        tool_ids: node.tool_bindings.iter().map(|b| b.capability_id.clone()).collect(), child: None }
+}
+
+/// New automatic-context Agents isolate their durable tool exchanges by node.
+/// Keep the historical invocation identity for pre-existing frozen workflows.
+fn instruction_agent_outer(outer: &StableId, node: &CompiledGraphNodeV1) -> StableId {
+    if node.tool_bindings.iter().all(|b| b.is_callable()) { return outer.clone(); }
+    StableId::parse(format!("invocation.agent.{:x}", Sha256::digest(format!("{outer}:{}",node.id).as_bytes())))
+        .expect("digest is a valid invocation identity")
+}
 
 /// Per-node pass budget ceilings derived from the frozen snapshot.
 #[derive(Clone, Copy, Debug)]
@@ -796,7 +809,7 @@ impl<'a> PassMachine<'a> {
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
         };
         let parameters = node_model_parameters(&node.configuration);
-        match self.execute_text_turn(&plan, ModelRequestV1 { input, parameters }, cancellation) {
+        match self.execute_text_turn(&plan, ModelRequestV1 { input, parameters }, None, cancellation) {
             Ok(evidence) => {
                 let turn = project_model_events(&evidence.events);
                 let text = turn.assistant_text;
@@ -834,6 +847,7 @@ impl<'a> PassMachine<'a> {
         node: &CompiledGraphNodeV1,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
+        let outer = instruction_agent_outer(self.outer_invocation_id, node);
         let messages = context::agent_messages(
             node,
             value_text(&self.incoming_agent_context(&node.id)),
@@ -844,6 +858,7 @@ impl<'a> PassMachine<'a> {
         let definitions = node
             .tool_bindings
             .iter()
+            .filter(|binding| binding.is_callable())
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
         let parameters = node_model_parameters(&node.configuration);
@@ -861,6 +876,7 @@ impl<'a> PassMachine<'a> {
                     input: context,
                     parameters,
                 },
+                Some(&agent_context(node)),
                 cancellation,
             ) {
                 Ok(evidence) => {
@@ -884,7 +900,8 @@ impl<'a> PassMachine<'a> {
         match execute_model_tool_loop_approval_v1(
             self.gateway,
             ModelToolLoopRequestV1 {
-                outer_invocation_id: self.outer_invocation_id,
+                agent_context: Some(agent_context(node)),
+                outer_invocation_id: &outer,
                 input: context,
                 parameters,
                 definitions,
@@ -957,9 +974,33 @@ impl<'a> PassMachine<'a> {
         &mut self,
         plan: &ModelResolutionPlanV1,
         mut request: ModelRequestV1,
+        agent: Option<&AgentContextV1>,
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
+        let mut context = super::context_inspection::ContextDocument::from_input(&request.input)
+            .map_err(ProviderError::Failed)?.request();
+        self.tool_authority.revise_model_context(&mut context).map_err(ProviderError::Failed)?;
+        if let Some(agent) = agent {
+            self.tool_authority.prepare_automatic_context(self.outer_invocation_id, 0, agent, &mut context, cancellation)
+                .map_err(ProviderError::Failed)?;
+        }
+        if !context.exchanges.is_empty() || !context.tools.is_empty() {
+            return Err(ProviderError::Failed("A text-only node cannot accept tool exchanges.".into()));
+        }
+        let mut recorded_context = context.clone();
+        if !context.context_messages.is_empty() {
+            context.input = context.projected_input()?;
+            let messages = context.input.get_mut("messages").and_then(Value::as_array_mut)
+                .ok_or(ProviderError::InvalidPlan)?;
+            messages.extend(context.context_messages.iter().filter(|c| c.after_input_messages.is_none()).map(|c| c.message()));
+        }
+        if let Some(notice) = context.retry_notice {
+            context.input["messages"].as_array_mut().ok_or(ProviderError::InvalidPlan)?
+                .push(json!({"role":"user","content":notice}));
+        }
+        request.input = context.input;
         loop {
+            self.tool_authority.record_text_context(&request.input, &recorded_context);
             self.attempted_model_turns = self.attempted_model_turns.saturating_add(1);
             match self
                 .gateway
@@ -970,6 +1011,7 @@ impl<'a> PassMachine<'a> {
                 {
                     self.timeout_recoveries = self.timeout_recoveries.saturating_add(1);
                     append_retry_notice(&mut request.input)?;
+                    recorded_context.retry_notice = Some(PROVIDER_TIMEOUT_NOTICE.into());
                 }
                 result => return result,
             }
@@ -985,6 +1027,7 @@ impl<'a> PassMachine<'a> {
         approved: bool,
         cancellation: &CancellationToken,
     ) -> AgentResumeOutcomeV1 {
+        let outer = instruction_agent_outer(self.outer_invocation_id, node);
         let messages = context::agent_messages(
             node,
             value_text(&self.incoming_agent_context(&node.id)),
@@ -995,10 +1038,12 @@ impl<'a> PassMachine<'a> {
         let definitions = node
             .tool_bindings
             .iter()
+            .filter(|binding| binding.is_callable())
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
         let request = ModelToolLoopRequestV1 {
-            outer_invocation_id: self.outer_invocation_id,
+            agent_context: Some(agent_context(node)),
+            outer_invocation_id: &outer,
             input: context,
             parameters: node_model_parameters(&node.configuration),
             definitions,

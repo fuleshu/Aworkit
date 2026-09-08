@@ -20,6 +20,7 @@ fn call(id: &str) -> ModelToolCallV1 {
 
 fn request(id: &StableId) -> ModelToolLoopRequestV1<'_> {
     ModelToolLoopRequestV1 {
+        agent_context: None,
         outer_invocation_id: id,
         input: json!("Can you see Adashi?"),
         parameters: BTreeMap::new(),

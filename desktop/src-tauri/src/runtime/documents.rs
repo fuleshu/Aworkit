@@ -1377,6 +1377,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
 pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
     [
         "tool.skill",
+        "tool.workspace_instructions",
         "tool.files.read",
         "tool.files.search",
         "tool.files.list",
@@ -1606,6 +1607,9 @@ fn validate_tool_configuration(
         .get("toolId")
         .and_then(Value::as_str)
         .expect("validated toolId");
+    if !super::tool_registry::is_callable(tool_id) {
+        return Err(format!("workflow node '{node_id}': automatic context plugins belong on Agent nodes; select Workspace Instructions in the Agent tool selector"));
+    }
     if !builtin_tool_binding_ids().contains(tool_id) && !tool_id.starts_with("mcp:") {
         return Err(format!(
             "workflow node '{node_id}' tool binds '{tool_id}' with no installed executor in this build"
@@ -1914,7 +1918,7 @@ mod tests {
             migrated.settings.projects[0].workspace.location,
             "/workspace/atlas"
         );
-        assert_eq!(migrated.settings.tools.len(), 14);
+        assert_eq!(migrated.settings.tools.len(), super::super::tool_registry::native_plugin().tools.len());
         assert!(migrated.settings.tools.iter().all(|tool| !tool.enabled));
         let canonical = repository
             .export_lossless(DocumentKind::Configuration, SETTINGS_ID)
@@ -1997,7 +2001,7 @@ mod tests {
         // Simulate a document written before tool.skill existed: drop that
         // built-in entry while preserving one user-enabled entry.
         settings.tools.retain(|tool| tool.id != "tool.skill");
-        assert_eq!(settings.tools.len(), 13);
+        assert_eq!(settings.tools.len(), super::super::tool_registry::native_plugin().tools.len() - 1);
         settings.tools[3].enabled = true;
         repository
             .save(
@@ -2010,7 +2014,7 @@ mod tests {
 
         let repaired = CanonicalDocuments::open(root.path()).unwrap();
         assert_eq!(repaired.settings_version, 2);
-        assert_eq!(repaired.settings.tools.len(), 14);
+        assert_eq!(repaired.settings.tools.len(), super::super::tool_registry::native_plugin().tools.len());
         assert!(
             repaired
                 .settings
@@ -2022,7 +2026,7 @@ mod tests {
         drop(repaired);
 
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.settings.tools.len(), 14);
+        assert_eq!(reopened.settings.tools.len(), super::super::tool_registry::native_plugin().tools.len());
     }
 
     #[test]

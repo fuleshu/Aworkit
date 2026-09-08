@@ -20,6 +20,7 @@ export interface WorkflowOption {
 }
 
 interface ChatComposerProps {
+  readonly contextUsage?: React.ReactNode;
   readonly chat: ChatProjection;
   readonly projects: readonly ChatProjectChoice[];
   readonly stale: boolean;
@@ -37,6 +38,7 @@ interface ChatComposerProps {
 
 /** Local IME-safe composer; only a committed core result is allowed to clear its draft. */
 export function ChatComposer({
+  contextUsage,
   chat,
   projects,
   stale,
@@ -234,7 +236,7 @@ export function ChatComposer({
           {imageError}
         </p>
       )}
-      <div className="composer-input">
+      <div className={"composer-input" + (contextUsage ? " composer-with-context" : "")}>
         <ImageAttachmentMenu
           disabled={chat.recoveryPending || commandPending}
           onFiles={(files) => void addFiles(files)}
@@ -262,6 +264,7 @@ export function ChatComposer({
           }}
           onChange={(event) => edit({ draft: event.target.value })}
         />
+        {contextUsage}
         <button
           className="primary-action"
           disabled={disabledReason !== null}

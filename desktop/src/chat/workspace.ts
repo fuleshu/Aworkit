@@ -3,7 +3,7 @@ import type { ChatIntent } from "./types";
 
 /** Creates typed Chat intents; event ownership stays in useChatRuntime. */
 export class ChatWorkspaceController {
-  public createIntent(type: ChatIntent["type"], targetId?: string): ChatIntent {
+  public createIntent(type: Exclude<ChatIntent["type"], "edit_context">, targetId?: string): ChatIntent {
     const commandId = createDurableCommandId("chat");
     if (type === "start")
       return {

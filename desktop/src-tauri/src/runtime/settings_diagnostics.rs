@@ -105,6 +105,13 @@ pub(crate) fn probe_tool_with_api_key(
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.workspace_instructions" => (|| {
+                let config = super::tool_loop::workspace_instructions::configuration(
+                    &serde_json::to_value(&request.tool.configuration).map_err(|e| e.to_string())?,
+                )?;
+                Ok(("adapter.workspace_instructions".into(), format!("Automatic Agent context is configured. Global source: {}. {}",
+                    config.aworkit_home.join("AGENTS.md").display(), config.diagnostics().join(" "))))
+            })(),
             "tool.skill" => (|| {
                 let config = super::tool_loop::skills::configuration(
                     &serde_json::to_value(&request.tool.configuration)

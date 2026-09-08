@@ -1244,6 +1244,10 @@ impl ChatHistory {
             })
             .collect();
         Ok(RuntimeSnapshot {
+            context_model: frozen.as_ref().map(|record| super::dto::ContextModelDto {
+                name: record.context.model_name.clone(),
+                context_window: record.context.model_snapshot.context_window,
+            }),
             version: head,
             through_sequence: head,
             reducer_version: "chat.semantic.reducer.v1".into(),

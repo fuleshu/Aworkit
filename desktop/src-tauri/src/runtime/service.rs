@@ -1,4 +1,5 @@
 mod mcp_selection;
+mod context_edit;
 mod tool_plugins;
 
 use std::{
@@ -591,7 +592,7 @@ impl DesktopRuntime {
             let model = resolved
                 .as_ref()
                 .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
-            validate_model_capabilities(&model.provider, &model.model, !agent.tools.is_empty())?;
+            validate_model_capabilities(&model.provider, &model.model, agent.tools.iter().any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)))?;
             validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
             if agent
                 .tools
@@ -651,6 +652,7 @@ impl DesktopRuntime {
                 | "cancel"
                 | "approval"
                 | "approval_mode"
+                | "edit_context"
         ) {
             self.ensure_current_chat_target(input.target_id.as_deref())?;
         }
@@ -696,6 +698,7 @@ impl DesktopRuntime {
             "start" | "enqueue" => self.complete_workflow_input(input, fingerprint),
             "approval" => self.complete_approval(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
+            "edit_context" => self.edit_context(input, fingerprint),
             "resume" => {
                 self.recover_pending_effect(&input.command_id, &fingerprint, input.expected_version)
             }
@@ -1151,6 +1154,7 @@ impl DesktopRuntime {
                     "createdAt": created_at,
                     "hasInput": true,
                     "input": user_input,
+                    "contextModel": { "name":context.model_name, "contextWindow":context.model_snapshot.context_window },
                 }),
             ));
             self.history.begin_effect_command(
@@ -1764,7 +1768,7 @@ impl DesktopRuntime {
             project.is_some(),
             &mcp_definitions,
         )?;
-        validate_model_capabilities(&resolved.provider, &resolved.model, !agent.tools.is_empty())?;
+        validate_model_capabilities(&resolved.provider, &resolved.model, agent.tools.iter().any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)))?;
         validate_workflow_model_parameters(
             &workflow.document,
             &resolved.provider,
@@ -4214,6 +4218,7 @@ mod tests {
     };
 
     mod credentialed_web_search;
+    mod context_edit;
     mod image_chat;
 
     struct FixtureProvider {
@@ -6151,7 +6156,7 @@ mod tests {
         let settings = reopened.settings_v2_snapshot();
         assert_eq!(settings.version, 2);
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION_V2);
-        assert_eq!(settings.settings.tools.len(), 14);
+        assert_eq!(settings.settings.tools.len(), super::super::tool_registry::native_plugin().tools.len());
         assert!(
             settings
                 .settings

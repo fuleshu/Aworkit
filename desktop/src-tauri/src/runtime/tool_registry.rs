@@ -109,6 +109,14 @@ pub struct ToolField {
     pub maximum: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Activation {
+    #[default]
+    ModelCall,
+    AutomaticContext,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeTool {
@@ -117,7 +125,11 @@ pub struct NativeTool {
     pub description: String,
     pub instructions: String,
     pub executor: String,
+    #[serde(default)]
+    pub activation: Activation,
+    #[serde(default)]
     pub provider_name: String,
+    #[serde(default)]
     pub input_schema: Value,
     pub execution: String,
     pub requires_project: bool,
@@ -156,8 +168,11 @@ impl NativeToolPlugin {
                 || tool.id != format!("tool.{}", tool.executor)
                 || tool.name.is_empty()
                 || tool.description.is_empty()
-                || tool.provider_name.is_empty()
-                || !tool.input_schema.is_object()
+                || match tool.activation {
+                    Activation::ModelCall => tool.provider_name.is_empty() || !tool.input_schema.is_object(),
+                    Activation::AutomaticContext => tool.executor != "workspace_instructions"
+                        || tool.execution != "native" || !tool.provider_name.is_empty() || !tool.input_schema.is_null(),
+                }
                 || !matches!(tool.execution.as_str(), "native" | "shell" | "python")
             {
                 return Err(format!("Invalid or duplicate tool '{}'", tool.id));
@@ -187,6 +202,12 @@ impl NativeToolPlugin {
                 return Err(format!("Missing setting metadata for '{}'", tool.id));
             }
         }
+        let raw: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        for entry in raw["tools"].as_array().into_iter().flatten() {
+            if entry["activation"] == "automatic_context" && (entry.get("providerName").is_some() || entry.get("inputSchema").is_some()) {
+                return Err("Automatic context plugins cannot declare model-call fields".into());
+            }
+        }
         Ok(manifest)
     }
 }
@@ -198,6 +219,10 @@ pub fn native_plugin() -> &'static NativeToolPlugin {
 
 pub fn native_tool(id: &str) -> Option<&'static NativeTool> {
     native_plugin().tools.iter().find(|tool| tool.id == id)
+}
+
+pub(crate) fn is_callable(id: &str) -> bool {
+    native_tool(id).is_none_or(|tool| tool.activation == Activation::ModelCall)
 }
 
 pub fn native_defaults() -> Vec<BuiltInToolConfigurationV2> {
@@ -221,6 +246,12 @@ pub(crate) fn freeze_settings(
     tool: &BuiltInToolConfigurationV2,
 ) -> Result<BuiltInToolConfigurationV2, String> {
     let mut frozen = tool.clone();
+    if tool.id == "tool.workspace_instructions" {
+        let resolved = super::tool_loop::workspace_instructions::configuration(
+            &serde_json::to_value(&tool.configuration).map_err(|e| e.to_string())?,
+        )?;
+        frozen.configuration = serde_json::from_value(serde_json::to_value(resolved).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    }
     if tool.id == "tool.skill" {
         let resolved = super::tool_loop::skills::freeze_settings(
             &serde_json::to_value(&tool.configuration).map_err(|e| e.to_string())?,

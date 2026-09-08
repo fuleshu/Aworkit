@@ -1,5 +1,6 @@
 /** Editable tool guidance and execution policy, independent of tool arguments. */
 import type { ToolOptions } from "../configuration";
+import { findNativeTool } from "../toolRegistry";
 
 export function ToolOptionsEditor({ id, value = {}, defaultInstructions, execution, onChange, onPickCommand }: {
   readonly id: string;
@@ -10,6 +11,9 @@ export function ToolOptionsEditor({ id, value = {}, defaultInstructions, executi
   readonly onPickCommand?: () => Promise<string | null>;
 }): React.JSX.Element {
   const patch = (next: Partial<ToolOptions>) => onChange({ ...value, ...next });
+  if (findNativeTool(id)?.activation === "automatic_context") return <small>
+    Runs automatically when selected on an Agent. Reads stay within the frozen project and global instruction locations. Settings changes apply to new Chats.
+  </small>;
   return <div className="settings-section-stack">
     <label className="settings-field" htmlFor={`${id}-instructions`}>Tool instructions
       <textarea id={`${id}-instructions`} rows={5} title="Instructions included in the system prompt only when this tool is selected. Saving affects new chats."

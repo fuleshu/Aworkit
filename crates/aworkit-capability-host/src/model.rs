@@ -427,6 +427,30 @@ impl FrozenModelGateway {
                 &request.input,
                 self.image_resolver.as_deref(),
             )?;
+            // The validator bounds base and positioned images together; resolve
+            // positioned references only after the same observer/authority checks.
+            let positioned = serde_json::Value::Array(
+                request
+                    .context_messages
+                    .iter()
+                    .map(|c| c.message())
+                    .collect(),
+            );
+            let positioned = crate::model_images::materialize_images(
+                &positioned,
+                self.image_resolver.as_deref(),
+            )?;
+            for (context, message) in materialized
+                .context_messages
+                .iter_mut()
+                .zip(positioned.as_array().into_iter().flatten())
+            {
+                context.images = message
+                    .get("images")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+            }
             let acceptance =
                 provider.execute_tool_turn_cancellable(&materialized, cancellation, &mut emit)?;
             match acceptance {

@@ -33,6 +33,17 @@ pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the p
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    /// Preserve typed instruction references in ordinary model request history.
+    fn record_text_context(&self, _input: &Value, _context: &ModelToolRequestV1) {}
+    /// Last Agent preparation step, after any visible-context replacement.
+    fn prepare_automatic_context(&self, _outer: &StableId, _after_exchanges: usize,
+        _agent: &AgentContextV1, _request: &mut ModelToolRequestV1, _cancellation: &CancellationToken) -> Result<(), String> {
+        Ok(())
+    }
+    /// Apply explicitly saved prompt revisions without changing tool authority.
+    fn revise_model_context(&self, _request: &mut ModelToolRequestV1) -> Result<(), String> {
+        Ok(())
+    }
     /// Non-secret project facts from the trusted Run context, separate from
     /// user conversation messages and external services' project identifiers.
     fn project_context(&self) -> Option<Value> {
@@ -145,7 +156,15 @@ pub(crate) struct SettledModelToolCallV1 {
     pub activity: WorkflowToolActivityV1,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AgentContextV1 {
+    pub node_id: String,
+    pub tool_ids: Vec<String>,
+    pub child: Option<String>,
+}
+
 pub(crate) struct ModelToolLoopRequestV1<'a> {
+    pub agent_context: Option<AgentContextV1>,
     pub outer_invocation_id: &'a StableId,
     pub input: Value,
     pub parameters: BTreeMap<String, Value>,
@@ -437,6 +456,12 @@ fn execute_tool_turn_with_timeout_recovery(
             ));
         }
         provider_request.exchanges = exchanges.to_vec();
+        authority.revise_model_context(&mut provider_request)
+            .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+        if let Some(agent) = &request.agent_context {
+            authority.prepare_automatic_context(request.outer_invocation_id, exchanges.len(), agent, &mut provider_request, cancellation)
+                .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+        }
         match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
             Err(ProviderError::RequestTimedOut)
                 if *timeout_recoveries < request.maximum_timeout_recoveries =>

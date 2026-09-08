@@ -1,5 +1,5 @@
 import { stableIdSchema } from "../protocol/schema";
-import { nativeTools } from "./toolRegistry";
+import { nativeTools, findNativeTool } from "./toolRegistry";
 import type { JsonObject, WorkflowDocument } from "./workflow";
 
 export interface WorkflowExecutionIssue {
@@ -301,6 +301,8 @@ export function assessNativeWorkflow(
             message: `Workflow node '${id}' tool configuration accepts exactly toolId plus optional parameters.`,
           });
         const toolId = configuration.toolId;
+        if (typeof toolId === "string" && findNativeTool(toolId)?.activation === "automatic_context")
+          issues.push({code: "native_tool_node", message: `Workflow node '${id}': automatic context plugins belong on Agent nodes; select Workspace Instructions in the Agent tool selector.`});
         if (typeof toolId !== "string" || !isToolBindingId(toolId))
           issues.push({
             code: "native_tool_node",

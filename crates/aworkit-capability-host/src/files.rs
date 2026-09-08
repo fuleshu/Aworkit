@@ -170,6 +170,46 @@ pub struct ProjectFiles {
 }
 
 impl ProjectFiles {
+    /// Probe a marker using the same authority and alias policy as file tools.
+    pub fn instruction_exists(&self, path: &Path, cancellation: &CancellationToken) -> Result<bool, String> {
+        check_cancelled(cancellation).map_err(|e| e.to_string())?;
+        let probe = (|| -> Result<bool, FileToolError> {
+            self.revalidate_root()?;
+            let path = validate_relative(path)?;
+            self.reject_symlinks(path, true)?;
+            self.directory.metadata(path)?;
+            Ok(true)
+        })();
+        match probe {
+            Ok(found) => Ok(found),
+            Err(FileToolError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Bounded instruction observation; absence and temporary failure differ.
+    pub fn instruction_read(&self, path: &Path, limit: usize, cancellation: &CancellationToken)
+        -> Result<crate::workspace_instructions::FileObservation, String>
+    {
+        use crate::workspace_instructions::FileObservation;
+        let read = (|| -> Result<Option<String>, FileToolError> {
+            check_cancelled(cancellation)?;
+            self.revalidate_root()?;
+            let path = validate_relative(path)?;
+            self.reject_symlinks(path, true)?;
+            if !self.directory.metadata(path)?.is_file() { return Ok(None); }
+            let result = self.read_v1(&FileReadRequestV1 { path: path.to_owned(), maximum_bytes: limit }, cancellation)?;
+            String::from_utf8(result.bytes).map(Some).map_err(|_| FileToolError::NotText)
+        })();
+        if cancellation.is_cancelled() { return Err("workspace instruction read cancelled".into()); }
+        Ok(match read {
+            Ok(Some(text)) => FileObservation::Present(text),
+            Ok(None) => FileObservation::Absent,
+            Err(FileToolError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => FileObservation::Absent,
+            Err(e) => FileObservation::Unavailable(e.to_string()),
+        })
+    }
+
     pub fn new(authority: FileAuthority) -> Result<Self, FileToolError> {
         let canonical_root = fs::canonicalize(&authority.root)?;
         if !canonical_root.is_dir() {

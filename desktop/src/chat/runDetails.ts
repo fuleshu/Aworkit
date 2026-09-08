@@ -133,6 +133,17 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
     countField("Errors", input.items, (item) => item.kind === "error"),
   ];
   const sections: RunDetailsSection[] = [];
+  const instructions = input.events.filter(event => event.kind === "context.instructions").flatMap(event => {
+    const payload = asRecord(event.payload), observation = asRecord(payload.event);
+    const changes = Array.isArray(observation.changes) ? observation.changes : [];
+    const diagnostics = Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
+    if (changes.length === 0 && diagnostics.length === 0) return [];
+    return [{ agent: payload.nodeId, files: changes.map(change => {
+      const item = asRecord(change);
+      return { action: item.action, path: item.path, scope: String(item.scope ?? "").split("\0")[0] };
+    }), diagnostics }];
+  });
+  if (instructions.length > 0) sections.push({ kind: "data", title: "Workspace instructions", value: instructions });
   if (usage.input > 0 || usage.output > 0 || models.length > 0) {
     sections.push({
       kind: "fields",

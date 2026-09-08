@@ -79,6 +79,7 @@ const runtimeEventSchema = z
   })
   .strict();
 const runtimeSnapshotSchema = z.object({
+  contextModel: z.object({ name: z.string(), contextWindow: z.number().positive().nullable() }).nullable().optional(),
   version: z.number().int().nonnegative(),
   throughSequence: z.number().int().nonnegative(),
   reducerVersion: z.string().min(1),
@@ -96,6 +97,7 @@ const receiptSchema = z.object({
   reason: z.string().nullable(),
 });
 export interface RuntimeSnapshot {
+  readonly contextModel?: import("./contextProjection").ContextModel | null;
   readonly version: number;
   readonly throughSequence: number;
   readonly reducerVersion: string;
@@ -124,6 +126,7 @@ export interface ChatCorePort {
 export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
   const parsed = runtimeSnapshotSchema.parse(input);
   return {
+    contextModel: parsed.contextModel,
     version: parsed.version,
     throughSequence: parsed.throughSequence,
     reducerVersion: parsed.reducerVersion,
@@ -146,6 +149,7 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
 
 /** Projects a typed renderer intent into the exact native IPC payload. */
 export function chatIntentPayload(intent: ChatIntent): unknown {
+  if (intent.type === "edit_context") return { nodeId: intent.nodeId, baseSequence: intent.baseSequence, document: intent.document };
   if (intent.type === "approval_mode") return { mode: intent.mode };
   if (intent.type === "start")
     return {

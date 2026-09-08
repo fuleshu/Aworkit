@@ -14,7 +14,7 @@ export interface ChatRuntimeState {
   readonly loading: boolean;
   readonly error: RuntimeErrorNotice | null;
   readonly pendingCommandIds: ReadonlySet<string>;
-  dispatch(intent: ChatIntent): Promise<boolean>;
+  dispatch(intent: ChatIntent, expectedVersion?: number): Promise<boolean>;
   resynchronize(): Promise<boolean>;
   dismissError(): void;
 }
@@ -226,14 +226,14 @@ export function useChatRuntime(
   }, [pollIntervalMs, refresh]);
 
   const dispatch = useCallback(
-    async (intent: ChatIntent): Promise<boolean> => {
+    async (intent: ChatIntent, expectedVersion?: number): Promise<boolean> => {
       const current = snapshotRef.current;
       if (current === null || stale) return false;
       pendingRef.current.add(intent.commandId);
       setPending((value) => new Set([...value, intent.commandId]));
       try {
         await eventReadyRef.current;
-        const receipt = await port.command(intent, current.version);
+        const receipt = await port.command(intent, expectedVersion ?? current.version);
         if (!receipt.accepted) {
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";

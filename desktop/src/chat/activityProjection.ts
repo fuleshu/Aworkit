@@ -395,6 +395,9 @@ function projectFact(
   approvalResolutions: ReadonlyMap<string, boolean>,
   terminalEvents: readonly RuntimeEvent[],
 ): TimelineItem | undefined {
+  if (event.kind === "context.edited") {
+    return baseItem(event, fact, { kind: "step", title: "Context edited", status: "completed" });
+  }
   if (event.kind === "message.user" || event.kind === "message.assistant") {
     return baseItem(event, fact, {
       kind: "message",

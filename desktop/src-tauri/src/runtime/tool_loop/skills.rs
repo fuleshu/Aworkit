@@ -142,6 +142,7 @@ impl BoundFileToolAuthorityV1 {
                 added.push(ModelToolContextV1 {
                     after_exchanges,
                     content: library::render_catalog(&entries, catalog.is_some()),
+                    ..Default::default()
                 });
                 catalog = Some(entries);
             }
@@ -164,6 +165,7 @@ impl BoundFileToolAuthorityV1 {
                         added.push(ModelToolContextV1 {
                             after_exchanges,
                             content: library::render_content(&skill),
+                            ..Default::default()
                         });
                     }
                 }

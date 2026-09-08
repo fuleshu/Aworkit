@@ -813,6 +813,12 @@ impl BuiltInToolConfigurationV2 {
 
     fn validate_implemented_contract(&self) -> Result<(), String> {
         match self.id.as_str() {
+            "tool.workspace_instructions" => {
+                require_tool_project_scope(self, false)?;
+                super::tool_loop::workspace_instructions::configuration(
+                    &serde_json::to_value(&self.configuration).map_err(|e| e.to_string())?,
+                ).map(|_| ())
+            }
             "tool.skill" => {
                 require_tool_project_scope(self, false)?;
                 super::tool_loop::skills::configuration(
@@ -2588,7 +2594,8 @@ mod tests {
                 "tool.web_fetch",
                 "tool.web_extract",
                 "tool.subagent",
-                "tool.skill"
+                "tool.skill",
+                "tool.workspace_instructions"
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));

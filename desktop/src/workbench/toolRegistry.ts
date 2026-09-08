@@ -18,6 +18,7 @@ export interface ToolManifestEntry {
   readonly description: string;
   readonly instructions: string;
   readonly executor: string;
+  readonly activation?: string;
   readonly execution: string;
   readonly requiresProject: boolean;
   readonly configuration: Readonly<Record<string, unknown>>;

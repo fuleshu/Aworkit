@@ -13,7 +13,7 @@ pub(crate) fn anthropic_tool_request(
     maximum_output_tokens: u32,
     request: &ModelToolRequestV1,
 ) -> Result<Value, ProviderError> {
-    let base = normalize_model_input(&request.input)?;
+    let base = normalize_model_input(&request.projected_input()?)?;
     let system = base
         .iter()
         .filter(|message| message.role == ModelInputRoleV1::System)
@@ -39,9 +39,9 @@ pub(crate) fn anthropic_tool_request(
         for context in request
             .context_messages
             .iter()
-            .filter(|c| c.after_exchanges == index)
+            .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == index)
         {
-            messages.push(json!({"role":"user","content":context.content}));
+            messages.push(super::context_message(context, "anthropic")?);
         }
         let assistant = exchange
             .assistant_content
@@ -97,9 +97,9 @@ pub(crate) fn anthropic_tool_request(
     for context in request
         .context_messages
         .iter()
-        .filter(|c| c.after_exchanges == request.exchanges.len())
+        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
     {
-        messages.push(json!({"role":"user","content":context.content}));
+        messages.push(super::context_message(context, "anthropic")?);
     }
     if let Some(notice) = &request.retry_notice {
         messages.push(json!({"role":"user","content":notice}));

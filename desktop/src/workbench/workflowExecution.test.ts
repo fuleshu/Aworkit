@@ -30,7 +30,7 @@ function workflow(toolId: string, type: "agent" | "tool"): WorkflowDocument {
 }
 
 describe.each(["agent", "tool"] as const)("%s tool validation", (type) => {
-  it.each(nativeTools.map(({ id }) => id))("accepts bundled executor %s", (id) => {
+  it.each(nativeTools.filter(entry => type === "agent" || entry.activation !== "automatic_context").map(({ id }) => id))("accepts bundled executor %s", (id) => {
     expect(assessNativeWorkflow(workflow(id, type))).toEqual({ executable: true, issues: [] });
   });
 
@@ -39,4 +39,10 @@ describe.each(["agent", "tool"] as const)("%s tool validation", (type) => {
     expect(result.executable).toBe(false);
     expect(result.issues.some(issue => issue.message.includes("no installed executor"))).toBe(true);
   });
+});
+
+it("explains that automatic context contributions belong on Agent nodes", () => {
+  const result = assessNativeWorkflow(workflow("tool.workspace_instructions", "tool"));
+  expect(result.executable).toBe(false);
+  expect(result.issues.some(issue => issue.message.includes("automatic context plugins belong on Agent nodes"))).toBe(true);
 });

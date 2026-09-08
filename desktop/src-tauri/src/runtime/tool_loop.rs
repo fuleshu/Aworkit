@@ -7,6 +7,8 @@
 //! settled before they can be returned to the provider.
 
 pub(crate) mod skills;
+#[path = "workspace_instructions/mod.rs"]
+pub(crate) mod workspace_instructions;
 #[cfg(test)]
 mod skills_tests;
 mod web;
@@ -151,7 +153,8 @@ const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
-pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 9] = [
+pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 10] = [
+    "tool.workspace_instructions",
     SKILL_CAPABILITY_ID,
     FILE_READ_CAPABILITY_ID,
     FILE_SEARCH_CAPABILITY_ID,
@@ -166,6 +169,7 @@ pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 9] = [
 /// Approval-free tool ids that settle without a user decision.
 pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
     BTreeSet::from([
+        "tool.workspace_instructions",
         SKILL_CAPABILITY_ID,
         FILE_READ_CAPABILITY_ID,
         FILE_SEARCH_CAPABILITY_ID,
@@ -382,6 +386,9 @@ pub(crate) struct StoredToolSecretBindingV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum StoredFileToolLimitV1 {
+    WorkspaceInstructions {
+        configuration: aworkit_capability_host::workspace_instructions::Configuration,
+    },
     Skill {
         configuration: aworkit_capability_host::skills::SkillConfiguration,
     },
@@ -476,6 +483,9 @@ where
 }
 
 impl StoredFileToolBindingV1 {
+    pub(crate) fn is_callable(&self) -> bool {
+        !matches!(self.limit, StoredFileToolLimitV1::WorkspaceInstructions { .. })
+    }
     pub(crate) fn definition(&self) -> ModelToolDefinitionV1 {
         ModelToolDefinitionV1 {
             capability_id: self.capability_id.clone(),
@@ -493,6 +503,11 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
+        (
+            "tool.workspace_instructions", CapabilityKind::FileRead, "workspace_instructions.read",
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+            SideEffectClass::ReadOnly, false,
+        ),
         (
             SKILL_CAPABILITY_ID,
             CapabilityKind::FileRead,
@@ -693,6 +708,12 @@ pub(crate) fn freeze_file_tool_bindings(
             .validate(native.map_or("mcp", |tool| tool.execution.as_str()))
             .map_err(|error| invalid_tool(&error))?;
         let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
+            "workspace_instructions" => (
+                String::new(), "Automatic workspace instructions".into(), Value::Null,
+                StoredFileToolLimitV1::WorkspaceInstructions {
+                    configuration: workspace_instructions::configuration(&requested.configuration).map_err(|e| invalid_tool(&e))?,
+                },
+            ),
             "skill" => (
                 "skill".to_owned(),
                 aworkit_capability_host::skills::TOOL_DESCRIPTION.to_owned(),
@@ -1089,6 +1110,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
     Ok(CapabilityBindingV1 {
         capability_id: binding_capability_id,
         adapter_id: stable(match tool.capability_id.as_str() {
+            "tool.workspace_instructions" => "adapter.workspace_instructions",
             SKILL_CAPABILITY_ID => "adapter.skills.read",
             FILE_READ_CAPABILITY_ID => FILE_READ_ADAPTER_ID,
             FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_ADAPTER_ID,
@@ -1434,6 +1456,18 @@ pub(crate) struct BoundFileToolAuthorityV1 {
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
+    fn record_text_context(&self, input: &Value, context: &aworkit_capability_host::ModelToolRequestV1) {
+        self.run_events.record_text_context(input, context);
+    }
+    fn prepare_automatic_context(&self, outer: &StableId, after_exchanges: usize,
+        agent: &super::model_tool_loop::AgentContextV1, request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken) -> Result<(), String> {
+        self.workspace_context(outer, after_exchanges, agent, request, cancellation)
+    }
+    fn revise_model_context(&self, request: &mut aworkit_capability_host::ModelToolRequestV1) -> Result<(), String> {
+        self.run_events.revise_model_context(request)
+    }
+
     fn project_context(&self) -> Option<Value> {
         self.context.approvals.project_name.as_ref().map(|name| {
             json!({
@@ -2344,6 +2378,7 @@ impl FileToolDispatcherV1 {
             )
             .map_err(|error| error.to_string())?;
             match &self.record.binding.limit {
+                StoredFileToolLimitV1::WorkspaceInstructions { .. } => Err("automatic context plugins are prepared by the Agent lifecycle and cannot be invoked".into()),
                 StoredFileToolLimitV1::Skill { configuration } => {
                     let name = self.record.call.arguments["name"]
                         .as_str()
@@ -2909,6 +2944,7 @@ impl FileToolDispatcherV1 {
             .bindings
             .iter()
             .filter(|binding| SUBAGENT_CHILD_TOOL_IDS.contains(&binding.capability_id.as_str()))
+            .filter(|binding| binding.is_callable())
             .map(StoredFileToolBindingV1::definition)
             .collect::<Vec<_>>();
         let child_authority = SubagentToolPortV1 {
@@ -2936,6 +2972,7 @@ impl FileToolDispatcherV1 {
         match execute_model_tool_loop_v1(
             gateway,
             ModelToolLoopRequestV1 {
+                agent_context: Some(child_authority.inner.child_instruction_context(&envelope.invocation_id)?),
                 outer_invocation_id: &envelope.invocation_id,
                 input: child_input,
                 parameters: BTreeMap::new(),
@@ -2981,6 +3018,11 @@ struct SubagentToolPortV1<'a> {
 }
 
 impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
+    fn prepare_automatic_context(&self, outer: &StableId, after_exchanges: usize,
+        agent: &super::model_tool_loop::AgentContextV1, request: &mut aworkit_capability_host::ModelToolRequestV1,
+        cancellation: &CancellationToken) -> Result<(), String> {
+        self.inner.workspace_context(outer, after_exchanges, agent, request, cancellation)
+    }
     fn prepare_context(
         &self,
         outer: &StableId,
@@ -3133,6 +3175,7 @@ struct ToolOutcomeRecordV1 {
 
 #[derive(Clone)]
 struct ToolRecordStore {
+    instruction_lock: Arc<Mutex<()>>,
     store: LocalHistoryStore,
     write_lock: Arc<Mutex<()>>,
 }
@@ -3141,6 +3184,7 @@ impl ToolRecordStore {
     fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
+            instruction_lock: Arc::new(Mutex::new(())),
             write_lock: Arc::new(Mutex::new(())),
         })
     }
@@ -3379,6 +3423,7 @@ fn validate_call_arguments(
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
     let expected_keys: BTreeSet<&str> = match binding.limit {
+        StoredFileToolLimitV1::WorkspaceInstructions { .. } => return Err(invalid_tool("automatic context plugins cannot be called as tools")),
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
         StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
@@ -3442,6 +3487,7 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
+        StoredFileToolLimitV1::WorkspaceInstructions { .. } => return Err(invalid_tool("automatic context plugins cannot be called as tools")),
         StoredFileToolLimitV1::Skill { .. } => {
             object
                 .get("name")
@@ -3923,6 +3969,7 @@ fn revalidate_optional_branch(
 
 fn scope_for(capability_id: &str) -> &'static str {
     match capability_id {
+        "tool.workspace_instructions" => "workspace_instructions.read",
         FILE_READ_CAPABILITY_ID => FILE_READ_SCOPE,
         FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_SCOPE,
         FILE_LIST_CAPABILITY_ID => FILE_LIST_SCOPE,

@@ -42,14 +42,17 @@ fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
             ModelToolContextV1 {
                 after_exchanges: 0,
                 content: "initial catalog".into(),
+                ..Default::default()
             },
             ModelToolContextV1 {
                 after_exchanges: 0,
                 content: "explicit invocation".into(),
+                ..Default::default()
             },
             ModelToolContextV1 {
                 after_exchanges: 1,
                 content: "replacement catalog".into(),
+                ..Default::default()
             },
         ],
     };
@@ -99,4 +102,58 @@ fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
     let mut invalid = request;
     invalid.context_messages[0].after_exchanges = 2;
     assert!(crate::model_tools::validate_tool_request(&invalid).is_err());
+}
+
+#[test]
+fn edited_context_keeps_assistant_user_and_image_order_for_every_provider() {
+    use base64::Engine;
+    use sha2::Digest;
+    let data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    let request: crate::ModelToolRequestV1 = serde_json::from_value(json!({
+        "input":{"messages":[{"role":"user","content":"Original question"}]},
+        "parameters":{}, "tools":[], "exchanges":[],
+        "contextMessages":[
+            {"afterExchanges":0,"role":"assistant","content":"Edited answer"},
+            {"afterExchanges":0,"role":"user","content":"New image question","images":[{
+                "id":format!("{:x}",sha2::Sha256::digest(&bytes)),"name":"test.png","mimeType":"image/png","byteLength":bytes.len(),"data":data
+            }]}
+        ]
+    })).unwrap();
+    request.validate().unwrap();
+    let openai =
+        openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap();
+    assert_eq!(openai["messages"][1]["role"], "assistant");
+    assert_eq!(openai["messages"][1]["content"], "Edited answer");
+    assert_eq!(openai["messages"][2]["role"], "user");
+    assert!(
+        openai["messages"][2]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| part["type"] == "image_url")
+    );
+    let anthropic = anthropic_tool_request("fixture", 100, &request).unwrap();
+    assert_eq!(anthropic["messages"][1]["role"], "assistant");
+    assert_eq!(anthropic["messages"][2]["role"], "user");
+    assert!(
+        anthropic["messages"][2]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| part["type"] == "image")
+    );
+    let gemini = gemini_tool_request(&request).unwrap();
+    assert_eq!(gemini["contents"][1]["role"], "model");
+    assert_eq!(gemini["contents"][1]["parts"][0]["text"], "Edited answer");
+    assert_eq!(gemini["contents"][2]["role"], "user");
+    assert!(
+        gemini["contents"][2]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| part.get("inlineData").is_some())
+    );
 }

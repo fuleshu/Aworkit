@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value, ProviderError> {
-    let base = normalize_model_input(&request.input)?;
+    let base = normalize_model_input(&request.projected_input()?)?;
     let system_parts = base
         .iter()
         .filter(|message| message.role == ModelInputRoleV1::System)
@@ -34,9 +34,9 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
         for context in request
             .context_messages
             .iter()
-            .filter(|c| c.after_exchanges == index)
+            .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == index)
         {
-            contents.push(json!({"role":"user","parts":[{"text":context.content}]}));
+            contents.push(super::context_message(context, "gemini")?);
         }
         let model_parts = exchange
             .assistant_content
@@ -108,9 +108,9 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
     for context in request
         .context_messages
         .iter()
-        .filter(|c| c.after_exchanges == request.exchanges.len())
+        .filter(|c| c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len())
     {
-        contents.push(json!({"role":"user","parts":[{"text":context.content}]}));
+        contents.push(super::context_message(context, "gemini")?);
     }
     if let Some(notice) = &request.retry_notice {
         contents.push(json!({"role":"user","parts":[{"text":notice}]}));

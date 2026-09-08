@@ -13,6 +13,7 @@ pub(super) fn planning_tools(graph: &CompiledGraphPassV1, node_id: &str) -> Stri
             let tools: Vec<_> = agent
                 .tool_bindings
                 .iter()
+                .filter(|binding| binding.is_callable())
                 .map(|binding| {
                     let definition = binding.definition();
                     json!({"name":definition.name, "capabilityId":definition.capability_id,
@@ -80,7 +81,7 @@ pub(super) fn agent_messages(
             truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES)
         ));
     }
-    if !node.tool_bindings.is_empty() {
+    if node.tool_bindings.iter().any(|binding| binding.is_callable()) {
         sections.push(
             "The supplied tool definitions are the tools registered for this Agent. \
             Use their exact callable names. Earlier plans do not add tools. \
@@ -89,7 +90,7 @@ pub(super) fn agent_messages(
                 .into(),
         );
     }
-    for binding in &node.tool_bindings {
+    for binding in node.tool_bindings.iter().filter(|binding| binding.is_callable()) {
         let mut section = format!(
             "Tool {} ({}):",
             binding.provider_name, binding.capability_id
