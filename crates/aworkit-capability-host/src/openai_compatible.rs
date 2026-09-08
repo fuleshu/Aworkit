@@ -533,7 +533,7 @@ fn discovered_model(entry: ModelEntry) -> Option<OpenAiDiscoveredModelV1> {
     }
     let context_window = first_u64(
         &entry.metadata,
-        &["context_window", "max_model_len", "max_context_length"],
+        &["context_window", "max_model_len", "max_context_length", "context_length", "contextWindow"],
     );
     let max_output_tokens = first_u64(
         &entry.metadata,

@@ -8,6 +8,7 @@ import {
 } from "./corePort";
 
 export interface ChatRuntimeState {
+  readonly contextModel?: ChatCorePort["contextModel"];
   readonly snapshot: RuntimeSnapshot | null;
   readonly events: readonly RuntimeEvent[];
   readonly stale: boolean;
@@ -39,6 +40,7 @@ export function useChatRuntime(
     () => explicitPort ?? createChatCorePort(),
     [explicitPort],
   );
+  const contextModel = useMemo(() => port.contextModel?.bind(port), [port]);
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const snapshotRef = useRef<RuntimeSnapshot | null>(null);
   const eventsRef = useRef<RuntimeEvent[]>([]);
@@ -309,6 +311,7 @@ export function useChatRuntime(
   },[maintenancePending,queueVersion,stale,execute,snapshot?.chat.chatId,snapshot?.chat.recoveryPending]);
 
   return {
+    contextModel,
     snapshot,
     events,
     stale,

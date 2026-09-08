@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneSplitter } from "../shell/PaneSplitter";
+import { usePaneWidth } from "../shell/usePaneWidth";
 import { useProjectedNotification } from "../notifications/NotificationContext";
 import {
   hasOpenSemanticSpan,
@@ -13,6 +14,7 @@ import {
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
+import { useContextModel } from "./useContextModel";
 import type { ApprovalActionDetails } from "./approvals";
 import { controlsFor } from "./composer";
 import { RunDetailsInspector } from "./RunDetailsInspector";
@@ -73,8 +75,14 @@ export function ChatWorkspaceScreen({
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [inspectorWidth, setInspectorWidth] = useState(320);
+  const inspector = usePaneWidth(320, 280, 420);
+  const { width: inspectorWidth, setWidth: setInspectorWidth } = inspector;
   const chatLayoutRef = useRef<HTMLElement>(null);
+  const inspectorRef = inspector.ref;
+  const attachChatLayout = useCallback((element: HTMLElement | null) => {
+    chatLayoutRef.current = element;
+    inspectorRef(element);
+  }, [inspectorRef]);
   const previewInspectorWidth = useCallback((width: number) => {
     chatLayoutRef.current?.style.setProperty(
       "--aw-inspector-width",
@@ -108,6 +116,8 @@ export function ChatWorkspaceScreen({
   const snapshot = runtime.snapshot;
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
   const projectedChatId = snapshot?.chat.chatId;
+  const resolvedContextModel = useContextModel(runtime.contextModel, projectedChatId,
+    snapshot?.chat.workflowId ?? selectedWorkflowId, snapshot?.contextModel);
   const timelineItems = useMemo(
     () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
     [snapshot, runtime.events],
@@ -332,7 +342,7 @@ export function ChatWorkspaceScreen({
   ].filter((item): item is string => item !== null);
   return (
     <section
-      ref={chatLayoutRef}
+      ref={attachChatLayout}
       className={`chat-layout ${inspectorOpen ? "with-inspector" : ""}`}
       style={
         inspectorOpen
@@ -352,27 +362,6 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
           <div className="run-actions">
-            <span className={`run-status ${visibleChat.phase}`}>
-              <i />
-              {label(visibleChat.phase)}
-            </span>
-            {controlsFor(visibleChat).includes("cancel") && (
-              <button
-                className="danger-action"
-                disabled={chat.recoveryPending || stopRequested}
-                title={
-                  chat.recoveryPending
-                    ? "Resume the interrupted command before stopping the Run"
-                    : stopRequested
-                      ? "Stopping the current response"
-                    : "Stop the current response; completed workspace effects are not undone and the Chat remains open"
-                }
-                type="button"
-                onClick={() => control("cancel")}
-              >
-                ■&nbsp; {stopRequested ? "Stopping…" : "Stop"}
-              </button>
-            )}
             <button
               aria-pressed={inspectorOpen}
               title="Show or hide Run details"
@@ -462,6 +451,7 @@ export function ChatWorkspaceScreen({
           </div>
         ) : null}
         <ConversationTimeline
+          key={chat.chatId}
           active={active}
           items={timelineItems}
           selectedId={selectedTimelineId}
@@ -469,13 +459,17 @@ export function ChatWorkspaceScreen({
           onSelect={selectTimelineItem}
           onAction={cardAction}
         />
-        <div className="chat-approval-control"><ApprovalModeSelect value={chat.approvalMode ?? "ask_for_approval"}
-          disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
-          onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} /></div>
         <ChatComposer
           key={chat.chatId + (defaultWorkflowId ?? "")}
+          approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
+            disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
+            onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} />}
+          status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{label(visibleChat.phase)}</span>}
+          onStop={controlsFor(visibleChat).includes("cancel") ? () => control("cancel") : undefined}
+          stopDisabled={runtime.stale || chat.recoveryPending || stopRequested}
+          stopRequested={stopRequested}
             chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}
-          contextUsage={<ContextUsage events={runtime.events} model={snapshot.contextModel}
+          contextUsage={<ContextUsage events={runtime.events} model={resolvedContextModel}
             onCompact={selection => runtime.dispatch({type:"compact_context", commandId:commandIds.createIntent("enqueue").commandId,targetId:chat.chatId,nodeId:selection.nodeId,baseSequence:selection.sequence})}
             editDisabledReason={runtime.stale ? "Resynchronize before editing context."
               : chat.recoveryPending ? "Resume or abandon the interrupted turn before editing context."
@@ -508,7 +502,7 @@ export function ChatWorkspaceScreen({
           className="inspector-splitter"
           direction={-1}
           label="Resize Run details"
-          max={420}
+          max={inspector.max}
           min={280}
           value={inspectorWidth}
           onPreview={previewInspectorWidth}
@@ -548,7 +542,7 @@ export function timelineActionIntent(
 }
 
 function label(phase: string): string {
-  if (phase === "waiting_input") return "Waiting for input";
+  if (phase === "waiting_input" || phase === "draft") return "Waiting for input";
   return phase
     .replaceAll("_", " ")
     .replace(/^./, (value) => value.toUpperCase());

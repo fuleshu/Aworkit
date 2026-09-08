@@ -116,6 +116,7 @@ export interface RuntimeReceipt {
   readonly reason: string | null;
 }
 export interface ChatCorePort {
+  contextModel?(chatId: string, workflowId: string | null): Promise<import("./contextProjection").ContextModel | null>;
   snapshot(afterSequence: number): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
   subscribeEvents?(
@@ -178,6 +179,10 @@ export function chatIntentTargetId(intent: ChatIntent): string | null {
 
 /** Native implementation: all persistent or privileged actions cross one typed Tauri port. */
 export class TauriChatCorePort implements ChatCorePort {
+  public async contextModel(chatId: string, workflowId: string | null) {
+    return z.object({ name: z.string(), contextWindow: z.number().positive().nullable() }).nullable()
+      .parse(await invoke("desktop_context_model", { chatId, workflowId }));
+  }
   public async snapshot(afterSequence: number): Promise<RuntimeSnapshot> {
     return normalizeRuntimeSnapshot(
       await invoke("desktop_snapshot", { afterSequence }),

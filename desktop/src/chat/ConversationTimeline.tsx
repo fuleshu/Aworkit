@@ -13,6 +13,7 @@ import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
 import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
+import { useTimelineFollow } from "./useTimelineFollow";
 
 interface ConversationTimelineProps {
   readonly active?: boolean;
@@ -70,6 +71,7 @@ export function ConversationTimeline({
   });
   const restoring = useTimelineReturn(active, scrollRef, presentedItems.map(item => item.id), pinnedToEnd,
     index => virtualizer.scrollToIndex(index, { align: "start" }));
+  const follow = useTimelineFollow(active, scrollRef, pinnedToEnd, restoring);
   useEffect(() => {
     if (!active) return;
     let scrollFrame: number | null = null;
@@ -84,7 +86,7 @@ export function ConversationTimeline({
       }
       if (pinnedToEnd.current && presentedItems.length > 0) {
         scrollFrame = window.requestAnimationFrame(() => {
-          virtualizer.scrollToIndex(presentedItems.length - 1, { align: "end" });
+          follow.current();
         });
       }
     });
@@ -92,7 +94,7 @@ export function ConversationTimeline({
       window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [active, presentedItems.length, layoutRevision, virtualizer]);
+  }, [active, presentedItems, layoutRevision, virtualizer, follow]);
   useEffect(() => {
     if (!active) return;
     const scroll = scrollRef.current;
@@ -127,9 +129,7 @@ export function ConversationTimeline({
         if (pinnedToEnd.current && presentedItems.length > 0) {
           scrollFrame = window.requestAnimationFrame(() => {
             scrollFrame = null;
-            virtualizer.scrollToIndex(presentedItems.length - 1, {
-              align: "end",
-            });
+            follow.current();
           });
         }
       });
@@ -141,7 +141,7 @@ export function ConversationTimeline({
         window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
-  }, [active, presentedItems.length, virtualizer]);
+  }, [active, presentedItems.length, virtualizer, follow]);
   return (
     <div
       aria-live={active ? "polite" : "off"}
@@ -150,13 +150,7 @@ export function ConversationTimeline({
       ref={scrollRef}
       data-follow-latest={pinnedToEnd.current}
       role="log"
-      onScroll={(event) => {
-        if (!active || restoring.current) return;
-        const target = event.currentTarget;
-        pinnedToEnd.current =
-          target.scrollHeight - target.scrollTop - target.clientHeight < 48;
-        target.dataset.followLatest = String(pinnedToEnd.current);
-      }}
+      tabIndex={0}
     >
       {items.length === 0 ? (
         <p className="empty-state timeline-empty">

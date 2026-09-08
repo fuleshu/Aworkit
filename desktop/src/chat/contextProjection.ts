@@ -103,7 +103,8 @@ export function contextModel(events: readonly RuntimeEvent[], fallback?: Context
   for (let index = events.length - 1; index >= 0; index--) {
     const model = record(record(events[index]?.payload).contextModel);
     if (typeof model.name === "string") return {
-      name: model.name, contextWindow: typeof model.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : null,
+      name: model.name, contextWindow: typeof model.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow
+        : fallback?.name === model.name ? fallback.contextWindow : null,
     };
   }
   return fallback ?? null;
@@ -147,10 +148,10 @@ export function compactTokens(value: number): string {
     : String(value);
 }
 
-/** Accept a provider anchor only when it covers the complete heuristic surface. */
+/** Provider usage is authoritative even when the local character heuristic overestimates it. */
 export function contextUsage(selection: ContextSelection) {
   const estimate = estimateContext(selection.document);
-  const reported = selection.pressureTokens !== undefined ? selection.pressureReported === true : selection.inputTokens !== null && selection.inputTokens > 0 && selection.inputTokens + (selection.outputTokens ?? 0) >= estimate.total;
+  const reported = selection.pressureTokens !== undefined ? selection.pressureReported === true : selection.inputTokens !== null && selection.inputTokens > 0;
   const total = selection.pressureTokens ?? (reported ? selection.inputTokens! + (selection.outputTokens ?? 0) : estimate.total);
   const scale = estimate.total > 0 ? total / estimate.total : 0;
   const system = Math.round(estimate.system * scale), tools = Math.round(estimate.tools * scale);

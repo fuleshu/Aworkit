@@ -1,4 +1,5 @@
 mod context_edit;
+mod context_model;
 mod mcp_selection;
 mod tool_plugins;
 
@@ -506,6 +507,7 @@ impl DesktopRuntime {
     pub fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
         let mut snapshot = self.history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
+        self.populate_context_model(&mut snapshot)?;
         let fallback_mode = self
             .history
             .current_frozen_context()?
@@ -1902,6 +1904,9 @@ impl DesktopRuntime {
             }
         }
         let mut resolved = resolved.expect("at least one model tier is resolved");
+        if resolved.model.context_window.is_none() {
+            resolved.model.context_window = self.discover_context_window(&resolved.provider, &resolved.model.remote_id);
+        }
         // Missing compression in old frozen Chats remains disabled. New Chats
         // explicitly snapshot the default without changing the saved Settings.
         let policy = resolved.model.compaction.get_or_insert_with(|| json!({}));
@@ -4391,6 +4396,7 @@ mod tests {
     };
 
     mod context_edit;
+    mod context_model;
     mod credentialed_web_search;
     mod image_chat;
 

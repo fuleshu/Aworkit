@@ -14,6 +14,7 @@ use aworkit_capability_host::{
 
 const KIND: &str = "pipeline.workspace-instructions";
 const ID: &str = "tool.workspace_instructions";
+mod chat_clock;
 
 #[cfg(test)]
 mod tests;
@@ -308,8 +309,12 @@ impl BoundFileToolAuthorityV1 {
             ),
         )
         .map_err(|e| e.to_string())?;
+        let clock = format!("\nChat started: {}", chat_clock::chat_start(&self.run_events.context_events()?));
+        let mut budgeted = configuration.clone();
+        let include_clock = budgeted.max_bytes >= clock.len();
+        if include_clock { budgeted.max_bytes -= clock.len(); }
         let mut plan = library::prepare(Preparation {
-            configuration,
+            configuration: &budgeted,
             owner: &owner,
             workspace,
             cwd: workspace,
@@ -325,6 +330,15 @@ impl BoundFileToolAuthorityV1 {
         })?;
         if let Err(error) = validation {
             plan.diagnostics.push(error);
+        }
+        if let Some(event) = &mut plan.event {
+            let clock_visible = history.iter().any(|prior| selection.event_ids.contains(&prior.id) && prior.text.ends_with(&clock));
+            if include_clock && (event.baseline || !clock_visible) {
+                // Clock context belongs to this selected contribution and is committed with it.
+                // Rehydration after compaction uses the original Chat start, never a moving clock.
+                // Append so byte ranges into instruction bodies remain valid.
+                event.text.push_str(&clock);
+            }
         }
         if let Some(event) = &plan.event {
             positions.push(Position {

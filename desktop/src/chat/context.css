@@ -1,5 +1,4 @@
 .context-usage { position: relative; align-self: end; flex: 0 0 auto; }
-.composer-input.composer-with-context { grid-template-columns: 28px minmax(0, 1fr) auto auto; }
 .context-ring-button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; }
 .context-ring-track, .context-ring-fill { fill: none; stroke-width: 2.7; }
 .context-ring-track { stroke: var(--aw-control); }

@@ -534,6 +534,7 @@ pre {
 }
 
 /* Chat */
+.timeline-scroll { overflow-anchor: none; }
 .chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -543,11 +544,11 @@ pre {
   overflow: hidden;
 }
 .chat-layout.with-inspector {
-  grid-template-columns: minmax(480px, 1fr) 6px var(--aw-inspector-width, 320px);
+  grid-template-columns: minmax(0, 1fr) 6px min(var(--aw-inspector-width, 320px), max(280px, calc(100% - 426px)));
 }
 .chat-main {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -565,9 +566,8 @@ pre {
   grid-row: 3;
 }
 .chat-main > .composer-shell {
-  grid-row: 5;
+  grid-row: 4;
 }
-.chat-main > .chat-approval-control { grid-row: 4; }
 .chat-title-line {
   align-items: baseline;
   display: flex;
@@ -1310,13 +1310,12 @@ pre {
   padding: 4px 8px 4px 28px;
 }
 .composer-input {
-  align-items: end;
   border: 1px solid var(--aw-control);
-  border-radius: 6px;
+  border-radius: 14px;
   display: grid;
   gap: 6px;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  padding: 5px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 8px;
 }
 .composer-input textarea {
   border: 0;
@@ -1326,10 +1325,27 @@ pre {
   padding: 6px;
   resize: vertical;
 }
-.composer-input > button:first-child {
-  background: transparent;
-  border: 0;
-  padding: 3px;
+.composer-toolbar, .composer-submit-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-submit-controls { margin-left: auto; }
+.composer-submit.primary-action {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.composer-submit.primary-action:disabled {
+  background: var(--aw-inset);
+  color: var(--aw-secondary);
+  border-color: var(--aw-divider);
+  opacity: 1;
 }
 .attachment-entry {
   display: grid;
@@ -2476,15 +2492,20 @@ pre {
   .run-details-inspector {
     bottom: 0;
     box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
-    max-width: 420px;
+    max-width: calc(100% - 40px);
     position: absolute;
     right: 0;
     top: 0;
-    width: min(420px, 80vw);
+    width: min(var(--aw-inspector-width, 320px), calc(100% - 40px));
     z-index: 10;
   }
   .inspector-splitter {
-    display: none;
+    position: absolute;
+    right: min(var(--aw-inspector-width, 320px), calc(100% - 40px));
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    z-index: 11;
   }
   .workflow-body {
     grid-template-columns: 184px minmax(0, 1fr);

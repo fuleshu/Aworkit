@@ -21,6 +21,7 @@ import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
+import { usePaneWidth } from "./shell/usePaneWidth";
 import { useSettingsNavigation } from "./shell/settingsNavigation";
 import { NotificationStore } from "./notifications/NotificationStore";
 import { NotificationProvider } from "./notifications/NotificationContext";
@@ -56,7 +57,8 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   const mainRef = useRef<HTMLElement>(null);
   const { route, mountedRoutes, visit, navigate, back, registerLeaveGuard, returnLabel } = useSettingsNavigation(mainRef, store);
   const workflowLibraryPort = useMemo(() => createWorkflowLibraryPort(), []);
-  const [navigationWidth, setNavigationWidth] = useState(208);
+  const navigation = usePaneWidth(208, 184, 640);
+  const { width: navigationWidth, setWidth: setNavigationWidth } = navigation;
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
   const [historyActionRequest, setHistoryActionRequest] =
@@ -183,6 +185,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   return (
     <div
       className="desktop-shell"
+      ref={navigation.ref}
       style={{
         gridTemplateColumns: `${collapsed ? 44 : navigationWidth}px 6px minmax(0, 1fr)`,
       }}
@@ -246,7 +249,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
       <PaneSplitter
         value={navigationWidth}
         min={184}
-        max={264}
+        max={navigation.max}
         onChange={setNavigationWidth}
       />
       <section

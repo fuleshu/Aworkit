@@ -148,7 +148,17 @@ async fn desktop_snapshot(
     .await
 }
 
-/// Thumbnail I/O must not wait for an active model request's runtime mutex.
+/// Resolve the visible Chat's model capacity without changing its frozen context.
+#[tauri::command]
+async fn desktop_context_model(
+    runtime: tauri::State<'_, SharedRuntime>,
+    chat_id: String,
+    workflow_id: Option<String>,
+) -> Result<Option<aworkit_desktop::runtime::ContextModelDto>, String> {
+    runtime_worker(Arc::clone(runtime.inner()), "context model", move |runtime|
+        runtime.context_model(&chat_id, workflow_id.as_deref())).await
+}
+
 #[tauri::command]
 async fn approval_project_grants(
     runtime: tauri::State<'_, SharedRuntime>,
@@ -731,6 +741,7 @@ fn main() {
                 chat_image_preview,
                 chat_image_thumbnail,
                 desktop_snapshot,
+                desktop_context_model,
                 desktop_command,
                 approval_project_grants,
                 approval_revoke_project_grant,

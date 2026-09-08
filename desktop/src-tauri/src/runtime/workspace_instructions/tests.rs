@@ -171,6 +171,20 @@ impl Fixture {
 }
 
 #[test]
+fn clock_is_present_without_instruction_files_and_is_stable_on_replay() {
+    let f = Fixture::new();
+    std::fs::remove_file(f.authority.context.workspace.root.join("AGENTS.md")).unwrap();
+    f.committer.commit(vec![SemanticEventDraft::new("chat.started", json!({"createdAt":"1788854400"}))]).unwrap();
+    let mut first = f.request();
+    f.prepare("clock.first", 0, &mut first);
+    assert_eq!(first.context_messages.len(), 1);
+    assert!(first.context_messages[0].content.contains("Chat started: 2026-09-08T08:00:00Z"));
+    let mut next = f.request();
+    f.prepare("clock.second", 0, &mut next);
+    assert_eq!(next.context_messages.iter().map(|m| m.content.matches("Chat started:").count()).sum::<usize>(), 1);
+}
+
+#[test]
 fn prepared_replay_reopen_cross_input_and_node_selection() {
     let mut f = Fixture::new();
     let mut first = f.request();

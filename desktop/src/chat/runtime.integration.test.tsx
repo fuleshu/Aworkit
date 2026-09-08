@@ -248,7 +248,7 @@ describe("Chat native-port recovery contracts", () => {
       "Select a saved project before sending because the selected workflow binds project file tools.";
     expect(send).toBeDisabled();
     expect(send).toHaveAttribute("title", reason);
-    expect(screen.getByText(reason)).toBeVisible();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
     expect(intents).toEqual([]);
 
     await user.selectOptions(
@@ -689,7 +689,7 @@ describe("Chat native-port recovery contracts", () => {
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Stop/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Queue" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Queue" })).not.toBeInTheDocument();
     const resume = screen.getByRole("button", {
       name: "Resume interrupted command",
     });
@@ -1045,7 +1045,7 @@ describe("Chat native-port recovery contracts", () => {
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
     await screen.findByRole("heading", { name: "Rejected command" });
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.keyboard("{Enter}");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/invoke\.pending/);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -1293,7 +1293,7 @@ describe("Chat native-port recovery contracts", () => {
     await screen.findByRole("heading", { name: "Live Chat" });
     const input = screen.getByRole("textbox", { name: "Chat input" });
     await user.type(input, "inspect the project");
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(commandId).not.toBe(""));
     const streamed = [
       canonicalEvent(2, "span.started", {
@@ -1454,7 +1454,7 @@ describe("Chat native-port recovery contracts", () => {
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
     await screen.findByRole("heading", { name: "Fast provider" });
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go");
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.keyboard("{Enter}");
     expect(commandStarted).toBe(false);
 
     releaseSubscription();

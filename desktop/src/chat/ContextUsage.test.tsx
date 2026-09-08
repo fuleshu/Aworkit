@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { ContextUsage } from "./ContextUsage";
 import { CompressionUsage } from "./CompressionUsage";
-import { contextUsage, estimateContext, projectContexts } from "./contextProjection";
+import { contextModel, contextUsage, estimateContext, projectContexts } from "./contextProjection";
 import { projectSemanticTimeline } from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
 
@@ -18,6 +18,11 @@ const events = [
   event(4, "span.usage", { spanId: "model", inputTokens: 800, outputTokens: 100 }),
   event(5, "span.completed", { spanId: "model", output: [{ kind: "assistant_output", text: "The answer" }] }),
 ];
+it("fills an older Chat's missing capacity only from the same model", () => {
+  const old = [event(1, "span.started", { contextModel: { name: "Fixture", contextWindow: null } })];
+  expect(contextModel(old, { name: "Fixture", contextWindow: 32768 })?.contextWindow).toBe(32768);
+  expect(contextModel(old, { name: "Different", contextWindow: 32768 })?.contextWindow).toBeNull();
+});
 it("reports local compression separately and excludes other nodes and children",()=>{
  render(<CompressionUsage nodeId="agent.1" events={[
   event(1,"context.compression",{nodeId:"agent.1",child:null,metrics:{beforeBytes:10000,afterBytes:2000}}),
@@ -94,16 +99,16 @@ it("locks active context, closes unchanged without saving, and projects an edit 
 
 it("shows an honest empty state when model context or capacity is unavailable", () => {
   render(<ContextUsage events={[]} editDisabledReason={null} onSave={vi.fn()} />);
-  fireEvent.click(screen.getByRole("button", { name: "Context usage" }));
+  fireEvent.click(screen.getByRole("button", { name: /Context usage/ }));
   expect(screen.getByText(/Context is available after the first model call/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Display Context" })).toHaveProperty("disabled", true);
 });
 
-it("rejects an undercounted provider anchor when estimating occupancy",()=>{
+it("uses actual provider tokens even when the character estimate is larger",()=>{
   const selected=projectContexts(events)[0];
   const large={...selected,inputTokens:1,outputTokens:1,document:{...selected.document,input:{messages:[{role:"user" as const,content:"large ".repeat(1000)}]}}};
-  expect(contextUsage(large).reported).toBe(false);
-  expect(contextUsage(large).total).toBe(estimateContext(large.document).total);
+  expect(contextUsage(large).reported).toBe(true);
+  expect(contextUsage(large).total).toBe(2);
 });
 
 it("compacts only the selected idle context and displays the committed pressure",async()=>{

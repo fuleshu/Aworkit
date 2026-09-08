@@ -21,6 +21,11 @@ export interface WorkflowOption {
 
 interface ChatComposerProps {
   readonly contextUsage?: React.ReactNode;
+  readonly approvalControl?: React.ReactNode;
+  readonly status?: React.ReactNode;
+  readonly onStop?: () => void;
+  readonly stopDisabled?: boolean;
+  readonly stopRequested?: boolean;
   readonly chat: ChatProjection;
   readonly projects: readonly ChatProjectChoice[];
   readonly stale: boolean;
@@ -39,6 +44,11 @@ interface ChatComposerProps {
 /** Local IME-safe composer; only a committed core result is allowed to clear its draft. */
 export function ChatComposer({
   contextUsage,
+  approvalControl,
+  status,
+  onStop,
+  stopDisabled = false,
+  stopRequested = false,
   chat,
   projects,
   stale,
@@ -105,7 +115,7 @@ export function ChatComposer({
             workflowReadinessError,
           });
   const send = async () => {
-    if (commandPending) return;
+    if (disabledReason !== null) return;
     setSubmitting(true);
     try {
       const intent =
@@ -236,11 +246,7 @@ export function ChatComposer({
           {imageError}
         </p>
       )}
-      <div className={"composer-input" + (contextUsage ? " composer-with-context" : "")}>
-        <ImageAttachmentMenu
-          disabled={chat.recoveryPending || commandPending}
-          onFiles={(files) => void addFiles(files)}
-        />
+      <div className="composer-input">
         <textarea
           aria-label="Chat input"
           placeholder="Message Aworkit"
@@ -264,19 +270,32 @@ export function ChatComposer({
           }}
           onChange={(event) => edit({ draft: event.target.value })}
         />
-        {contextUsage}
-        <button
-          className="primary-action"
-          disabled={disabledReason !== null}
-          title={
-            disabledReason ??
-            (chat.lockedWorkflow ? "Queue this input" : "Start this Chat")
-          }
-          type="button"
-          onClick={() => void send()}
-        >
-          {chat.lockedWorkflow ? "Queue" : "Send"}
-        </button>
+        <div className="composer-toolbar">
+          <ImageAttachmentMenu
+            disabled={chat.recoveryPending || commandPending}
+            onFiles={(files) => void addFiles(files)}
+          />
+          {approvalControl}
+          <div className="composer-submit-controls">
+            {contextUsage}
+            <button
+              className="primary-action composer-submit"
+              aria-label={onStop ? stopRequested ? "Stopping response" : "Stop response" : chat.lockedWorkflow ? "Queue" : "Send"}
+              disabled={onStop ? stopDisabled : disabledReason !== null}
+              title={
+                onStop ? stopRequested ? "Stopping the current response" : "Stop the current response" : disabledReason ??
+                (chat.lockedWorkflow ? "Queue this input" : "Start this Chat")
+              }
+              type="button"
+              onClick={() => onStop ? onStop() : void send()}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                {onStop ? <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
+                  : <path d="M12 20V4m-7 7 7-7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
       {chat.queuedInputs.length > 0 && (
         <details className="queued-input-preview">
@@ -289,12 +308,7 @@ export function ChatComposer({
         </details>
       )}
       <div className="composer-footer">
-        <span>
-          {disabledReason ??
-            (retryIntent === null
-              ? "Enter to send · Shift+Enter for a new line · Paste to add images"
-              : "Retry will reuse the same idempotent command ID")}
-        </span>
+        {status}
         <span>{state.draft.length} characters</span>
       </div>
     </section>

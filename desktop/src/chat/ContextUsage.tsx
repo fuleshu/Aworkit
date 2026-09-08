@@ -33,7 +33,8 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [open]);
-  const label = percent === null ? "Context usage" : `Context usage: approximately ${percent}% used`;
+  const totalLabel = estimate ? `${estimate.reported ? "" : "~"}${estimate.total.toLocaleString()} tokens` : "No model call yet";
+  const label = `Context usage: ${totalLabel}${capacity ? ` / ${capacity.toLocaleString()} capacity` : ""}${percent === null ? "" : ` (${percent}% used)`}`;
   return <div ref={root} className="context-usage" onKeyDown={event => {
     if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
@@ -47,7 +48,7 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
     </button>
     {open && <section id={popupId} role="dialog" aria-label="Context usage details" className="context-popover">
       <div className="context-popover-summary"><span><strong>{percent === null ? "—" : `${percent}%`}</strong> of context used</span>
-        <strong>{estimate ? (estimate.reported ? "" : "~") + compactTokens(estimate.total) : "—"} / {capacity ? compactTokens(capacity) : "Unknown"}</strong></div>
+        <strong title={label}>{estimate ? (estimate.reported ? "" : "~") + estimate.total.toLocaleString() : "—"} / {capacity ? capacity.toLocaleString() : "Not reported"}</strong></div>
       <div className="context-segments" aria-hidden="true">{estimate && ["system", "tools", "messages"].map(part => {
         const amount = estimate[part as "system" | "tools" | "messages"];
         return <span key={part} className={"context-segment-" + part} style={{ width: `${Math.min(100, amount / Math.max(capacity ?? estimate.total, estimate.total, 1) * 100)}%` }} />;
@@ -58,7 +59,7 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
         onChange={event => setSelectedNode(event.target.value)}>{selections.map(s => <option key={s.nodeId} value={s.nodeId}>{s.label}</option>)}</select>}
       <p className="context-usage-note">{estimate ? estimate.reported ? "Provider total · estimated breakdown." : "Estimated tokens · includes the latest completed response." : "Context is available after the first model call."}
         {estimate?.hasImages && !estimate.reported && " Image token cost is not included in the estimate."}
-        {!capacity && " This model has no configured context limit."}</p>
+        {!capacity && " The provider has not reported a context limit; set it in Model Settings."}</p>
       {selection?.inputTokens !== null && selection?.inputTokens !== undefined && <p className="context-usage-note">Last request reported {compactTokens(selection.inputTokens)} input / {compactTokens(selection.outputTokens ?? 0)} output tokens.</p>}
       {model && <p className="context-model-name">{model.name}</p>}
       <CompressionUsage events={events} nodeId={selection?.nodeId} />

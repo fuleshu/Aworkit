@@ -38,8 +38,8 @@ describe("honest JSON-workflow desktop slice", () => {
     expect(
       screen.getByRole("button", { name: /Management Chat.*Unsupported/ }),
     ).toBeDisabled();
-    expect(document.querySelector(".chat-view-header .run-status")).toHaveTextContent(
-      "Draft",
+    expect(document.querySelector(".composer-footer .run-status")).toHaveTextContent(
+      "Waiting for input",
     );
     expect(
       screen.getByRole("combobox", {
@@ -262,7 +262,7 @@ describe("honest JSON-workflow desktop slice", () => {
         "All committed events are visible.",
       ),
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Run complete");
+    expect(document.querySelector(".notification-message")).toHaveTextContent("Run complete");
     let confirmation: Promise<boolean> | undefined;
     await act(async () => {
       confirmation = defaultDesktopAdapters.nativePresentation.confirm(
