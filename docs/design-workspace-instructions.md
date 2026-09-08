@@ -1,12 +1,12 @@
 # Workspace Instructions plugin: implementation specification
 
-Status: implementation baseline, 2026-09-08. Runtime implementation has not started. This consolidates the user's decisions from the DeepSeek Harness comparison: selectable plugin tool per Agent node, full instruction-loader behavior, lightweight persistence using existing history, and a mandatory, testable integration contract for future context compaction.
+Status: implemented, 2026-09-08. This records the user's decisions from the DeepSeek Harness comparison: selectable plugin tool per Agent node, instruction-loader behavior, lightweight persistence using existing history, and a mandatory, testable integration contract for future context compaction. See [operation and verification](workspace-instructions.md) for implementation boundaries and acceptance evidence. Automatic conversation compaction remains separate future work; the loader's restoration algorithm is implemented.
 
 Reference: `C:/src/deepseek-harness` at `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`, particularly `packages/context/agent-instructions/{README.md,src,tests}` and `packages/bundle/base/cordis.patch.yml`. The feature target is that loader's observable behavior. The following explicitly documented Aworkit adaptations apply: `.aworkit` replaces `.dsh`; activation is selected per Agent node; existing workspace authority and frozen Chat policy remain authoritative. Aworkit does not currently have an automatic conversation compactor.
 
 ## 1. Product and plugin contract
 
-- Register **Workspace Instructions**, proposed ID `tool.workspace_instructions`, in the existing bundled native tool-plugin catalog. It is independently configurable from `tool.skill` and appears in the same Agent tool selector.
+- Register **Workspace Instructions**, ID `tool.workspace_instructions`, in the existing bundled native tool-plugin catalog. It is independently configurable from `tool.skill` and appears in the same Agent tool selector.
 - Settings controls plugin availability and defaults. Each Agent node selects whether to activate it. An unselected plugin performs no instruction discovery or automatic injection for that node. Explicit user-provided context remains governed by existing context selection.
 - Freeze selected plugin identity, configuration, resolved home paths, and workspace authority with the Chat. Settings edits affect new Chats; they do not alter an existing Chat's loader configuration. Existing Chats and saved workflows are not silently enabled or rebound during migration.
 - Extend the manifest contract with an activation discriminator: ordinary entries default to `model_call`; this entry uses `automatic_context`. Automatic entries declare a supported native lifecycle executor and configuration, but no model-call function name or input schema. Validate these alternatives as a closed contract.

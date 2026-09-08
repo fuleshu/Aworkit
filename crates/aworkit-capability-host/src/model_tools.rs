@@ -354,9 +354,9 @@ fn normalize_messages(
 }
 
 pub(crate) fn validate_tool_request(request: &ModelToolRequestV1) -> Result<(), ProviderError> {
-    if request.tools.is_empty() {
-        return Err(invalid_tool_request());
-    }
+    // An automatic-context-only child still uses the shared turn protocol.
+    // Empty definitions grant no callable authority; exchange/response validation
+    // continues to reject every undeclared tool call.
     validate_context_request(request)
 }
 

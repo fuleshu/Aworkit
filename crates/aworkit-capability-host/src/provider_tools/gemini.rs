@@ -138,6 +138,10 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
         json!({"functionCallingConfig":{"mode":"AUTO"}}),
     );
     body.insert("generationConfig".to_owned(), json!({"candidateCount":1}));
+    if request.tools.is_empty() {
+        body.remove("tools");
+        body.remove("toolConfig");
+    }
     if !system_parts.is_empty() {
         body.insert(
             "systemInstruction".to_owned(),

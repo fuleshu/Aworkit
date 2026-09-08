@@ -117,6 +117,11 @@ pub(crate) fn openai_tool_request(
         "stream": true,
         "stream_options": {"include_usage": true},
     });
+    if request.tools.is_empty() {
+        let object = body.as_object_mut().expect("request object");
+        object.remove("tools");
+        object.remove("tool_choice");
+    }
     parameters.apply(&mut body);
     Ok(body)
 }

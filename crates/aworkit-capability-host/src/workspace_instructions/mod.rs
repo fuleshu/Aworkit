@@ -12,7 +12,7 @@ mod tests;
 pub use config::Configuration;
 pub use files::{FileObservation, InstructionFiles, ProjectInstructionFiles};
 pub use render::{Action, Change, RenderItem, Rendered, render};
-pub use state::{Event, Owner, Preparation, Selection, prepare};
+pub use state::{Event, Owner, Plan, Preparation, Selection, prepare};
 
 use sha1::{Digest, Sha1};
 
@@ -22,6 +22,9 @@ pub fn digest(text: &str) -> String {
 }
 
 fn check_cancelled(cancellation: &crate::CancellationToken) -> Result<(), String> {
-    if cancellation.is_cancelled() { Err("workspace instruction preparation cancelled".into()) }
-    else { Ok(()) }
+    if cancellation.is_cancelled() {
+        Err("workspace instruction preparation cancelled".into())
+    } else {
+        Ok(())
+    }
 }

@@ -120,8 +120,10 @@ pub(crate) fn anthropic_tool_request(
     body.insert("model".to_owned(), Value::String(model.to_owned()));
     body.insert("max_tokens".to_owned(), Value::from(maximum_output_tokens));
     body.insert("messages".to_owned(), Value::Array(messages));
-    body.insert("tools".to_owned(), Value::Array(tools));
-    body.insert("tool_choice".to_owned(), json!({"type":"auto"}));
+    if !tools.is_empty() {
+        body.insert("tools".to_owned(), Value::Array(tools));
+        body.insert("tool_choice".to_owned(), json!({"type":"auto"}));
+    }
     body.insert("stream".to_owned(), Value::Bool(false));
     if !system.is_empty() {
         body.insert("system".to_owned(), Value::String(system));

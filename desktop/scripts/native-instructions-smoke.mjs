@@ -19,7 +19,7 @@ await writeFile(resolve(globalHome, "AGENTS.md"), "GLOBAL V1");
 await writeFile(resolve(project, "src/AGENTS.md"), "NESTED V1");
 await writeFile(resolve(project, "src/file.txt"), "file content");
 const requests = [], failures = [];
-let scenario = "tools", toolTurns = 0;
+let scenario = "tools", toolTurns = 0, childTurns = 0;
 const provider = createServer(async (request, response) => {
   try {
     if (request.url === "/v1/models") return response.end(JSON.stringify({ data: [{ id: "instructions-fixture" }] }));
@@ -57,6 +57,12 @@ const provider = createServer(async (request, response) => {
       } else if (scenario === "restored") {
         assert.equal(reminders.length, 1); assert.ok(guidance.includes("PROJECT V3")); assert.ok(guidance.includes("NESTED V2"));
         assert.ok(!guidance.includes("PROJECT V1"));
+      } else if (scenario === "child") {
+        assert.ok(guidance.includes("PROJECT V3"));
+        assert.equal(reminders.length, 1, "parent and child own separate instruction state");
+        if (childTurns === 0) call = { id: "delegate.1", type: "function", function: { name: "aworkit_spawn_subagent", arguments: JSON.stringify({ task: "Read the provided instructions and report." }) } };
+        if (childTurns === 1) assert.equal((body.tools ?? []).length, 0, "instruction-only child has no callable schemas");
+        childTurns++;
       } else {
         assert.equal((body.tools ?? []).length, 0, "instruction-only Agent uses text model requests");
         assert.equal(reminders.length, 1); assert.ok(guidance.includes("PROJECT V3"));
@@ -79,32 +85,42 @@ async function waitFor(expression) {
   for (let i = 0; i < 250; i++) { if (await view.evaluate(expression)) return; if (failures.length) throw new Error(failures.join("\n")); await pause(); }
   throw new Error(`Timed out: ${expression}\n${await view.evaluate("document.body.innerText")}`);
 }
-const click = name => waitFor(`(() => { const b=[...document.querySelectorAll('button')].find(b=>!b.disabled&&(b.title===${JSON.stringify(name)}||b.getAttribute('aria-label')===${JSON.stringify(name)}||b.textContent.trim().startsWith(${JSON.stringify(name)}))); if(!b)return false;b.click();return true;})()`);
+const click = name => waitFor(`(() => { const b=[...document.querySelectorAll('button,[role="button"]')].find(b=>!b.disabled&&b.offsetParent!==null&&(b.title===${JSON.stringify(name)}||b.getAttribute('aria-label')===${JSON.stringify(name)}||b.textContent.trim().replace(/^[＋⚙◇○]\\s*/,'').startsWith(${JSON.stringify(name)}))); if(!b)return false;b.click();return true;})()`);
 async function setValue(selector, value) {
   await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector + ":not(:disabled)")}))`);
   await view.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});const p=e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLTextAreaElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event(e.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
 }
 async function send(text) {
   const before = requests.length;
-  if (!await view.evaluate("Boolean(document.querySelector('textarea[aria-label=\"Chat input\"]')?.offsetParent)")) {
-    const title = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.title)");
-    await click(title);
-  }
-  await setValue('textarea[aria-label="Chat input"]', text); await click("Send");
+  await waitFor("Boolean(document.querySelector('textarea[aria-label=\"Chat input\"]')?.offsetParent)");
+  await setValue('textarea[aria-label="Chat input"]', text);
+  const locked = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.lockedWorkflow)");
+  await click(locked ? "Queue" : "Send");
   await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='waiting_input')");
   assert.ok(requests.length > before); assert.deepEqual(failures, []);
 }
 async function close() { view?.close(); view = undefined; if (child.exitCode === null) { const exited = once(child, "exit"); child.kill(); await exited; } }
 async function workflowTools(ids, capabilities) {
   await view.evaluate(`(async()=>{const i=window.__TAURI_INTERNALS__.invoke; const v=await i('settings_v2_snapshot'); for(const p of v.settings.providers)for(const m of p.models)m.capabilities=${JSON.stringify(capabilities)};
+    if(${JSON.stringify(ids)}.includes('tool.subagent')) {
+      for(const t of v.settings.tools)t.enabled=${JSON.stringify(ids)}.includes(t.id);
+      v.settings.tools.find(t=>t.id==='tool.subagent').options={approvalMode:'full_access'};
+    }
     await i('settings_v2_commit',{command:{commandId:crypto.randomUUID(),expectedVersion:v.version,settings:v.settings}});
     const w=await i('workflow_snapshot',{workflowId:'workflow.simple-chat'});w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=${JSON.stringify(ids)};
-    await i('workflow_commit',{command:{commandId:crypto.randomUUID(),expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
+    await i('workflow_commit',{command:{commandId:crypto.randomUUID(),expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});
+    await i('workflow_set_default',{command:{commandId:crypto.randomUUID(),workflowId:'workflow.simple-chat'}});})()`);
+  // Fixture API edits bypass the editor's local invalidation; reload its caches.
+  await view.command("Page.reload");
+  await waitFor("Boolean(window.__TAURI_INTERNALS__?.invoke)");
 }
 async function newChat() {
+  const previous = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
   await click("New Chat");
-  await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.simple-chat");
+  await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId!==${JSON.stringify(previous)}&&s.chat.phase==='draft')`);
+  await waitFor("Boolean(document.querySelector('textarea[aria-label=\"Chat input\"]')?.offsetParent)");
   await setValue('select[aria-label="Project for the first Chat input"]', "project.instructions");
+  await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.simple-chat");
 }
 try {
   view = await connect();
@@ -133,9 +149,11 @@ try {
     await waitFor(`(()=>{const e=document.querySelector('input[title="Bind ${name} to this agent"]');if(!e)return false;if(!e.checked)e.click();return true;})()`);
   }
   await click("Validate"); await waitFor("document.body.innerText.includes('Validation passed: this workflow document is executable.')");
+  await view.evaluate("document.querySelector('input[title=\"Bind Workspace Instructions to this agent\"]').scrollIntoView({block:'center'})");
   await view.screenshot(resolve(root, "workflow-validation.png")); await click("Save"); await click("Run");
-  await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.simple-chat");
+  await waitFor("Boolean(document.querySelector('textarea[aria-label=\"Chat input\"]')?.offsetParent)");
   await setValue('select[aria-label="Project for the first Chat input"]', "project.instructions");
+  await setValue('select[aria-label="Workflow for the first Chat input"]', "workflow.simple-chat");
   await send("Run instruction checks."); assert.equal(toolTurns, 4);
   scenario = "follow-up"; await send("Continue in this Chat.");
   // Discover a reappearing nested rule before removing the visible projection.
@@ -151,6 +169,8 @@ try {
   scenario = "restored"; await send("Continue after restart and context replacement.");
   await workflowTools(["tool.workspace_instructions"], ["text"]); await newChat();
   scenario = "text-only"; await send("Use global and project instructions with a text-only model.");
+  await workflowTools(["tool.workspace_instructions", "tool.subagent"], ["text", "tools"]); await newChat();
+  scenario = "child"; await send("Delegate to an instruction-only child."); assert.equal(childTurns, 3);
   await workflowTools([], ["text"]); await newChat(); scenario = "disabled"; await send("No automatic instructions in this Agent.");
   await view.screenshot(resolve(root, "completed.png"));
   console.log(JSON.stringify({ ok: true, root, requests: requests.length, scenarios: [...new Set(requests.map(r=>r.scenario))] }));

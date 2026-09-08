@@ -11,6 +11,48 @@ use crate::{
 use serde_json::json;
 
 #[test]
+fn historical_instruction_references_keep_position_without_callable_schemas() {
+    let request = ModelToolRequestV1 {
+        input: json!({"messages":[
+            {"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":"second"}
+        ]}),
+        parameters: Default::default(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        retry_notice: None,
+        context_messages: vec![ModelToolContextV1 {
+            after_input_messages: Some(1),
+            instruction_event_id: Some("event.instructions".into()),
+            content: "<system-reminder>\nOriginal guidance\n</system-reminder>".into(),
+            ..Default::default()
+        }],
+    };
+    request.validate().unwrap();
+    crate::model_tools::validate_tool_request(&request).unwrap();
+    for body in [
+        openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap(),
+        anthropic_tool_request("fixture", 100, &request).unwrap(),
+    ] {
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        assert_eq!(
+            body["messages"][1]["content"],
+            request.context_messages[0].content
+        );
+        assert_eq!(body["messages"][2]["content"], "answer");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 4);
+        assert!(!body.to_string().contains("event.instructions"));
+    }
+    let gemini = gemini_tool_request(&request).unwrap();
+    assert!(gemini.get("tools").is_none());
+    assert_eq!(
+        gemini["contents"][1]["parts"][0]["text"],
+        request.context_messages[0].content
+    );
+    assert_eq!(gemini["contents"][2]["role"], "model");
+}
+
+#[test]
 fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
     let call = ModelToolCallV1 {
         call_id: "call.1".into(),

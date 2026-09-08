@@ -3175,7 +3175,7 @@ struct ToolOutcomeRecordV1 {
 
 #[derive(Clone)]
 struct ToolRecordStore {
-    instruction_lock: Arc<Mutex<()>>,
+    instruction_locks: Arc<Mutex<BTreeMap<String, std::sync::Weak<Mutex<()>>>>>,
     store: LocalHistoryStore,
     write_lock: Arc<Mutex<()>>,
 }
@@ -3184,7 +3184,7 @@ impl ToolRecordStore {
     fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
-            instruction_lock: Arc::new(Mutex::new(())),
+            instruction_locks: Arc::new(Mutex::new(BTreeMap::new())),
             write_lock: Arc::new(Mutex::new(())),
         })
     }

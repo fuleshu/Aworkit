@@ -406,7 +406,11 @@ fn failure(
 }
 
 fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelToolLoopErrorV1> {
-    if request.definitions.is_empty()
+    let automatic_child = request.agent_context.as_ref().is_some_and(|agent| {
+        agent.child.is_some()
+            && agent.tool_ids.iter().any(|id| id == "tool.workspace_instructions")
+    });
+    if (request.definitions.is_empty() && !automatic_child)
         || request.maximum_input_bytes == 0
         || request.maximum_tool_output_bytes == 0
         || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
