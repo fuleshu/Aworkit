@@ -15,7 +15,9 @@ use aworkit_protocol::{ProcessGeneration, StableId};
 use std::sync::Arc;
 
 mod names;
+mod result;
 pub(crate) use names::{mcp_provider_name, portable_frozen_name};
+pub(crate) use result::model_result;
 
 /// The capability-id prefix for MCP tools: `mcp://<server>/<tool>`.
 pub(crate) const MCP_CAPABILITY_PREFIX: &str = "mcp://";

@@ -56,6 +56,37 @@ without requiring unrelated actions. Search discovers sources; retrieval reads
 a supplied URL. Partial content is assessed before deciding on further work.
 Subagents receive guidance for their own permitted tool set.
 
+Project Chats pass their frozen project name, absolute directory and optional
+Git branch to Plan and Agent model requests. These are context facts, not tool
+arguments or permission grants. Aworkit's internal project id is not passed as
+an MCP project id; external servers own their own identifiers. Reopening or
+continuing a Chat uses its original project even after Settings edits.
+
+Plan-contract nodes receive the actual tool inventories of the next reachable
+Agents, grouped by node. Traversal stops at Agent, wait and completion boundaries.
+Plans cannot add tools or require discovery of an inventory already supplied.
+Agent guidance maps every callable alias to its exact capability identity,
+including the full original MCP operation name. Initial execution and approval
+recovery use the same context composition.
+
+## MCP results
+
+Structured MCP results retain their complete data. When a plain text block is an
+exact JSON copy of `structuredContent`, the model continuation keeps only the
+structured copy. Distinct or annotated text, media, metadata and `isError` are
+preserved. Server-reported errors remain failed tool calls.
+
+The 512 KiB tool-result bound applies after duplicate removal. A provider's
+configured tool-output limit still clips larger model-facing results with an
+explicit truncation notice. Completed exchanges have a separate 512 KiB durable
+allowance; they are not charged again against the Agent's base input allowance.
+Oversized nonduplicate results still fail explicitly.
+
+`desktop/scripts/native-adashi-chat.mjs` tests the real Adashi stdio server in an
+isolated native profile with a local deterministic provider. It checks project
+context in Plan and Agent requests, the frozen tool inventory and aliases, and
+delivery of the real `adashi_get_memory` structured result.
+
 ## Compatibility and validation
 
 Known untouched legacy default personas migrate to the short persona; custom

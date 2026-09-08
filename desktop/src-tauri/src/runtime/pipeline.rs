@@ -4690,8 +4690,8 @@ mod tests {
         let project = root.path().join("project");
         fs::create_dir(&project).expect("project");
         // Each byte is valid UTF-8 but expands to a six-byte JSON escape. One
-        // canonical 60 KiB read fits; adding another turn exceeds the frozen
-        // provider context bound and must fail explicitly before journal commit.
+        // canonical 60 KiB read fits its separate exchange allowance; a second
+        // read exceeds that allowance and fails before exchange journal commit.
         fs::write(project.join("large.txt"), "\u{1}".repeat(60 * 1024)).expect("large file");
         let (pipeline, _store, metadata, calls, _results) =
             setup_tool_pipeline(&root, ToolScriptV1::LargeAggregate);
@@ -4706,16 +4706,13 @@ mod tests {
             .expect("bounded failure remains durably representable");
         assert_eq!(result.status, WorkflowExecutionStatusV1::FailedKnownStarted);
         assert!(
-            result.error.as_deref().is_some_and(|error| {
-                error.contains("history byte limit")
-                    || error.contains("frozen provider plan is invalid")
-            }),
+            result.error.as_deref().is_some_and(|error| error.contains("history byte limit")),
             "{:?}",
             result.error
         );
-        assert_eq!((result.model_turns, result.tool_calls), (2, 1));
-        assert_eq!(result.tool_activity.len(), 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!((result.model_turns, result.tool_calls), (2, 2));
+        assert_eq!(result.tool_activity.len(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         let outcome = pipeline
             .records
             .outcomes()
@@ -6197,6 +6194,7 @@ mod tests {
     const MCP_FIXTURE_NAME: &str = "mcp__serv_fixture__echo";
 
     mod mcp_name_tests;
+    mod mcp_result_tests;
 
     fn mcp_echo_schema() -> Value {
         json!({
@@ -6239,6 +6237,8 @@ mod tests {
         Echo,
         CallFailure,
         OversizedResult,
+        DuplicatedResult,
+        ToolError,
     }
 
     struct ScriptedMcpPeer {
@@ -6306,6 +6306,21 @@ mod tests {
                     result: json!({"echo": "x".repeat(MAXIMUM_TOOL_RESULT_BYTES + 1)}),
                     progress: Vec::new(),
                 }),
+                ScriptedMcpBehavior::DuplicatedResult | ScriptedMcpBehavior::ToolError => {
+                    let is_error = matches!(self.behavior, ScriptedMcpBehavior::ToolError);
+                    let data = json!({
+                        "body": "x".repeat(if is_error { 10 } else { 270_000 }),
+                        "tail": "complete"
+                    });
+                    Ok(McpPeerCallResultV1 {
+                        result: json!({
+                            "isError": is_error,
+                            "structuredContent": data,
+                            "content": [{"type":"text","text":data.to_string()}]
+                        }),
+                        progress: Vec::new(),
+                    })
+                }
             }
         }
 

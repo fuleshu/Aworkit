@@ -7919,6 +7919,14 @@ mod tests {
             requests[1].frozen_context_hash
         );
         assert_eq!(
+            requests[0].approvals.project_name.as_deref(),
+            Some("Project Atlas")
+        );
+        assert_eq!(
+            requests[0].approvals.project_name,
+            requests[1].approvals.project_name
+        );
+        assert_eq!(
             requests[1].workspace.as_ref().unwrap().root,
             fs::canonicalize(first_workspace.path()).unwrap()
         );
@@ -7960,6 +7968,10 @@ mod tests {
         let requests = provider.execution_requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert_ne!(requests[2].frozen_context_hash, first_hash);
+        assert_eq!(
+            requests[2].approvals.project_name.as_deref(),
+            Some("Future Atlas")
+        );
         assert_eq!(
             requests[2].workspace.as_ref().unwrap().root,
             fs::canonicalize(future_workspace.path()).unwrap()

@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod context;
+
 use super::{
     documents::validate_v1_executable_catalog,
     model_tool_loop::{
@@ -760,6 +762,21 @@ impl<'a> PassMachine<'a> {
                 content: instructions.to_owned(),
             });
         }
+        if let Some(project) = self.tool_authority.project_context() {
+            messages.push(context::project_message(project));
+        }
+        if node
+            .configuration
+            .get("outputContract")
+            .and_then(Value::as_str)
+            == Some("plan")
+        {
+            messages.push(WorkflowMessageV1 {
+                images: Vec::new(),
+                role: "system".into(),
+                content: context::planning_tools(self.compiled, &node.id),
+            });
+        }
         messages.push(WorkflowMessageV1 {
             images: self
                 .conversation
@@ -769,7 +786,7 @@ impl<'a> PassMachine<'a> {
             role: "user".into(),
             content: context_text,
         });
-        let input = json!({"messages": messages});
+        let input = json!({"messages": context::merge_system_messages(messages)});
         let plan = ModelResolutionPlanV1 {
             candidates: vec![ModelCandidateV1 {
                 binding_id: self.model_binding_id.to_owned(),
@@ -817,48 +834,12 @@ impl<'a> PassMachine<'a> {
         node: &CompiledGraphNodeV1,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
-        let instructions = node
-            .configuration
-            .get("instructions")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let upstream = value_text(&self.incoming_agent_context(&node.id));
-        let mut messages = Vec::new();
-        if !instructions.trim().is_empty() || !upstream.trim().is_empty() {
-            let mut system = String::new();
-            if !instructions.trim().is_empty() {
-                system.push_str(instructions);
-            }
-            if !upstream.trim().is_empty() {
-                if !system.is_empty() {
-                    system.push_str("\n\nAdditional context from earlier graph steps:\n");
-                }
-                system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
-            }
-            messages.push(WorkflowMessageV1 {
-                images: Vec::new(),
-                role: "system".into(),
-                content: system,
-            });
-        }
-        let guidance = super::tool_registry::instruction_block(
-            node.tool_bindings
-                .iter()
-                .map(|tool| (tool.capability_id.as_str(), &tool.options)),
+        let messages = context::agent_messages(
+            node,
+            value_text(&self.incoming_agent_context(&node.id)),
+            &self.conversation,
+            self.tool_authority.project_context(),
         );
-        if !guidance.is_empty() {
-            if let Some(system) = messages.iter_mut().find(|message| message.role == "system") {
-                system.content.push_str("\n\n");
-                system.content.push_str(&guidance);
-            } else {
-                messages.push(WorkflowMessageV1 {
-                    role: "system".into(),
-                    content: guidance,
-                    images: Vec::new(),
-                });
-            }
-        }
-        messages.extend(self.conversation.iter().cloned());
         let context = json!({"messages": messages});
         let definitions = node
             .tool_bindings
@@ -1004,48 +985,12 @@ impl<'a> PassMachine<'a> {
         approved: bool,
         cancellation: &CancellationToken,
     ) -> AgentResumeOutcomeV1 {
-        let instructions = node
-            .configuration
-            .get("instructions")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let upstream = value_text(&self.incoming_agent_context(&node.id));
-        let mut messages = Vec::new();
-        if !instructions.trim().is_empty() || !upstream.trim().is_empty() {
-            let mut system = String::new();
-            if !instructions.trim().is_empty() {
-                system.push_str(instructions);
-            }
-            if !upstream.trim().is_empty() {
-                if !system.is_empty() {
-                    system.push_str("\n\nAdditional context from earlier graph steps:\n");
-                }
-                system.push_str(&truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES));
-            }
-            messages.push(WorkflowMessageV1 {
-                images: Vec::new(),
-                role: "system".into(),
-                content: system,
-            });
-        }
-        let guidance = super::tool_registry::instruction_block(
-            node.tool_bindings
-                .iter()
-                .map(|tool| (tool.capability_id.as_str(), &tool.options)),
+        let messages = context::agent_messages(
+            node,
+            value_text(&self.incoming_agent_context(&node.id)),
+            &self.conversation,
+            self.tool_authority.project_context(),
         );
-        if !guidance.is_empty() {
-            if let Some(system) = messages.iter_mut().find(|message| message.role == "system") {
-                system.content.push_str("\n\n");
-                system.content.push_str(&guidance);
-            } else {
-                messages.push(WorkflowMessageV1 {
-                    role: "system".into(),
-                    content: guidance,
-                    images: Vec::new(),
-                });
-            }
-        }
-        messages.extend(self.conversation.iter().cloned());
         let context = json!({"messages": messages});
         let definitions = node
             .tool_bindings

@@ -62,6 +62,8 @@ The local Harness web profile at `C:\Users\timo\.dsh\profiles\web\cordis.patch.y
 
 Session persistence records conversations; it is not an agent-callable memory-entry API. The repository's Agent Notes workflow is also instructions for ordinary file operations, not a special memory tool. No new memory tool or invented memory prompt was added because the requested built-in reference feature is absent. Automatic workspace-instruction loading is a separate feature from the requested memory-writing tools.
 
+The complete implementation baseline for that separate, Agent-selectable plugin is [Workspace Instructions](design-workspace-instructions.md). It includes Harness behavior parity, lightweight resume state, and a mandatory compaction-restoration contract to implement and test with the loader before a production compaction engine exists.
+
 Reference sources: `packages/skill/{skill,skill-filesystem,tool-skill}/src/index.ts`, their READMEs, `packages/context/agent-instructions`, `packages/session/session-persistence`, `packages/storage/storage-domain`, and `docs/tool-catalog.md` in the supplied harness checkout.
 
 ## Verification

@@ -33,6 +33,12 @@ pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the p
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    /// Non-secret project facts from the trusted Run context, separate from
+    /// user conversation messages and external services' project identifiers.
+    fn project_context(&self) -> Option<Value> {
+        None
+    }
+
     /// Refresh and durably record injected context before a provider request.
     fn prepare_context(
         &self,
@@ -146,6 +152,8 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub definitions: Vec<ModelToolDefinitionV1>,
     pub binding_id: String,
     pub binding_version_hash: String,
+    /// Base input, definitions and injected context. Completed exchanges have
+    /// their own durable byte bound and must also fit the provider request.
     pub maximum_input_bytes: usize,
     pub maximum_output_bytes: usize,
     pub maximum_tool_output_bytes: usize,
@@ -205,7 +213,9 @@ pub(crate) fn execute_model_tool_loop_v1(
             binding_id: request.binding_id.clone(),
             version_hash: request.binding_version_hash.clone(),
         }],
-        maximum_input_bytes: request.maximum_input_bytes,
+        maximum_input_bytes: request
+            .maximum_input_bytes
+            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut exchanges = Vec::new();
@@ -378,6 +388,7 @@ fn failure(
 
 fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelToolLoopErrorV1> {
     if request.definitions.is_empty()
+        || request.maximum_input_bytes == 0
         || request.maximum_tool_output_bytes == 0
         || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
         || request.maximum_tokens == 0
@@ -410,14 +421,22 @@ fn execute_tool_turn_with_timeout_recovery(
     let mut retry_notice = runtime_notice;
     loop {
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
-        let provider_request = ModelToolRequestV1 {
+        let mut provider_request = ModelToolRequestV1 {
             context_messages: context_messages.clone(),
             input: request.input.clone(),
             parameters: request.parameters.clone(),
             tools: request.definitions.clone(),
-            exchanges: exchanges.to_vec(),
+            exchanges: Vec::new(),
             retry_notice: retry_notice.clone(),
         };
+        if serde_json::to_vec(&provider_request)
+            .map_or(true, |bytes| bytes.len() > request.maximum_input_bytes)
+        {
+            return Err(ModelToolLoopErrorV1::Budget(
+                "model input, tool definitions and injected context exceed the input bound",
+            ));
+        }
+        provider_request.exchanges = exchanges.to_vec();
         match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
             Err(ProviderError::RequestTimedOut)
                 if *timeout_recoveries < request.maximum_timeout_recoveries =>
@@ -490,7 +509,9 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             binding_id: request.binding_id.clone(),
             version_hash: request.binding_version_hash.clone(),
         }],
-        maximum_input_bytes: request.maximum_input_bytes,
+        maximum_input_bytes: request
+            .maximum_input_bytes
+            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut exchanges = Vec::new();
@@ -683,7 +704,9 @@ pub(crate) fn resume_model_tool_loop_v1(
             binding_id: request.binding_id.clone(),
             version_hash: request.binding_version_hash.clone(),
         }],
-        maximum_input_bytes: request.maximum_input_bytes,
+        maximum_input_bytes: request
+            .maximum_input_bytes
+            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut pending = pending.clone();

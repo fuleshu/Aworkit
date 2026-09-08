@@ -1434,6 +1434,16 @@ pub(crate) struct BoundFileToolAuthorityV1 {
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
+    fn project_context(&self) -> Option<Value> {
+        self.context.approvals.project_name.as_ref().map(|name| {
+            json!({
+                "name":name,
+                "directory":self.context.workspace.root,
+                "branch":self.context.project_branch,
+            })
+        })
+    }
+
     fn prepare_context(
         &self,
         outer: &StableId,
@@ -2698,10 +2708,11 @@ impl FileToolDispatcherV1 {
                 call_id: self.record.call.call_id.clone(),
                 capability_id: self.record.call.capability_id.clone(),
                 path,
-                is_error: matches!(
-                    self.record.binding.limit,
-                    StoredFileToolLimitV1::WebFetch { .. }
-                ) && web::unavailable(&result),
+                is_error: match self.record.binding.limit {
+                    StoredFileToolLimitV1::WebFetch { .. } => web::unavailable(&result),
+                    StoredFileToolLimitV1::Mcp { .. } => result["result"]["isError"] == true,
+                    _ => false,
+                },
                 result,
                 summary,
             },
@@ -2839,11 +2850,16 @@ impl FileToolDispatcherV1 {
                 let value = json!({
                     "server": server_id,
                     "tool": tool_name,
-                    "result": result,
+                    "result": super::mcp_tools::model_result(result),
                     "progress": outcome.progress,
                 });
                 enforce_result_bound(&value)?;
-                Ok((value, format!("MCP {server_id}/{tool_name} completed.")))
+                let status = if value["result"]["isError"] == true {
+                    "reported an error"
+                } else {
+                    "completed"
+                };
+                Ok((value, format!("MCP {server_id}/{tool_name} {status}.")))
             }
             None => Err(format!(
                 "MCP {server_id}/{tool_name} failed: {}",
@@ -4648,7 +4664,10 @@ mod tests {
         .expect("mcp binding")
         .remove(0);
         assert_eq!(binding.capability_id, "mcp://serv.fixture/echo");
-        assert_eq!(binding.provider_name, mcp_provider_name("serv.fixture", "echo"));
+        assert_eq!(
+            binding.provider_name,
+            mcp_provider_name("serv.fixture", "echo")
+        );
         assert!(
             binding.requires_approval,
             "MCP tools follow the same approval policy as host tools"
@@ -4678,7 +4697,10 @@ mod tests {
         let binding = freeze_file_tool_bindings(&[mcp_binding_request(None)])
             .expect("mcp fallback binding")
             .remove(0);
-        assert_eq!(binding.provider_name, mcp_provider_name("serv.fixture", "echo"));
+        assert_eq!(
+            binding.provider_name,
+            mcp_provider_name("serv.fixture", "echo")
+        );
         assert_eq!(
             binding.description,
             "Call MCP tool 'echo' on server 'serv.fixture'."
