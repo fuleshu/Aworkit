@@ -150,6 +150,7 @@ impl BoundFileToolAuthorityV1 {
         if cancellation.is_cancelled() {
             return Err(invalid_tool("Compression cancelled"));
         }
+        let started = std::time::Instant::now();
         let compressed = compression::compress(
             &settled.result.content,
             &query,
@@ -157,7 +158,23 @@ impl BoundFileToolAuthorityV1 {
             &policy,
             retrieval.then_some(key.as_str()),
             self.context.maximum_tool_output_bytes,
-        );
+        ).or_else(|| {
+            // A mandatory output cap would omit data even in lossless mode.
+            // When retrieval is authorized, archive that original before exposing
+            // its explicitly partial preview instead of creating an orphaned cut.
+            if !retrieval { return None; }
+            let content = crate::runtime::tool_result_preview::bounded_content(
+                &settled.result.content, self.context.maximum_tool_output_bytes, Some(&key))?;
+            let before = compression::render(&settled.result.content);
+            let after = compression::render(&content);
+            Some(compression::Compression { content, metrics: compression::Metrics {
+                before_bytes: before.len(), after_bytes: after.len(),
+                before_tokens: compression::count(&before, policy.tokenizer),
+                after_tokens: compression::count(&after, policy.tokenizer),
+                tokenizer: policy.tokenizer, strategies: vec!["output-limit-preview".into()],
+                lossy: true, elapsed_micros: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            } })
+        });
         if cancellation.is_cancelled() {
             return Err(invalid_tool("Compression cancelled"));
         }

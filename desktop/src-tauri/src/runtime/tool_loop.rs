@@ -25,6 +25,7 @@ use std::{
 };
 
 pub(crate) mod approval_policy;
+mod mcp_approval;
 
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
@@ -1016,8 +1017,12 @@ pub(crate) fn freeze_file_tool_bindings(
             configuration: requested.configuration.clone(),
             limit,
             secret,
-            requires_approval: requested.options.approval_mode.is_some()
-                || !approval_free_tool_ids().contains(requested.capability_id.as_str()),
+            requires_approval: if requested.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
+                mcp_approval::requires_approval(requested)?
+            } else {
+                requested.options.approval_mode.is_some()
+                    || !approval_free_tool_ids().contains(requested.capability_id.as_str())
+            },
             internal_id,
         });
     }
@@ -1039,9 +1044,11 @@ fn freeze_mcp_binding(
         .as_object()
         .ok_or_else(|| invalid_tool("tool configuration must be an object"))?;
     let observed = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    if observed != BTreeSet::from(["serverId", "tool"]) {
+    if observed != BTreeSet::from(["serverId", "tool"])
+        && observed != BTreeSet::from(["serverId", "tool", "annotations"])
+    {
         return Err(invalid_tool(
-            "MCP tool configuration accepts exactly serverId and tool",
+            "MCP tool configuration accepts serverId, tool, and optional annotations",
         ));
     }
     let configured_server = object

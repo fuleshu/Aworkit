@@ -1,5 +1,6 @@
 mod context_edit;
 mod context_model;
+mod mcp_definitions;
 mod mcp_selection;
 mod tool_plugins;
 
@@ -14,6 +15,7 @@ use std::{
 
 use aworkit_capability_host::{McpCapabilitySnapshotV1, McpPeerPort, ModelToolDefinitionV1};
 use aworkit_protocol::StableId;
+use mcp_definitions::{DiscoveredMcpDefinition, preview_mcp_definitions};
 use aworkit_trusted_core::{
     CredentialMetadataV1, CredentialRef, NativeCredentialStore, PlatformCredentialStorePort,
     ProjectCoordinator,
@@ -1868,16 +1870,7 @@ impl DesktopRuntime {
                     })?;
                 mcp_definitions.insert(
                     capability_id.clone(),
-                    ModelToolDefinitionV1 {
-                        capability_id: capability_id.clone(),
-                        name: mcp_provider_name(server_id, tool),
-                        description: if descriptor.description.is_empty() {
-                            format!("Call MCP tool '{tool}' on server '{server_id}'.")
-                        } else {
-                            descriptor.description.clone()
-                        },
-                        input_schema: descriptor.input_schema.clone(),
-                    },
+                    DiscoveredMcpDefinition::from_descriptor(&capability_id, server_id, descriptor),
                 );
             }
         }
@@ -3583,28 +3576,11 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
     ids
 }
 
-/// Readiness is inert; live discovery replaces these definitions when a Run starts.
-fn preview_mcp_definitions(
-    workflow: &Value,
-    settings: &SettingsConfigurationV2,
-) -> Result<BTreeMap<String, ModelToolDefinitionV1>, String> {
-    graph_mcp_tool_ids(workflow).into_iter().map(|id| {
-        let (server_id, name) = split_mcp_capability(&id).map_err(|error| error.to_string())?;
-        let server = settings.mcp_servers.iter().find(|server| server.id == server_id && server.enabled)
-            .ok_or_else(|| format!("MCP server '{server_id}' is missing or disabled in Settings"))?;
-        let tool = server.tools.iter().find(|tool| tool.name == name && tool.enabled)
-            .ok_or_else(|| format!("MCP tool '{id}' is missing or disabled; discover and enable it in Settings → MCP"))?;
-        Ok((id.clone(), ModelToolDefinitionV1 { capability_id: id.clone(), name: mcp_provider_name(server_id, name),
-            description: if tool.description.is_empty() { format!("Call MCP tool '{name}'.") } else { tool.description.clone() },
-            input_schema: tool.input_schema.clone() }))
-    }).collect()
-}
-
 fn freeze_graph_bindings(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
     has_project: bool,
-    mcp_definitions: &BTreeMap<String, ModelToolDefinitionV1>,
+    mcp_definitions: &BTreeMap<String, DiscoveredMcpDefinition>,
 ) -> Result<FrozenWorkflowAgentV1, String> {
     let nodes = workflow
         .get("nodes")
@@ -3642,9 +3618,10 @@ fn freeze_graph_bindings(
                 continue;
             }
             if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
-                let definition = mcp_definitions.get(&tool_id).cloned().ok_or_else(|| {
+                let discovered = mcp_definitions.get(&tool_id).ok_or_else(|| {
                     format!("workflow MCP tool '{tool_id}' has no frozen definition")
                 })?;
+                let definition = discovered.definition.clone();
                 let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
                 let saved_tool = settings
                     .mcp_servers
@@ -3654,12 +3631,11 @@ fn freeze_graph_bindings(
                 if saved_tool.is_some_and(|entry| !entry.enabled) {
                     return Err(format!("MCP tool '{tool_id}' is disabled in Settings"));
                 }
-                let mut options = saved_tool
+                // Descriptions already travel in the frozen tool definition. Only
+                // explicitly configured instructions belong in the system prompt.
+                let options = saved_tool
                     .map(|entry| entry.options.clone())
                     .unwrap_or_default();
-                if options.instructions.is_none() {
-                    options.instructions = Some(definition.description.clone());
-                }
                 let snapshot = BuiltInToolConfigurationV2 {
                     options,
                     id: tool_id.clone(),
@@ -3667,10 +3643,7 @@ fn freeze_graph_bindings(
                     enabled: true,
                     requires_project: false,
                     credential_bindings: Vec::new(),
-                    configuration: BTreeMap::from([
-                        ("serverId".to_owned(), Value::String(server_id.to_owned())),
-                        ("tool".to_owned(), Value::String(tool.to_owned())),
-                    ]),
+                    configuration: discovered.configuration(server_id, tool)?,
                 };
                 let tool_hash = canonical_hash(&snapshot)?;
                 tools.push(FrozenToolBindingV1 {
@@ -6091,6 +6064,7 @@ mod tests {
                 env: vec![],
             },
             tools: vec![super::super::tool_registry::McpToolConfiguration {
+                annotations: None,
                 name: "echo".into(),
                 description: "Echo".into(),
                 input_schema: json!({"type":"object"}),

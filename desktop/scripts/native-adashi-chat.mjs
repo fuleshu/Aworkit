@@ -24,7 +24,8 @@ const provider = createServer(async (request, response) => {
   // Resolve the exact read-only name from the same alias mapping visible to the
   // model; many unrelated MCP functions have the same projectId-only schema.
   const guidance = body.messages.filter(m => m.role === "system").map(m => m.content).join("\n");
-  const alias = guidance.match(/^Tool ([A-Za-z0-9_-]+) \(mcp:\/\/[^/]+\/adashi_get_memory\):$/m)?.[1];
+  const alias = guidance.match(/^([A-Za-z0-9_-]+) = mcp:\/\/[^/]+\/adashi_get_memory$/m)?.[1]
+    ?? guidance.match(/^Tool ([A-Za-z0-9_-]+) \(mcp:\/\/[^/]+\/adashi_get_memory\):$/m)?.[1];
   const selected = body.tools?.find(tool => tool.function.name === alias);
   if (body.tools?.length && (!selected || !isDeepStrictEqual(selected.function.parameters, memorySchema))) {
     response.writeHead(400); return response.end("The exact read-only Adashi memory tool was not identified");

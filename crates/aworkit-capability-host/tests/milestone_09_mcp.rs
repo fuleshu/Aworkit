@@ -60,6 +60,7 @@ fn initialize_response() -> McpInitializeResponseV1 {
                 name: "issues.create".into(),
                 input_schema_hash: HASH_A.into(),
                 side_effect_known_read_only: false,
+                annotations: None,
                 description: "Create an issue".into(),
                 input_schema: serde_json::json!({
                     "type": "object",

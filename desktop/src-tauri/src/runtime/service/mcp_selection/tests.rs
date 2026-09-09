@@ -22,6 +22,7 @@ fn fixture() -> (Value, SettingsConfigurationV2) {
         tools: ["read", "write", "disabled"]
             .into_iter()
             .map(|name| McpToolConfiguration {
+                annotations: None,
                 name: name.into(),
                 description: name.into(),
                 input_schema: json!({"type":"object"}),
@@ -113,5 +114,63 @@ fn individual_bindings_and_other_server_prefixes_remain_exact() {
     assert_eq!(
         expand_server_selections(&workflow, &settings).unwrap(),
         workflow
+    );
+}
+
+#[test]
+fn mcp_approval_choices_and_live_hints_are_frozen_with_the_tool_hash() {
+    let (_, mut settings) = fixture();
+    let workflow = json!({"nodes":[{"id":"agent","type":"agent",
+        "configuration":{"toolIds":["mcp://adashi/read"]}}]});
+    let mut definitions = preview_mcp_definitions(&workflow, &settings).unwrap();
+    // Discovery, rather than the older saved catalog, supplies the runtime hints.
+    definitions.get_mut("mcp://adashi/read").unwrap().annotations = Some(aworkit_capability_host::McpToolAnnotationsV1 {
+        read_only_hint: Some(true), destructive_hint: Some(false),
+    });
+    let frozen = freeze_graph_bindings(&workflow, &settings, false, &definitions).unwrap();
+    let original = frozen.tools[0].tool_snapshot.clone();
+    assert_eq!(original.configuration["annotations"], json!({"readOnlyHint": true, "destructiveHint": false}));
+    assert!(!original.options.auto_approve);
+    settings.mcp_servers[0].tools[0].options.auto_approve = true;
+    let next = freeze_graph_bindings(&workflow, &settings, false, &definitions).unwrap();
+    assert!(next.tools[0].tool_snapshot.options.auto_approve);
+    assert_ne!(next.tools[0].tool_hash, frozen.tools[0].tool_hash);
+    assert!(!frozen.tools[0].tool_snapshot.options.auto_approve);
+    let restored: BuiltInToolConfigurationV2 = serde_json::from_value(serde_json::to_value(&original).unwrap()).unwrap();
+    assert_eq!(restored, original);
+    definitions.get_mut("mcp://adashi/read").unwrap().annotations = None;
+    let changed = freeze_graph_bindings(&workflow, &settings, false, &definitions).unwrap();
+    assert_ne!(changed.tools[0].tool_hash, next.tools[0].tool_hash);
+    assert!(changed.tools[0].tool_snapshot.configuration.get("annotations").is_none());
+}
+
+#[test]
+fn frozen_mcp_descriptions_are_not_invented_instructions_and_custom_options_survive() {
+    let (_, mut settings) = fixture();
+    let workflow = json!({"nodes":[{"id":"agent","type":"agent",
+        "configuration":{"toolIds":["mcp://adashi/read","mcp://adashi/write"]}}]});
+    settings.mcp_servers[0].tools[1].options.instructions = Some("Custom write guidance".into());
+    let definitions = preview_mcp_definitions(&workflow, &settings).unwrap();
+    let frozen = freeze_graph_bindings(&workflow, &settings, false, &definitions).unwrap();
+    assert!(frozen.tools[0].tool_snapshot.options.instructions.is_none());
+    assert_eq!(
+        frozen.tools[0].definition.as_ref().unwrap(),
+        &definitions["mcp://adashi/read"].definition
+    );
+    assert_eq!(
+        frozen.tools[1].tool_snapshot.options,
+        settings.mcp_servers[0].tools[1].options
+    );
+    let original_hash = frozen.tools[1].tool_hash.clone();
+    settings.mcp_servers[0].tools[1].options.instructions = Some("Later setting".into());
+    let next = freeze_graph_bindings(&workflow, &settings, false, &definitions).unwrap();
+    assert_ne!(next.tools[1].tool_hash, original_hash);
+    assert_eq!(
+        frozen.tools[1]
+            .tool_snapshot
+            .options
+            .instructions
+            .as_deref(),
+        Some("Custom write guidance")
     );
 }

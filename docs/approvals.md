@@ -36,9 +36,23 @@ On startup, existing exact-action project grants are upgraded to tool permission
 for the same project and frozen binding. Revoked grants are never recreated.
 Approve once continues to authorize only the exact invocation.
 
+Each MCP function in Settings → MCP has an **Auto approve** checkbox. Enabling
+it requires a risk confirmation: the tool will run without prompts or automatic
+review, including actions that change or delete data. The choice takes precedence
+over Chat and per-tool approval modes. Disabling it requires no confirmation.
+
+With **Auto approve** off, Aworkit skips review only when the server explicitly
+supplies both `readOnlyHint: true` and `destructiveHint: false`. Missing, partial,
+write, or destructive hints use the tool's approval mode, or the Chat mode when
+no override is configured. These are server claims, not enforced restrictions.
+They do not change Aworkit's conservative effect/replay handling. New Chats
+freeze live discovery hints and the saved Auto approve choice; subsequent
+Settings edits and catalog refreshes apply to new Chats. Existing frozen Chats
+without hints continue using the shared approval policy.
+
 Read/search/list/grep, task-list and existing web tools keep their ordinary
-approval-free contracts. File writes, shell, Python, subagents and MCP tools use
-the shared policy. Legacy `requiresApproval` configuration is retained only for
+approval-free contracts. File writes, shell, Python, subagents and MCP calls
+requiring review use the shared policy. Legacy `requiresApproval` configuration is retained only for
 compatibility with existing frozen records and hidden from the tool editor; it
 is not the user-facing policy switch.
 
@@ -84,6 +98,11 @@ be reconstructed by the checkpoint alone.
   scripts in one run, approve-once versus project approval, reuse in another chat,
   migration of old exact-script grants across restart, and revocation. Verifies
   twelve actual Python file effects with a local provider and isolated profile.
+- `desktop/scripts/native-mcp-approval.mjs`: native Settings confirmation, cancel,
+  refresh, save, and actual MCP effects for explicit safe, partial, write,
+  destructive, and missing annotations. Checks Auto approve, existing frozen
+  Chats across a restart, and new Chats after disabling it. Uses a local model
+  and STDIO server fixture, with screenshots and results in a temporary profile.
 
 Run the smoke from `desktop` with `node scripts/native-approval-smoke.mjs` after
 building `desktop/dist` and the native executable. The fixture uses no remote

@@ -309,10 +309,10 @@ impl BoundFileToolAuthorityV1 {
             ),
         )
         .map_err(|e| e.to_string())?;
-        let clock = format!("\nChat started: {}", chat_clock::chat_start(&self.run_events.context_events()?));
+        let clock = chat_clock::context(&self.run_events.context_events()?);
         let mut budgeted = configuration.clone();
-        let include_clock = budgeted.max_bytes >= clock.len();
-        if include_clock { budgeted.max_bytes -= clock.len(); }
+        let include_clock = budgeted.max_bytes >= chat_clock::MAX_BYTES;
+        if include_clock { budgeted.max_bytes -= chat_clock::MAX_BYTES; }
         let mut plan = library::prepare(Preparation {
             configuration: &budgeted,
             owner: &owner,
@@ -331,11 +331,25 @@ impl BoundFileToolAuthorityV1 {
         if let Err(error) = validation {
             plan.diagnostics.push(error);
         }
+        let clock_visible = history.iter().any(|prior| selection.event_ids.contains(&prior.id) && prior.text.ends_with(&clock));
+        if include_clock && !clock_visible && plan.event.is_none() {
+            if let Some(prior) = history.last() {
+                // A new human turn refreshes clock context even when no instruction file changed.
+                // Keep the same owner and baseline identity; no file state is reset or invented.
+                let mut event = prior.clone();
+                event.id = event_id.to_string();
+                event.text.clear();
+                event.changes.clear();
+                event.observed_directories.clear();
+                event.baseline = false;
+                event.reset = false;
+                plan.event = Some(event);
+            }
+        }
         if let Some(event) = &mut plan.event {
-            let clock_visible = history.iter().any(|prior| selection.event_ids.contains(&prior.id) && prior.text.ends_with(&clock));
             if include_clock && (event.baseline || !clock_visible) {
                 // Clock context belongs to this selected contribution and is committed with it.
-                // Rehydration after compaction uses the original Chat start, never a moving clock.
+                // Replay keeps the committed text; a new user turn advances the clock.
                 // Append so byte ranges into instruction bodies remain valid.
                 event.text.push_str(&clock);
             }

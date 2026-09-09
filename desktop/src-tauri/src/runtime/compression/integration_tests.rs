@@ -120,6 +120,34 @@ fn compressed_projection_is_durable_before_use_and_replay_is_identical() {
 }
 
 #[test]
+fn output_limit_preview_archives_uncompressible_original_and_recovers_omitted_tail() {
+    let mut f = fixture();
+    f.authority.context.maximum_tool_output_bytes = 1024;
+    let source = format!("{}TAIL_RECEIPT_739", "ordinary prose without log rows ".repeat(300));
+    f.write("src/file.txt", &source);
+    scope(&f, "outer.preview");
+    let result = read(&f, "outer.preview", "read.preview");
+    assert_eq!(result.result.content["aworkitOutput"]["truncated"], true);
+    assert!(result.result.content.to_string().len() <= 1024);
+    assert!(!result.result.content.to_string().contains("TAIL_RECEIPT_739"));
+    let reference = result.result.content["aworkitContext"]["reference"].clone();
+    assert!(reference.is_string());
+    let events = f.committer.committed_events().unwrap();
+    let archive = events.iter().find(|e| e.kind == "context.compression").unwrap();
+    assert_eq!(archive.payload["original"]["content"], source);
+    assert_eq!(archive.payload["metrics"]["strategies"], json!(["output-limit-preview"]));
+    assert_eq!(archive.payload["metrics"]["lossy"], true);
+    f.write("src/file.txt", "changed file must not be read again");
+    f.authority.runtime.records = Arc::new(ToolRecordStore::open(&f.root.path().join("events.sqlite3")).unwrap());
+    assert_eq!(read(&f, "outer.preview", "read.preview").result, result.result);
+    scope(&f, "outer.preview-recovery");
+    let recovered = invoke(&f, "outer.preview-recovery", "recover.preview", "tool.context",
+        json!({"operation":"read","reference":reference,"pointer":"/content","offset":source.len()-16,"limit":256}));
+    assert!(!recovered.result.is_error, "{:?}", recovered.result);
+    assert!(recovered.result.content.to_string().contains("TAIL_RECEIPT_739"));
+}
+
+#[test]
 fn retrieval_survives_new_outer_and_rejects_other_nodes_children_and_chats() {
     let mut f = fixture();
     scope(&f, "outer.first");

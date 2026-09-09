@@ -33,10 +33,10 @@ fn duplicate_structured_result_reaches_provider_once_and_respects_configured_lim
             );
             assert_eq!(results[0]["result"]["content"], json!([]));
         } else {
-            let text = results[0].as_str().unwrap();
-            assert!(text.len() <= maximum_bytes);
-            assert!(text.contains("tool output truncated"));
-            assert!(!text.contains("provider continuation bound"));
+            assert!(results[0].to_string().len() <= maximum_bytes);
+            assert_eq!(results[0]["aworkitOutput"]["truncated"], true);
+            assert_eq!(results[0]["preview"]["result"]["structuredContent"]["tail"], "complete");
+            assert_eq!(results[0]["preview"]["result"]["content"], json!([]));
         }
     }
 }

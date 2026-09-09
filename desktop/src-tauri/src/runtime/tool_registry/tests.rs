@@ -87,6 +87,11 @@ fn prompt_migration_preserves_custom_workflows_and_is_idempotent() {
 
 #[test]
 fn tool_options_reject_invalid_execution_and_preserve_the_resolved_path() {
+    let auto = ToolOptions { auto_approve: true, ..Default::default() };
+    assert!(auto.validate("mcp").is_ok());
+    assert!(auto.validate("native").is_err());
+    assert!(auto.validate("shell").is_err());
+    assert_eq!(serde_json::to_value(ToolOptions::default()).unwrap(), json!({}));
     assert!(
         ToolOptions {
             executable: Some("relative.exe".into()),

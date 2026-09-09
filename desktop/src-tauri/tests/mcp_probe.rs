@@ -65,6 +65,8 @@ fn desktop_probe_redeems_named_field_and_discovers_real_stdio_catalog() {
     let result = runtime
         .settings_v2_probe_mcp(McpProbeRequestV2 {
             server: McpServerConfigurationV2 {
+                plugin: None,
+                tools: Vec::new(),
                 id: "mcp.desktop-probe".into(),
                 name: "Desktop probe fixture".into(),
                 // Test/Discover remains useful before the draft is enabled or saved.

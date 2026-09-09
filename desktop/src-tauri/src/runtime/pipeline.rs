@@ -4652,7 +4652,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_output_is_truncated_with_an_explicit_model_facing_marker() {
+    fn tool_output_is_a_valid_partial_preview_with_an_explicit_model_facing_marker() {
         let root = TempDir::new().expect("root");
         let project = root.path().join("project");
         fs::create_dir(&project).expect("project");
@@ -4666,10 +4666,9 @@ mod tests {
         let result = pipeline.execute(request).expect("truncated tool result");
         assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         let observed = observed_results.lock().expect("tool results");
-        let text = observed[0].as_str().expect("truncated result becomes text");
-        assert!(text.len() <= 1024);
-        assert!(text.contains("Aworkit: tool output truncated"));
-        assert!(text.is_char_boundary(text.len()));
+        assert!(observed[0].to_string().len() <= 1024);
+        assert_eq!(observed[0]["aworkitOutput"]["truncated"], true);
+        assert!(observed[0]["preview"]["content"].as_str().unwrap().ends_with("[Aworkit: string truncated]"));
     }
 
     #[test]
@@ -6304,6 +6303,7 @@ mod tests {
     const MCP_FIXTURE_NAME: &str = "mcp__serv_fixture__echo";
 
     mod mcp_name_tests;
+    mod mcp_approval_tests;
     mod mcp_result_tests;
 
     fn mcp_echo_schema() -> Value {
@@ -6379,6 +6379,7 @@ mod tests {
                         name: MCP_FIXTURE_TOOL.into(),
                         input_schema_hash: format!("sha256:{:x}", Sha256::digest(schema)),
                         side_effect_known_read_only: false,
+                        annotations: None,
                         description: "Echo the given text.".into(),
                         input_schema: mcp_echo_schema(),
                     }],

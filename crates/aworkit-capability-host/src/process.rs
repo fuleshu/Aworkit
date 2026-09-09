@@ -36,7 +36,7 @@ pub struct ProcessRequest {
     pub timeout: Duration,
 }
 
-/// Explicit command environment, plus the Windows SystemRoot needed by OS services.
+/// Explicit command environment, plus host PATH and the Windows OS baseline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProcessSpecV1 {
     pub program: PathBuf,
@@ -252,14 +252,19 @@ impl ProcessRunner {
             .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
         let mut command = Command::new(&executable.canonical_path);
         command.env_clear();
+        // Host commands and their descendants must be able to find installed tools.
+        // Keep executable discovery without copying credentials or unrelated app state.
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
         // Winsock name resolution needs SystemRoot even for an absolute executable.
-        // Keep the OS baseline without inheriting PATH, credentials, or app variables.
+        // Keep the OS baseline without inheriting credentials or app variables.
         #[cfg(windows)]
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
         }
+        crate::shell::command_arguments(&mut command, &executable.canonical_path, &request.arguments);
         command
-            .args(&request.arguments)
             .envs(&request.environment)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

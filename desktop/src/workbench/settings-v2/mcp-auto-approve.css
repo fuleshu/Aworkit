@@ -1,0 +1,26 @@
+.mcp-auto-approve-dialog {
+  color: inherit;
+  margin: auto;
+  max-height: calc(100% - 32px);
+  overflow: auto;
+}
+
+.mcp-auto-approve-dialog::backdrop {
+  background: rgb(0 0 0 / 38%);
+}
+
+.mcp-function-permissions {
+  display: grid;
+  gap: 6px;
+  margin-block: 12px;
+}
+
+.mcp-function-permissions .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-function-permissions input {
+  margin: 0;
+}

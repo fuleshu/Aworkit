@@ -23,7 +23,8 @@ export function ToolOptionsEditor({ id, value = {}, defaultInstructions, executi
       const next = { ...value }; delete next.instructions; onChange(next);
     }}>{execution === "mcp" ? "Use server description" : "Restore plugin instructions"}</button>}
     <label className="settings-field" htmlFor={`${id}-approval-mode`}>Approval mode
-      <select id={`${id}-approval-mode`} title="Override the chat approval mode for this tool, or inherit it. Authority boundaries still apply."
+      <select id={`${id}-approval-mode`} disabled={execution === "mcp" && value.autoApprove === true}
+        title={execution === "mcp" ? "Used when Auto approve is off and the server does not explicitly declare both read-only and non-destructive behavior." : "Override the chat approval mode for this tool, or inherit it. Authority boundaries still apply."}
         value={value.approvalMode ?? ""} onChange={event => patch({ approvalMode: event.target.value === "" ? undefined : event.target.value as ToolOptions["approvalMode"] })}>
         <option value="">Use Chat approval mode</option><option value="ask_for_approval">Ask for approval</option>
         <option value="approve_for_me">Approve for me</option><option value="full_access">Full access</option>

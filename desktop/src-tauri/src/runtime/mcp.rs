@@ -269,6 +269,7 @@ pub(crate) fn probe_mcp_server(
                 name: tool.name.clone(),
                 description: tool.description.clone(),
                 input_schema: tool.input_schema.clone(),
+                annotations: tool.annotations.clone(),
                 enabled: true,
                 options: Default::default(),
             })

@@ -55,10 +55,29 @@ pub struct McpToolDescriptorV1 {
     pub name: String,
     pub input_schema_hash: String,
     pub side_effect_known_read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotationsV1>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub input_schema: Value,
+}
+
+/// Server claims used for approval routing, never proof of side-effect freedom.
+/// Missing hints remain distinct from explicitly supplied boolean values.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpToolAnnotationsV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+}
+
+impl McpToolAnnotationsV1 {
+    pub fn permits_approval_free_call(&self) -> bool {
+        self.read_only_hint == Some(true) && self.destructive_hint == Some(false)
+    }
 }
 
 /// Runtime discovery evidence. It is not canonical configuration.

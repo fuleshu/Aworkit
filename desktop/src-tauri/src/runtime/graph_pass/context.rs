@@ -81,30 +81,62 @@ pub(super) fn agent_messages(
             truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES)
         ));
     }
-    if node.tool_bindings.iter().any(|binding| binding.is_callable()) {
+    if node
+        .tool_bindings
+        .iter()
+        .any(|binding| binding.is_callable())
+    {
         sections.push(
             "The supplied tool definitions are the tools registered for this Agent. \
             Use their exact callable names. Earlier plans do not add tools. \
             Answer tool-visibility questions from these definitions; searching local files, \
-            configuration or databases is unnecessary to establish visibility."
+            configuration or databases is unnecessary to establish visibility.\n\n\
+            Use the narrowest tool query that answers the user's question. A successful, complete \
+            filtered result, including an empty result, is sufficient evidence for that scope. \
+            Broaden retrieval only to resolve a concrete ambiguity, error, partial result, or an \
+            additional user request. Do not fetch unrelated records merely to confirm an empty \
+            filtered result. Treat truncated or paginated previews as incomplete."
                 .into(),
         );
     }
-    for binding in node.tool_bindings.iter().filter(|binding| binding.is_callable()) {
-        let mut section = format!(
-            "Tool {} ({}):",
-            binding.provider_name, binding.capability_id
-        );
+    let mut mcp_identities = Vec::new();
+    for binding in node
+        .tool_bindings
+        .iter()
+        .filter(|binding| binding.is_callable())
+    {
+        if binding.capability_id == "tool.shell.host" {
+            if let Some(executable) = binding.options.executable.as_deref() {
+                sections.push(aworkit_capability_host::shell::context(std::path::Path::new(executable)));
+            }
+        }
         if let Some(instructions) = binding
             .options
             .instructions
             .as_deref()
             .filter(|s| !s.trim().is_empty())
         {
-            section.push('\n');
-            section.push_str(instructions);
+            sections.push(format!(
+                "Tool {} ({}):\n{}",
+                binding.provider_name, binding.capability_id, instructions
+            ));
+        } else if binding
+            .capability_id
+            .starts_with(super::super::mcp_tools::MCP_CAPABILITY_PREFIX)
+        {
+            // Provider aliases can shorten the original operation name. Preserve
+            // its identity without repeating the schema's description or an empty heading.
+            mcp_identities.push(format!(
+                "{} = {}",
+                binding.provider_name, binding.capability_id
+            ));
         }
-        sections.push(section);
+    }
+    if !mcp_identities.is_empty() {
+        sections.push(format!(
+            "MCP tool identities (callable name = capability):\n{}",
+            mcp_identities.join("\n")
+        ));
     }
     let mut messages = Vec::new();
     if !sections.is_empty() {

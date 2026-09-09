@@ -29,6 +29,9 @@ pub struct ToolOptions {
     pub executable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<ApprovalMode>,
+    /// Explicit user authorization to skip review for this MCP tool.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_approve: bool,
 }
 
 /// Saved discovery plus user choices. Live execution revalidates the server schema.
@@ -38,6 +41,8 @@ pub struct McpToolConfiguration {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<aworkit_capability_host::McpToolAnnotationsV1>,
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "ToolOptions::is_default")]
     pub options: ToolOptions,
@@ -71,6 +76,9 @@ impl ToolOptions {
     }
 
     pub fn validate(&self, execution: &str) -> Result<(), String> {
+        if self.auto_approve && execution != "mcp" {
+            return Err("Auto approve is available only for MCP tools".into());
+        }
         if self
             .instructions
             .as_ref()

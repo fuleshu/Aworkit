@@ -185,6 +185,27 @@ fn clock_is_present_without_instruction_files_and_is_stable_on_replay() {
 }
 
 #[test]
+fn new_user_turn_refreshes_clock_without_file_changes_and_replay_keeps_it() {
+    let f = Fixture::new();
+    f.committer.commit(vec![SemanticEventDraft::new("chat.started", json!({"createdAt":"1788854400"}))]).unwrap();
+    let mut first = f.request();
+    f.prepare("clock.before", 0, &mut first);
+    f.committer.commit(vec![SemanticEventDraft::new("message.user", json!({"body":"what date is today?","createdAt":"1788940800"}))]).unwrap();
+    let mut next = f.request();
+    f.prepare("clock.after", 0, &mut next);
+    let text = &next.context_messages.last().unwrap().content;
+    assert!(text.contains("Current turn UTC: 2026-09-09T08:00:00Z"));
+    assert!(text.contains("Trusted Aworkit host clock"));
+    assert_eq!(next.context_messages.iter().filter(|m| m.content.contains("ROOT V1")).count(), 1);
+    let mut replay = f.request();
+    f.prepare("clock.after", 0, &mut replay);
+    assert_eq!(serde_json::to_value(next.context_messages).unwrap(), serde_json::to_value(replay.context_messages).unwrap());
+    let mut unchanged = f.request();
+    f.prepare("clock.unchanged", 0, &mut unchanged);
+    assert_eq!(unchanged.context_messages.iter().filter(|m| m.content.contains("Current turn UTC: 2026-09-09T08:00:00Z")).count(), 1);
+}
+
+#[test]
 fn prepared_replay_reopen_cross_input_and_node_selection() {
     let mut f = Fixture::new();
     let mut first = f.request();

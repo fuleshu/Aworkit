@@ -126,6 +126,7 @@ export const toolOptionsSchema = z.object({
   instructions: z.string().refine(value => new TextEncoder().encode(value).length <= 32768 && !value.includes("\0"), "Instructions must be at most 32 KiB and contain no NUL characters.").optional(),
   executable: z.string().min(1).max(4096).refine(runtimePathIsAbsolute, "Use an absolute executable path.").optional(),
   approvalMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).optional(),
+  autoApprove: z.boolean().optional(),
 }).strict();
 export type ToolOptions = z.infer<typeof toolOptionsSchema>;
 
@@ -133,6 +134,7 @@ export const mcpToolConfigurationSchema = z.object({
   name: z.string().min(1).max(256),
   description: z.string().max(32768),
   inputSchema: z.record(z.string(), z.unknown()),
+  annotations: z.object({ readOnlyHint: z.boolean().optional(), destructiveHint: z.boolean().optional() }).strict().optional(),
   enabled: z.boolean(),
   options: toolOptionsSchema.optional(),
 }).strict();

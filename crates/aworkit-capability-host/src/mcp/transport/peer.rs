@@ -974,6 +974,10 @@ async fn discover_catalog(
                     input_schema_hash: format!("sha256:{:x}", Sha256::digest(&schema)),
                     // Server annotations are hints, not proof of side-effect freedom.
                     side_effect_known_read_only: false,
+                    annotations: tool.annotations.as_ref().map(|hints| crate::McpToolAnnotationsV1 {
+                        read_only_hint: hints.read_only_hint,
+                        destructive_hint: hints.destructive_hint,
+                    }),
                     description: tool
                         .description
                         .map_or_else(String::new, |value| value.into_owned()),

@@ -99,6 +99,11 @@ fn real_stdio_peer_negotiates_legacy_discovers_and_calls_a_tool() {
     assert!(snapshot.features.tools);
     assert_eq!(snapshot.catalog.tools.len(), 1);
     assert_eq!(snapshot.catalog.tools[0].name, "echo");
+    let hints = snapshot.catalog.tools[0].annotations.as_ref().expect("server annotations");
+    assert_eq!(hints.read_only_hint, Some(true));
+    assert_eq!(hints.destructive_hint, Some(false));
+    assert!(!snapshot.catalog.tools[0].side_effect_known_read_only,
+        "approval hints never prove side-effect freedom");
 
     let outcome = manager
         .invoke(

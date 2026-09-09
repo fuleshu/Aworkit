@@ -60,6 +60,7 @@ mod provider_tools;
 mod provider_transport;
 mod registry;
 pub mod skills;
+pub mod shell;
 pub mod workspace_instructions;
 mod tools;
 mod web;

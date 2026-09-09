@@ -1079,7 +1079,7 @@
     {
       "id": "tool.workspace_instructions",
       "name": "Workspace Instructions",
-      "description": "Automatically provide the Chat start date/time and load global, project and nested AGENTS.md guidance before Agent requests.",
+      "description": "Automatically provide trusted date/time for each user turn and load global, project and nested AGENTS.md guidance before Agent requests.",
       "instructions": "",
       "executor": "workspace_instructions",
       "activation": "automatic_context",

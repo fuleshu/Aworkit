@@ -50,6 +50,7 @@ def main():
                         {
                             "name": "echo",
                             "description": "Return one message",
+                            "annotations": {"readOnlyHint": True, "destructiveHint": False},
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {"message": {"type": "string"}},

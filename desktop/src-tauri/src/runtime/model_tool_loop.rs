@@ -606,28 +606,8 @@ fn model_facing_tool_result(
     maximum_bytes: usize,
 ) -> ModelToolResultV1 {
     let result = super::tool_loop::skills::model_result(result, capability_id);
-    let rendered = match &result.content {
-        Value::String(text) => text.clone(),
-        value => serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned()),
-    };
-    if rendered.len() <= maximum_bytes {
-        return result.clone();
-    }
-    let marker = format!(
-        "\n\n[Aworkit: tool output truncated; originalBytes={}; maximumBytes={}. Use a narrower tool request to retrieve omitted data.]",
-        rendered.len(),
-        maximum_bytes
-    );
-    let prefix_limit = maximum_bytes.saturating_sub(marker.len());
-    let mut boundary = prefix_limit.min(rendered.len());
-    while !rendered.is_char_boundary(boundary) {
-        boundary = boundary.saturating_sub(1);
-    }
-    ModelToolResultV1 {
-        call_id: result.call_id.clone(),
-        content: Value::String(format!("{}{}", &rendered[..boundary], marker)),
-        is_error: result.is_error,
-    }
+    let content = super::tool_result_preview::bounded_content(&result.content, maximum_bytes, None);
+    ModelToolResultV1 { content: content.unwrap_or_else(|| result.content.clone()), ..result }
 }
 
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation

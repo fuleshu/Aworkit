@@ -12,7 +12,7 @@ fn windows_child_environment_probe() {
         return;
     };
     assert_eq!(std::env::var("SystemRoot").unwrap(), expected_root);
-    assert!(std::env::var_os("PATH").is_none());
+    assert_eq!(std::env::var("PATH").unwrap(), std::env::var("AWORKIT_EXPECTED_PATH").unwrap());
     assert!(std::env::var_os("USERPROFILE").is_none());
     assert!(std::env::var_os("PYTHONPATH").is_none());
 }
@@ -32,10 +32,10 @@ fn native_windows_launch_retains_system_root_without_inheriting_user_environment
                 "--nocapture".into(),
             ],
             working_directory: None,
-            environment: BTreeMap::from([(
-                "AWORKIT_EXPECTED_SYSTEM_ROOT".into(),
-                std::env::var("SystemRoot").expect("Windows OS environment"),
-            )]),
+            environment: BTreeMap::from([
+                ("AWORKIT_EXPECTED_SYSTEM_ROOT".into(), std::env::var("SystemRoot").expect("Windows OS environment")),
+                ("AWORKIT_EXPECTED_PATH".into(), std::env::var("PATH").expect("Host executable discovery")),
+            ]),
             timeout: Duration::from_secs(10),
             maximum_output_bytes: 8192,
             cancellation_grace: Duration::from_millis(100),

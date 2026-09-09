@@ -1796,7 +1796,11 @@ fn validate_frozen_context_record(
             || !(super::documents::builtin_tool_binding_ids().contains(&tool.tool_id)
                 || (tool.tool_id.starts_with("mcp://")
                     && tool.definition.is_some()
-                    && tool.tool_snapshot.configuration.len() == 2
+                    && tool.tool_snapshot.configuration.len()
+                        == 2 + usize::from(tool.tool_snapshot.configuration.contains_key("annotations"))
+                    && tool.tool_snapshot.configuration.get("annotations").is_none_or(|hints| {
+                        serde_json::from_value::<aworkit_capability_host::McpToolAnnotationsV1>(hints.clone()).is_ok()
+                    })
                     && tool.tool_snapshot.configuration.contains_key("serverId")
                     && tool.tool_snapshot.configuration.contains_key("tool")))
     }) {

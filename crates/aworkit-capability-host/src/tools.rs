@@ -140,7 +140,7 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
             invocation.shell_program.clone(),
             arguments,
             invocation.working_directory.clone(),
-            invocation.environment.clone(),
+            crate::shell::environment(&invocation.environment),
             &invocation.limits,
             cancellation,
         )

@@ -33,6 +33,7 @@ mod service;
 mod settings_diagnostics;
 mod settings_v2;
 mod tool_loop;
+mod tool_result_preview;
 pub mod tool_registry;
 mod web_documents;
 
