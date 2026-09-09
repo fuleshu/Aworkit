@@ -94,6 +94,7 @@ impl ContextDocument {
                     .map_err(|e| format!("Invalid context images: {e}"))?;
             images.extend(refs);
         }
+        images.extend(self.exchanges.iter().flat_map(|e| &e.results).flat_map(|r| r.images.clone()));
         aworkit_capability_host::model_images::validate_image_attachments(&images)
             .map_err(|e| e.to_string())?;
         self.request()

@@ -40,6 +40,12 @@ impl ChatImageStore {
         let bytes = STANDARD
             .decode(data)
             .map_err(|_| "Invalid image encoding")?;
+        self.import_bytes(name, &bytes)
+    }
+
+    /// Import a bounded native file/capture without a base64 round trip.
+    pub(crate) fn import_bytes(&self, name: String, bytes: &[u8]) -> Result<ImageAttachmentV1, String> {
+        if bytes.len() > MAX_IMAGE_BYTES { return Err("Images must be 5 MiB or smaller".into()); }
         let format = image::guess_format(&bytes).map_err(|_| "Choose a PNG, JPEG or WebP image")?;
         let mime_type = match format {
             image::ImageFormat::Png => "image/png",

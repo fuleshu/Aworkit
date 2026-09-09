@@ -248,6 +248,30 @@ impl ProjectFiles {
         if request.maximum_bytes == 0 || request.maximum_bytes > MAX_FILE_BYTES {
             return Err(FileToolError::TooLarge);
         }
+        self.read_bounded(request, cancellation)
+    }
+
+    /// Read image bytes with the same anchored file authority and cancellation
+    /// checks as text reads, but the separately bounded image-size allowance.
+    pub fn read_image_v1(
+        &self,
+        path: &Path,
+        cancellation: &CancellationToken,
+    ) -> Result<FileReadResultV1, FileToolError> {
+        self.read_bounded(
+            &FileReadRequestV1 {
+                path: path.to_owned(),
+                maximum_bytes: crate::model_images::MAX_IMAGE_BYTES,
+            },
+            cancellation,
+        )
+    }
+
+    fn read_bounded(
+        &self,
+        request: &FileReadRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<FileReadResultV1, FileToolError> {
         check_cancelled(cancellation)?;
         self.revalidate_root()?;
         let path = validate_relative(&request.path)?;

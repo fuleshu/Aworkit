@@ -88,6 +88,7 @@ fn exchange(events: &[ModelToolEventV1]) -> ModelToolExchangeV1 {
     ModelToolExchangeV1 {
         assistant_content,
         results: vec![ModelToolResultV1 {
+            images: Vec::new(),
             call_id,
             content: json!({"stdout":"42\n","exitCode":0}),
             is_error: false,

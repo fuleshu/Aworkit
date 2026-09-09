@@ -14,6 +14,7 @@ pub(crate) mod skills;
 #[cfg(test)]
 mod skills_tests;
 mod web;
+mod image_tools;
 #[path = "workspace_instructions/mod.rs"]
 pub(crate) mod workspace_instructions;
 
@@ -158,9 +159,10 @@ const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
-pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 11] = [
+pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 12] = [
     "tool.workspace_instructions",
     SKILL_CAPABILITY_ID,
+    image_tools::READ,
     FILE_READ_CAPABILITY_ID,
     FILE_SEARCH_CAPABILITY_ID,
     FILE_LIST_CAPABILITY_ID,
@@ -178,6 +180,7 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         "tool.workspace_instructions",
         SKILL_CAPABILITY_ID,
         "tool.context",
+        image_tools::READ,
         FILE_READ_CAPABILITY_ID,
         FILE_SEARCH_CAPABILITY_ID,
         FILE_LIST_CAPABILITY_ID,
@@ -393,6 +396,8 @@ pub(crate) struct StoredToolSecretBindingV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum StoredFileToolLimitV1 {
+    ImageRead,
+    Screenshot,
     Context { maximum_bytes: usize },
     WorkspaceInstructions {
         configuration: aworkit_capability_host::workspace_instructions::Configuration,
@@ -514,6 +519,8 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
+        (image_tools::READ, CapabilityKind::FileRead, "project.image.read", image_tools::schema(image_tools::READ), SideEffectClass::ReadOnly, true),
+        (image_tools::SCREENSHOT, CapabilityKind::Plugin, "screen.capture", image_tools::schema(image_tools::SCREENSHOT), SideEffectClass::ReadOnly, false),
         ("tool.context", CapabilityKind::Plugin, "context.read", result_compression::schema(), SideEffectClass::ReadOnly, false),
         (
             "tool.workspace_instructions",
@@ -652,7 +659,7 @@ pub(crate) fn file_tool_descriptors()
             descriptor.secret_slots = vec![WEB_SEARCH_API_KEY_SECRET_SLOT.to_owned()];
         }
         descriptor.requires_workspace = workspace;
-        descriptor.maximum_concurrency = 8;
+        descriptor.maximum_concurrency = if capability_id == image_tools::SCREENSHOT { 1 } else { 8 };
         descriptor.max_input_bytes = MAXIMUM_TOOL_PAYLOAD_BYTES;
         descriptor.max_output_bytes = MAXIMUM_TOOL_RESULT_BYTES;
         descriptor.input_schema_hash = Some(canonical_hash(&schema)?);
@@ -723,6 +730,7 @@ pub(crate) fn freeze_file_tool_bindings(
             .validate(native.map_or("mcp", |tool| tool.execution.as_str()))
             .map_err(|error| invalid_tool(&error))?;
         let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
+            "image.read" | "screenshot" => image_tools::freeze(&requested.capability_id, &requested.configuration)?,
             "context" => (
                 "aworkit_context".into(),
                 "Read or search original compressed tool output by its reference, or inspect compression statistics. Use originals for exact counts, quotes and edits. Read offsets are UTF-8 bytes; search offsets are ranked matches.".into(),
@@ -1138,6 +1146,8 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
         capability_id: binding_capability_id,
         adapter_id: stable(match tool.capability_id.as_str() {
             "tool.workspace_instructions" => "adapter.workspace_instructions",
+            image_tools::READ => "adapter.image.read",
+            image_tools::SCREENSHOT => "adapter.screenshot",
             SKILL_CAPABILITY_ID => "adapter.skills.read",
             "tool.context" => "adapter.context.read",
             FILE_READ_CAPABILITY_ID => FILE_READ_ADAPTER_ID,
@@ -1180,6 +1190,7 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     host: Arc<CapabilityHost>,
     descriptors: BTreeMap<String, CapabilityDescriptor>,
     web: WebTools,
+    images: super::images::ChatImageStore,
     web_documents: super::web_documents::WebDocumentStore,
     lease_authority: Arc<ToolLeaseAuthority>,
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
@@ -1203,6 +1214,7 @@ impl FileToolAuthorityRuntimeV1 {
 
     pub(crate) fn open(
         database: &Path,
+        images: super::images::ChatImageStore,
         projects: ProjectCoordinator,
         host: Arc<CapabilityHost>,
         descriptors: BTreeMap<String, CapabilityDescriptor>,
@@ -1224,6 +1236,7 @@ impl FileToolAuthorityRuntimeV1 {
             host,
             descriptors,
             web: WebTools::production(),
+            images,
             web_documents: super::web_documents::WebDocumentStore::new(
                 database
                     .parent()
@@ -1739,6 +1752,7 @@ impl BoundFileToolAuthorityV1 {
                 let reason = self.denial_reason(&response.invocation_id)?;
                 let denied = SettledModelToolCallV1 {
                     result: ModelToolResultV1 {
+                        images: Vec::new(),
                         call_id: call.call_id.clone(),
                         content: json!({
                             "error": "user_rejected",
@@ -1972,6 +1986,7 @@ impl BoundFileToolAuthorityV1 {
         };
         Ok(SettledModelToolCallV1 {
             result: ModelToolResultV1 {
+                images: image_tools::result_images(&call.capability_id, &outcome.result, outcome.is_error)?,
                 call_id: call.call_id.clone(),
                 content: outcome.result.clone(),
                 is_error: outcome.is_error,
@@ -2104,6 +2119,7 @@ fn definitely_not_started_tool_result(
     const DETAIL: &str = "Tool invocation was rejected before execution started.";
     SettledModelToolCallV1 {
         result: ModelToolResultV1 {
+            images: Vec::new(),
             call_id: call.call_id.clone(),
             content: json!({
                 "error": "tool_not_started",
@@ -2463,6 +2479,7 @@ impl FileToolDispatcherV1 {
             )
             .map_err(|error| error.to_string())?;
             match &self.record.binding.limit {
+                StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::Screenshot => self.acquire_image(&files, cancellation),
                 StoredFileToolLimitV1::Context { maximum_bytes } => self.retrieve_context(*maximum_bytes, cancellation),
                 StoredFileToolLimitV1::WorkspaceInstructions { .. } => Err("automatic context plugins are prepared by the Agent lifecycle and cannot be invoked".into()),
                 StoredFileToolLimitV1::Skill { configuration } => {
@@ -3563,7 +3580,8 @@ fn validate_call_arguments(
             ));
         }
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
-        StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
+        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
+        StoredFileToolLimitV1::Screenshot => BTreeSet::from(["operation", "target"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
         StoredFileToolLimitV1::List { .. } => BTreeSet::from(["pattern"]),
         StoredFileToolLimitV1::Grep { .. } => BTreeSet::from(["pattern"]),
@@ -3589,6 +3607,7 @@ fn validate_call_arguments(
     };
     let observed_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
     let valid_keys = match binding.limit {
+        StoredFileToolLimitV1::Screenshot => observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation"),
         StoredFileToolLimitV1::Subagent { .. } => {
             // The subagent context slice is optional; the task is required.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
@@ -3625,6 +3644,16 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
+        StoredFileToolLimitV1::ImageRead => {
+            if object.get("path").and_then(Value::as_str).is_none() { return Err(invalid_tool("image path must be text")); }
+        },
+        StoredFileToolLimitV1::Screenshot => {
+            match object.get("operation").and_then(Value::as_str) {
+                Some("list") if !object.contains_key("target") => {},
+                Some("capture") if object.get("target").and_then(Value::as_str).is_some_and(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control)) => {},
+                _ => return Err(invalid_tool("use operation=list, or operation=capture with a listed target")),
+            }
+        },
         StoredFileToolLimitV1::Context { .. } => {},
         StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
             return Err(invalid_tool(
@@ -4113,6 +4142,8 @@ fn revalidate_optional_branch(
 fn scope_for(capability_id: &str) -> &'static str {
     match capability_id {
         "tool.workspace_instructions" => "workspace_instructions.read",
+        image_tools::READ => "project.image.read",
+        image_tools::SCREENSHOT => "screen.capture",
         FILE_READ_CAPABILITY_ID => FILE_READ_SCOPE,
         FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_SCOPE,
         FILE_LIST_CAPABILITY_ID => FILE_LIST_SCOPE,
@@ -4353,6 +4384,7 @@ mod tests {
         );
         let runtime = FileToolAuthorityRuntimeV1::open(
             &root.path().join("tool-invocations.sqlite3"),
+            crate::runtime::images::ChatImageStore::new(root.path()),
             projects.clone(),
             host,
             descriptors.clone(),
@@ -4623,6 +4655,7 @@ mod tests {
         let exchange = ModelToolExchangeV1 {
             assistant_content: vec![ModelAssistantContentV1::ToolCall { call }],
             results: vec![ModelToolResultV1 {
+                images: Vec::new(),
                 call_id: "call.search-bound".into(),
                 content: json!({
                     "path":arguments["path"],

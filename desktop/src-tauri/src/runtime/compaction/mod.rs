@@ -15,6 +15,9 @@ pub(crate) use target::freeze_summary_target;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Metadata {
+    /// Frozen model capability shared with image acquisition tools.
+    #[serde(default)]
+    pub image_input: bool,
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_target: Option<FrozenSummaryTarget>,

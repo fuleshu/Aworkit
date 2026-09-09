@@ -448,6 +448,7 @@ impl WorkflowExecutionPipeline {
         );
         let file_tool_authority = FileToolAuthorityRuntimeV1::open(
             &database,
+            super::images::ChatImageStore::new(&root),
             projects.clone(),
             host.clone(),
             file_tool_descriptors.clone(),

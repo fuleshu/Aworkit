@@ -29,6 +29,7 @@ fn exchange(text: &str) -> ModelToolExchangeV1 {
             },
         }],
         results: vec![ModelToolResultV1 {
+            images: Vec::new(),
             call_id: "c1".into(),
             content: json!(text),
             is_error: false,

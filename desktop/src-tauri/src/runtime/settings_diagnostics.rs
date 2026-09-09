@@ -99,12 +99,19 @@ pub(crate) fn probe_tool_with_api_key(
     let outcome = if bindings_supported {
         match tool_id.as_str() {
             "tool.files.read" | "tool.files.search" | "tool.files.list" | "tool.files.grep"
-            | "tool.files.edit" | "tool.files.write" => {
+            | "tool.files.edit" | "tool.files.write" | "tool.image.read" => {
                 probe_project_file_tool(&request.tool, request.project.as_ref())
             }
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.screenshot" => request.tool.validate_implemented_contract().and_then(|()| {
+                if cfg!(target_os = "windows") {
+                    Ok(("adapter.screenshot".into(), "Windows screenshot adapter is installed. Use the tool to list targets and capture a visible window or monitor; this test takes no screenshot.".into()))
+                } else {
+                    Err("Screenshot capture is currently available on Windows only.".into())
+                }
+            }),
             "tool.context" => request.tool.validate_implemented_contract().map(|()|("adapter.context.read".into(), "Context retrieval is available for immutable evidence in the current Chat node and child scope. No external connection is needed.".into())),
             "tool.workspace_instructions" => (|| {
                 let config = super::tool_loop::workspace_instructions::configuration(

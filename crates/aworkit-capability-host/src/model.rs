@@ -449,10 +449,11 @@ impl FrozenModelGateway {
                 &request.input,
                 self.image_resolver.as_deref(),
             )?;
+            crate::model_images::project_tool_images(&mut materialized)?;
             // The validator bounds base and positioned images together; resolve
             // positioned references only after the same observer/authority checks.
             let positioned = serde_json::Value::Array(
-                request
+                materialized
                     .context_messages
                     .iter()
                     .map(|c| c.message())

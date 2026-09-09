@@ -50,6 +50,7 @@ fn skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable() {
     let database = root.path().join("invocations.sqlite3");
     let runtime = FileToolAuthorityRuntimeV1::open(
         &database,
+        crate::runtime::images::ChatImageStore::new(root.path()),
         projects.clone(),
         host,
         descriptors.clone(),

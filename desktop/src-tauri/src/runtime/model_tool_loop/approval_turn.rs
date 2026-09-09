@@ -70,6 +70,7 @@ pub(super) fn resume_pending_turn(
             // user rejection. Retain a correlated non-execution result for each
             // request so the model can reconsider using the user's reason.
             exchange.results.push(ModelToolResultV1 {
+                images: Vec::new(),
                 call_id: call.call_id.clone(),
                 content: serde_json::json!({"error":"not_executed_after_denial",
                     "detail":"Not executed: an earlier action in this response was denied. Reconsider the remaining requests in light of the user's reason. The available tool definitions are unchanged."}),

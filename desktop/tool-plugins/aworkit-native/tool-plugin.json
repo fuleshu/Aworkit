@@ -1127,6 +1127,87 @@
         },"required":["operation"]
       },
       "providerName":"aworkit_context"
+    },
+    {
+      "id": "tool.image.read",
+      "name": "Image read",
+      "description": "Read a PNG, JPEG or WebP image from the project and show it to the vision model.",
+      "instructions": "Use this tool when you need to inspect a project image. A vision-capable model is required. The result includes the actual image, not just text metadata.",
+      "executor": "image.read",
+      "requiresProject": true,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "project_files"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Reads images only inside the selected project.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Image path relative to the project root."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "providerName": "aworkit_read_image"
+    },
+    {
+      "id": "tool.screenshot",
+      "name": "Screenshot",
+      "description": "List visible windows and monitors, or capture a selected target as an image for the vision model. Windows only.",
+      "instructions": "Use operation=list to discover visible windows and monitors. Choose the target requested by the user, then call operation=capture with its exact identifier. Captures contain visible desktop pixels: keep the target unobscured. Do not infer hidden or protected content. A vision-capable model is required for capture.",
+      "executor": "screenshot",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "screen_capture"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Capture scope",
+          "help": "Captures visible desktop pixels through the selected tool approval policy. Keep the selected target unobscured.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "capture"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Exact target identifier from operation=list; required only for capture."
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "providerName": "aworkit_screenshot"
     }
   ]
 }

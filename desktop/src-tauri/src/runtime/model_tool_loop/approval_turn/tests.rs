@@ -93,6 +93,7 @@ struct Authority {
 fn settled(call: &ModelToolCallV1, approved: bool) -> SettledModelToolCallV1 {
     SettledModelToolCallV1 {
         result: ModelToolResultV1 {
+            images: Vec::new(),
             call_id: call.call_id.clone(),
             content: if approved {
                 json!({"project":"Aworkit"})

@@ -6,6 +6,18 @@ import {
 import type { RuntimeEvent } from "./corePort";
 
 describe("canonical semantic timeline projection", () => {
+  it("projects settled native tool images and rejects forged or failed previews", () => {
+    const image = { id: "a".repeat(64), name: "screenshot.png", mimeType: "image/png", byteLength: 123 };
+    const project = (capabilityId: string, images: unknown, isError = false) => projectSemanticTimeline([
+      span(1, "span.started", "image", { spanKind: "tool_call", semanticRole: "tool", title: "Screenshot", capabilityId }),
+      span(2, "span.completed", "image", { status: "completed", hasOutput: true, output: { callId: "capture.1", content: { image }, images, isError } }),
+    ])[0];
+    expect(project("tool.screenshot", [image]).attachments).toEqual([image]);
+    expect(project("tool.image.read", [image]).attachments).toEqual([image]);
+    expect(project("mcp.untrusted", [image]).attachments).toBeUndefined();
+    expect(project("tool.screenshot", [image], true).attachments).toBeUndefined();
+    expect(project("tool.screenshot", [{ ...image, id: "../escape" }]).attachments).toBeUndefined();
+  });
   it("derives live running state from started spans until their terminal fact", () => {
     const started = span(1, "span.started", "span.run.live", {
       spanKind: "run",

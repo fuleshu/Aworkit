@@ -134,11 +134,15 @@ export function estimateContext(document: ContextDocument) {
     for (const block of Array.isArray(exchange.assistantContent) ? exchange.assistantContent.map(record) : []) {
       messages += 4 + (block.kind === "text" ? tokens(block.text ?? "") : tokens(record(block.call).name ?? "") + tokens(record(block.call).arguments ?? {}));
     }
-    for (const result of Array.isArray(exchange.results) ? exchange.results.map(record) : []) messages += resultTokens(result.content) + 8;
+    for (const result of Array.isArray(exchange.results) ? exchange.results.map(record) : []) {
+      messages += resultTokens(result.content) + 8;
+      if (Array.isArray(result.images)) messages += result.images.reduce<number>((n,image)=>n+tokens(image)+4,0);
+    }
   }
   for (const message of document.contextMessages) messages += tokens(message.content) + 8 + (message.images ?? []).reduce<number>((n,image)=>n+tokens(image)+4,0);
   if (document.retryNotice) messages += tokens(document.retryNotice) + 8;
-  const hasImages = document.input.messages.some(m => m.images?.length) || document.contextMessages.some(m => m.images?.length);
+  const hasImages = document.input.messages.some(m => m.images?.length) || document.contextMessages.some(m => m.images?.length)
+    || document.exchanges.some(e => Array.isArray(e.results) && e.results.some(r => Array.isArray(record(r).images) && (record(r).images as unknown[]).length > 0));
   return { system, tools, messages, total: system + tools + messages, hasImages: Boolean(hasImages) };
 }
 

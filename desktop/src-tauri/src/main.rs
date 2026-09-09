@@ -674,6 +674,16 @@ fn main() {
         .nth(1)
         .map(PathBuf::from);
     let mut context = tauri::generate_context!();
+    // Keep an isolated screenshot QA window unobscured without changing normal
+    // app focus or adding renderer permission to control other windows.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("AWORKIT_QA_PROFILE").is_some()
+        && std::env::var("AWORKIT_QA_TOPMOST").as_deref() == Ok("1")
+    {
+        for window in &mut context.config_mut().app.windows {
+            window.always_on_top = true;
+        }
+    }
     #[cfg(debug_assertions)]
     if qa_report.is_some() || std::env::var("AWORKIT_QA_HIDE_WINDOW").as_deref() == Ok("1") {
         for window in &mut context.config_mut().app.windows {

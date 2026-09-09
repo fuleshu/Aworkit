@@ -3,6 +3,8 @@
 mod compaction_integration;
 #[path = "../compression/integration_tests.rs"]
 mod compression_integration;
+#[path = "../tool_loop/image_tools_tests.rs"]
+mod image_tools_tests;
 use super::*;
 use crate::runtime::pipeline::WorkflowMessageV1;
 use crate::runtime::semantic_events::{
@@ -18,7 +20,8 @@ struct Fixture {
     committer: Arc<dyn SemanticEventCommitter>,
 }
 impl Fixture {
-    fn new() -> Self {
+    fn new() -> Self { Self::with_tools(&[ID, FILE_READ_CAPABILITY_ID]) }
+    fn with_tools(ids: &[&str]) -> Self {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
         std::fs::create_dir_all(workspace.join("src")).unwrap();
@@ -51,6 +54,7 @@ impl Fixture {
         );
         let runtime = FileToolAuthorityRuntimeV1::open(
             &root.path().join("events.sqlite3"),
+            crate::runtime::images::ChatImageStore::new(root.path()),
             projects.clone(),
             host,
             descriptors.clone(),
@@ -60,7 +64,7 @@ impl Fixture {
         )
         .unwrap();
         let bindings = freeze_file_tool_bindings(
-            &[ID, FILE_READ_CAPABILITY_ID]
+            &ids
                 .iter()
                 .map(|id| {
                     let entry = crate::runtime::tool_registry::native_tool(id).unwrap();
@@ -131,7 +135,7 @@ impl Fixture {
             authority,
             agent: AgentContextV1 {
                 node_id: "agent.1".into(),
-                tool_ids: vec![ID.into(), FILE_READ_CAPABILITY_ID.into()],
+                tool_ids: ids.iter().map(|id|(*id).into()).collect(),
                 child: None,
             },
             committer,

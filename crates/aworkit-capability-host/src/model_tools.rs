@@ -92,6 +92,10 @@ pub struct ModelToolResultV1 {
     pub call_id: String,
     pub content: Value,
     pub is_error: bool,
+    /// Immutable images produced by this settled tool. Provider dispatch projects
+    /// them after the complete exchange, retaining call/result adjacency.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::model_images::ImageAttachmentV1>,
 }
 
 /// Ordered assistant content retained between tool turns.
@@ -365,23 +369,45 @@ fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), Provider
         .into_iter()
         .flat_map(|m| m.images.into_iter().map(|image| image.attachment))
         .collect::<Vec<_>>();
+    let mut compact_contexts = Vec::new();
     for context in &request.context_messages {
         if !matches!(context.role.as_deref(), None | Some("user" | "assistant")) {
             return Err(invalid_tool_request());
         }
-        images.extend(
-            normalize_context_message(&context.message())?
-                .images
-                .into_iter()
-                .map(|image| image.attachment),
-        );
+        let references = normalize_context_message(&context.message())?
+            .images
+            .into_iter()
+            .map(|image| image.attachment)
+            .collect::<Vec<_>>();
+        // Provider adapters validate again after image materialization. Image
+        // bytes have their own bound and must not consume the text-only budget.
+        compact_contexts.push(ModelToolContextV1 {
+            after_exchanges: context.after_exchanges,
+            after_input_messages: context.after_input_messages,
+            instruction_event_id: context.instruction_event_id.clone(),
+            content: context.content.clone(),
+            role: context.role.clone(),
+            images: references
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| invalid_tool_request())?,
+        });
+        images.extend(references);
     }
+    images.extend(
+        request
+            .exchanges
+            .iter()
+            .flat_map(|e| &e.results)
+            .flat_map(|r| r.images.clone()),
+    );
     crate::model_images::validate_image_attachments(&images)?;
     request.projected_input()?;
     if request.context_messages.iter().any(|message| {
         message.after_exchanges > request.exchanges.len()
             || (message.content.is_empty() && message.images.is_empty())
-    }) || serde_json::to_vec(&request.context_messages)
+    }) || serde_json::to_vec(&compact_contexts)
         .map_err(|_| invalid_tool_request())?
         .len()
         > MAX_TEXT_CONTENT_BYTES

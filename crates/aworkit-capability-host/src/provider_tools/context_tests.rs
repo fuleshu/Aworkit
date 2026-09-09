@@ -11,6 +11,38 @@ use crate::{
 use serde_json::json;
 
 #[test]
+fn materialized_image_context_uses_image_budget_and_still_bounds_metadata() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha2::{Digest, Sha256};
+    let mut bytes = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC").unwrap();
+    bytes.resize(4 * 1024 * 1024, 0);
+    let image = json!({"id":format!("{:x}",Sha256::digest(&bytes)),"name":"large.png","mimeType":"image/png","byteLength":bytes.len(),"data":STANDARD.encode(&bytes)});
+    let mut request = ModelToolRequestV1 {
+        input: json!({"messages":[{"role":"user","content":"Inspect"}]}),
+        parameters: Default::default(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        retry_notice: None,
+        context_messages: vec![ModelToolContextV1 {
+            content: "Image evidence".into(),
+            images: vec![image],
+            ..Default::default()
+        }],
+    };
+    request.validate().unwrap();
+    // Actual provider translation verifies the stored content hash and image bytes.
+    openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap();
+    request.context_messages[0].content = "x".repeat(4 * 1024 * 1024 + 1);
+    assert!(request.validate().is_err());
+    request.context_messages[0].content = "Image evidence".into();
+    request.context_messages[0].images = vec![request.context_messages[0].images[0].clone(); 4];
+    assert!(
+        request.validate().is_err(),
+        "aggregate image budget still applies"
+    );
+}
+
+#[test]
 fn historical_instruction_references_keep_position_without_callable_schemas() {
     let request = ModelToolRequestV1 {
         input: json!({"messages":[
@@ -75,6 +107,7 @@ fn durable_catalog_and_invocation_context_keep_append_only_provider_order() {
         exchanges: vec![ModelToolExchangeV1 {
             assistant_content: vec![ModelAssistantContentV1::ToolCall { call }],
             results: vec![ModelToolResultV1 {
+                images: Vec::new(),
                 call_id: "call.1".into(),
                 content: json!("loaded body"),
                 is_error: false,

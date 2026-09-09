@@ -1171,6 +1171,15 @@ impl BuiltInToolConfigurationV2 {
                 require_config_string(self, "authorityMode", "run_subagent")?;
                 require_config_bool(self, "requiresApproval", true)
             }
+            "tool.image.read" | "tool.screenshot" => {
+                let manifest = super::tool_registry::native_tool(&self.id)
+                    .ok_or_else(|| format!("missing native tool '{}'", self.id))?;
+                require_tool_project_scope(self, manifest.requires_project)?;
+                if self.configuration != manifest.configuration {
+                    return Err(format!("invalid configuration for '{}'", self.id));
+                }
+                Ok(())
+            }
             _ => Err(format!("built-in tool '{}' is not implemented", self.id)),
         }
     }
@@ -2633,7 +2642,9 @@ mod tests {
                 "tool.subagent",
                 "tool.skill",
                 "tool.workspace_instructions",
-                "tool.context"
+                "tool.context",
+                "tool.image.read",
+                "tool.screenshot"
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));

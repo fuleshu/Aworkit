@@ -1,5 +1,36 @@
 # Chat images
 
+## Image tools
+
+Enable **Image read** and **Screenshot** in **Settings → Tools**, bind them to the
+workflow's Agent, and start a new Chat with a vision-capable model. Existing Chats
+keep their frozen tool selection and model capabilities.
+
+- `aworkit_read_image({"path":"assets/example.png"})` reads an image relative to
+  the selected project, using the same project boundary as file tools.
+- `aworkit_screenshot({"operation":"list"})` lists available Windows windows and
+  monitors with target identifiers, titles and physical pixel bounds.
+- `aworkit_screenshot({"operation":"capture","target":"<identifier from list>"})`
+  captures that selected target through the Chat's normal tool approval policy.
+
+Screenshots currently capture **visible desktop pixels on Windows**. Keep the
+chosen window visible and unobscured; overlapping windows will appear in the
+capture. Minimized windows are excluded, partially offscreen windows are clipped,
+and unavailable targets must be listed again. No mouse or keyboard input is sent.
+Other platforms report that screenshot capture is unsupported.
+
+Both tools return clickable image previews and send the actual image to the next
+model request. Their results retain immutable references in settled tool history,
+so replay and reopening do not read the source or take another screenshot. They
+use the same image limits and storage as attachments below. Screenshot target
+listing itself does not require vision; reading or capturing an image does.
+
+From `desktop`, run `node scripts/native-image-tools-smoke.mjs` to exercise the native editor, approvals,
+window capture, provider image bytes, history restart and previews against an
+isolated profile and local fixture provider.
+
+## Attachments
+
 Use **+ → Add image** in the Chat composer to select one or more files, or paste
 an image from the OS clipboard with the normal paste shortcut. Attachments appear
 as removable thumbnails before sending and remain visible in the submitted user

@@ -248,6 +248,7 @@ function spanItem(
   };
   return {
     id: span.spanId,
+    attachments: toolImageAttachments(span.metadata.capabilityId, output),
     sequence: span.firstSequence,
     spanId: span.spanId,
     parentSpanId: span.parentSpanId,
@@ -265,6 +266,13 @@ function spanItem(
     raw: span.sourceEvents,
     metadata,
   };
+}
+
+/** Only trusted native image tools provide previewable local image references. */
+function toolImageAttachments(capabilityId: unknown, output: unknown): TimelineItem["attachments"] {
+  if (!["tool.image.read", "tool.screenshot"].includes(String(capabilityId)) || !isRecord(output) || output.isError === true || !output.images) return undefined;
+  const parsed = imageAttachmentsSchema.safeParse(output.images);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**

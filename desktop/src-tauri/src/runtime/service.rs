@@ -1135,7 +1135,7 @@ impl DesktopRuntime {
         };
         execution_request.model_parameters = context.model_snapshot.parameters.clone();
         if context.compaction_version.is_some() {
-            execution_request.model_context = json!({"contextWindow":context.model_snapshot.context_window,"policy":context.model_snapshot.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
+            execution_request.model_context = json!({"imageInput":context.model_snapshot.capabilities.iter().any(|c|c == "vision"),"contextWindow":context.model_snapshot.context_window,"policy":context.model_snapshot.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
         }
         if manual {
             execution_request.compact_node = Some(string_field(&input.payload, "nodeId")?.into());

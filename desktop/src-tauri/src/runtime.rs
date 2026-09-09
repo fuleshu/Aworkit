@@ -19,6 +19,7 @@ mod graph_pass;
 mod history;
 mod history_index;
 mod images;
+mod screen_capture;
 mod mcp;
 mod mcp_tools;
 mod model_tool_loop;

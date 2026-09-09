@@ -29,7 +29,7 @@ fn attachment() -> ImageAttachmentV1 {
 #[test]
 fn images_reach_all_protocols_in_plain_and_tool_turns() {
     for kind in ["openai", "anthropic", "gemini"] {
-        let (origin, server) = start_fixture(2, move |index, request| {
+        let (origin, server) = start_fixture(3, move |index, request| {
             assert_eq!(request.method, "POST");
             assert!(request.headers.contains_key("content-type"));
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -38,43 +38,77 @@ fn images_reach_all_protocols_in_plain_and_tool_turns() {
             } else {
                 &body["messages"]
             };
-            let first = if kind == "gemini" {
-                &messages[0]["parts"]
-            } else {
-                &messages[0]["content"]
-            };
-            let last = if kind == "gemini" {
-                &messages[2]["parts"]
-            } else {
-                &messages[2]["content"]
-            };
-            assert_eq!(first.as_array().unwrap().len(), 2);
-            assert_eq!(
-                last.as_array().unwrap().len(),
-                2,
-                "image-only last turn has two images"
-            );
-            for part in [first[0].clone(), last[0].clone(), last[1].clone()] {
-                match kind {
-                    "openai" => {
-                        assert_eq!(part["type"], "image_url");
-                        assert_eq!(
-                            part["image_url"]["url"],
-                            format!("data:image/png;base64,{PNG}")
-                        );
-                    }
-                    "anthropic" => {
-                        assert_eq!(part["source"]["type"], "base64");
-                        assert_eq!(part["source"]["media_type"], "image/png");
-                        assert_eq!(part["source"]["data"], PNG);
-                    }
-                    _ => {
-                        assert_eq!(part["inlineData"]["mimeType"], "image/png");
-                        assert_eq!(part["inlineData"]["data"], PNG);
+            if index < 2 {
+                let first = if kind == "gemini" {
+                    &messages[0]["parts"]
+                } else {
+                    &messages[0]["content"]
+                };
+                let last = if kind == "gemini" {
+                    &messages[2]["parts"]
+                } else {
+                    &messages[2]["content"]
+                };
+                assert_eq!(first.as_array().unwrap().len(), 2);
+                assert_eq!(
+                    last.as_array().unwrap().len(),
+                    2,
+                    "image-only last turn has two images"
+                );
+                for part in [first[0].clone(), last[0].clone(), last[1].clone()] {
+                    match kind {
+                        "openai" => {
+                            assert_eq!(part["type"], "image_url");
+                            assert_eq!(
+                                part["image_url"]["url"],
+                                format!("data:image/png;base64,{PNG}")
+                            );
+                        }
+                        "anthropic" => {
+                            assert_eq!(part["source"]["type"], "base64");
+                            assert_eq!(part["source"]["media_type"], "image/png");
+                            assert_eq!(part["source"]["data"], PNG);
+                        }
+                        _ => {
+                            assert_eq!(part["inlineData"]["mimeType"], "image/png");
+                            assert_eq!(part["inlineData"]["data"], PNG);
+                        }
                     }
                 }
+            } else {
+                // Every protocol must keep the call/result adjacent, then send
+                // the tool image as labeled user evidence with actual bytes.
+                assert_eq!(messages.as_array().unwrap().len(), 4);
+                let last = &messages[3];
+                assert_eq!(last["role"], "user");
+                let parts = if kind == "gemini" {
+                    &last["parts"]
+                } else {
+                    &last["content"]
+                };
+                let data = match kind {
+                    "openai" => {
+                        assert_eq!(messages[2]["role"], "tool");
+                        assert_eq!(messages[2]["tool_call_id"], "image.1");
+                        parts[0]["image_url"]["url"]
+                            .as_str()
+                            .unwrap()
+                            .strip_prefix("data:image/png;base64,")
+                            .unwrap()
+                    }
+                    "anthropic" => {
+                        assert_eq!(messages[2]["content"][0]["tool_use_id"], "image.1");
+                        parts[0]["source"]["data"].as_str().unwrap()
+                    }
+                    _ => {
+                        assert_eq!(messages[2]["parts"][0]["functionResponse"]["name"], "test");
+                        parts[0]["inlineData"]["data"].as_str().unwrap()
+                    }
+                };
+                assert_eq!(data, PNG);
+                assert!(parts.to_string().contains("tool evidence"));
             }
-            assert_eq!(body.get("tools").is_some(), index == 1);
+            assert_eq!(body.get("tools").is_some(), index > 0);
             match kind {
                 "openai" => {
                     assert_eq!(request.path, "/v1/chat/completions");
@@ -173,6 +207,43 @@ fn images_reach_all_protocols_in_plain_and_tool_turns() {
                 },
             )
             .unwrap();
+        let request = ModelToolRequestV1 {
+            input: json!({"messages":[{"role":"user","content":"Read the image"}]}),
+            parameters: Default::default(),
+            tools: vec![ModelToolDefinitionV1 {
+                capability_id: "tool.test".into(),
+                name: "test".into(),
+                description: "Test".into(),
+                input_schema: json!({"type":"object"}),
+            }],
+            exchanges: vec![ModelToolExchangeV1 {
+                assistant_content: vec![ModelAssistantContentV1::ToolCall {
+                    call: ModelToolCallV1 {
+                        call_id: "image.1".into(),
+                        provider_call_id: Some("image.1".into()),
+                        capability_id: "tool.test".into(),
+                        name: "test".into(),
+                        arguments: json!({}),
+                        provider_context: None,
+                    },
+                }],
+                results: vec![ModelToolResultV1 {
+                    call_id: "image.1".into(),
+                    content: json!({"image":attachment()}),
+                    is_error: false,
+                    images: vec![attachment()],
+                }],
+            }],
+            context_messages: Vec::new(),
+            retry_notice: None,
+        };
+        let canonical = request.clone();
+        gateway.execute_tool_turn(&plan, &request).unwrap();
+        assert_eq!(
+            request, canonical,
+            "provider projection must not mutate durable history"
+        );
+        assert!(!serde_json::to_string(&request).unwrap().contains(PNG));
         server.join().unwrap();
     }
 }

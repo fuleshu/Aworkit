@@ -88,6 +88,7 @@ fn exchange(events: &[ModelToolEventV1]) -> ModelToolExchangeV1 {
     ModelToolExchangeV1 {
         assistant_content,
         results: vec![ModelToolResultV1 {
+            images: Vec::new(),
             call_id,
             content: Value::String("project scope denied the requested path".to_owned()),
             is_error: true,

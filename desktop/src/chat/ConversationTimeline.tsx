@@ -469,6 +469,7 @@ export function TimelineCard({
         </span>
       </button>
       <ActivityData item={item} />
+      <ImageAttachments images={item.attachments ?? []} />
       {item.kind === "approval" && item.action === "approve" ? (
         <ApprovalActions disabled={actionsDisabled}
           projectScope={typeof metadataOf(item).projectScope === "string" ? metadataOf(item).projectScope as string : undefined}
