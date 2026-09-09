@@ -218,7 +218,7 @@ describe("Chat native-port recovery contracts", () => {
     expect(onWorkflowChange).toHaveBeenCalledWith("workflow.test");
   });
 
-  it("blocks first Send when the saved workflow binds project tools but No project is selected", async () => {
+  it("submits the default Standard Agent with No project selected", async () => {
     const user = userEvent.setup();
     const intents: ChatIntent[] = [];
     render(
@@ -231,8 +231,7 @@ describe("Chat native-port recovery contracts", () => {
             workspaceKind: "local_directory",
           },
         ]}
-        workflowRequiresProject
-        nextCommandId={() => "command.project.required"}
+        nextCommandId={() => "command.projectless"}
         pending={false}
         stale={false}
         onSubmit={async (intent) => {
@@ -244,21 +243,10 @@ describe("Chat native-port recovery contracts", () => {
 
     await user.type(screen.getByRole("textbox", { name: "Chat input" }), "read it");
     const send = screen.getByRole("button", { name: "Send" });
-    const reason =
-      "Select a saved project before sending because the selected workflow binds project file tools.";
-    expect(send).toBeDisabled();
-    expect(send).toHaveAttribute("title", reason);
-    expect(screen.queryByText(reason)).not.toBeInTheDocument();
-    expect(intents).toEqual([]);
-
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Project for the first Chat input" }),
-      "project.atlas",
-    );
     expect(send).toBeEnabled();
     await user.click(send);
     expect(intents).toEqual([
-      expect.objectContaining({ type: "start", projectId: "project.atlas" }),
+      expect.objectContaining({ type: "start", projectId: null, workflowId: "workflow.standard-agent" }),
     ]);
   });
 
@@ -484,12 +472,7 @@ describe("Chat native-port recovery contracts", () => {
     rendered.rerender(<ChatWorkspaceScreen {...screenProps} active={false} />);
     providerReady = true;
     rendered.rerender(<ChatWorkspaceScreen {...screenProps} active />);
-    await waitFor(() =>
-      expect(send).toHaveAttribute(
-        "title",
-        "Select a saved project before sending because the selected workflow binds project file tools.",
-      ),
-    );
+    await waitFor(() => expect(send).toBeEnabled());
     expect(workflowSnapshots).toBeGreaterThanOrEqual(3);
     expect(input).toHaveValue("preserve this draft");
   });

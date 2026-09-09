@@ -199,6 +199,7 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
 /// Native composition root for the currently supported desktop workflow.
 pub struct DesktopRuntime {
+    chat_workspaces: super::chat_workspace::ChatWorkspaceStore,
     tool_plugin_directory: std::path::PathBuf,
     approvals: super::approvals::ApprovalStore,
     images: super::images::ChatImageStore,
@@ -333,6 +334,7 @@ impl DesktopRuntime {
         std::fs::create_dir_all(&tool_plugin_directory)
             .map_err(|error| format!("Cannot create tool plugin folder: {error}"))?;
         let mut runtime = Self {
+            chat_workspaces: super::chat_workspace::ChatWorkspaceStore::new(&data_root),
             tool_plugin_directory,
             images: super::images::ChatImageStore::new(&data_root),
             approvals: super::approvals::ApprovalStore::open(
@@ -584,13 +586,11 @@ impl DesktopRuntime {
                     }
                 }
             }
-            let has_project = !selectable_projects(&self.documents.settings().projects).is_empty();
             let mcp_definitions =
                 preview_mcp_definitions(&workflow.document, self.documents.settings())?;
             let agent = freeze_graph_bindings(
                 &workflow.document,
                 self.documents.settings(),
-                has_project,
                 &mcp_definitions,
             )?;
             let model = resolved
@@ -605,17 +605,6 @@ impl DesktopRuntime {
                     .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
             )?;
             validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
-            if agent
-                .tools
-                .iter()
-                .any(|tool| tool.tool_snapshot.requires_project)
-                && !has_project
-            {
-                return Err(
-                    "the saved Agent uses project tools, but Settings has no eligible local project"
-                        .into(),
-                );
-            }
             Ok(())
         })();
         readiness
@@ -789,6 +778,11 @@ impl DesktopRuntime {
         let child_context = if let Some(parent_context) = parent_context.as_ref() {
             let mut child_context = parent_context.context.clone();
             child_context.identity = child.clone();
+            if child_context.chat_workspace.is_some() {
+                child_context.chat_workspace = Some(self.chat_workspaces.create(
+                    &self.project_coordinator, &child.chat_id,
+                )?);
+            }
             child_context.history_base_head = 0;
             child_context.start_command_id =
                 StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
@@ -1149,7 +1143,8 @@ impl DesktopRuntime {
         execution_request.workspace = context
             .project
             .as_ref()
-            .map(|project| project.workspace_binding.clone());
+            .map(|project| project.workspace_binding.clone())
+            .or_else(|| context.chat_workspace.clone());
         execution_request.project_branch = context
             .project
             .as_ref()
@@ -1915,7 +1910,6 @@ impl DesktopRuntime {
         let agent = freeze_graph_bindings(
             &workflow.document,
             self.documents.settings(),
-            project.is_some(),
             &mcp_definitions,
         )?;
         validate_model_capabilities(
@@ -1939,7 +1933,13 @@ impl DesktopRuntime {
                 field_names: metadata.field_names.clone(),
                 revision: metadata.revision,
             });
+        let chat_workspace = if project.is_none() {
+            Some(self.chat_workspaces.create(&self.project_coordinator, &identity.chat_id)?)
+        } else {
+            None
+        };
         let context = FrozenChatExecutionContextV1 {
+            chat_workspace,
             compaction_version: Some(1),
             summary_target: super::compaction::freeze_summary_target(
                 self.documents.settings(),
@@ -3579,7 +3579,6 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
 fn freeze_graph_bindings(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
-    has_project: bool,
     mcp_definitions: &BTreeMap<String, DiscoveredMcpDefinition>,
 ) -> Result<FrozenWorkflowAgentV1, String> {
     let nodes = workflow
@@ -3665,11 +3664,6 @@ fn freeze_graph_bindings(
                     "workflow tool '{tool_id}' is disabled in saved Settings"
                 ));
             }
-            if configured.requires_project && !has_project {
-                return Err(format!(
-                    "workflow tool '{tool_id}' requires selecting a saved project before the first input"
-                ));
-            }
             let snapshot = super::tool_registry::freeze_settings(configured)?;
             tools.push(FrozenToolBindingV1 {
                 tool_id,
@@ -3694,7 +3688,7 @@ fn freeze_graph_bindings(
                 .iter()
                 .find(|tool| tool.id == child_id)
                 .ok_or_else(|| format!("subagent child tool '{child_id}' is not installed"))?;
-            if !configured.enabled || (configured.requires_project && !has_project) {
+            if !configured.enabled {
                 continue;
             }
             seen.insert(child_id.to_owned());
@@ -4372,6 +4366,7 @@ mod tests {
     mod context_model;
     mod credentialed_web_search;
     mod image_chat;
+    mod projectless;
 
     struct FixtureProvider {
         calls: AtomicUsize,
@@ -5014,7 +5009,7 @@ mod tests {
             .expect("bundled workflow");
         workflow["nodes"][1]["configuration"]["toolIds"] = json!([SUBAGENT_CAPABILITY_ID]);
 
-        let frozen = freeze_graph_bindings(&workflow, &settings, true, &BTreeMap::new())
+        let frozen = freeze_graph_bindings(&workflow, &settings, &BTreeMap::new())
             .expect("subagent freeze");
         assert_eq!(
             frozen
@@ -5155,28 +5150,7 @@ mod tests {
     }
 
     #[test]
-    fn project_file_tools_fail_before_provider_when_disabled_or_unscoped() {
-        let unscoped_root = TempDir::new().unwrap();
-        let unscoped_provider = Arc::new(FixtureProvider::new());
-        let mut unscoped = runtime(&unscoped_root, unscoped_provider.clone());
-        configure_project_read_workflow(&mut unscoped, None, true);
-        let error = unscoped
-            .command(send("chat.tool.unscoped", 0, "read notes.txt"))
-            .unwrap_err();
-        assert!(
-            error.contains("requires selecting a saved project"),
-            "{error}"
-        );
-        assert_eq!(unscoped_provider.calls.load(Ordering::SeqCst), 0);
-        assert!(
-            unscoped_provider
-                .execution_requests
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(unscoped.snapshot(0).unwrap().version, 0);
-
+    fn project_file_tools_fail_before_provider_when_disabled() {
         let disabled_root = TempDir::new().unwrap();
         let workspace = TempDir::new().unwrap();
         let disabled_provider = Arc::new(FixtureProvider::new());

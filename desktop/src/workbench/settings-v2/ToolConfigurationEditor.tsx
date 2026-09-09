@@ -12,7 +12,7 @@ export function ToolConfigurationEditor({ tool, configuration = true, onChange, 
   const manifest = findNativeTool(tool.id);
   if (!manifest) return <p role="alert">The tool plugin is unavailable.</p>;
   return <div className="settings-section-stack">
-    <p>{manifest.requiresProject ? "Execution: native, confined to the selected project." : manifest.execution === "native" ? "Execution: native Aworkit plugin." : "Execution: host process."}</p>
+    <p>{manifest.requiresProject ? "Execution: native, confined to the project or the Chat's private working folder." : manifest.execution === "native" ? "Execution: native Aworkit plugin." : "Execution: host process."}</p>
     <ToolOptionsEditor id={tool.id} value={tool.options} defaultInstructions={manifest.instructions} execution={manifest.execution}
       onPickCommand={onPickCommand} onChange={options => onChange({ ...tool, options })} />
     {configuration && <div className="settings-grid two-columns">{manifest.fields.map(field => {

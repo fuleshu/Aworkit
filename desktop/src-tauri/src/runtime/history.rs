@@ -106,6 +106,9 @@ pub(crate) struct FrozenChatExecutionContextV1 {
     pub settings_version: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<FrozenProjectScopeV1>,
+    /// Absent in legacy Chats; never retrofit workspace authority into old snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_workspace: Option<aworkit_trusted_core::WorkspaceBindingV1>,
     pub workflow_id: String,
     pub workflow_name: String,
     pub workflow_version: u64,
@@ -1767,6 +1770,12 @@ fn validate_frozen_context_record(
     if let Some(project) = &context.project {
         validate_frozen_project_scope(project)?;
     }
+    if let Some(workspace) = &context.chat_workspace {
+        if context.project.is_some() {
+            return Err("stored Chat cannot bind both a project and a private working folder".into());
+        }
+        super::chat_workspace::validate_chat_workspace(workspace, &context.identity.chat_id)?;
+    }
     let mut tool_ids = BTreeSet::new();
     if context.tools.iter().any(|tool| {
         let frozen_refs = tool
@@ -1811,6 +1820,7 @@ fn validate_frozen_context_record(
         .iter()
         .any(|tool| tool.tool_snapshot.requires_project)
         && context.project.is_none()
+        && context.chat_workspace.is_none()
         || !(30_000..=3_600_000).contains(&context.run_deadline_millis)
     {
         return Err("stored frozen Chat Agent execution context is invalid".into());

@@ -28,7 +28,6 @@ import {
   type WorkflowCorePort,
   type WorkflowLibraryPort,
 } from "../workbench/corePort";
-import { bindsProjectTools } from "../workbench/workflowExecution";
 
 interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;
@@ -101,9 +100,7 @@ export function ChatWorkspaceScreen({
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
     null,
   );
-  const [workflowRequiresProject, setWorkflowRequiresProject] = useState<
-    boolean | null
-  >(nativeWorkflowPort === null ? false : null);
+  const [workflowChecking, setWorkflowChecking] = useState(nativeWorkflowPort !== null);
   const [workflowReadinessError, setWorkflowReadinessError] = useState<
     string | null
   >(null);
@@ -195,29 +192,29 @@ export function ChatWorkspaceScreen({
   useEffect(() => {
     if (!active) return;
     if (nativeWorkflowPort === null || selectedWorkflowId === null) {
-      setWorkflowRequiresProject(false);
+      setWorkflowChecking(false);
       setWorkflowReadinessError(null);
       return;
     }
     let current = true;
-    setWorkflowRequiresProject(null);
+    setWorkflowChecking(true);
     setWorkflowReadinessError(null);
     void nativeWorkflowPort
       .snapshot(selectedWorkflowId)
-      .then(({ document, editable }) => {
+      .then(({ editable }) => {
         if (!current) return;
         if (!editable) {
-          setWorkflowRequiresProject(null);
+          setWorkflowChecking(false);
           setWorkflowReadinessError(
             "The selected workflow uses a read-only schema and cannot run.",
           );
           return;
         }
-        setWorkflowRequiresProject(bindsProjectTools(document));
+        setWorkflowChecking(false);
       })
       .catch(() => {
         if (current) {
-          setWorkflowRequiresProject(null);
+          setWorkflowChecking(false);
           setWorkflowReadinessError(
             "The selected workflow could not be checked; resynchronize before sending.",
           );
@@ -490,7 +487,7 @@ export function ChatWorkspaceScreen({
             pending={runtime.pendingCommandIds.size > 0 && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0}
           workflows={workflows}
           defaultWorkflowId={defaultWorkflowId}
-          workflowRequiresProject={workflowRequiresProject}
+          workflowChecking={workflowChecking}
           workflowReadinessError={workflowReadinessError}
           nextCommandId={() => commandIds.createIntent("enqueue").commandId}
           onWorkflowChange={setSelectedWorkflowId}

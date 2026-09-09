@@ -32,7 +32,7 @@ interface ChatComposerProps {
   readonly pending: boolean;
   readonly workflows?: readonly WorkflowOption[];
   readonly defaultWorkflowId?: string | null;
-  readonly workflowRequiresProject?: boolean | null;
+  readonly workflowChecking?: boolean;
   readonly workflowReadinessError?: string | null;
   readonly nextCommandId: () => string;
   readonly onWorkflowChange?: (workflowId: string) => void;
@@ -55,7 +55,7 @@ export function ChatComposer({
   pending,
   workflows,
   defaultWorkflowId,
-  workflowRequiresProject = false,
+  workflowChecking = false,
   workflowReadinessError = null,
   nextCommandId,
   onWorkflowChange,
@@ -111,7 +111,7 @@ export function ChatComposer({
       : commandPending
         ? "The previous command is awaiting a committed core event."
         : canSubmit(state, chat, {
-            workflowRequiresProject,
+            workflowChecking,
             workflowReadinessError,
           });
   const send = async () => {
@@ -121,7 +121,7 @@ export function ChatComposer({
       const intent =
         retryIntent ??
         submitIntent(state, chat, nextCommandId(), {
-          workflowRequiresProject,
+          workflowChecking,
           workflowReadinessError,
         });
       setRetryIntent(intent);

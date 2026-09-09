@@ -131,18 +131,16 @@ describe("Milestone 08 Chat and Run details experience", () => {
       canSubmit(
         { ...emptyComposer, draft: "read it", projectId: null },
         { ...draftChat, projectId: null },
-        { workflowRequiresProject: true },
+        { workflowChecking: false },
       ),
-    ).toBe(
-      "Select a saved project before sending because the selected workflow binds project file tools.",
-    );
+    ).toBeNull();
     expect(
       canSubmit(
         { ...emptyComposer, draft: "read it", projectId: "project.atlas" },
         { ...draftChat, projectId: null },
-        { workflowRequiresProject: true },
+        { workflowChecking: true },
       ),
-    ).toBeNull();
+    ).toBe("Checking the saved workflow before sending.");
     expect(
       canSubmit(
         { ...emptyComposer, draft: "later" },

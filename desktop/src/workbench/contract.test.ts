@@ -23,7 +23,6 @@ import {
 } from "./workflow";
 import {
   assessNativeWorkflow,
-  simpleChatBindsProjectTools,
 } from "./workflowExecution";
 
 describe("desktop design and workflow contracts", () => {
@@ -391,13 +390,6 @@ describe("desktop design and workflow contracts", () => {
       executable: true,
       issues: [],
     });
-    expect(simpleChatBindsProjectTools(exact)).toBe(false);
-    expect(simpleChatBindsProjectTools(toolBound)).toBe(true);
-    expect(
-      assessNativeWorkflow(toolBound, { projectScoped: false }).issues,
-    ).toContainEqual(
-      expect.objectContaining({ code: "native_project_scope" }),
-    );
     const future = { ...exact, schemaVersion: 2 };
     expect(validateWorkflow(future)).toContainEqual(
       expect.objectContaining({ code: "unsupported_schema" }),

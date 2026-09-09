@@ -11,7 +11,7 @@ export interface ComposerState {
 }
 
 export interface ComposerReadiness {
-  readonly workflowRequiresProject?: boolean | null;
+  readonly workflowChecking?: boolean;
   readonly workflowReadinessError?: string | null;
 }
 
@@ -52,10 +52,8 @@ export function canSubmit(
       readiness.workflowReadinessError !== undefined
     )
       return readiness.workflowReadinessError;
-    if (readiness.workflowRequiresProject === null)
+    if (readiness.workflowChecking)
       return "Checking the saved workflow before sending.";
-    if (readiness.workflowRequiresProject === true && state.projectId === null)
-      return "Select a saved project before sending because the selected workflow binds project file tools.";
   }
   return null;
 }

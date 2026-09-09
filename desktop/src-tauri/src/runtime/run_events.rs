@@ -28,6 +28,7 @@ struct RunEventState {
     terminal_spans: BTreeSet<String>,
     parent_spans: BTreeMap<String, String>,
     active_model_node: Option<String>,
+    active_tool_node: Option<String>,
     agent_loop_span: Option<String>,
     active_subagent_span: Option<String>,
     tool_requests: BTreeMap<String, String>,
@@ -484,6 +485,11 @@ impl RunEventStream {
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .active_model_node = Some(span_id);
+            } else if activity.node_type == "tool" {
+                self.state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .active_tool_node = Some(span_id);
             }
             return;
         }
@@ -525,6 +531,9 @@ impl RunEventStream {
             state.active_model_node = None;
             state.agent_loop_span = None;
         }
+        if state.active_tool_node.as_deref() == Some(span_id.as_str()) {
+            state.active_tool_node = None;
+        }
     }
 
     pub(crate) fn publish_tool_started(&self, call: &aworkit_capability_host::ModelToolCallV1) {
@@ -541,9 +550,15 @@ impl RunEventStream {
             .tool_requests
             .get(&call.call_id)
             .cloned();
+        // Explicit Tool nodes own their calls directly. Creating an Agent loop
+        // here leaves an orphan span because no Agent node can settle that loop.
+        let graph_parent = {
+            let state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
+            state.active_subagent_span.clone().or_else(|| state.active_tool_node.clone())
+        };
         self.start_span(
             span_id.clone(),
-            Some(self.agent_loop_span()),
+            Some(graph_parent.unwrap_or_else(|| self.agent_loop_span())),
             span_kind,
             "tool",
             call.capability_id.clone(),
@@ -907,6 +922,7 @@ fn rehydrate_state(
 ) -> RunEventState {
     let mut state = RunEventState::default();
     let mut model_nodes = Vec::new();
+    let mut tool_nodes = Vec::new();
     let mut agent_loops = Vec::new();
     let mut subagents = Vec::new();
     for event in events {
@@ -926,6 +942,11 @@ fn rehydrate_state(
                 match event.payload.get("spanKind").and_then(Value::as_str) {
                     Some("agent_loop") => agent_loops.push(span_id.clone()),
                     Some("external_agent") => subagents.push(span_id.clone()),
+                    Some("graph_node")
+                        if event.payload.get("semanticRole").and_then(Value::as_str) == Some("tool") =>
+                    {
+                        tool_nodes.push(span_id);
+                    }
                     Some("graph_node")
                         if matches!(
                             event.payload.get("semanticRole").and_then(Value::as_str),
@@ -954,6 +975,10 @@ fn rehydrate_state(
         state.events.push(event);
     }
     state.active_model_node = model_nodes
+        .into_iter()
+        .rev()
+        .find(|span_id| !state.terminal_spans.contains(span_id));
+    state.active_tool_node = tool_nodes
         .into_iter()
         .rev()
         .find(|span_id| !state.terminal_spans.contains(span_id));
@@ -1000,6 +1025,7 @@ fn now_label() -> String {
 mod tests {
     use super::*;
     use crate::runtime::semantic_events::ephemeral_semantic_event_committer;
+    mod tool_nodes;
 
     #[test]
     fn model_tool_model_sequence_uses_sibling_spans_and_committed_order() {

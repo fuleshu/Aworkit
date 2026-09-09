@@ -1556,13 +1556,11 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
     }
 
     fn project_context(&self) -> Option<Value> {
-        self.context.approvals.project_name.as_ref().map(|name| {
-            json!({
-                "name":name,
-                "directory":self.context.workspace.root,
-                "branch":self.context.project_branch,
-            })
-        })
+        Some(json!({
+            "name":self.context.approvals.project_name,
+            "directory":self.context.workspace.root,
+            "branch":self.context.project_branch,
+        }))
     }
 
     fn prepare_context(

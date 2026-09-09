@@ -5372,7 +5372,10 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             observed_inputs.lock().expect("provider input")[0]["messages"][0],
-            json!({"role":"system","content":instructions})
+            json!({"role":"system","content":format!(
+                "{instructions}\n\nWorking folder for this Chat (no saved project selected):\n{}",
+                json!({"name":null,"directory":std::fs::canonicalize(root.path().join("core/unscoped-workspace")).unwrap(),"branch":null})
+            )})
         );
 
         let mut mismatched = request(metadata.clone());

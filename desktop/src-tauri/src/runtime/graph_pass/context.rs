@@ -154,9 +154,14 @@ pub(super) fn agent_messages(
 }
 
 pub(super) fn project_message(project: Value) -> WorkflowMessageV1 {
+    let label = if project.get("name").is_some_and(Value::is_null) {
+        "Working folder for this Chat (no saved project selected)"
+    } else {
+        "Current project selected for this Chat"
+    };
     WorkflowMessageV1 {
         role: "system".into(),
-        content: format!("Current project selected for this Chat:\n{project}"),
+        content: format!("{label}:\n{project}"),
         images: Vec::new(),
     }
 }

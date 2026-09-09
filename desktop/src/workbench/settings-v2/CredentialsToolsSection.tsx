@@ -429,7 +429,7 @@ export function ToolsSection({
               </label>
               <p>
                 {toolDescription(tool.id)} {tool.requiresProject
-                  ? "Project-scoped: workflows binding this tool require a saved project selection when the Chat starts."
+                  ? "Files are confined to the selected project or, with No project, the Chat's private working folder."
                   : ""}
               </p>
               <div className="provider-actions">

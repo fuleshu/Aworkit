@@ -17,8 +17,7 @@ export interface WorkflowExecutionIssue {
     | "native_condition"
     | "native_condition_routes"
     | "native_approval"
-    | "native_structure"
-    | "native_project_scope";
+    | "native_structure";
   readonly message: string;
 }
 
@@ -58,48 +57,6 @@ const PREDICATE_KINDS = new Set([
   "not",
 ]);
 
-const PROJECT_SCOPED_TOOL_IDS = [
-  "tool.files.read",
-  "tool.files.search",
-  "tool.files.list",
-  "tool.files.grep",
-  "tool.files.edit",
-  "tool.files.write",
-];
-
-function nodeBindsProjectTools(node: JsonObject | undefined): boolean {
-  const configuration = node?.configuration;
-  if (
-    typeof configuration !== "object" ||
-    configuration === null ||
-    Array.isArray(configuration)
-  )
-    return false;
-  const toolIds = (configuration as JsonObject).toolIds;
-  return (
-    Array.isArray(toolIds) &&
-    toolIds.some(
-      (toolId) =>
-        typeof toolId === "string" && PROJECT_SCOPED_TOOL_IDS.includes(toolId),
-    )
-  );
-}
-
-/** Reports whether any node in the document binds a project-scoped file tool. */
-export function bindsProjectTools(document: WorkflowDocument): boolean {
-  return document.nodes.some((node) => nodeBindsProjectTools(node));
-}
-
-/** Reports whether the selected workflow binds a project-scoped tool.
- * The seeded document is an ordinary configured workflow; this predicate only
- * exists for selection-aware composer UX. */
-export function simpleChatBindsProjectTools(
-  document: WorkflowDocument,
-): boolean {
-  const agent = document.nodes.find((node) => node.id === "agent.1");
-  return nodeBindsProjectTools(agent);
-}
-
 /**
  * Mirrors the native v1 executable-catalog validator without claiming
  * authority: any saved workflow document is executable when it passes the
@@ -108,7 +65,6 @@ export function simpleChatBindsProjectTools(
  */
 export function assessNativeWorkflow(
   document: WorkflowDocument,
-  context?: { readonly projectScoped?: boolean },
 ): WorkflowExecutionCompatibility {
   const issues: WorkflowExecutionIssue[] = [];
   if (document.schemaVersion !== 1)
@@ -466,16 +422,6 @@ export function assessNativeWorkflow(
         message: `Condition node '${node.id}' requires one true route and one false or fallback route.`,
       });
   }
-
-  if (
-    context?.projectScoped === false &&
-    bindsProjectTools(document)
-  )
-    issues.push({
-      code: "native_project_scope",
-      message:
-        "This workflow binds project file tools and requires a saved project selection when the Chat starts.",
-    });
 
   return { executable: issues.length === 0, issues };
 }
