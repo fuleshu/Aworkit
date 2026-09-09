@@ -477,6 +477,9 @@ const webSearchSettingsState = verifyWebSearchSettings
         settingsControlPresent: settingsControl !== undefined,
         toolsControlPresent: toolsControl !== undefined && toolsControl !== null,
         backendPresent: backend !== null,
+        backendValue: backend?.value ?? null,
+        backendGroups: [...(backend?.querySelectorAll('optgroup') ?? [])].map(group => group.label),
+        preferredApiProvider: document.getElementById('tool.web_search-credential-backend')?.value ?? null,
         backendOptions: [...(backend?.options ?? [])].map((option) => option.value),
         maximumResultsValue: maximumResults?.value ?? null,
         maximumResultsMaximum: maximumResults?.max ?? null,
@@ -616,16 +619,21 @@ if (verifyProviderRuntimeSettings) {
 if (verifyWebSearchSettings) {
   const settings = state.webSearchSettingsState;
   const expectedBackends = [
-    "automatic",
     "keyless",
+    "automatic",
     "duckduckgo",
+    "exa:free",
+    "parallel:free",
+    "firecrawl:free",
+    "tavily:free",
+    "keenable:free",
     "searxng",
-    "exa",
-    "parallel",
-    "firecrawl",
-    "tavily",
+    "exa:paid",
+    "parallel:paid",
+    "firecrawl:paid",
+    "tavily:paid",
+    "keenable:paid",
     "brave",
-    "keenable",
     "xai",
     "deepseek",
   ];
@@ -637,6 +645,9 @@ if (verifyWebSearchSettings) {
     failures.push("Web-search Settings were not rendered in the native WebView");
   if (JSON.stringify(settings?.backendOptions) !== JSON.stringify(expectedBackends))
     failures.push("Web-search Settings do not expose the complete provider list");
+  if (JSON.stringify(settings?.backendGroups) !== JSON.stringify([
+    "Automatic", "Free providers", "Self-hosted", "Paid providers",
+  ])) failures.push("Web-search providers are not grouped by search cost and hosting");
   const maximumResults = Number(settings?.maximumResultsValue ?? Number.NaN);
   if (
     !Number.isInteger(maximumResults) ||
@@ -645,22 +656,25 @@ if (verifyWebSearchSettings) {
     settings?.maximumResultsMaximum !== "100"
   )
     failures.push("Web-search maximum-result defaults or bounds are incorrect");
-  if (!settings?.keylessRescuePresent)
-    failures.push("Web-search one-shot keyless rescue control was not rendered");
+  const paidSelected = settings?.backendValue?.endsWith(":paid") ||
+    ["automatic", "brave", "xai", "deepseek"].includes(settings?.backendValue);
+  if (settings?.keylessRescuePresent !== Boolean(paidSelected || settings?.backendValue === "searxng"))
+    failures.push("Web-search free fallback control does not match the selected provider");
   if (
     settings?.freshnessValidationChecked !== true ||
     settings?.freshnessMaximumAgeValue !== "45" ||
     settings?.freshnessBypassCacheChecked !== true
   )
     failures.push("Web-search freshness controls were not rendered with safe defaults");
-  if (
+  if ((settings?.backendValue === "deepseek" ||
+    (settings?.backendValue === "automatic" && settings?.preferredApiProvider === "deepseek")) && (
     settings?.deepseekUrlValue !== "https://api.deepseek.com" ||
     settings?.deepseekModelValue !== "deepseek-v4-flash" ||
     settings?.deepseekOutputTokensValue !== "4096"
-  )
+  ))
     failures.push("Paid DeepSeek search settings were not rendered with their defaults");
-  if (!settings?.credentialPresent)
-    failures.push("Web-search credential lease selector was not rendered");
+  if (settings?.credentialPresent !== Boolean(paidSelected))
+    failures.push("Web-search credential selector does not match the selected provider");
   if ((settings?.controlsWithoutTooltips ?? 1) !== 0)
     failures.push("A native web-search Settings control has no tooltip");
 }

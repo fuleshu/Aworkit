@@ -569,7 +569,7 @@
       "requiresProject": false,
       "execution": "native",
       "configuration": {
-        "backend": "automatic",
+        "backend": "keyless",
         "credentialBackend": "deepseek",
         "providerTier": "automatic",
         "maximumResults": 10,

@@ -3,41 +3,19 @@ import type {
   CredentialMetadataConfiguration,
 } from "../configuration";
 
-type SearchBackend =
-  | "automatic"
-  | "keyless"
-  | "duckduckgo"
-  | "searxng"
-  | "exa"
-  | "parallel"
-  | "firecrawl"
-  | "tavily"
-  | "brave"
-  | "keenable"
-  | "xai"
-  | "deepseek";
-type CredentialBackend = Exclude<
-  SearchBackend,
-  "automatic" | "keyless" | "duckduckgo" | "searxng"
->;
-type ProviderTier = "automatic" | "free" | "paid";
+import {
+  NO_CREDENTIAL_BACKENDS,
+  SEARCH_PROVIDER_GROUPS,
+  SEARCH_PROVIDER_OPTIONS,
+  selectedSearchProvider,
+  type CredentialBackend,
+  type ProviderTier,
+  type SearchBackend,
+} from "./webSearchProviderOptions";
 type ParallelSearchMode = "fast" | "one-shot" | "agentic";
 
-const DUAL_TIER_BACKENDS = new Set<SearchBackend>([
-  "exa",
-  "parallel",
-  "firecrawl",
-  "tavily",
-  "keenable",
-]);
-const NO_CREDENTIAL_BACKENDS = new Set<SearchBackend>([
-  "keyless",
-  "duckduckgo",
-  "searxng",
-]);
-
 const DEFAULT_CONFIGURATION = {
-  backend: "automatic" as SearchBackend,
+  backend: "keyless" as SearchBackend,
   credentialBackend: "deepseek" as CredentialBackend,
   providerTier: "automatic" as ProviderTier,
   maximumResults: 10,
@@ -85,22 +63,15 @@ export function WebSearchSettingsEditor({
     configuration.backend === "automatic"
       ? configuration.credentialBackend
       : configuration.backend;
-  const dualTier = DUAL_TIER_BACKENDS.has(configuration.backend);
-  const credentialForbidden =
-    NO_CREDENTIAL_BACKENDS.has(configuration.backend) ||
-    (dualTier && configuration.providerTier === "free");
-  const credentialRequired =
-    effectiveProvider === "brave" ||
-    effectiveProvider === "xai" ||
-    effectiveProvider === "deepseek" ||
-    (dualTier && configuration.providerTier === "paid");
-  const showCredential = !credentialForbidden;
+  const selectedProvider = selectedSearchProvider(configuration, binding !== undefined);
+  const showCredential = selectedProvider.allowsCredential;
+  const credentialRequired = showCredential && configuration.backend !== "automatic";
   const showProviderEndpoint =
     effectiveProvider !== "deepseek" &&
     !NO_CREDENTIAL_BACKENDS.has(effectiveProvider) &&
     !(
       (effectiveProvider === "exa" || effectiveProvider === "parallel") &&
-      configuration.providerTier === "free"
+      selectedProvider.providerTier === "free"
     );
   const updateConfiguration = (patch: Partial<WebSearchConfiguration>) =>
     onChange({
@@ -111,55 +82,59 @@ export function WebSearchSettingsEditor({
   return (
     <div className="settings-section-stack web-search-settings">
       <p className="provider-detail diagnostic">
-        Automatic mode prefers a bound credential, then configured SearXNG, then rotates
-        through Exa, Parallel, Firecrawl, and Keenable anonymous services. DuckDuckGo is
-        the final no-account fallback.
+        {configuration.backend === "automatic"
+          ? "Uses your configured paid provider first. Charges may apply. Without an API key, uses SearXNG or free search when available."
+          : configuration.backend === "keyless"
+            ? "Automatically tries free search services, with DuckDuckGo as a fallback. Never uses a paid search API."
+            : configuration.backend === "searxng"
+              ? "Uses your SearXNG server. Enter its address below."
+              : showCredential
+                ? "Uses the selected provider's paid API. An API key is required and charges may apply."
+                : "Uses free search without an API key."}
       </p>
 
       <div className="settings-grid two-columns">
         <label className="settings-field" htmlFor={`${tool.id}-backend`}>
-          Search backend
+          Search provider
           <select
             id={`${tool.id}-backend`}
-            title="Choose automatic routing, the anonymous provider ring, DuckDuckGo, SearXNG, or a specific Hermes-compatible provider"
-            value={configuration.backend}
+            title="Choose automatic search, a free provider, your own SearXNG server, or a paid provider"
+            value={selectedProvider.value}
             onChange={(event) => {
-              const backend = event.target.value as SearchBackend;
-              const forbidsCredential = NO_CREDENTIAL_BACKENDS.has(backend);
+              const provider = SEARCH_PROVIDER_OPTIONS.find(option => option.value === event.target.value);
+              if (provider === undefined) return;
               onChange({
                 ...tool,
-                credentialBindings: forbidsCredential
-                  ? []
-                  : tool.credentialBindings.slice(0, 1),
+                credentialBindings: provider.allowsCredential
+                  ? tool.credentialBindings.slice(0, 1)
+                  : [],
                 configuration: {
                   ...configuration,
-                  backend,
-                  providerTier: "automatic",
+                  backend: provider.backend,
+                  providerTier: provider.providerTier,
+                  keylessFallback: provider.allowsCredential
+                    ? configuration.keylessFallback
+                    : true,
                   providerBaseUrl: "",
                 },
               });
             }}
           >
-            <option value="automatic">Automatic · credential → SearXNG → keyless ring</option>
-            <option value="keyless">Keyless ring · rotating and free</option>
-            <option value="duckduckgo">DuckDuckGo · keyless HTML</option>
-            <option value="searxng">SearXNG · self-hosted</option>
-            <option value="exa">Exa</option>
-            <option value="parallel">Parallel</option>
-            <option value="firecrawl">Firecrawl</option>
-            <option value="tavily">Tavily</option>
-            <option value="brave">Brave Search</option>
-            <option value="keenable">Keenable</option>
-            <option value="xai">xAI Grok · paid API</option>
-            <option value="deepseek">DeepSeek · paid API</option>
+            {SEARCH_PROVIDER_GROUPS.map(group => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         </label>
         {configuration.backend === "automatic" && (
           <label className="settings-field" htmlFor={`${tool.id}-credential-backend`}>
-            Bound credential provider
+            Preferred API provider
             <select
               id={`${tool.id}-credential-backend`}
-              title="Identifies which provider owns the optional API key used first by automatic routing"
+              title="Choose the provider for the API key that automatic paid-preferred search uses first"
               value={configuration.credentialBackend}
               onChange={(event) =>
                 updateConfiguration({
@@ -174,31 +149,8 @@ export function WebSearchSettingsEditor({
               <option value="tavily">Tavily</option>
               <option value="brave">Brave Search</option>
               <option value="keenable">Keenable</option>
-              <option value="xai">xAI Grok</option>
+              <option value="xai">Grok by xAI</option>
               <option value="deepseek">DeepSeek</option>
-            </select>
-          </label>
-        )}
-        {dualTier && (
-          <label className="settings-field" htmlFor={`${tool.id}-provider-tier`}>
-            Provider tier
-            <select
-              id={`${tool.id}-provider-tier`}
-              title="Automatic uses a bound API key when present; Free pins the anonymous route; Paid requires a credential"
-              value={configuration.providerTier}
-              onChange={(event) => {
-                const providerTier = event.target.value as ProviderTier;
-                onChange({
-                  ...tool,
-                  credentialBindings:
-                    providerTier === "free" ? [] : tool.credentialBindings.slice(0, 1),
-                  configuration: { ...configuration, providerTier },
-                });
-              }}
-            >
-              <option value="automatic">Automatic tier</option>
-              <option value="free">Free · anonymous</option>
-              <option value="paid">Paid · API key</option>
             </select>
           </label>
         )}
@@ -268,26 +220,20 @@ export function WebSearchSettingsEditor({
       </div>
 
       <div className="settings-grid two-columns">
-        <BooleanField
-          id={`${tool.id}-keyless-fallback`}
-          label="Keyless fallback"
-          title="Allow anonymous provider routing when no configured provider is available"
-          checked={configuration.keylessFallback}
-          onChange={(keylessFallback) =>
-            updateConfiguration({
-              keylessFallback,
-              keylessRescue: keylessFallback ? configuration.keylessRescue : false,
-            })
-          }
-        />
-        <BooleanField
-          id={`${tool.id}-keyless-rescue`}
-          label="One-shot keyless rescue"
-          title="Retry one failed configured-provider call through the anonymous ring without making the fallback sticky"
-          checked={configuration.keylessRescue}
-          disabled={!configuration.keylessFallback}
-          onChange={(keylessRescue) => updateConfiguration({ keylessRescue })}
-        />
+        {(showCredential || configuration.backend === "searxng") && (
+          <BooleanField
+            id={`${tool.id}-keyless-rescue`}
+            label={configuration.backend === "searxng"
+              ? "Try free search if the self-hosted provider fails"
+              : "Try free search if the paid provider fails"}
+            title="Allow free search when automatic search has no API key, and retry a failed provider request using free search services"
+            checked={configuration.keylessFallback && configuration.keylessRescue}
+            onChange={(enabled) => updateConfiguration({
+              keylessFallback: enabled,
+              keylessRescue: enabled,
+            })}
+          />
+        )}
         <BooleanField
           id={`${tool.id}-cache-enabled`}
           label="Memory cache"
@@ -452,7 +398,7 @@ export function WebSearchSettingsEditor({
             <p className="field-warning">
               {credentialRequired
                 ? `${providerName(effectiveProvider)} requires an API key for this route.`
-                : `A bound key makes automatic or automatic-tier routing use ${providerName(effectiveProvider)}'s API.`}
+                : `Automatic search will use ${providerName(effectiveProvider)}'s paid API with this key.`}
             </p>
           )}
           <div className="settings-grid two-columns">
@@ -658,7 +604,7 @@ function readConfiguration(
 ): WebSearchConfiguration {
   const merged = { ...DEFAULT_CONFIGURATION, ...value };
   return {
-    backend: isBackend(merged.backend) ? merged.backend : "automatic",
+    backend: isBackend(merged.backend) ? merged.backend : "keyless",
     credentialBackend: isCredentialBackend(merged.credentialBackend)
       ? merged.credentialBackend
       : "deepseek",
@@ -721,7 +667,7 @@ function isParallelMode(value: unknown): value is ParallelSearchMode {
 function providerName(backend: SearchBackend): string {
   const names: Record<SearchBackend, string> = {
     automatic: "Automatic provider",
-    keyless: "Keyless ring",
+    keyless: "Automatic (free only)",
     duckduckgo: "DuckDuckGo",
     searxng: "SearXNG",
     exa: "Exa",
@@ -730,7 +676,7 @@ function providerName(backend: SearchBackend): string {
     tavily: "Tavily",
     brave: "Brave Search",
     keenable: "Keenable",
-    xai: "xAI Grok",
+    xai: "Grok by xAI",
     deepseek: "DeepSeek",
   };
   return names[backend];
