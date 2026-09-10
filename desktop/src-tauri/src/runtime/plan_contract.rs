@@ -15,6 +15,18 @@ struct PlanOutputV1 {
     tool_order: Vec<String>,
 }
 
+/// State the complete validator contract even for existing frozen workflows.
+pub(crate) fn plan_output_instructions_v1() -> String {
+    format!(
+        "Return only one JSON object with exactly these fields: goal (string), \
+         openQuestions (string array), evidenceNeeded (string array), and toolOrder \
+         (non-empty string array). Each array may contain at most {MAXIMUM_PLAN_ITEMS} \
+         items; group related actions when needed. Every string must be non-empty, \
+         contain no NUL characters, and be at most {MAXIMUM_PLAN_TEXT_BYTES} UTF-8 bytes. \
+         Do not include Markdown headings, commentary, or any text outside the JSON object."
+    )
+}
+
 pub(crate) fn parse_plan_output_v1(text: &str) -> Result<Value, String> {
     let json = strip_json_fence(text.trim());
     let plan: PlanOutputV1 = serde_json::from_str(json).map_err(|_| {

@@ -4,7 +4,8 @@
 //! execute in deterministic topological order with implicit joins (a node runs
 //! once every active predecessor settles), conditions route true/false, and the
 //! pass ends at a wait or completion node. The agent node owns the standard
-//! bounded model/tool loop; model_call nodes are single no-tool completions;
+//! bounded model/tool loop; model_call nodes make no-tool completions with one
+//! format-correction attempt for invalid structured Plan output;
 //! tool nodes settle exactly one bound capability invocation through the same
 //! durable authority used by the agent loop. An approval node suspends the pass
 //! with a durably restorable prefix so a later decision resumes without
@@ -23,6 +24,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 mod context;
+mod model_call;
 
 use super::{
     documents::validate_v1_executable_catalog,
@@ -34,7 +36,6 @@ use super::{
     pipeline::{
         WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
     },
-    plan_contract::parse_plan_output_v1,
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
@@ -773,97 +774,6 @@ impl<'a> PassMachine<'a> {
         Value::Null
     }
 
-    fn run_model_call(
-        &mut self,
-        node: &CompiledGraphNodeV1,
-        cancellation: &CancellationToken,
-    ) -> Result<Value, String> {
-        let instructions = node
-            .configuration
-            .get("instructions")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let context_text = value_text(&self.incoming_value(&node.id));
-        let mut messages = Vec::new();
-        if !instructions.trim().is_empty() {
-            messages.push(WorkflowMessageV1 {
-                images: Vec::new(),
-                role: "system".into(),
-                content: instructions.to_owned(),
-            });
-        }
-        if let Some(project) = self.tool_authority.project_context() {
-            messages.push(context::project_message(project));
-        }
-        if node
-            .configuration
-            .get("outputContract")
-            .and_then(Value::as_str)
-            == Some("plan")
-        {
-            messages.push(WorkflowMessageV1 {
-                images: Vec::new(),
-                role: "system".into(),
-                content: context::planning_tools(self.compiled, &node.id),
-            });
-        }
-        messages.push(WorkflowMessageV1 {
-            images: self
-                .conversation
-                .iter()
-                .flat_map(|message| message.images.clone())
-                .collect(),
-            role: "user".into(),
-            content: context_text,
-        });
-        let input = json!({"messages": context::merge_system_messages(messages)});
-        let plan = ModelResolutionPlanV1 {
-            candidates: vec![ModelCandidateV1 {
-                binding_id: self.model_binding_id.to_owned(),
-                version_hash: self.model_version_hash.to_owned(),
-            }],
-            maximum_input_bytes: MAXIMUM_MODEL_CALL_INPUT_BYTES,
-            maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
-        };
-        let parameters = node_model_parameters(&node.configuration);
-        match self.execute_text_turn(
-            &plan,
-            ModelRequestV1 { input, parameters },
-            None,
-            cancellation,
-        ) {
-            Ok(evidence) => {
-                let turn = project_model_events(&evidence.events);
-                let text = turn.assistant_text;
-                let units = (turn.input_tokens, turn.output_tokens);
-                if text.trim().is_empty() {
-                    return Err(format!(
-                        "model_call node '{}' returned no assistant text",
-                        node.id
-                    ));
-                }
-                self.input_units = self.input_units.saturating_add(units.0);
-                self.output_units = self.output_units.saturating_add(units.1);
-                if node
-                    .configuration
-                    .get("outputContract")
-                    .and_then(Value::as_str)
-                    == Some("plan")
-                {
-                    parse_plan_output_v1(&text).map_err(|error| {
-                        format!(
-                            "model_call node '{}' violated its plan output contract: {error}",
-                            node.id
-                        )
-                    })
-                } else {
-                    Ok(Value::String(text))
-                }
-            }
-            Err(error) => Err(format!("model_call node '{}' failed: {error}", node.id)),
-        }
-    }
-
     fn run_agent(
         &mut self,
         node: &CompiledGraphNodeV1,
@@ -903,6 +813,7 @@ impl<'a> PassMachine<'a> {
                     parameters,
                 },
                 Some(&agent_context(node)),
+                None,
                 cancellation,
             ) {
                 Ok(evidence) => {
@@ -1001,12 +912,14 @@ impl<'a> PassMachine<'a> {
         plan: &ModelResolutionPlanV1,
         mut request: ModelRequestV1,
         agent: Option<&AgentContextV1>,
+        retry_notice: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         let mut context = super::context_inspection::ContextDocument::from_input(&request.input)
             .map_err(ProviderError::Failed)?
             .request();
         context.parameters = request.parameters.clone();
+        context.retry_notice = retry_notice.map(str::to_owned);
         let preparation = self
             .tool_authority
             .manage_model_context(
@@ -1098,7 +1011,10 @@ impl<'a> PassMachine<'a> {
                 {
                     self.timeout_recoveries = self.timeout_recoveries.saturating_add(1);
                     append_retry_notice(&mut request.input)?;
-                    recorded_context.retry_notice = Some(PROVIDER_TIMEOUT_NOTICE.into());
+                    recorded_context.retry_notice = Some(match retry_notice {
+                        Some(notice) => format!("{notice}\n\n{PROVIDER_TIMEOUT_NOTICE}"),
+                        None => PROVIDER_TIMEOUT_NOTICE.into(),
+                    });
                 }
                 Ok(evidence) => {
                     let output = project_model_events(&evidence.events);
