@@ -132,8 +132,9 @@ For a service, replace `execution` with:
 embedded secrets. The MCP tab edits transport, command, arguments, directory,
 credential bindings, tool enablement, instructions, and approval overrides.
 Local subprocesses run with the user's OS permissions. No process sandbox is
-provided by this transport. Native project-file tools retain their confined
-project boundary, and their fixed authority fields cannot be weakened.
+provided by this transport. Native file tools resolve an exact target before
+execution. Paths inside the workspace need no approval; external paths use the
+approval policy. Fixed authority fields cannot be weakened.
 
 An optional `tools` array seeds tool guidance before discovery:
 

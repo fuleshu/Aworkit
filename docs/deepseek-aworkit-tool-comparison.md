@@ -6,7 +6,7 @@ Your pasted inventory has **166 instances, 139 distinct plugin names, 137 enable
 
 Aworkit's native manifest currently contains **15 callable tools plus Workspace Instructions as automatic context**. MCP adds the tools exposed by configured servers. A tool present in the registry still needs to be enabled/selected for a new Chat; existing Chats retain their frozen bindings.
 
-Priority is a recommendation for the **missing capability**: **1 = first implementation wave**, **2 = next wave**, **3 = optional/later**, **0 = no useful direct adoption in Aworkit**. Blank cells mean a functional counterpart exists. “Partial” means the named Aworkit capability exists, but the third column identifies a material gap; its priority applies only to that gap. A functional counterpart does not claim identical schemas, limits, permissions, storage format or lifecycle. Aworkit's native file tools are project-scoped.
+Priority is a recommendation for the **missing capability**: **1 = first implementation wave**, **2 = next wave**, **3 = optional/later**, **0 = no useful direct adoption in Aworkit**. Blank cells mean a functional counterpart exists. “Partial” means the named Aworkit capability exists, but the third column identifies a material gap; its priority applies only to that gap. A functional counterpart does not claim identical schemas, limits, permissions, storage format or lifecycle. Aworkit's native file tools accept absolute paths and use approval for external locations.
 
 ## Model-callable tools
 
@@ -14,25 +14,25 @@ The first table expands tool plugins into their actual callable names. Parent to
 
 | DeepSeek tool / plugin | Matching Aworkit tool / feature | Missing capability: description and relevance to Aworkit | Priority |
 |---|---|---|---|
-| `read` · tool-fs | Project file read · `aworkit_read_project_file` |  |  |
-| `write` · tool-fs | Project file write · `aworkit_write_project_file` |  |  |
-| `edit` · tool-fs | Project file edit · `aworkit_edit_project_file` |  |  |
+| `read` · tool-fs | Project file read · `read_file` |  |  |
+| `write` · tool-fs | Project file write · `write_file` |  |  |
+| `edit` · tool-fs | Project file edit · `edit_file` |  |  |
 | `read_image` · tool-fs | —; user image attachments already exist | Lets the agent open a local image and send it to its vision model. Highly relevant for screenshots, diagrams, and UI verification; user-uploaded images do not cover this invocation path. | 1 |
-| `glob` · tool-fs-search | Project file list (glob) · `aworkit_list_project_files` |  |  |
-| `grep` · tool-fs-search | Project file regex search · `aworkit_grep_project_files` |  |  |
-| `pwsh` · tool-pwsh | Partial: Host shell · `aworkit_host_shell` (configure PowerShell) | Foreground execution is covered. Missing managed background execution and its job handle; relevant for long builds and commands, alongside the job tools. | 1 |
+| `glob` · tool-fs-search | Project file list (glob) · `list_files` |  |  |
+| `grep` · tool-fs-search | Project file regex search · `grep_files` |  |  |
+| `pwsh` · tool-pwsh | Partial: Host shell · `shell` (configure PowerShell) | Foreground execution is covered. Missing managed background execution and its job handle; relevant for long builds and commands, alongside the job tools. | 1 |
 | `job_list` · tool-jobs | — | Lists owned background shell/subagent jobs. Useful for long builds and parallel tasks; implement with the background-job runtime. | 1 |
 | `job_output` · tool-jobs | — | Reads or waits for background-job output/status. Essential once commands can continue beyond a foreground tool call. | 1 |
 | `job_kill` · tool-jobs | —; whole-Run Stop is a different operation | Stops one background job and its process/agent work. Needed alongside job creation and output retrieval. | 1 |
 | `skill` · tool-skill | Skills · `skill` (`tool.skill`) |  |  |
-| `todo_write` · tool-todo | Run task list · `aworkit_todo` |  |  |
-| `web_search` · tool-web | Web search · `aworkit_web_search` |  |  |
+| `todo_write` · tool-todo | Run task list · `todo` |  |  |
+| `web_search` · tool-web | Web search · `web_search` |  |  |
 | `ask_user_question` · tool-ask-user | —; approval cards cover authorization only | Asks structured questions and waits for the human's answer within a run. Highly relevant for requirements and user-owned choices. | 1 |
 | `exit_plan_mode` · plan-mode | —; Aworkit has a Plan workflow node | Submits a complete plan for review and exits planning after approval. Relevant; a structured Plan node does not provide this interactive mode/lifecycle. | 2 |
 | `create_goal` · tool-goal | —; a todo list is related | Creates a durable objective, optionally with a budget, for continued execution. Useful for user-authorized work across multiple rounds. | 2 |
 | `get_goal` · tool-goal | — | Reads goal status and budget/usage. Implement together with goal creation and the round driver. | 2 |
 | `update_goal` · tool-goal | — | Changes goal state under the caller's allowed authority, including completion/blocking and authorized lifecycle edits. Useful with the complete goal subsystem. | 2 |
-| `subagent` · tool-subagent, spawn instance | Partial: Subagent delegation · `aworkit_spawn_subagent` | Aworkit runs a fresh foreground child with a restricted read-only tool set and no further delegation. Missing: continuable/background children and broader explicitly granted child capabilities. | 1 |
+| `subagent` · tool-subagent, spawn instance | Partial: Subagent delegation · `spawn_subagent` | Aworkit runs a fresh foreground child with a restricted read-only tool set and no further delegation. Missing: continuable/background children and broader explicitly granted child capabilities. | 1 |
 | `subagent_fork` · tool-subagent, fork instance | —; UI Chat Fork exists | Starts a child with a snapshot of the parent's conversation. Useful when copying all necessary context into a fresh subtask is difficult; UI Chat Fork is not an agent-callable child fork. | 2 |
 | `list_agents` · tool-subagent-control/list-agents | — | Lists live/known child agents and their state. Relevant for supervising concurrent delegation. | 1 |
 | `send_message` · tool-subagent-control | — | Sends guidance to an existing continuable child. Relevant for corrections and sharing findings without starting over. | 1 |
@@ -41,8 +41,8 @@ The first table expands tool plugins into their actual callable names. Parent to
 | `workflow` · tool-workflow | Partial: visual workflow editor + Rust workflow worker | Runs an agent-authored JavaScript orchestration script with child agents, structured results, and phases. Aworkit's preconfigured workflow graphs are related; no equivalent model-callable script tool was found. | 2 |
 | `ralph` · tool-ralph | — | Runs successive fresh agents toward one fixed objective, carrying bounded handoffs and shared workspace state. Useful for explicit iterative coding requests after writable child/workflow support; specialized rather than a general agent-loop replacement. | 3 |
 | `run_code` · tools + code-runtime-worker-thread; conditional | —; Host Python executes scripts only | Runs code that calls the registered tools through a generated SDK and their normal approval/logging pipeline. Relevant for batching and reducing model/tool round trips; ordinary Python or shell execution is not equivalent. | 2 |
-| `web_fetch` · tool-web; disabled by checked-in standard preset | Web page fetch · `aworkit_web_fetch`; also multi-page `aworkit_web_extract` |  |  |
-| `bash` · tool-bash; disabled in pasted Windows list | Host shell · `aworkit_host_shell` (when a Bash/POSIX executable is configured) |  |  |
+| `web_fetch` · tool-web; disabled by checked-in standard preset | Web page fetch · `web_fetch`; also multi-page `web_extract` |  |  |
+| `bash` · tool-bash; disabled in pasted Windows list | Host shell · `shell` (when a Bash/POSIX executable is configured) |  |  |
 | `str_replace_editor` · tool-str-replace-editor; disabled | Functional overlap: Project file read/write/edit |  |  |
 | `subagent_codex` · optional disabled tool-subagent instance | —; external-agent/Codex adapter infrastructure is related | Delegates through an external Codex provider. Relevant if Aworkit should delegate to a separate coding agent, but no matching callable native tool is registered. | 3 |
 | `subagent_claude_code` · optional disabled tool-subagent instance | — | Delegates through an external Claude Code provider. An optional integration for users of that agent; no matching callable native tool is registered. | 3 |
@@ -91,11 +91,11 @@ This table covers **every one of the 139 distinct names** in your list, in first
 | `user-approval` · 1 enabled | Native approval broker, approval cards, durable decisions |  |  |
 | `permission-presets` · 1 enabled | Partial: Chat approval-mode selector | Bundles sandbox mode and approval policy in one preset. Relevant after sandbox modes exist; Aworkit's approval selector covers only part of that choice. | 2 |
 | `shell-env` · 1 enabled | Frozen shell executable, shell syntax context, child environment construction |  |  |
-| `tool-bash` · 2 disabled | Host shell · aworkit_host_shell; Bash when configured (listed disabled) |  |  |
-| `tool-pwsh` · 1 enabled, 1 disabled | Partial: Host shell · aworkit_host_shell | Foreground PowerShell execution is covered. Missing DeepSeek's managed run_in_background option and job registration; implement with jobs-local/tool-jobs. | 1 |
+| `tool-bash` · 2 disabled | Host shell · shell; Bash when configured (listed disabled) |  |  |
+| `tool-pwsh` · 1 enabled, 1 disabled | Partial: Host shell · shell | Foreground PowerShell execution is covered. Missing DeepSeek's managed run_in_background option and job registration; implement with jobs-local/tool-jobs. | 1 |
 | `tool-jobs` · 1 enabled, 1 disabled | — | Registers job_list, job_output, job_kill. Relevant with the owned background-job runtime; these are three tools from one plugin. | 1 |
 | `fs-observation-policy` · 1 enabled | Partial: exact-match edits and atomic content-hash checks | Tracks what the agent has read and rejects edits/writes against unobserved or changed versions. Relevant: Aworkit's edit hashes its execution-time read, while its write path passes no expected content hash; this is not the same model-observation guard. | 1 |
-| `tool-fs` · 1 enabled, 1 disabled | Partial: project read/write/edit tools | Text file operations have counterparts. Missing read_image, which lets the model initiate local-image inspection. Aworkit's file authority is project-scoped. | 1 |
+| `tool-fs` · 1 enabled, 1 disabled | Native read/write/edit and image-read tools | Text and image tools accept local paths with location-based approval; shell sandboxing remains separate. | 1 |
 | `tool-fs-search` · 1 enabled, 1 disabled | Project file list (glob) and Project file regex search |  |  |
 | `agent-instructions` · 1 enabled, 1 disabled | Workspace Instructions · tool.workspace_instructions (automatic context) |  |  |
 | `skill` · 1 enabled | Native skill discovery/catalog and loader services |  |  |
@@ -111,21 +111,21 @@ This table covers **every one of the 139 distinct names** in your list, in first
 | `token-meter` · 1 enabled | Context usage estimates, provider token usage, compaction pressure measurement |  |  |
 | `compaction-basic` · 1 enabled, 1 disabled | Native automatic context compaction |  |  |
 | `command-compact` · 1 enabled, 1 disabled | Context details → Compact context; UI counterpart to /compact |  |  |
-| `subagent` · 1 enabled | Partial: foreground aworkit_spawn_subagent | Fresh read-only delegation exists. Missing continuable/background children and richer granted child capabilities; relevant for independent coding work. | 1 |
-| `subagent-spawn-in-process` · 1 enabled | Partial: foreground aworkit_spawn_subagent | Fresh read-only delegation exists. Missing continuable/background children and richer granted child capabilities; relevant for independent coding work. | 1 |
+| `subagent` · 1 enabled | Partial: foreground spawn_subagent | Fresh read-only delegation exists. Missing continuable/background children and richer granted child capabilities; relevant for independent coding work. | 1 |
+| `subagent-spawn-in-process` · 1 enabled | Partial: foreground spawn_subagent | Fresh read-only delegation exists. Missing continuable/background children and richer granted child capabilities; relevant for independent coding work. | 1 |
 | `subagent-fork-in-process` · 1 enabled | —; UI Chat Fork is related | Forks a child agent from the parent's conversation snapshot. Relevant for delegated work needing the existing context; UI Chat Fork does not provide this tool lifecycle. | 2 |
 | `tool-subagent-control` · 1 enabled, 1 disabled | — | Registers send_message and interrupt_agent for continuable children. Relevant with background delegation. | 1 |
 | `tool-subagent-control/list-agents` · 1 enabled, 1 disabled | — | Registers list_agents with child state/identity. Relevant for supervising concurrent agents. | 1 |
-| `tool-subagent` · 2 enabled, 4 disabled | Partial: aworkit_spawn_subagent | Configured instances expose subagent and subagent_fork; optional Codex/Claude Code instances are disabled. Aworkit lacks the continuable/fork/control lifecycle; see the callable-tool table for individual priorities. | 1 |
+| `tool-subagent` · 2 enabled, 4 disabled | Partial: spawn_subagent | Configured instances expose subagent and subagent_fork; optional Codex/Claude Code instances are disabled. Aworkit lacks the continuable/fork/control lifecycle; see the callable-tool table for individual priorities. | 1 |
 | `tool-subagent-report` · 1 enabled | —; final child result is related | Registers report only inside a continuable child so it can update its direct parent while working. Useful after messaging/background children exist. | 2 |
 | `workflow-worker-thread` · 1 enabled, 1 disabled | Partial: Rust workflow worker and visual graph editor | Runs model-authored JavaScript workflows that call children and collect structured results. Aworkit's saved graph execution is related; no equivalent callable script engine is registered. | 2 |
 | `tool-workflow` · 1 enabled, 1 disabled | Partial: Rust workflow worker and visual graph editor | Runs model-authored JavaScript workflows that call children and collect structured results. Aworkit's saved graph execution is related; no equivalent callable script engine is registered. | 2 |
 | `tool-call-timeout-policy` · 1 enabled | Frozen invocation limits, cancellation and process/model deadlines |  |  |
-| `spill-local` · 1 enabled | Immutable result archives, bounded previews, and Context retrieval · aworkit_context; Aworkit reference mechanism differs |  |  |
-| `spill-policy` · 1 enabled | Immutable result archives, bounded previews, and Context retrieval · aworkit_context; Aworkit reference mechanism differs |  |  |
+| `spill-local` · 1 enabled | Immutable result archives, bounded previews, and Context retrieval · context; Aworkit reference mechanism differs |  |  |
+| `spill-policy` · 1 enabled | Immutable result archives, bounded previews, and Context retrieval · context; Aworkit reference mechanism differs |  |  |
 | `session-checkpoint-policy` · 1 enabled | Durable broker admission/settlement and history/context checkpoints |  |  |
 | `compaction-tool-result-pruner` · 1 enabled, 1 disabled | Integrated tool-result pruning before context compaction |  |  |
-| `tool-todo` · 1 enabled, 1 disabled | Run task list · aworkit_todo |  |  |
+| `tool-todo` · 1 enabled, 1 disabled | Run task list · todo |  |  |
 | `tool-goal` · 1 enabled, 1 disabled | — | Registers create_goal, get_goal, update_goal. Relevant with durable objective state and authorized continuation. | 2 |
 | `tool-ralph` · 1 enabled, 1 disabled | — | Fresh-agent iterative execution with bounded handoffs. Specialized; useful after child/workflow support, for explicit Ralph-style requests. | 3 |
 | `tool-str-replace-editor` · 1 disabled | Project read/write/edit tools cover the central operations; alternate tool is listed disabled |  |  |
@@ -136,7 +136,7 @@ This table covers **every one of the 139 distinct names** in your list, in first
 | `tools` · 1 enabled | Partial: native registry, provider schemas and dispatch | The registry role is covered. Missing optional code/both mode with run_code and generated tool SDK; useful for batching and orchestration. | 2 |
 | `system-prompt` · 1 enabled | Frozen persona and selected-tool/workspace/skill context assembly |  |  |
 | `agent-loop` · 1 enabled | Agent workflow node and native model/tool loop |  |  |
-| `fs-sandbox` · 1 enabled | ProjectFiles canonical project-boundary enforcement and frozen file authority; functional counterpart |  |  |
+| `fs-sandbox` · 1 enabled | Anchored directory capabilities and frozen per-invocation file locations with external-path approval; functional counterpart |  |  |
 | `llm-deepseek` · 1 enabled | OpenAI-compatible model adapter supporting DeepSeek |  |  |
 | `code-runtime-worker-thread` · 1 enabled | —; Host Python is related | JavaScript execution behind run_code, with controlled calls into the registered tool pipeline. Useful for code-based tool orchestration; Host Python is not a tool bridge. | 2 |
 | `storage` · 1 enabled | Document repositories, SQLite history and validated settings/domain documents; different storage architecture |  |  |

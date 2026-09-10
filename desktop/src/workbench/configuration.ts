@@ -174,7 +174,7 @@ export const builtInToolConfigurationSchema = z
     const value = tool.configuration;
     const validImplementedContract =
       tool.id === "tool.files.read"
-        ? tool.requiresProject === true &&
+        ? tool.requiresProject === manifest?.requiresProject &&
           value.authorityMode === "project_files" &&
           value.effect === "read" &&
           typeof value.maximumBytes === "number" &&
@@ -182,7 +182,7 @@ export const builtInToolConfigurationSchema = z
           value.maximumBytes >= 1 &&
           value.maximumBytes <= 65_536
         : tool.id === "tool.files.search"
-          ? tool.requiresProject === true &&
+          ? tool.requiresProject === manifest?.requiresProject &&
             value.authorityMode === "project_files" &&
             value.effect === "search" &&
             typeof value.maximumResults === "number" &&

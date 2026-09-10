@@ -10,7 +10,7 @@ fn read_call(path: &str) -> ModelToolCallV1 {
         call_id: "image.1".into(),
         provider_call_id: Some("image.1".into()),
         capability_id: "tool.image.read".into(),
-        name: "aworkit_read_image".into(),
+        name: "read_image".into(),
         arguments: json!({"path":path}),
         provider_context: None,
     }
@@ -48,7 +48,6 @@ fn image_read_rejects_nonvision_corrupt_oversized_and_escaping_input() {
         (0, "image.png", STANDARD.decode(PNG).unwrap(), false),
         (1, "image.png", b"not an image".to_vec(), true),
         (2, "image.png", vec![0; 32 * 1024 * 1024 + 1], true),
-        (3, "../outside.png", STANDARD.decode(PNG).unwrap(), true),
     ] {
         let mut f = Fixture::with_tools(&["tool.image.read"]);
         f.authority.context.model_context = json!({"imageInput":vision});
@@ -77,6 +76,7 @@ fn absolute_local_image_outside_workspace_is_bounded_and_replays_without_rereadi
     let mut f = Fixture::with_tools(&["tool.image.read"]);
     f.authority.context.model_context = json!({"imageInput":true});
     f.authority.context.approvals.project_key = None;
+    f.authority.context.approvals.mode = crate::runtime::approvals::ApprovalMode::FullAccess;
     let source = f.root.path().join("external image ü.png");
     let mut bytes = STANDARD.decode(PNG).unwrap();
     bytes.resize(6 * 1024 * 1024, 0); // Valid PNG with a large ancillary/trailing payload.
@@ -129,6 +129,8 @@ fn invalid_image_arguments_settle_as_recoverable_errors_and_legacy_scope_stays_f
     let external = f.root.path().join("outside.png");
     std::fs::write(&external, STANDARD.decode(PNG).unwrap()).unwrap();
     f.authority.context.bindings[0].limit = StoredFileToolLimitV1::ImageRead;
+    f.authority.context.bindings[0].file_access_version = None;
+    f.authority.context.approvals.mode = crate::runtime::approvals::ApprovalMode::FullAccess;
     let legacy = f
         .authority
         .invoke(

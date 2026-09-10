@@ -60,7 +60,7 @@ fn invoke(
                 provider_call_id: Some(id.into()),
                 capability_id: capability.into(),
                 name: if capability == "tool.context" {
-                    "aworkit_context"
+                    "context"
                 } else {
                     FILE_READ_PROVIDER_NAME
                 }

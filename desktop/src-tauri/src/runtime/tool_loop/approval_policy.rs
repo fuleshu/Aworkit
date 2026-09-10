@@ -10,6 +10,11 @@ pub(crate) fn project_grant(
     binding: &StoredFileToolBindingV1,
     call: &ModelToolCallV1,
 ) -> Option<ProjectApprovalGrant> {
+    // Workspace operations need no standing grant. External file operations
+    // must never inherit a permission labelled "in project".
+    if binding.file_access_version.is_some() {
+        return None;
+    }
     let project_key = context.project_key.as_ref()?;
     let binding_hash = approvals::digest(binding);
     let mut grant = ProjectApprovalGrant {
@@ -35,8 +40,10 @@ impl BoundFileToolAuthorityV1 {
         outer_invocation_id: &StableId,
         turn: u32,
         call: &ModelToolCallV1,
+        proposal_id: &StableId,
         challenge: ApprovalChallengeV1,
         cancellation: &CancellationToken,
+        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         if cancellation.is_cancelled() {
             return Err(WorkflowPipelineError::Host(
@@ -67,7 +74,26 @@ impl BoundFileToolAuthorityV1 {
         });
         let mut pending = tool_approval_challenge(&challenge, call);
         pending.project_scope = grant.as_ref().map(|grant| grant.scope.clone());
-        let approved = if mode == ApprovalMode::FullAccess || saved {
+        let file_access = self
+            .runtime
+            .records
+            .invocation(proposal_id)?
+            .ok_or(WorkflowPipelineError::IncompleteEvidence)?
+            .file_access;
+        if let Some(Ok(access)) = &file_access {
+            if access.outside_workspace {
+                pending.summary.push_str(&format!(
+                    "\n\nResolved path: {}\nThis file is outside the Chat workspace.",
+                    access.display_target()
+                ));
+            }
+        }
+        let local_file = file_access.as_ref().is_some_and(|access| {
+            access
+                .as_ref()
+                .map_or(true, |access| !access.outside_workspace)
+        });
+        let approved = if local_file || mode == ApprovalMode::FullAccess || saved {
             Some(true)
         } else if mode == ApprovalMode::ApproveForMe {
             let review = match store
@@ -109,7 +135,7 @@ impl BoundFileToolAuthorityV1 {
                         &self.context.review_messages,
                         &exchanges,
                         call,
-                        &json!({"root":self.context.workspace.root,"project":self.context.approvals.project_name}),
+                        &json!({"root":self.context.workspace.root,"project":self.context.approvals.project_name,"fileAccess":file_access}),
                         cancellation,
                     );
                     if cancellation.is_cancelled() {
@@ -136,7 +162,7 @@ impl BoundFileToolAuthorityV1 {
             None
         };
         match approved {
-            Some(approved) => self.resolve_invoke_v1_inner(
+            Some(approved) => self.resolve_invoke_v1_with_delivery(
                 outer_invocation_id,
                 turn,
                 call,
@@ -147,6 +173,7 @@ impl BoundFileToolAuthorityV1 {
                     now_epoch_millis: current_epoch_millis(),
                 },
                 cancellation,
+                scoped_delivery,
             ),
             None => Err(WorkflowPipelineError::ToolApproval(pending)),
         }

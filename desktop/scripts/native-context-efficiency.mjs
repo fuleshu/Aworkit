@@ -71,7 +71,7 @@ const provider = createServer(async (req, res) => {
       assert.ok(results.some(r => r.content === firstPreview), "Prior preview survives restart unchanged");
       message = { content: "RESTART PREVIEW VERIFIED" };
     } else if (phase === "recover") {
-      if (phaseTurn === 1) message = call("aworkit_context", { operation: "search", reference, pointer: "/result/structuredContent/tasks/39/description", query: "OMITTED_RECEIPT_739" });
+      if (phaseTurn === 1) message = call("context", { operation: "search", reference, pointer: "/result/structuredContent/tasks/39/description", query: "OMITTED_RECEIPT_739" });
       else {
         assert.equal(phaseTurn, 2);
         assert.ok(results.at(-1).content.includes("OMITTED_RECEIPT_739"));

@@ -155,81 +155,29 @@ fn automatic_review_approves_denies_or_falls_back_to_a_person() {
 }
 
 #[test]
-fn saved_project_grant_survives_reopen_is_isolated_and_can_be_revoked() {
+fn external_file_approval_cannot_create_a_project_grant_or_authorize_later_calls() {
     let root = TempDir::new().unwrap();
     let project = edit_approval_project(&root);
     let (pipeline, _, metadata, _, _) = setup_tool_pipeline(&root, ToolScriptV1::Edit);
-    let request = scoped_request(
-        &pipeline,
-        metadata.clone(),
-        &project,
-        ApprovalMode::AskForApproval,
-    );
-    let result = pipeline.execute(request).unwrap();
-    let approval = result.approval.unwrap();
-    assert_eq!(
-        approval.project_scope.as_deref(),
-        Some("Files in this project")
-    );
-    let resolution = ApprovalResolution {
-        choice: ApprovalChoice::AlwaysApproveInProject,
-        reason: None,
-    };
-    assert_eq!(
-        pipeline
-            .resume_approval_choice(&approval.decision_id, &resolution)
-            .unwrap()
-            .status,
-        WorkflowExecutionStatusV1::Succeeded
-    );
-    let grants = pipeline.file_tool_authority.approvals.grants().unwrap();
-    assert_eq!(grants.len(), 1);
+    let request = scoped_request(&pipeline, metadata, &project, ApprovalMode::AskForApproval);
+    let approval = pipeline.execute(request).unwrap().approval.unwrap();
+    assert!(approval.project_scope.is_none());
+    assert!(pipeline.resume_approval_choice(&approval.decision_id, &ApprovalResolution {
+        choice: ApprovalChoice::AlwaysApproveInProject, reason: None,
+    }).is_err());
+    assert_eq!(fs::read_to_string(project.join("notes.txt")).unwrap(), "alpha");
+    assert_eq!(pipeline.resume_approval_choice(&approval.decision_id, &ApprovalResolution::once(true)).unwrap().status,
+        WorkflowExecutionStatusV1::Succeeded);
+    assert!(pipeline.file_tool_authority.approvals.grants().unwrap().is_empty());
     drop(pipeline);
 
     let (pipeline, _, metadata, _, _) = setup_tool_pipeline(&root, ToolScriptV1::Edit);
     fs::write(project.join("notes.txt"), "alpha").unwrap();
-    let mut next = scoped_request(
-        &pipeline,
-        metadata.clone(),
-        &project,
-        ApprovalMode::AskForApproval,
-    );
-    next.request_id = stable("command.saved-project-grant").unwrap();
-    next.run_id = stable("run.saved-project-grant").unwrap();
-    next.chat_id = stable("chat.saved-project-grant").unwrap();
-    assert_eq!(
-        pipeline.execute(next).unwrap().status,
-        WorkflowExecutionStatusV1::Succeeded
-    );
-
-    let mut other = scoped_request(
-        &pipeline,
-        metadata.clone(),
-        &project,
-        ApprovalMode::AskForApproval,
-    );
-    other.request_id = stable("command.other-project-grant").unwrap();
-    other.run_id = stable("run.other-project-grant").unwrap();
-    other.chat_id = stable("chat.other-project-grant").unwrap();
-    other.approvals.project_key = Some("different-project".into());
-    assert_eq!(
-        pipeline.execute(other).unwrap().status,
-        WorkflowExecutionStatusV1::AwaitingApproval
-    );
-
-    pipeline
-        .file_tool_authority
-        .approvals
-        .revoke(&grants[0].id)
-        .unwrap();
-    let mut revoked = scoped_request(&pipeline, metadata, &project, ApprovalMode::AskForApproval);
-    revoked.request_id = stable("command.revoked-project-grant").unwrap();
-    revoked.run_id = stable("run.revoked-project-grant").unwrap();
-    revoked.chat_id = stable("chat.revoked-project-grant").unwrap();
-    assert_eq!(
-        pipeline.execute(revoked).unwrap().status,
-        WorkflowExecutionStatusV1::AwaitingApproval
-    );
+    let mut next = scoped_request(&pipeline, metadata, &project, ApprovalMode::AskForApproval);
+    next.request_id = stable("command.next-external").unwrap();
+    next.run_id = stable("run.next-external").unwrap();
+    next.chat_id = stable("chat.next-external").unwrap();
+    assert_eq!(pipeline.execute(next).unwrap().status, WorkflowExecutionStatusV1::AwaitingApproval);
 }
 
 #[test]

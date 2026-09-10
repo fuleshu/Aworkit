@@ -6,6 +6,7 @@ import {
   type SettingsConfigurationV2,
 } from "./configuration";
 import { settingsDraftIssues } from "./settings-v2/settingsDraft";
+import { nativeToolDefaults } from "./toolRegistry";
 
 function configuration(): SettingsConfigurationV2 {
   return {
@@ -71,6 +72,16 @@ function configuration(): SettingsConfigurationV2 {
 }
 
 describe("Settings configuration v2", () => {
+  it("accepts the native file catalog and rejects stale project-only read/search scope", () => {
+    const tools = nativeToolDefaults();
+    const value = { ...configuration(), tools };
+    expect(settingsConfigurationV2Schema.safeParse(value).success).toBe(true);
+    for (const id of ["tool.files.read", "tool.files.search"]) {
+      const tool = tools.find(tool => tool.id === id)!;
+      expect(tool.requiresProject).toBe(false);
+      expect(builtInToolConfigurationSchema.safeParse({ ...tool, requiresProject: true }).success).toBe(false);
+    }
+  });
   it("validates bounded provider runtime controls", () => {
     const value = configuration();
     value.providers[0]!.configuration = {
@@ -91,7 +102,7 @@ describe("Settings configuration v2", () => {
       id: "tool.files.read",
       name: "Project file read",
       enabled: true,
-      requiresProject: true,
+      requiresProject: false,
       credentialBindings: [],
       configuration: {
         authorityMode: "project_files",

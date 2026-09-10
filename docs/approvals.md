@@ -27,7 +27,7 @@ Project grants bind the saved project and native workspace identity and exact
 tool binding/configuration. **Always approve in project** covers subsequent calls
 to that tool, including different Python scripts, shell commands or MCP arguments.
 It also applies to later calls in the current run. A different project or changed
-tool binding still asks again. File tools retain their enforced project boundary;
+tool binding still asks again. File tools use the location policy below;
 shell and Python retain host execution semantics. The card displays the scope
 before it is saved; Settings shows the tool permission and supports immediate
 revocation. Grants apply across chats in the same project and survive restarts.
@@ -50,11 +50,37 @@ freeze live discovery hints and the saved Auto approve choice; subsequent
 Settings edits and catalog refreshes apply to new Chats. Existing frozen Chats
 without hints continue using the shared approval policy.
 
-Read/search/list/grep, task-list and existing web tools keep their ordinary
-approval-free contracts. File writes, shell, Python, subagents and MCP calls
-requiring review use the shared policy. Legacy `requiresApproval` configuration is retained only for
+For new Chats, `read_file`, `search_file`, `list_files`, `grep_files`, `edit_file`,
+`write_file`, and `read_image` accept absolute paths and workspace-relative paths.
+List and grep accept an optional directory `path`, defaulting to the workspace;
+their `pattern` remains a glob and a regex respectively. Chats without a saved
+project use their private Chat workspace as the relative base and approval boundary.
+
+File reads and writes inside the resolved workspace run without approval,
+including when a per-tool approval mode is selected. External paths enter the
+shared policy: Ask for approval prompts, Approve for me reviews, and Full access
+permits execution. The card shows the resolved target. **Always approve in
+project** is unavailable for external file access, and project tool grants cannot
+authorize it. Approve once covers only that invocation.
+
+Before approval, Aworkit resolves path metadata, including symlinks and junctions,
+and freezes the target directory identity and file name in the durable invocation.
+Dispatch revalidates that directory and uses an anchored directory capability.
+Approval recovery retains the reviewed target; a replaced directory fails closed.
+Recursive listing/search does not follow symlinks out of its approved directory.
+New file writes require an existing parent directory. Settled results replay
+without rereading or repeating writes.
+
+Task-list and existing web tools keep their ordinary approval-free contracts.
+Shell, Python, subagents and MCP calls requiring review use the shared policy.
+Legacy `requiresApproval` configuration is retained only for
 compatibility with existing frozen records and hidden from the tool editor; it
 is not the user-facing policy switch.
+
+Native provider names are concise, such as `read_file`, `shell`, `python`,
+`web_fetch`, and `context`. Stable capability IDs and configuration keys remain
+unchanged. Saved file-tool catalog metadata migrates for new Chats; existing
+Chats retain their frozen names, schemas, path restrictions and approval contracts.
 
 Automatic-review rationale and provider-reported tokens are recorded as
 `approval.reviewed` evidence, separate from the acting model's output and
@@ -80,6 +106,10 @@ Older single-call checkpoints remain readable; content they never stored cannot
 be reconstructed by the checkpoint alone.
 
 ## Verification
+
+- `desktop/scripts/native-file-access-smoke.mjs`: all six file operations,
+  external image reads, internal automatic execution, external approval and denial,
+  approval across restart, automatic review, Full access and projectless access.
 
 - Native Rust coverage: mode isolation, tool/project grant matching and migration,
   manual/automatic/full-access execution, review failure fallback, denial reason

@@ -17,6 +17,11 @@ fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
     let mut names = BTreeSet::new();
     for entry in &native_plugin().tools {
         assert!(names.insert(&entry.provider_name));
+        assert!(!entry.provider_name.starts_with("aworkit_"));
+        if entry.id.starts_with("tool.files.") {
+            assert!(!entry.provider_name.contains("project"));
+            assert!(!entry.requires_project);
+        }
         let settings = defaults.iter().find(|tool| tool.id == entry.id).unwrap();
         let frozen = super::super::tool_loop::freeze_file_tool_bindings(&[
             super::super::tool_loop::WorkflowToolBindingV1 {

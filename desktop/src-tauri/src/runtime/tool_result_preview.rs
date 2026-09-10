@@ -21,7 +21,7 @@ pub(crate) fn bounded_content(
         "originalBytes":original_bytes,"maximumBytes":maximum_bytes,"notice":NOTICE},"preview":null});
     if let Some(reference) = reference {
         result["aworkitContext"] = json!({"reference":reference,"omitted":true,
-            "retrieve":"aworkit_context: read or search; pointers and offsets refer to the original"});
+            "retrieve":"Read or search with Context retrieval; pointers and offsets refer to the original"});
     }
     // `null` already reserves four bytes for the preview slot.
     let overhead = result.to_string().len() - 4;

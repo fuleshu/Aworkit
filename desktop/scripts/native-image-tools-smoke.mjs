@@ -40,9 +40,9 @@ const provider = createServer(async (request, response) => {
     const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
     const results=body.messages.filter(m=>m.role==="tool");
     const images=body.messages.flatMap(m=>Array.isArray(m.content)?m.content.filter(p=>p.type==="image_url"):[]);
-    assert.ok(body.tools.some(t=>t.function.name==="aworkit_read_image"));
-    assert.ok(body.tools.some(t=>t.function.name==="aworkit_screenshot"));
-    let name="aworkit_read_image",args={path:resolve(project,"red.png")};
+    assert.ok(body.tools.some(t=>t.function.name==="read_image"));
+    assert.ok(body.tools.some(t=>t.function.name==="screenshot"));
+    let name="read_image",args={path:resolve(project,"red.png")};
     if (localPaths) {
       args = {path: 42};
       if (results.length >= 1) {
@@ -73,7 +73,7 @@ const provider = createServer(async (request, response) => {
       assert.equal(images[0].image_url.url,`data:image/png;base64,${png}`);
       assert.ok(body.messages.indexOf(results[0])<body.messages.findIndex(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==="image_url")));
     }
-    if(!localPaths && results.length===1){await unlink(resolve(project,"red.png"));name="aworkit_screenshot";args={operation:"list"};}
+    if(!localPaths && results.length===1){await unlink(resolve(project,"red.png"));name="screenshot";args={operation:"list"};}
     if(!localPaths && results.length===2){
       let listed=JSON.parse(results[1].content);
       // The normal lossless output compressor can encode repeated target rows.
@@ -84,7 +84,7 @@ const provider = createServer(async (request, response) => {
       assert.ok(listed.targets.some(t=>t.kind==="monitor"));
       const target=listed.targets.find(t=>t.target.startsWith(`window:${child.pid}:`));
       assert.ok(target,"own fixture window is selectable");
-      name="aworkit_screenshot";args={operation:"capture",target:target.target};
+      name="screenshot";args={operation:"capture",target:target.target};
     }
     if(!localPaths && results.length>=3){
       assert.equal(images.length,2);
@@ -191,9 +191,9 @@ try{
   await waitFor("document.querySelector('select[aria-label=\"Workflow for the first Chat input\"]')?.value==='workflow.simple-chat'");
   await setValue('textarea[aria-label="Chat input"]',localPaths ? `Tell me what you see in this image: "${externalPath}"` : `Read "${resolve(project,"red.png")}", then list screenshot targets and capture this Aworkit window.`);
   await click("Send");
-  for(let i=0;i<(localPaths ? 0 : 2);i++){
+  for(let i=0;i<(localPaths ? 1 : 3);i++){
     await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='awaiting_approval')");
-    if(i===1)await view.screenshot(resolve(root,"capture-approval.png"));
+    if(i===2)await view.screenshot(resolve(root,"capture-approval.png"));
     await click("Approve once");
     await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.events.filter(e=>e.kind==='approval.requested').length>=${i+2}||s.chat.phase==='waiting_input')`);
   }

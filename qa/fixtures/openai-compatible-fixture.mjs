@@ -179,7 +179,7 @@ function validateToolCompletion(body) {
   const [tool] = body.tools;
   if (
     tool?.type !== "function" ||
-    tool.function?.name !== "aworkit_read_project_file" ||
+    tool.function?.name !== "read_file" ||
     typeof tool.function.description !== "string" ||
     tool.function.description.trim() === "" ||
     tool.function.parameters?.type !== "object"
@@ -229,7 +229,7 @@ function validateToolCompletion(body) {
   if (
     call?.id !== "call_read_1" ||
     call?.type !== "function" ||
-    call.function?.name !== "aworkit_read_project_file" ||
+    call.function?.name !== "read_file" ||
     call.function?.arguments !== JSON.stringify({ path: toolPath })
   ) {
     badRequest("tool result turn changed the frozen read request");
@@ -295,7 +295,7 @@ function toolCallEnvelope(callId, path) {
               id: callId,
               type: "function",
               function: {
-                name: "aworkit_read_project_file",
+                name: "read_file",
                 arguments: JSON.stringify({ path }),
               },
             },

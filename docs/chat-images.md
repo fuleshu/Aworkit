@@ -6,13 +6,15 @@ Enable **Image read** and **Screenshot** in **Settings → Tools**, bind them to
 workflow's Agent, and start a new Chat with a vision-capable model. Existing Chats
 keep their frozen tool selection and model capabilities.
 
-- `aworkit_read_image({"path":"C:\\Pictures\\example.png"})` reads a local image by
+- `read_image({"path":"C:\\Pictures\\example.png"})` reads a local image by
   absolute path, including in Chats without a project. Relative paths such as
   `assets/example.png` resolve inside the Chat's workspace. Invalid paths or
   unreadable images return tool errors so the agent can correct its request.
-- `aworkit_screenshot({"operation":"list"})` lists available Windows windows and
+  In new Chats, image reads inside the workspace run without approval; external
+  paths use the selected approval mode, just like text-file reads.
+- `screenshot({"operation":"list"})` lists available Windows windows and
   monitors with target identifiers, titles and physical pixel bounds.
-- `aworkit_screenshot({"operation":"capture","target":"<identifier from list>"})`
+- `screenshot({"operation":"capture","target":"<identifier from list>"})`
   captures that selected target through the Chat's normal tool approval policy.
 
 Screenshots currently capture **visible desktop pixels on Windows**. Keep the

@@ -431,6 +431,23 @@ impl SettingsConfigurationV2 {
         }
     }
 
+    /// Upgrade saved catalog metadata without changing frozen Chat contracts.
+    pub(crate) fn normalize_legacy_file_tools(&mut self) -> bool {
+        let mut changed = false;
+        for tool in &mut self.tools {
+            if tool.id.starts_with("tool.files.") {
+                if let Some(native) = super::tool_registry::native_tool(&tool.id) {
+                    if tool.requires_project != native.requires_project || tool.name != native.name {
+                        tool.requires_project = native.requires_project;
+                        tool.name.clone_from(&native.name);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
+    }
+
     /// Narrows project-tool limits written by earlier desktop builds to the
     /// first persistence-safe native contract. This is used only while opening
     /// an already-versioned document; new save requests are rejected instead
@@ -881,14 +898,14 @@ impl BuiltInToolConfigurationV2 {
             }
             "tool.files.read" => {
                 require_exact_config_keys(self, &["authorityMode", "effect", "maximumBytes"])?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "read")?;
                 require_config_u64(self, "maximumBytes", 1, PROJECT_FILE_READ_MAXIMUM_BYTES_V1)
             }
             "tool.files.search" => {
                 require_exact_config_keys(self, &["authorityMode", "effect", "maximumResults"])?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "search")?;
                 require_config_u64(
@@ -908,7 +925,7 @@ impl BuiltInToolConfigurationV2 {
                         "maximumBytes",
                     ],
                 )?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "write")?;
                 require_config_bool(self, "requiresApproval", true)?;
@@ -950,7 +967,7 @@ impl BuiltInToolConfigurationV2 {
             }
             "tool.files.list" => {
                 require_exact_config_keys(self, &["authorityMode", "effect", "maximumEntries"])?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "list")?;
                 require_config_u64(
@@ -962,7 +979,7 @@ impl BuiltInToolConfigurationV2 {
             }
             "tool.files.grep" => {
                 require_exact_config_keys(self, &["authorityMode", "effect", "maximumMatches"])?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "grep")?;
                 require_config_u64(
@@ -982,7 +999,7 @@ impl BuiltInToolConfigurationV2 {
                         "maximumBytes",
                     ],
                 )?;
-                require_tool_project_scope(self, true)?;
+                require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "project_files")?;
                 require_config_string(self, "effect", "write")?;
                 require_config_bool(self, "requiresApproval", true)?;

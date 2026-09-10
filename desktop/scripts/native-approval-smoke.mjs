@@ -25,9 +25,9 @@ const server = createServer(async (request, response) => {
   if (isReview) message = { role: "assistant", content: JSON.stringify({ decision: reviewerDecision, reason: reviewerDecision === "approve" ? "The user requested this project edit." : "Preserve the original file." }) };
   else if (body.messages.some(message => message.role === "tool")) message = { role: "assistant", content: "Action settled." };
   else {
-    const name = body.tools?.find(tool => tool.function.name.includes("write"))?.function.name;
-    if (!name) throw new Error("Fixture expected the project write tool");
-    message = { role: "assistant", content: null, tool_calls: [{ id: "fixture.write", type: "function", function: { name, arguments: JSON.stringify({ path: "approval.txt", content: "updated" }) } }] };
+    const name = body.tools?.find(tool => tool.function.name === "shell")?.function.name;
+    if (!name) throw new Error("Fixture expected the host shell tool");
+    message = { role: "assistant", content: null, tool_calls: [{ id: "fixture.write", type: "function", function: { name, arguments: JSON.stringify({ command: '<nul set /p "=updated" > approval.txt' }) } }] };
   }
   const usage = { prompt_tokens: 17, completion_tokens: 9, total_tokens: 26 };
   if (body.stream) {
@@ -78,7 +78,7 @@ try {
     await invoke('settings_v2_commit', {command:{commandId:'native.approval.enable',expectedVersion:v2.version,settings:v2.settings}});
     const workflow = await invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'});
     const agent = workflow.document.nodes.find(node => node.type === 'agent');
-    agent.configuration.toolIds = ['tool.files.write'];
+    agent.configuration.toolIds = ['tool.shell.host'];
     await invoke('workflow_commit',{command:{commandId:'native.approval.workflow',expectedVersion:workflow.version,workflowId:'workflow.simple-chat',document:workflow.document}});
   })()`);
   await command("Page.reload");

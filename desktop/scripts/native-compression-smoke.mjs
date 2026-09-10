@@ -22,25 +22,25 @@ const provider=createServer(async(req,res)=>{
   if(body.model==="summary"){summaries++;message={content:"Continue verification. Earlier source inspection succeeded. Original evidence is available through Context retrieval search."};}
   else{
    step++;
-   const tools=body.tools??[];assert.ok(tools.some(t=>t.function.name==="aworkit_context"));
+   const tools=body.tools??[];assert.ok(tools.some(t=>t.function.name==="context"));
    const results=body.messages.filter(m=>m.role==="tool");
-   if(step===1)message=call("aworkit_read_project_file","compress.read",{path:"source.rs"});
+   if(step===1)message=call("read_file","compress.read",{path:"source.rs"});
    else if(step===2){
     firstProjection=results.at(-1).content;const output=JSON.parse(firstProjection);reference=output.aworkitContext.reference;
     assert.equal(reference.length,64);assert.equal(output.aworkitContext.omitted,true);
     assert.ok(firstProjection.includes("TARGET MUST SURVIVE"));assert.ok(!firstProjection.includes("hidden_receipt_992"));
     assert.ok(firstProjection.length<source.length/2);
-    message=call("aworkit_context","compress.search",{operation:"search",reference,pointer:"/content",query:"hidden_receipt_992"});
+    message=call("context","compress.search",{operation:"search",reference,pointer:"/content",query:"hidden_receipt_992"});
    }else if(step===3){
     assert.equal(results[0].content,firstProjection,"previous tool content must be cache-stable");
     assert.ok(results.at(-1).content.includes("exact-original-proof"));
-    message=call("aworkit_context","compress.stats",{operation:"stats"});
+    message=call("context","compress.stats",{operation:"stats"});
    }else if(step===4){
     assert.equal(JSON.parse(results.at(-1).content).compressedResults,1);
     assert.equal(results[0].content,firstProjection);message={content:"COMPRESSION VERIFIED"};
    }else if(step===5 || step===7){
     assert.ok(JSON.stringify(body).includes("<compacted-summary>"));
-    message=call("aworkit_context",`compress.recover.${step}`,{operation:"search",query:"hidden_receipt_992",pointer:"/content"});
+    message=call("context",`compress.recover.${step}`,{operation:"search",query:"hidden_receipt_992",pointer:"/content"});
    }else if(step===6 || step===8){
     const output=JSON.parse(results.at(-1).content);assert.equal(output.matches[0].reference,reference);
     assert.ok(JSON.stringify(output).includes("exact-original-proof"));

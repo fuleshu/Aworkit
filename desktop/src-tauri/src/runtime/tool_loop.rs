@@ -15,6 +15,8 @@ pub(crate) mod skills;
 mod skills_tests;
 mod web;
 mod image_tools;
+mod file_access;
+mod file_operations;
 #[path = "workspace_instructions/mod.rs"]
 pub(crate) mod workspace_instructions;
 
@@ -93,18 +95,18 @@ pub(crate) const SKILL_CAPABILITY_ID: &str = "tool.skill";
 pub(crate) const WEB_SEARCH_CAPABILITY_ID: &str = "tool.web_search";
 pub(crate) const WEB_FETCH_CAPABILITY_ID: &str = "tool.web_fetch";
 pub(crate) const WEB_EXTRACT_CAPABILITY_ID: &str = "tool.web_extract";
-const FILE_READ_PROVIDER_NAME: &str = "aworkit_read_project_file";
-const FILE_SEARCH_PROVIDER_NAME: &str = "aworkit_search_project_file";
-const FILE_LIST_PROVIDER_NAME: &str = "aworkit_list_project_files";
-const FILE_GREP_PROVIDER_NAME: &str = "aworkit_grep_project_files";
-const FILE_EDIT_PROVIDER_NAME: &str = "aworkit_edit_project_file";
-const FILE_WRITE_PROVIDER_NAME: &str = "aworkit_write_project_file";
-const SHELL_PROVIDER_NAME: &str = "aworkit_host_shell";
-const PYTHON_PROVIDER_NAME: &str = "aworkit_host_python";
-const TODO_PROVIDER_NAME: &str = "aworkit_todo";
-const WEB_SEARCH_PROVIDER_NAME: &str = "aworkit_web_search";
-const WEB_FETCH_PROVIDER_NAME: &str = "aworkit_web_fetch";
-const WEB_EXTRACT_PROVIDER_NAME: &str = "aworkit_web_extract";
+const FILE_READ_PROVIDER_NAME: &str = "read_file";
+const FILE_SEARCH_PROVIDER_NAME: &str = "search_file";
+const FILE_LIST_PROVIDER_NAME: &str = "list_files";
+const FILE_GREP_PROVIDER_NAME: &str = "grep_files";
+const FILE_EDIT_PROVIDER_NAME: &str = "edit_file";
+const FILE_WRITE_PROVIDER_NAME: &str = "write_file";
+const SHELL_PROVIDER_NAME: &str = "shell";
+const PYTHON_PROVIDER_NAME: &str = "python";
+const TODO_PROVIDER_NAME: &str = "todo";
+const WEB_SEARCH_PROVIDER_NAME: &str = "web_search";
+const WEB_FETCH_PROVIDER_NAME: &str = "web_fetch";
+const WEB_EXTRACT_PROVIDER_NAME: &str = "web_extract";
 const FILE_READ_ADAPTER_ID: &str = "adapter.project-files.read";
 const FILE_SEARCH_ADAPTER_ID: &str = "adapter.project-files.search";
 const FILE_LIST_ADAPTER_ID: &str = "adapter.project-files.list";
@@ -149,7 +151,7 @@ pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
-const SUBAGENT_PROVIDER_NAME: &str = "aworkit_spawn_subagent";
+const SUBAGENT_PROVIDER_NAME: &str = "spawn_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
 const SUBAGENT_MAXIMUM_TOKENS: u64 = 64_000;
@@ -300,12 +302,12 @@ fn tool_approval_copy(call: &ModelToolCallV1) -> (String, String) {
             )
         }
         FILE_EDIT_CAPABILITY_ID => (
-            "Allow project file edit?".to_owned(),
-            format!("The model wants to edit project files with these arguments:\n\n{arguments}"),
+            "Allow file edit?".to_owned(),
+            format!("The model wants to edit a file with these arguments:\n\n{arguments}"),
         ),
         FILE_WRITE_CAPABILITY_ID => (
-            "Allow project file write?".to_owned(),
-            format!("The model wants to write a project file with these arguments:\n\n{arguments}"),
+            "Allow file write?".to_owned(),
+            format!("The model wants to write a file with these arguments:\n\n{arguments}"),
         ),
         SUBAGENT_CAPABILITY_ID => (
             "Allow subagent task?".to_owned(),
@@ -350,6 +352,9 @@ pub struct WorkflowToolActivityV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StoredFileToolBindingV1 {
+    /// Absent in legacy Chats, whose original path and approval contract stays frozen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_access_version: Option<u8>,
     #[serde(
         default,
         skip_serializing_if = "super::tool_registry::ToolOptions::is_default"
@@ -663,7 +668,7 @@ pub(crate) fn file_tool_descriptors()
         descriptor.maximum_concurrency = if capability_id == image_tools::SCREENSHOT { 1 } else { 8 };
         descriptor.max_input_bytes = MAXIMUM_TOOL_PAYLOAD_BYTES;
         descriptor.max_output_bytes = MAXIMUM_TOOL_RESULT_BYTES;
-        descriptor.input_schema_hash = Some(canonical_hash(&schema)?);
+        descriptor.input_schema_hash = Some(canonical_hash(&file_access::descriptor_schema(capability_id, schema))?);
         descriptor
             .rehash()
             .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
@@ -733,7 +738,7 @@ pub(crate) fn freeze_file_tool_bindings(
         let (provider_name, description, input_schema, limit) = match native.map_or(requested.capability_id.as_str(), |tool| tool.executor.as_str()) {
             "image.read" | "screenshot" => image_tools::freeze(&requested.capability_id, &requested.configuration)?,
             "context" => (
-                "aworkit_context".into(),
+                "context".into(),
                 "Read or search original compressed tool output by its reference, or inspect compression statistics. Use originals for exact counts, quotes and edits. Read offsets are UTF-8 bytes; search offsets are ranked matches.".into(),
                 result_compression::schema(),
                 StoredFileToolLimitV1::Context { maximum_bytes: exact_unsigned_configuration(&requested.configuration, &[("authorityMode",json!("context_read"))], "maximumBytes", 256, 65536)? },
@@ -752,7 +757,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.read" => (
                 FILE_READ_PROVIDER_NAME.to_owned(),
-                "Read one UTF-8 text file relative to the frozen project root.".to_owned(),
+                "Read a UTF-8 file by absolute or workspace-relative path. External paths use the approval policy.".to_owned(),
                 file_read_schema(),
                 StoredFileToolLimitV1::Read {
                     maximum_bytes: exact_unsigned_configuration(
@@ -769,7 +774,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.search" => (
                 FILE_SEARCH_PROVIDER_NAME.to_owned(),
-                "Find exact UTF-8 text matches in one file relative to the frozen project root.".to_owned(),
+                "Find exact text in a file by absolute or workspace-relative path.".to_owned(),
                 file_search_schema(),
                 StoredFileToolLimitV1::Search {
                     maximum_results: exact_unsigned_configuration(
@@ -786,7 +791,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.list" => (
                 FILE_LIST_PROVIDER_NAME.to_owned(),
-                "List project files matching a bounded glob (supports *, **, ?), newest first.".to_owned(),
+                "List files matching a glob beneath an absolute or workspace-relative directory, newest first.".to_owned(),
                 file_list_schema(),
                 StoredFileToolLimitV1::List {
                     maximum_entries: exact_unsigned_configuration(
@@ -803,7 +808,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.grep" => (
                 FILE_GREP_PROVIDER_NAME.to_owned(),
-                "Regex-search text files beneath the frozen project root with line context.".to_owned(),
+                "Regex-search files beneath an absolute or workspace-relative directory, with line context.".to_owned(),
                 file_grep_schema(),
                 StoredFileToolLimitV1::Grep {
                     maximum_matches: exact_unsigned_configuration(
@@ -821,7 +826,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.edit" => (
                 FILE_EDIT_PROVIDER_NAME.to_owned(),
-                "Replace one exact text range in a project file atomically; follows the selected approval mode.".to_owned(),
+                "Replace one exact text range in a file atomically. External paths use the approval policy.".to_owned(),
                 file_edit_schema(),
                 StoredFileToolLimitV1::Edit {
                     maximum_bytes: *freeze_configuration(
@@ -839,7 +844,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.write" => (
                 FILE_WRITE_PROVIDER_NAME.to_owned(),
-                "Create or replace a project file with exact content; follows the selected approval mode.".to_owned(),
+                "Create or replace a file with exact content. External paths use the approval policy.".to_owned(),
                 file_write_schema(),
                 StoredFileToolLimitV1::Write {
                     maximum_bytes: *freeze_configuration(
@@ -1017,6 +1022,7 @@ pub(crate) fn freeze_file_tool_bindings(
             );
         }
         bindings.push(StoredFileToolBindingV1 {
+            file_access_version: file_access::is_file_tool(&requested.capability_id).then_some(1),
             options,
             capability_id: requested.capability_id.clone(),
             provider_name,
@@ -1029,7 +1035,8 @@ pub(crate) fn freeze_file_tool_bindings(
             requires_approval: if requested.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
                 mcp_approval::requires_approval(requested)?
             } else {
-                requested.options.approval_mode.is_some()
+                file_access::is_file_tool(&requested.capability_id)
+                    || requested.options.approval_mode.is_some()
                     || !approval_free_tool_ids().contains(requested.capability_id.as_str())
             },
             internal_id,
@@ -1690,7 +1697,7 @@ impl BoundFileToolAuthorityV1 {
             .map_err(broker_error)?;
         match decision {
             BrokerDecisionV1::AwaitingApproval(challenge) => {
-                self.review_tool_approval(outer_invocation_id, turn, call, challenge, cancellation)
+                self.review_tool_approval(outer_invocation_id, turn, call, &proposal_id, challenge, cancellation, scoped_delivery)
             }
             _ => self.complete_broker_decision(
                 broker,
@@ -1726,6 +1733,18 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         response: &ApprovalResponseV1,
         cancellation: &CancellationToken,
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
+        self.resolve_invoke_v1_with_delivery(outer_invocation_id, turn, call, response, cancellation, false)
+    }
+
+    fn resolve_invoke_v1_with_delivery(
+        &self,
+        outer_invocation_id: &StableId,
+        turn: u32,
+        call: &ModelToolCallV1,
+        response: &ApprovalResponseV1,
+        cancellation: &CancellationToken,
+        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         let (broker, proposal, replayed) = self.prepare_broker(outer_invocation_id, turn, call)?;
         let proposal_id = proposal.proposal_id.clone();
@@ -1787,7 +1806,7 @@ impl BoundFileToolAuthorityV1 {
                 replayed,
                 call,
                 cancellation,
-                false,
+                scoped_delivery,
             ),
         }
     }
@@ -2037,7 +2056,8 @@ impl BoundFileToolAuthorityV1 {
                 canonical_hash(&payload)?
             ),
         )?;
-        Ok(ToolInvocationRecordV1 {
+        let mut record = ToolInvocationRecordV1 {
+            file_access: None,
             schema_version: 1,
             outer_invocation_id: outer_invocation_id.clone(),
             turn,
@@ -2061,7 +2081,9 @@ impl BoundFileToolAuthorityV1 {
             project_branch: self.context.project_branch.clone(),
             binding: binding.clone(),
             deadline_epoch_millis: self.context.deadline_epoch_millis,
-        })
+        };
+        file_access::freeze_record(&mut record, &self.runtime)?;
+        Ok(record)
     }
 
     fn reconcile_outcome(
@@ -2470,11 +2492,15 @@ impl FileToolDispatcherV1 {
                 self.record.binding.limit,
                 StoredFileToolLimitV1::Edit { .. } | StoredFileToolLimitV1::Write { .. }
             );
-            let files = ProjectFiles::new(FileAuthority {
+            let files = if let Some(access) = &self.record.file_access {
+                access.as_ref().map_err(Clone::clone)?.open(&self.projects, allow_write)?
+            } else { ProjectFiles::new(FileAuthority {
                 root: self.record.workspace.root.clone(),
                 allow_write,
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())? };
+            let file_path = self.record.file_access.as_ref()
+                .and_then(|access| access.as_ref().ok()).map_or_else(|| PathBuf::from(&path), |access| access.path.clone());
             self.projects
                 .revalidate_workspace_v1(&self.record.workspace)
                 .map_err(|error| error.to_string())?;
@@ -2503,179 +2529,10 @@ impl FileToolDispatcherV1 {
                     enforce_result_bound(&value)?;
                     Ok((value, format!("Loaded skill {name}.")))
                 }
-                StoredFileToolLimitV1::Read { maximum_bytes } => {
-                    let read = files
-                        .read_v1(
-                            &FileReadRequestV1 {
-                                path: PathBuf::from(&path),
-                                maximum_bytes: *maximum_bytes,
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let content = String::from_utf8(read.bytes)
-                        .map_err(|_| "file is not UTF-8 text".to_owned())?;
-                    let value = json!({
-                        "path": path,
-                        "content": content,
-                        "contentHash": read.content_hash,
-                        "bytes": read.effect.bytes_observed_or_written,
-                    });
-                    enforce_result_bound(&value)?;
-                    Ok((
-                        value,
-                        format!(
-                            "Read {} bytes from {}.",
-                            read.effect.bytes_observed_or_written,
-                            read.effect.relative_path.display()
-                        ),
-                    ))
-                }
-                StoredFileToolLimitV1::Search { maximum_results } => {
-                    let needle = self.record.call.arguments["query"]
-                        .as_str()
-                        .ok_or_else(|| "search query is invalid".to_owned())?;
-                    let search = files
-                        .search_v1(
-                            &FileSearchRequestV1 {
-                                path: PathBuf::from(&path),
-                                needle: needle.to_owned(),
-                                maximum_results: *maximum_results,
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let match_count = search.offsets.len();
-                    let value = json!({
-                        "path": path,
-                        "query": needle,
-                        "offsets": search.offsets,
-                        "contentHash": search.effect.before_content_hash,
-                        "bytesObserved": search.effect.bytes_observed_or_written,
-                    });
-                    enforce_result_bound(&value)?;
-                    Ok((
-                        value,
-                        format!(
-                            "Found {} match(es) in {}.",
-                            match_count,
-                            search.effect.relative_path.display()
-                        ),
-                    ))
-                }
-                StoredFileToolLimitV1::List { maximum_entries } => {
-                    let pattern = self.record.call.arguments["pattern"]
-                        .as_str()
-                        .ok_or_else(|| "glob pattern is invalid".to_owned())?;
-                    let list = files
-                        .list_v1(
-                            &FileListRequestV1 {
-                                pattern: pattern.to_owned(),
-                                maximum_entries: *maximum_entries,
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = json!({
-                        "pattern": pattern,
-                        "entries": list.entries,
-                    });
-                    enforce_result_bound(&value)?;
-                    Ok((value, format!("Listed {} file(s).", list.entries.len())))
-                }
-                StoredFileToolLimitV1::Grep {
-                    maximum_matches,
-                    maximum_files,
-                } => {
-                    let pattern = self.record.call.arguments["pattern"]
-                        .as_str()
-                        .ok_or_else(|| "regex pattern is invalid".to_owned())?;
-                    let grep = files
-                        .grep_v1(
-                            &FileGrepRequestV1 {
-                                pattern: pattern.to_owned(),
-                                maximum_matches: *maximum_matches,
-                                maximum_files: *maximum_files,
-                                maximum_file_bytes: 1024 * 1024,
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = json!({
-                        "pattern": pattern,
-                        "matches": grep.matches,
-                        "filesScanned": grep.files_scanned,
-                    });
-                    enforce_result_bound(&value)?;
-                    Ok((
-                        value,
-                        format!(
-                            "Found {} match(es) across {} file(s).",
-                            grep.matches.len(),
-                            grep.files_scanned
-                        ),
-                    ))
-                }
-                StoredFileToolLimitV1::Edit { .. } => {
-                    let old_string = self.record.call.arguments["old_string"]
-                        .as_str()
-                        .ok_or_else(|| "old_string is invalid".to_owned())?;
-                    let new_string = self.record.call.arguments["new_string"]
-                        .as_str()
-                        .ok_or_else(|| "new_string is invalid".to_owned())?;
-                    let current = files
-                        .read(PathBuf::from(&path))
-                        .map_err(|error| error.to_string())?;
-                    let text = String::from_utf8(current.clone())
-                        .map_err(|_| "file is not UTF-8 text".to_owned())?;
-                    let occurrences = text.match_indices(old_string).count();
-                    if occurrences == 0 {
-                        return Err("old_string was not found in the file".to_owned());
-                    }
-                    if occurrences > 1 {
-                        return Err("old_string matched more than once; make it unique".to_owned());
-                    }
-                    let replacement = text.replacen(old_string, new_string, 1).into_bytes();
-                    files
-                        .edit_hash(
-                            &PathBuf::from(&path),
-                            &content_hash_local(&current),
-                            &replacement,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = json!({
-                        "path": path,
-                        "oldString": old_string,
-                        "newString": new_string,
-                        "contentHash": content_hash_local(&replacement),
-                        "bytesWritten": replacement.len(),
-                    });
-                    Ok((
-                        value,
-                        format!("Edited {} by replacing one occurrence.", path),
-                    ))
-                }
-                StoredFileToolLimitV1::Write { .. } => {
-                    let content = self.record.call.arguments["content"]
-                        .as_str()
-                        .ok_or_else(|| "content is invalid".to_owned())?;
-                    let write = files
-                        .write_v1(
-                            &FileWriteRequestV1 {
-                                path: PathBuf::from(&path),
-                                content: content.as_bytes().to_vec(),
-                                expected_content_hash: None,
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = json!({
-                        "path": path,
-                        "contentHash": write.effect.after_content_hash,
-                        "bytesWritten": write.effect.bytes_observed_or_written,
-                    });
-                    Ok((value, format!("Wrote {} bytes to {}.", content.len(), path)))
-                }
+                StoredFileToolLimitV1::Read { .. } | StoredFileToolLimitV1::Search { .. }
+                | StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
+                | StoredFileToolLimitV1::Edit { .. } | StoredFileToolLimitV1::Write { .. } =>
+                    self.execute_file(&files, &file_path, &path, cancellation),
                 StoredFileToolLimitV1::Shell {
                     timeout_seconds,
                     maximum_output_bytes,
@@ -2844,6 +2701,10 @@ impl FileToolDispatcherV1 {
                 StoredFileToolLimitV1::Subagent { .. } => self.run_subagent(envelope, cancellation),
             }
         })();
+        let result = result.and_then(|(mut value, summary)| {
+            file_access::describe_result(&self.record, &mut value)?;
+            Ok((value, summary))
+        });
         match result {
             Ok((result, summary)) => ToolOutcomeRecordV1 {
                 schema_version: 1,
@@ -3297,6 +3158,8 @@ fn content_hash_local(bytes: &[u8]) -> String {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ToolInvocationRecordV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_access: Option<Result<file_access::FileAccess, String>>,
     schema_version: u16,
     outer_invocation_id: StableId,
     turn: u32,
@@ -3588,8 +3451,8 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Screenshot => BTreeSet::from(["operation", "target"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
-        StoredFileToolLimitV1::List { .. } => BTreeSet::from(["pattern"]),
-        StoredFileToolLimitV1::Grep { .. } => BTreeSet::from(["pattern"]),
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } if binding.file_access_version.is_some() => BTreeSet::from(["pattern", "path"]),
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } => BTreeSet::from(["pattern"]),
         StoredFileToolLimitV1::Edit { .. } => BTreeSet::from(["path", "old_string", "new_string"]),
         StoredFileToolLimitV1::Write { .. } => BTreeSet::from(["path", "content"]),
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
@@ -3597,7 +3460,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
         StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit", "freshness"]),
         StoredFileToolLimitV1::WebFetch { .. }
-            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
+            if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID =>
         {
             BTreeSet::from(["urls", "char_limit", "documentId", "offset", "feedContent"])
         }
@@ -3612,6 +3475,7 @@ fn validate_call_arguments(
     };
     let observed_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
     let valid_keys = match binding.limit {
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } if binding.file_access_version.is_some() => observed_keys.is_subset(&expected_keys) && observed_keys.contains("pattern"),
         StoredFileToolLimitV1::Screenshot => observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation"),
         StoredFileToolLimitV1::Subagent { .. } => {
             // The subagent context slice is optional; the task is required.
@@ -3623,7 +3487,7 @@ fn validate_call_arguments(
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("query")
         }
         StoredFileToolLimitV1::WebFetch { .. }
-            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME =>
+            if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID =>
         {
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("urls")
         }
@@ -3641,11 +3505,11 @@ fn validate_call_arguments(
         if path.is_empty()
             || path.len() > 4096
             || path.contains('\0')
-            || (Path::new(path).is_absolute() && !matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead))
+            || (Path::new(path).is_absolute() && binding.file_access_version.is_none() && !matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead))
         {
             return Err(invalid_tool(
-                if matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead) {
-                    "image path must be non-empty, at most 4096 bytes, and contain no NUL; use an absolute local path or a relative Chat workspace path"
+                if binding.file_access_version.is_some() || matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead) {
+                    "file path must be non-empty, at most 4096 bytes, and contain no NUL; use an absolute path or a relative Chat workspace path"
                 } else {
                     "tool path must be a bounded relative path inside the frozen project root"
                 },
@@ -3796,7 +3660,7 @@ fn validate_call_arguments(
         }
         StoredFileToolLimitV1::WebFetch { .. } => {
             web::validate_continuation(arguments)?;
-            if binding.provider_name == WEB_EXTRACT_PROVIDER_NAME {
+            if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID {
                 let urls = object
                     .get("urls")
                     .and_then(Value::as_array)
@@ -4295,7 +4159,7 @@ mod tests {
 
         let (title, message) = tool_approval_copy(&call);
 
-        assert_eq!(title, "Allow project file edit?");
+        assert_eq!(title, "Allow file edit?");
         assert!(message.contains("README.md"));
         assert!(message.contains("replacement"));
     }
@@ -4352,6 +4216,14 @@ mod tests {
             .expect("authorize pending invocation")
         {
             BrokerDecisionV1::DispatchReady(dispatch) => (dispatch.invocation_id, proposal_id),
+            BrokerDecisionV1::AwaitingApproval(challenge) => {
+                let decision = broker.resolve_approval(&legacy_manifest(&authority.context.manifest), &ApprovalResponseV1 {
+                    invocation_id: challenge.invocation_id, nonce: challenge.nonce,
+                    approved: true, now_epoch_millis: current_epoch_millis(),
+                }).unwrap();
+                let BrokerDecisionV1::DispatchReady(dispatch) = decision else { panic!("unexpected decision") };
+                (dispatch.invocation_id, proposal_id)
+            }
             other => panic!("unexpected pending decision: {other:?}"),
         }
     }

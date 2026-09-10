@@ -5,6 +5,8 @@ mod compaction_integration;
 mod compression_integration;
 #[path = "../tool_loop/image_tools_tests.rs"]
 mod image_tools_tests;
+#[path = "../tool_loop/file_access_tests.rs"]
+mod file_access_tests;
 use super::*;
 use crate::runtime::pipeline::WorkflowMessageV1;
 use crate::runtime::semantic_events::{

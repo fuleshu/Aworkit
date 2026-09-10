@@ -108,7 +108,7 @@ impl ProviderEnginePortV1 for Provider {
             emit(tool_call(
                 "call.web.first",
                 CAPABILITY,
-                "aworkit_web_extract",
+                "web_extract",
                 if self.full {
                     json!({"urls":urls,"feedContent":"full"})
                 } else {
@@ -128,7 +128,7 @@ impl ProviderEnginePortV1 for Provider {
             emit(tool_call(
                 "call.web.more",
                 CAPABILITY,
-                "aworkit_web_extract",
+                "web_extract",
                 json!({"urls":["https://example.com/"],"documentId":page["documentId"],"offset":page["nextOffset"]}),
             ))?;
         } else {

@@ -24,21 +24,21 @@ const provider = createServer(async (req, res) => {
     let message;
     const call = (name, args) => ({ tool_calls: [{ index: 0, id: `${scenario}.${turn}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
     if (text.includes('Return only one JSON object with exactly these fields:')) {
-      message = { content: JSON.stringify({ goal: 'Use the Chat working folder', openQuestions: [], evidenceNeeded: [], toolOrder: ['aworkit_list_project_files'] }) };
+      message = { content: JSON.stringify({ goal: 'Use the Chat working folder', openQuestions: [], evidenceNeeded: [], toolOrder: ['list_files'] }) };
     } else {
       turn++;
       if (scenario === 'standard' || scenario === 'isolated') {
-        if (turn === 1) message = call('aworkit_list_project_files', { pattern: '**/*' });
+        if (turn === 1) message = call('list_files', { pattern: '**/*' });
         else {
           const output = JSON.parse(body.messages.filter(m => m.role === 'tool').at(-1).content);
           assert.ok(!JSON.stringify(output).includes('private-note.txt'), JSON.stringify(output));
           message = { content: `${scenario}: private folder listing succeeded.` };
         }
       } else if (scenario === 'write') {
-        if (turn === 1) message = call('aworkit_write_project_file', { path: 'private-note.txt', content: 'persistent private content' });
+        if (turn === 1) message = call('write_file', { path: 'private-note.txt', content: 'persistent private content' });
         else message = { content: 'write: private file created.' };
       } else if (scenario === 'restart') {
-        if (turn === 1) message = call('aworkit_read_project_file', { path: 'private-note.txt' });
+        if (turn === 1) message = call('read_file', { path: 'private-note.txt' });
         else {
           assert.ok(body.messages.filter(m => m.role === 'tool').at(-1).content.includes('persistent private content'));
           message = { content: 'restart: private file restored.' };

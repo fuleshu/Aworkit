@@ -71,7 +71,7 @@ pub fn compress(
     let content = if let Some(reference) = reference {
         if rich {
             let mut result = transformed;
-            let metadata = json!({"reference":reference,"omitted":lossy,"retrieve":"aworkit_context: read or search; offsets refer to the original"});
+            let metadata = json!({"reference":reference,"omitted":lossy,"retrieve":"Read or search with Context retrieval; offsets refer to the original"});
             if let Some(blocks) = result.as_array_mut() {
                 blocks.push(json!({"type":"text","text":format!("Aworkit context: {metadata}")}));
             } else if result.get("aworkitContext").is_none() {
@@ -81,7 +81,7 @@ pub fn compress(
             }
             result
         } else {
-            json!({"aworkitContext":{"reference":reference,"omitted":lossy,"retrieve":"aworkit_context: read or search; use original before exact counts, quotes or edits"},"value":transformed})
+            json!({"aworkitContext":{"reference":reference,"omitted":lossy,"retrieve":"Use Context retrieval before exact counts, quotes or edits"},"value":transformed})
         }
     } else {
         transformed

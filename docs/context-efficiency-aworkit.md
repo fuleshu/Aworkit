@@ -20,7 +20,7 @@ The reviewed Chat started on 2026-09-08 at 18:13:14 UTC. Measurements below are 
 | Unnecessary retrieval | The successful `states: ["open"]` query returned `tasks: []`. The agent subsequently requested all tasks and then confirmed tasks. |
 | Incomplete result | The all-task result was 214,666 bytes. Aworkit capped it at 65,536 bytes, cutting a task description and returning incomplete JSON as text with a truncation notice. |
 | Lifecycle mismatch | Workspace instructions required four hooks. The export contains only `run.start` and `run.end`; `run.start` was requested alongside the task query. |
-| Retrieval unavailable | The frozen tool definitions contain no `aworkit_context`. This does not establish whether compression was disabled or which policy was active. |
+| Retrieval unavailable | The frozen tool definitions contain no `context`. This does not establish whether compression was disabled or which policy was active. |
 
 Aworkit already removes an MCP text block when its parsed JSON exactly equals `structuredContent`. The remaining duplicated Adashi memory is inside that structured object and belongs to the separate Adashi fix.
 

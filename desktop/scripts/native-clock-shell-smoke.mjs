@@ -32,7 +32,7 @@ const provider = createServer(async (req, res) => {
       message = { content: `Date supplied by trusted context: ${clocks.at(-1)[1].slice(0, 10)}.` };
     } else if (turn === 1) {
       const command = phase === 'cmd' ? 'date /t' : `powershell -NoProfile -NonInteractive -Command "Get-Date -Format 'yyyy-MM-dd'; Write-Output 'quoted text'"`;
-      message = { tool_calls: [{ index: 0, id: `clock.${phase}`, type: 'function', function: { name: 'aworkit_host_shell', arguments: JSON.stringify({ command }) } }] };
+      message = { tool_calls: [{ index: 0, id: `clock.${phase}`, type: 'function', function: { name: 'shell', arguments: JSON.stringify({ command }) } }] };
     } else {
       assert.equal(turn, 2);
       const result = JSON.parse(body.messages.filter(m => m.role === 'tool').at(-1).content);

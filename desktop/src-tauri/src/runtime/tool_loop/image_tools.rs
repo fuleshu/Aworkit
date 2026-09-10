@@ -75,7 +75,10 @@ impl FileToolDispatcherV1 {
         }
         let (name, bytes, mut source) = if self.record.call.capability_id == READ {
             let path = Path::new(args["path"].as_str().ok_or("Image path is required")?);
-            let bytes = if matches!(
+            let bytes = if let Some(access) = &self.record.file_access {
+                let access = access.as_ref().map_err(Clone::clone)?;
+                files.read_image_source_v1(&access.path, cancellation).map_err(|e| e.to_string())?.bytes
+            } else if matches!(
                 self.record.binding.limit,
                 StoredFileToolLimitV1::LocalImageRead
             ) {

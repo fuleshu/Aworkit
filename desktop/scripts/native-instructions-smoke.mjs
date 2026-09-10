@@ -47,7 +47,7 @@ const provider = createServer(async (request, response) => {
           await unlink(resolve(project, "src/AGENTS.md"));
         }
         if (toolTurns === 3) assert.ok(guidance.includes("Instructions removed: src/AGENTS.md"));
-        if (toolTurns < 3) call = { id: `read.${toolTurns}`, type: "function", function: { name: "aworkit_read_project_file", arguments: JSON.stringify({ path: "src/file.txt" }) } };
+        if (toolTurns < 3) call = { id: `read.${toolTurns}`, type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "src/file.txt" }) } };
         toolTurns++;
       } else if (scenario === "follow-up") {
         assert.equal(reminders.filter(m => m.content.includes("The following workspace instructions")).length, 1);
@@ -60,7 +60,7 @@ const provider = createServer(async (request, response) => {
       } else if (scenario === "child") {
         assert.ok(guidance.includes("PROJECT V3"));
         assert.equal(reminders.length, 1, "parent and child own separate instruction state");
-        if (childTurns === 0) call = { id: "delegate.1", type: "function", function: { name: "aworkit_spawn_subagent", arguments: JSON.stringify({ task: "Read the provided instructions and report." }) } };
+        if (childTurns === 0) call = { id: "delegate.1", type: "function", function: { name: "spawn_subagent", arguments: JSON.stringify({ task: "Read the provided instructions and report." }) } };
         if (childTurns === 1) assert.equal((body.tools ?? []).length, 0, "instruction-only child has no callable schemas");
         childTurns++;
       } else {

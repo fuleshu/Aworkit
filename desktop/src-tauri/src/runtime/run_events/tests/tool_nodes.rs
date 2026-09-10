@@ -24,7 +24,7 @@ fn explicit_tool_node_can_finish_the_run_directly_and_after_resume() {
             call_id: "files.1.tool".into(),
             provider_call_id: None,
             capability_id: "tool.files.write".into(),
-            name: "aworkit_write_project_file".into(),
+            name: "write_file".into(),
             arguments: json!({"path":"notes.txt","content":"private"}),
             provider_context: None,
         };

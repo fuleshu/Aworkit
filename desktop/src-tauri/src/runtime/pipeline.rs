@@ -4015,7 +4015,7 @@ mod tests {
                     ToolScriptV1::WebSearch => emit(tool_call(
                         "call.web-search",
                         WEB_SEARCH_CAPABILITY_ID,
-                        "aworkit_web_search",
+                        "web_search",
                         json!({
                             "query": "current product price",
                             "limit": 5,
@@ -4026,13 +4026,13 @@ mod tests {
                         emit(tool_call(
                             "call.read",
                             FILE_READ_CAPABILITY_ID,
-                            "aworkit_read_project_file",
+                            "read_file",
                             json!({"path":"notes.txt"}),
                         ))?;
                         emit(tool_call(
                             "call.search",
                             FILE_SEARCH_CAPABILITY_ID,
-                            "aworkit_search_project_file",
+                            "search_file",
                             json!({"path":"notes.txt","query":"alpha"}),
                         ))?;
                     }
@@ -4050,32 +4050,32 @@ mod tests {
                         emit(tool_call(
                             "call.read",
                             FILE_READ_CAPABILITY_ID,
-                            "aworkit_read_project_file",
+                            "read_file",
                             json!({"path":"notes.txt"}),
                         ))?;
                     }
                     ToolScriptV1::LargeAggregate => emit(tool_call(
                         "call.large-one",
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"large.txt"}),
                     ))?,
                     ToolScriptV1::Escape => emit(tool_call(
                         "call.escape",
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"../outside.txt"}),
                     ))?,
                     ToolScriptV1::Malformed => emit(tool_call(
                         "call.malformed",
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"notes.txt","unknown":true}),
                     ))?,
                     ToolScriptV1::ReadThenProviderFailure => emit(tool_call(
                         "call.before-failure",
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"notes.txt"}),
                     ))?,
                     ToolScriptV1::Edit
@@ -4093,14 +4093,14 @@ mod tests {
                                 "call.edit"
                             },
                             "tool.files.edit",
-                            "aworkit_edit_project_file",
-                            json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
+                            "edit_file",
+                            json!({"path":"../notes.txt","old_string":"alpha","new_string":"beta"}),
                         ))?;
                     }
                     ToolScriptV1::Todo => emit(tool_call(
                         "call.todo",
                         "tool.todo",
-                        "aworkit_todo",
+                        "todo",
                         json!({"todos":[
                             {"content":"Write tests","status":"in_progress"},
                             {"content":"Fix pipeline","status":"completed"},
@@ -4120,20 +4120,20 @@ mod tests {
                             emit(tool_call(
                                 "call.read",
                                 FILE_READ_CAPABILITY_ID,
-                                "aworkit_read_project_file",
+                                "read_file",
                                 json!({"path":"notes.txt"}),
                             ))?;
                             emit(tool_call(
                                 "call.search",
                                 FILE_SEARCH_CAPABILITY_ID,
-                                "aworkit_search_project_file",
+                                "search_file",
                                 json!({"path":"notes.txt","query":"alpha"}),
                             ))?;
                         } else {
                             emit(tool_call(
                                 "call.subagent",
                                 SUBAGENT_CAPABILITY_ID,
-                                "aworkit_spawn_subagent",
+                                "spawn_subagent",
                                 json!({"task":"Summarize the project notes.","context":"notes.txt mentions alpha beta alpha."}),
                             ))?;
                         }
@@ -4141,7 +4141,7 @@ mod tests {
                     ToolScriptV1::SubagentNest => emit(tool_call(
                         "call.nested",
                         SUBAGENT_CAPABILITY_ID,
-                        "aworkit_spawn_subagent",
+                        "spawn_subagent",
                         json!({"task":"Nested delegation attempt."}),
                     ))?,
                     ToolScriptV1::SubagentLoop => {
@@ -4154,14 +4154,14 @@ mod tests {
                             emit(tool_call(
                                 "call.loop-read",
                                 FILE_READ_CAPABILITY_ID,
-                                "aworkit_read_project_file",
+                                "read_file",
                                 json!({"path":"notes.txt"}),
                             ))?;
                         } else {
                             emit(tool_call(
                                 "call.subagent",
                                 SUBAGENT_CAPABILITY_ID,
-                                "aworkit_spawn_subagent",
+                                "spawn_subagent",
                                 json!({"task":"Never finish.","context":"notes.txt"}),
                             ))?;
                         }
@@ -4177,7 +4177,7 @@ mod tests {
                 emit(tool_call(
                     "call.large-two",
                     FILE_READ_CAPABILITY_ID,
-                    "aworkit_read_project_file",
+                    "read_file",
                     json!({"path":"large.txt"}),
                 ))?;
                 emit(ModelToolEventV1::Usage {
@@ -4207,7 +4207,7 @@ mod tests {
                     emit(tool_call(
                         &format!("call.read.{}", request.exchanges.len() + 1),
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"notes.txt"}),
                     ))?;
                     emit(ModelToolEventV1::Usage {
@@ -4226,8 +4226,8 @@ mod tests {
                 emit(tool_call(
                     &format!("call.edit.{}", request.exchanges.len() + 1),
                     "tool.files.edit",
-                    "aworkit_edit_project_file",
-                    json!({"path":"notes.txt","old_string":"alpha","new_string":"beta"}),
+                    "edit_file",
+                    json!({"path":"../notes.txt","old_string":"alpha","new_string":"beta"}),
                 ))?;
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 5,
@@ -4257,7 +4257,7 @@ mod tests {
                     emit(tool_call(
                         &format!("call.loop-read.{}", request.exchanges.len() + 1),
                         FILE_READ_CAPABILITY_ID,
-                        "aworkit_read_project_file",
+                        "read_file",
                         json!({"path":"notes.txt"}),
                     ))?;
                     emit(ModelToolEventV1::Usage {
@@ -4690,16 +4690,15 @@ mod tests {
         let result = pipeline.execute(escaped).expect("settled denied read");
         assert_eq!(
             result.status,
-            WorkflowExecutionStatusV1::Succeeded,
+            WorkflowExecutionStatusV1::AwaitingApproval,
             "{:?}",
             result.error
         );
-        assert_eq!(result.tool_activity.len(), 1, "{:?}", result.error);
-        assert_eq!(result.tool_activity[0].status, "failed");
+        assert!(result.approval.is_some());
         let encoded = serde_json::to_string(&*observed_results.lock().expect("result"))
             .expect("encode result");
         assert!(!encoded.contains("outside secret"));
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let malformed_calls = Arc::new(AtomicUsize::new(0));
         let malformed = WorkflowExecutionPipeline::compose(
@@ -4735,10 +4734,9 @@ mod tests {
         let missing_scope = pipeline
             .execute(missing_scope)
             .expect("missing project scope is a settled denied tool result");
-        assert_eq!(missing_scope.status, WorkflowExecutionStatusV1::Succeeded);
-        assert_eq!(missing_scope.tool_activity.len(), 1);
-        assert_eq!(missing_scope.tool_activity[0].status, "failed");
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(missing_scope.status, WorkflowExecutionStatusV1::AwaitingApproval);
+        assert!(missing_scope.approval.is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -5657,6 +5655,8 @@ mod tests {
         fs::create_dir(project.join(".git")).expect("git metadata");
         fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
         fs::write(project.join("notes.txt"), b"alpha").expect("notes");
+        fs::create_dir_all(project.join("workspace/.git")).unwrap();
+        fs::write(project.join("workspace/.git/HEAD"), b"ref: refs/heads/main\n").unwrap();
         project
     }
 
@@ -5699,7 +5699,7 @@ mod tests {
         request.workspace = Some(
             pipeline
                 .projects
-                .resolve_workspace_v1(project)
+                .resolve_workspace_v1(project.join("workspace"))
                 .expect("workspace"),
         );
         request.budget.turns = 4;
@@ -5751,7 +5751,7 @@ mod tests {
         );
         let approval = suspended.approval.expect("tool approval evidence");
         assert_eq!(approval.node_id, "agent.1");
-        assert_eq!(approval.title, "Allow project file edit?");
+        assert_eq!(approval.title, "Allow file edit?");
         assert!(approval.message.contains("notes.txt"));
         assert!(approval.message.contains("alpha"));
         assert!(approval.message.contains("beta"));
@@ -5800,7 +5800,7 @@ mod tests {
         assert_eq!(edit.status, "completed");
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed.len(), 1);
-        assert_eq!(observed[0]["path"], "notes.txt");
+        assert_eq!(observed[0]["path"], "../notes.txt");
         assert_eq!(observed[0]["oldString"], "alpha");
         assert_eq!(observed[0]["newString"], "beta");
         drop(observed);

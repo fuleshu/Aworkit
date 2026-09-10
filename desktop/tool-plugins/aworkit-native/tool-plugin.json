@@ -6,11 +6,11 @@
   "tools": [
     {
       "id": "tool.files.read",
-      "name": "Project file read",
-      "description": "Read one UTF-8 text file relative to the project root.",
-      "instructions": "Read files when their contents are relevant to the task. Use returned content as evidence; respect partial-content notices.",
+      "name": "File read",
+      "description": "Read a UTF-8 file by absolute or workspace-relative path.",
+      "instructions": "Read files when their contents are relevant to the task. Use returned content as evidence; respect partial-content notices. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.read",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -21,14 +21,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -49,22 +49,23 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 4096
+            "maxLength": 4096,
+            "description": "Absolute file path or path relative to the Chat workspace."
           }
         },
         "required": [
           "path"
         ]
       },
-      "providerName": "aworkit_read_project_file"
+      "providerName": "read_file"
     },
     {
       "id": "tool.files.search",
-      "name": "Project file search",
-      "description": "Find exact text matches in one project file.",
-      "instructions": "Use exact text search when you know the file and text to locate.",
+      "name": "File search",
+      "description": "Find exact text matches in one file.",
+      "instructions": "Use exact text search when you know the file and text to locate. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.search",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -75,14 +76,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -103,7 +104,8 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 4096
+            "maxLength": 4096,
+            "description": "Absolute file path or path relative to the Chat workspace."
           },
           "query": {
             "type": "string",
@@ -116,15 +118,15 @@
           "query"
         ]
       },
-      "providerName": "aworkit_search_project_file"
+      "providerName": "search_file"
     },
     {
       "id": "tool.files.edit",
-      "name": "Project file edit",
-      "description": "Replace one exact text range in a project file.",
-      "instructions": "Read relevant content before editing. Apply changes within the requested scope and verify the resulting behavior when appropriate.",
+      "name": "File edit",
+      "description": "Replace one exact text range in a file.",
+      "instructions": "Read relevant content before editing. Apply changes within the requested scope and verify the resulting behavior when appropriate. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.edit",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -136,14 +138,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -171,7 +173,8 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 4096
+            "maxLength": 4096,
+            "description": "Absolute file path or path relative to the Chat workspace."
           },
           "old_string": {
             "type": "string",
@@ -189,15 +192,15 @@
           "new_string"
         ]
       },
-      "providerName": "aworkit_edit_project_file"
+      "providerName": "edit_file"
     },
     {
       "id": "tool.files.list",
-      "name": "Project file list (glob)",
-      "description": "List project files matching a glob.",
-      "instructions": "Use file listing to discover relevant paths. Narrow the glob when results are truncated.",
+      "name": "File list (glob)",
+      "description": "List files matching a glob.",
+      "instructions": "Use file listing to discover relevant paths. Narrow the glob when results are truncated. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.list",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -208,14 +211,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -237,21 +240,27 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Directory to search, absolute or relative to the Chat workspace; defaults to the workspace."
           }
         },
         "required": [
           "pattern"
         ]
       },
-      "providerName": "aworkit_list_project_files"
+      "providerName": "list_files"
     },
     {
       "id": "tool.files.grep",
-      "name": "Project file regex search",
-      "description": "Regex-search project files with line context.",
-      "instructions": "Use repository search to find relevant definitions or references. Refine the query if results are incomplete.",
+      "name": "File regex search",
+      "description": "Regex-search files with line context.",
+      "instructions": "Use repository search to find relevant definitions or references. Refine the query if results are incomplete. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.grep",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -262,14 +271,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -291,21 +300,27 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 16384
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Directory to search, absolute or relative to the Chat workspace; defaults to the workspace."
           }
         },
         "required": [
           "pattern"
         ]
       },
-      "providerName": "aworkit_grep_project_files"
+      "providerName": "grep_files"
     },
     {
       "id": "tool.files.write",
-      "name": "Project file write",
-      "description": "Create or replace a project file with exact content.",
-      "instructions": "Write complete requested content. Inspect an existing file before replacing it unless its replacement was explicitly requested.",
+      "name": "File write",
+      "description": "Create or replace a file with exact content.",
+      "instructions": "Write complete requested content. Inspect an existing file before replacing it unless its replacement was explicitly requested. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.write",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "project_files",
@@ -317,14 +332,14 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         },
         {
           "key": "effect",
           "label": "Operation",
-          "help": "The kind of project operation implemented by this tool.",
+          "help": "The file operation implemented by this tool.",
           "kind": "string",
           "readOnly": true
         },
@@ -352,7 +367,8 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 4096
+            "maxLength": 4096,
+            "description": "Absolute file path or path relative to the Chat workspace."
           },
           "content": {
             "type": "string",
@@ -365,7 +381,7 @@
           "content"
         ]
       },
-      "providerName": "aworkit_write_project_file"
+      "providerName": "write_file"
     },
     {
       "id": "tool.shell.host",
@@ -429,7 +445,7 @@
           "command"
         ]
       },
-      "providerName": "aworkit_host_shell"
+      "providerName": "shell"
     },
     {
       "id": "tool.python.host",
@@ -501,7 +517,7 @@
           "script"
         ]
       },
-      "providerName": "aworkit_host_python"
+      "providerName": "python"
     },
     {
       "id": "tool.todo",
@@ -558,7 +574,7 @@
           "todos"
         ]
       },
-      "providerName": "aworkit_todo"
+      "providerName": "todo"
     },
     {
       "id": "tool.web_search",
@@ -790,7 +806,7 @@
           "query"
         ]
       },
-      "providerName": "aworkit_web_search"
+      "providerName": "web_search"
     },
     {
       "id": "tool.web_fetch",
@@ -863,7 +879,7 @@
           "url"
         ]
       },
-      "providerName": "aworkit_web_fetch"
+      "providerName": "web_fetch"
     },
     {
       "id": "tool.web_extract",
@@ -949,7 +965,7 @@
           "urls"
         ]
       },
-      "providerName": "aworkit_web_extract"
+      "providerName": "web_extract"
     },
     {
       "id": "tool.subagent",
@@ -997,7 +1013,7 @@
           "task"
         ]
       },
-      "providerName": "aworkit_spawn_subagent"
+      "providerName": "spawn_subagent"
     },
     {
       "id": "tool.skill",
@@ -1126,13 +1142,13 @@
           "query":{"type":"string","maxLength":4096}
         },"required":["operation"]
       },
-      "providerName":"aworkit_context"
+      "providerName":"context"
     },
     {
       "id": "tool.image.read",
       "name": "Image read",
       "description": "Read a local PNG, JPEG or WebP image by absolute path or a path relative to the Chat workspace, and show it to the vision model.",
-      "instructions": "Use the absolute local file path supplied by the user; relative paths use the Chat workspace. No project selection is needed for absolute paths. A vision-capable model is required. Sources up to 32 MiB are accepted; oversized images are reencoded or resized into a bounded vision copy, with preparation details in the result. Invalid reads return an error you can correct.",
+      "instructions": "Use the absolute local file path supplied by the user; relative paths use the Chat workspace. No project selection is needed for absolute paths. A vision-capable model is required. Sources up to 32 MiB are accepted; oversized images are reencoded or resized into a bounded vision copy, with preparation details in the result. Invalid reads return an error you can correct. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "image.read",
       "requiresProject": false,
       "execution": "native",
@@ -1143,7 +1159,7 @@
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Reads one local image file. Absolute paths work without a project; relative paths use the Chat workspace.",
+          "help": "Paths inside the workspace need no approval; external paths use the selected approval policy.",
           "kind": "string",
           "readOnly": true
         }
@@ -1156,14 +1172,14 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "description": "Absolute local image file path, or a path relative to the Chat workspace."
+            "description": "Absolute file path or path relative to the Chat workspace."
           }
         },
         "required": [
           "path"
         ]
       },
-      "providerName": "aworkit_read_image"
+      "providerName": "read_image"
     },
     {
       "id": "tool.screenshot",
@@ -1207,7 +1223,7 @@
           "operation"
         ]
       },
-      "providerName": "aworkit_screenshot"
+      "providerName": "screenshot"
     }
   ]
 }

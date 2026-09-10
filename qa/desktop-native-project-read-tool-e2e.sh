@@ -512,7 +512,7 @@ jq -e \
     .turn == 1
     and .call.callId == "call_read_1"
     and .call.capabilityId == "tool.files.read"
-    and .call.name == "aworkit_read_project_file"
+    and .call.name == "read_file"
     and .call.arguments == {"path":"notes.txt"}
     and .proposal.runId == $run
     and .workspace.root == $root
@@ -588,7 +588,7 @@ jq -s -e \
       and ([$requests[].stream] | all(. == false))
       and ([$requests[].toolChoice] | all(. == "auto"))
       and ([$requests[].tools | length] | all(. == 1))
-      and ([$requests[].tools[0].function.name] | all(. == "aworkit_read_project_file"))
+      and ([$requests[].tools[0].function.name] | all(. == "read_file"))
       and ([$requests[].tools[0].function.parameters.type] | all(. == "object"))
       and $requests[0].messages == [{"role":"user","content":$prompt}]
       and $requests[1].messages[0] == {"role":"user","content":$prompt}
@@ -597,7 +597,7 @@ jq -s -e \
         "id":"call_read_1",
         "type":"function",
         "function":{
-          "name":"aworkit_read_project_file",
+          "name":"read_file",
           "arguments":"{\"path\":\"notes.txt\"}"
         }
       }]

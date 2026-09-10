@@ -538,6 +538,7 @@ fn load_or_migrate_settings(
                 | settings.normalize_legacy_agent_turn_limits()
                 | settings.normalize_legacy_web_search_configuration()
                 | settings.normalize_legacy_image_tool()
+                | settings.normalize_legacy_file_tools()
                 | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {

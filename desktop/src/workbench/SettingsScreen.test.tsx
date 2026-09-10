@@ -1233,6 +1233,8 @@ describe("Settings v2 workbench", () => {
   it("shows exact tool and project failures and omits unsupported remote tool roots", async () => {
     const tool = {
       ...configuration().tools[0]!,
+      // Keep this legacy project-only draft inspectable while reporting its failures.
+      requiresProject: true,
       credentialBindings: [
         {
           name: "legacy_api_key",
@@ -2506,7 +2508,7 @@ function configuration(): SettingsConfigurationV2 {
         id: "tool.files.read",
         name: "Read project file",
         enabled: true,
-        requiresProject: true,
+        requiresProject: false,
         credentialBindings: [],
         configuration: {
           authorityMode: "project_files",
