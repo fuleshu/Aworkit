@@ -28,7 +28,6 @@ impl FileToolDispatcherV1 {
                     "contentHash": read.content_hash,
                     "bytes": read.effect.bytes_observed_or_written,
                 });
-                enforce_result_bound(&value)?;
                 Ok((
                     value,
                     format!(
@@ -60,7 +59,6 @@ impl FileToolDispatcherV1 {
                     "contentHash": search.effect.before_content_hash,
                     "bytesObserved": search.effect.bytes_observed_or_written,
                 });
-                enforce_result_bound(&value)?;
                 Ok((
                     value,
                     format!(
@@ -87,7 +85,6 @@ impl FileToolDispatcherV1 {
                     "pattern": pattern,
                     "entries": list.entries,
                 });
-                enforce_result_bound(&value)?;
                 Ok((value, format!("Listed {} file(s).", list.entries.len())))
             }
             StoredFileToolLimitV1::Grep {
@@ -113,7 +110,6 @@ impl FileToolDispatcherV1 {
                     "matches": grep.matches,
                     "filesScanned": grep.files_scanned,
                 });
-                enforce_result_bound(&value)?;
                 Ok((
                     value,
                     format!(

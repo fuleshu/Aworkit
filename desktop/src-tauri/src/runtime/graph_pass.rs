@@ -30,17 +30,15 @@ use super::{
     documents::validate_v1_executable_catalog,
     model_tool_loop::{
         AgentContextV1, ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
-        ModelToolLoopRunV1, PROVIDER_TIMEOUT_NOTICE, execute_model_tool_loop_approval_v1,
+        ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, provider_recovery_notice,
         resume_model_tool_loop_v1,
     },
-    pipeline::{
-        WORKFLOW_MAX_ASSISTANT_TEXT_BYTES, WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1,
-    },
+    pipeline::{WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1},
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
 pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
-const MAXIMUM_NODE_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
+const MAXIMUM_NODE_OUTPUT_BYTES: usize = usize::MAX;
 const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
 
@@ -69,10 +67,10 @@ fn instruction_agent_outer(outer: &StableId, node: &CompiledGraphNodeV1, legacy:
     .expect("digest is a valid invocation identity")
 }
 
-/// Per-node pass budget ceilings derived from the frozen snapshot.
+/// Per-node transport recovery and tool-output bounds. Cumulative token usage
+/// is reported for the run and never terminates its execution.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GraphPassBudgetV1 {
-    pub tokens: u64,
     pub maximum_timeout_recoveries: u32,
     pub maximum_tool_output_bytes: usize,
 }
@@ -466,9 +464,6 @@ impl<'a> PassMachine<'a> {
             if cancellation.is_cancelled() {
                 return self.failed_outcome("graph pass was cancelled".to_owned());
             }
-            if let Err(error) = self.check_budget() {
-                return self.failed_outcome(error);
-            }
             self.push_activity(node, "started", "running");
             let value = if node.node_type == "approval" {
                 match approval_decision {
@@ -522,10 +517,6 @@ impl<'a> PassMachine<'a> {
             if let Some((approval, suspension)) = self.pending_tool_approval.take() {
                 self.push_activity(node, "waiting", "awaiting user decision");
                 return self.pending_for_tool_approval(approval, suspension);
-            }
-            if let Err(error) = self.enforce_node_output_bound(&value, node) {
-                self.push_activity(node, "failed", &error);
-                return self.failed_outcome(error);
             }
             self.values.insert(node_id.clone(), value);
             self.executed.insert(node_id.clone());
@@ -668,13 +659,6 @@ impl<'a> PassMachine<'a> {
         any_active
     }
 
-    fn check_budget(&self) -> Result<(), String> {
-        if self.input_units.saturating_add(self.output_units) > self.budget.tokens {
-            return Err("graph pass budget is exhausted".to_owned());
-        }
-        Ok(())
-    }
-
     fn push_activity(&mut self, node: &CompiledGraphNodeV1, status: &str, summary: &str) {
         let input = (status == "started").then(|| self.node_input(node));
         let output = match status {
@@ -708,26 +692,6 @@ impl<'a> PassMachine<'a> {
                 .unwrap_or(Value::Null);
         }
         self.incoming_value(&node.id)
-    }
-
-    fn enforce_node_output_bound(
-        &self,
-        value: &Value,
-        node: &CompiledGraphNodeV1,
-    ) -> Result<(), String> {
-        let limit = if node.node_type == "input" {
-            WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
-        } else {
-            MAXIMUM_NODE_OUTPUT_BYTES
-        };
-        if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > limit) {
-            return Err(format!(
-                "node '{}' output exceeds the {} KiB pass bound",
-                node.id,
-                limit / 1024
-            ));
-        }
-        Ok(())
     }
 
     fn incoming_value(&self, node_id: &str) -> Value {
@@ -851,7 +815,6 @@ impl<'a> PassMachine<'a> {
                     .budget
                     .maximum_timeout_recoveries
                     .saturating_sub(self.timeout_recoveries),
-                maximum_tokens: self.budget.tokens,
             },
             self.tool_authority,
             cancellation,
@@ -947,7 +910,6 @@ impl<'a> PassMachine<'a> {
         let mut overflow_retries = 0;
         loop {
             let mut context = recorded_context.clone();
-            self.check_budget().map_err(ProviderError::Failed)?;
             if !context.context_messages.is_empty() {
                 context.input = context.projected_input()?;
                 let messages = context
@@ -1006,14 +968,16 @@ impl<'a> PassMachine<'a> {
                     }
                     overflow_retries += 1;
                 }
-                Err(ProviderError::RequestTimedOut)
-                    if self.timeout_recoveries < self.budget.maximum_timeout_recoveries =>
+                Err(error)
+                    if provider_recovery_notice(&error).is_some()
+                        && self.timeout_recoveries < self.budget.maximum_timeout_recoveries =>
                 {
                     self.timeout_recoveries = self.timeout_recoveries.saturating_add(1);
-                    append_retry_notice(&mut request.input)?;
+                    let recovery_notice =
+                        provider_recovery_notice(&error).expect("recoverable error");
                     recorded_context.retry_notice = Some(match retry_notice {
-                        Some(notice) => format!("{notice}\n\n{PROVIDER_TIMEOUT_NOTICE}"),
-                        None => PROVIDER_TIMEOUT_NOTICE.into(),
+                        Some(notice) => format!("{notice}\n\n{recovery_notice}"),
+                        None => recovery_notice.into(),
                     });
                 }
                 Ok(evidence) => {
@@ -1077,7 +1041,6 @@ impl<'a> PassMachine<'a> {
                 .budget
                 .maximum_timeout_recoveries
                 .saturating_sub(self.timeout_recoveries),
-            maximum_tokens: self.budget.tokens,
         };
         match resume_model_tool_loop_v1(
             self.gateway,
@@ -1339,29 +1302,6 @@ pub(crate) fn execute_graph_pass_observed(
         activity_observer,
     };
     machine.run(pending, approval_decision, cancellation)
-}
-
-fn append_retry_notice(input: &mut Value) -> Result<(), ProviderError> {
-    let notice = json!({"role":"user","content":PROVIDER_TIMEOUT_NOTICE});
-    match input {
-        Value::String(text) => {
-            *input = json!({"messages":[
-                {"role":"user","content":text.clone()},
-                notice,
-            ]});
-        }
-        Value::Array(messages) => messages.push(notice),
-        Value::Object(object) if object.contains_key("messages") => object
-            .get_mut("messages")
-            .and_then(Value::as_array_mut)
-            .ok_or(ProviderError::InvalidPlan)?
-            .push(notice),
-        Value::Object(object) if object.contains_key("role") && object.contains_key("content") => {
-            *input = Value::Array(vec![Value::Object(object.clone()), notice]);
-        }
-        _ => return Err(ProviderError::InvalidPlan),
-    }
-    Ok(())
 }
 
 /// Extracts the closed request overrides owned by a model-consuming workflow

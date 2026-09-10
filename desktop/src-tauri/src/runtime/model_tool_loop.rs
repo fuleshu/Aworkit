@@ -3,6 +3,8 @@
 //! Providers can only request tools. Every request is settled by the injected
 //! trusted-core port before the exact result is sent back on the next model
 //! turn. This module owns neither workspace authority nor tool execution.
+//! Token totals are usage accounting only, including after approval resume and
+//! inside subagents; they impose no cumulative run limit.
 
 use std::collections::BTreeMap;
 
@@ -24,9 +26,12 @@ use super::{
 };
 
 mod approval_turn;
+mod provider_recovery;
 
-const MAXIMUM_TOOL_CALLS_PER_TURN: usize = 8;
-const MAXIMUM_DURABLE_EXCHANGE_BYTES: usize = 512 * 1024;
+pub(crate) use provider_recovery::provider_recovery_notice;
+
+// Headroom for context compaction, not a limit on persisted exchanges.
+const TOOL_CONTEXT_HEADROOM_BYTES: usize = 512 * 1024;
 pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 1;
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
 
@@ -214,7 +219,6 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub maximum_output_bytes: usize,
     pub maximum_tool_output_bytes: usize,
     pub maximum_timeout_recoveries: u32,
-    pub maximum_tokens: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,7 +275,7 @@ pub(crate) fn execute_model_tool_loop_v1(
         }],
         maximum_input_bytes: request
             .maximum_input_bytes
-            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
+            .saturating_add(TOOL_CONTEXT_HEADROOM_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut exchanges = Vec::new();
@@ -314,17 +318,6 @@ pub(crate) fn execute_model_tool_loop_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
-        if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("token limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
 
         if turn_output.calls.is_empty() {
             let assistant_text = turn_output.assistant_text.trim().to_owned();
@@ -349,17 +342,6 @@ pub(crate) fn execute_model_tool_loop_v1(
                 exchanges,
                 activities,
             });
-        }
-        if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
@@ -392,19 +374,6 @@ pub(crate) fn execute_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        if serde_json::to_vec(&exchange)
-            .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
-        {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {
@@ -455,7 +424,6 @@ fn validate_limits(request: &ModelToolLoopRequestV1<'_>) -> Result<(), ModelTool
         || request.maximum_input_bytes == 0
         || request.maximum_tool_output_bytes == 0
         || request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
-        || request.maximum_tokens == 0
     {
         return Err(ModelToolLoopErrorV1::Budget("invalid frozen limits"));
     }
@@ -519,9 +487,6 @@ fn execute_tool_turn_with_timeout_recovery(
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled.into());
         }
-        if input_tokens.saturating_add(*output_tokens) >= request.maximum_tokens {
-            return Err(ModelToolLoopErrorV1::Budget("token limit"));
-        }
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
         match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
             Err(ProviderError::ContextWindowExceeded)
@@ -555,13 +520,15 @@ fn execute_tool_turn_with_timeout_recovery(
                 }
                 overflow_retries += 1;
             }
-            Err(ProviderError::RequestTimedOut)
-                if *timeout_recoveries < request.maximum_timeout_recoveries =>
+            Err(error)
+                if provider_recovery_notice(&error).is_some()
+                    && *timeout_recoveries < request.maximum_timeout_recoveries =>
             {
                 *timeout_recoveries = timeout_recoveries.saturating_add(1);
+                let recovery_notice = provider_recovery_notice(&error).expect("recoverable error");
                 retry_notice = Some(match retry_notice {
-                    Some(notice) => format!("{notice}\n\n{PROVIDER_TIMEOUT_NOTICE}"),
-                    None => PROVIDER_TIMEOUT_NOTICE.to_owned(),
+                    Some(notice) => format!("{notice}\n\n{recovery_notice}"),
+                    None => recovery_notice.to_owned(),
                 });
                 provider_request.retry_notice = retry_notice.clone();
             }
@@ -607,7 +574,10 @@ fn model_facing_tool_result(
 ) -> ModelToolResultV1 {
     let result = super::tool_loop::skills::model_result(result, capability_id);
     let content = super::tool_result_preview::bounded_content(&result.content, maximum_bytes, None);
-    ModelToolResultV1 { content: content.unwrap_or_else(|| result.content.clone()), ..result }
+    ModelToolResultV1 {
+        content: content.unwrap_or_else(|| result.content.clone()),
+        ..result
+    }
 }
 
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation
@@ -626,7 +596,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         }],
         maximum_input_bytes: request
             .maximum_input_bytes
-            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
+            .saturating_add(TOOL_CONTEXT_HEADROOM_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut exchanges = Vec::new();
@@ -669,17 +639,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
-        if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("token limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         if turn_output.calls.is_empty() {
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
@@ -703,17 +662,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 exchanges,
                 activities,
             }));
-        }
-        if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
@@ -771,19 +719,6 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        if serde_json::to_vec(&exchange)
-            .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
-        {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {
@@ -822,7 +757,7 @@ pub(crate) fn resume_model_tool_loop_v1(
         }],
         maximum_input_bytes: request
             .maximum_input_bytes
-            .saturating_add(MAXIMUM_DURABLE_EXCHANGE_BYTES),
+            .saturating_add(TOOL_CONTEXT_HEADROOM_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
     let mut pending = pending.clone();
@@ -879,17 +814,6 @@ pub(crate) fn resume_model_tool_loop_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
-        if input_tokens.saturating_add(output_tokens) > request.maximum_tokens {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("token limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         if turn_output.calls.is_empty() {
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
@@ -913,17 +837,6 @@ pub(crate) fn resume_model_tool_loop_v1(
                 exchanges,
                 activities,
             }));
-        }
-        if turn_output.calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("per-turn tool-call limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         for call in &turn_output.calls {
@@ -981,19 +894,6 @@ pub(crate) fn resume_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
-        if serde_json::to_vec(&exchange)
-            .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
-        {
-            return Err(failure(
-                ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
-                input_tokens,
-                output_tokens,
-                attempted_model_turns,
-                settled_tool_calls,
-                &exchanges,
-                &activities,
-            ));
-        }
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {

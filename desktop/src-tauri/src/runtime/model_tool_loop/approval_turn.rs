@@ -30,8 +30,7 @@ pub(super) fn resume_pending_turn(
         })
         .collect();
     let index = exchange.results.len();
-    if calls.len() > MAXIMUM_TOOL_CALLS_PER_TURN
-        || calls.get(index) != Some(&pending.call)
+    if calls.get(index) != Some(&pending.call)
         || exchange
             .results
             .iter()
@@ -43,7 +42,6 @@ pub(super) fn resume_pending_turn(
             "invalid pending assistant turn".into(),
         ));
     }
-    ensure_bound(pending, &exchange)?;
     let response = ApprovalResponseV1 {
         invocation_id: StableId::parse(pending.challenge.invocation_id.clone()).map_err(|_| {
             authority_failure(pending, "invalid approval invocation identity".into())
@@ -78,7 +76,6 @@ pub(super) fn resume_pending_turn(
             });
             continue;
         }
-        ensure_bound(pending, &exchange)?;
         let invocation = authority
             .invoke_extended(
                 request.outer_invocation_id,
@@ -92,7 +89,6 @@ pub(super) fn resume_pending_turn(
                 record_settlement(request, pending, &mut exchange, call, settled)
             }
             ToolInvokeV1::Approval(challenge) => {
-                ensure_bound(pending, &exchange)?;
                 pending.call = call.clone();
                 pending.challenge = challenge;
                 pending.pending_exchange = Some(exchange);
@@ -100,7 +96,6 @@ pub(super) fn resume_pending_turn(
             }
         }
     }
-    ensure_bound(pending, &exchange)?;
     authority
         .commit_exchange(request.outer_invocation_id, pending.turn, &exchange)
         .map_err(|error| authority_failure(pending, error))?;
@@ -150,28 +145,10 @@ fn pending_failure(
     )
 }
 
-fn ensure_bound(
-    pending: &ModelToolLoopPendingV1,
-    exchange: &ModelToolExchangeV1,
-) -> Result<(), ModelToolLoopFailureV1> {
-    if serde_json::to_vec(exchange)
-        .map_or(true, |bytes| bytes.len() > MAXIMUM_DURABLE_EXCHANGE_BYTES)
-    {
-        return Err(pending_failure(
-            pending,
-            ModelToolLoopErrorV1::Budget("individual model/tool exchange byte limit"),
-        ));
-    }
-    Ok(())
-}
-
-/// Apply the same history bound before persisting an incomplete turn.
+/// Preserve the complete unfinished turn for approval and exact resumption.
 pub(super) fn suspend(
     pending: ModelToolLoopPendingV1,
 ) -> Result<ModelToolLoopRunV1, ModelToolLoopFailureV1> {
-    if let Some(exchange) = &pending.pending_exchange {
-        ensure_bound(&pending, exchange)?;
-    }
     Ok(ModelToolLoopRunV1::Suspended {
         challenge: pending.challenge.clone(),
         pending,

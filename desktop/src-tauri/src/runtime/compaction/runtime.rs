@@ -654,7 +654,7 @@ impl BoundFileToolAuthorityV1 {
                 // so the acting node's smaller admission limit cannot price it.
                 summary_plan.maximum_input_bytes =
                     crate::runtime::context_inspection::MAX_CONTEXT_BYTES;
-                summary_plan.maximum_output_bytes = 128 * 1024;
+                summary_plan.maximum_output_bytes = usize::MAX;
                 if let Some(target) = &metadata.summary_target {
                     summary_plan.candidates = vec![aworkit_capability_host::ModelCandidateV1 {
                         binding_id: c::SUMMARY_BINDING.into(),

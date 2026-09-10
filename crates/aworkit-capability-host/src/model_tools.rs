@@ -14,18 +14,13 @@ const INVALID_TOOL_RESPONSE: &str = "provider tool response is invalid or unsupp
 
 const MAX_TOOL_DEFINITIONS: usize = 128;
 const MAX_RETRY_NOTICE_BYTES: usize = 4 * 1024;
-const MAX_TOOL_CALLS_PER_EXCHANGE: usize = 64;
-const MAX_ASSISTANT_CONTENT_BLOCKS: usize = 256;
 const MAX_TEXT_MESSAGES: usize = 4096;
 const MAX_TEXT_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TOOL_NAME_BYTES: usize = 64;
 const MAX_CAPABILITY_ID_BYTES: usize = 256;
 const MAX_DESCRIPTION_BYTES: usize = 16 * 1024;
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
-const MAX_ARGUMENT_BYTES: usize = 256 * 1024;
-const MAX_RESULT_BYTES: usize = 512 * 1024;
 const MAX_CALL_ID_BYTES: usize = 256;
-const MAX_PROVIDER_CONTEXT_BYTES: usize = 512 * 1024;
 const MAX_JSON_DEPTH: usize = 32;
 
 /// One authority-bearing Aworkit capability exposed under a provider-safe name.
@@ -464,11 +459,7 @@ fn validate_exchange(
             ModelAssistantContentV1::Text { .. } => None,
         })
         .collect::<Vec<_>>();
-    if calls.is_empty()
-        || calls.len() > MAX_TOOL_CALLS_PER_EXCHANGE
-        || exchange.assistant_content.len() > MAX_ASSISTANT_CONTENT_BLOCKS
-        || exchange.results.len() != calls.len()
-    {
+    if calls.is_empty() || exchange.results.len() != calls.len() {
         return Err(invalid_tool_request());
     }
 
@@ -476,7 +467,7 @@ fn validate_exchange(
     for content in &exchange.assistant_content {
         match content {
             ModelAssistantContentV1::Text { text }
-                if text.is_empty() || text.len() > MAX_RESULT_BYTES || text.contains('\0') =>
+                if text.is_empty() || text.contains('\0') =>
             {
                 return Err(invalid_tool_request());
             }
@@ -494,7 +485,6 @@ fn validate_exchange(
     for result in &exchange.results {
         if !call_ids.contains(result.call_id.as_str())
             || !result_ids.insert(result.call_id.as_str())
-            || serialized_len(&result.content)? > MAX_RESULT_BYTES
             || json_depth(&result.content, 0) > MAX_JSON_DEPTH
         {
             return Err(invalid_tool_request());
@@ -517,11 +507,11 @@ fn validate_call(
             .is_some_and(|id| !valid_identifier(id, MAX_CALL_ID_BYTES))
         || definitions.get(call.name.as_str()).copied() != Some(call.capability_id.as_str())
         || !call.arguments.is_object()
-        || serialized_len(&call.arguments)? > MAX_ARGUMENT_BYTES
         || json_depth(&call.arguments, 0) > MAX_JSON_DEPTH
-        || call.provider_context.as_ref().is_some_and(|context| {
-            context.as_str().is_empty() || context.as_str().len() > MAX_PROVIDER_CONTEXT_BYTES
-        })
+        || call
+            .provider_context
+            .as_ref()
+            .is_some_and(|context| context.as_str().is_empty())
     {
         return Err(invalid_tool_request());
     }
@@ -541,10 +531,7 @@ pub(crate) fn normalize_tool_call(
         .iter()
         .find(|tool| tool.name == name)
         .ok_or_else(invalid_tool_response)?;
-    if !arguments.is_object()
-        || serialized_len(&arguments)? > MAX_ARGUMENT_BYTES
-        || json_depth(&arguments, 0) > MAX_JSON_DEPTH
-    {
+    if !arguments.is_object() || json_depth(&arguments, 0) > MAX_JSON_DEPTH {
         return Err(invalid_tool_response());
     }
     if provider_call_id
@@ -552,7 +539,7 @@ pub(crate) fn normalize_tool_call(
         .is_some_and(|id| !valid_identifier(id, MAX_CALL_ID_BYTES))
         || provider_context
             .as_ref()
-            .is_some_and(|context| context.is_empty() || context.len() > MAX_PROVIDER_CONTEXT_BYTES)
+            .is_some_and(|context| context.is_empty())
     {
         return Err(invalid_tool_response());
     }
@@ -596,7 +583,6 @@ pub(crate) fn validate_tool_events(
         .map(|tool| (tool.name.as_str(), tool.capability_id.as_str()))
         .collect::<BTreeMap<_, _>>();
     let mut calls = BTreeSet::new();
-    let mut call_count = 0_usize;
     let mut has_content = false;
     for event in events {
         match event {
@@ -610,10 +596,6 @@ pub(crate) fn validate_tool_events(
                 has_content = true;
             }
             ModelToolEventV1::ToolCall { call } => {
-                call_count = call_count.saturating_add(1);
-                if call_count > MAX_TOOL_CALLS_PER_EXCHANGE {
-                    return Err(invalid_tool_response());
-                }
                 validate_call(call, &definitions).map_err(|_| invalid_tool_response())?;
                 if !calls.insert(call.call_id.as_str()) {
                     return Err(invalid_tool_response());

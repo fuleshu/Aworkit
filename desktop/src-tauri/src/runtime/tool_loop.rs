@@ -8,15 +8,15 @@
 
 #[path = "compaction/runtime.rs"]
 mod context_compaction;
+mod file_access;
+mod file_operations;
+mod image_tools;
 #[path = "compression/runtime.rs"]
 mod result_compression;
 pub(crate) mod skills;
 #[cfg(test)]
 mod skills_tests;
 mod web;
-mod image_tools;
-mod file_access;
-mod file_operations;
 #[path = "workspace_instructions/mod.rs"]
 pub(crate) mod workspace_instructions;
 
@@ -154,11 +154,10 @@ pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
 const SUBAGENT_PROVIDER_NAME: &str = "spawn_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
-const SUBAGENT_MAXIMUM_TOKENS: u64 = 64_000;
 const SUBAGENT_MAXIMUM_TASK_BYTES: usize = 16 * 1024;
 const SUBAGENT_MAXIMUM_CONTEXT_BYTES: usize = 32 * 1024;
 const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
-const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = 64 * 1024;
+const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = usize::MAX;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
 pub(crate) const SUBAGENT_CHILD_TOOL_IDS: [&str; 12] = [
@@ -404,7 +403,9 @@ pub(crate) enum StoredFileToolLimitV1 {
     ImageRead,
     LocalImageRead,
     Screenshot,
-    Context { maximum_bytes: usize },
+    Context {
+        maximum_bytes: usize,
+    },
     WorkspaceInstructions {
         configuration: aworkit_capability_host::workspace_instructions::Configuration,
     },
@@ -525,9 +526,30 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
-        (image_tools::READ, CapabilityKind::FileRead, "image.read", image_tools::schema(image_tools::READ), SideEffectClass::ReadOnly, false),
-        (image_tools::SCREENSHOT, CapabilityKind::Plugin, "screen.capture", image_tools::schema(image_tools::SCREENSHOT), SideEffectClass::ReadOnly, false),
-        ("tool.context", CapabilityKind::Plugin, "context.read", result_compression::schema(), SideEffectClass::ReadOnly, false),
+        (
+            image_tools::READ,
+            CapabilityKind::FileRead,
+            "image.read",
+            image_tools::schema(image_tools::READ),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            image_tools::SCREENSHOT,
+            CapabilityKind::Plugin,
+            "screen.capture",
+            image_tools::schema(image_tools::SCREENSHOT),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            "tool.context",
+            CapabilityKind::Plugin,
+            "context.read",
+            result_compression::schema(),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
         (
             "tool.workspace_instructions",
             CapabilityKind::FileRead,
@@ -665,10 +687,17 @@ pub(crate) fn file_tool_descriptors()
             descriptor.secret_slots = vec![WEB_SEARCH_API_KEY_SECRET_SLOT.to_owned()];
         }
         descriptor.requires_workspace = workspace;
-        descriptor.maximum_concurrency = if capability_id == image_tools::SCREENSHOT { 1 } else { 8 };
+        descriptor.maximum_concurrency = if capability_id == image_tools::SCREENSHOT {
+            1
+        } else {
+            8
+        };
         descriptor.max_input_bytes = MAXIMUM_TOOL_PAYLOAD_BYTES;
         descriptor.max_output_bytes = MAXIMUM_TOOL_RESULT_BYTES;
-        descriptor.input_schema_hash = Some(canonical_hash(&file_access::descriptor_schema(capability_id, schema))?);
+        descriptor.input_schema_hash = Some(canonical_hash(&file_access::descriptor_schema(
+            capability_id,
+            schema,
+        ))?);
         descriptor
             .rehash()
             .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
@@ -1658,7 +1687,9 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false);
         self.publish_tool_outcome(call, &result);
-        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
+        result.and_then(|settled| {
+            self.compress_settlement(outer_invocation_id, call, settled, cancellation)
+        })
     }
 
     /// Same broker flow with delivery scoped to exactly this invocation's
@@ -1675,7 +1706,9 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true);
         self.publish_tool_outcome(call, &result);
-        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
+        result.and_then(|settled| {
+            self.compress_settlement(outer_invocation_id, call, settled, cancellation)
+        })
     }
 
     fn invoke_v1_with_delivery(
@@ -1696,9 +1729,15 @@ impl BoundFileToolAuthorityV1 {
             )
             .map_err(broker_error)?;
         match decision {
-            BrokerDecisionV1::AwaitingApproval(challenge) => {
-                self.review_tool_approval(outer_invocation_id, turn, call, &proposal_id, challenge, cancellation, scoped_delivery)
-            }
+            BrokerDecisionV1::AwaitingApproval(challenge) => self.review_tool_approval(
+                outer_invocation_id,
+                turn,
+                call,
+                &proposal_id,
+                challenge,
+                cancellation,
+                scoped_delivery,
+            ),
             _ => self.complete_broker_decision(
                 broker,
                 &proposal_id,
@@ -1723,7 +1762,9 @@ impl BoundFileToolAuthorityV1 {
         let result =
             self.resolve_invoke_v1_inner(outer_invocation_id, turn, call, response, cancellation);
         self.publish_tool_outcome(call, &result);
-        result.and_then(|settled|self.compress_settlement(outer_invocation_id,call,settled,cancellation))
+        result.and_then(|settled| {
+            self.compress_settlement(outer_invocation_id, call, settled, cancellation)
+        })
     }
 
     fn resolve_invoke_v1_inner(
@@ -1734,7 +1775,14 @@ impl BoundFileToolAuthorityV1 {
         response: &ApprovalResponseV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.resolve_invoke_v1_with_delivery(outer_invocation_id, turn, call, response, cancellation, false)
+        self.resolve_invoke_v1_with_delivery(
+            outer_invocation_id,
+            turn,
+            call,
+            response,
+            cancellation,
+            false,
+        )
     }
 
     fn resolve_invoke_v1_with_delivery(
@@ -1886,7 +1934,10 @@ impl BoundFileToolAuthorityV1 {
             .ok_or_else(|| invalid_tool("provider requested an unbound tool"))?;
         // Image argument failures settle through the normal tool result path so
         // the model can correct a path without aborting the Agent.
-        if !matches!(binding.limit, StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead) {
+        if !matches!(
+            binding.limit,
+            StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead
+        ) {
             validate_call_arguments(binding, &call.arguments)?;
         }
         let expected_manifest_ref = if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
@@ -2010,7 +2061,11 @@ impl BoundFileToolAuthorityV1 {
         };
         Ok(SettledModelToolCallV1 {
             result: ModelToolResultV1 {
-                images: image_tools::result_images(&call.capability_id, &outcome.result, outcome.is_error)?,
+                images: image_tools::result_images(
+                    &call.capability_id,
+                    &outcome.result,
+                    outcome.is_error,
+                )?,
                 call_id: call.call_id.clone(),
                 content: outcome.result.clone(),
                 is_error: outcome.is_error,
@@ -2493,14 +2548,23 @@ impl FileToolDispatcherV1 {
                 StoredFileToolLimitV1::Edit { .. } | StoredFileToolLimitV1::Write { .. }
             );
             let files = if let Some(access) = &self.record.file_access {
-                access.as_ref().map_err(Clone::clone)?.open(&self.projects, allow_write)?
-            } else { ProjectFiles::new(FileAuthority {
-                root: self.record.workspace.root.clone(),
-                allow_write,
-            })
-            .map_err(|error| error.to_string())? };
-            let file_path = self.record.file_access.as_ref()
-                .and_then(|access| access.as_ref().ok()).map_or_else(|| PathBuf::from(&path), |access| access.path.clone());
+                access
+                    .as_ref()
+                    .map_err(Clone::clone)?
+                    .open(&self.projects, allow_write)?
+            } else {
+                ProjectFiles::new(FileAuthority {
+                    root: self.record.workspace.root.clone(),
+                    allow_write,
+                })
+                .map_err(|error| error.to_string())?
+            };
+            let file_path = self
+                .record
+                .file_access
+                .as_ref()
+                .and_then(|access| access.as_ref().ok())
+                .map_or_else(|| PathBuf::from(&path), |access| access.path.clone());
             self.projects
                 .revalidate_workspace_v1(&self.record.workspace)
                 .map_err(|error| error.to_string())?;
@@ -2526,7 +2590,6 @@ impl FileToolDispatcherV1 {
                     )?
                     .ok_or_else(|| format!("skill \"{name}\" is unknown or no longer available"))?;
                     let value = serde_json::to_value(content).map_err(|e| e.to_string())?;
-                    enforce_result_bound(&value)?;
                     Ok((value, format!("Loaded skill {name}.")))
                 }
                 StoredFileToolLimitV1::Read { .. } | StoredFileToolLimitV1::Search { .. }
@@ -2573,7 +2636,6 @@ impl FileToolDispatcherV1 {
                         "stderr": stderr,
                         "exitCode": run.status,
                     });
-                    enforce_result_bound(&value)?;
                     Ok((value, format!("Shell exited with status {:?}.", run.status)))
                 }
                 StoredFileToolLimitV1::Python {
@@ -2617,7 +2679,6 @@ impl FileToolDispatcherV1 {
                         "stderr": stderr,
                         "exitCode": run.status,
                     });
-                    enforce_result_bound(&value)?;
                     Ok((
                         value,
                         format!("Python exited with status {:?}.", run.status),
@@ -2663,7 +2724,6 @@ impl FileToolDispatcherV1 {
                     let rescued_from = outcome.rescued_from.clone();
                     let value = serde_json::to_value(outcome)
                         .map_err(|error| format!("cannot encode web-search result: {error}"))?;
-                    enforce_result_bound(&value)?;
                     let route = rescued_from.map_or_else(
                         || backend.clone(),
                         |source| format!("{backend}, rescued from {source}"),
@@ -2857,7 +2917,6 @@ impl FileToolDispatcherV1 {
                     "result": super::mcp_tools::model_result(result),
                     "progress": outcome.progress,
                 });
-                enforce_result_bound(&value)?;
                 let status = if value["result"]["isError"] == true {
                     "reported an error"
                 } else {
@@ -2956,7 +3015,6 @@ impl FileToolDispatcherV1 {
                 maximum_output_bytes: SUBAGENT_MAXIMUM_OUTPUT_BYTES,
                 maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
                 maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
-                maximum_tokens: SUBAGENT_MAXIMUM_TOKENS,
             },
             &child_authority,
             cancellation,
@@ -2969,7 +3027,6 @@ impl FileToolDispatcherV1 {
                     "inputTokens": completed.input_tokens,
                     "outputTokens": completed.output_tokens,
                 });
-                enforce_result_bound(&value)?;
                 Ok((
                     value,
                     format!(
@@ -3439,20 +3496,29 @@ fn validate_call_arguments(
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
     let expected_keys: BTreeSet<&str> = match binding.limit {
         StoredFileToolLimitV1::Context { .. } => {
-            aworkit_capability_host::context_compression::retrieval::Request::parse(arguments).map_err(|e|invalid_tool(&e))?;
+            aworkit_capability_host::context_compression::retrieval::Request::parse(arguments)
+                .map_err(|e| invalid_tool(&e))?;
             return Ok(());
-        },
+        }
         StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
             return Err(invalid_tool(
                 "automatic context plugins cannot be called as tools",
             ));
         }
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
-        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
+        StoredFileToolLimitV1::ImageRead
+        | StoredFileToolLimitV1::LocalImageRead
+        | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Screenshot => BTreeSet::from(["operation", "target"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
-        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } if binding.file_access_version.is_some() => BTreeSet::from(["pattern", "path"]),
-        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } => BTreeSet::from(["pattern"]),
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
+            if binding.file_access_version.is_some() =>
+        {
+            BTreeSet::from(["pattern", "path"])
+        }
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } => {
+            BTreeSet::from(["pattern"])
+        }
         StoredFileToolLimitV1::Edit { .. } => BTreeSet::from(["path", "old_string", "new_string"]),
         StoredFileToolLimitV1::Write { .. } => BTreeSet::from(["path", "content"]),
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
@@ -3475,8 +3541,14 @@ fn validate_call_arguments(
     };
     let observed_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
     let valid_keys = match binding.limit {
-        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. } if binding.file_access_version.is_some() => observed_keys.is_subset(&expected_keys) && observed_keys.contains("pattern"),
-        StoredFileToolLimitV1::Screenshot => observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation"),
+        StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
+            if binding.file_access_version.is_some() =>
+        {
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("pattern")
+        }
+        StoredFileToolLimitV1::Screenshot => {
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation")
+        }
         StoredFileToolLimitV1::Subagent { .. } => {
             // The subagent context slice is optional; the task is required.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
@@ -3505,10 +3577,14 @@ fn validate_call_arguments(
         if path.is_empty()
             || path.len() > 4096
             || path.contains('\0')
-            || (Path::new(path).is_absolute() && binding.file_access_version.is_none() && !matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead))
+            || (Path::new(path).is_absolute()
+                && binding.file_access_version.is_none()
+                && !matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead))
         {
             return Err(invalid_tool(
-                if binding.file_access_version.is_some() || matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead) {
+                if binding.file_access_version.is_some()
+                    || matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead)
+                {
                     "file path must be non-empty, at most 4096 bytes, and contain no NUL; use an absolute path or a relative Chat workspace path"
                 } else {
                     "tool path must be a bounded relative path inside the frozen project root"
@@ -3518,16 +3594,28 @@ fn validate_call_arguments(
     }
     match binding.limit {
         StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead => {
-            if object.get("path").and_then(Value::as_str).is_none() { return Err(invalid_tool("image path must be text")); }
-        },
+            if object.get("path").and_then(Value::as_str).is_none() {
+                return Err(invalid_tool("image path must be text"));
+            }
+        }
         StoredFileToolLimitV1::Screenshot => {
             match object.get("operation").and_then(Value::as_str) {
-                Some("list") if !object.contains_key("target") => {},
-                Some("capture") if object.get("target").and_then(Value::as_str).is_some_and(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control)) => {},
-                _ => return Err(invalid_tool("use operation=list, or operation=capture with a listed target")),
+                Some("list") if !object.contains_key("target") => {}
+                Some("capture")
+                    if object
+                        .get("target")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| {
+                            !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control)
+                        }) => {}
+                _ => {
+                    return Err(invalid_tool(
+                        "use operation=list, or operation=capture with a listed target",
+                    ));
+                }
             }
-        },
-        StoredFileToolLimitV1::Context { .. } => {},
+        }
+        StoredFileToolLimitV1::Context { .. } => {}
         StoredFileToolLimitV1::WorkspaceInstructions { .. } => {
             return Err(invalid_tool(
                 "automatic context plugins cannot be called as tools",
@@ -3972,14 +4060,6 @@ fn subagent_schema() -> Value {
         .clone()
 }
 
-fn enforce_result_bound(value: &Value) -> Result<(), String> {
-    if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > MAXIMUM_TOOL_RESULT_BYTES) {
-        Err("tool result exceeds the provider continuation bound".into())
-    } else {
-        Ok(())
-    }
-}
-
 fn redact_tool_error(
     materialized: &Option<aworkit_capability_host::SecretMaterializationV1>,
     error: &str,
@@ -4217,11 +4297,20 @@ mod tests {
         {
             BrokerDecisionV1::DispatchReady(dispatch) => (dispatch.invocation_id, proposal_id),
             BrokerDecisionV1::AwaitingApproval(challenge) => {
-                let decision = broker.resolve_approval(&legacy_manifest(&authority.context.manifest), &ApprovalResponseV1 {
-                    invocation_id: challenge.invocation_id, nonce: challenge.nonce,
-                    approved: true, now_epoch_millis: current_epoch_millis(),
-                }).unwrap();
-                let BrokerDecisionV1::DispatchReady(dispatch) = decision else { panic!("unexpected decision") };
+                let decision = broker
+                    .resolve_approval(
+                        &legacy_manifest(&authority.context.manifest),
+                        &ApprovalResponseV1 {
+                            invocation_id: challenge.invocation_id,
+                            nonce: challenge.nonce,
+                            approved: true,
+                            now_epoch_millis: current_epoch_millis(),
+                        },
+                    )
+                    .unwrap();
+                let BrokerDecisionV1::DispatchReady(dispatch) = decision else {
+                    panic!("unexpected decision")
+                };
                 (dispatch.invocation_id, proposal_id)
             }
             other => panic!("unexpected pending decision: {other:?}"),

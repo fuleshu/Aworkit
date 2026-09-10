@@ -45,7 +45,6 @@ pub(super) fn describe_result(
                 }
             }
         }
-        enforce_result_bound(value)?;
     }
     Ok(())
 }

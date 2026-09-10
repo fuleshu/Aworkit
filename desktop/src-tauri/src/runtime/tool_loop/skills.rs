@@ -178,7 +178,6 @@ impl BoundFileToolAuthorityV1 {
             messages: added.clone(),
         };
         let value = serde_json::to_value(&step).map_err(|e| e.to_string())?;
-        enforce_result_bound(&value)?;
         self.runtime
             .records
             .append(

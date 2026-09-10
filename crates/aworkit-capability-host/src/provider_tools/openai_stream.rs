@@ -76,6 +76,11 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
                     emit,
                 )?;
                 data.clear();
+                // The terminal marker completes SSE; waiting for socket EOF
+                // can turn an already-complete response into a transport error.
+                if state.done {
+                    break;
+                }
             }
         } else if let Some(value) = field.strip_prefix("data:") {
             data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
@@ -87,7 +92,10 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
             return Err(invalid_stream("contained an unsupported SSE field"));
         }
     }
-    if !state.done || !state.usage_seen || state.finish_reason.is_none() {
+    if !state.done {
+        return Err(ProviderError::StreamInterrupted);
+    }
+    if !state.usage_seen || state.finish_reason.is_none() {
         return Err(invalid_stream(
             "ended before terminal usage and finish evidence",
         ));
@@ -345,8 +353,10 @@ fn map_read_error(error: io::Error) -> ProviderError {
         .is_some_and(reqwest::Error::is_timeout);
     if timeout {
         ProviderError::RequestTimedOut
+    } else if error.kind() == io::ErrorKind::InvalidData {
+        invalid_stream("contained invalid text encoding")
     } else {
-        invalid_stream("transport failed")
+        ProviderError::StreamInterrupted
     }
 }
 

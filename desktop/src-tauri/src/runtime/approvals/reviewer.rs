@@ -62,7 +62,7 @@ pub(crate) fn review_action(
                         version_hash: version_hash.into(),
                     }],
                     maximum_input_bytes: 192 * 1024,
-                    maximum_output_bytes: 16 * 1024,
+                    maximum_output_bytes: usize::MAX,
                 },
                 &ModelRequestV1 {
                     input,

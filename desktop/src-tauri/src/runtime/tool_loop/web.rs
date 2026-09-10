@@ -162,7 +162,6 @@ impl FileToolDispatcherV1 {
         if cancellation.is_cancelled() {
             return Err("web request was cancelled or its frozen deadline expired".into());
         }
-        enforce_result_bound(&value)?;
         if serde_json::to_vec(&value).map_err(|e| e.to_string())?.len() > budget {
             return Err("web receipt exceeded the frozen output budget".into());
         }

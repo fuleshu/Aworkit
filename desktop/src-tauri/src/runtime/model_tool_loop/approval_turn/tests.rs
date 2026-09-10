@@ -39,7 +39,6 @@ fn request(id: &StableId) -> ModelToolLoopRequestV1<'_> {
         maximum_output_bytes: 1_000_000,
         maximum_tool_output_bytes: 4096,
         maximum_timeout_recoveries: 0,
-        maximum_tokens: 1000,
     }
 }
 

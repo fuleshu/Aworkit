@@ -29,11 +29,6 @@ use crate::{
     maintenance::MaintenanceGate,
 };
 
-const MAX_EVENTS_PER_COMMIT: usize = 64;
-const MAX_ATTEMPTS_PER_COMMIT: usize = 64;
-const MAX_OUTBOX_PER_COMMIT: usize = 64;
-const MAX_ARTIFACTS_PER_COMMIT: usize = 64;
-const MAX_COMMIT_BYTES: usize = 1024 * 1024;
 const MAX_PAGE_SIZE: u32 = 512;
 const SUPPORTED_SEMANTIC_SCHEMA: u16 = 1;
 
@@ -1025,17 +1020,8 @@ fn validate_batch(batch: &CommitBatchV1) -> Result<(), StoreError> {
     }
     to_i64(batch.expected_head)?;
     to_i64(batch.expected_aggregate_version)?;
-    if batch.events.is_empty() || batch.events.len() > MAX_EVENTS_PER_COMMIT {
+    if batch.events.is_empty() {
         return Err(StoreError::InvalidEventBatch);
-    }
-    if batch.attempts.len() > MAX_ATTEMPTS_PER_COMMIT
-        || batch.outbox.len() > MAX_OUTBOX_PER_COMMIT
-        || batch.prepared_artifacts.len() > MAX_ARTIFACTS_PER_COMMIT
-    {
-        return Err(StoreError::CommitCollectionTooLarge);
-    }
-    if serde_json::to_vec(batch)?.len() > MAX_COMMIT_BYTES {
-        return Err(StoreError::CommitTooLarge);
     }
 
     let mut event_ids = BTreeSet::new();

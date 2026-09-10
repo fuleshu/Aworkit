@@ -82,12 +82,11 @@ const MODEL_ADAPTER_VERSION: &str = "1.0.0";
 const API_KEY_FIELD: &str = "api_key";
 const MODEL_SCOPE: &str = "model.invoke";
 pub(crate) const WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES: usize = 256 * 1024;
-pub(crate) const WORKFLOW_MAX_ASSISTANT_TEXT_BYTES: usize = 16 * 1024;
 const MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
-const MAXIMUM_OUTPUT_BYTES: usize = WORKFLOW_MAX_ASSISTANT_TEXT_BYTES;
+// Chat output has no application-imposed byte ceiling.
+const MAXIMUM_OUTPUT_BYTES: usize = usize::MAX;
 pub(crate) const MAXIMUM_WORKFLOW_SNAPSHOT_BYTES: usize = 128 * 1024;
 const MAXIMUM_PREPARED_RECORD_BYTES: usize = 768 * 1024;
-const MAXIMUM_PROVIDER_OUTCOME_BYTES: usize = 896 * 1024;
 const MAXIMUM_ERROR_BYTES: usize = 16 * 1024;
 const APPROVAL_TTL_MILLIS: u64 = 60_000;
 /// The authority protocol requires a positive absolute deadline on every
@@ -252,8 +251,10 @@ impl WorkflowExecutionRequestV1 {
                 turns: 1,
                 attempts: 1,
                 tool_calls: 0,
-                tokens: 1_000_000,
-                cost_micros: 100_000_000,
+                // Required protocol reservations for the single outer dispatch;
+                // actual cumulative usage is reported without a run ceiling.
+                tokens: MAX_SAFE_WIRE_INTEGER,
+                cost_micros: MAX_SAFE_WIRE_INTEGER,
                 actions: 1,
                 depth: 0,
                 fanout: 1,
@@ -626,13 +627,18 @@ impl WorkflowExecutionPipeline {
             && existing.snapshot.chat_id == request.chat_id
             && existing.snapshot.run_id == request.run_id
             && existing.snapshot.snapshot_id == digest_id("snapshot", request.run_id.as_str())?;
+        // Old prepared runs retain their signed reservation metadata. Token/cost
+        // ceilings are no longer execution semantics, including during recovery.
+        let mut replay_budget = request.budget.clone();
+        replay_budget.tokens = existing.snapshot.budget.tokens;
+        replay_budget.cost_micros = existing.snapshot.budget.cost_micros;
         if !identity_matches
             || existing.provider != provider
             || existing.secret != secret
             || existing.tool_bindings != tools
             || existing.project_branch != request.project_branch
             || existing.approvals != request.approvals
-            || existing.snapshot.budget != request.budget
+            || existing.snapshot.budget != replay_budget
             || stored_messages != request_messages
             || existing.worker_proposal.payload["compactNode"] != json!(request.compact_node)
             || !workspace_matches
@@ -1040,7 +1046,6 @@ impl WorkflowExecutionPipeline {
             &compiled,
             &pending.conversation,
             GraphPassBudgetV1 {
-                tokens: prepared.snapshot.budget.tokens,
                 maximum_timeout_recoveries: prepared.maximum_timeout_recoveries,
                 maximum_tool_output_bytes: prepared.provider.maximum_tool_output_bytes,
             },
@@ -1106,7 +1111,7 @@ impl WorkflowExecutionPipeline {
                 } else {
                     WorkflowExecutionStatusV1::FailedKnownStarted
                 };
-                let mut record = ProviderOutcomeRecordV1 {
+                let record = ProviderOutcomeRecordV1 {
                     schema_version: 1,
                     invocation_id: broker_invocation_id.clone(),
                     status,
@@ -1126,13 +1131,6 @@ impl WorkflowExecutionPipeline {
                     scheduler_checkpoint: None,
                     scheduler_trace: Vec::new(),
                 };
-                validate_provider_outcome_accounting(&prepared, &record)?;
-                compact_provider_outcome_if_needed(&mut record)?;
-                enforce_serialized_bound(
-                    &record,
-                    MAXIMUM_PROVIDER_OUTCOME_BYTES,
-                    "provider outcome record",
-                )?;
                 self.records.record_outcome(&record)?;
                 let broker = DurableInvocationBroker::new(self.ledger.clone(), APPROVAL_TTL_MILLIS);
                 self.reconcile_persisted_outcomes(&broker)?;
@@ -1752,6 +1750,7 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
             ProviderProtocolV1::OpenAiCompatible => {
                 let limits = OpenAiCompatibleLimitsV1 {
                     request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    maximum_response_bytes: usize::MAX,
                     ..OpenAiCompatibleLimitsV1::default()
                 };
                 let config = OpenAiCompatibleProviderConfig::new(
@@ -1771,6 +1770,7 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
             ProviderProtocolV1::Anthropic => {
                 let limits = AnthropicMessagesLimitsV1 {
                     request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    maximum_response_bytes: usize::MAX,
                     ..AnthropicMessagesLimitsV1::default()
                 };
                 let config = AnthropicMessagesProviderConfig::new(
@@ -1789,6 +1789,7 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
             ProviderProtocolV1::Gemini => {
                 let limits = GoogleGeminiLimitsV1 {
                     request_timeout: Duration::from_secs(provider.request_timeout_seconds),
+                    maximum_response_bytes: usize::MAX,
                     ..GoogleGeminiLimitsV1::default()
                 };
                 let config = GoogleGeminiProviderConfig::new(
@@ -2402,7 +2403,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                             version_hash: self.descriptor.version_hash.clone(),
                         }],
                         maximum_input_bytes: super::context_inspection::MAX_CONTEXT_BYTES,
-                        maximum_output_bytes: 128 * 1024,
+                        maximum_output_bytes: usize::MAX,
                     },
                     &envelope.invocation_id,
                     node,
@@ -2413,7 +2414,6 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     &compiled,
                     &conversation,
                     GraphPassBudgetV1 {
-                        tokens: self.prepared.snapshot.budget.tokens,
                         maximum_timeout_recoveries: self.prepared.maximum_timeout_recoveries,
                         maximum_tool_output_bytes: self.prepared.provider.maximum_tool_output_bytes,
                     },
@@ -2503,15 +2503,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
 impl ModelInvocationDispatcher {
     fn persist(
         &self,
-        mut outcome: ProviderOutcomeRecordV1,
+        outcome: ProviderOutcomeRecordV1,
     ) -> Result<ProviderOutcomeRecordV1, WorkflowPipelineError> {
-        validate_provider_outcome_accounting(&self.prepared, &outcome)?;
-        compact_provider_outcome_if_needed(&mut outcome)?;
-        enforce_serialized_bound(
-            &outcome,
-            MAXIMUM_PROVIDER_OUTCOME_BYTES,
-            "provider outcome record",
-        )?;
         self.records.record_outcome(&outcome)?;
         Ok(outcome)
     }
@@ -3069,39 +3062,6 @@ impl InvocationLedgerPortV1 for LocalInvocationLedger {
             .mark_outbox_delivered(outbox_id.as_str())
             .map_err(map_store_to_broker)
     }
-}
-
-fn validate_provider_outcome_accounting(
-    prepared: &PreparedExecutionRecordV1,
-    outcome: &ProviderOutcomeRecordV1,
-) -> Result<(), WorkflowPipelineError> {
-    if outcome.input_units.saturating_add(outcome.output_units) > prepared.snapshot.budget.tokens {
-        return Err(WorkflowPipelineError::IncompleteEvidence);
-    }
-    Ok(())
-}
-
-fn compact_provider_outcome_if_needed(
-    outcome: &mut ProviderOutcomeRecordV1,
-) -> Result<(), WorkflowPipelineError> {
-    if serialized_len(outcome)? <= MAXIMUM_PROVIDER_OUTCOME_BYTES {
-        return Ok(());
-    }
-    outcome.status = if outcome.attempted_model_turns == 0 {
-        WorkflowExecutionStatusV1::FailedDefinitelyNotStarted
-    } else {
-        WorkflowExecutionStatusV1::FailedKnownStarted
-    };
-    outcome.assistant_text = None;
-    outcome.error = Some(
-        "Provider/tool evidence exceeded the durable outcome bound; large exchange bodies were omitted after their individual authority outcomes were committed."
-            .into(),
-    );
-    outcome.tool_exchanges.clear();
-    if serialized_len(outcome)? > MAXIMUM_PROVIDER_OUTCOME_BYTES {
-        return Err(WorkflowPipelineError::IncompleteEvidence);
-    }
-    Ok(())
 }
 
 fn serialized_len<T: Serialize>(value: &T) -> Result<usize, WorkflowPipelineError> {
@@ -3875,9 +3835,7 @@ mod tests {
                     return Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted);
                 }
                 ScriptedBehavior::OversizedOutput => {
-                    emit(ModelEventV1::AssistantOutput(
-                        "x".repeat(WORKFLOW_MAX_ASSISTANT_TEXT_BYTES + 1),
-                    ))?;
+                    emit(ModelEventV1::AssistantOutput("x".repeat(16 * 1024 + 1)))?;
                     emit(ModelEventV1::Usage {
                         input_tokens: 7,
                         output_tokens: 100_000,
@@ -4669,7 +4627,12 @@ mod tests {
         let observed = observed_results.lock().expect("tool results");
         assert!(observed[0].to_string().len() <= 1024);
         assert_eq!(observed[0]["aworkitOutput"]["truncated"], true);
-        assert!(observed[0]["preview"]["content"].as_str().unwrap().ends_with("[Aworkit: string truncated]"));
+        assert!(
+            observed[0]["preview"]["content"]
+                .as_str()
+                .unwrap()
+                .ends_with("[Aworkit: string truncated]")
+        );
     }
 
     #[test]
@@ -4734,7 +4697,10 @@ mod tests {
         let missing_scope = pipeline
             .execute(missing_scope)
             .expect("missing project scope is a settled denied tool result");
-        assert_eq!(missing_scope.status, WorkflowExecutionStatusV1::AwaitingApproval);
+        assert_eq!(
+            missing_scope.status,
+            WorkflowExecutionStatusV1::AwaitingApproval
+        );
         assert!(missing_scope.approval.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -4823,7 +4789,6 @@ mod tests {
             .into_iter()
             .next()
             .expect("outcome");
-        assert!(serialized_len(&outcome).unwrap() <= MAXIMUM_PROVIDER_OUTCOME_BYTES);
         assert_eq!(outcome.tool_exchanges.len(), 2);
         assert!(
             serde_json::to_string(&outcome.tool_exchanges)
@@ -4833,16 +4798,19 @@ mod tests {
     }
 
     #[test]
-    fn oversized_input_and_output_are_rejected_or_settled_before_store_limits() {
+    fn large_output_succeeds_while_input_admission_is_validated() {
         let root = TempDir::new().expect("root");
         let (pipeline, _store, metadata, calls, _) =
             setup(&root, ScriptedBehavior::OversizedOutput);
         let output = pipeline
             .execute(request(metadata.clone()))
-            .expect("oversized provider output is a bounded durable outcome");
-        assert_eq!(output.status, WorkflowExecutionStatusV1::FailedKnownStarted);
+            .expect("large provider output is preserved");
+        assert_eq!(output.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!((output.model_turns, output.tool_calls), (1, 0));
-        assert!(output.assistant_text.is_none());
+        assert_eq!(
+            output.assistant_text.as_deref(),
+            Some("x".repeat(16 * 1024 + 1).as_str())
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let mut oversized_input = request(metadata);
@@ -5656,7 +5624,11 @@ mod tests {
         fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
         fs::write(project.join("notes.txt"), b"alpha").expect("notes");
         fs::create_dir_all(project.join("workspace/.git")).unwrap();
-        fs::write(project.join("workspace/.git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+        fs::write(
+            project.join("workspace/.git/HEAD"),
+            b"ref: refs/heads/main\n",
+        )
+        .unwrap();
         project
     }
 
@@ -6306,8 +6278,8 @@ mod tests {
     const MCP_FIXTURE_CAPABILITY: &str = "mcp://serv.fixture/echo";
     const MCP_FIXTURE_NAME: &str = "mcp__serv_fixture__echo";
 
-    mod mcp_name_tests;
     mod mcp_approval_tests;
+    mod mcp_name_tests;
     mod mcp_result_tests;
 
     fn mcp_echo_schema() -> Value {

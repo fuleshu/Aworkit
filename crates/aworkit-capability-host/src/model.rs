@@ -567,6 +567,9 @@ pub enum ProviderError {
     Failed(String),
     #[error("provider request timed out")]
     RequestTimedOut,
+    /// An incomplete response was discarded before any requested tools ran.
+    #[error("provider response stream was interrupted")]
+    StreamInterrupted,
     #[error("provider execution was cancelled")]
     Cancelled,
     #[error("an accepted provider result must contain exactly one usage event")]

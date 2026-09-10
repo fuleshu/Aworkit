@@ -24,7 +24,7 @@ pub(crate) fn validate_limits(
         && !request_timeout.is_zero()
         && request_timeout <= MAX_REQUEST_TIMEOUT
         && maximum_response_bytes > 0
-        && maximum_response_bytes <= MAX_RESPONSE_BYTES
+        && (maximum_response_bytes == usize::MAX || maximum_response_bytes <= MAX_RESPONSE_BYTES)
 }
 
 pub(crate) fn validate_base_url(value: &str) -> Result<Url, BoundedJsonError> {
@@ -105,7 +105,7 @@ impl BoundedJsonClient {
         }
         let mut bytes = Vec::new();
         response
-            .take(self.maximum_response_bytes as u64 + 1)
+            .take((self.maximum_response_bytes as u64).saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|_| BoundedJsonError::Transport)?;
         if bytes.len() > self.maximum_response_bytes {

@@ -33,6 +33,7 @@ const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct OpenAiCompatibleLimitsV1 {
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
+    /// Maximum response size, or `usize::MAX` for no application byte ceiling.
     pub maximum_response_bytes: usize,
 }
 
@@ -53,7 +54,8 @@ impl OpenAiCompatibleLimitsV1 {
             || self.request_timeout.is_zero()
             || self.request_timeout > MAX_REQUEST_TIMEOUT
             || self.maximum_response_bytes == 0
-            || self.maximum_response_bytes > MAX_RESPONSE_BYTES
+            || (self.maximum_response_bytes != usize::MAX
+                && self.maximum_response_bytes > MAX_RESPONSE_BYTES)
         {
             return Err(OpenAiCompatibleProviderError::InvalidLimits);
         }
@@ -362,7 +364,7 @@ impl OpenAiCompatibleProvider {
         }
         let mut bytes = Vec::new();
         response
-            .take(self.config.limits.maximum_response_bytes as u64 + 1)
+            .take((self.config.limits.maximum_response_bytes as u64).saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|_| OpenAiCompatibleProviderError::Transport)?;
         if bytes.len() > self.config.limits.maximum_response_bytes {
@@ -432,7 +434,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
             )),
         };
         consume_openai_stream(
-            BufReader::new(response.take(limit as u64 + 1)),
+            BufReader::new(response.take((limit as u64).saturating_add(1))),
             limit,
             &[],
             &self.config.binding_id,
@@ -454,7 +456,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         let response = self.streaming_tool_response(request)?;
         let limit = self.config.limits.maximum_response_bytes;
         consume_openai_stream(
-            BufReader::new(response.take(limit as u64 + 1)),
+            BufReader::new(response.take((limit as u64).saturating_add(1))),
             limit,
             &request.tools,
             &self.config.binding_id,
@@ -533,7 +535,13 @@ fn discovered_model(entry: ModelEntry) -> Option<OpenAiDiscoveredModelV1> {
     }
     let context_window = first_u64(
         &entry.metadata,
-        &["context_window", "max_model_len", "max_context_length", "context_length", "contextWindow"],
+        &[
+            "context_window",
+            "max_model_len",
+            "max_context_length",
+            "context_length",
+            "contextWindow",
+        ],
     );
     let max_output_tokens = first_u64(
         &entry.metadata,
