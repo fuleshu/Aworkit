@@ -2,7 +2,8 @@
 // Captures only this fixture's own visible Aworkit window.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { once } from "node:events";
 import assert from "node:assert/strict";
@@ -14,7 +15,23 @@ await mkdir(resolve(project, ".git"), { recursive: true });
 await writeFile(resolve(project, ".git/HEAD"), "ref: refs/heads/main\n");
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 await writeFile(resolve(project, "red.png"), Buffer.from(png, "base64"));
+// Optional regression: no project, a recoverable bad call, then an oversized
+// absolute image outside the Chat workspace. Only this isolated copy is removed.
+const localPaths = process.argv.includes("--local-paths");
+const externalPath = resolve(root, "external image ü.png");
+const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+let sourceBytes, sourceHash, imageName, imageData, prepared;
+if (localPaths) {
+  sourceBytes = process.env.AWORKIT_QA_SOURCE_IMAGE
+    ? await readFile(process.env.AWORKIT_QA_SOURCE_IMAGE)
+    : Buffer.concat([Buffer.from(png, "base64"), Buffer.alloc(6 * 1024 * 1024)]);
+  sourceHash = hash(sourceBytes);
+  await writeFile(externalPath, sourceBytes);
+}
+const toolTurns = localPaths ? 2 : 3;
+const imageCount = localPaths ? 1 : 2;
 const requests = [], failures = [];
+const startupLog = [];
 let child, view, screenshotData;
 const provider = createServer(async (request, response) => {
   try {
@@ -25,13 +42,39 @@ const provider = createServer(async (request, response) => {
     const images=body.messages.flatMap(m=>Array.isArray(m.content)?m.content.filter(p=>p.type==="image_url"):[]);
     assert.ok(body.tools.some(t=>t.function.name==="aworkit_read_image"));
     assert.ok(body.tools.some(t=>t.function.name==="aworkit_screenshot"));
-    let name="aworkit_read_image",args={path:"red.png"};
-    if(results.length>=1){
+    let name="aworkit_read_image",args={path:resolve(project,"red.png")};
+    if (localPaths) {
+      args = {path: 42};
+      if (results.length >= 1) {
+        assert.match(results[0].content, /path.*text/i, "invalid input returned to the model");
+        args = {path: externalPath};
+      }
+      if (results.length >= 2) {
+        assert.equal(images.length, 1);
+        const data = images[0].image_url.url;
+        const content = JSON.parse(results[1].content);
+        const bytes = Buffer.from(data.split(",")[1], "base64");
+        assert.equal(bytes.length, content.image.byteLength);
+        assert.equal(hash(bytes), content.image.id);
+        assert.ok(bytes.length <= 5 * 1024 * 1024);
+        assert.equal(content.source.preparation.originalBytes, sourceBytes.length);
+        assert.equal(content.source.preparation.originalSha256, sourceHash);
+        assert.equal(content.source.preparation.reencoded, true);
+        if (imageData) assert.equal(data, imageData, "restart reuses the saved image copy");
+        else {
+          assert.equal(hash(await readFile(externalPath)), sourceHash, "read preserves the source");
+          await unlink(externalPath);
+          await writeFile(resolve(root, content.image.name), bytes);
+        }
+        imageData = data; imageName = content.image.name; prepared = content.source.preparation;
+      } else assert.equal(images.length, 0);
+    }
+    if(!localPaths && results.length>=1){
       assert.equal(images[0].image_url.url,`data:image/png;base64,${png}`);
       assert.ok(body.messages.indexOf(results[0])<body.messages.findIndex(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==="image_url")));
     }
-    if(results.length===1){await unlink(resolve(project,"red.png"));name="aworkit_screenshot";args={operation:"list"};}
-    if(results.length===2){
+    if(!localPaths && results.length===1){await unlink(resolve(project,"red.png"));name="aworkit_screenshot";args={operation:"list"};}
+    if(!localPaths && results.length===2){
       let listed=JSON.parse(results[1].content);
       // The normal lossless output compressor can encode repeated target rows.
       if(listed.format==='aworkit.table.v1'){
@@ -43,7 +86,7 @@ const provider = createServer(async (request, response) => {
       assert.ok(target,"own fixture window is selectable");
       name="aworkit_screenshot";args={operation:"capture",target:target.target};
     }
-    if(results.length>=3){
+    if(!localPaths && results.length>=3){
       assert.equal(images.length,2);
       const data=images[1].image_url.url;
       const captured=JSON.parse(results[2].content);
@@ -56,11 +99,11 @@ const provider = createServer(async (request, response) => {
       screenshotData=data;
       await writeFile(resolve(root,"captured-window.png"),bytes);
     }
-    const delta=results.length>=3?{role:"assistant",content:"Image tools verified: the red image and selected window reached the model."}
+    const delta=results.length>=toolTurns?{role:"assistant",content:"Image tools verified: saved image bytes reached the model."}
       :{role:"assistant",tool_calls:[{index:0,id:`image.${results.length}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]};
     response.setHeader("Content-Type","text/event-stream");
     response.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})}\n\n`);
-    response.write(`data: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:results.length>=3?"stop":"tool_calls"}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}})}\n\n`);
+    response.write(`data: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:results.length>=toolTurns?"stop":"tool_calls"}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}})}\n\n`);
     response.end("data: [DONE]\n\n");
   }catch(error){failures.push(String(error));response.statusCode=500;response.end(String(error));}
 });
@@ -72,11 +115,18 @@ const port=reservation.address().port;await new Promise(resolve=>reservation.clo
 const executable=process.env.AWORKIT_QA_EXECUTABLE??resolve("src-tauri/target/debug/aworkit-desktop.exe");
 const pause=()=>new Promise(r=>setTimeout(r,100));
 async function boot(){
-  const env={...process.env,AWORKIT_QA_PROFILE:root,AWORKIT_QA_TOPMOST:'1',WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`};
+  const env={...process.env,AWORKIT_QA_PROFILE:root,AWORKIT_QA_TOPMOST:'1',WEBVIEW2_USER_DATA_FOLDER:resolve(root,'webview'),WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`};
   delete env.AWORKIT_QA_HIDE_WINDOW;
-  child=spawn(executable,[],{windowsHide:true,stdio:"ignore",env});
-  for(let i=0;i<150&&!view;i++){try{view=await connectNativeWebView(`http://127.0.0.1:${port}`);}catch{await pause();}}
-  assert.ok(view,"native WebView started");
+  child=spawn(executable,[],{windowsHide:true,stdio:["ignore","pipe","pipe"],env});
+  child.stdout.on('data', chunk=>startupLog.push(chunk.toString()));
+  child.stderr.on('data', chunk=>startupLog.push(chunk.toString()));
+  child.on('error', error=>startupLog.push(String(error)));
+  let connectionError;
+  for(let i=0;i<300&&!view;i++){
+    if(child.exitCode!==null)break;
+    try{view=await connectNativeWebView(`http://127.0.0.1:${port}`);}catch(error){connectionError=String(error);await pause();}
+  }
+  assert.ok(view,`native WebView started (exit=${child.exitCode}, ${connectionError}): ${startupLog.join('')}`);
   await waitFor("Boolean(window.__TAURI_INTERNALS__?.invoke)");
 }
 async function stop(){
@@ -96,6 +146,7 @@ async function waitFor(expression){
 const click=name=>waitFor(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getClientRects().length&&!b.disabled&&(b.title===${JSON.stringify(name)}||b.getAttribute('aria-label')===${JSON.stringify(name)}||( ${JSON.stringify(name)}==='Run'?b.textContent.trim()==='Run':b.textContent.trim().startsWith(${JSON.stringify(name)}))));if(!b)return false;b.click();return true;})()`);
 async function setValue(selector,value){
   await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector+":not(:disabled)")}))`);
+  if (await view.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e.tagName==='SELECT'&&e.value===${JSON.stringify(value)};})()`)) return;
   await view.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});const p=e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLTextAreaElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event(e.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
   await pause();
 }
@@ -131,39 +182,50 @@ try{
   await waitFor("window.__TAURI_INTERNALS__.invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'}).then(w=>w.document.nodes.find(n=>n.type==='agent').configuration.toolIds.includes('tool.screenshot'))");
   await click("Run");
   await waitFor("!document.querySelector('.workflow-library-bar')?.getClientRects().length && Boolean(document.querySelector('textarea[aria-label=\"Chat input\"]')?.getClientRects().length)");
-  await setValue('select[aria-label="Project for the first Chat input"]',"project.images");
+  // Both image capabilities are usable without a saved project.
+  const selectedProject = "";
+  await waitFor(`Array.from(document.querySelector('select[aria-label="Project for the first Chat input"]').options).some(o=>o.value===${JSON.stringify(selectedProject)})`);
+  await setValue('select[aria-label="Project for the first Chat input"]',selectedProject);
+  await waitFor(`document.querySelector('select[aria-label="Project for the first Chat input"]').value===${JSON.stringify(selectedProject)}`);
   await setValue('select[aria-label="Workflow for the first Chat input"]',"workflow.simple-chat");
   await waitFor("document.querySelector('select[aria-label=\"Workflow for the first Chat input\"]')?.value==='workflow.simple-chat'");
-  await setValue('textarea[aria-label="Chat input"]',"Read red.png, then list screenshot targets and capture this Aworkit window.");
+  await setValue('textarea[aria-label="Chat input"]',localPaths ? `Tell me what you see in this image: "${externalPath}"` : `Read "${resolve(project,"red.png")}", then list screenshot targets and capture this Aworkit window.`);
   await click("Send");
-  for(let i=0;i<2;i++){
+  for(let i=0;i<(localPaths ? 0 : 2);i++){
     await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='awaiting_approval')");
     if(i===1)await view.screenshot(resolve(root,"capture-approval.png"));
     await click("Approve once");
     await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.events.filter(e=>e.kind==='approval.requested').length>=${i+2}||s.chat.phase==='waiting_input')`);
   }
-  await settled();assert.deepEqual(failures,[]);assert.equal(requests.length,4);
-  await waitFor("document.querySelectorAll('.chat-image-list img').length===2");
-  await view.evaluate("document.querySelector('button[aria-label=\"Preview screenshot.png\"]').scrollIntoView({block:'center'})");
-  await click('Preview screenshot.png');
-  await waitFor("document.querySelector('.chat-image-dialog img')?.naturalWidth>300");
+  await settled();assert.deepEqual(failures,[]);assert.equal(requests.length,toolTurns+1);
+  await waitFor(`document.querySelectorAll('.chat-image-list img').length===${imageCount}`);
+  const previewLabel = `Preview ${localPaths ? imageName : 'screenshot.png'}`;
+  await view.evaluate(`document.querySelector('button[aria-label=${JSON.stringify(previewLabel)}]').scrollIntoView({block:'center'})`);
+  await click(previewLabel);
+  await waitFor("document.querySelector('.chat-image-dialog img')?.naturalWidth>0");
   await view.screenshot(resolve(root,'expanded-preview.png'));
   await click('Close image preview');
   await view.screenshot(resolve(root,"chat.png"));
   await stop();await boot();await settled();
-  await waitFor("document.querySelectorAll('.chat-image-list img').length===2");
+  await waitFor(`document.querySelectorAll('.chat-image-list img').length===${imageCount}`);
   await setValue('textarea[aria-label="Chat input"]',"Check the same saved images again.");
   await click("Queue");
   await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.phase==='waiting_input'&&s.events.filter(e=>e.kind==='message.user').length===2)");
-  assert.deepEqual(failures,[]);assert.equal(requests.length,5);
+  assert.deepEqual(failures,[]);assert.equal(requests.length,toolTurns+2);
   const snapshot=await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0})");
-  assert.equal(snapshot.events.filter(e=>e.kind==="approval.requested").length,2);
+  assert.equal(snapshot.events.filter(e=>e.kind==="approval.requested").length,localPaths ? 0 : 2);
+  if (localPaths) {
+    assert.equal(snapshot.events.find(e=>e.kind==='chat.started').payload.projectId, null);
+    assert.ok(!JSON.stringify(snapshot.events).includes(imageData.split(',')[1]), "image bytes stay out of history");
+    if (process.env.AWORKIT_QA_SOURCE_IMAGE) assert.equal(hash(await readFile(process.env.AWORKIT_QA_SOURCE_IMAGE)), sourceHash);
+  }
   assert.ok(!JSON.stringify(snapshot.events).includes(png),"history contains references only");
   await view.screenshot(resolve(root,"reopened-chat.png"));
-  const report={ok:true,root,requests:requests.length,cases:["native tool Settings and editor binding","vision image bytes","source deletion","monitor and window enumeration","selected native window capture","two explicit screenshot approvals","clickable previews","restart and follow-up retain exact pixels without recapture"]};
+  const report={ok:true,root,requests:requests.length,...(localPaths?{prepared,modelBytes:Buffer.from(imageData.split(',')[1],'base64').length}:{}),cases:localPaths?["native editor binding","no project selected","invalid path arguments recover without failing the agent","absolute local image outside workspace","oversized source converted within model limit","original file unchanged","clickable preview","restart and follow-up preserve saved image after source deletion"]:["native tool Settings and editor binding","vision image bytes","source deletion","monitor and window enumeration","selected native window capture","two explicit screenshot approvals","clickable previews","restart and follow-up retain exact pixels without recapture"]};
   await writeFile(resolve(root,"result.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{
   await writeFile(resolve(root,"requests.json"),JSON.stringify(requests,null,2));
   await writeFile(resolve(root,"failures.json"),JSON.stringify(failures));
+  await writeFile(resolve(root,"startup.log"),startupLog.join(''));
   await stop();provider.close();
 }

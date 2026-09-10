@@ -1,4 +1,4 @@
-//! Image acquisition uses existing project authority, immutable image storage,
+//! Image acquisition uses frozen tool authority, immutable image storage,
 //! tool settlement and vision dispatch. No image bytes enter durable JSON.
 use super::*;
 use aworkit_capability_host::model_images::ImageAttachmentV1;
@@ -19,15 +19,18 @@ pub(super) fn freeze(
 ) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
     let tool = super::super::tool_registry::native_tool(id)
         .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-    if *configuration != json!(tool.configuration) {
+    let legacy = id == READ && *configuration == json!({"authorityMode":"project_files"});
+    if !legacy && *configuration != json!(tool.configuration) {
         return Err(invalid_tool("invalid image tool configuration"));
     }
     Ok((
         tool.provider_name.clone(),
         tool.description.clone(),
         tool.input_schema.clone(),
-        if id == READ {
+        if legacy {
             StoredFileToolLimitV1::ImageRead
+        } else if id == READ {
+            StoredFileToolLimitV1::LocalImageRead
         } else {
             StoredFileToolLimitV1::Screenshot
         },
@@ -59,6 +62,7 @@ impl FileToolDispatcherV1 {
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
         let args = &self.record.call.arguments;
+        validate_call_arguments(&self.record.binding, args).map_err(|e| e.to_string())?;
         if cancellation.is_cancelled() {
             return Err("Image acquisition cancelled".into());
         }
@@ -69,17 +73,25 @@ impl FileToolDispatcherV1 {
         if self.context.model_context["imageInput"] != true {
             return Err("This Chat's model is not configured for vision. Enable Vision for a compatible model and start a new Chat.".into());
         }
-        let (name, bytes, source) = if self.record.call.capability_id == READ {
+        let (name, bytes, mut source) = if self.record.call.capability_id == READ {
             let path = Path::new(args["path"].as_str().ok_or("Image path is required")?);
-            let read = files
-                .read_image_v1(path, cancellation)
-                .map_err(|e| e.to_string())?;
+            let bytes = if matches!(
+                self.record.binding.limit,
+                StoredFileToolLimitV1::LocalImageRead
+            ) {
+                super::super::image_files::read(files, path, cancellation)?
+            } else {
+                files
+                    .read_image_v1(path, cancellation)
+                    .map_err(|e| e.to_string())?
+                    .bytes
+            };
             let name = path
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or("Invalid image name")?
                 .to_owned();
-            (name, read.bytes, json!({"path":path}))
+            (name, bytes, json!({"path":path}))
         } else {
             let target = args["target"]
                 .as_str()
@@ -90,7 +102,18 @@ impl FileToolDispatcherV1 {
         if cancellation.is_cancelled() {
             return Err("Image acquisition cancelled".into());
         }
-        let image = self.runtime.images.import_bytes(name, &bytes)?;
+        let image = if matches!(
+            self.record.binding.limit,
+            StoredFileToolLimitV1::LocalImageRead
+        ) {
+            let (image, preparation) = self.runtime.images.import_source(name, &bytes)?;
+            if let Some(preparation) = preparation {
+                source["preparation"] = preparation;
+            }
+            image
+        } else {
+            self.runtime.images.import_bytes(name, &bytes)?
+        };
         let summary = format!("Read image {} ({} bytes).", image.name, image.byte_length);
         Ok((json!({"image":image,"source":source}), summary))
     }

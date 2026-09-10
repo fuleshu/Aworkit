@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use crate::ProviderError;
 
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+/// Bounded local source input; the desktop prepares a model-sized copy.
+pub const MAX_IMAGE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_IMAGE_CONTEXT_BYTES: usize = 12 * 1024 * 1024;
 pub const MAX_IMAGES: usize = 20;
 

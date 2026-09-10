@@ -267,6 +267,30 @@ impl ProjectFiles {
         )
     }
 
+    /// Local source-image reads retain the same anchored/no-alias file checks.
+    pub fn read_image_source_v1(
+        &self,
+        path: &Path,
+        cancellation: &CancellationToken,
+    ) -> Result<FileReadResultV1, FileToolError> {
+        check_cancelled(cancellation)?;
+        let path = validate_relative(path)?;
+        self.reject_symlinks(path, true)?;
+        if !self.directory.metadata(path)?.is_file() {
+            return Err(FileToolError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Image path must name a regular file",
+            )));
+        }
+        self.read_bounded(
+            &FileReadRequestV1 {
+                path: path.to_owned(),
+                maximum_bytes: crate::model_images::MAX_IMAGE_SOURCE_BYTES,
+            },
+            cancellation,
+        )
+    }
+
     fn read_bounded(
         &self,
         request: &FileReadRequestV1,

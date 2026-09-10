@@ -6,8 +6,10 @@ Enable **Image read** and **Screenshot** in **Settings → Tools**, bind them to
 workflow's Agent, and start a new Chat with a vision-capable model. Existing Chats
 keep their frozen tool selection and model capabilities.
 
-- `aworkit_read_image({"path":"assets/example.png"})` reads an image relative to
-  the selected project, using the same project boundary as file tools.
+- `aworkit_read_image({"path":"C:\\Pictures\\example.png"})` reads a local image by
+  absolute path, including in Chats without a project. Relative paths such as
+  `assets/example.png` resolve inside the Chat's workspace. Invalid paths or
+  unreadable images return tool errors so the agent can correct its request.
 - `aworkit_screenshot({"operation":"list"})` lists available Windows windows and
   monitors with target identifiers, titles and physical pixel bounds.
 - `aworkit_screenshot({"operation":"capture","target":"<identifier from list>"})`
@@ -22,12 +24,27 @@ Other platforms report that screenshot capture is unsupported.
 Both tools return clickable image previews and send the actual image to the next
 model request. Their results retain immutable references in settled tool history,
 so replay and reopening do not read the source or take another screenshot. They
-use the same image limits and storage as attachments below. Screenshot target
+use the same stored-image limits and storage as attachments below. Screenshot target
 listing itself does not require vision; reading or capturing an image does.
+
+Image read accepts source files up to 32 MiB, with the same 8000-pixel side limit.
+Sources above the stored-image limit of 5 MiB are reencoded (JPEG for opaque
+images, PNG for transparency), then resized only if needed. The tool result
+reports the original hash, size and dimensions plus any conversion or resizing.
+The source file stays unchanged; the saved model copy supplies the preview and
+subsequent model requests. Smaller accepted images retain their original bytes.
+
+Saved Settings using the earlier project-only Image read mode are upgraded on
+startup. Existing Chats retain that frozen mode; restart the app and start a new
+Chat to use absolute local paths.
 
 From `desktop`, run `node scripts/native-image-tools-smoke.mjs` to exercise the native editor, approvals,
 window capture, provider image bytes, history restart and previews against an
 isolated profile and local fixture provider.
+Add `--local-paths` to verify a projectless Chat, recoverable invalid arguments,
+an oversized absolute-path image, source preservation, and restart. Optionally
+set `AWORKIT_QA_SOURCE_IMAGE` to test a specific image: the fixture makes a local
+copy and sends it only to its local test provider.
 
 ## Attachments
 

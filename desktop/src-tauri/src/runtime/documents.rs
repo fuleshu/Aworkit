@@ -537,6 +537,7 @@ fn load_or_migrate_settings(
                 | settings.normalize_legacy_project_tool_limits()
                 | settings.normalize_legacy_agent_turn_limits()
                 | settings.normalize_legacy_web_search_configuration()
+                | settings.normalize_legacy_image_tool()
                 | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {
@@ -2023,6 +2024,27 @@ mod tests {
             reopened.settings.tools.len(),
             super::super::tool_registry::native_plugin().tools.len()
         );
+    }
+
+    #[test]
+    fn persisted_project_only_image_reader_is_upgraded_once_on_open() {
+        let root = TempDir::new().unwrap();
+        let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        let mut settings = SettingsConfigurationV2::default();
+        let image = settings.tools.iter_mut().find(|t| t.id == "tool.image.read").unwrap();
+        image.enabled = true;
+        image.requires_project = true;
+        image.configuration.insert("authorityMode".into(), Value::from("project_files"));
+        repository.save(DocumentKind::Configuration, SETTINGS_ID, None, &json_document(&settings).unwrap()).unwrap();
+
+        let repaired = CanonicalDocuments::open(root.path()).unwrap();
+        assert_eq!(repaired.settings_version, 2);
+        let image = repaired.settings.tools.iter().find(|t| t.id == "tool.image.read").unwrap();
+        assert!(image.enabled);
+        assert!(!image.requires_project);
+        assert_eq!(image.configuration["authorityMode"], "local_images");
+        drop(repaired);
+        assert_eq!(CanonicalDocuments::open(root.path()).unwrap().settings_version, 2);
     }
 
     #[test]

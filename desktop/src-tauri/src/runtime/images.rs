@@ -8,6 +8,7 @@ use aworkit_capability_host::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
+mod source;
 use sha2::{Digest, Sha256};
 use std::{
     fs,

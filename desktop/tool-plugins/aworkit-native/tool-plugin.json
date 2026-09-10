@@ -1131,19 +1131,19 @@
     {
       "id": "tool.image.read",
       "name": "Image read",
-      "description": "Read a PNG, JPEG or WebP image from the project and show it to the vision model.",
-      "instructions": "Use this tool when you need to inspect a project image. A vision-capable model is required. The result includes the actual image, not just text metadata.",
+      "description": "Read a local PNG, JPEG or WebP image by absolute path or a path relative to the Chat workspace, and show it to the vision model.",
+      "instructions": "Use the absolute local file path supplied by the user; relative paths use the Chat workspace. No project selection is needed for absolute paths. A vision-capable model is required. Sources up to 32 MiB are accepted; oversized images are reencoded or resized into a bounded vision copy, with preparation details in the result. Invalid reads return an error you can correct.",
       "executor": "image.read",
-      "requiresProject": true,
+      "requiresProject": false,
       "execution": "native",
       "configuration": {
-        "authorityMode": "project_files"
+        "authorityMode": "local_images"
       },
       "fields": [
         {
           "key": "authorityMode",
           "label": "Authority boundary",
-          "help": "Reads images only inside the selected project.",
+          "help": "Reads one local image file. Absolute paths work without a project; relative paths use the Chat workspace.",
           "kind": "string",
           "readOnly": true
         }
@@ -1156,7 +1156,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "description": "Image path relative to the project root."
+            "description": "Absolute local image file path, or a path relative to the Chat workspace."
           }
         },
         "required": [

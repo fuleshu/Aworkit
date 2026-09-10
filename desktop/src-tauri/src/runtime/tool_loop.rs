@@ -397,6 +397,7 @@ pub(crate) struct StoredToolSecretBindingV1 {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum StoredFileToolLimitV1 {
     ImageRead,
+    LocalImageRead,
     Screenshot,
     Context { maximum_bytes: usize },
     WorkspaceInstructions {
@@ -519,7 +520,7 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
-        (image_tools::READ, CapabilityKind::FileRead, "project.image.read", image_tools::schema(image_tools::READ), SideEffectClass::ReadOnly, true),
+        (image_tools::READ, CapabilityKind::FileRead, "image.read", image_tools::schema(image_tools::READ), SideEffectClass::ReadOnly, false),
         (image_tools::SCREENSHOT, CapabilityKind::Plugin, "screen.capture", image_tools::schema(image_tools::SCREENSHOT), SideEffectClass::ReadOnly, false),
         ("tool.context", CapabilityKind::Plugin, "context.read", result_compression::schema(), SideEffectClass::ReadOnly, false),
         (
@@ -1864,7 +1865,11 @@ impl BoundFileToolAuthorityV1 {
                 binding.capability_id == call.capability_id && binding.provider_name == call.name
             })
             .ok_or_else(|| invalid_tool("provider requested an unbound tool"))?;
-        validate_call_arguments(binding, &call.arguments)?;
+        // Image argument failures settle through the normal tool result path so
+        // the model can correct a path without aborting the Agent.
+        if !matches!(binding.limit, StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead) {
+            validate_call_arguments(binding, &call.arguments)?;
+        }
         let expected_manifest_ref = if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
             binding.internal_id.as_str()
         } else {
@@ -2479,7 +2484,7 @@ impl FileToolDispatcherV1 {
             )
             .map_err(|error| error.to_string())?;
             match &self.record.binding.limit {
-                StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::Screenshot => self.acquire_image(&files, cancellation),
+                StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead | StoredFileToolLimitV1::Screenshot => self.acquire_image(&files, cancellation),
                 StoredFileToolLimitV1::Context { maximum_bytes } => self.retrieve_context(*maximum_bytes, cancellation),
                 StoredFileToolLimitV1::WorkspaceInstructions { .. } => Err("automatic context plugins are prepared by the Agent lifecycle and cannot be invoked".into()),
                 StoredFileToolLimitV1::Skill { configuration } => {
@@ -3580,7 +3585,7 @@ fn validate_call_arguments(
             ));
         }
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
-        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
+        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
         StoredFileToolLimitV1::Screenshot => BTreeSet::from(["operation", "target"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
         StoredFileToolLimitV1::List { .. } => BTreeSet::from(["pattern"]),
@@ -3636,15 +3641,19 @@ fn validate_call_arguments(
         if path.is_empty()
             || path.len() > 4096
             || path.contains('\0')
-            || Path::new(path).is_absolute()
+            || (Path::new(path).is_absolute() && !matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead))
         {
             return Err(invalid_tool(
-                "tool path must be a bounded relative path inside the frozen project root",
+                if matches!(binding.limit, StoredFileToolLimitV1::LocalImageRead) {
+                    "image path must be non-empty, at most 4096 bytes, and contain no NUL; use an absolute local path or a relative Chat workspace path"
+                } else {
+                    "tool path must be a bounded relative path inside the frozen project root"
+                },
             ));
         }
     }
     match binding.limit {
-        StoredFileToolLimitV1::ImageRead => {
+        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead => {
             if object.get("path").and_then(Value::as_str).is_none() { return Err(invalid_tool("image path must be text")); }
         },
         StoredFileToolLimitV1::Screenshot => {
@@ -4142,7 +4151,7 @@ fn revalidate_optional_branch(
 fn scope_for(capability_id: &str) -> &'static str {
     match capability_id {
         "tool.workspace_instructions" => "workspace_instructions.read",
-        image_tools::READ => "project.image.read",
+        image_tools::READ => "image.read",
         image_tools::SCREENSHOT => "screen.capture",
         FILE_READ_CAPABILITY_ID => FILE_READ_SCOPE,
         FILE_SEARCH_CAPABILITY_ID => FILE_SEARCH_SCOPE,

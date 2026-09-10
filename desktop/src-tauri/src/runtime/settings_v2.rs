@@ -414,6 +414,23 @@ impl SettingsConfigurationV2 {
         changed
     }
 
+    /// Upgrade saved catalog defaults only. Existing Chats retain their frozen
+    /// project-only ImageRead binding; new Chats receive LocalImageRead.
+    pub(crate) fn normalize_legacy_image_tool(&mut self) -> bool {
+        let Some(tool) = self.tools.iter_mut().find(|tool| tool.id == "tool.image.read") else {
+            return false;
+        };
+        if tool.configuration == BTreeMap::from([("authorityMode".into(), serde_json::json!("project_files"))])
+            && tool.requires_project
+        {
+            tool.configuration.insert("authorityMode".into(), serde_json::json!("local_images"));
+            tool.requires_project = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Narrows project-tool limits written by earlier desktop builds to the
     /// first persistence-safe native contract. This is used only while opening
     /// an already-versioned document; new save requests are rejected instead
