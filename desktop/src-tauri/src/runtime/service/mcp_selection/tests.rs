@@ -52,9 +52,43 @@ fn server_selection_resolves_exact_enabled_functions_and_preserves_source() {
     assert_eq!(definitions.len(), 2);
 }
 
+/// The alias a model is asked to call leads with the server's configured display
+/// name, and the discovery preview and the frozen snapshot agree on it, so the
+/// name the model sees is the name dispatch resolves.
 #[test]
-fn later_catalog_changes_apply_only_to_new_resolutions() {
-    let (workflow, mut settings) = fixture();
+fn frozen_mcp_aliases_are_readable_and_derived_from_the_configured_server_name() {
+    let (_, settings) = fixture();
+    // Freezing needs identified nodes; the shared fixture deliberately omits ids
+    // because the selection tests only read node configuration.
+    let workflow = json!({"nodes":[
+        {"id":"agent.1","label":"Agent","type":"agent",
+         "configuration":{"toolIds":["mcp://adashi/read"]}},
+        {"id":"output.1","label":"Output","type":"output","configuration":{}}
+    ]});
+    let definitions = preview_mcp_definitions(&workflow, &settings).unwrap();
+    assert_eq!(
+        definitions["mcp://adashi/read"].definition.name,
+        "adashi_read"
+    );
+    let frozen = freeze_graph_bindings(&workflow, &settings, &definitions).unwrap();
+    let read = frozen
+        .tools
+        .iter()
+        .find(|tool| tool.tool_id == "mcp://adashi/read")
+        .expect("frozen read tool");
+    assert_eq!(read.tool_snapshot.name, "adashi_read");
+    assert_eq!(
+        read.definition.as_ref().map(|d| d.name.as_str()),
+        Some("adashi_read"),
+        "the frozen definition must project the same alias"
+    );
+    // The alias never carries the opaque digest form or a repeated label.
+    assert!(!read.tool_snapshot.name.starts_with("mcp__"));
+    assert!(!read.tool_snapshot.name.contains("adashi_adashi"));
+}
+
+#[test]
+fn later_catalog_changes_apply_only_to_new_resolutions() {    let (workflow, mut settings) = fixture();
     let frozen = expand_server_selections(&workflow, &settings).unwrap();
     settings.mcp_servers[0].tools[2].enabled = true;
     let next = expand_server_selections(&workflow, &settings).unwrap();

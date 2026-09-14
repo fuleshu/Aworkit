@@ -184,7 +184,8 @@ impl BoundFileToolAuthorityV1 {
         // Only a core-committed fork can delegate an immutable loader record.
         // The exact owner/id allowlist freezes the fork point; subsequent parent
         // observations and unrelated nodes/children cannot enter this history.
-        let sources:Vec<Value>=self.run_events.context_events()?.into_iter()
+        let stream = self.run_events.context_events_shared()?;
+        let sources:Vec<Value>=stream.iter()
             .filter(|e|e.kind=="context.fork-source" && e.payload["nodeId"]==agent.node_id && agent.child.is_none()
                 && e.payload["ownerKey"]==crate::runtime::compaction::hash(&json!({"chat":self.context.chat_id,"branch":self.context.project_branch})))
             .flat_map(|e|e.payload["instructionSources"].as_array().cloned().unwrap_or_default()).collect();
@@ -309,7 +310,7 @@ impl BoundFileToolAuthorityV1 {
             ),
         )
         .map_err(|e| e.to_string())?;
-        let clock = chat_clock::context(&self.run_events.context_events()?);
+        let clock = chat_clock::context(&self.run_events.context_events_shared()?);
         let mut budgeted = configuration.clone();
         let include_clock = budgeted.max_bytes >= chat_clock::MAX_BYTES;
         if include_clock { budgeted.max_bytes -= chat_clock::MAX_BYTES; }

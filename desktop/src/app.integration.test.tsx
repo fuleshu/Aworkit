@@ -177,7 +177,9 @@ describe("honest JSON-workflow desktop slice", () => {
     await user.click(screen.getByRole("button", { name: "Discard and return" }));
     expect(await screen.findByRole("textbox", { name: "Chat input" })).toBeVisible();
     expect(document.documentElement.dataset.appearance).toBe("light");
-  });
+    // This flow drives the whole App shell through jsdom and finishes just past
+    // Vitest's 5s default from interaction cost alone, not from a failing wait.
+  }, 30_000);
 
   it("opens the starter graph declared as default in the JSON bundle", async () => {
     const user = userEvent.setup();
@@ -251,7 +253,9 @@ describe("honest JSON-workflow desktop slice", () => {
       "http://localhost:11434/v1",
     );
     expect(screen.getByLabelText("Remote model ID")).toHaveValue("qwen3");
-  });
+    // Typing into the full App shell and re-mounting the lazy Settings route costs
+    // far more than Vitest's 5s default; every assertion above still holds.
+  }, 90_000);
 
   it("provides accessible in-workbench notification and confirmation fallbacks", async () => {
     const user = userEvent.setup();

@@ -33,10 +33,12 @@ mod mcp_approval;
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
     BuiltInProcessTools, CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind,
-    FileAuthority, FileGrepRequestV1, FileListRequestV1, FileReadRequestV1, FileSearchRequestV1,
+    ControlledProcessResult, FileAuthority, FileGrepRequestV1, FileListRequestV1,
+    FileReadRequestV1, FileSearchRequestV1,
     FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, InjectionTargetV1, McpCallKindV1,
     McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelToolCallV1, ModelToolDefinitionV1,
-    ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1, ProjectFiles,
+    ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1, ProcessTermination,
+    ProjectFiles,
     PythonInvocationV1, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
     SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
     SecretLeaseHandleV1, SecretMaterializationError, SecretMaterializationPlanV1,
@@ -67,7 +69,7 @@ use super::{
     WEB_SEARCH_MAXIMUM_RESULTS_V1,
     mcp_tools::{
         MCP_ADAPTER_ID, MCP_ADAPTER_VERSION, MCP_CAPABILITY_PREFIX, MCP_SCOPE, McpToolRuntimeV1,
-        mcp_provider_name, portable_frozen_name, split_mcp_capability,
+        mcp_fallback_label, mcp_provider_name, portable_frozen_name, split_mcp_capability,
     },
     model_tool_loop::{
         ModelToolInvocationPortV1, ModelToolLoopRequestV1, PROVIDER_TIMEOUT_RECOVERIES_V1,
@@ -147,6 +149,9 @@ const MAXIMUM_FILE_SEARCH_QUERY_BYTES: usize = 16 * 1024;
 const MAXIMUM_ACTIVITY_TEXT_BYTES: usize = 512;
 pub(crate) const PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1: u64 = 1000;
 pub(crate) const PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1: u64 = 512;
+// A whole-project regex walk needs a file budget large enough to reach real
+// sources; a small cap reported an incomplete scan as "no matches".
+pub(crate) const PROJECT_FILE_GREP_MAXIMUM_FILES_V1: u64 = 20_000;
 pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
@@ -837,7 +842,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.grep" => (
                 FILE_GREP_PROVIDER_NAME.to_owned(),
-                "Regex-search files beneath an absolute or workspace-relative directory, with line context.".to_owned(),
+                "Regex-search text files beneath an absolute or workspace-relative directory, with line context. Dependency and version-control directories are skipped, and the result states explicitly when a file or match limit stopped the scan.".to_owned(),
                 file_grep_schema(),
                 StoredFileToolLimitV1::Grep {
                     maximum_matches: exact_unsigned_configuration(
@@ -850,7 +855,7 @@ pub(crate) fn freeze_file_tool_bindings(
                         1,
                         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
                     )?,
-                    maximum_files: 128,
+                    maximum_files: PROJECT_FILE_GREP_MAXIMUM_FILES_V1 as usize,
                 },
             ),
             "files.edit" => (
@@ -1116,7 +1121,7 @@ fn freeze_mcp_binding(
         .clone()
         .unwrap_or_else(|| ModelToolDefinitionV1 {
             capability_id: requested.capability_id.clone(),
-            name: mcp_provider_name(server_id, tool),
+            name: mcp_provider_name(server_id, &mcp_fallback_label(server_id), tool),
             description: format!("Call MCP tool '{tool}' on server '{server_id}'."),
             input_schema: json!({"type": "object", "additionalProperties": true}),
         });
@@ -1932,14 +1937,9 @@ impl BoundFileToolAuthorityV1 {
                 binding.capability_id == call.capability_id && binding.provider_name == call.name
             })
             .ok_or_else(|| invalid_tool("provider requested an unbound tool"))?;
-        // Image argument failures settle through the normal tool result path so
-        // the model can correct a path without aborting the Agent.
-        if !matches!(
-            binding.limit,
-            StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead
-        ) {
-            validate_call_arguments(binding, &call.arguments)?;
-        }
+        // Tool argument validation is deferred to the execution path so a
+        // malformed call settles as an ordinary tool result the model can
+        // correct, instead of aborting the Agent node here.
         let expected_manifest_ref = if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
             binding.internal_id.as_str()
         } else {
@@ -2535,6 +2535,10 @@ impl FileToolDispatcherV1 {
             Err(error) => return self.failed_outcome(envelope, path, error),
         };
         let result: Result<(Value, String), String> = (|| {
+            // Frozen argument validation is the recoverable execution boundary:
+            // a malformed call becomes a tool result error the model can retry.
+            validate_call_arguments(&self.record.binding, &self.record.call.arguments)
+                .map_err(|error| error.to_string())?;
             self.projects
                 .revalidate_workspace_v1(&self.record.workspace)
                 .map_err(|error| error.to_string())?;
@@ -2631,12 +2635,10 @@ impl FileToolDispatcherV1 {
                         .map_err(|error| error.to_string())?;
                     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
                     let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
-                    let value = json!({
-                        "stdout": stdout,
-                        "stderr": stderr,
-                        "exitCode": run.status,
-                    });
-                    Ok((value, format!("Shell exited with status {:?}.", run.status)))
+                    let value = host_process_result_value(&run, stdout, stderr);
+                    let summary =
+                        host_process_result_summary("Shell command", &run, *timeout_seconds as u64);
+                    Ok((value, summary))
                 }
                 StoredFileToolLimitV1::Python {
                     timeout_seconds,
@@ -2674,15 +2676,10 @@ impl FileToolDispatcherV1 {
                         .map_err(|error| error.to_string())?;
                     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
                     let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
-                    let value = json!({
-                        "stdout": stdout,
-                        "stderr": stderr,
-                        "exitCode": run.status,
-                    });
-                    Ok((
-                        value,
-                        format!("Python exited with status {:?}.", run.status),
-                    ))
+                    let value = host_process_result_value(&run, stdout, stderr);
+                    let summary =
+                        host_process_result_summary("Python script", &run, *timeout_seconds as u64);
+                    Ok((value, summary))
                 }
                 StoredFileToolLimitV1::Todo => {
                     let todos = self.record.call.arguments["todos"].clone();
@@ -2775,6 +2772,13 @@ impl FileToolDispatcherV1 {
                 is_error: match self.record.binding.limit {
                     StoredFileToolLimitV1::WebFetch { .. } => web::unavailable(&result),
                     StoredFileToolLimitV1::Mcp { .. } => result["result"]["isError"] == true,
+                    // A command the runtime killed (deadline or cancellation) is a
+                    // failed invocation, not a command that merely returned non-zero;
+                    // the model must be able to tell those apart.
+                    StoredFileToolLimitV1::Shell { .. }
+                    | StoredFileToolLimitV1::Python { .. } => {
+                        result["timedOut"] == true || result["cancelled"] == true
+                    }
                     _ => false,
                 },
                 result,
@@ -3487,6 +3491,59 @@ fn legacy_manifest(manifest: &AuthorityManifestV1) -> AuthorityManifest {
     }
 }
 
+/// Complete bounded-process facts for one host shell or Python invocation.
+///
+/// The exit status alone cannot distinguish a command that failed from a command
+/// the runtime killed at its deadline: on Windows a killed process reports exit
+/// code 1 with partial output. The termination fact must travel with the result so
+/// the model does not retry a command that was simply too slow for the configured
+/// limit.
+fn host_process_result_value(
+    run: &ControlledProcessResult,
+    stdout: String,
+    stderr: String,
+) -> Value {
+    json!({
+        "stdout": stdout,
+        "stderr": stderr,
+        "exitCode": run.status,
+        "termination": match run.termination {
+            ProcessTermination::Exited => "exited",
+            ProcessTermination::TimedOut => "timed_out",
+            ProcessTermination::Cancelled => "cancelled",
+        },
+        "timedOut": run.termination == ProcessTermination::TimedOut,
+        "cancelled": run.termination == ProcessTermination::Cancelled,
+        "outputTruncated": run.output_truncated,
+    })
+}
+
+/// Names the real outcome, including the exact deadline that stopped the command.
+fn host_process_result_summary(
+    label: &str,
+    run: &ControlledProcessResult,
+    timeout_seconds: u64,
+) -> String {
+    let truncation = if run.output_truncated {
+        " Its output was truncated at the configured byte limit."
+    } else {
+        ""
+    };
+    match run.termination {
+        ProcessTermination::TimedOut => format!(
+            "{label} was killed after the {timeout_seconds} second limit expired, so it never finished; the output above is partial. Retry with a narrower command or raise this tool's timeout in Settings.{truncation}"
+        ),
+        ProcessTermination::Cancelled => format!(
+            "{label} was cancelled before it finished; the output above is partial.{truncation}"
+        ),
+        ProcessTermination::Exited => match run.status {
+            Some(0) => format!("{label} completed successfully.{truncation}"),
+            Some(code) => format!("{label} exited with status {code}.{truncation}"),
+            None => format!("{label} ended without reporting an exit status.{truncation}"),
+        },
+    }
+}
+
 fn validate_call_arguments(
     binding: &StoredFileToolBindingV1,
     arguments: &Value,
@@ -3569,9 +3626,11 @@ fn validate_call_arguments(
         _ => observed_keys == expected_keys,
     };
     if !valid_keys {
-        return Err(invalid_tool(
-            "tool arguments contain missing or unknown fields",
-        ));
+        let observed = observed_keys.into_iter().collect::<Vec<_>>().join(", ");
+        let expected = expected_keys.into_iter().collect::<Vec<_>>().join(", ");
+        return Err(invalid_tool(&format!(
+            "tool arguments contain missing or unknown fields (received: [{observed}]; expected: [{expected}])"
+        )));
     }
     if let Some(path) = object.get("path").and_then(Value::as_str) {
         if path.is_empty()
@@ -4851,7 +4910,7 @@ mod tests {
     fn mcp_definition(server: &str, tool: &str) -> ModelToolDefinitionV1 {
         ModelToolDefinitionV1 {
             capability_id: format!("mcp://{server}/{tool}"),
-            name: mcp_provider_name(server, tool),
+            name: mcp_provider_name(server, &mcp_fallback_label(server), tool),
             description: format!("Call MCP tool '{tool}' on server '{server}'."),
             input_schema: json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}),
         }
@@ -4868,7 +4927,7 @@ mod tests {
         assert_eq!(binding.capability_id, "mcp://serv.fixture/echo");
         assert_eq!(
             binding.provider_name,
-            mcp_provider_name("serv.fixture", "echo")
+            mcp_provider_name("serv.fixture", &mcp_fallback_label("serv.fixture"), "echo")
         );
         assert!(
             binding.requires_approval,
@@ -4901,7 +4960,7 @@ mod tests {
             .remove(0);
         assert_eq!(
             binding.provider_name,
-            mcp_provider_name("serv.fixture", "echo")
+            mcp_provider_name("serv.fixture", &mcp_fallback_label("serv.fixture"), "echo")
         );
         assert_eq!(
             binding.description,

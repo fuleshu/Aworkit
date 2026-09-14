@@ -32,7 +32,11 @@ pub(crate) use provider_recovery::provider_recovery_notice;
 
 // Headroom for context compaction, not a limit on persisted exchanges.
 const TOOL_CONTEXT_HEADROOM_BYTES: usize = 512 * 1024;
-pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 1;
+// Transient provider failures (request timeout, stream interruption) retry the
+// same frozen request instead of aborting the Agent node. A single retry is too
+// brittle for flaky transports, so allow a generous bounded budget; the pass has
+// no aggregate deadline, so the user remains the only hard stop.
+pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 5;
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
 
 /// Trusted-core boundary used by the provider loop. Implementations must

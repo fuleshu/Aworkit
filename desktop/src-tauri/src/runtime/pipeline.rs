@@ -4684,9 +4684,13 @@ mod tests {
         let denied = malformed
             .execute(malformed_request)
             .expect("malformed call is a durable provider outcome");
-        assert_eq!(denied.status, WorkflowExecutionStatusV1::FailedKnownStarted);
-        assert!(denied.tool_activity.is_empty());
-        assert_eq!(malformed_calls.load(Ordering::SeqCst), 1);
+        // The unknown argument field is rejected before the read executes, but
+        // the rejection now settles as a recoverable tool error the model can
+        // retry, so the pass continues to a final answer.
+        assert_eq!(denied.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(denied.tool_activity.len(), 1);
+        assert_eq!(denied.tool_activity[0].status, "failed");
+        assert_eq!(malformed_calls.load(Ordering::SeqCst), 2);
 
         let mut missing_scope =
             tool_bound_request(&pipeline, metadata, &project, &[FILE_READ_CAPABILITY_ID]);
@@ -6658,25 +6662,45 @@ mod tests {
     }
 
     #[test]
-    fn mcp_oversized_result_is_rejected_without_crashing_the_pass() {
+    fn mcp_oversized_result_becomes_a_bounded_output_without_crashing_the_pass() {
         let root = TempDir::new().expect("temporary directory");
         let (pipeline, metadata, peer_calls, _arguments, observed_results) =
             setup_mcp_pipeline(&root, ScriptedMcpBehavior::OversizedResult);
-        let result = pipeline
-            .execute(mcp_graph_request(&pipeline, metadata))
-            .expect("mcp oversize pass");
+        let request = mcp_graph_request(&pipeline, metadata);
+        let maximum_bytes = request.provider.maximum_tool_output_bytes;
+        let result = pipeline.execute(request).expect("mcp oversize pass");
         assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
         let results = observed_results.lock().expect("results");
         assert_eq!(results.len(), 1);
+        // A result too large to forward is bounded rather than rejected: the model
+        // receives a declared truncation notice and a preview it can narrow with a
+        // follow-up request. The pass itself keeps going. The MCP adapter carries
+        // the payload as a JSON *string*, so the encoded result is what the model
+        // actually receives.
+        let encoded = serde_json::to_string(&results[0]).expect("encoded result");
         assert!(
-            results[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("provider continuation bound")),
-            "{:?}",
-            results[0]
+            encoded.contains(r#"\"truncated\":true"#),
+            "a bounded result must declare its truncation: {:.120}",
+            encoded
         );
-        assert_eq!(result.tool_activity[0].status, "failed");
+        assert!(
+            encoded.contains(&format!(r#"\"maximumBytes\":{maximum_bytes}"#)),
+            "the bound the projection honoured must be recorded"
+        );
+        assert!(
+            encoded.contains("Partial tool result"),
+            "the model-facing notice must survive projection"
+        );
+        assert!(
+            !encoded.contains("provider continuation bound"),
+            "an oversized result is no longer rejected outright"
+        );
+        assert!(
+            encoded.len() < MAXIMUM_TOOL_RESULT_BYTES,
+            "the bounded form must be smaller than the peer's original result"
+        );
+        assert_eq!(result.tool_activity[0].status, "completed");
     }
 
     #[test]

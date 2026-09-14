@@ -8,7 +8,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub(crate) const MAX_CONTEXT_BYTES: usize = 768 * 1024;
+/// Durable context documents may hold a full large-model context. The byte
+/// trigger in compaction is derived from the token threshold, so this bound must
+/// stay comfortably above it rather than firing before the token pressure does.
+pub(crate) const MAX_CONTEXT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Counts serialized bytes without retaining them.
+#[derive(Default)]
+struct ByteCounter {
+    bytes: usize,
+}
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self.bytes.saturating_add(buffer.len());
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Provider-neutral prompt, before image bytes and credentials are materialized.
 /// Parameters and capability authority belong to the frozen workflow, not this editor.
@@ -71,8 +91,12 @@ impl ContextDocument {
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if serde_json::to_vec(self).map_err(|e| e.to_string())?.len() > MAX_CONTEXT_BYTES {
-            return Err("Context exceeds the 768 KiB durable limit.".into());
+        // Measure the durable shape without materializing a second multi-megabyte
+        // JSON buffer; this runs for every model turn.
+        let mut counter = ByteCounter::default();
+        serde_json::to_writer(&mut counter, self).map_err(|e| e.to_string())?;
+        if counter.bytes > MAX_CONTEXT_BYTES {
+            return Err("Context exceeds the 4 MiB durable limit.".into());
         }
         // Durable contexts permit only the same compact message shape used by Chat.
         #[derive(Deserialize)]

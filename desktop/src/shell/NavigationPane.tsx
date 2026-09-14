@@ -114,6 +114,23 @@ export function NavigationPane({
         />
       ) : (
         <div className="navigation-history" aria-label="Chat history">
+          {
+            // The Chat route itself is never gated by history changes: the gated
+            // reasons (pending or stale projection, unresolved recovery) are
+            // resolved from inside the Chat surface, so the user must always be
+            // able to reach it. History rows below stay fenced because selecting
+            // another Chat is a canonical mutation.
+          }
+          <div className="nav-group">
+            <p className="nav-section-label">CHAT</p>
+            <NavigationButton
+              active={route === "chat"}
+              icon="○"
+              label="Chat"
+              collapsed={false}
+              onClick={() => onNavigate("chat")}
+            />
+          </div>
           {organized.pinned.length > 0 && (
             <HistorySection
               label="PINNED"
@@ -163,16 +180,7 @@ export function NavigationPane({
             />
           )}
           {history.length === 0 && (
-            <div className="nav-group">
-              <p className="nav-section-label">CHAT</p>
-              <NavigationButton
-                active={route === "chat"}
-                icon="○"
-                label="Chat"
-                collapsed={false}
-                onClick={() => onNavigate("chat")}
-              />
-            </div>
+            <p className="nav-section-label">No saved Chats yet</p>
           )}
         </div>
       )}

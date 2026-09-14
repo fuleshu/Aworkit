@@ -6,3 +6,4 @@ desktop/src-tauri/target/
 *.log
 /.tmp-c24.html
 /.tmp-gh.html
+/.pnpm-store/v11

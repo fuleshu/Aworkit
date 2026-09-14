@@ -150,6 +150,10 @@ describe("Milestone 08 Chat and Run details experience", () => {
     expect(controlsFor({ ...draftChat, phase: "running" })).toEqual([
       "cancel",
     ]);
+    // A turn that has not settled after a cancellation request stays stoppable.
+    expect(controlsFor({ ...draftChat, phase: "cancelling" })).toEqual([
+      "cancel",
+    ]);
     expect(controlsFor({ ...draftChat, phase: "waiting_input" })).toEqual([]);
     expect(controlsFor({ ...draftChat, phase: "completed" })).toEqual([]);
   });

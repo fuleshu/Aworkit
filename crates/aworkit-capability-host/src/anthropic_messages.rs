@@ -376,6 +376,7 @@ impl From<AnthropicMessagesProviderError> for ProviderError {
         match error {
             AnthropicMessagesProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             AnthropicMessagesProviderError::RequestTimedOut => Self::RequestTimedOut,
+            AnthropicMessagesProviderError::Transport => Self::TransportFailed,
             other => Self::Failed(other.to_string()),
         }
     }

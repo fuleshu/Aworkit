@@ -28,6 +28,14 @@ export interface RuntimeErrorNotice {
 }
 
 /**
+ * Window for one coalesced publish of streamed content. Provider chunk rate
+ * never reaches React: a burst of `span.content_delta` envelopes produces a
+ * single state update, while every lifecycle fact still publishes in the call
+ * that ingested it.
+ */
+const STREAM_PUBLISH_INTERVAL_MS = 50;
+
+/**
  * Maintains one contiguous projection of the canonical committed event stream.
  * Live notifications and snapshots carry the same envelopes; neither source
  * owns a second reducer or a replace-at-settlement representation.
@@ -47,6 +55,7 @@ export function useChatRuntime(
   const bufferedRef = useRef<Map<number, RuntimeEvent>>(new Map());
   const initializedRef = useRef(false);
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
+  const flushTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef<Set<string>>(new Set());
   const maintenanceRef = useRef(false);
   const drainingRef = useRef(false);
@@ -89,10 +98,44 @@ export function useChatRuntime(
     [reportError],
   );
 
-  const publishEvents = useCallback((next: RuntimeEvent[]): void => {
-    eventsRef.current = next;
-    setEvents(next);
+  /** Drops a scheduled coalesced publish; the authoritative projection is untouched. */
+  const cancelDeferredPublish = useCallback((): void => {
+    if (flushTimerRef.current === undefined) return;
+    window.clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = undefined;
   }, []);
+
+  /**
+   * Publishes the contiguous projection immediately. Every publish supersedes
+   * a pending deferred delta flush: `eventsRef.current` already carries the
+   * drained deltas, so a second flush would only re-render identical content
+   * from a stale array reference. The rendered value is an independent copy so
+   * the authoritative projection can keep growing in place between publishes.
+   */
+  const publishEvents = useCallback(
+    (next: RuntimeEvent[]): void => {
+      cancelDeferredPublish();
+      eventsRef.current = next;
+      setEvents(next.slice());
+    },
+    [cancelDeferredPublish],
+  );
+
+  /**
+   * Coalesces streamed content into one React publish per window. The
+   * authoritative projection in `eventsRef` still grows with every drained
+   * event; only the visible projection is rate-limited, so no delta is lost,
+   * duplicated, or reordered.
+   */
+  const scheduleDeferredPublish = useCallback((): void => {
+    if (flushTimerRef.current !== undefined) return;
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = undefined;
+      setEvents(eventsRef.current.slice());
+    }, STREAM_PUBLISH_INTERVAL_MS);
+  }, []);
+
+  useEffect(() => cancelDeferredPublish, [cancelDeferredPublish]);
 
   const ingestLiveEvent = useCallback(
     (event: RuntimeEvent): void => {
@@ -111,14 +154,22 @@ export function useChatRuntime(
           return;
         }
         bufferEvent(bufferedRef.current, event);
-        const next = [...eventsRef.current];
-        drainContiguous(next, bufferedRef.current);
-        if (next.length !== eventsRef.current.length) publishEvents(next);
+        const head = eventsRef.current.length;
+        drainContiguous(eventsRef.current, bufferedRef.current);
+        if (eventsRef.current.length === head) return;
+        // Only streamed content may be deferred. A drained batch that carries
+        // any lifecycle fact publishes in this same call, because synchronous
+        // callers and lifecycle ordering in the UI depend on it.
+        if (onlyStreamedContent(eventsRef.current, head)) {
+          scheduleDeferredPublish();
+          return;
+        }
+        publishEvents(eventsRef.current);
       } catch (failure) {
         failProjection(failure);
       }
     },
-    [failProjection, publishEvents],
+    [failProjection, publishEvents, scheduleDeferredPublish],
   );
 
   const replaceSnapshot = useCallback(
@@ -356,6 +407,16 @@ function drainContiguous(
     buffered.delete(sequence);
     events.push(event);
   }
+}
+
+/** True when the slice appended after `from` holds only coalescible streamed content. */
+function onlyStreamedContent(
+  events: readonly RuntimeEvent[],
+  from: number,
+): boolean {
+  for (let index = from; index < events.length; index += 1)
+    if (events[index]?.kind !== "span.content_delta") return false;
+  return true;
 }
 
 function mergeCanonicalEvents(

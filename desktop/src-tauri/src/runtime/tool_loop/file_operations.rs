@@ -109,11 +109,34 @@ impl FileToolDispatcherV1 {
                     "pattern": pattern,
                     "matches": grep.matches,
                     "filesScanned": grep.files_scanned,
+                    "matchLimitReached": grep.match_limit_reached,
+                    "fileLimitReached": grep.file_limit_reached,
+                    "skippedDirectories": grep.skipped_directories,
                 });
+                // An incomplete scan must never read as "the pattern is absent".
+                let completeness = if grep.file_limit_reached {
+                    format!(
+                        " The scan stopped at the {maximum_files} file limit, so deeper files were never examined; narrow the path or pattern and search again."
+                    )
+                } else if grep.match_limit_reached {
+                    format!(
+                        " The scan stopped at the {maximum_matches} match limit, so more matches may exist; refine the pattern."
+                    )
+                } else {
+                    String::new()
+                };
+                let skipped = if grep.skipped_directories == 0 {
+                    String::new()
+                } else {
+                    format!(
+                        " Dependency and version-control directories were skipped ({}).",
+                        grep.skipped_directories
+                    )
+                };
                 Ok((
                     value,
                     format!(
-                        "Found {} match(es) across {} file(s).",
+                        "Found {} match(es) across {} file(s).{completeness}{skipped}",
                         grep.matches.len(),
                         grep.files_scanned
                     ),

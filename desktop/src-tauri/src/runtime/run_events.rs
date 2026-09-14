@@ -7,7 +7,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use aworkit_capability_host::{
@@ -35,6 +35,23 @@ struct RunEventState {
     commit_error: Option<String>,
 }
 
+/// One streamed provider chunk used to mean one durable commit, which placed the
+/// client's per-chunk cost in front of the provider stream: the visible stream
+/// rate decayed with the size of the Chat because every chunk re-validated and
+/// re-read the whole history. Consecutive text for the same span and channel is
+/// merged into one event per window instead.
+const DELTA_EVENT_KIND: &str = "span.content_delta";
+/// Longest a streamed fragment waits before it is committed as one event.
+const DELTA_COALESCE_WINDOW: Duration = Duration::from_millis(60);
+/// Upper bound on one merged delta so a single event stays small.
+const DELTA_COALESCE_MAX_BYTES: usize = 8 * 1024;
+
+/// Streamed text accumulated for the next durable delta commit.
+struct PendingDelta {
+    draft: SemanticEventDraft,
+    started: Instant,
+}
+
 /// Serializes all semantic proposals for one command execution.
 pub(crate) struct RunEventStream {
     request_id: String,
@@ -43,6 +60,7 @@ pub(crate) struct RunEventStream {
     cancellation: CancellationToken,
     publish_lock: Mutex<()>,
     state: Mutex<RunEventState>,
+    pending_delta: Mutex<Option<PendingDelta>>,
 }
 
 impl RunEventStream {
@@ -60,8 +78,11 @@ impl RunEventStream {
             .and_then(|e| e.payload["nodeId"].as_str())
             .map(str::to_owned)
     }
-    pub(crate) fn context_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
-        self.committer.committed_events()
+    /// Shared view of the committed stream for the read-only scans a model turn
+    /// performs several times; a durable committer serves all of them from one
+    /// decoded snapshot instead of a fresh history read per caller.
+    pub(crate) fn context_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+        self.committer.committed_events_shared()
     }
     pub(crate) fn context_event(
         &self,
@@ -129,7 +150,7 @@ impl RunEventStream {
     ) -> Result<String, String> {
         Ok(self
             .committer
-            .committed_events()?
+            .committed_events_shared()?
             .iter()
             .rev()
             .find(|e| {
@@ -187,7 +208,7 @@ impl RunEventStream {
         drop(state);
         if let Some(node_id) = node_id {
             super::context_inspection::apply_edit(
-                &self.committer.committed_events()?,
+                &self.committer.committed_events_shared()?,
                 &node_id,
                 request,
             )?;
@@ -217,8 +238,8 @@ impl RunEventStream {
         committer: Arc<dyn SemanticEventCommitter>,
         cancellation: CancellationToken,
     ) -> Self {
-        let state = match committer.committed_events() {
-            Ok(events) => rehydrate_state(&request_id, &run_id, events),
+        let state = match committer.committed_events_shared() {
+            Ok(events) => rehydrate_state(&request_id, &run_id, &events),
             Err(error) => RunEventState {
                 commit_error: Some(error),
                 ..RunEventState::default()
@@ -231,6 +252,7 @@ impl RunEventStream {
             cancellation,
             publish_lock: Mutex::new(()),
             state: Mutex::new(state),
+            pending_delta: Mutex::new(None),
         };
         stream.ensure_root_span();
         stream
@@ -270,6 +292,70 @@ impl RunEventStream {
         {
             return None;
         }
+        if draft.kind == DELTA_EVENT_KIND {
+            return self.publish_delta(draft);
+        }
+        // Any other event is an ordering boundary: the text that arrived before it
+        // must be durable first, so a settled span never follows its own output.
+        self.flush_pending_delta();
+        self.commit_draft(draft)
+    }
+
+    /// Merges streamed text into at most one event per window.
+    fn publish_delta(&self, draft: SemanticEventDraft) -> Option<CoreEventEnvelope> {
+        let mut pending = self
+            .pending_delta
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(current) = pending.as_mut() {
+            let mergeable = same_delta_target(&current.draft, &draft)
+                && current.started.elapsed() < DELTA_COALESCE_WINDOW
+                && delta_text_len(&current.draft.payload) < DELTA_COALESCE_MAX_BYTES;
+            if mergeable {
+                append_delta_text(&mut current.draft.payload, &draft.payload);
+                if delta_text_len(&current.draft.payload) < DELTA_COALESCE_MAX_BYTES
+                    && current.started.elapsed() < DELTA_COALESCE_WINDOW
+                {
+                    return None;
+                }
+            }
+        }
+        let ready = pending.take();
+        drop(pending);
+        if let Some(ready) = ready {
+            let committed = self.commit_draft(ready.draft);
+            if committed.is_none() && self.ensure_healthy().is_err() {
+                return None;
+            }
+        }
+        // Start the next window; a chunk larger than the bound is committed alone.
+        if delta_text_len(&draft.payload) >= DELTA_COALESCE_MAX_BYTES {
+            return self.commit_draft(draft);
+        }
+        *self
+            .pending_delta
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(PendingDelta {
+            draft,
+            started: Instant::now(),
+        });
+        None
+    }
+
+    /// Commits text that is still waiting for its window.
+    fn flush_pending_delta(&self) {
+        let ready = self
+            .pending_delta
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
+        if let Some(ready) = ready {
+            let _ = self.commit_draft(ready.draft);
+        }
+    }
+
+    /// Persists exactly one draft and retains the committed envelope.
+    fn commit_draft(&self, draft: SemanticEventDraft) -> Option<CoreEventEnvelope> {
         match self.committer.commit(vec![draft]) {
             Ok(mut committed) => {
                 let event = committed.pop()?;
@@ -822,6 +908,53 @@ impl ModelRunEventObserver {
     }
 }
 
+impl Drop for RunEventStream {
+    fn drop(&mut self) {
+        // A provider stream can end between chunks; never lose its tail.
+        let ready = self
+            .pending_delta
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
+        if let Some(ready) = ready {
+            let _ = self.commit_draft(ready.draft);
+        }
+    }
+}
+
+/// Streamed text may only merge while it targets the same span and channel.
+fn same_delta_target(left: &SemanticEventDraft, right: &SemanticEventDraft) -> bool {
+    left.kind == right.kind
+        && left.payload.get("spanId") == right.payload.get("spanId")
+        && left.payload.get("channel") == right.payload.get("channel")
+        && left.payload.get("sourceClassification") == right.payload.get("sourceClassification")
+}
+
+/// Appends streamed text, keeping the merged event's original start time.
+fn append_delta_text(target: &mut Value, incoming: &Value) {
+    let text = incoming
+        .get("append")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if text.is_empty() {
+        return;
+    }
+    for field in ["append", "body"] {
+        let merged = match target.get(field).and_then(Value::as_str) {
+            Some(existing) => format!("{existing}{text}"),
+            None => text.to_owned(),
+        };
+        target[field] = json!(merged);
+    }
+}
+
+fn delta_text_len(payload: &Value) -> usize {
+    payload
+        .get("append")
+        .and_then(Value::as_str)
+        .map_or(0, str::len)
+}
+
 impl ModelEventObserverV1 for ModelRunEventObserver {
     fn model_turn_started(&self, input: &Value) {
         let canonical = self
@@ -918,7 +1051,7 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
 fn rehydrate_state(
     request_id: &str,
     run_id: &str,
-    events: Vec<CoreEventEnvelope>,
+    events: &[CoreEventEnvelope],
 ) -> RunEventState {
     let mut state = RunEventState::default();
     let mut model_nodes = Vec::new();
@@ -972,7 +1105,7 @@ fn rehydrate_state(
                     .insert(call_id.to_owned(), event.event_id.clone());
             }
         }
-        state.events.push(event);
+        state.events.push(event.clone());
     }
     state.active_model_node = model_nodes
         .into_iter()
@@ -1026,6 +1159,78 @@ mod tests {
     use super::*;
     use crate::runtime::semantic_events::ephemeral_semantic_event_committer;
     mod tool_nodes;
+
+    #[test]
+    fn streamed_text_is_coalesced_without_losing_or_reordering_content() {
+        let stream = Arc::new(RunEventStream::new(
+            "request.coalesce".into(),
+            "run.coalesce".into(),
+            ephemeral_semantic_event_committer(),
+            CancellationToken::default(),
+        ));
+        let observer = ModelRunEventObserver::new(stream.clone());
+        observer.model_turn_started(&json!({"messages": []}));
+        let fragments = ["one ", "two ", "three ", "four ", "five "];
+        for fragment in fragments {
+            observer.model_event(&ModelEventV1::AssistantOutput(fragment.to_owned()));
+        }
+        // A settled span is an ordering boundary: pending text must be durable
+        // before the model call reports completion.
+        observer.model_turn_completed(&json!({}), "completed");
+
+        let events = stream.events();
+        let deltas: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "span.content_delta")
+            .collect();
+        let merged: String = deltas
+            .iter()
+            .filter_map(|event| event.payload.get("append").and_then(Value::as_str))
+            .collect();
+        assert_eq!(merged, "one two three four five ");
+        assert!(
+            !deltas.is_empty() && deltas.len() < fragments.len(),
+            "streamed fragments must merge into fewer events, got {}",
+            deltas.len()
+        );
+        assert!(deltas.iter().all(|event| event.span_id.is_some()));
+        let last_delta = events
+            .iter()
+            .rposition(|event| event.kind == "span.content_delta")
+            .expect("merged delta");
+        let completed = events
+            .iter()
+            .position(|event| event.kind == "span.completed")
+            .expect("model completion");
+        assert!(
+            last_delta < completed,
+            "merged text must be committed before the terminal event"
+        );
+    }
+
+    #[test]
+    fn streamed_text_is_flushed_when_the_command_ends_between_chunks() {
+        let committer = ephemeral_semantic_event_committer();
+        let observer = ModelRunEventObserver::new(Arc::new(RunEventStream::new(
+            "request.tail".into(),
+            "run.tail".into(),
+            committer.clone(),
+            CancellationToken::default(),
+        )));
+        observer.model_turn_started(&json!({"messages": []}));
+        observer.model_event(&ModelEventV1::AssistantOutput("tail".into()));
+        // The command can end between chunks, before any ordering boundary: the
+        // last fragment must still reach durable history.
+        drop(observer);
+
+        let events = committer.committed_events().expect("committed events");
+        let merged: String = events
+            .iter()
+            .filter(|event| event.kind == "span.content_delta")
+            .filter_map(|event| event.payload.get("append").and_then(Value::as_str))
+            .collect();
+        assert_eq!(merged, "tail");
+    }
 
     #[test]
     fn model_tool_model_sequence_uses_sibling_spans_and_committed_order() {

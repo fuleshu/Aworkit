@@ -59,7 +59,8 @@ use super::{
     mcp::probe_mcp_server,
     mcp::{materialize_bindings, prepare_mcp_server},
     mcp_tools::{
-        MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_provider_name, split_mcp_capability,
+        MCP_CAPABILITY_PREFIX, McpRunServerPreparationV1, mcp_fallback_label, mcp_provider_name,
+        split_mcp_capability,
     },
     model_tool_loop::PROVIDER_TIMEOUT_RECOVERIES_V1,
     pipeline::{
@@ -1863,9 +1864,25 @@ impl DesktopRuntime {
                     .ok_or_else(|| {
                         format!("MCP server '{server_id}' did not discover tool '{tool}'")
                     })?;
+                // The frozen alias leads with the configured server name so the
+                // model can re-identify its tools; an unconfigured server id is
+                // its own fallback label.
+                let server_label = self
+                    .documents
+                    .settings()
+                    .mcp_servers
+                    .iter()
+                    .find(|server| server.id == server_id)
+                    .map(|server| server.name.clone())
+                    .unwrap_or_else(|| mcp_fallback_label(server_id));
                 mcp_definitions.insert(
                     capability_id.clone(),
-                    DiscoveredMcpDefinition::from_descriptor(&capability_id, server_id, descriptor),
+                    DiscoveredMcpDefinition::from_descriptor(
+                        &capability_id,
+                        server_id,
+                        &server_label,
+                        descriptor,
+                    ),
                 );
             }
         }
@@ -3622,10 +3639,11 @@ fn freeze_graph_bindings(
                 })?;
                 let definition = discovered.definition.clone();
                 let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
-                let saved_tool = settings
+                let configured_server = settings
                     .mcp_servers
                     .iter()
-                    .find(|server| server.id == server_id)
+                    .find(|server| server.id == server_id);
+                let saved_tool = configured_server
                     .and_then(|server| server.tools.iter().find(|entry| entry.name == tool));
                 if saved_tool.is_some_and(|entry| !entry.enabled) {
                     return Err(format!("MCP tool '{tool_id}' is disabled in Settings"));
@@ -3635,10 +3653,16 @@ fn freeze_graph_bindings(
                 let options = saved_tool
                     .map(|entry| entry.options.clone())
                     .unwrap_or_default();
+                // The alias leads with the configured server name so the model can
+                // re-identify its tools; a server without a usable name falls back
+                // to its own id.
+                let label = configured_server
+                    .map(|server| server.name.clone())
+                    .unwrap_or_else(|| mcp_fallback_label(server_id));
                 let snapshot = BuiltInToolConfigurationV2 {
                     options,
                     id: tool_id.clone(),
-                    name: mcp_provider_name(server_id, tool),
+                    name: mcp_provider_name(server_id, &label, tool),
                     enabled: true,
                     requires_project: false,
                     credential_bindings: Vec::new(),
@@ -5225,7 +5249,10 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].workspace, requests[1].workspace);
         assert_eq!(requests[0].tools, requests[1].tools);
-        assert_eq!(requests[0].maximum_timeout_recoveries, 1);
+        assert_eq!(
+            requests[0].maximum_timeout_recoveries,
+            PROVIDER_TIMEOUT_RECOVERIES_V1
+        );
         assert_eq!(requests[0].budget.turns, 1);
         assert_eq!(requests[0].provider.request_timeout_seconds, 300);
         assert_eq!(requests[0].provider.maximum_tool_output_bytes, 65_536);

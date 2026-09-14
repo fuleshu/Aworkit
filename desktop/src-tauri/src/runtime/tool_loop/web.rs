@@ -359,15 +359,17 @@ pub(super) fn validate_continuation(arguments: &Value) -> Result<(), WorkflowPip
             ));
         }
     }
+    // `offset` selects a byte position inside a web document. The runtime
+    // (`run_web`) supports it on a fresh fetch (fetch the URL, retain it, then
+    // preview from the offset) as well as on a saved-document continuation, so
+    // the frozen validator must not reject `offset` merely because it lacks a
+    // `documentId`. Only the byte range is a frozen shape/limit concern.
     if let Some(offset) = arguments.get("offset")
-        && (arguments.get("documentId").is_none()
-            || offset
-                .as_u64()
-                .is_none_or(|n| n > aworkit_capability_host::MAXIMUM_WEB_DOCUMENT_BYTES as u64))
+        && offset
+            .as_u64()
+            .is_none_or(|n| n > aworkit_capability_host::MAXIMUM_WEB_DOCUMENT_BYTES as u64)
     {
-        return Err(invalid_tool(
-            "offset requires a saved document and a valid byte range",
-        ));
+        return Err(invalid_tool("offset must be a valid byte range"));
     }
     Ok(())
 }
@@ -397,6 +399,35 @@ mod tests {
                 ..
             }
         ));
+    }
+    #[test]
+    fn continuation_offset_is_valid_without_a_saved_document() {
+        // A fresh fetch with an offset (fetch the URL, then read from the
+        // offset) is supported by `run_web` and must pass frozen validation.
+        validate_continuation(&json!({"url":"https://example.com","offset":6000}))
+            .expect("fresh fetch with offset");
+
+        // The saved-document continuation path still validates id and range.
+        let id = format!("web.{}", "0".repeat(64));
+        validate_continuation(&json!({
+            "url":"https://example.com",
+            "documentId": id,
+            "offset": 6000
+        }))
+        .expect("saved document continuation");
+
+        // Offsets beyond the maximum retained web document stay rejected.
+        assert!(validate_continuation(&json!({
+            "url":"https://example.com",
+            "offset": 9_000_000_u64
+        }))
+        .is_err());
+        // Non-integer offsets stay rejected.
+        assert!(validate_continuation(&json!({
+            "url":"https://example.com",
+            "offset": "6000"
+        }))
+        .is_err());
     }
     #[test]
     fn cancellation_scope_observes_parent_and_deadline_without_cancelling_parent() {

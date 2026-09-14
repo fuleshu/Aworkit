@@ -46,7 +46,7 @@ impl BoundFileToolAuthorityV1 {
             .collect::<String>();
         let scope = json!({"ownerKey":owner_key(&self.context),"nodeId":owner.node_id,"child":owner.child,"outer":outer,"query":query,
             "retrieval":request.tools.iter().any(|t|t.capability_id=="tool.context")});
-        let events = self.run_events.context_events()?;
+        let events = self.run_events.context_events_shared()?;
         if let Some(prior) = events
             .iter()
             .find(|e| e.kind == "context.compression-scope" && e.payload["outer"] == json!(outer))
@@ -93,7 +93,7 @@ impl BoundFileToolAuthorityV1 {
         }
         let events = self
             .run_events
-            .context_events()
+            .context_events_shared()
             .map_err(|e| invalid_tool(&e))?;
         let Some(scope) = events.iter().find(|e| {
             e.kind == "context.compression-scope"
@@ -203,7 +203,7 @@ impl FileToolDispatcherV1 {
         if cancellation.is_cancelled() {
             return Err("Context retrieval cancelled".into());
         }
-        let events = self.run_events.context_events()?;
+        let events = self.run_events.context_events_shared()?;
         let scope = events
             .iter()
             .find(|e| {

@@ -106,7 +106,7 @@ export function ChatWorkspaceScreen({
   >(null);
   const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
     useState(false);
-  const [stopRequested, setStopRequested] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const handledNewChatRequest = useRef(0);
   const handledHistoryActionRequest = useRef(0);
   const wasActive = useRef(active);
@@ -114,7 +114,7 @@ export function ChatWorkspaceScreen({
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
   const projectedChatId = snapshot?.chat.chatId;
   const resolvedContextModel = useContextModel(runtime.contextModel, projectedChatId,
-    snapshot?.chat.workflowId ?? selectedWorkflowId, snapshot?.contextModel);
+    snapshot?.chat.workflowId ?? selectedWorkflowId, snapshot?.contextModel, active);
   const timelineItems = useMemo(
     () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
     [snapshot, runtime.events],
@@ -230,10 +230,10 @@ export function ChatWorkspaceScreen({
   }, [onRecoveryPendingChange, projectedRecoveryPending]);
   useEffect(() => {
     setSelectedTimelineId(null);
-    setStopRequested(false);
+    setStopPending(false);
   }, [projectedChatId]);
   useEffect(() => {
-    if (!liveTurnRunning) setStopRequested(false);
+    if (!liveTurnRunning) setStopPending(false);
   }, [liveTurnRunning]);
   useEffect(() => {
     if (
@@ -306,12 +306,19 @@ export function ChatWorkspaceScreen({
     ? { ...chat, phase: "running" as const }
     : chat;
   const control = (type: "cancel") => {
-    setStopRequested(true);
-    void runtime
-      .dispatch(commandIds.createIntent(type, chat.chatId))
-      .then((accepted) => {
-        if (!accepted) setStopRequested(false);
-      });
+    // Stop is the safety control for a live turn: it must stay usable while the
+    // model is working, including while the projection is stale, and it must not
+    // latch itself off when a slow turn ignores the first cancellation. A stale
+    // projection is resynchronized first so the cancel carries a current fence.
+    setStopPending(true);
+    void (async () => {
+      try {
+        if (runtime.stale) await runtime.resynchronize();
+        await runtime.dispatch(commandIds.createIntent(type, chat.chatId));
+      } finally {
+        setStopPending(false);
+      }
+    })();
   };
   const cardAction = (
     action: NonNullable<TimelineItem["action"]>,
@@ -463,8 +470,8 @@ export function ChatWorkspaceScreen({
             onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} />}
           status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{label(visibleChat.phase)}</span>}
           onStop={controlsFor(visibleChat).includes("cancel") ? () => control("cancel") : undefined}
-          stopDisabled={runtime.stale || chat.recoveryPending || stopRequested}
-          stopRequested={stopRequested}
+          stopDisabled={chat.recoveryPending}
+          stopRequested={stopPending}
             chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}
           contextUsage={<ContextUsage events={runtime.events} model={resolvedContextModel}
             onCompact={selection => runtime.dispatch({type:"compact_context", commandId:commandIds.createIntent("enqueue").commandId,targetId:chat.chatId,nodeId:selection.nodeId,baseSequence:selection.sequence})}

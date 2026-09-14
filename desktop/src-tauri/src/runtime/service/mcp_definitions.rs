@@ -10,11 +10,18 @@ pub(super) struct DiscoveredMcpDefinition {
 }
 
 impl DiscoveredMcpDefinition {
-    pub fn from_descriptor(capability_id: &str, server: &str, tool: &McpToolDescriptorV1) -> Self {
+    /// `server_label` is the MCP server's configured display name; it leads the
+    /// provider alias so the model can re-identify its tools across turns.
+    pub fn from_descriptor(
+        capability_id: &str,
+        server: &str,
+        server_label: &str,
+        tool: &McpToolDescriptorV1,
+    ) -> Self {
         Self {
             definition: ModelToolDefinitionV1 {
                 capability_id: capability_id.to_owned(),
-                name: mcp_provider_name(server, &tool.name),
+                name: mcp_provider_name(server, server_label, &tool.name),
                 description: if tool.description.is_empty() {
                     format!("Call MCP tool '{}' on server '{server}'.", tool.name)
                 } else {
@@ -57,7 +64,7 @@ pub(super) fn preview_mcp_definitions(
         let tool = server.tools.iter().find(|tool| tool.name == name && tool.enabled)
             .ok_or_else(|| format!("MCP tool '{id}' is missing or disabled; discover and enable it in Settings → MCP"))?;
         Ok((id.clone(), DiscoveredMcpDefinition {
-            definition: ModelToolDefinitionV1 { capability_id: id.clone(), name: mcp_provider_name(server_id, name),
+            definition: ModelToolDefinitionV1 { capability_id: id.clone(), name: mcp_provider_name(server_id, &server.name, name),
                 description: if tool.description.is_empty() { format!("Call MCP tool '{name}'.") } else { tool.description.clone() },
                 input_schema: tool.input_schema.clone() },
             annotations: tool.annotations.clone(),

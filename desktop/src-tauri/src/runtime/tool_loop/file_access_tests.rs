@@ -218,16 +218,18 @@ fn legacy_frozen_binding_stays_relative_and_keeps_its_name() {
     assert_eq!(result.result.content["content"], "file");
     let mut absolute = call.clone();
     absolute.arguments = json!({"path":f.authority.context.workspace.root.join("src/file.txt")});
-    assert!(
-        f.authority
-            .invoke_v1(
-                &stable("outer.legacy-absolute").unwrap(),
-                1,
-                &absolute,
-                &CancellationToken::default()
-            )
-            .is_err()
-    );
+    // An absolute path on a legacy (relative-only) binding is rejected before
+    // execution and settles as a recoverable tool error, not a fatal pass error.
+    let denied = f
+        .authority
+        .invoke_v1(
+            &stable("outer.legacy-absolute").unwrap(),
+            1,
+            &absolute,
+            &CancellationToken::default()
+        )
+        .unwrap();
+    assert!(denied.result.is_error);
 }
 
 #[cfg(windows)]

@@ -383,6 +383,7 @@ impl From<GoogleGeminiProviderError> for ProviderError {
         match error {
             GoogleGeminiProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             GoogleGeminiProviderError::RequestTimedOut => Self::RequestTimedOut,
+            GoogleGeminiProviderError::Transport => Self::TransportFailed,
             other => Self::Failed(other.to_string()),
         }
     }

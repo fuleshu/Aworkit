@@ -88,10 +88,13 @@ export function submitIntent(
 export function controlsFor(
   chat: ChatProjection,
 ): readonly ChatIntent["type"][] {
+  // `cancelling` keeps the Stop control available: a turn that is slow to settle
+  // must remain stoppable until it actually leaves the live phase.
   if (
     chat.phase === "running" ||
     chat.phase === "paused" ||
-    chat.phase === "awaiting_approval"
+    chat.phase === "awaiting_approval" ||
+    chat.phase === "cancelling"
   )
     return ["cancel"];
   return [];

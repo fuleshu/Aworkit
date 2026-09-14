@@ -430,6 +430,46 @@ describe("Settings v2 workbench", () => {
     ).toEqual(["Project B edited", "Added Project edited"]);
   });
 
+  it("verifies a project save even though the core omits the unset project workflow", async () => {
+    // Regression: the editor writes `defaultWorkflowId: null` for a new project
+    // while the trusted core serializes the same absence by omitting the key. The
+    // save committed, but the old postcondition compared raw JSON, reported an
+    // unverifiable save, and left the Projects section permanently "Unsaved".
+    const port = new RecordingSettingsV2Port();
+    port.coreOmitsAbsentOptionals = true;
+    const user = userEvent.setup();
+    render(
+      <SettingsScreen
+        settingsPort={port}
+        presentation={presentation({
+          pickFolder: async () => "/tmp/New Project",
+        })}
+      />,
+    );
+
+    await screen.findByLabelText("Base URL");
+    await user.click(screen.getByRole("button", { name: /Projects/ }));
+    await user.click(screen.getByRole("button", { name: "Add folder…" }));
+    expect(
+      await screen.findByRole("heading", { name: "New Project" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(
+      port.commits[0]?.settings.projects.map(({ name }) => name),
+    ).toEqual(["New Project"]);
+    expect(port.commits[0]?.settings.projects[0]?.defaultWorkflowId).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByText(/Version 2 · saved/)).toBeVisible(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeDisabled();
+    expect(screen.queryByText(/could not be verified/iu)).toBeNull();
+    expect(screen.queryByText(/unsaved/iu)).toBeNull();
+  });
+
   it(
     "invalidates every diagnostic when its exact Settings draft changes",
     async () => {
@@ -1832,6 +1872,8 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public mutationSnapshotVersionOffset = 0;
   public mutationSnapshotFaultCount = 0;
   public mutationSnapshotContentMismatch = false;
+  /** Mirrors the trusted core, which omits absent optionals and empty collections. */
+  public coreOmitsAbsentOptionals = false;
   public credentialConflictOnce = false;
   public credentialLostResponseOnce = false;
   public credentialMismatchedReceiptOnce = false;
@@ -1940,7 +1982,9 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
     this.state = {
       ...this.state,
       version: this.state.version + 1,
-      settings: structuredClone(command.settings),
+      settings: this.coreOmitsAbsentOptionals
+        ? omitAbsentOptionals(structuredClone(command.settings))
+        : structuredClone(command.settings),
     };
     this.mutationSnapshotFaultsRemaining = this.mutationSnapshotFaultCount;
     return receipt(
@@ -2449,6 +2493,19 @@ function projectConfiguration(
     defaultWorkflowId: "workflow.simple-chat",
     portableHistoryEnabled: false,
   };
+}
+
+/** Mirrors the trusted core serializer: absent optionals are omitted, never the value itself. */
+function omitAbsentOptionals<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(omitAbsentOptionals) as T;
+  if (value === null || typeof value !== "object") return value;
+  const projected: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const next = omitAbsentOptionals(item);
+    if (next === null || next === undefined) continue;
+    projected[key] = next;
+  }
+  return projected as T;
 }
 
 function snapshot(): SettingsV2Snapshot {

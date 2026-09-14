@@ -313,10 +313,10 @@ fn finalize_calls(
     }
     for (ordinal, (_, pending)) in std::mem::take(&mut state.calls).into_iter().enumerate() {
         if pending.name.is_empty() || pending.arguments.is_empty() {
-            return Err(invalid_stream("ended with an incomplete tool call"));
+            return Err(ProviderError::InvalidToolCall);
         }
         let arguments = serde_json::from_str::<Value>(&pending.arguments)
-            .map_err(|_| invalid_stream("ended with invalid tool arguments"))?;
+            .map_err(|_| ProviderError::InvalidToolCall)?;
         let call = normalize_tool_call(
             tools,
             (!pending.provider_call_id.is_empty()).then_some(pending.provider_call_id),
@@ -326,7 +326,7 @@ fn finalize_calls(
             ordinal,
             provider_namespace,
         )
-        .map_err(|_| invalid_stream("ended with an unsupported tool call"))?;
+        .map_err(|_| ProviderError::InvalidToolCall)?;
         emit(ModelToolEventV1::ToolCall { call })?;
     }
     Ok(())

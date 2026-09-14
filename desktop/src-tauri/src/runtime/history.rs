@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -192,6 +192,36 @@ pub(crate) struct ConversationMessage {
 pub(crate) struct ChatHistory {
     store: LocalHistoryStore,
     committed_events: Arc<dyn CommittedChatEventPort>,
+    /// Validated view of the selected Chat's stream.
+    ///
+    /// A live turn commits one semantic event per streamed provider chunk. Reading
+    /// and re-validating the complete stream for each of those commits made the
+    /// visible stream rate decay with the size of the Chat, so the span ledger is
+    /// carried forward and only the decoded event snapshot is rebuilt — at most
+    /// once per turn — when a reader asks for it.
+    stream: Arc<Mutex<StreamCache>>,
+}
+
+/// Span-ledger state plus the decoded events it was derived from.
+#[derive(Default)]
+struct StreamCache {
+    chat_id: Option<String>,
+    /// Durable head reflected by `spans`; a mismatch means a writer moved the
+    /// stream behind this handle and the whole view must be rebuilt.
+    head: u64,
+    spans: SpanLedgerState,
+    /// Decoded events for one head. Any commit drops it, so a streaming turn
+    /// never carries a stale copy and readers rebuild it once per turn.
+    decoded: Option<DecodedStream>,
+}
+
+#[derive(Default)]
+struct DecodedStream {
+    head: u64,
+    events: Arc<Vec<Event>>,
+    /// Committed envelopes derived from `events`, built on first demand because
+    /// most turns only need the stored events.
+    envelopes: Option<Arc<Vec<CoreEventEnvelope>>>,
 }
 
 impl ChatHistory {
@@ -204,6 +234,7 @@ impl ChatHistory {
         let history = Self {
             store,
             committed_events,
+            stream: Arc::new(Mutex::new(StreamCache::default())),
         };
         history.initialize_history_index(data_root)?;
         history.ensure_history_summaries()?;
@@ -243,7 +274,7 @@ impl ChatHistory {
         if let Some(receipt) = history_index::replay(&self.store, command_id, command_hash)? {
             return Ok(Some(receipt));
         }
-        for event in self.events()? {
+        for event in self.events()?.iter() {
             if event.payload.get("commandId").and_then(Value::as_str) == Some(command_id) {
                 if event.payload.get("commandHash").and_then(Value::as_str) != Some(command_hash) {
                     return Err("desktop command ID was reused with different content".into());
@@ -412,7 +443,7 @@ impl ChatHistory {
             .collect::<BTreeSet<_>>();
         let mut facts = Vec::new();
         for event in events
-            .into_iter()
+            .iter()
             .rev()
             .filter(|event| event.kind == "span.started")
         {
@@ -460,10 +491,10 @@ impl ChatHistory {
     pub(crate) fn conversation(&self) -> Result<Vec<ConversationMessage>, String> {
         let events = self.events()?;
         events
-            .into_iter()
+            .iter()
             .filter_map(|event| match event.kind.as_str() {
-                "message.user" => Some(message_from_event(event, "user")),
-                "message.assistant" => Some(message_from_event(event, "assistant")),
+                "message.user" => Some(message_from_event(event.clone(), "user")),
+                "message.assistant" => Some(message_from_event(event.clone(), "assistant")),
                 _ => None,
             })
             .collect()
@@ -1272,15 +1303,109 @@ impl ChatHistory {
         })
     }
 
-    fn events(&self) -> Result<Vec<Event>, String> {
+    fn events(&self) -> Result<Arc<Vec<Event>>, String> {
         let chat_id = self.selected_identity()?.chat_id;
-        self.events_for_chat(&chat_id)
+        let head = self.head_for_chat(&chat_id)?;
+        let mut cache = self.lock_stream();
+        self.refresh_spans(&mut cache, &chat_id, head)?;
+        let decoded = self.decoded_stream(&mut cache, &chat_id, head)?;
+        Ok(Arc::clone(&decoded.events))
     }
 
     pub(crate) fn events_for_chat(&self, chat_id: &StableId) -> Result<Vec<Event>, String> {
         self.store
             .events(chat_id.as_str(), BRANCH_ID)
             .map_err(|error| format!("cannot read desktop Chat history: {error}"))
+    }
+
+    fn lock_stream(&self) -> std::sync::MutexGuard<'_, StreamCache> {
+        self.stream
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Rebuilds the cached span ledger when the durable head is no longer the one
+    /// it was derived from. A writer outside this handle (repair, import, another
+    /// reader) can move the stream, so the indexed head is the cache validator
+    /// rather than a trust assumption.
+    fn refresh_spans(
+        &self,
+        cache: &mut StreamCache,
+        chat_id: &StableId,
+        head: u64,
+    ) -> Result<(), String> {
+        if cache.chat_id.as_deref() == Some(chat_id.as_str()) && cache.head == head {
+            return Ok(());
+        }
+        let events = self.events_for_chat(chat_id)?;
+        let mut spans = SpanLedgerState::default();
+        for event in &events {
+            observe_existing_span(&mut spans, &event.kind, &event.payload);
+        }
+        cache.chat_id = Some(chat_id.as_str().to_owned());
+        cache.head = head;
+        cache.spans = spans;
+        cache.decoded = Some(DecodedStream {
+            head,
+            events: Arc::new(events),
+            envelopes: None,
+        });
+        Ok(())
+    }
+
+    /// Decoded events for `head`, reading once when a commit dropped the snapshot.
+    fn decoded_stream<'a>(
+        &self,
+        cache: &'a mut StreamCache,
+        chat_id: &StableId,
+        head: u64,
+    ) -> Result<&'a mut DecodedStream, String> {
+        if cache
+            .decoded
+            .as_ref()
+            .is_none_or(|decoded| decoded.head != head)
+        {
+            cache.decoded = Some(DecodedStream {
+                head,
+                events: Arc::new(self.events_for_chat(chat_id)?),
+                envelopes: None,
+            });
+        }
+        Ok(cache.decoded.as_mut().expect("decoded stream"))
+    }
+
+    /// Shared committed envelopes for read-only scans that must not deep-clone.
+    pub(crate) fn committed_events_shared(
+        &self,
+    ) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+        let chat_id = self.selected_identity()?.chat_id;
+        let head = self.head_for_chat(&chat_id)?;
+        let mut cache = self.lock_stream();
+        self.refresh_spans(&mut cache, &chat_id, head)?;
+        let decoded = self.decoded_stream(&mut cache, &chat_id, head)?;
+        if decoded.envelopes.is_none() {
+            let stream_id = chat_id.as_str().to_owned();
+            let built = decoded
+                .events
+                .iter()
+                .enumerate()
+                .map(|(offset, event)| {
+                    let sequence = u64::try_from(offset)
+                        .expect("bounded history offset")
+                        .saturating_add(1);
+                    envelope(
+                        &stream_id,
+                        BRANCH_ID,
+                        sequence,
+                        SemanticEventDraft::new(event.kind.clone(), event.payload.clone()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            decoded.envelopes = Some(Arc::new(built));
+        }
+        Ok(Arc::clone(
+            decoded.envelopes.as_ref().expect("committed envelopes"),
+        ))
     }
 
     fn session_events(&self) -> Result<Vec<Event>, String> {
@@ -1314,17 +1439,60 @@ impl SemanticEventCommitter for ChatHistory {
         if drafts.is_empty() {
             return Ok(Vec::new());
         }
-        let expected_head = self.head()?;
-        let stream_id = self.selected_identity()?.chat_id.to_string();
-        validate_span_drafts(&self.events()?, &drafts)?;
+        let chat_id = self.selected_identity()?.chat_id;
+        let expected_head = self.head_for_chat(&chat_id)?;
+        let committed = {
+            let mut cache = self.lock_stream();
+            match self.commit_locked(&mut cache, &chat_id, expected_head, drafts) {
+                Ok(committed) => committed,
+                Err(error) => {
+                    // A rejected draft can leave the ledger half-applied, so the
+                    // whole view is rebuilt from durable history next time.
+                    *cache = StreamCache::default();
+                    return Err(error);
+                }
+            }
+        };
+        self.drain_committed_outbox()?;
+        Ok(committed)
+    }
+
+    fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
+        Ok(self.committed_events_shared()?.as_ref().clone())
+    }
+
+    fn committed_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+        ChatHistory::committed_events_shared(self)
+    }
+}
+
+impl ChatHistory {
+    /// Validates and persists one semantic batch against the carried ledger.
+    ///
+    /// Streaming calls this once per provider chunk: the span ledger advances in
+    /// place and only the decoded snapshot is dropped, so no chunk pays for
+    /// re-reading or re-validating the Chat's whole history.
+    fn commit_locked(
+        &self,
+        cache: &mut StreamCache,
+        chat_id: &StableId,
+        expected_head: u64,
+        drafts: Vec<SemanticEventDraft>,
+    ) -> Result<Vec<CoreEventEnvelope>, String> {
+        let stream_id = chat_id.as_str().to_owned();
+        let event_count = u64::try_from(drafts.len())
+            .map_err(|_| "bounded semantic batch".to_owned())?;
+        self.refresh_spans(cache, chat_id, expected_head)?;
+        apply_span_drafts(&mut cache.spans, &drafts)?;
         let committed = committed_envelopes(&stream_id, expected_head, &drafts);
+        let local = local_events(&stream_id, expected_head, &drafts);
         let outcome = self
             .store
             .commit(&CommitBatch {
-                chat_id: stream_id.clone(),
+                chat_id: stream_id,
                 branch_id: BRANCH_ID.into(),
                 expected_head,
-                events: local_events(&stream_id, expected_head, &drafts),
+                events: local,
                 attempt: None,
                 checkpoint: None,
                 deduplication: None,
@@ -1334,27 +1502,9 @@ impl SemanticEventCommitter for ChatHistory {
         if matches!(outcome, CommitOutcome::Existing(_)) {
             return Err("semantic event commit unexpectedly resolved as an existing batch".into());
         }
-        self.drain_committed_outbox()?;
+        cache.head = expected_head.saturating_add(event_count);
+        cache.decoded = None;
         Ok(committed)
-    }
-
-    fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
-        let stream_id = self.selected_identity()?.chat_id.to_string();
-        Ok(self
-            .events()?
-            .into_iter()
-            .enumerate()
-            .map(|(offset, event)| {
-                envelope(
-                    &stream_id,
-                    BRANCH_ID,
-                    u64::try_from(offset)
-                        .expect("bounded history offset")
-                        .saturating_add(1),
-                    SemanticEventDraft::new(event.kind, event.payload),
-                )
-            })
-            .collect())
     }
 }
 
@@ -1370,6 +1520,14 @@ fn validate_span_drafts(history: &[Event], drafts: &[SemanticEventDraft]) -> Res
     for event in history {
         observe_existing_span(&mut state, &event.kind, &event.payload);
     }
+    apply_span_drafts(&mut state, drafts)
+}
+
+/// Validates drafts against the current ledger and advances it on success.
+fn apply_span_drafts(
+    state: &mut SpanLedgerState,
+    drafts: &[SemanticEventDraft],
+) -> Result<(), String> {
     for draft in drafts {
         let span_id = draft.payload.get("spanId").and_then(Value::as_str);
         match draft.kind.as_str() {
@@ -2025,6 +2183,66 @@ mod tests {
         history.drain_committed_outbox().unwrap();
         assert_eq!(port.delivered.lock().unwrap().len(), 1);
         assert!(history.store.pending_outbox(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stream_cache_carries_the_span_ledger_and_observes_a_foreign_writer() {
+        let root = TempDir::new().unwrap();
+        let port = Arc::new(SwitchableEventPort {
+            fail: AtomicBool::new(false),
+            delivered: Mutex::new(Vec::new()),
+        });
+        let first = ChatHistory::open_with_committed_events(root.path(), port.clone()).unwrap();
+        let run_start = SemanticEventDraft::new(
+            "span.started",
+            json!({
+                "requestId":"request.cache",
+                "runId":"run.cache",
+                "spanId":"span.run.cache",
+                "parentSpanId":Value::Null,
+                "spanKind":"run",
+                "semanticRole":"run",
+            }),
+        );
+        let model_start = SemanticEventDraft::new(
+            "span.started",
+            json!({
+                "requestId":"request.cache",
+                "runId":"run.cache",
+                "spanId":"span.model.cache",
+                "parentSpanId":"span.run.cache",
+                "spanKind":"model_call",
+                "semanticRole":"model_call",
+            }),
+        );
+        first
+            .commit(vec![run_start.clone(), model_start.clone()])
+            .unwrap();
+        assert_eq!(first.events().unwrap().len(), 2);
+        // A later chunk validates against the carried ledger: the decodable
+        // stream is rebuilt, but history is not re-read for every commit.
+        first
+            .commit(vec![SemanticEventDraft::new(
+                "span.content_delta",
+                json!({"spanId":"span.model.cache","channel":"assistant_output","append":"hello"}),
+            )])
+            .unwrap();
+        assert_eq!(first.events().unwrap().len(), 3);
+        // The ledger really advanced: a repeated span start is still rejected.
+        assert!(first.commit(vec![model_start]).is_err());
+        assert_eq!(first.events().unwrap().len(), 3);
+
+        // A writer outside this handle moves the durable head; the cached view
+        // must observe it instead of serving a stale stream.
+        let second = ChatHistory::open_with_committed_events(root.path(), port).unwrap();
+        second
+            .commit(vec![SemanticEventDraft::new(
+                "span.completed",
+                json!({"spanId":"span.model.cache","status":"completed"}),
+            )])
+            .unwrap();
+        assert_eq!(first.events().unwrap().len(), 4);
+        assert_eq!(first.committed_events().unwrap().len(), 4);
     }
 
     #[test]

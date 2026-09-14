@@ -1,0 +1,23 @@
+todos:
+- fix mcp names, remove mcp_hash
+provider_name mcp__62af506f…__adashi_get_memory — this one is shown to the model, and the mcp__<hash>__ part is dead weight. It tells the model nothing useful and actively confuses it (hence mcp__ai__write_file).
+
+Your question #3 — can compaction run on the running LLM line instead of a parallel one?
+Short answer: it isn't actually parallel — it's sequential, and it's already using the same model. The slowness you're feeling is a different (real) cost.
+
+What the code actually does (SummaryProvider in compaction/provider.rs, and the selectedBinding: None in your log):
+
+Compaction fires inside manage_model_context, before the next main turn — it does not run a concurrent second thread.
+You have no separate summarization model configured (summary_target is None), so the summary uses the same local model, not a second one.
+What's expensive is that the summary request re-sends the shadowed history (~125K+ tokens) as input, and the local runner must prefill all of it again — a fresh forward pass over the whole prefix. That's the slow + memory-heavy part (the KV cache for that huge input), not a second model.
+So "run it inline on the already-running line" doesn't map onto stateless LLM APIs: each request independently pre-fills its input, and the summary has to re-read the history it's summarizing. There's no way for the summary to reuse the in-flight generation's compute.
+
+Options that would actually help (none are quick one-liners):
+
+Prefix / KV-cache reuse — if your local runner (llama.cpp / vLLM / etc.) supports prompt prefix caching, the summary's input (a prefix of the main context) could reuse the cached KV instead of re-prefilling. Aworkit doesn't currently do this; it would need runner awareness + wiring. This is the real "inline" answer.
+Compaction fires less often now — your fix #2 already moves the trigger from ~50% to ~80%, so you'll hit this expensive path far less frequently.
+Keep summary_target unset (it already is) so you never load a second model.
+
+deepseek harness:
+All three resolved. Let me record them in the contract.
+[records contract in an md file]

@@ -226,7 +226,7 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses() {
             Ok(())
         })
         .expect_err("malformed tool call");
-    assert!(error.to_string().contains("invalid tool arguments"));
+    assert!(error.to_string().contains("unsupported tool call"));
     assert_eq!(
         events,
         vec![

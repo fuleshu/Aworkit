@@ -570,6 +570,12 @@ pub enum ProviderError {
     /// An incomplete response was discarded before any requested tools ran.
     #[error("provider response stream was interrupted")]
     StreamInterrupted,
+    /// The provider transport (connection) failed before a response was read.
+    #[error("provider transport failed")]
+    TransportFailed,
+    /// The provider emitted a tool call that does not match any bound tool.
+    #[error("provider emitted an unsupported tool call")]
+    InvalidToolCall,
     #[error("provider execution was cancelled")]
     Cancelled,
     #[error("an accepted provider result must contain exactly one usage event")]

@@ -50,6 +50,16 @@ pub(crate) trait SemanticEventCommitter: Send + Sync {
     /// Replays the exact committed envelopes used to recover open spans and
     /// causation after a suspended execution or process restart.
     fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String>;
+
+    /// Shared view of the same committed envelopes for read-only scans.
+    ///
+    /// Per-turn context producers scan the committed stream several times per
+    /// model turn. Returning a shared snapshot lets a durable committer reuse one
+    /// decoded stream instead of re-reading and deep-cloning history for each
+    /// caller; committers without a cache keep the owning behaviour.
+    fn committed_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+        Ok(Arc::new(self.committed_events()?))
+    }
 }
 
 /// Transport for events that have already committed durably. Delivery failure

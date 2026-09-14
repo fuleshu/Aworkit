@@ -472,6 +472,7 @@ impl From<OpenAiCompatibleProviderError> for ProviderError {
         match error {
             OpenAiCompatibleProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             OpenAiCompatibleProviderError::RequestTimedOut => Self::RequestTimedOut,
+            OpenAiCompatibleProviderError::Transport => Self::TransportFailed,
             other => Self::Failed(other.to_string()),
         }
     }

@@ -43,7 +43,7 @@ impl BoundFileToolAuthorityV1 {
             // Older Chats already have immutable provider requests, even before
             // they have a compaction checkpoint. Include the final node answer.
             let mut request = crate::runtime::context_inspection::select_context(
-                &self.run_events.context_events()?,
+                &self.run_events.context_events_shared()?,
                 &owner.node_id,
             )?
             .document
@@ -121,7 +121,7 @@ impl BoundFileToolAuthorityV1 {
     fn selection_generation(&self, owner: &AgentContextV1) -> Result<u64, String> {
         Ok(self
             .run_events
-            .context_events()?
+            .context_events_shared()?
             .iter()
             .rev()
             .find(|e| {
@@ -142,7 +142,7 @@ impl BoundFileToolAuthorityV1 {
         owner: &AgentContextV1,
     ) -> Result<Option<(u64, c::Snapshot)>, String> {
         self.run_events
-            .context_events()?
+            .context_events_shared()?
             .iter()
             .rev()
             .find(|e| {
@@ -198,15 +198,15 @@ impl BoundFileToolAuthorityV1 {
         request: &mut ModelToolRequestV1,
         conversation_context: bool,
     ) -> Result<Option<c::Anchor>, String> {
-        let events: Vec<_> = self
-            .run_events
-            .context_events()?
-            .into_iter()
+        let stream = self.run_events.context_events_shared()?;
+        let events: Vec<_> = stream
+            .iter()
             .filter(|e| {
                 e.payload
                     .get("ownerKey")
                     .is_none_or(|key| key == &json!(self.context_key()))
             })
+            .cloned()
             .collect();
         let previous = self.context_snapshot(owner)?;
         let edit = owner
@@ -397,7 +397,7 @@ impl BoundFileToolAuthorityV1 {
             anchor,
             conversation_sequence: self
                 .run_events
-                .context_events()?
+                .context_events_shared()?
                 .iter()
                 .rev()
                 .find(|e| matches!(e.kind.as_str(), "message.user" | "message.assistant"))
@@ -494,9 +494,18 @@ impl BoundFileToolAuthorityV1 {
             }
         };
         let _guard = lock.lock().map_err(|_| "Context lock poisoned")?;
+        // The preparation chain below emits no events while it runs, so a turn
+        // that stalls here is invisible in the store. Record its phase timings so
+        // the cost can be attributed instead of inferred.
+        let prepare_started = std::time::Instant::now();
+        let mut timings: Vec<(&'static str, u128)> = Vec::new();
+        let mark = |name: &'static str, since: &mut std::time::Instant, timings: &mut Vec<(&'static str, u128)>| {
+            timings.push((name, since.elapsed().as_millis()));
+            *since = std::time::Instant::now();
+        };
         // A process interrupted between start and end never committed a partial
         // replacement. Close its maintenance marker before another attempt.
-        let lifecycle = self.run_events.context_events()?;
+        let lifecycle = self.run_events.context_events_shared()?;
         for event in lifecycle.iter().filter(|e| {
             e.kind == "context.compaction-started"
                 && e.payload["ownerKey"] == self.context_key()
@@ -515,7 +524,10 @@ impl BoundFileToolAuthorityV1 {
             }
         }
         metadata.policy.validate(metadata.context_window)?;
+        let mut since = prepare_started;
+        mark("lifecycle", &mut since, &mut timings);
         self.register_compression_scope(&owner, outer, request)?;
+        mark("compression-scope", &mut since, &mut timings);
         let mut outcome = c::Preparation {
             durable: true,
             max_overflow_retries: metadata.policy.max_overflow_retries,
@@ -528,9 +540,11 @@ impl BoundFileToolAuthorityV1 {
         } else {
             self.restore_context(&owner, outer, through, request, agent.is_some())?
         };
+        mark("restore", &mut since, &mut timings);
         if let Some(agent) = agent {
             self.workspace_context(outer, through, agent, request, cancellation)?;
         }
+        mark("instructions", &mut since, &mut timings);
         if cancellation.is_cancelled() {
             return Err("Context preparation cancelled".into());
         }
@@ -538,9 +552,15 @@ impl BoundFileToolAuthorityV1 {
             .map_err(|e| e.to_string())?
             .len();
         let pressure = c::pressure(request, anchor.as_ref())?;
-        // Leave room for one newly settled exchange in approval/recovery
-        // checkpoints while preserving the original event-store hard bound.
-        let byte_limit = plan.maximum_input_bytes.min(512 * 1024);
+        mark("pressure", &mut since, &mut timings);
+        // Align the byte-pressure trigger with the token threshold so a token
+        // count below the configured 80% threshold cannot trip byte pressure
+        // first. JSON context averages about four bytes per token; without a
+        // configured context window the legacy 512 KiB floor applies.
+        let byte_limit = metadata
+            .context_window
+            .map(|capacity| metadata.policy.threshold(capacity).saturating_mul(4) as usize)
+            .unwrap_or(512 * 1024);
         let byte_pressure = bytes > byte_limit;
         let qualifies = trigger != c::Trigger::Pressure
             || (metadata.policy.auto
@@ -622,10 +642,19 @@ impl BoundFileToolAuthorityV1 {
                     "compact.{}.{}",
                     self.context.run_id,
                     self.run_events
-                        .context_events()?
+                        .context_events_shared()?
                         .last()
                         .map_or(1, |e| e.sequence + 1)
                 );
+                // A summary must never be truncated by an output cap: the
+                // provider ends a truncated response with "length", which the
+                // stream rejects as an unsupported stop reason. Allow up to the
+                // retention budget instead of the small fixed cap.
+                let summary_output_cap = metadata
+                    .context_window
+                    .map(|capacity| metadata.policy.retention(capacity))
+                    .unwrap_or(0)
+                    .max(metadata.policy.max_tokens);
                 let mut summary_request = request.clone();
                 let mut summary_surface = surface[..cut].to_vec();
                 summary_surface.push(c::Unit::Message(ModelToolContextV1 {
@@ -636,17 +665,16 @@ impl BoundFileToolAuthorityV1 {
                 summary_request.retry_notice = None;
                 summary_request
                     .parameters
-                    .insert("maxOutputTokens".into(), json!(metadata.policy.max_tokens));
-                let source_events: Vec<_> = self
-                    .run_events
-                    .context_events()?
-                    .into_iter()
+                    .insert("maxOutputTokens".into(), json!(summary_output_cap));
+                let stream = self.run_events.context_events_shared()?;
+                let source_events: Vec<_> = stream
+                    .iter()
                     .filter(|e| {
                         e.sequence == source_generation
                             || (matches!(e.kind.as_str(), "message.user" | "message.assistant")
                                 && e.sequence > source_generation)
                     })
-                    .map(|e| e.event_id)
+                    .map(|e| e.event_id.clone())
                     .collect();
                 let start = self.run_events.context_event("context.compaction-started", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"trigger":effective_trigger,"beforeHash":before_hash,"sourceGeneration":source_generation,"sourceEventIds":source_events,"outer":outer,"through":through,"sourceUnits":surface[..cut].iter().map(c::hash).collect::<Vec<_>>(),"sourceInstructionIds":surface[..cut].iter().filter_map(|u|match u{c::Unit::Message(m)=>m.instruction_event_id.as_ref(),_=>None}).collect::<Vec<_>>(),"body":"Compacting context…"}))?;
                 let mut summary_plan = plan.clone();
@@ -663,7 +691,7 @@ impl BoundFileToolAuthorityV1 {
                     summary_request.parameters = target.model.parameters.clone();
                     summary_request
                         .parameters
-                        .insert("maxOutputTokens".into(), json!(metadata.policy.max_tokens));
+                        .insert("maxOutputTokens".into(), json!(summary_output_cap));
                 }
                 let capture = SummaryCapture::default();
                 let result = gateway.execute_compaction_cancellable(
@@ -722,10 +750,24 @@ impl BoundFileToolAuthorityV1 {
         {
             self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":"Context is still above the configured pressure threshold after the permitted reductions. The latest context is preserved; provider overflow recovery remains bounded by the configured retry policy."}))?;
         }
+        mark("manage", &mut since, &mut timings);
         if cancellation.is_cancelled() {
             return Err("Context preparation cancelled".into());
         }
         self.save_context(&owner, outer, through, request, anchor)?;
+        mark("checkpoint", &mut since, &mut timings);
+        self.run_events.context_event(
+            "context.prepare-timing",
+            json!({
+                "ownerKey":self.context_key(),
+                "nodeId":owner.node_id,
+                "child":owner.child,
+                "trigger":format!("{trigger:?}"),
+                "changed":outcome.changed,
+                "totalMs":prepare_started.elapsed().as_millis(),
+                "phases":timings.iter().map(|(name,ms)|json!({"phase":name,"ms":ms})).collect::<Vec<_>>(),
+            }),
+        )?;
         Ok(outcome)
     }
 }

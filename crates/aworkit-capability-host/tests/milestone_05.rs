@@ -314,6 +314,9 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
         .expect("grep");
     assert_eq!(grep.files_scanned, 2);
     assert_eq!(grep.matches.len(), 2);
+    assert!(!grep.match_limit_reached);
+    assert!(!grep.file_limit_reached);
+    assert_eq!(grep.skipped_directories, 0);
     assert!(
         grep.matches
             .iter()
@@ -449,6 +452,84 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
         );
         assert_eq!(files.read("notes.txt").expect("still readable"), b"changed");
     }
+}
+
+/// The regex walk must report what it actually covered: dependency trees are
+/// skipped, and a stopped scan is never presented as a complete one.
+#[test]
+fn grep_reports_skipped_dependency_trees_and_stopped_scans() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src/deep")).expect("src");
+    std::fs::create_dir_all(project.join("node_modules/dep")).expect("dependency tree");
+    std::fs::create_dir_all(project.join(".git/objects")).expect("vcs tree");
+    std::fs::write(project.join("src/app.ts"), b"const balance = 1;").expect("source");
+    std::fs::write(project.join("src/deep/page.ts"), b"const balance = 2;").expect("source");
+    std::fs::write(project.join("node_modules/dep/index.js"), b"const balance = 3;")
+        .expect("dependency");
+    std::fs::write(project.join(".git/objects/pack"), b"const balance = 4;").expect("vcs");
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.clone(),
+        allow_write: false,
+    })
+    .expect("files");
+
+    let complete = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "balance".into(),
+                maximum_matches: 8,
+                maximum_files: 64,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(
+        complete.matches.len(),
+        2,
+        "scanned={} skipped={} match_limit={} file_limit={}",
+        complete.files_scanned,
+        complete.skipped_directories,
+        complete.match_limit_reached,
+        complete.file_limit_reached
+    );
+    assert!(!complete.match_limit_reached);
+    assert!(!complete.file_limit_reached);
+    assert_eq!(complete.skipped_directories, 2);
+
+    // A low file ceiling stops the walk and must say so instead of implying that
+    // the pattern is absent from the tree.
+    let stopped = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "absent-everywhere".into(),
+                maximum_matches: 8,
+                maximum_files: 1,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert!(stopped.matches.is_empty());
+    assert!(stopped.file_limit_reached);
+    assert!(!stopped.match_limit_reached);
+    assert_eq!(stopped.files_scanned, 1);
+
+    let matched_out = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "balance".into(),
+                maximum_matches: 1,
+                maximum_files: 64,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(matched_out.matches.len(), 1);
+    assert!(matched_out.match_limit_reached);
+    assert!(!matched_out.file_limit_reached);
 }
 
 fn controlled(stdout: &[u8]) -> ControlledProcessResult {

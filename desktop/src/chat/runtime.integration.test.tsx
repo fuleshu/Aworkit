@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "../test/renderWithNotifications";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { useChatRuntime } from "./useChatRuntime";
@@ -794,6 +794,52 @@ describe("Chat native-port recovery contracts", () => {
     expect(onNewChat).toHaveBeenCalledOnce();
   });
 
+  it("keeps the Chat route reachable while history changes are fenced", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    const onSelectChat = vi.fn();
+    render(
+      <NavigationPane
+        route="workflows"
+        collapsed={false}
+        history={[
+          {
+            chatId: "chat.local",
+            runId: "run.chat.local",
+            title: "Interrupted investigation",
+            projectId: null,
+            projectName: null,
+            phase: "paused",
+            pinned: false,
+            parentChatId: null,
+            createdAt: "1",
+            updatedAt: "2",
+          },
+        ]}
+        projects={[]}
+        selectedChatId="chat.local"
+        // An unresolved recovery or a stale projection fences history changes.
+        historyDisabledReason="Resolve the interrupted Chat command before changing history"
+        onNavigate={onNavigate}
+        onNewChat={() => undefined}
+        onToggleCollapsed={() => undefined}
+        onSelectChat={onSelectChat}
+      />,
+    );
+
+    // Every history row is fenced, so the Chat route itself must stay enabled:
+    // otherwise the recovery banner that unlocks this state is unreachable.
+    const rows = screen.getAllByRole("button", { name: /Interrupted investigation/ });
+    for (const row of rows) expect(row).toBeDisabled();
+    const chatGroup = screen.getByText("CHAT").closest<HTMLElement>(".nav-group");
+    expect(chatGroup).not.toBeNull();
+    const chatRoute = within(chatGroup!).getByRole("button");
+    expect(chatRoute).toBeEnabled();
+    await user.click(chatRoute);
+    expect(onNavigate).toHaveBeenCalledWith("chat");
+    expect(onSelectChat).not.toHaveBeenCalled();
+  });
+
   it("groups Chat history by project and exposes pin, fork, and delete actions", async () => {
     const user = userEvent.setup();
     const onSelectChat = vi.fn();
@@ -1505,6 +1551,56 @@ describe("Chat native-port recovery contracts", () => {
     expect(snapshotCalls).toBe(2);
   });
 
+  it("keeps Stop available while an accepted cancellation has not settled the turn", async () => {
+    const user = userEvent.setup();
+    const commands: ChatIntent[] = [];
+    // The core accepts the cancellation but keeps reporting a live turn, which is
+    // exactly the runaway case: Stop must stay usable instead of latching off.
+    const liveTurn = snapshot(2, "Runaway Chat", [
+      { sequence: 1 },
+      {
+        sequence: 2,
+        kind: "span.started",
+        payload: {
+          spanId: "span.model.1",
+          spanKind: "model_call",
+          semanticRole: "model_call",
+          title: "Model call 1",
+          status: "running",
+        },
+      },
+    ]);
+    const port: ChatCorePort = {
+      async snapshot() {
+        return liveTurn;
+      },
+      async command(intent) {
+        commands.push(intent);
+        return {
+          commandId: intent.commandId,
+          accepted: true,
+          currentVersion: 2,
+          reason: null,
+        };
+      },
+    };
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+
+    const stop = await screen.findByRole("button", { name: /Stop/ });
+    expect(stop).toBeEnabled();
+    await user.click(stop);
+    await waitFor(() => expect(commands).toHaveLength(1));
+    expect(commands[0]).toMatchObject({ type: "cancel" });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Stop/ })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: /Stop/ }));
+    await waitFor(() => expect(commands).toHaveLength(2));
+    expect(commands[1]).toMatchObject({ type: "cancel" });
+    expect(commands[1]!.commandId).not.toBe(commands[0]!.commandId);
+  });
+
   it("marks only active cards busy and renders settled thinking as terminal", () => {
     const { rerender } = render(
       <TimelineCard
@@ -1715,6 +1811,219 @@ describe("Chat native-port recovery contracts", () => {
     expect(screen.queryByText("More")).toBeNull();
     for (const label of ["Retry", "Fork", "Continue", "Pause", "Resume"])
       expect(screen.queryByRole("button", { name: label })).toBeNull();
+  });
+
+  it("publishes one contiguous runtime projection per streamed window", async () => {
+    let renders = 0;
+    let eventListener: ((event: CoreEventEnvelope) => void) | undefined;
+    const port: ChatCorePort = {
+      async snapshot() {
+        return snapshot(1, "Windowed runtime", [{ sequence: 1 }]);
+      },
+      async command(intent) {
+        return {
+          commandId: intent.commandId,
+          accepted: false,
+          currentVersion: 1,
+          reason: "unused",
+        };
+      },
+      async subscribeEvents(listener) {
+        eventListener = listener;
+        return () => undefined;
+      },
+    };
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useChatRuntime(port, 60_000);
+    });
+    await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+    await waitFor(() => expect(eventListener).toBeDefined());
+    act(() => {
+      eventListener?.(
+        canonicalEvent(2, "span.started", {
+          spanId: "span.model.window",
+          spanKind: "model_call",
+          semanticRole: "model_call",
+          title: "Model call 1",
+          status: "running",
+        }),
+      );
+    });
+    expect(result.current.events.map((event) => event.sequence)).toEqual([1, 2]);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    });
+    const settled = renders;
+
+    const chunks = Array.from({ length: 40 }, (_, index) => `chunk-${index};`);
+    // One synchronous burst, exactly as a fast provider delivers a window.
+    act(() => {
+      for (const [index, append] of chunks.entries())
+        eventListener?.(
+          canonicalEvent(3 + index, "span.content_delta", {
+            spanId: "span.model.window",
+            channel: "reasoning",
+            append,
+            status: "running",
+          }),
+        );
+    });
+    // No intermediate projection reached React: the whole burst is one window.
+    expect(renders - settled).toBe(0);
+    expect(result.current.events).toHaveLength(2);
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 70));
+    });
+    expect(renders - settled).toBe(1);
+    const drained = Array.from({ length: 42 }, (_, index) => index + 1);
+    expect(result.current.events.map((event) => event.sequence)).toEqual(drained);
+    expect(
+      result.current.events.slice(2).map((event) =>
+        (event.payload as { readonly append: string }).append,
+      ),
+    ).toEqual(chunks);
+
+    act(() => {
+      eventListener?.(
+        canonicalEvent(43, "span.completed", {
+          spanId: "span.model.window",
+          status: "completed",
+        }),
+      );
+    });
+    // A lifecycle fact publishes in its ingesting call, without a second frame.
+    expect(renders - settled).toBe(2);
+    expect(result.current.events.map((event) => event.sequence)).toEqual([
+      ...drained,
+      43,
+    ]);
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+    // The synchronous publish superseded the pending flush: nothing re-published.
+    expect(renders - settled).toBe(2);
+    expect(result.current.events).toHaveLength(43);
+  });
+
+  it("coalesces a streamed delta burst into one publish while lifecycle facts stay synchronous", async () => {
+    const commits: string[] = [];
+    let eventListener: ((event: CoreEventEnvelope) => void) | undefined;
+    const port: ChatCorePort = {
+      async snapshot() {
+        return snapshot(1, "Coalesced stream", [{ sequence: 1 }]);
+      },
+      async command(intent) {
+        return {
+          commandId: intent.commandId,
+          accepted: false,
+          currentVersion: 1,
+          reason: "unused",
+        };
+      },
+      async subscribeEvents(listener) {
+        eventListener = listener;
+        return () => undefined;
+      },
+    };
+    render(
+      <Profiler id="chat-timeline" onRender={() => commits.push("commit")}>
+        <ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />
+      </Profiler>,
+    );
+    await screen.findByRole("heading", { name: "Coalesced stream" });
+    await waitFor(() => expect(eventListener).toBeDefined());
+    act(() => {
+      eventListener?.(
+        canonicalEvent(2, "span.started", {
+          spanId: "span.model.burst",
+          spanKind: "model_call",
+          semanticRole: "model_call",
+          title: "Model call 1",
+          status: "running",
+        }),
+      );
+    });
+    expect(
+      screen.getByRole("group", { name: "Model call: Model call 1" }),
+    ).toBeVisible();
+    // Let snapshot, readiness, and notification commits settle before the burst.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    });
+    const settled = commits.length;
+
+    // One provider window delivered synchronously, exactly as the native
+    // subscription delivers a fast burst. Publishing per delta produced one
+    // commit per chunk here.
+    const chunks = Array.from({ length: 40 }, (_, index) => `chunk-${index};`);
+    act(() => {
+      for (const [index, append] of chunks.entries())
+        eventListener?.(
+          canonicalEvent(3 + index, "span.content_delta", {
+            spanId: "span.model.burst",
+            channel: "reasoning",
+            sourceClassification: "source_provided",
+            append,
+            status: "running",
+          }),
+        );
+    });
+    expect(commits.length - settled).toBe(0);
+
+    const aggregated = chunks.join("");
+    // Nothing from the burst reached the timeline before its window elapsed:
+    // that is the batching observable and it needs no timer to hold.
+    expect(screen.queryByLabelText("Thinking: Model call 1")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Thinking: Model call 1")).toBeVisible(),
+    );
+    expect(
+      within(screen.getByLabelText("Thinking: Model call 1")).getByText(
+        aggregated,
+      ),
+    ).toBeVisible();
+
+    // A lifecycle fact publishes in its ingesting call, so the settled span is
+    // visible without waiting for the deferred window.
+    act(() => {
+      eventListener?.(
+        canonicalEvent(43, "span.completed", {
+          spanId: "span.model.burst",
+          status: "completed",
+        }),
+      );
+    });
+    expect(screen.getByLabelText("Thinking: Model call 1")).not.toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+
+    // The synchronous publish superseded the pending flush: waiting past the
+    // window adds no duplicate text and the projection stays intact.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+    expect(
+      within(screen.getByLabelText("Thinking: Model call 1")).getByText(
+        aggregated,
+      ),
+    ).toBeVisible();
+
+    act(() => {
+      eventListener?.(
+        canonicalEvent(44, "message.assistant", {
+          body: "Burst settled",
+          createdAt: "now",
+        }),
+      );
+    });
+    // Only a gap-free stream can drain a later sequence, so a visible follow-up
+    // message also proves the live projection never stalled on a lost delta.
+    expect(screen.getByText("Burst settled")).toBeVisible();
+    expect(screen.queryByText(/Projection disconnected/)).toBeNull();
   });
 });
 

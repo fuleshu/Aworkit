@@ -3,7 +3,10 @@ import type { NativePresentationAdapter } from "../adapters/contracts";
 import type { SettingsLeaveGuard } from "../shell/settingsNavigation";
 import { useSettingsFeedback } from "./settings-v2/useSettingsFeedback";
 import { useSettingsDiagnostics } from "./settings-v2/useSettingsDiagnostics";
-import { settingsSaveContentIssue } from "./settings-v2/settingsSavePostcondition";
+import {
+  settingsDocumentsMatch,
+  settingsSaveContentIssue,
+} from "./settings-v2/settingsSavePostcondition";
 import { useSettingsLeave } from "./settings-v2/useSettingsLeave";
 import { SettingsLeaveDialog } from "./settings-v2/SettingsLeaveDialog";
 import { projectAppearancePreference } from "./appearance";
@@ -1354,7 +1357,9 @@ function settingsMutationReceiptProofIssue(
 }
 
 function sameSettings(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  // The trusted core omits absent optionals while the draft spells them as null;
+  // both describe the same document, so comparison ignores only that encoding.
+  return settingsDocumentsMatch(left, right);
 }
 
 const inertPresentation: SettingsPresentation = {
