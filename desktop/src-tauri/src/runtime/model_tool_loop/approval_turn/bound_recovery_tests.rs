@@ -1,6 +1,7 @@
 //! One Agent turn whose provider fails, and one whose exact request outgrew the
-//! frozen plan's input bound. Neither ends the Run: the failure is reported to
-//! the model on the same frozen route, which then decides how to finish.
+//! frozen plan's input bound. A provider failure is reported to the model on the
+//! same frozen route; a failure that cannot change is surfaced instead of
+//! looping, so the turn always ends.
 
 use super::*;
 use super::super::super::compaction::{Preparation, Trigger};
@@ -68,8 +69,6 @@ fn user_input() -> Value {
     json!({"messages":[{"role":"user","content":"Inspect the workspace."}]})
 }
 
-/// Settles one oversized result on the first turn, then fails every remaining
-/// turn until the model has been told about the failure, and finally answers.
 struct Provider {
     observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
     dispatches: AtomicUsize,
@@ -105,30 +104,63 @@ impl ProviderEnginePortV1 for Provider {
         emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
         self.observed.lock().unwrap().push(request.clone());
-        let dispatch = self.dispatches.fetch_add(1, Ordering::SeqCst);
-        if request.retry_notice.is_some() || request.exchanges.is_empty() {
-            if request.exchanges.is_empty() && request.retry_notice.is_none() {
+        match self.dispatches.fetch_add(1, Ordering::SeqCst) {
+            // The model asks for the tool whose result pushes the request past
+            // the frozen bound.
+            0 => {
                 emit(ModelToolEventV1::ToolCall { call: call("read0") })?;
-            } else {
+            }
+            // Distinct provider failures, each the model's to handle.
+            1 => return Err(ProviderError::Failed("quota exceeded".into())),
+            2 => return Err(ProviderError::Failed("upstream unavailable".into())),
+            // The model answers after being told.
+            _ => {
                 emit(ModelToolEventV1::AssistantOutput {
                     text: "The workspace is understood.".into(),
                 })?;
             }
-        } else if dispatch == 1 {
-            // The exact refusal the model must be told about. This is the turn
-            // whose request also outgrew the frozen bound after the settled
-            // exchange, so the two conditions are exercised together.
-            return Err(ProviderError::Failed("quota exceeded".into()));
-        } else {
-            emit(ModelToolEventV1::AssistantOutput {
-                text: "The workspace is understood.".into(),
-            })?;
         }
         emit(ModelToolEventV1::Usage {
             input_tokens: 10,
             output_tokens: 10,
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
+    }
+}
+
+/// Always fails the same way, so no model turn can change the condition.
+struct StuckProvider {
+    observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
+}
+
+impl StuckProvider {
+    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>) -> Self {
+        Self { observed }
+    }
+}
+
+impl ProviderEnginePortV1 for StuckProvider {
+    fn binding_id(&self) -> &str {
+        "model"
+    }
+    fn version_hash(&self) -> &str {
+        "v1"
+    }
+    fn execute(
+        &self,
+        _: &ModelRequestV1,
+        _: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        unreachable!()
+    }
+    fn execute_tool_turn_cancellable(
+        &self,
+        request: &ModelToolRequestV1,
+        _: &CancellationToken,
+        _: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        self.observed.lock().unwrap().push(request.clone());
+        Err(ProviderError::Failed("quota exceeded".into()))
     }
 }
 
@@ -180,7 +212,7 @@ impl ModelToolInvocationPortV1 for Stuck {
     }
 }
 
-fn gateway(provider: Provider) -> FrozenModelGateway {
+fn gateway(provider: impl ProviderEnginePortV1 + 'static) -> FrozenModelGateway {
     FrozenModelGateway::new(vec![Box::new(provider)])
 }
 
@@ -199,20 +231,20 @@ fn a_provider_failure_is_reported_to_the_model_and_the_agent_finishes() {
     let ModelToolLoopRunV1::Completed(outcome) = result else {
         panic!("expected completion")
     };
-
     assert_eq!(outcome.assistant_text, "The workspace is understood.");
+
     let turns = observed.lock().unwrap();
-    let reported = turns
+    let notices: Vec<&str> = turns
         .iter()
-        .find(|turn| turn.retry_notice.is_some())
-        .expect("the provider failure reached the model");
-    assert!(
-        reported
-            .retry_notice
-            .as_deref()
-            .is_some_and(|notice| notice.contains("quota exceeded")),
-        "the model sees the provider's own diagnostic"
+        .filter_map(|turn| turn.retry_notice.as_deref())
+        .collect();
+    assert_eq!(
+        notices.len(),
+        2,
+        "each distinct provider failure becomes one model-visible turn"
     );
+    assert!(notices[0].contains("quota exceeded"));
+    assert!(notices[1].contains("upstream unavailable"));
     assert_eq!(
         turns.last().unwrap().exchanges.len(),
         1,
@@ -221,27 +253,82 @@ fn a_provider_failure_is_reported_to_the_model_and_the_agent_finishes() {
 }
 
 #[test]
-fn an_over_bound_request_that_cannot_be_reduced_is_still_reported_to_the_model() {
+fn a_failure_that_cannot_change_is_surfaced_instead_of_looping() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let id = StableId::parse("outer.test").unwrap();
 
-    // The settled exchange pushes the exact request past the bound and the
-    // authority cannot reduce anything. The condition is reported to the model
-    // like any other provider failure, and the node still completes.
-    let result = execute_model_tool_loop_approval_v1(
-        &gateway(Provider::new(observed.clone())),
+    // Every dispatch fails with the same condition, which no model turn can
+    // change. The first report is granted and the unchanged failure is then
+    // surfaced, so the invocation always ends instead of spinning with no
+    // durable activity while the runtime lock is held.
+    let failure = match execute_model_tool_loop_approval_v1(
+        &gateway(StuckProvider::new(observed.clone())),
         tool_request(&id, user_input()),
         &Stuck,
         &CancellationToken::default(),
-    )
-    .unwrap_or_else(|failure| panic!("the turn must keep running: {failure}"));
-    let ModelToolLoopRunV1::Completed(outcome) = result else {
-        panic!("expected completion")
+    ) {
+        Ok(ModelToolLoopRunV1::Suspended { .. }) => panic!("no approval was requested"),
+        Ok(ModelToolLoopRunV1::Completed(outcome)) => {
+            panic!(
+                "an irreducible failure must be surfaced, not completed: {}",
+                outcome.assistant_text
+            )
+        }
+        Err(failure) => failure,
     };
-    assert_eq!(outcome.assistant_text, "The workspace is understood.");
-    let turns = observed.lock().unwrap();
     assert!(
-        turns.iter().any(|turn| turn.retry_notice.is_some()),
-        "the failure is model-visible"
+        failure.error.to_string().contains("quota exceeded"),
+        "the surfaced failure names the real condition: {}",
+        failure.error
+    );
+
+    let turns = observed.lock().unwrap();
+    let reports = turns
+        .iter()
+        .filter(|turn| turn.retry_notice.is_some())
+        .count();
+    assert_eq!(
+        reports, 1,
+        "an unchanged failure is reported once, never repeatedly"
+    );
+    assert_eq!(
+        turns.len(),
+        2,
+        "one report and one surfaced failure, with no further turns"
+    );
+}
+
+#[test]
+fn the_report_budget_is_finite_and_owns_the_whole_invocation() {
+    let mut request = ModelToolRequestV1 {
+        context_messages: Vec::new(),
+        input: user_input(),
+        parameters: BTreeMap::new(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        retry_notice: None,
+    };
+    let mut budget = ProviderRecoveryBudget::default();
+    let bound = ProviderError::InputBoundExceeded {
+        input_bytes: 8,
+        maximum_input_bytes: 4,
+    };
+    assert!(
+        budget.note(&bound, &mut request).is_some(),
+        "the first report reaches the model"
+    );
+    assert!(
+        budget.note(&bound, &mut request).is_none(),
+        "an identical failure is surfaced instead of reported again"
+    );
+    for index in 0..MAXIMUM_ERROR_RECOVERIES {
+        let _ = budget.note(&ProviderError::Failed(format!("failure {index}")), &mut request);
+    }
+    assert!(budget.exhausted(), "the report budget is finite");
+    assert!(
+        budget
+            .note(&ProviderError::Failed("one more".into()), &mut request)
+            .is_none(),
+        "an exhausted budget surfaces the failure"
     );
 }

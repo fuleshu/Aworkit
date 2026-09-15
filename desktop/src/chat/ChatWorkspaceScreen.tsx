@@ -89,6 +89,10 @@ export function ChatWorkspaceScreen({
     );
   }, []);
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
+  // A stopped Run is reported persistently in the workspace, not only as a
+  // transient notice the user can miss. The banner clears when a later turn
+  // succeeds or the user dismisses it, never silently.
+  const [dismissedRunFailure, setDismissedRunFailure] = useState<string | null>(null);
   const nativeWorkflowPort = useMemo(
     () =>
       workflowPort ??
@@ -302,6 +306,23 @@ export function ChatWorkspaceScreen({
       </>
     );
   const chat = snapshot.chat;
+  const runFailure = useMemo(() => {
+    const failed = runtime.events.filter(
+      (event) => event.kind === "execution.failed" && event.eventId !== dismissedRunFailure,
+    );
+    const latest = failed.at(-1);
+    if (latest === undefined) return null;
+    const payload = latest.payload as { title?: unknown; body?: unknown };
+    return {
+      id: latest.eventId,
+      title: typeof payload.title === "string" ? payload.title : "The Run stopped.",
+      body:
+        typeof payload.body === "string"
+          ? payload.body
+          : "The trusted core recorded this failure. Inspect Run details for the exact record.",
+    };
+  }, [runtime.events, dismissedRunFailure]);
+  const dismissRunFailure = (id: string) => setDismissedRunFailure(id);
   const visibleChat = liveTurnRunning
     ? { ...chat, phase: "running" as const }
     : chat;
@@ -450,6 +471,22 @@ export function ChatWorkspaceScreen({
                 }}
               >
                 Abandon as uncertain
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {runFailure !== null ? (
+          <div className="recovery-banner run-failure-banner" role="alert">
+            <div>
+              <strong>{runFailure.title}</strong>
+              <p>{runFailure.body}</p>
+            </div>
+            <div className="recovery-actions">
+              <button type="button" onClick={inspect}>
+                Run details
+              </button>
+              <button type="button" onClick={() => dismissRunFailure(runFailure.id)}>
+                Dismiss
               </button>
             </div>
           </div>

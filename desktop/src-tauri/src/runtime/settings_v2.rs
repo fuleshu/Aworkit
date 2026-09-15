@@ -31,6 +31,15 @@ const MAX_ARGUMENTS: usize = 512;
 const MAX_STRING_BYTES: usize = 16 * 1024;
 const MAX_FREEFORM_BYTES: usize = 256 * 1024;
 const MAX_FREEFORM_DEPTH: usize = 16;
+/// Largest persisted window dimension, in physical device pixels.
+const MAXIMUM_WINDOW_DIMENSION_V2: u32 = 65_535;
+/// Largest persisted window coordinate magnitude, in physical device pixels.
+/// The bound is generous for multi-monitor desktops with negative coordinates.
+const MAXIMUM_WINDOW_COORDINATE_V2: i32 = 32_767;
+/// Largest persisted pane-separator position, in logical device-independent pixels.
+const MAXIMUM_PANE_WIDTH_V2: u32 = 4_096;
+const MINIMUM_SCALE_FACTOR_V2: f64 = 0.5;
+const MAXIMUM_SCALE_FACTOR_V2: f64 = 8.0;
 pub(crate) const DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 300;
 pub(crate) const MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 3_600;
 pub(crate) const DEFAULT_MAXIMUM_TOOL_OUTPUT_BYTES_V1: usize = 64 * 1024;

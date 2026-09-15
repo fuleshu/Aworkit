@@ -97,7 +97,9 @@ struct ProcessedCommand {
 // A first command is also embedded in the frozen context. Keeping the user
 // body at half the full message-context budget leaves deterministic room for
 // Agent instructions and durable envelopes before that first context commit.
-const WORKFLOW_MAX_USER_INPUT_BYTES: usize = 128 * 1024;
+/// A Chat input is bounded only by the shared runaway guard; the model's context
+/// window and the provider are the real budgets.
+const WORKFLOW_MAX_USER_INPUT_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
 const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
 
 pub(crate) mod approval_control;
@@ -382,36 +384,157 @@ impl DesktopRuntime {
         resume_fingerprint: &str,
         expected_version: u64,
     ) -> Result<UiCommandReceipt, String> {
+        // This history fence is deliberately not compared against the UI's
+        // optimistic version. Recovery replays one exact command that was staged
+        // before any effect, so a renderer that resynchronized after the
+        // interruption would otherwise never be able to resume it. The staged
+        // record's own frozen identity is the authority here.
         let history_head = self.history.head()?;
         if expected_version != history_head {
-            return Err(format!(
-                "desktop version conflict: expected {expected_version}, actual {history_head}"
-            ));
+            eprintln!(
+                "aworkit: recovery resume ignores a stale renderer fence \
+                 (renderer {expected_version}, durable {history_head})"
+            );
         }
         let pending = self
             .history
             .pending_effect_command_at_head(history_head)?
             .ok_or_else(|| "there is no interrupted Chat command to resume".to_owned())?;
+        let pending_command_id = pending.command.command_id.clone();
         let fingerprint = command_fingerprint(&pending.command)?;
         if fingerprint != pending.command_hash {
             return Err("pending Chat command failed command integrity validation".into());
         }
-        let recovered = self.command(pending.command)?;
-        let receipt = UiCommandReceipt {
-            command_id: resume_command_id.to_owned(),
-            accepted: recovered.accepted,
-            current_version: recovered.current_version,
-            reason: recovered.reason,
-            credential_mutation: None,
+        // An original command can carry the fence it was staged with. Recovery
+        // replays that exact command at the current head, so a renderer that
+        // resynchronized after the interruption can always resume it; the staged
+        // record's own identity remains the authority.
+        //
+        // The process ended mid-effect, so the Chat still carries the
+        // interrupted pass' span hierarchy with its run and node spans open. No
+        // terminal fact can commit while a child span is open, and the
+        // interrupted attempt can never resume that work, so close every
+        // dangling child span as failed before replaying. The interrupted pass'
+        // own run span is left alone: the recovered command emits its terminal
+        // fact for that exact span, and closing it twice would be refused. This
+        // removes no evidence: the original events, tool outcomes and
+        // checkpoints stay as stored, and the closes are themselves recorded.
+        let resume_fingerprint = resume_fingerprint.to_owned();
+        let run_span_suffix = format!(".{pending_command_id}");
+        let dangling: Vec<Value> = self
+            .history
+            .open_span_terminal_facts(
+                "failed",
+                "The interrupted attempt ended without a terminal result.",
+                &now_label(),
+            )?
+            .into_iter()
+            .filter(|fact| {
+                fact.get("spanId")
+                    .and_then(Value::as_str)
+                    .is_none_or(|span_id| !span_id.ends_with(&run_span_suffix))
+            })
+            .collect();
+        if !dangling.is_empty() {
+            let facts = dangling
+                .into_iter()
+                .map(|fact| ("span.failed", fact))
+                .collect();
+            self.history.append(
+                resume_command_id,
+                &resume_fingerprint,
+                history_head,
+                facts,
+            )?;
+        }
+        // The interruption guard admits this replay only because it is the same
+        // staged command; every other lifecycle, target and version check still
+        // runs exactly as for an ordinary turn.
+        //
+        // A `start` whose first turn already began cannot replay: re-initializing
+        // a started Chat would duplicate its conversation. It continues the task
+        // instead, exactly like an uncertain outcome.
+        let replay_command = pending.command.clone();
+        let chat_already_started = self.history.chat_started_by(&pending_command_id)?;
+        let needs_continuation = if replay_command.action == "start" && chat_already_started {
+            true
+        } else {
+            let recovered = self
+                .complete_workflow_input(
+                    replay_command,
+                    fingerprint,
+                    Some(self.history.head()?),
+                )
+                .inspect_err(|error| {
+                    eprintln!(
+                        "aworkit: recovery resume of '{pending_command_id}' was refused: {error}"
+                    );
+                })?;
+            if recovered.1 == WorkflowExecutionStatusV1::OutcomeUncertain {
+                true
+            } else {
+                let receipt = recovered.0;
+                self.processed.insert(
+                    resume_command_id.to_owned(),
+                    ProcessedCommand {
+                        fingerprint: resume_fingerprint.to_owned(),
+                        receipt: receipt.clone(),
+                    },
+                );
+                return Ok(receipt);
+            }
         };
-        self.processed.insert(
-            resume_command_id.to_owned(),
-            ProcessedCommand {
-                fingerprint: resume_fingerprint.to_owned(),
-                receipt: receipt.clone(),
-            },
-        );
-        Ok(receipt)
+        debug_assert!(needs_continuation);
+        // The interrupted attempt can never resume its own provider work: the
+        // broker forbids replaying an attempted effect, so recovery finalizes it
+        // as an uncertain outcome. That must not stop the task. The Chat still
+        // owes the user an answer, so start a real next turn for the same task
+        // under a fresh command identity and the model keeps working instead of
+        // the Run dead-ending on infrastructure.
+        {
+            // The durable head makes the continuation identity unique and
+            // idempotent for exactly this recovery.
+            let continuation_id =
+                format!("{resume_command_id}.continue.{}", self.history.head()?);
+            let continuation = UiCommandInput {
+                schema_version: 1,
+                command_id: continuation_id,
+                expected_version: 0,
+                action: "enqueue".into(),
+                target_id: None,
+                payload: json!({
+                    "input": "Aworkit recovery: the previous attempt was interrupted by a process \
+                              restart, so it produced no answer. No tool call from that attempt is \
+                              assumed to have run. Restart the requested task now from the \
+                              conversation above and carry it through to completion."
+                }),
+            };
+            let continuation_fingerprint = command_fingerprint(&continuation)?;
+            let (continued, _status) = self.complete_workflow_input(
+                continuation,
+                continuation_fingerprint,
+                Some(self.history.head()?),
+            )?;
+            let receipt = UiCommandReceipt {
+                command_id: resume_command_id.to_owned(),
+                accepted: continued.accepted,
+                current_version: continued.current_version,
+                reason: Some(
+                    "The interrupted attempt was finalized as outcome-uncertain, so the task \
+                     restarted as a fresh turn."
+                        .into(),
+                ),
+                credential_mutation: None,
+            };
+            self.processed.insert(
+                resume_command_id.to_owned(),
+                ProcessedCommand {
+                    fingerprint: resume_fingerprint.to_owned(),
+                    receipt: receipt.clone(),
+                },
+            );
+            Ok(receipt)
+        }
     }
 
     /// Resolves an unrecoverable pending effect without pretending it never
@@ -613,6 +736,22 @@ impl DesktopRuntime {
     }
 
     pub fn command(&mut self, input: UiCommandInput) -> Result<UiCommandReceipt, String> {
+        self.command_fenced(input, None)
+    }
+
+    /// Runs one UI command.
+    ///
+    /// `replay_fence` is set only by recovery, which replays one command that
+    /// was staged before any effect. That command carries the history fence it
+    /// was staged with, and the Chat head may have advanced while the
+    /// interruption was handled, so recovery supplies the current head instead
+    /// of failing on a divergence it already accounts for. Every other command
+    /// keeps its own fence.
+    fn command_fenced(
+        &mut self,
+        input: UiCommandInput,
+        replay_fence: Option<u64>,
+    ) -> Result<UiCommandReceipt, String> {
         if input.schema_version != 1 {
             return Err(format!(
                 "unsupported UI command schema {}",
@@ -696,9 +835,9 @@ impl DesktopRuntime {
                 )
             }
             "fork" => self.fork_chat(input, fingerprint),
-            "start" | "enqueue" | "compact_context" => {
-                self.complete_workflow_input(input, fingerprint)
-            }
+            "start" | "enqueue" | "compact_context" => self
+                .complete_workflow_input(input, fingerprint, replay_fence)
+                .map(|(receipt, _status)| receipt),
             "approval" => self.complete_approval(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
             "edit_context" => self.edit_context(input, fingerprint),
@@ -942,7 +1081,8 @@ impl DesktopRuntime {
         &mut self,
         input: UiCommandInput,
         fingerprint: String,
-    ) -> Result<UiCommandReceipt, String> {
+        replay_fence: Option<u64>,
+    ) -> Result<(UiCommandReceipt, WorkflowExecutionStatusV1), String> {
         let manual = input.action == "compact_context";
         if manual && !self.history.command_started(&input.command_id)? {
             let snapshot = self.snapshot(0)?;
@@ -974,8 +1114,9 @@ impl DesktopRuntime {
             }
         }
         let command_started = self.history.command_started(&input.command_id)?;
+        let fence = replay_fence.unwrap_or(input.expected_version);
         if !command_started {
-            self.history.ensure_expected(input.expected_version)?;
+            self.history.ensure_expected(fence)?;
         }
         if input.action == "start" {
             let workflow_id = string_field(&input.payload, "workflowId")?;
@@ -1292,13 +1433,14 @@ impl DesktopRuntime {
             self.history.begin_effect_command(
                 &input.command_id,
                 &fingerprint,
-                input.expected_version,
+                fence,
                 initial_facts,
             )?;
         }
         let result = self.pipeline.execute(execution_request)?;
         if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
-            return Ok(receipt);
+            let status = result.status;
+            return Ok((receipt, status));
         }
         let created_at = now_label();
         let mut facts = Vec::new();
@@ -1468,8 +1610,10 @@ impl DesktopRuntime {
                 ));
             }
         }
-        self.history
-            .append(&input.command_id, &fingerprint, self.history.head()?, facts)
+        let receipt =
+            self.history
+                .append(&input.command_id, &fingerprint, self.history.head()?, facts)?;
+        Ok((receipt, result.status))
     }
 
     /// Converts a controller-requested cancellation into a non-terminal Chat
@@ -5327,13 +5471,189 @@ mod tests {
             .unwrap();
         let replay = reopened.command(command).unwrap();
         assert_eq!(first.current_version, replay.current_version);
-        assert_eq!(first.command_id, "chat.resume-pending-freeze");
+        // Recovery replays the exact staged command, so its committed receipt
+        // carries that command's identity rather than the resume wrapper's.
+        assert_eq!(first.command_id, "chat.pending-freeze");
+        assert_eq!(replay.command_id, "chat.pending-freeze");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert!(!reopened.snapshot(0).unwrap().chat.recovery_pending);
         let requests = provider.execution_requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].provider.model, "fixture-model");
         assert_eq!(requests[0].frozen_context_hash, frozen.context_hash);
+    }
+
+    #[test]
+    fn recovery_closes_dangling_spans_before_it_replays_the_staged_command() {
+        // A process that ended mid-effect leaves the run and node spans open, and
+        // no terminal fact can commit while a child span is open. Recovery must
+        // close them (child first) and then replay the exact staged command
+        // instead of refusing the resume forever.
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+
+        let pending_command = send("chat.dangling-spans", 0, "resume after a crash");
+        let command_hash = command_fingerprint(&pending_command).unwrap();
+        let frozen = runtime
+            .freeze_workflow_context(&pending_command, &pending_command.command_id, &command_hash, 0, None)
+            .unwrap();
+        runtime
+            .history
+            .stage_effect_command(PendingChatCommandV1 {
+                schema_version: 1,
+                frozen_context_hash: frozen.context_hash.clone(),
+                command_hash: command_hash.clone(),
+                command: pending_command.clone(),
+            })
+            .unwrap();
+        let run_id = frozen.context.identity.run_id.to_string();
+        let run_span = format!("span.run.{run_id}.{}", pending_command.command_id);
+        runtime
+            .history
+            .begin_effect_command(
+                &pending_command.command_id,
+                &command_hash,
+                0,
+                vec![
+                    (
+                        "command.started",
+                        json!({
+                            "schemaVersion": 1,
+                            "requestId": pending_command.command_id,
+                            "runId": run_id,
+                            "status": "running",
+                            "createdAt": now_label(),
+                        }),
+                    ),
+                    (
+                        "message.user",
+                        {
+                            let mut fact = message_fact("resume after a crash", &now_label(), None, None, None);
+                            if let Some(object) = fact.as_object_mut() {
+                                object.insert(
+                                    "requestId".into(),
+                                    Value::String(pending_command.command_id.clone()),
+                                );
+                                object.insert("runId".into(), Value::String(run_id.clone()));
+                            }
+                            fact
+                        },
+                    ),
+                    (
+                        "span.started",
+                        json!({
+                            "schemaVersion": 1,
+                            "requestId": pending_command.command_id,
+                            "runId": run_id,
+                            "spanId": run_span,
+                            "parentSpanId": Value::Null,
+                            "spanKind": "run",
+                            "semanticRole": "run",
+                            "title": "Run",
+                            "status": "running",
+                            "createdAt": now_label(),
+                        }),
+                    ),
+                    (
+                        "span.started",
+                        json!({
+                            "schemaVersion": 1,
+                            "requestId": pending_command.command_id,
+                            "runId": run_id,
+                            "spanId": format!("span.node.{run_id}.agent.1"),
+                            "parentSpanId": run_span,
+                            "spanKind": "node",
+                            "semanticRole": "node",
+                            "title": "Agent",
+                            "status": "running",
+                            "createdAt": now_label(),
+                        }),
+                    ),
+                ],
+            )
+            .unwrap();
+        assert!(runtime.snapshot(0).unwrap().chat.recovery_pending);
+        drop(runtime);
+
+        let mut reopened = self::runtime(&root, provider.clone());
+        assert!(reopened.snapshot(0).unwrap().chat.recovery_pending);
+        let receipt = reopened
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.resume-dangling-spans".into(),
+                expected_version: 0,
+                action: "resume".into(),
+                target_id: None,
+                payload: json!({}),
+            })
+            .unwrap();
+        assert!(receipt.accepted);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        let resumed = reopened.snapshot(0).unwrap();
+        assert!(!resumed.chat.recovery_pending);
+        // The dangling spans are closed and the recovered turn is visible.
+        let open = resumed.events.iter().filter(|event| event.kind == "span.started").any(|started| {
+            !resumed.events.iter().any(|end| {
+                matches!(
+                    end.kind.as_str(),
+                    "span.completed" | "span.failed" | "span.cancelled"
+                ) && end.payload.get("spanId") == started.payload.get("spanId")
+            })
+        });
+        assert!(!open, "no span may stay open after recovery");
+        assert!(
+            resumed
+                .events
+                .iter()
+                .any(|event| event.kind == "message.assistant"),
+            "the recovered turn reaches the Chat"
+        );
+    }
+
+    #[test]
+    fn recovery_resumes_after_a_stale_renderer_fence() {
+        // The renderer's optimistic version can lag the durable head (it
+        // resynchronizes after the interruption). Recovery must still replay the
+        // exact staged command instead of refusing on that divergence, because
+        // the staged record itself is the authority.
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+        let command = send("chat.stale-fence", 0, "resume me");
+        let fingerprint = command_fingerprint(&command).unwrap();
+        runtime
+            .freeze_workflow_context(&command, &command.command_id, &fingerprint, 0, None)
+            .unwrap();
+        assert!(runtime.snapshot(0).unwrap().chat.recovery_pending);
+        drop(runtime);
+
+        let mut reopened = self::runtime(&root, provider.clone());
+        assert!(reopened.snapshot(0).unwrap().chat.recovery_pending);
+        let receipt = reopened
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.resume-stale-fence".into(),
+                // Deliberately not the durable head.
+                expected_version: 9_999,
+                action: "resume".into(),
+                target_id: None,
+                payload: json!({}),
+            })
+            .unwrap();
+        assert!(receipt.accepted, "a stale fence cannot block recovery");
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        let resumed = reopened.snapshot(0).unwrap();
+        assert!(!resumed.chat.recovery_pending);
+        assert!(
+            resumed
+                .events
+                .iter()
+                .any(|event| event.kind == "message.assistant"),
+            "the recovered turn reaches the Chat"
+        );
     }
 
     #[test]
@@ -5475,7 +5795,9 @@ mod tests {
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         let failed = reopened.snapshot(0).unwrap();
-        assert_eq!(failed.chat.phase, "failed");
+        // The abandoned attempt is durable evidence, but it is not a terminal
+        // state: the Chat stays open for its next turn.
+        assert_eq!(failed.chat.phase, "waiting_input");
         assert!(!failed.chat.recovery_pending);
         let failure = failed
             .events

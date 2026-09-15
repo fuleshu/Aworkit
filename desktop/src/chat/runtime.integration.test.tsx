@@ -920,6 +920,39 @@ describe("Chat native-port recovery contracts", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("reports a stopped Run in the workspace instead of only a transient notice", async () => {
+    const user = userEvent.setup();
+    const projected = snapshot(2, "Stopped Run", [
+      canonicalEvent(1, "message.user", { body: "continue", status: "completed" }),
+      canonicalEvent(2, "execution.failed", {
+        title: "Execution failed",
+        body: "The provider may have accepted the request, but no conclusive terminal evidence was durably committed.",
+        status: "failed",
+      }),
+    ]);
+    const port: ChatCorePort = {
+      async snapshot() {
+        return projected;
+      },
+      async command(intent) {
+        return {
+          commandId: intent.commandId,
+          accepted: false,
+          currentVersion: 2,
+          reason: "unused",
+        };
+      },
+    };
+    render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
+
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Execution failed");
+    expect(banner).toHaveTextContent(/no conclusive terminal evidence/);
+    // The failure is reported until the user explicitly dismisses it.
+    await user.click(within(banner).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("maps selected tool and error cards to distinct contextual Run details", async () => {
     const user = userEvent.setup();
     const projected = {

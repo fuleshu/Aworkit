@@ -412,8 +412,7 @@ impl ChatHistory {
     }
 
     pub(crate) fn command_started(&self, command_id: &str) -> Result<bool, String> {
-        Ok(self.events()?.iter().any(|event| {
-            event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
+        Ok(self.events()?.iter().any(|event| {            event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
                 && event.kind == "command.started"
         }))
     }
@@ -512,9 +511,10 @@ impl ChatHistory {
         if current.iter().any(|event| event.kind == "chat.cancelled") {
             return Err("the current Chat is cancelled and cannot accept more input".into());
         }
-        if current.iter().any(|event| event.kind == "execution.failed") {
-            return Err("the current Chat failed and cannot accept more input".into());
-        }
+        // A failed or uncertain turn is terminal for that invocation, not for the
+        // Chat. Refusing every later input would dead-end a Chat whose context is
+        // still intact and still owes the user a next step, so a new message
+        // simply starts the next turn under its own command identity.
         if !current.iter().any(|event| event.kind == "chat.started") {
             return Err("cannot enqueue before the current Chat is started".into());
         }
@@ -1306,6 +1306,16 @@ impl ChatHistory {
         })
     }
 
+    /// Whether this exact command already initialized the Chat. A recovery that
+    /// replays a `start` after this point would duplicate an in-progress Chat's
+    /// conversation, so it continues the task instead.
+    pub(crate) fn chat_started_by(&self, command_id: &str) -> Result<bool, String> {
+        Ok(self.events()?.iter().any(|event| {
+            event.kind == "chat.started"
+                && event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
+        }))
+    }
+
     fn events(&self) -> Result<Arc<Vec<Event>>, String> {
         let chat_id = self.selected_identity()?.chat_id;
         let head = self.head_for_chat(&chat_id)?;
@@ -1735,9 +1745,10 @@ fn projected_phase(events: &[Event]) -> &'static str {
     if events.iter().any(|event| event.kind == "chat.cancelled") {
         return "cancelled";
     }
-    if events.iter().any(|event| event.kind == "execution.failed") {
-        return "failed";
-    }
+    // A failed or uncertain attempt is evidence about one turn, never a terminal
+    // state of the Chat. Like the reference harness, the attempt stays in the log
+    // for inspection while the Chat remains open for the next turn; only an
+    // explicit cancellation stops it.
     let has_open_approval = events
         .iter()
         .filter(|event| event.kind == "approval.requested")
