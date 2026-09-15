@@ -61,7 +61,7 @@ pub(crate) fn review_action(
                         binding_id: binding_id.into(),
                         version_hash: version_hash.into(),
                     }],
-                    maximum_input_bytes: 192 * 1024,
+                    maximum_input_bytes: super::super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES,
                     maximum_output_bytes: usize::MAX,
                 },
                 &ModelRequestV1 {

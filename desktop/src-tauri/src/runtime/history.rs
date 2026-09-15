@@ -35,9 +35,12 @@ const SESSION_AGGREGATE_ID: &str = "chat.frozen-sessions";
 const COMMITTED_EVENT_DESTINATION: &str = "chat.semantic.committed.v1";
 // The local history adapter caps the entire serialized commit at 1 MiB. Leave
 // ample headroom for the event, deduplication, and backend envelope.
-const MAXIMUM_FROZEN_CONTEXT_BYTES: usize = 512 * 1024;
-const MAXIMUM_PENDING_COMMAND_BYTES: usize = 320 * 1024;
-const MAXIMUM_USER_INPUT_BYTES: usize = 128 * 1024;
+/// Stored Chat records keep the shared runaway guard; they are not a limit on
+/// what a user may type or paste. A user input is bounded only by the guard and
+/// by what the model can accept.
+const MAXIMUM_FROZEN_CONTEXT_BYTES: usize = 32 * 1024 * 1024;
+const MAXIMUM_PENDING_COMMAND_BYTES: usize = 32 * 1024 * 1024;
+const MAXIMUM_USER_INPUT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

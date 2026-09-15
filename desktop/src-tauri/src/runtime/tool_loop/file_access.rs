@@ -143,12 +143,26 @@ impl FileAccess {
                     .map_err(|e| e.to_string())?
                     .join(target.file_name().ok_or("File path must name a file")?)
             }
-            Err(error) => return Err(error.to_string()),
+            // The platform message alone never names the path, which leaves a
+            // mistyped target indistinguishable from a missing workspace.
+            Err(error) => return Err(format!("{raw}: {error}")),
         };
+        let target_is_directory = std::fs::metadata(&target).is_ok_and(|meta| meta.is_dir());
         let outside_workspace = !target.starts_with(&workspace.root);
-        let (root, path) = if directory_tool {
+        let (root, path) = if directory_tool && target_is_directory {
             (target, PathBuf::from("."))
+        } else if directory_tool && call.capability_id != FILE_GREP_CAPABILITY_ID {
+            // A listing is rooted at a directory by definition: say that instead
+            // of resolving a file as a workspace and reporting the workspace as
+            // unavailable.
+            return Err(format!(
+                "{} needs a directory path; {} is a file. Pass the containing directory.",
+                call.name,
+                target.display()
+            ));
         } else {
+            // A file target - including a regex search of one file - scopes the
+            // capability to the reviewed parent directory and the file's name.
             (
                 target.parent().ok_or("File path has no parent")?.to_owned(),
                 PathBuf::from(target.file_name().ok_or("File path must name a file")?),

@@ -63,7 +63,10 @@ the designed target for later milestones; this is reported, not silently drifted
 
 Approval-free (authority-settled, read-only or run-local state):
 `tool.files.read` (≤64 KiB), `tool.files.search` (≤512 results), `tool.files.list`
-(glob, ≤1000 entries), `tool.files.grep` (regex, ≤512 matches, bounded files),
+(glob, ≤1000 entries), `tool.files.grep` (regex, ≤512 matches, ≤20k files, ≤30 s,
+parallel content reads, project ignore declarations plus generated/hidden/binary
+skipping, and every stop reported so an incomplete scan never reads as an absent
+pattern),
 `tool.todo` (run-local plan/task list), `tool.web_search` (HTTPS, ≤8 results),
 `tool.web_fetch` (legacy single-page HTTPS fetch), `tool.web_extract` (up to ten
 independently settled HTTPS pages, 1 MiB download / 32 KiB extracted per page), MCP tools

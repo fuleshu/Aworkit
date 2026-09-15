@@ -134,3 +134,31 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
 export function providerPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((preset) => preset.id === id);
 }
+
+/**
+ * Manufacturer-stated context windows for well-known hosted models.
+ *
+ * The provider catalog stays authoritative: a provider that reports a context
+ * length is used exactly as reported. This table only fills the gap for hosted
+ * models whose catalog endpoint publishes no length at all, so the model editor
+ * can offer an explicit, editable recommendation instead of an empty field that
+ * silently leaves token-pressure compaction unavailable.
+ */
+const RECOMMENDED_CONTEXT_WINDOWS: readonly {
+  readonly pattern: RegExp;
+  readonly tokens: number;
+}[] = [
+  // DeepSeek V4 generation: "Entering the Era of Affordable Million-Token
+  // Context" (https://www.deepseek.com/en/news/v4-preview/).
+  { pattern: /^deepseek-(?:v4|flash)/iu, tokens: 1_000_000 },
+];
+
+/** Recommended context window for an exact remote model ID, or null when unknown. */
+export function recommendedContextWindow(remoteId: string): number | null {
+  const normalized = remoteId.trim();
+  if (normalized === "") return null;
+  return (
+    RECOMMENDED_CONTEXT_WINDOWS.find((entry) => entry.pattern.test(normalized))
+      ?.tokens ?? null
+  );
+}

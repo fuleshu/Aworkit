@@ -94,10 +94,21 @@ impl FileToolDispatcherV1 {
                 let pattern = self.record.call.arguments["pattern"]
                     .as_str()
                     .ok_or_else(|| "regex pattern is invalid".to_owned())?;
+                // The frozen file access already classified the target: its
+                // relative path is the exact file or directory to search, and
+                // "." means the whole resolved workspace.
+                let scope = self
+                    .record
+                    .file_access
+                    .as_ref()
+                    .and_then(|access| access.as_ref().ok())
+                    .map(|access| access.path.clone())
+                    .filter(|path| path != Path::new("."));
                 let grep = files
                     .grep_v1(
                         &FileGrepRequestV1 {
                             pattern: pattern.to_owned(),
+                            path: scope,
                             maximum_matches: *maximum_matches,
                             maximum_files: *maximum_files,
                             maximum_file_bytes: 1024 * 1024,
@@ -111,12 +122,19 @@ impl FileToolDispatcherV1 {
                     "filesScanned": grep.files_scanned,
                     "matchLimitReached": grep.match_limit_reached,
                     "fileLimitReached": grep.file_limit_reached,
+                    "timeLimitReached": grep.time_limit_reached,
                     "skippedDirectories": grep.skipped_directories,
+                    "skippedFiles": grep.skipped_files,
                 });
                 // An incomplete scan must never read as "the pattern is absent".
                 let completeness = if grep.file_limit_reached {
                     format!(
                         " The scan stopped at the {maximum_files} file limit, so deeper files were never examined; narrow the path or pattern and search again."
+                    )
+                } else if grep.time_limit_reached {
+                    format!(
+                        " The scan stopped at the {seconds}s time limit, so the tree was not exhausted; narrow the path or pattern and search again.",
+                        seconds = aworkit_capability_host::MAX_GREP_WALL_CLOCK.as_secs()
                     )
                 } else if grep.match_limit_reached {
                     format!(
@@ -125,12 +143,12 @@ impl FileToolDispatcherV1 {
                 } else {
                     String::new()
                 };
-                let skipped = if grep.skipped_directories == 0 {
+                let skipped = if grep.skipped_directories == 0 && grep.skipped_files == 0 {
                     String::new()
                 } else {
                     format!(
-                        " Dependency and version-control directories were skipped ({}).",
-                        grep.skipped_directories
+                        " Skipped {} generated, ignored or hidden directories and {} excluded, hidden or binary files.",
+                        grep.skipped_directories, grep.skipped_files
                     )
                 };
                 Ok((

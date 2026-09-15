@@ -288,22 +288,11 @@ impl FrozenModelGateway {
         cancellation: &CancellationToken,
         observer: Option<&dyn ModelEventObserverV1>,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
-        let identities: BTreeSet<_> = plan
-            .candidates
-            .iter()
-            .map(|candidate| candidate.binding_id.as_str())
-            .collect();
-        if plan.candidates.is_empty()
-            || identities.len() != plan.candidates.len()
-            || plan.maximum_input_bytes == 0
-            || plan.maximum_output_bytes == 0
-            || serde_json::to_vec(&request.input)
-                .map_err(|_| ProviderError::InvalidPlan)?
-                .len()
-                > plan.maximum_input_bytes
-        {
-            return Err(ProviderError::InvalidPlan);
-        }
+        validate_plan(plan)?;
+        validate_request_bound(
+            plan,
+            &serde_json::to_vec(&request.input).map_err(|_| ProviderError::InvalidPlan)?,
+        )?;
         if let Some(observer) = observer {
             observer.model_turn_started(&request.input);
         }
@@ -408,10 +397,7 @@ impl FrozenModelGateway {
         observer: Option<&dyn ModelEventObserverV1>,
     ) -> Result<ModelToolDispatchEvidenceV1, ProviderError> {
         validate_tool_request(request)?;
-        validate_plan_and_input(
-            plan,
-            &serde_json::to_value(request).map_err(|_| ProviderError::InvalidPlan)?,
-        )?;
+        validate_tool_request_bound(plan, request)?;
         if let Some(observer) = observer {
             observer.model_turn_started(&serde_json::to_value(request).unwrap_or(Value::Null));
         }
@@ -498,10 +484,19 @@ impl FrozenModelGateway {
     }
 }
 
-fn validate_plan_and_input(
+fn validate_tool_request_bound(
     plan: &ModelResolutionPlanV1,
-    input: &Value,
+    request: &ModelToolRequestV1,
 ) -> Result<(), ProviderError> {
+    validate_plan(plan)?;
+    validate_request_bound(
+        plan,
+        &serde_json::to_vec(request).map_err(|_| ProviderError::InvalidPlan)?,
+    )
+}
+
+/// A malformed plan is a caller defect and never depends on the request.
+fn validate_plan(plan: &ModelResolutionPlanV1) -> Result<(), ProviderError> {
     let identities: BTreeSet<_> = plan
         .candidates
         .iter()
@@ -511,12 +506,24 @@ fn validate_plan_and_input(
         || identities.len() != plan.candidates.len()
         || plan.maximum_input_bytes == 0
         || plan.maximum_output_bytes == 0
-        || serde_json::to_vec(input)
-            .map_err(|_| ProviderError::InvalidPlan)?
-            .len()
-            > plan.maximum_input_bytes
     {
         return Err(ProviderError::InvalidPlan);
+    }
+    Ok(())
+}
+
+/// An oversized request is a real, recoverable context condition and must stay
+/// distinguishable from a malformed plan: the runtime reduces the context and
+/// retries, and the user sees an actionable message.
+fn validate_request_bound(
+    plan: &ModelResolutionPlanV1,
+    encoded: &[u8],
+) -> Result<(), ProviderError> {
+    if encoded.len() > plan.maximum_input_bytes {
+        return Err(ProviderError::InputBoundExceeded {
+            input_bytes: encoded.len(),
+            maximum_input_bytes: plan.maximum_input_bytes,
+        });
     }
     Ok(())
 }
@@ -563,6 +570,16 @@ pub enum ProviderError {
     NoCandidateAccepted,
     #[error("frozen provider plan is invalid")]
     InvalidPlan,
+    /// The exact provider request exceeds the frozen plan's input bound. This is
+    /// a context condition, not a malformed plan, so a caller may reduce the
+    /// context and retry the same frozen route.
+    #[error(
+        "provider request is {input_bytes} bytes and exceeds the {maximum_input_bytes} byte input bound"
+    )]
+    InputBoundExceeded {
+        input_bytes: usize,
+        maximum_input_bytes: usize,
+    },
     #[error("provider failed: {0}")]
     Failed(String),
     #[error("provider request timed out")]

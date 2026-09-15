@@ -305,7 +305,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "description": "Directory to search, absolute or relative to the Chat workspace; defaults to the workspace."
+            "description": "File or directory to search, absolute or relative to the Chat workspace; defaults to the workspace."
           }
         },
         "required": [

@@ -305,6 +305,7 @@ fn rooted_file_tools_enforce_bounds_identity_symlinks_cancellation_and_effects()
         .grep_v1(
             &FileGrepRequestV1 {
                 pattern: "beta".into(),
+                path: None,
                 maximum_matches: 8,
                 maximum_files: 8,
                 maximum_file_bytes: 1024,
@@ -478,6 +479,7 @@ fn grep_reports_skipped_dependency_trees_and_stopped_scans() {
         .grep_v1(
             &FileGrepRequestV1 {
                 pattern: "balance".into(),
+                path: None,
                 maximum_matches: 8,
                 maximum_files: 64,
                 maximum_file_bytes: 1024,
@@ -504,6 +506,7 @@ fn grep_reports_skipped_dependency_trees_and_stopped_scans() {
         .grep_v1(
             &FileGrepRequestV1 {
                 pattern: "absent-everywhere".into(),
+                path: None,
                 maximum_matches: 8,
                 maximum_files: 1,
                 maximum_file_bytes: 1024,
@@ -520,6 +523,7 @@ fn grep_reports_skipped_dependency_trees_and_stopped_scans() {
         .grep_v1(
             &FileGrepRequestV1 {
                 pattern: "balance".into(),
+                path: None,
                 maximum_matches: 1,
                 maximum_files: 64,
                 maximum_file_bytes: 1024,
@@ -530,6 +534,260 @@ fn grep_reports_skipped_dependency_trees_and_stopped_scans() {
     assert_eq!(matched_out.matches.len(), 1);
     assert!(matched_out.match_limit_reached);
     assert!(!matched_out.file_limit_reached);
+    assert!(!matched_out.time_limit_reached);
+}
+
+/// A generated build tree must not consume the walk: a Rust `target/` can hold
+/// more files than the entire source of a project, so descending into it spent
+/// the whole file budget on compiler artefacts and made a workspace-wide regex
+/// search look frozen. A walk that cannot finish inside its budget must stop and
+/// say so instead of running unbounded.
+#[test]
+fn grep_skips_generated_build_trees_and_reports_the_time_bound() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("src");
+    std::fs::create_dir_all(project.join("target/debug/deps")).expect("build tree");
+    std::fs::write(project.join("src/app.rs"), b"let balance = 1;").expect("source");
+    std::fs::write(project.join("target/debug/deps/app.rs"), b"let balance = 2;")
+        .expect("build artefact");
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.clone(),
+        allow_write: false,
+    })
+    .expect("files");
+
+    let request = FileGrepRequestV1 {
+        pattern: "balance".into(),
+        path: None,
+        maximum_matches: 8,
+        maximum_files: 64,
+        maximum_file_bytes: 1024,
+    };
+    let walked = files
+        .grep_v1(&request, &CancellationToken::default())
+        .expect("grep");
+    assert_eq!(
+        walked.matches.len(),
+        1,
+        "build artefacts are not searchable source"
+    );
+    assert_eq!(walked.matches[0].path, "src/app.rs");
+    assert_eq!(walked.skipped_directories, 1);
+    assert!(!walked.file_limit_reached);
+    assert!(!walked.match_limit_reached);
+    assert!(!walked.time_limit_reached);
+
+    // A budget that expires before the first file stops the walk with an empty,
+    // explicitly incomplete result rather than an implied absent pattern.
+    let expired = files
+        .grep_v1_with_budget(&request, &CancellationToken::default(), Duration::ZERO)
+        .expect("grep");
+    assert!(expired.matches.is_empty());
+    assert!(expired.time_limit_reached);
+    assert!(!expired.file_limit_reached);
+    assert!(!expired.match_limit_reached);
+    assert_eq!(expired.files_scanned, 0);
+}
+
+/// A scope is the caller's answer to "where": a named file is scanned on its
+/// own, a named directory replaces the root, and a scope that does not exist is
+/// an error rather than a silently widened search.
+#[test]
+fn grep_scope_searches_one_named_file_or_directory() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src/nested")).expect("src");
+    std::fs::write(project.join("src/app.rs"), b"let balance = 1;").expect("source");
+    std::fs::write(project.join("src/sibling.rs"), b"let balance = 2;").expect("source");
+    std::fs::write(project.join("src/nested/page.rs"), b"let balance = 3;").expect("source");
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.clone(),
+        allow_write: false,
+    })
+    .expect("files");
+    let request = |path: Option<PathBuf>| FileGrepRequestV1 {
+        pattern: "balance".into(),
+        path,
+        maximum_matches: 8,
+        maximum_files: 64,
+        maximum_file_bytes: 1024,
+    };
+
+    let one_file = files
+        .grep_v1(
+            &request(Some(PathBuf::from("src/app.rs"))),
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(one_file.matches.len(), 1);
+    assert_eq!(one_file.matches[0].path, "src/app.rs");
+    assert_eq!(one_file.files_scanned, 1);
+
+    let one_directory = files
+        .grep_v1(
+            &request(Some(PathBuf::from("src/nested"))),
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(one_directory.matches.len(), 1);
+    assert_eq!(one_directory.matches[0].path, "src/nested/page.rs");
+
+    assert!(matches!(
+        files.grep_v1(
+            &request(Some(PathBuf::from("src/absent.rs"))),
+            &CancellationToken::default()
+        ),
+        Err(FileToolError::MissingPath(_))
+    ));
+}
+
+/// The project's own ignore declarations are authoritative: a root `.gitignore`
+/// is honored, a nested one can re-include what the root excluded, hidden
+/// entries and binary files are skipped, and every skip is reported so the
+/// result never claims to be a complete scan of the tree.
+#[test]
+fn grep_honors_project_ignore_declarations_including_nested_ones() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("src");
+    std::fs::create_dir_all(project.join("generated")).expect("generated");
+    std::fs::write(project.join(".gitignore"), b"generated/\n*.log\n").expect("ignore");
+    std::fs::write(project.join("src/.gitignore"), b"!keep.log\n").expect("nested ignore");
+    std::fs::write(project.join("src/app.rs"), b"let balance = 1;").expect("source");
+    std::fs::write(project.join("src/keep.log"), b"let balance = 2;").expect("re-included");
+    std::fs::write(project.join("src/other.log"), b"let balance = 3;").expect("ignored");
+    std::fs::write(project.join("notes.log"), b"let balance = 4;").expect("ignored");
+    std::fs::write(project.join("generated/artifact.rs"), b"let balance = 5;").expect("ignored dir");
+    std::fs::write(project.join(".hidden.rs"), b"let balance = 6;").expect("hidden");
+    std::fs::write(project.join("binary.dat"), b"let balance = 7;\0binary").expect("binary");
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.clone(),
+        allow_write: false,
+    })
+    .expect("files");
+
+    let result = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "balance".into(),
+                path: None,
+                maximum_matches: 32,
+                maximum_files: 256,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    let paths: Vec<&str> = result.matches.iter().map(|m| m.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec!["src/app.rs", "src/keep.log"],
+        "a nested !keep.log re-includes one file and nothing else"
+    );
+    assert_eq!(
+        result.skipped_directories, 1,
+        "the ignored generated/ directory is counted"
+    );
+    assert_eq!(
+        result.skipped_files, 6,
+        "two .gitignore declarations, notes.log, src/other.log, .hidden.rs and binary.dat"
+    );
+}
+
+/// A search rooted below the project root still honors the declarations above it,
+/// which is what makes a scoped search agree with the project it belongs to.
+#[test]
+fn grep_honors_declarations_above_the_capability_root() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join(".git")).expect("repository marker");
+    std::fs::create_dir_all(project.join("src/skipped")).expect("src");
+    std::fs::write(project.join(".gitignore"), b"skipped/\n").expect("ignore");
+    std::fs::write(project.join("src/app.rs"), b"let balance = 1;").expect("source");
+    std::fs::write(project.join("src/skipped/old.rs"), b"let balance = 2;").expect("ignored");
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.join("src"),
+        allow_write: false,
+    })
+    .expect("files");
+
+    let result = files
+        .grep_v1(
+            &FileGrepRequestV1 {
+                pattern: "balance".into(),
+                path: None,
+                maximum_matches: 32,
+                maximum_files: 256,
+                maximum_file_bytes: 1024,
+            },
+            &CancellationToken::default(),
+        )
+        .expect("grep");
+    assert_eq!(result.matches.len(), 1);
+    assert_eq!(result.matches[0].path, "app.rs");
+    assert_eq!(result.skipped_directories, 1);
+}
+
+/// Reading candidates on several cores must reproduce the single-threaded result
+/// exactly, including which matches survive a match ceiling.
+#[test]
+fn parallel_scan_reproduces_the_serial_match_order() {
+    let temp = TempDir::new().expect("temp");
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("src");
+    for index in 0..400 {
+        let body = if index % 7 == 0 {
+            format!("let balance = {index};\n")
+        } else {
+            format!("let other = {index};\n")
+        };
+        std::fs::write(project.join(format!("src/file_{index:03}.rs")), body).expect("source");
+    }
+    let files = ProjectFiles::new(FileAuthority {
+        root: project.clone(),
+        allow_write: false,
+    })
+    .expect("files");
+    let request = |maximum_matches| FileGrepRequestV1 {
+        pattern: "balance".into(),
+        path: None,
+        maximum_matches,
+        maximum_files: 1024,
+        maximum_file_bytes: 1024,
+    };
+    let cancelled = CancellationToken::default();
+
+    for maximum_matches in [128, 3] {
+        let serial = files
+            .grep_v1_with_budget_and_workers(
+                &request(maximum_matches),
+                &cancelled,
+                Duration::from_secs(30),
+                1,
+            )
+            .expect("serial grep");
+        let parallel = files
+            .grep_v1_with_budget_and_workers(
+                &request(maximum_matches),
+                &cancelled,
+                Duration::from_secs(30),
+                4,
+            )
+            .expect("parallel grep");
+        assert_eq!(
+            serial.matches, parallel.matches,
+            "match ceiling {maximum_matches} must not depend on the worker count"
+        );
+        // The parallel scan reads whole blocks, so it may examine more files
+        // before it stops, but never fewer than the serial walk it must match.
+        assert!(
+            parallel.files_scanned >= serial.files_scanned,
+            "serial={} parallel={}",
+            serial.files_scanned,
+            parallel.files_scanned
+        );
+    }
 }
 
 fn controlled(stdout: &[u8]) -> ControlledProcessResult {
@@ -886,6 +1144,43 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
             }
         ),
         Err(ProviderError::InvalidPlan)
+    );
+}
+
+#[test]
+fn an_oversized_request_is_a_context_condition_not_a_plan_defect() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gateway = FrozenModelGateway::new(vec![Box::new(ScriptedProvider {
+        binding: "primary",
+        version: "hash-a",
+        events: vec![ModelEventV1::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+        }],
+        acceptance: ProviderAcceptanceV1::Accepted,
+        calls: calls.clone(),
+    })]);
+    // The plan itself is valid; only the exact request exceeds its input bound.
+    let plan = ModelResolutionPlanV1 {
+        candidates: vec![candidate("primary", "hash-a")],
+        maximum_input_bytes: 8,
+        maximum_output_bytes: 64,
+    };
+    let oversized = ModelRequestV1 {
+        input: json!({"messages":[{"role":"user","content":"x".repeat(64)}]}),
+        parameters: Default::default(),
+    };
+    assert!(
+        matches!(
+            gateway.execute(&plan, &oversized),
+            Err(ProviderError::InputBoundExceeded { .. })
+        ),
+        "an over-bound request must stay distinguishable from a malformed plan"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "an over-bound request never reaches the provider"
     );
 }
 

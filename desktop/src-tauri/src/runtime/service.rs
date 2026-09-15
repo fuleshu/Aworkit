@@ -64,9 +64,8 @@ use super::{
     },
     model_tool_loop::PROVIDER_TIMEOUT_RECOVERIES_V1,
     pipeline::{
-        WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowExecutionPipeline, WorkflowExecutionRequestV1,
-        WorkflowExecutionResultV1, WorkflowExecutionStatusV1, WorkflowMessageV1,
-        WorkflowProviderBindingV1,
+        WorkflowExecutionPipeline, WorkflowExecutionRequestV1, WorkflowExecutionResultV1,
+        WorkflowExecutionStatusV1, WorkflowMessageV1, WorkflowProviderBindingV1,
     },
     project_scope::{resolve_project_scope, selectable_projects},
     provider::{ProviderPort, production_provider, provider_supports_tool_calls},
@@ -1200,12 +1199,10 @@ impl DesktopRuntime {
         execution_request.budget.attempts = 1;
         execution_request.budget.tool_calls = 0;
         execution_request.budget.actions = 1;
-        if manual
-            || serde_json::to_vec(&execution_request.messages)
-                .map_err(|error| format!("cannot encode Chat message context: {error}"))?
-                .len()
-                > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
-        {
+        // A compact-only command carries no new user turn; every ordinary send
+        // replays the complete conversation. Conversation size is never a reason
+        // to drop history the model is owed.
+        if manual {
             execution_request.messages = execution_request
                 .messages
                 .into_iter()
@@ -5520,6 +5517,8 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        // A large Chat replays its complete history. Conversation size is not a
+        // reason to drop turns the model is owed.
         assert_eq!(
             provider
                 .execution_requests
@@ -5529,7 +5528,7 @@ mod tests {
                 .unwrap()
                 .messages
                 .len(),
-            1
+            3
         );
         assert_eq!(runtime.history.conversation().unwrap().len(), 4);
         assert!(!runtime.snapshot(0).unwrap().chat.recovery_pending);

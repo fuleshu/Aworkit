@@ -232,6 +232,92 @@ fn legacy_frozen_binding_stays_relative_and_keeps_its_name() {
     assert!(denied.result.is_error);
 }
 
+/// A regex search must accept one file the way `read` does. The model targets
+/// the file it just read, and the search then covers exactly that file instead
+/// of failing on its path or silently widening to its whole directory.
+#[test]
+fn grep_accepts_a_single_file_target_and_scans_only_that_file() {
+    for external in [false, true] {
+        let f = Fixture::with_tools(&[FILE_GREP_CAPABILITY_ID]);
+        let directory = if external {
+            f.root.path().join("external")
+        } else {
+            f.authority.context.workspace.root.join("files")
+        };
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("provider.ts");
+        std::fs::write(&target, "const maxBytes = 1;\n").unwrap();
+        std::fs::write(directory.join("sibling.ts"), "const maxBytes = 2;\n").unwrap();
+        let call = call(
+            &f,
+            FILE_GREP_CAPABILITY_ID,
+            json!({"path":target,"pattern":"maxBytes"}),
+        );
+        let outer = stable("outer.grep-file").unwrap();
+        let result = if external {
+            let challenge = pending(&f, &outer, &call);
+            assert!(challenge.summary.contains("outside the Chat workspace"));
+            approve(&f, &outer, &call, challenge, true)
+        } else {
+            f.authority
+                .invoke_v1(&outer, 1, &call, &CancellationToken::default())
+                .unwrap()
+        };
+        assert!(!result.result.is_error, "{:?}", result.result);
+        let matches = result.result.content["matches"].as_array().unwrap();
+        assert_eq!(
+            matches.len(),
+            1,
+            "only the named file is searched: {:?}",
+            result.result.content
+        );
+        assert!(
+            matches[0]["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("provider.ts"),
+            "{:?}",
+            matches[0]
+        );
+        assert!(
+            Path::new(matches[0]["path"].as_str().unwrap()).is_absolute(),
+            "the model sees a usable absolute path: {:?}",
+            matches[0]
+        );
+    }
+}
+
+/// A listing cannot be rooted at a file, and saying so must be actionable
+/// rather than a workspace error about a workspace that was never involved.
+#[test]
+fn list_rejects_a_file_target_with_an_actionable_error() {
+    let f = Fixture::with_tools(&[FILE_LIST_CAPABILITY_ID]);
+    let directory = f.authority.context.workspace.root.join("files");
+    std::fs::create_dir(&directory).unwrap();
+    let target = directory.join("notes.txt");
+    std::fs::write(&target, "alpha").unwrap();
+    let call = call(
+        &f,
+        FILE_LIST_CAPABILITY_ID,
+        json!({"path":target,"pattern":"*.txt"}),
+    );
+    let result = f
+        .authority
+        .invoke_v1(
+            &stable("outer.list-file").unwrap(),
+            1,
+            &call,
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(result.result.is_error);
+    let message = result.result.content["error"].as_str().unwrap();
+    assert!(
+        message.contains("directory") && !message.contains("workspace is unavailable"),
+        "{message}"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn junction_inside_workspace_is_classified_as_external() {

@@ -22,6 +22,7 @@ import type {
   CredentialDeleteCommand,
   CredentialStoreCommand,
   CredentialStoreReceipt,
+  DiscoveredModel,
   ExtensionRegisterCommand,
   ExternalAgentProbeRequest,
   ExternalAgentProbeResult,
@@ -109,6 +110,49 @@ describe("Settings v2 workbench", () => {
     expect(screen.getByLabelText("Command")).toHaveValue(
       "C:\\Program Files\\MCP Server\\server.exe",
     );
+  });
+
+  it("offers the stated context window when the provider reports none", async () => {
+    // A hosted catalog that publishes no context length used to leave this field
+    // empty while promising a "provider default" that the runtime does not have,
+    // which silently disabled token-pressure compaction.
+    const initial = configuration();
+    initial.providers[0]!.models[0] = {
+      ...initial.providers[0]!.models[0]!,
+      name: "deepseek-flash",
+      remoteId: "deepseek-flash",
+      contextWindow: null,
+    };
+    const port = new RecordingSettingsV2Port(initial);
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    expect(await screen.findByLabelText("Context window (tokens)")).toHaveValue(
+      null,
+    );
+    expect(
+      screen.getByText(/No context window recorded for deepseek-flash/),
+    ).toBeVisible();
+    // The value states its unit; the label is locale-formatted, so match either
+    // separator convention.
+    await user.click(
+      screen.getByRole("button", {
+        name: /^Use 1[.,\s]?000[.,\s]?000 tokens$/u,
+      }),
+    );
+    expect(screen.getByLabelText("Context window (tokens)")).toHaveValue(
+      1_000_000,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]?.settings.providers[0]?.models[0]?.contextWindow).toBe(
+      1_000_000,
+    );
+    // The recommendation disappears once the model carries an explicit value.
+    expect(screen.queryByText(/No context window recorded/)).toBeNull();
   });
 
   it("edits and atomically saves the complete configuration across ten real sections", async () => {
@@ -273,6 +317,51 @@ describe("Settings v2 workbench", () => {
       "http://127.0.0.1:11434/v1",
     );
     expect(await screen.findByDisplayValue("remote-model-2")).toBeVisible();
+  });
+
+  it("keeps a recorded context window and states a known one when discovery omits it", async () => {
+    const initial = configuration();
+    initial.providers[0]!.models[0] = {
+      ...initial.providers[0]!.models[0]!,
+      contextWindow: 16_000,
+    };
+    const port = new RecordingSettingsV2Port(initial);
+    port.discoveryModels = [
+      // The catalog republishes the saved model without a length: keep the value.
+      {
+        remoteId: "chat-model",
+        name: "Chat model",
+        contextWindow: null,
+        maxOutputTokens: null,
+        capabilities: ["text", "tools"],
+      },
+      // A newly discovered DeepSeek model whose catalog states no length.
+      {
+        remoteId: "deepseek-flash",
+        name: "deepseek-flash",
+        contextWindow: null,
+        maxOutputTokens: null,
+        capabilities: ["text", "tools"],
+      },
+    ];
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    await screen.findByLabelText("Base URL");
+    await user.click(screen.getByRole("button", { name: "Discover models" }));
+    await waitFor(() => expect(port.discoveries).toHaveLength(1));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    const models = port.commits[0]!.settings.providers[0]!.models;
+    expect(
+      models.find(({ remoteId }) => remoteId === "chat-model")?.contextWindow,
+    ).toBe(16_000);
+    expect(
+      models.find(({ remoteId }) => remoteId === "deepseek-flash")
+        ?.contextWindow,
+    ).toBe(1_000_000);
   });
 
   it("does not let a delayed provider diagnostic snapshot downgrade an accepted Save", async () => {
@@ -1854,6 +1943,8 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public readonly commits: SettingsV2Commit[] = [];
   public readonly probes: ProviderProbeRequest[] = [];
   public readonly discoveries: ModelDiscoveryRequest[] = [];
+  /** Overrides the catalog returned by `discoverModels` when set. */
+  public discoveryModels: readonly DiscoveredModel[] | null = null;
   public readonly credentialStores: CredentialStoreCommand[] = [];
   public readonly credentialDeletes: CredentialDeleteCommand[] = [];
   public readonly mcpProbes: McpProbeRequest[] = [];
@@ -2147,15 +2238,17 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
       providerId: request.provider.id,
       draftFingerprint: request.draftFingerprint,
       message: "Discovered one additional model.",
-      models: [
-        {
-          remoteId: "remote-model-2",
-          name: "Remote model 2",
-          contextWindow: 32_000,
-          maxOutputTokens: 4_096,
-          capabilities: ["text"],
-        },
-      ],
+      models: this.discoveryModels === null
+        ? [
+            {
+              remoteId: "remote-model-2",
+              name: "Remote model 2",
+              contextWindow: 32_000,
+              maxOutputTokens: 4_096,
+              capabilities: ["text"],
+            },
+          ]
+        : [...this.discoveryModels],
     };
   }
 

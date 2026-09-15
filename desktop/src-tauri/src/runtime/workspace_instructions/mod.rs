@@ -65,20 +65,21 @@ impl BoundFileToolAuthorityV1 {
             .map(serde_json::from_value)
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?;
-        let mut parent = None;
-        for record in &invocations {
-            if self
-                .runtime
-                .ledger
-                .invocation_for_proposal(&record.proposal.proposal_id)
-                .map_err(|e| e.to_string())?
-                .as_ref()
-                == Some(invocation)
-            {
-                parent = Some(record);
-                break;
-            }
-        }
+        // Resolve every stored proposal from one ledger load instead of one load
+        // per record, which dominated the turn on a mature profile.
+        let proposals: Vec<StableId> = invocations
+            .iter()
+            .map(|record| record.proposal.proposal_id.clone())
+            .collect();
+        let resolved = self
+            .runtime
+            .ledger
+            .invocation_ids_for_proposals(&proposals)
+            .map_err(|e| e.to_string())?;
+        let parent = invocations.iter().find(|record| {
+            resolved.get(&record.proposal.proposal_id).map(StableId::as_str)
+                == Some(invocation.as_str())
+        });
         let steps: Vec<Step> = self
             .runtime
             .records
@@ -433,17 +434,25 @@ impl BoundFileToolAuthorityV1 {
             .map(serde_json::from_value)
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?;
-        let mut identities = Vec::new();
-        for invocation in &invocations {
-            if let Some(id) = self
-                .runtime
-                .ledger
-                .invocation_for_proposal(&invocation.proposal.proposal_id)
-                .map_err(|e| e.to_string())?
-            {
-                identities.push((id, invocation));
-            }
-        }
+        // One ledger load resolves every stored proposal. Resolving them one at a
+        // time reloaded the whole broker ledger per record and dominated the turn.
+        let proposals: Vec<StableId> = invocations
+            .iter()
+            .map(|invocation| invocation.proposal.proposal_id.clone())
+            .collect();
+        let resolved = self
+            .runtime
+            .ledger
+            .invocation_ids_for_proposals(&proposals)
+            .map_err(|e| e.to_string())?;
+        let identities: Vec<_> = invocations
+            .iter()
+            .filter_map(|invocation| {
+                resolved
+                    .get(&invocation.proposal.proposal_id)
+                    .map(|id| (id.clone(), invocation))
+            })
+            .collect();
         let mut accepted: BTreeSet<_> = identities
             .iter()
             .filter(|(_, i)| i.outer_invocation_id == *outer && calls.contains(&i.call.call_id))

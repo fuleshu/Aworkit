@@ -18,6 +18,7 @@ import {
 import {
   PROVIDER_PRESETS,
   providerPreset,
+  recommendedContextWindow,
 } from "../providerCatalog";
 import type {
   DiscoveredModel,
@@ -532,6 +533,9 @@ function ModelEditor({
   readonly onRemove: () => void;
   readonly onProbe: () => void;
 }): React.JSX.Element {
+  // A provider whose catalog omits the context length leaves compaction without a
+  // token budget; offer the manufacturer's stated value as an explicit choice.
+  const recommended = recommendedContextWindow(model.remoteId);
   return (
     <section className="settings-record model-record">
       <div className="settings-record-heading">
@@ -575,19 +579,39 @@ function ModelEditor({
         />
         <OptionalNumber
           id={`${provider.id}-${model.id}-context`}
-          label="Context window"
-          title="Optional advertised context-window token limit"
+          label="Context window (tokens)"
+          placeholder="Not set"
+          title="Token limit used for context pressure and compaction. Enter the model's advertised limit; while it is empty, token-pressure compaction is unavailable and only the 512 KiB byte-pressure floor applies."
           value={model.contextWindow}
           onChange={(contextWindow) => onChange({ ...model, contextWindow })}
         />
         <OptionalNumber
           id={`${provider.id}-${model.id}-output`}
-          label="Maximum output"
+          label="Maximum output (tokens)"
+          placeholder="Not set"
           title="Provider-advertised metadata only; the current execution adapters do not send this value as an output-token parameter"
           value={model.maxOutputTokens}
           onChange={(maxOutputTokens) => onChange({ ...model, maxOutputTokens })}
         />
       </div>
+      {model.contextWindow == null && (
+        <p className="settings-field-help" role="status">
+          No context window recorded for {model.remoteId}: token-pressure
+          compaction stays unavailable until one is entered.
+          {recommended === null ? null : (
+            <>
+              {" "}
+              <button
+                title={`Record ${recommended.toLocaleString()} tokens, the manufacturer's context window for ${model.remoteId}`}
+                type="button"
+                onClick={() => onChange({ ...model, contextWindow: recommended })}
+              >
+                Use {recommended.toLocaleString()} tokens
+              </button>
+            </>
+          )}
+        </p>
+      )}
       <CompactionSettings model={model} providers={providers} onChange={onChange} />
       <label className="settings-field" htmlFor={`${provider.id}-${model.id}-capabilities`}>
         Capabilities
@@ -964,8 +988,16 @@ function mergeDiscoveredModels(
       name: remote.name,
       remoteId: remote.remoteId,
       enabled: existing >= 0 ? result[existing]!.enabled : false,
-      contextWindow: remote.contextWindow,
-      maxOutputTokens: remote.maxOutputTokens,
+      // A refresh must never erase a limit the user already recorded, and a
+      // catalog that publishes none must not leave compaction without a budget
+      // when the model's stated window is known.
+      contextWindow:
+        remote.contextWindow ??
+        (existing >= 0 ? result[existing]!.contextWindow : null) ??
+        recommendedContextWindow(remote.remoteId),
+      maxOutputTokens:
+        remote.maxOutputTokens ??
+        (existing >= 0 ? result[existing]!.maxOutputTokens : null),
       // Catalogs such as vLLM often omit modality metadata. Keep an explicit
       // saved Vision selection when refreshing that incomplete catalog.
       capabilities: [...new Set([...remote.capabilities, ...(existing >= 0 && result[existing]!.capabilities.includes("vision") ? ["vision"] : [])])],
@@ -1047,12 +1079,14 @@ function OptionalNumber({
   id,
   label,
   title,
+  placeholder = "Not set",
   value,
   onChange,
 }: {
   readonly id: string;
   readonly label: string;
   readonly title: string;
+  readonly placeholder?: string;
   readonly value: number | null | undefined;
   readonly onChange: (value: number | null) => void;
 }): React.JSX.Element {
@@ -1062,7 +1096,7 @@ function OptionalNumber({
       <input
         id={id}
         min={1}
-        placeholder="Provider default"
+        placeholder={placeholder}
         title={title}
         type="number"
         value={value ?? ""}

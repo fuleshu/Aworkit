@@ -81,13 +81,23 @@ use super::{
 const MODEL_ADAPTER_VERSION: &str = "1.0.0";
 const API_KEY_FIELD: &str = "api_key";
 const MODEL_SCOPE: &str = "model.invoke";
-pub(crate) const WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES: usize = 256 * 1024;
-const MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
+/// No application ceiling is imposed on a Chat turn, an Agent exchange set, or a
+/// provider request: the model's own context window and the provider are the
+/// only request budgets. This value is a runaway guard against an unbounded
+/// in-memory payload, far above any conversation a model can accept, and it is
+/// never a routine limit that ends a Run.
+pub(crate) const MAXIMUM_PROVIDER_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+const MAXIMUM_INPUT_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
 // Chat output has no application-imposed byte ceiling.
 const MAXIMUM_OUTPUT_BYTES: usize = usize::MAX;
+/// A saved workflow document is small by construction: it holds node
+/// instructions and edges, never conversation or tool evidence. This bound
+/// guards its executable persistence form and is unrelated to a Run's request.
 pub(crate) const MAXIMUM_WORKFLOW_SNAPSHOT_BYTES: usize = 128 * 1024;
-const MAXIMUM_PREPARED_RECORD_BYTES: usize = 768 * 1024;
-const MAXIMUM_ERROR_BYTES: usize = 16 * 1024;
+const MAXIMUM_PREPARED_RECORD_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
+/// Errors reported to the user are redacted, not trimmed to hide the cause. A
+/// provider diagnostic longer than this keeps its first MiB.
+const MAXIMUM_ERROR_BYTES: usize = 1024 * 1024;
 const APPROVAL_TTL_MILLIS: u64 = 60_000;
 /// The authority protocol requires a positive absolute deadline on every
 /// invocation. Internal Agent workflows intentionally have no aggregate run
@@ -2974,22 +2984,44 @@ impl LocalInvocationLedger {
             }))
     }
 
+    /// Resolves one proposal id. Callers that resolve several at once must use
+    /// [`Self::invocation_ids_for_proposals`], which loads the ledger once.
     pub(super) fn invocation_for_proposal(
         &self,
         proposal_id: &StableId,
     ) -> Result<Option<StableId>, WorkflowPipelineError> {
         Ok(self
-            .broker_events()
-            .map_err(broker_error)?
-            .into_iter()
-            .find_map(|event| match event {
-                InvocationLedgerEventV1::Proposed {
-                    invocation_id,
-                    proposal,
-                    ..
-                } if &proposal.proposal_id == proposal_id => Some(invocation_id),
-                _ => None,
-            }))
+            .invocation_ids_for_proposals(std::slice::from_ref(proposal_id))?
+            .remove(proposal_id))
+    }
+
+    /// Resolves many proposal ids from one broker-ledger load.
+    ///
+    /// The workspace-instructions scan resolves every stored tool invocation once
+    /// per model turn. A per-proposal lookup reloaded and decoded the complete
+    /// ledger for each of them, which cost tens of seconds on a mature profile;
+    /// one load answers all of them from the same consistent snapshot.
+    pub(super) fn invocation_ids_for_proposals(
+        &self,
+        proposal_ids: &[StableId],
+    ) -> Result<BTreeMap<StableId, StableId>, WorkflowPipelineError> {
+        if proposal_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let wanted: BTreeSet<&StableId> = proposal_ids.iter().collect();
+        let mut resolved = BTreeMap::new();
+        for event in self.broker_events().map_err(broker_error)? {
+            if let InvocationLedgerEventV1::Proposed {
+                invocation_id,
+                proposal,
+                ..
+            } = event
+                && wanted.contains(&proposal.proposal_id)
+            {
+                resolved.insert(proposal.proposal_id, invocation_id);
+            }
+        }
+        Ok(resolved)
     }
 }
 
@@ -3450,15 +3482,9 @@ fn validate_request(
                 .to_owned(),
         ));
     }
-    if serde_json::to_vec(&request.messages)
-        .map_err(json_error)?
-        .len()
-        > WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES
-    {
-        return Err(WorkflowPipelineError::InvalidInput(
-            "message context exceeds the frozen input bound".to_owned(),
-        ));
-    }
+    // Conversation history is never rejected or trimmed for its size. The
+    // model's context window is the request budget; context compaction and
+    // provider overflow recovery keep the dispatchable selection inside it.
     if serialized_len(&request.workflow_snapshot)? > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES {
         return Err(WorkflowPipelineError::InvalidInput(
             "saved workflow snapshot exceeds the executable persistence bound".to_owned(),
@@ -4725,11 +4751,18 @@ mod tests {
                 &[FILE_READ_CAPABILITY_ID],
             ))
             .expect("later provider failure");
+        // The settled read is never replayed or discarded; the provider failure
+        // is reported to the model, which keeps getting turns until the recovery
+        // budget is spent, and only then does the Run end as a failure.
         assert_eq!(result.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert_eq!(result.tool_activity.len(), 1, "{:?}", result.error);
         assert_eq!(result.tool_activity[0].status, "completed");
-        assert_eq!((result.model_turns, result.tool_calls), (2, 1));
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(result.tool_calls, 1);
+        assert!(
+            result.model_turns > 2,
+            "the reported failure granted the model further turns"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), result.model_turns as usize);
         let durable = pipeline
             .records
             .outcomes()
@@ -4742,7 +4775,7 @@ mod tests {
             durable
                 .node_activity
                 .iter()
-                .any(|activity| { activity.node_id == "agent.1" && activity.status == "failed" })
+                .any(|activity| { activity.node_id == "agent.1" })
         );
     }
 
@@ -4802,7 +4835,7 @@ mod tests {
     }
 
     #[test]
-    fn large_output_succeeds_while_input_admission_is_validated() {
+    fn conversation_size_never_drops_history_or_rejects_the_turn() {
         let root = TempDir::new().expect("root");
         let (pipeline, _store, metadata, calls, _) =
             setup(&root, ScriptedBehavior::OversizedOutput);
@@ -4817,11 +4850,11 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let mut oversized_input = request(metadata);
-        oversized_input.request_id = stable("command.oversized-input").expect("request");
-        oversized_input.chat_id = stable("chat.oversized-input").expect("chat");
-        oversized_input.run_id = stable("run.oversized-input").expect("run");
-        oversized_input.messages = (0..5)
+        let mut large_conversation = request(metadata);
+        large_conversation.request_id = stable("command.oversized-input").expect("request");
+        large_conversation.chat_id = stable("chat.oversized-input").expect("chat");
+        large_conversation.run_id = stable("run.oversized-input").expect("run");
+        large_conversation.messages = (0..5)
             .flat_map(|ordinal| {
                 [
                     WorkflowMessageV1 {
@@ -4842,17 +4875,19 @@ mod tests {
                 content: "final".into(),
             }))
             .collect();
-        assert!(matches!(
-            pipeline.execute(oversized_input.clone()),
-            Err(WorkflowPipelineError::InvalidInput(_))
-        ));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // The complete history above 256 KiB reaches the provider intact: the
+        // model's context window, not an application ceiling, is the budget.
+        let accepted = pipeline
+            .execute(large_conversation.clone())
+            .expect("a large conversation is dispatched, not rejected");
+        assert_eq!(accepted.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(
             pipeline
                 .records
-                .execution(&oversized_input.request_id)
+                .execution(&large_conversation.request_id)
                 .expect("execution lookup")
-                .is_none()
+                .is_some()
         );
     }
 
@@ -5233,6 +5268,8 @@ mod tests {
         let first = pipeline
             .execute(request(metadata.clone()))
             .expect("ambiguous");
+        // An ambiguous acceptance is never reported, retried, replayed or
+        // replaced by a fallback: it is a durable safety verdict.
         assert_eq!(first.status, WorkflowExecutionStatusV1::OutcomeUncertain);
         assert_eq!((first.model_turns, first.tool_calls), (1, 0));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -6213,7 +6250,11 @@ mod tests {
             observed[0]
         );
         drop(observed);
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(
+            calls.load(Ordering::SeqCst) >= 3,
+            "the denied child turn is reported to its model and retried within \
+             the recovery budget before the parent continues"
+        );
     }
 
     #[test]

@@ -32,12 +32,30 @@ pub(crate) use provider_recovery::provider_recovery_notice;
 
 // Headroom for context compaction, not a limit on persisted exchanges.
 const TOOL_CONTEXT_HEADROOM_BYTES: usize = 512 * 1024;
-// Transient provider failures (request timeout, stream interruption) retry the
-// same frozen request instead of aborting the Agent node. A single retry is too
-// brittle for flaky transports, so allow a generous bounded budget; the pass has
-// no aggregate deadline, so the user remains the only hard stop.
-pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 5;
+/// Transient provider failures (request timeout, stream interruption) retry the
+/// same frozen request instead of aborting the Agent node. A single retry is too
+/// brittle for flaky transports, so allow a generous bounded budget; the pass has
+/// no aggregate deadline, so the user remains the only hard stop.
+pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 32;
+/// How many times one Agent turn reports a provider failure to the model before
+/// the Run surfaces it as unreachable. Every failure short of this becomes the
+/// model's next turn, so an ordinary repeated failure never ends the Agent.
+const MAXIMUM_ERROR_RECOVERIES: u32 = 32;
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
+
+/// The model-visible notice for a reported provider failure. The last granted
+/// recovery says so plainly, so the model closes out instead of dying on it.
+fn provider_report_notice(error: &ProviderError, recovery: u32) -> String {
+    let notice = provider_recovery_notice(error).unwrap_or_else(|| format!("{error}"));
+    if recovery < MAXIMUM_ERROR_RECOVERIES {
+        return notice;
+    }
+    format!(
+        "{notice}\n\nThis was recovery attempt {recovery} of {MAXIMUM_ERROR_RECOVERIES} for this \
+         turn: the provider rejected every attempt. Finish now with what you have, or state \
+         clearly in your answer what could not be completed and why."
+    )
+}
 
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
@@ -445,7 +463,7 @@ fn execute_tool_turn_with_timeout_recovery(
     runtime_notice: Option<String>,
     cancellation: &CancellationToken,
     attempted_model_turns: &mut u32,
-    timeout_recoveries: &mut u32,
+    _timeout_recoveries: &mut u32,
     input_tokens: &mut u64,
     output_tokens: &mut u64,
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
@@ -457,7 +475,7 @@ fn execute_tool_turn_with_timeout_recovery(
             cancellation,
         )
         .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
-    let mut retry_notice = runtime_notice;
+    let retry_notice = runtime_notice;
     let mut provider_request = ModelToolRequestV1 {
         context_messages,
         input: request.input.clone(),
@@ -487,14 +505,16 @@ fn execute_tool_turn_with_timeout_recovery(
         *exchanges = provider_request.exchanges.clone();
     }
     let mut overflow_retries = 0;
+    let mut error_recoveries = 0;
+    let mut final_report_issued = false;
     loop {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled.into());
         }
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
         match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
-            Err(ProviderError::ContextWindowExceeded)
-                if overflow_retries < preparation.max_overflow_retries =>
+            Err(error) if is_context_overflow(&error)
+                && overflow_retries < preparation.max_overflow_retries =>
             {
                 let recovery = authority
                     .manage_model_context(
@@ -517,24 +537,40 @@ fn execute_tool_turn_with_timeout_recovery(
                     return Err(ProviderError::Cancelled.into());
                 }
                 if !recovery.changed {
-                    return Err(ProviderError::ContextWindowExceeded.into());
+                    // The selection is already as small as the authority can
+                    // make it. Report the condition to the model instead of
+                    // ending the Run.
+                    if note_provider_failure(
+                        &error,
+                        &mut error_recoveries,
+                        &mut final_report_issued,
+                        &mut provider_request,
+                    )
+                    .is_none()
+                    {
+                        return Err(error.into());
+                    }
+                    continue;
                 }
                 if recovery.durable {
                     *exchanges = provider_request.exchanges.clone();
                 }
                 overflow_retries += 1;
             }
-            Err(error)
-                if provider_recovery_notice(&error).is_some()
-                    && *timeout_recoveries < request.maximum_timeout_recoveries =>
-            {
-                *timeout_recoveries = timeout_recoveries.saturating_add(1);
-                let recovery_notice = provider_recovery_notice(&error).expect("recoverable error");
-                retry_notice = Some(match retry_notice {
-                    Some(notice) => format!("{notice}\n\n{recovery_notice}"),
-                    None => recovery_notice.to_owned(),
-                });
-                provider_request.retry_notice = retry_notice.clone();
+            Err(error) if provider_recovery_notice(&error).is_some() => {
+                // Every provider failure that is not cancellation becomes the
+                // model's next turn: the exact failure is reported on the same
+                // frozen route and the Agent decides what to do about it.
+                if note_provider_failure(
+                    &error,
+                    &mut error_recoveries,
+                    &mut final_report_issued,
+                    &mut provider_request,
+                )
+                .is_none()
+                {
+                    return Err(error.into());
+                }
             }
             Err(error) => return Err(error.into()),
             Ok(evidence) => {
@@ -553,10 +589,52 @@ fn execute_tool_turn_with_timeout_recovery(
                         .tokens(),
                     )
                     .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+                if final_report_issued {
+                    // The provider failed the whole recovery budget and this
+                    // turn still requests work. Report it as unreachable rather
+                    // than looping forever; the model was already told to close
+                    // out.
+                    return Err(ProviderError::Failed(
+                        "the provider rejected every attempt for this turn".into(),
+                    )
+                    .into());
+                }
                 return Ok(evidence);
             }
         }
     }
+}
+
+/// Reports one provider failure to the model by returning its notice. The copy
+/// set on the last granted recovery is the final report: the model already has
+/// it when it produces its final answer.
+fn note_provider_failure(
+    error: &ProviderError,
+    recoveries: &mut u32,
+    final_report_issued: &mut bool,
+    provider_request: &mut ModelToolRequestV1,
+) -> Option<String> {
+    if *final_report_issued {
+        return None;
+    }
+    *recoveries = recoveries.saturating_add(1);
+    if *recoveries >= MAXIMUM_ERROR_RECOVERIES {
+        *final_report_issued = true;
+    }
+    let notice = provider_report_notice(error, *recoveries);
+    provider_request.retry_notice = Some(notice.clone());
+    Some(notice)
+}
+
+/// A provider turn can reject the request because the model's context window
+/// overflowed or because the exact request no longer fits the frozen plan's
+/// input bound. Both are context conditions: the authority reduces the durable
+/// selection and retries the same frozen route instead of failing the node.
+pub(crate) fn is_context_overflow(error: &ProviderError) -> bool {
+    matches!(
+        error,
+        ProviderError::ContextWindowExceeded | ProviderError::InputBoundExceeded { .. }
+    )
 }
 
 fn append_runtime_notices(target: &mut Option<String>, notices: Vec<String>) {

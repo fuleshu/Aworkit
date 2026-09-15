@@ -159,9 +159,14 @@ pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
 const SUBAGENT_PROVIDER_NAME: &str = "spawn_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
-const SUBAGENT_MAXIMUM_TASK_BYTES: usize = 16 * 1024;
-const SUBAGENT_MAXIMUM_CONTEXT_BYTES: usize = 32 * 1024;
-const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = 384 * 1024;
+// A delegation carries the parent's chosen task and context verbatim. Only the
+// shared runaway guard applies; the child model's own context window governs how
+// much it can accept.
+const SUBAGENT_MAXIMUM_TASK_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
+const SUBAGENT_MAXIMUM_CONTEXT_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
+// The child Agent keeps the same runaway guard as its parent; the model's
+// context window governs its request, not an application ceiling.
+const SUBAGENT_MAXIMUM_INPUT_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
 const SUBAGENT_MAXIMUM_OUTPUT_BYTES: usize = usize::MAX;
 /// Read-only, approval-free tools a subagent child may invoke. The subagent
 /// tool itself is excluded, capping the v1 delegation depth at one.
@@ -842,7 +847,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "files.grep" => (
                 FILE_GREP_PROVIDER_NAME.to_owned(),
-                "Regex-search text files beneath an absolute or workspace-relative directory, with line context. Dependency and version-control directories are skipped, and the result states explicitly when a file or match limit stopped the scan.".to_owned(),
+                "Regex-search text files beneath an absolute or workspace-relative directory, or inside one named file, with line context. The project's own ignore declarations (.gitignore, .ignore, .rgignore, at any depth), generated dependency and build trees, hidden entries and binary files are skipped unless one is named directly as the path. The scan is bounded by matches, files and time and the result states explicitly when a bound stopped it, so an incomplete search is never read as an absent pattern.".to_owned(),
                 file_grep_schema(),
                 StoredFileToolLimitV1::Grep {
                     maximum_matches: exact_unsigned_configuration(

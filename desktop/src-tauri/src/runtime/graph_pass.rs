@@ -30,17 +30,24 @@ use super::{
     documents::validate_v1_executable_catalog,
     model_tool_loop::{
         AgentContextV1, ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
-        ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, provider_recovery_notice,
-        resume_model_tool_loop_v1,
+        ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, is_context_overflow,
+        provider_recovery_notice, resume_model_tool_loop_v1,
     },
-    pipeline::{WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES, WorkflowMessageV1},
+    pipeline::{MAXIMUM_PROVIDER_REQUEST_BYTES, WorkflowMessageV1},
     tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
 };
 
 pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
 const MAXIMUM_NODE_OUTPUT_BYTES: usize = usize::MAX;
-const MAXIMUM_AGENT_CONTEXT_BYTES: usize = 32 * 1024;
-const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = 96 * 1024;
+// Node context, model-call input and Agent request bounds are the pipeline's
+// runaway guard, not design limits. The model's context window remains the only
+// budget that governs a turn; oversize is reduced and retried, never fatal.
+const MAXIMUM_AGENT_CONTEXT_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
+const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
+/// How many provider failures one text-only node reports to its model before the
+/// node surfaces the provider as unreachable. Every failure short of this is the
+/// model's next turn, so an ordinary repeated failure never ends the node.
+const MAXIMUM_TEXT_ERROR_RECOVERIES: u32 = 32;
 
 fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
     AgentContextV1 {
@@ -419,6 +426,8 @@ struct PassMachine<'a> {
     attempted_model_turns: u32,
     settled_tool_calls: u32,
     timeout_recoveries: u32,
+    /// Provider failures reported to a text-only node's model in this pass.
+    text_error_recoveries: u32,
     final_text: Option<String>,
     pending_tool_approval: Option<(GraphApprovalRequestV1, AgentLoopSuspensionV1)>,
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
@@ -769,7 +778,7 @@ impl<'a> PassMachine<'a> {
                         binding_id: self.model_binding_id.to_owned(),
                         version_hash: self.model_version_hash.to_owned(),
                     }],
-                    maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
+                    maximum_input_bytes: MAXIMUM_PROVIDER_REQUEST_BYTES,
                     maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 },
                 ModelRequestV1 {
@@ -808,7 +817,7 @@ impl<'a> PassMachine<'a> {
                 definitions,
                 binding_id: self.model_binding_id.to_owned(),
                 binding_version_hash: self.model_version_hash.to_owned(),
-                maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
+                maximum_input_bytes: MAXIMUM_PROVIDER_REQUEST_BYTES,
                 maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
                 maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
                 maximum_timeout_recoveries: self
@@ -939,8 +948,9 @@ impl<'a> PassMachine<'a> {
                 .gateway
                 .execute_cancellable(plan, &request, cancellation)
             {
-                Err(ProviderError::ContextWindowExceeded)
-                    if overflow_retries < preparation.max_overflow_retries =>
+                Err(error)
+                    if is_context_overflow(&error)
+                        && overflow_retries < preparation.max_overflow_retries =>
                 {
                     let recovery = self
                         .tool_authority
@@ -964,20 +974,33 @@ impl<'a> PassMachine<'a> {
                         return Err(ProviderError::Cancelled);
                     }
                     if !recovery.changed {
-                        return Err(ProviderError::ContextWindowExceeded);
+                        // The selection is already as small as the authority can
+                        // make it. Report the condition to the model rather than
+                        // ending the node.
+                        self.text_error_recoveries = self.text_error_recoveries.saturating_add(1);
+                        if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
+                            return Err(error);
+                        }
+                        let recovery_notice = provider_recovery_notice(&error)
+                            .unwrap_or_else(|| error.to_string());
+                        recorded_context.retry_notice = Some(match retry_notice {
+                            Some(notice) => format!("{notice}\n\n{recovery_notice}"),
+                            None => recovery_notice,
+                        });
+                        continue;
                     }
                     overflow_retries += 1;
                 }
-                Err(error)
-                    if provider_recovery_notice(&error).is_some()
-                        && self.timeout_recoveries < self.budget.maximum_timeout_recoveries =>
-                {
-                    self.timeout_recoveries = self.timeout_recoveries.saturating_add(1);
+                Err(error) if provider_recovery_notice(&error).is_some() => {
+                    self.text_error_recoveries = self.text_error_recoveries.saturating_add(1);
+                    if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
+                        return Err(error);
+                    }
                     let recovery_notice =
                         provider_recovery_notice(&error).expect("recoverable error");
                     recorded_context.retry_notice = Some(match retry_notice {
                         Some(notice) => format!("{notice}\n\n{recovery_notice}"),
-                        None => recovery_notice.into(),
+                        None => recovery_notice,
                     });
                 }
                 Ok(evidence) => {
@@ -1034,7 +1057,7 @@ impl<'a> PassMachine<'a> {
             definitions,
             binding_id: self.model_binding_id.to_owned(),
             binding_version_hash: self.model_version_hash.to_owned(),
-            maximum_input_bytes: WORKFLOW_MAX_MESSAGE_CONTEXT_BYTES,
+            maximum_input_bytes: MAXIMUM_PROVIDER_REQUEST_BYTES,
             maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
             maximum_tool_output_bytes: self.budget.maximum_tool_output_bytes,
             maximum_timeout_recoveries: self
@@ -1296,6 +1319,7 @@ pub(crate) fn execute_graph_pass_observed(
         attempted_model_turns: 0,
         settled_tool_calls: 0,
         timeout_recoveries: 0,
+        text_error_recoveries: 0,
         final_text: None,
         pending_tool_approval: None,
         resume_agent_suspension: None,

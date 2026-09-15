@@ -1,4 +1,6 @@
 //! Capability-rooted project file read, search, and atomic edit tools.
+//!
+//! The bounded regex walk lives in the `grep` submodule.
 
 use std::{
     collections::BTreeSet,
@@ -13,36 +15,19 @@ use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
 };
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::CancellationToken;
 
+mod grep;
+pub use grep::{FileGrepMatchV1, FileGrepRequestV1, FileGrepResultV1, MAX_GREP_WALL_CLOCK};
+
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 1024;
 const MAX_LIST_ENTRIES: usize = 1000;
 const MAX_LIST_SCANNED_ENTRIES: u64 = 100_000;
-const MAX_GREP_MATCHES: usize = 512;
-/// The file budget bounds work; it is not a search strategy. A real repository
-/// holds far more files than this, and a small cap silently turned "no matches"
-/// into a wrong answer, so the ceiling is high enough to walk a whole project.
-const MAX_GREP_FILES: usize = 20_000;
-/// Machine-generated dependency and version-control directories. They are never
-/// searched, and the skipped count is reported so a result is never presented as
-/// a complete scan of the tree.
-const SKIPPED_GREP_DIRECTORIES: [&str; 9] = [
-    ".git",
-    ".hg",
-    ".svn",
-    "node_modules",
-    ".pnpm-store",
-    "__pycache__",
-    ".mypy_cache",
-    ".venv",
-    "venv",
-];
 
 #[derive(Clone, Debug)]
 pub struct FileAuthority {
@@ -131,47 +116,6 @@ pub struct FileListEntryV1 {
     pub path: String,
     pub size_bytes: u64,
     pub modified_epoch_millis: u64,
-}
-
-/// Bounded regex search across files beneath the root.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileGrepRequestV1 {
-    pub pattern: String,
-    pub maximum_matches: usize,
-    pub maximum_files: usize,
-    pub maximum_file_bytes: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileGrepResultV1 {
-    pub matches: Vec<FileGrepMatchV1>,
-    pub files_scanned: usize,
-    /// True when the scan stopped at the match ceiling, so the matches are not
-    /// the complete set for the pattern.
-    pub match_limit_reached: bool,
-    /// True when the scan stopped at the file ceiling, so whole subtrees were
-    /// never examined and "no matches" does not mean the pattern is absent.
-    pub file_limit_reached: bool,
-    /// Dependency or version-control directories that were deliberately skipped.
-    pub skipped_directories: usize,
-    pub effect: FileEffectDescriptorV1,
-}
-
-/// Why a bounded regex walk stopped before exhausting the tree.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GrepStop {
-    Complete,
-    MatchLimit,
-    FileLimit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FileGrepMatchV1 {
-    pub path: String,
-    pub line: u64,
-    pub offset: usize,
-    pub line_text: String,
 }
 
 /// Full-content create-or-replace write beneath the root.
@@ -351,13 +295,16 @@ impl ProjectFiles {
             }
             body.extend_from_slice(&chunk[..count]);
         }
+        // One digest serves all three fields: hashing the same bytes twice more
+        // doubled the cost of every read without adding evidence.
+        let hash = content_hash(&body);
         Ok(FileReadResultV1 {
-            content_hash: content_hash(&body),
+            content_hash: hash.clone(),
             effect: FileEffectDescriptorV1 {
                 kind: FileEffectKindV1::Read,
                 relative_path: path.to_path_buf(),
-                before_content_hash: content_hash(&body),
-                after_content_hash: content_hash(&body),
+                before_content_hash: hash.clone(),
+                after_content_hash: hash,
                 bytes_observed_or_written: body.len(),
                 write_committed: false,
             },
@@ -694,158 +641,6 @@ impl ProjectFiles {
             })
     }
 
-    /// Regex search across text files beneath the root with line context.
-    pub fn grep_v1(
-        &self,
-        request: &FileGrepRequestV1,
-        cancellation: &CancellationToken,
-    ) -> Result<FileGrepResultV1, FileToolError> {
-        if request.pattern.is_empty()
-            || request.pattern.len() > 16 * 1024
-            || request.maximum_matches == 0
-            || request.maximum_matches > MAX_GREP_MATCHES
-            || request.maximum_files == 0
-            || request.maximum_files > MAX_GREP_FILES
-            || request.maximum_file_bytes == 0
-            || request.maximum_file_bytes > MAX_FILE_BYTES
-        {
-            return Err(FileToolError::InvalidGrep);
-        }
-        let pattern = Regex::new(&request.pattern).map_err(|_| FileToolError::InvalidGrep)?;
-        self.revalidate_root()?;
-        let mut matches = Vec::new();
-        let mut files_scanned = 0_usize;
-        let mut skipped_directories = 0_usize;
-        let mut stop = GrepStop::Complete;
-        self.collect_regex(
-            &Path::new(""),
-            &pattern,
-            request,
-            &mut matches,
-            &mut files_scanned,
-            &mut skipped_directories,
-            &mut stop,
-            cancellation,
-        )?;
-        Ok(FileGrepResultV1 {
-            effect: FileEffectDescriptorV1 {
-                kind: FileEffectKindV1::Grep,
-                relative_path: PathBuf::new(),
-                before_content_hash: content_hash(&[]),
-                after_content_hash: content_hash(&[]),
-                bytes_observed_or_written: files_scanned,
-                write_committed: false,
-            },
-            match_limit_reached: stop == GrepStop::MatchLimit,
-            file_limit_reached: stop == GrepStop::FileLimit,
-            skipped_directories,
-            matches,
-            files_scanned,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn collect_regex(
-        &self,
-        directory_path: &Path,
-        pattern: &Regex,
-        request: &FileGrepRequestV1,
-        matches: &mut Vec<FileGrepMatchV1>,
-        files_scanned: &mut usize,
-        skipped_directories: &mut usize,
-        stop: &mut GrepStop,
-        cancellation: &CancellationToken,
-    ) -> Result<(), FileToolError> {
-        if *stop != GrepStop::Complete {
-            return Ok(());
-        }
-        if matches.len() >= request.maximum_matches {
-            *stop = GrepStop::MatchLimit;
-            return Ok(());
-        }
-        if *files_scanned >= request.maximum_files {
-            *stop = GrepStop::FileLimit;
-            return Ok(());
-        }
-        check_cancelled(cancellation)?;
-        let directory: Arc<Dir> = if directory_path.as_os_str().is_empty() {
-            self.directory.clone()
-        } else {
-            self.reject_symlinks(directory_path, false)?;
-            match self.directory.open_dir(directory_path) {
-                Ok(directory) => Arc::new(directory),
-                Err(_) => return Ok(()),
-            }
-        };
-        for entry in directory.entries().map_err(FileToolError::Io)? {
-            if *stop != GrepStop::Complete {
-                return Ok(());
-            }
-            let entry = entry.map_err(FileToolError::Io)?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let relative = directory_path.join(&name);
-            let file_type = entry.file_type().map_err(FileToolError::Io)?;
-            if file_type.is_dir() {
-                // Dependency and version-control trees are never source, and
-                // walking them would exhaust the file budget before reaching it.
-                if SKIPPED_GREP_DIRECTORIES
-                    .iter()
-                    .any(|skipped| name.eq_ignore_ascii_case(skipped))
-                {
-                    *skipped_directories = skipped_directories.saturating_add(1);
-                    continue;
-                }
-                self.collect_regex(
-                    &relative,
-                    pattern,
-                    request,
-                    matches,
-                    files_scanned,
-                    skipped_directories,
-                    stop,
-                    cancellation,
-                )?;
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-            if *files_scanned >= request.maximum_files {
-                *stop = GrepStop::FileLimit;
-                return Ok(());
-            }
-            *files_scanned = files_scanned.saturating_add(1);
-            let Ok(read) = self.read_v1(
-                &FileReadRequestV1 {
-                    path: relative.clone(),
-                    maximum_bytes: request.maximum_file_bytes,
-                },
-                cancellation,
-            ) else {
-                continue;
-            };
-            let Ok(text) = String::from_utf8(read.bytes) else {
-                continue;
-            };
-            let path_text = relative.to_string_lossy().replace('\\', "/");
-            for (line_index, line) in text.lines().enumerate() {
-                for found in pattern.find_iter(line) {
-                    matches.push(FileGrepMatchV1 {
-                        path: path_text.clone(),
-                        line: line_index as u64 + 1,
-                        offset: found.start(),
-                        line_text: truncate_line(line, 256),
-                    });
-                    if matches.len() >= request.maximum_matches {
-                        *stop = GrepStop::MatchLimit;
-                        return Ok(());
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Creates or replaces one file with the exact content, optionally gated
     /// on the current content hash. Symlinks and reparse aliases are denied.
     pub fn write_v1(
@@ -1178,6 +973,8 @@ pub enum FileToolError {
     InvalidGrep,
     #[error("glob matched no files: {0}")]
     NoMatch(String),
+    #[error("path {0} does not exist")]
+    MissingPath(String),
     #[error("write authority denied")]
     WriteDenied,
     #[error("optimistic content identity conflict")]
