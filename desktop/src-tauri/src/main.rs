@@ -108,7 +108,7 @@ fn native_window_action(
 /// The persisted desktop placement, read once when the shell mounts.
 #[tauri::command]
 async fn desktop_layout(runtime: tauri::State<'_, SharedRuntime>) -> Result<LayoutConfigurationV2, String> {
-    runtime_worker(runtime, "desktop layout", |runtime| Ok(runtime.layout())).await
+    runtime_worker(Arc::clone(runtime.inner()), "desktop layout", |runtime| Ok(runtime.layout())).await
 }
 
 /// Records the outer window frame and panel separators.
@@ -126,7 +126,7 @@ async fn desktop_layout_commit(
     history_pane_width: Option<u32>,
     inspector_pane_width: Option<u32>,
 ) -> Result<(), String> {
-    runtime_worker(runtime, "desktop layout commit", move |runtime| {
+    runtime_worker(Arc::clone(runtime.inner()), "desktop layout commit", move |runtime| {
         let mut layout = runtime.layout();
         if let Some(frame) = frame {
             layout.x = Some(frame.x);
