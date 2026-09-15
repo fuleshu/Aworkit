@@ -114,7 +114,9 @@ async function waiting() {
   await waitFor('window.__TAURI_INTERNALS__.invoke("desktop_snapshot",{afterSequence:0}).then(s=>s.chat.phase==="awaiting_approval")');
   await view.evaluate('document.querySelector(".timeline-scroll")?.scrollTo(0,1e9)');
   await waitFor('[...document.querySelectorAll("button")].some(e=>!e.disabled&&e.textContent==="Approve once")');
-  assert.ok(!await view.evaluate('[...document.querySelectorAll("button")].some(e=>e.getClientRects().length&&!e.disabled&&e.textContent==="Always approve in project")'));
+  const pending = (await snapshot()).events.filter(e=>e.kind==='approval.requested').at(-1);
+  assert.ok(pending.payload.filesystem, 'external file approvals expose shared filesystem access');
+  assert.equal(await view.evaluate('[...document.querySelectorAll("button")].some(e=>e.getClientRects().length&&!e.disabled&&e.textContent==="Always approve in project")'), Boolean(pending.payload.projectScope));
 }
 try {
   await launch();
@@ -179,6 +181,67 @@ try {
   await waiting(); await click('Approve once'); await completed();
   assert.equal((await snapshot()).chat.projectId,null);
   assert.deepEqual(await invoke('approval_project_grants'),[]);
+
+  // One real UI decision covers every read tool in this run and subsequent chats.
+  const readCalls = [
+    ['list_files',{path:external,pattern:'**/*'}], ['read_file',{path:resolve(external,'outside.txt')}],
+    ['grep_files',{path:external,pattern:'full'}], ['search_file',{path:resolve(external,'outside.txt'),query:'full'}],
+    ['read_image',{path:resolve(external,'image.png')}],
+  ];
+  await start('shared-project-read',readCalls);
+  await waiting();
+  await view.screenshot(resolve(root,'filesystem-project-approval.png'));
+  await click('Always approve in project'); await completed();
+  assert.equal((await snapshot()).events.filter(e=>e.kind==='approval.requested').length,1);
+  let permissions = await invoke('approval_filesystem_grants');
+  assert.equal(permissions.length,1); assert.equal(permissions[0].access,'read');
+  assert.equal(permissions[0].owner.scope,'project');
+  await close(); await launch();
+  await start('project-read-after-restart',readCalls); await completed();
+  assert.equal((await snapshot()).events.filter(e=>e.kind==='approval.requested').length,0);
+  assert.ok((await snapshot()).events.some(e=>e.kind==='approval.permission_used'));
+
+  await start('read-does-not-grant-write',[['write_file',{path:resolve(external,'outside.txt'),content:'project-write'}]]);
+  await waiting();
+  assert.equal(await readFile(resolve(external,'outside.txt'),'utf8'),'full');
+  await click('Always approve in project'); await completed();
+  assert.equal(await readFile(resolve(external,'outside.txt'),'utf8'),'project-write');
+  await start('project-write-next-chat',[['edit_file',{path:resolve(external,'outside.txt'),old_string:'project-write',new_string:'shared-write'}]]);
+  await completed();
+  assert.equal((await snapshot()).events.filter(e=>e.kind==='approval.requested').length,0);
+
+  // A sibling location and a projectless chat do not inherit the folder grant.
+  const sibling = resolve(root,'sibling'); await mkdir(sibling); await writeFile(resolve(sibling,'other.txt'),'sibling');
+  await start('directory-boundary',[['read_file',{path:resolve(sibling,'other.txt')}]]);
+  await waiting(); await click('Approve once'); await completed();
+  await start('projectless-isolated',[['read_file',{path:resolve(external,'outside.txt')}]],'ask_for_approval','');
+  await waiting(); await click('Allow for this chat'); await completed();
+  await start('chat-grant-isolated',[['read_file',{path:resolve(external,'outside.txt')}]],'ask_for_approval','');
+  await waiting(); await click('Approve once'); await completed();
+
+  // Revocation uses the actual Settings controls and survives another restart.
+  await click('Settings'); await click('Open Approvals: Default approval mode and saved project permissions');
+  await waitFor('document.body.innerText.includes("Filesystem permissions")');
+  await view.screenshot(resolve(root,'filesystem-settings.png'));
+  permissions = await invoke('approval_filesystem_grants');
+  for (const permission of permissions) await click('Revoke permission');
+  assert.deepEqual(await invoke('approval_filesystem_grants'),[]);
+  await click('Back to Chat');
+  await close(); await launch();
+  await start('revoked-project-asks-again',[['read_file',{path:resolve(external,'outside.txt')}]]);
+  await waiting();
+  await setValue('select[aria-label="Filesystem location"]','all_external');
+  await setValue('select[aria-label="Filesystem access"]','write');
+  await click('Always approve in project'); await completed();
+  await start('all-external-project-permission',[
+    ['read_file',{path:resolve(sibling,'other.txt')}],
+    ['write_file',{path:resolve(sibling,'new.txt'),content:'explicit all external'}],
+    ['grep_files',{path:sibling,pattern:'external'}],
+  ]); await completed();
+  assert.equal((await snapshot()).events.filter(e=>e.kind==='approval.requested').length,0);
+  assert.equal(await readFile(resolve(sibling,'new.txt'),'utf8'),'explicit all external');
+  permissions = await invoke('approval_filesystem_grants');
+  assert.equal(permissions.length,1); assert.equal(permissions[0].directory,null); assert.equal(permissions[0].access,'write');
   assert.deepEqual(failures,[]);
   await writeFile(resolve(root,'evidence.json'),JSON.stringify({ok:true,checks,requests},null,2));
   console.log(JSON.stringify({ok:true,root,checks}));

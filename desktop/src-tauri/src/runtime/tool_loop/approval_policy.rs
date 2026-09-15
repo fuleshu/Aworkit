@@ -80,8 +80,32 @@ impl BoundFileToolAuthorityV1 {
             .invocation(proposal_id)?
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?
             .file_access;
+        let mut filesystem_saved = false;
         if let Some(Ok(access)) = &file_access {
             if access.outside_workspace {
+                let required = filesystem_permissions::required_access(&call.capability_id);
+                pending.filesystem = Some(approvals::FilesystemApprovalRequest {
+                    access: required,
+                    directory: access.directory.root.to_string_lossy().into_owned(),
+                });
+                pending.project_scope = self.context.approvals.project_key.as_ref().map(|_| {
+                    "Selected filesystem permission across all chats in this project".into()
+                });
+                let permissions = store
+                    .filesystem_grants()
+                    .map_err(WorkflowPipelineError::Store)?;
+                if let Some(permission) = permissions.iter().find(|grant| {
+                    grant.permits(
+                        &self.context.approvals,
+                        required,
+                        &access.target(),
+                        &self.runtime.projects,
+                    )
+                }) {
+                    filesystem_saved = true;
+                    self.run_events
+                        .publish_filesystem_permission(call, permission);
+                }
                 pending.summary.push_str(&format!(
                     "\n\nResolved path: {}\nThis file is outside the Chat workspace.",
                     access.display_target()
@@ -93,7 +117,11 @@ impl BoundFileToolAuthorityV1 {
                 .as_ref()
                 .map_or(true, |access| !access.outside_workspace)
         });
-        let approved = if local_file || mode == ApprovalMode::FullAccess || saved {
+        let approved = if local_file
+            || mode == ApprovalMode::FullAccess
+            || saved
+            || filesystem_saved
+        {
             Some(true)
         } else if mode == ApprovalMode::ApproveForMe {
             let review = match store

@@ -181,5 +181,6 @@ export type ChatIntent =
       readonly decisionId: string;
       readonly approved: boolean;
       readonly choice?: import("./approvals").ApprovalChoice;
+      readonly filesystem?: import("./approvals").FilesystemSelection;
       readonly reason?: string;
     };

@@ -232,6 +232,14 @@ impl RunEventStream {
             }),
         ));
     }
+
+    pub(crate) fn publish_filesystem_permission(&self, call: &aworkit_capability_host::ModelToolCallV1,
+        grant: &super::approvals::FilesystemGrant) {
+        self.publish(SemanticEventDraft::new("approval.permission_used", json!({
+            "requestId":self.request_id,"runId":self.run_id,"createdAt":now_label(),
+            "callId":call.call_id,"capabilityId":call.capability_id,"permission":grant,
+        })));
+    }
     pub(crate) fn new(
         request_id: String,
         run_id: String,

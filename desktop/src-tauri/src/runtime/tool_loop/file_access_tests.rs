@@ -1,5 +1,107 @@
 //! Exercise location policy through the real durable broker and capability host.
 use super::*;
+
+#[test]
+fn one_filesystem_read_grant_covers_all_read_tools_and_other_chats_but_not_writes() {
+    use crate::runtime::approvals::{
+        ApprovalChoice, ApprovalResolution, FilesystemLocation, FilesystemSelection,
+    };
+    let mut f = Fixture::with_tools(&[
+        FILE_LIST_CAPABILITY_ID,
+        FILE_READ_CAPABILITY_ID,
+        FILE_SEARCH_CAPABILITY_ID,
+        FILE_GREP_CAPABILITY_ID,
+        FILE_WRITE_CAPABILITY_ID,
+    ]);
+    let directory = f.root.path().join("reference");
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("file.txt");
+    std::fs::write(&path, "reference alpha").unwrap();
+    let first = call(
+        &f,
+        FILE_LIST_CAPABILITY_ID,
+        json!({"path":directory,"pattern":"**/*"}),
+    );
+    let outer = stable("outer.permission-list").unwrap();
+    let challenge = pending(&f, &outer, &first);
+    let request = challenge.filesystem.clone().unwrap();
+    let resolution = ApprovalResolution {
+        choice: ApprovalChoice::AlwaysApproveInProject,
+        reason: None,
+        filesystem: Some(FilesystemSelection {
+            access: request.access,
+            location: FilesystemLocation::Directory,
+            directory: Some(request.directory),
+        }),
+    };
+    let grant = f
+        .authority
+        .runtime
+        .filesystem_grant(
+            &f.authority.context.approvals,
+            &challenge.decision_id,
+            &resolution,
+        )
+        .unwrap()
+        .unwrap();
+    f.authority
+        .runtime
+        .approvals
+        .resolve_with_filesystem(&challenge.decision_id, &resolution, None, Some(&grant))
+        .unwrap();
+    let first_result = approve(&f, &outer, &first, challenge, true).result;
+    assert!(!first_result.is_error, "{first_result:?}");
+    f.authority.context.approvals.chat_id = "chat.same-project".into();
+    for (index, (id, args)) in [
+        (FILE_READ_CAPABILITY_ID, json!({"path":path})),
+        (
+            FILE_SEARCH_CAPABILITY_ID,
+            json!({"path":path,"query":"alpha"}),
+        ),
+        (
+            FILE_GREP_CAPABILITY_ID,
+            json!({"path":directory,"pattern":"alpha"}),
+        ),
+        (
+            FILE_LIST_CAPABILITY_ID,
+            json!({"path":directory,"pattern":"**/*"}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = f
+            .authority
+            .invoke_v1(
+                &stable(&format!("outer.shared-{index}")).unwrap(),
+                1,
+                &call(&f, id, args),
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        assert!(!result.result.is_error, "{:?}", result.result);
+    }
+    let write = call(
+        &f,
+        FILE_WRITE_CAPABILITY_ID,
+        json!({"path":path,"content":"changed"}),
+    );
+    pending(&f, &stable("outer.write-needs-permission").unwrap(), &write);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "reference alpha");
+    f.authority.context.approvals.project_key = Some("project.other".into());
+    pending(
+        &f,
+        &stable("outer.other-project").unwrap(),
+        &call(&f, FILE_READ_CAPABILITY_ID, json!({"path":path})),
+    );
+    assert!(
+        f.committer
+            .committed_events()
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "approval.permission_used")
+    );
+}
 use crate::runtime::approvals::ApprovalMode;
 
 fn call(f: &Fixture, id: &str, args: Value) -> ModelToolCallV1 {
@@ -88,8 +190,8 @@ fn all_file_operations_use_absolute_paths_and_approve_only_external_access() {
             let result = if external {
                 let challenge = pending(&f, &outer, &call);
                 assert!(
-                    challenge.project_scope.is_none(),
-                    "external access cannot inherit a project grant"
+                    challenge.project_scope.is_some(),
+                    "external access offers an explicit filesystem project permission"
                 );
                 assert!(challenge.summary.contains("outside the Chat workspace"));
                 assert_eq!(
@@ -226,7 +328,7 @@ fn legacy_frozen_binding_stays_relative_and_keeps_its_name() {
             &stable("outer.legacy-absolute").unwrap(),
             1,
             &absolute,
-            &CancellationToken::default()
+            &CancellationToken::default(),
         )
         .unwrap();
     assert!(denied.result.is_error);

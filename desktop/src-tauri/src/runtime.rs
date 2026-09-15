@@ -52,6 +52,7 @@ pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 
 pub use approvals::{ApprovalMode, ApprovalResolution, ApprovalSettings, ProjectApprovalGrant};
+pub use approvals::FilesystemGrant;
 pub use cancellation::WorkflowCancellationController;
 pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};

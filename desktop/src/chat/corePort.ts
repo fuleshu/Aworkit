@@ -167,6 +167,7 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
       approved: intent.approved,
       ...(intent.choice === undefined ? {} : { choice: intent.choice }),
       ...(intent.reason === undefined ? {} : { reason: intent.reason }),
+      ...(intent.filesystem === undefined ? {} : { filesystem: intent.filesystem }),
     };
   if (intent.type === "set_chat_pinned") return { pinned: intent.pinned };
   return {};

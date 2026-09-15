@@ -172,6 +172,16 @@ async fn approval_project_grants(
 }
 
 #[tauri::command]
+async fn approval_filesystem_grants(runtime: tauri::State<'_, SharedRuntime>) -> Result<Vec<aworkit_desktop::runtime::FilesystemGrant>, String> {
+    runtime_worker(Arc::clone(runtime.inner()), "filesystem permissions", |runtime| runtime.filesystem_approval_grants()).await
+}
+
+#[tauri::command]
+async fn approval_revoke_filesystem_grant(runtime: tauri::State<'_, SharedRuntime>, id: String) -> Result<(), String> {
+    runtime_worker(Arc::clone(runtime.inner()), "revoke filesystem permission", move |runtime| runtime.revoke_filesystem_approval(&id)).await
+}
+
+#[tauri::command]
 async fn approval_revoke_project_grant(
     runtime: tauri::State<'_, SharedRuntime>,
     id: String,
@@ -754,6 +764,8 @@ fn main() {
                 desktop_context_model,
                 desktop_command,
                 approval_project_grants,
+                approval_filesystem_grants,
+                approval_revoke_filesystem_grant,
                 approval_revoke_project_grant,
                 settings_snapshot,
                 settings_commit,

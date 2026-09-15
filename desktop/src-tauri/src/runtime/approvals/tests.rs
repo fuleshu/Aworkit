@@ -85,6 +85,7 @@ fn legacy_project_grants_migrate_deduplicate_and_stay_revoked() {
                     &ApprovalResolution {
                         choice: ApprovalChoice::AlwaysApproveInProject,
                         reason: None,
+                        filesystem: None,
                     },
                     Some(&grant),
                 )
@@ -142,6 +143,7 @@ fn conflicting_durable_decisions_are_rejected() {
     let denied = ApprovalResolution {
         choice: ApprovalChoice::Deny,
         reason: Some("Preserve the file.".into()),
+        filesystem: None,
     };
     store.resolve("decision.1", &denied, None).unwrap();
     assert!(

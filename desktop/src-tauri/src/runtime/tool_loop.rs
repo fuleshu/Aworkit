@@ -9,6 +9,7 @@
 #[path = "compaction/runtime.rs"]
 mod context_compaction;
 mod file_access;
+pub(crate) mod filesystem_permissions;
 mod file_operations;
 mod image_tools;
 #[path = "compression/runtime.rs"]
@@ -241,6 +242,8 @@ pub struct WorkflowToolCredentialBindingV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ToolApprovalChallengeV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<super::approvals::FilesystemApprovalRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_scope: Option<String>,
     pub decision_id: String,
     pub invocation_id: String,
@@ -260,6 +263,7 @@ fn tool_approval_challenge(
 ) -> ToolApprovalChallengeV1 {
     let (title, summary) = tool_approval_copy(call);
     ToolApprovalChallengeV1 {
+        filesystem: None,
         project_scope: None,
         decision_id: challenge.invocation_id.to_string(),
         invocation_id: challenge.invocation_id.to_string(),

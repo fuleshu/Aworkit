@@ -472,6 +472,7 @@ export function TimelineCard({
       <ImageAttachments images={item.attachments ?? []} />
       {item.kind === "approval" && item.action === "approve" ? (
         <ApprovalActions disabled={actionsDisabled}
+          filesystem={metadataOf(item).filesystem}
           projectScope={typeof metadataOf(item).projectScope === "string" ? metadataOf(item).projectScope as string : undefined}
           onDecision={details => onAction(details.choice === "deny" ? "reject" : "approve", item.id, details)} />
       ) : card.action !== undefined ? (

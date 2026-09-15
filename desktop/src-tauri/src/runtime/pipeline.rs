@@ -790,6 +790,7 @@ impl WorkflowExecutionPipeline {
                 tool_activity: pending.tool_activity.clone(),
                 node_activity: pending.activity.clone(),
                 approval: Some(GraphApprovalRequestV1 {
+                    filesystem: pending.agent_loop.as_ref().and_then(|agent| agent.pending.challenge.filesystem.clone()),
                     project_scope: pending
                         .agent_loop
                         .as_ref()

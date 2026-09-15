@@ -24,6 +24,7 @@ impl ApprovalStore {
         connection.execute_batch("
             CREATE TABLE IF NOT EXISTS approval_chat_modes (chat_id TEXT PRIMARY KEY, mode TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_project_grants (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS approval_filesystem_grants (id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_resolutions (decision_id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_reviews (invocation_id TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approval_results (decision_id TEXT PRIMARY KEY, body TEXT NOT NULL);
@@ -32,7 +33,7 @@ impl ApprovalStore {
         Ok(store)
     }
 
-    fn connection(&self) -> Result<Connection, String> {
+    pub(super) fn connection(&self) -> Result<Connection, String> {
         let connection = Connection::open(&self.database).map_err(error)?;
         connection
             .busy_timeout(Duration::from_secs(5))
@@ -98,11 +99,22 @@ impl ApprovalStore {
 
     /// The user's one-use decision and optional project rule commit together.
     /// A crash/retry cannot change the original decision or broaden its grant.
+    #[cfg(test)]
     pub fn resolve(
         &self,
         decision_id: &str,
         resolution: &ApprovalResolution,
         grant: Option<&ProjectApprovalGrant>,
+    ) -> Result<(), String> {
+        self.resolve_with_filesystem(decision_id, resolution, grant, None)
+    }
+
+    pub fn resolve_with_filesystem(
+        &self,
+        decision_id: &str,
+        resolution: &ApprovalResolution,
+        grant: Option<&ProjectApprovalGrant>,
+        filesystem: Option<&super::FilesystemGrant>,
     ) -> Result<(), String> {
         resolution.validate()?;
         let mut connection = self.connection()?;
@@ -132,6 +144,14 @@ impl ApprovalStore {
             transaction
                 .execute(
                     "INSERT OR IGNORE INTO approval_project_grants VALUES (?1,?2)",
+                    params![grant.id, serde_json::to_string(grant).map_err(error)?],
+                )
+                .map_err(error)?;
+        }
+        if let Some(grant) = filesystem {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO approval_filesystem_grants VALUES (?1,?2)",
                     params![grant.id, serde_json::to_string(grant).map_err(error)?],
                 )
                 .map_err(error)?;

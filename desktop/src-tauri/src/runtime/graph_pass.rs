@@ -102,6 +102,8 @@ pub struct GraphNodeActivityV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphApprovalRequestV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<super::approvals::FilesystemApprovalRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_scope: Option<String>,
     pub decision_id: String,
     pub node_id: String,
@@ -1187,6 +1189,7 @@ impl<'a> PassMachine<'a> {
             .unwrap_or("The workflow reached an approval gate. Approve to continue the run.")
             .to_owned();
         let approval = GraphApprovalRequestV1 {
+            filesystem: None,
             project_scope: None,
             decision_id: decision_id.clone(),
             node_id: node.id.clone(),
@@ -1354,6 +1357,7 @@ fn tool_approval_request(
     node_id: &str,
 ) -> GraphApprovalRequestV1 {
     GraphApprovalRequestV1 {
+        filesystem: challenge.filesystem.clone(),
         project_scope: challenge.project_scope.clone(),
         decision_id: challenge.decision_id.clone(),
         node_id: node_id.to_owned(),

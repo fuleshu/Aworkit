@@ -26,6 +26,46 @@ impl WorkflowExecutionPipeline {
                     "Only a tool action in a selected project can create a project approval".into(),
                 ));
             }
+            if resolution.filesystem.is_none() {
+                let call = &pending.agent_loop.as_ref().unwrap().pending.call;
+                let binding = prepared
+                    .tool_bindings
+                    .iter()
+                    .find(|binding| binding.capability_id == call.capability_id)
+                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+                if super::super::tool_loop::approval_policy::project_grant(
+                    &prepared.approvals,
+                    binding,
+                    call,
+                )
+                .is_none()
+                {
+                    return Err(WorkflowPipelineError::InvalidInput(
+                        "Choose the filesystem access and location to save a reusable permission."
+                            .into(),
+                    ));
+                }
+            }
+        }
+        if resolution.filesystem.is_some() {
+            let pending = self
+                .records
+                .pending_approval(decision_id)?
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            let prepared = self
+                .records
+                .execution(&stable(&pending.request_id)?)?
+                .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            if pending.agent_loop.is_none() {
+                return Err(WorkflowPipelineError::InvalidInput(
+                    "Workflow approval steps cannot create filesystem permissions.".into(),
+                ));
+            }
+            self.file_tool_authority.filesystem_grant(
+                &prepared.approvals,
+                decision_id,
+                resolution,
+            )?;
         }
         Ok(())
     }
@@ -102,7 +142,15 @@ impl WorkflowExecutionPipeline {
         if self.records.approval_resolved(decision_id)? {
             return Err(WorkflowPipelineError::IncompleteEvidence);
         }
-        let grant = if resolution.choice == ApprovalChoice::AlwaysApproveInProject {
+        self.validate_approval_choice(decision_id, resolution)?;
+        let filesystem = self.file_tool_authority.filesystem_grant(
+            &prepared.approvals,
+            decision_id,
+            resolution,
+        )?;
+        let grant = if resolution.choice == ApprovalChoice::AlwaysApproveInProject
+            && filesystem.is_none()
+        {
             let agent = pending.agent_loop.as_ref().ok_or_else(|| {
                 WorkflowPipelineError::InvalidInput(
                     "Workflow approval steps cannot create tool permissions".into(),
@@ -138,7 +186,7 @@ impl WorkflowExecutionPipeline {
             .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
         self.file_tool_authority
             .approvals
-            .resolve(decision_id, resolution, grant.as_ref())
+            .resolve_with_filesystem(decision_id, resolution, grant.as_ref(), filesystem.as_ref())
             .map_err(WorkflowPipelineError::Store)?;
         self.resume_approval_committed(decision_id, resolution.approved())
     }
@@ -220,6 +268,10 @@ impl WorkflowExecutionPipeline {
                     .unwrap_or_else(|| "source_provided".into()),
             });
             result.approval = Some(GraphApprovalRequestV1 {
+                filesystem: next
+                    .agent_loop
+                    .as_ref()
+                    .and_then(|agent| agent.pending.challenge.filesystem.clone()),
                 project_scope: next
                     .agent_loop
                     .as_ref()

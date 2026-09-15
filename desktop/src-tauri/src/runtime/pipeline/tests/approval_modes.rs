@@ -155,20 +155,60 @@ fn automatic_review_approves_denies_or_falls_back_to_a_person() {
 }
 
 #[test]
-fn external_file_approval_cannot_create_a_project_grant_or_authorize_later_calls() {
+fn external_filesystem_project_permission_survives_restart_and_revocation() {
     let root = TempDir::new().unwrap();
     let project = edit_approval_project(&root);
     let (pipeline, _, metadata, _, _) = setup_tool_pipeline(&root, ToolScriptV1::Edit);
     let request = scoped_request(&pipeline, metadata, &project, ApprovalMode::AskForApproval);
     let approval = pipeline.execute(request).unwrap().approval.unwrap();
-    assert!(approval.project_scope.is_none());
-    assert!(pipeline.resume_approval_choice(&approval.decision_id, &ApprovalResolution {
-        choice: ApprovalChoice::AlwaysApproveInProject, reason: None,
-    }).is_err());
-    assert_eq!(fs::read_to_string(project.join("notes.txt")).unwrap(), "alpha");
-    assert_eq!(pipeline.resume_approval_choice(&approval.decision_id, &ApprovalResolution::once(true)).unwrap().status,
-        WorkflowExecutionStatusV1::Succeeded);
-    assert!(pipeline.file_tool_authority.approvals.grants().unwrap().is_empty());
+    assert!(approval.project_scope.is_some());
+    assert!(
+        pipeline
+            .resume_approval_choice(
+                &approval.decision_id,
+                &ApprovalResolution {
+                    choice: ApprovalChoice::AlwaysApproveInProject,
+                    reason: None,
+                    filesystem: None,
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("notes.txt")).unwrap(),
+        "alpha"
+    );
+    let filesystem = approval.filesystem.unwrap();
+    let resolution = ApprovalResolution {
+        choice: ApprovalChoice::AlwaysApproveInProject,
+        reason: None,
+        filesystem: Some(crate::runtime::approvals::FilesystemSelection {
+            access: filesystem.access,
+            location: crate::runtime::approvals::FilesystemLocation::Directory,
+            directory: Some(filesystem.directory),
+        }),
+    };
+    assert_eq!(
+        pipeline
+            .resume_approval_choice(&approval.decision_id, &resolution)
+            .unwrap()
+            .status,
+        WorkflowExecutionStatusV1::Succeeded
+    );
+    assert!(
+        pipeline
+            .resume_approval_choice(&approval.decision_id, &resolution)
+            .unwrap()
+            .replayed
+    );
+    assert!(
+        pipeline
+            .file_tool_authority
+            .approvals
+            .grants()
+            .unwrap()
+            .is_empty()
+    );
     drop(pipeline);
 
     let (pipeline, _, metadata, _, _) = setup_tool_pipeline(&root, ToolScriptV1::Edit);
@@ -177,7 +217,30 @@ fn external_file_approval_cannot_create_a_project_grant_or_authorize_later_calls
     next.request_id = stable("command.next-external").unwrap();
     next.run_id = stable("run.next-external").unwrap();
     next.chat_id = stable("chat.next-external").unwrap();
-    assert_eq!(pipeline.execute(next).unwrap().status, WorkflowExecutionStatusV1::AwaitingApproval);
+    next.approvals.chat_id = next.chat_id.to_string();
+    assert_eq!(
+        pipeline.execute(next.clone()).unwrap().status,
+        WorkflowExecutionStatusV1::Succeeded
+    );
+    let store = &pipeline.file_tool_authority.approvals;
+    let grant = store.filesystem_grants().unwrap().pop().unwrap();
+    store.revoke_filesystem(&grant.id).unwrap();
+    // Replaying the original receipt must not recreate a revoked permission.
+    assert!(
+        pipeline
+            .resume_approval_choice(&approval.decision_id, &resolution)
+            .unwrap()
+            .replayed
+    );
+    assert!(store.filesystem_grants().unwrap().is_empty());
+    next.request_id = stable("command.after-revoke").unwrap();
+    next.run_id = stable("run.after-revoke").unwrap();
+    next.chat_id = stable("chat.after-revoke").unwrap();
+    next.approvals.chat_id = next.chat_id.to_string();
+    assert_eq!(
+        pipeline.execute(next).unwrap().status,
+        WorkflowExecutionStatusV1::AwaitingApproval
+    );
 }
 
 #[test]
@@ -191,6 +254,7 @@ fn denial_reason_is_model_visible_and_durable() {
     let resolution = ApprovalResolution {
         choice: ApprovalChoice::Deny,
         reason: Some(reason.into()),
+        filesystem: None,
     };
     assert_eq!(
         pipeline
@@ -277,7 +341,8 @@ fn projectless_and_workflow_approvals_cannot_create_project_grants() {
                 &approval.decision_id,
                 &ApprovalResolution {
                     choice: ApprovalChoice::AlwaysApproveInProject,
-                    reason: None
+                    reason: None,
+                    filesystem: None,
                 }
             )
             .is_err()

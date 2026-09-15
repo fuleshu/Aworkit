@@ -9,3 +9,7 @@
 .approval-denial label { display: grid; gap: 4px; }
 .approval-denial textarea { min-height: 64px; width: 100%; resize: vertical; }
 .approval-grant-summary { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+.approval-filesystem { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid currentColor; border-radius: 6px; }
+.approval-filesystem p { margin: 0; }
+.approval-filesystem label { display: grid; gap: 4px; min-width: 0; }
+.approval-filesystem input, .approval-filesystem select { width: 100%; min-width: 0; }

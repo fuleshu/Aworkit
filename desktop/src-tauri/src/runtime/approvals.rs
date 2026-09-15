@@ -3,7 +3,16 @@
 //! Approval grants never change a tool's execution authority. The broker still
 //! checks the exact frozen capability and records a one-use invocation decision.
 
+mod filesystem;
+mod filesystem_store;
 pub(crate) mod reviewer;
+#[cfg(test)]
+pub use filesystem::FilesystemLocation;
+pub use filesystem::{
+    FilesystemAccess, FilesystemApprovalRequest, FilesystemGrant, FilesystemSelection,
+};
+#[cfg(test)]
+mod filesystem_tests;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -43,6 +52,7 @@ pub(crate) struct ApprovalContext {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalChoice {
     ApproveOnce,
+    ApproveForChat,
     AlwaysApproveInProject,
     Deny,
 }
@@ -53,6 +63,8 @@ pub struct ApprovalResolution {
     pub choice: ApprovalChoice,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<FilesystemSelection>,
 }
 
 impl ApprovalResolution {
@@ -64,6 +76,7 @@ impl ApprovalResolution {
                 ApprovalChoice::Deny
             },
             reason: None,
+            filesystem: None,
         }
     }
 
@@ -72,6 +85,17 @@ impl ApprovalResolution {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.filesystem.is_some()
+            && !matches!(
+                self.choice,
+                ApprovalChoice::ApproveForChat | ApprovalChoice::AlwaysApproveInProject
+            )
+        {
+            return Err("Filesystem permissions require a reusable approval.".into());
+        }
+        if self.choice == ApprovalChoice::ApproveForChat && self.filesystem.is_none() {
+            return Err("Chat approval requires a filesystem permission.".into());
+        }
         if self
             .reason
             .as_ref()

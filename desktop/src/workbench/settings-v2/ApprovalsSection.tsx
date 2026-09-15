@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import { ApprovalModeSelect } from "../../chat/ApprovalModeSelect";
+import { FilesystemPermissions } from "./FilesystemPermissions";
 import { approvalModes, type ApprovalMode } from "../../chat/approvals";
 
 const grantSchema = z.object({
@@ -33,5 +34,6 @@ export function ApprovalsSection({ mode, onChange }: { readonly mode: ApprovalMo
         void invoke("approval_revoke_project_grant", { id: grant.id }).then(refresh).catch(error => setError(String(error))).finally(() => setBusy(false));
       }}>Revoke approval</button>
     </div>)}
+    <FilesystemPermissions />
   </div>;
 }

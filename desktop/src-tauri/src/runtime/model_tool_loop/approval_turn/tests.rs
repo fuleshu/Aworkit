@@ -133,6 +133,7 @@ impl ModelToolInvocationPortV1 for Authority {
         self.invoked.lock().unwrap().push(call.call_id.clone());
         if call.call_id == "shell" || self.second_approval && call.call_id == "adashi" {
             Ok(ToolInvokeV1::Approval(ToolApprovalChallengeV1 {
+                filesystem: None,
                 project_scope: None,
                 decision_id: format!("decision.{}", call.call_id),
                 invocation_id: format!("invoke.{}", call.call_id),

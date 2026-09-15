@@ -8,6 +8,14 @@ use crate::runtime::approvals::{
 pub(crate) fn parse_approval_resolution(payload: &Value) -> Result<ApprovalResolution, String> {
     let resolution = if let Some(choice) = payload.get("choice") {
         let resolution = ApprovalResolution {
+            filesystem: payload
+                .get("filesystem")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value(value.clone())
+                        .map_err(|_| "Invalid filesystem permission")
+                })
+                .transpose()?,
             choice: serde_json::from_value(choice.clone())
                 .map_err(|_| "Invalid approval choice")?,
             reason: payload
@@ -33,6 +41,12 @@ pub(crate) fn parse_approval_resolution(payload: &Value) -> Result<ApprovalResol
         }
         resolution
     } else {
+        if payload
+            .get("filesystem")
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err("Filesystem permissions require an explicit approval choice.".into());
+        }
         ApprovalResolution::once(
             payload
                 .get("approved")
@@ -45,6 +59,15 @@ pub(crate) fn parse_approval_resolution(payload: &Value) -> Result<ApprovalResol
 }
 
 impl DesktopRuntime {
+    pub fn filesystem_approval_grants(
+        &self,
+    ) -> Result<Vec<crate::runtime::approvals::FilesystemGrant>, String> {
+        self.approvals.filesystem_grants()
+    }
+
+    pub fn revoke_filesystem_approval(&self, id: &str) -> Result<(), String> {
+        self.approvals.revoke_filesystem(id)
+    }
     pub fn project_approval_grants(&self) -> Result<Vec<ProjectApprovalGrant>, String> {
         self.approvals.grants()
     }

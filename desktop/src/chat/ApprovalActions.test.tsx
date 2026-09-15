@@ -8,6 +8,35 @@ import { timelineActionIntent } from "./ChatWorkspaceScreen";
 import { chatIntentPayload } from "./corePort";
 
 describe("Approval decisions", () => {
+  it("shares filesystem access across tools and sends the explicit folder or all-locations scope", async () => {
+    const user = userEvent.setup(); const onDecision = vi.fn();
+    render(<ApprovalActions disabled={false} projectScope="All chats in this project" filesystem={{ access: "read", directory: "C:\\reference\\src" }} onDecision={onDecision} />);
+    await user.clear(screen.getByRole("textbox", { name: "Permission folder" }));
+    await user.type(screen.getByRole("textbox", { name: "Permission folder" }), "C:\\reference");
+    await user.click(screen.getByRole("button", { name: "Always approve in project" }));
+    const details = onDecision.mock.calls[0]![0];
+    expect(chatIntentPayload(timelineActionIntent("approve", "decision.fs", "command.fs", details))).toEqual({
+      decisionId: "decision.fs", approved: true, choice: "always_approve_in_project",
+      filesystem: { access: "read", location: "directory", directory: "C:\\reference" },
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filesystem access" }), "write");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filesystem location" }), "all_external");
+    await user.click(screen.getByRole("button", { name: "Allow for this chat" }));
+    expect(onDecision.mock.calls[1]![0]).toEqual({ choice: "approve_for_chat", filesystem: { access: "write", location: "all_external" } });
+    await user.click(screen.getByRole("button", { name: "Approve once" }));
+    expect(onDecision.mock.calls[2]![0]).toEqual({ choice: "approve_once" });
+  });
+
+  it("requires write access for a write request and disables empty folder grants", async () => {
+    const user = userEvent.setup();
+    render(<ApprovalActions disabled={false} filesystem={{ access: "write", directory: "/reference" }} onDecision={vi.fn()} />);
+    expect(screen.getByRole("combobox", { name: "Filesystem access" })).toHaveValue("write");
+    expect(screen.getByRole("option", { name: "Read" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Always approve in project" })).toBeDisabled();
+    await user.clear(screen.getByRole("textbox", { name: "Permission folder" }));
+    expect(screen.getByRole("button", { name: "Allow for this chat" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve once" })).toBeEnabled();
+  });
   it("sends exact project and one-use choices through the native payload", async () => {
     const user = userEvent.setup();
     const onDecision = vi.fn();
