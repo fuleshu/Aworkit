@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useComposerDraft, type ComposerDrafts } from "./composerDrafts";
 import { ImageAttachmentMenu, ImageAttachments } from "./ImageAttachments";
 import { useChatImages } from "./useChatImages";
 import {
@@ -20,6 +21,7 @@ export interface WorkflowOption {
 }
 
 interface ChatComposerProps {
+  readonly drafts?: ComposerDrafts;
   readonly contextUsage?: React.ReactNode;
   readonly approvalControl?: React.ReactNode;
   readonly status?: React.ReactNode;
@@ -43,6 +45,7 @@ interface ChatComposerProps {
 
 /** Local IME-safe composer; only a committed core result is allowed to clear its draft. */
 export function ChatComposer({
+  drafts,
   contextUsage,
   approvalControl,
   status,
@@ -76,7 +79,7 @@ export function ChatComposer({
             { id: chat.workflowId, name: chat.workflowName ?? chat.workflowId },
           ]
     : workflowOptions;
-  const [state, setState] = useState<ComposerState>(() => ({
+  const { state, setState, retryIntent, setRetryIntent, submitting, setSubmitting } = useComposerDraft(chat.chatId, {
     ...emptyComposer,
     workflowId: chat.lockedWorkflow
       ? (chat.workflowId ?? "")
@@ -85,15 +88,11 @@ export function ChatComposer({
           ? bundledDefaultWorkflowId
           : workflowOptions[0]?.id) ??
         ""),
-  }));
+  }, drafts);
   useEffect(() => {
     onWorkflowChange?.(state.workflowId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [retryIntent, setRetryIntent] = useState<ReturnType<
-    typeof submitIntent
-  > | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const edit = (patch: Parameters<typeof updateComposer>[1]) => {
     setRetryIntent(null);
     setState((current) => updateComposer(current, patch));

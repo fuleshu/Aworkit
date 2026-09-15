@@ -1,5 +1,5 @@
-//! Out-of-band cancellation for the one workflow currently owned by the
-//! desktop runtime. The controller is cloneable outside the runtime mutex so a
+//! Out-of-band cancellation keyed by Chat. The controller lives outside the
+//! desktop coordinator and each Chat worker so a
 //! Stop command never waits behind the work it is meant to interrupt.
 
 use std::{
@@ -16,8 +16,8 @@ pub struct WorkflowCancellationController {
 
 #[derive(Default)]
 struct CancellationState {
-    active: Option<ActiveWorkflow>,
-    pending: Option<PendingStopRequestV1>,
+    active: BTreeMap<String, ActiveWorkflow>,
+    pending: BTreeMap<String, PendingStopRequestV1>,
     requested: BTreeMap<String, StopRequestV1>,
 }
 
@@ -56,20 +56,15 @@ impl WorkflowCancellationController {
             .state
             .lock()
             .map_err(|_| "workflow cancellation state is unavailable".to_owned())?;
-        if state.active.is_some() {
-            return Err("another workflow is already registered for cancellation".into());
+        if state.active.contains_key(chat_id) {
+            return Err("this Chat already has a workflow registered for cancellation".into());
         }
-        state.active = Some(ActiveWorkflow {
+        state.active.insert(chat_id.to_owned(), ActiveWorkflow {
             chat_id: chat_id.to_owned(),
             run_id: run_id.to_owned(),
             cancellation: cancellation.clone(),
         });
-        if state
-            .pending
-            .as_ref()
-            .is_some_and(|request| request.chat_id == chat_id)
-        {
-            let request = state.pending.take().expect("pending request exists");
+        if let Some(request) = state.pending.remove(chat_id) {
             cancellation.cancel();
             state.requested.insert(
                 run_id.to_owned(),
@@ -95,8 +90,8 @@ impl WorkflowCancellationController {
             .state
             .lock()
             .map_err(|_| "workflow cancellation state is unavailable".to_owned())?;
-        let Some(active) = state.active.as_ref() else {
-            if let Some(pending) = state.pending.as_ref() {
+        let Some(active) = state.active.get(chat_id) else {
+            if let Some(pending) = state.pending.get(chat_id) {
                 return if pending.command_id == command_id && pending.chat_id == chat_id {
                     Ok(false)
                 } else {
@@ -107,15 +102,12 @@ impl WorkflowCancellationController {
             // Queue this exact target across that narrow registration window;
             // the Tauri command removes it again if normal command validation
             // later proves that no workflow was running.
-            state.pending = Some(PendingStopRequestV1 {
+            state.pending.insert(chat_id.to_owned(), PendingStopRequestV1 {
                 command_id: command_id.to_owned(),
                 chat_id: chat_id.to_owned(),
             });
             return Ok(false);
         };
-        if active.chat_id != chat_id {
-            return Err("Stop targeted a Chat other than the active workflow".into());
-        }
         let request = StopRequestV1 {
             command_id: command_id.to_owned(),
             chat_id: active.chat_id.clone(),
@@ -132,13 +124,7 @@ impl WorkflowCancellationController {
     /// consumed by `take_request` and are unaffected.
     pub fn discard_request(&self, command_id: &str) {
         if let Ok(mut state) = self.state.lock() {
-            if state
-                .pending
-                .as_ref()
-                .is_some_and(|request| request.command_id == command_id)
-            {
-                state.pending = None;
-            }
+            state.pending.retain(|_, request| request.command_id != command_id);
             state
                 .requested
                 .retain(|_, request| request.command_id != command_id);
@@ -155,11 +141,11 @@ impl WorkflowCancellationController {
 
     fn unregister(&self, chat_id: &str, run_id: &str) {
         if let Ok(mut state) = self.state.lock()
-            && state.active.as_ref().is_some_and(|active| {
+            && state.active.get(chat_id).is_some_and(|active| {
                 active.chat_id == chat_id && active.run_id == run_id
             })
         {
-            state.active = None;
+            state.active.remove(chat_id);
         }
     }
 }
@@ -182,8 +168,9 @@ mod tests {
             .register("chat.active", "run.active", cancellation.clone())
             .expect("register");
 
-        assert!(controller.request_stop("chat.other", "chat.stop").is_err());
+        assert!(!controller.request_stop("chat.other", "chat.other-stop").unwrap());
         assert!(!cancellation.is_cancelled());
+        controller.discard_request("chat.other-stop");
         assert!(
             controller
                 .request_stop("chat.active", "chat.stop")
@@ -232,5 +219,23 @@ mod tests {
                 .command_id,
             "chat.stop-early"
         );
+    }
+
+    #[test]
+    fn two_chats_run_and_stop_independently() {
+        let controller = WorkflowCancellationController::default();
+        let a = CancellationToken::default();
+        let b = CancellationToken::default();
+        let ga = controller.register("chat.a", "run.a", a.clone()).unwrap();
+        let _gb = controller.register("chat.b", "run.b", b.clone()).unwrap();
+        assert!(controller.register("chat.a", "run.a", CancellationToken::default()).is_err());
+        assert!(controller.request_stop("chat.a", "stop.a").unwrap());
+        assert!(a.is_cancelled());
+        assert!(!b.is_cancelled());
+        drop(ga);
+        assert!(controller.request_stop("chat.b", "stop.b").unwrap());
+        assert!(b.is_cancelled());
+        assert_eq!(controller.take_request("chat.a", "run.a").unwrap().command_id, "stop.a");
+        assert_eq!(controller.take_request("chat.b", "run.b").unwrap().command_id, "stop.b");
     }
 }

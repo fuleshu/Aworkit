@@ -62,6 +62,7 @@ pub(crate) enum CredentialCrashPointV1 {
 
 /// An unavailable journal disables credential mutations but never prevents the
 /// rest of the desktop profile from opening.
+#[derive(Clone)]
 pub(crate) struct CredentialOperationJournal {
     available: Option<AvailableJournal>,
     warning: Option<String>,
@@ -69,6 +70,7 @@ pub(crate) struct CredentialOperationJournal {
     crash_point: Option<CredentialCrashPointV1>,
 }
 
+#[derive(Clone)]
 struct AvailableJournal {
     repository: RepositoryRoot,
     version: u64,

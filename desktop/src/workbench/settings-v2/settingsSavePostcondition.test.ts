@@ -26,6 +26,8 @@ function document(project: ProjectConfiguration): SettingsConfigurationV2 {
     },
     projects: [project],
     appearance: { mode: "system", fontScale: 1 },
+    chatDefaults: {},
+    layout: {},
   };
 }
 

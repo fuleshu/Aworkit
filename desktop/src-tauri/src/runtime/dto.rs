@@ -108,6 +108,8 @@ pub struct EvidenceRecordDto {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
+    #[serde(default)]
+    pub active_chat_ids: Vec<String>,
     /// Frozen model metadata for context inspection, including legacy Chats.
     pub context_model: Option<ContextModelDto>,
     pub version: u64,

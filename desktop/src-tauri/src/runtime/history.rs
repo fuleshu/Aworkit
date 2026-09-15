@@ -194,6 +194,8 @@ pub(crate) struct ConversationMessage {
 #[derive(Clone)]
 pub(crate) struct ChatHistory {
     store: LocalHistoryStore,
+    bound_identity: Option<ChatIdentityV1>,
+    metadata_lock: Arc<Mutex<()>>,
     committed_events: Arc<dyn CommittedChatEventPort>,
     /// Validated view of the selected Chat's stream.
     ///
@@ -236,6 +238,8 @@ impl ChatHistory {
             .map_err(|error| format!("cannot open desktop Chat history: {error}"))?;
         let history = Self {
             store,
+            bound_identity: None,
+            metadata_lock: Arc::new(Mutex::new(())),
             committed_events,
             stream: Arc::new(Mutex::new(StreamCache::default())),
         };
@@ -248,6 +252,15 @@ impl ChatHistory {
     pub(crate) fn head(&self) -> Result<u64, String> {
         let chat_id = self.selected_identity()?.chat_id;
         self.head_for_chat(&chat_id)
+    }
+
+    /// Execution uses an immutable stream binding, independent of shell selection.
+    pub(crate) fn for_chat(&self, chat_id: &str) -> Result<Self, String> {
+        Ok(Self {
+            bound_identity: Some(self.identity(chat_id)?),
+            stream: Arc::new(Mutex::new(StreamCache::default())),
+            ..self.clone()
+        })
     }
 
     /// Reads the indexed stream head without loading or parsing event payloads.
@@ -724,6 +737,7 @@ impl ChatHistory {
         &self,
         record: PendingChatCommandV1,
     ) -> Result<PendingChatCommandV1, String> {
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         validate_pending_command_record(&record)?;
         for event in self.session_events()? {
             if event.kind != "chat.effect-command-staged" {
@@ -780,6 +794,7 @@ impl ChatHistory {
         &self,
         context: FrozenChatExecutionContextV1,
     ) -> Result<FrozenChatExecutionRecordV1, String> {
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let context_hash = canonical_hash(&context)?;
         let record = FrozenChatExecutionRecordV1 {
             context,
@@ -933,6 +948,9 @@ impl ChatHistory {
     }
 
     fn selected_identity(&self) -> Result<ChatIdentityV1, String> {
+        if let Some(identity) = &self.bound_identity {
+            return Ok(identity.clone());
+        }
         let index = self.index()?;
         let entry = index
             .entries
@@ -965,9 +983,9 @@ impl ChatHistory {
         &self,
         command_id: &str,
         command_hash: &str,
-        expected_head: u64,
+        _expected_head: u64,
     ) -> Result<UiCommandReceipt, String> {
-        self.ensure_expected(expected_head)?;
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let identity = identity_for_seed(command_id)?;
         let created_at = now_label();
         let summary = ChatSummaryProjection::draft(&created_at);
@@ -992,10 +1010,10 @@ impl ChatHistory {
         &self,
         command_id: &str,
         command_hash: &str,
-        expected_head: u64,
+        _expected_head: u64,
         chat_id: &str,
     ) -> Result<UiCommandReceipt, String> {
-        self.ensure_expected(expected_head)?;
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         let target_head = self.head_for_chat(&target.chat_id)?;
         history_index::append_command(
@@ -1018,7 +1036,7 @@ impl ChatHistory {
         chat_id: &str,
         pinned: bool,
     ) -> Result<UiCommandReceipt, String> {
-        self.ensure_expected(expected_head)?;
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         history_index::append_command(
             &self.store,
@@ -1043,7 +1061,7 @@ impl ChatHistory {
         expected_head: u64,
         chat_id: &str,
     ) -> Result<UiCommandReceipt, String> {
-        self.ensure_expected(expected_head)?;
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         let index = self.index()?;
         let mut facts = vec![(
@@ -1145,6 +1163,7 @@ impl ChatHistory {
         child: &ChatIdentityV1,
         child_head: u64,
     ) -> Result<UiCommandReceipt, String> {
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         self.require_visible_entry(parent_chat_id.as_str())?;
         history_index::append_command(
             &self.store,
@@ -1198,7 +1217,11 @@ impl ChatHistory {
     }
 
     pub(crate) fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
+        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
         let mut index = self.index()?;
+        if let Some(identity) = &self.bound_identity {
+            index.selected_chat_id = identity.chat_id.clone();
+        }
         let indexed_position = index
             .entries
             .iter()
@@ -1290,6 +1313,7 @@ impl ChatHistory {
             })
             .collect();
         Ok(RuntimeSnapshot {
+            active_chat_ids: Vec::new(),
             context_model: frozen.as_ref().map(|record| super::dto::ContextModelDto {
                 name: record.context.model_name.clone(),
                 context_window: record.context.model_snapshot.context_window,

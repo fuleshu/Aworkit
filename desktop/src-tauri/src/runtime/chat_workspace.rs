@@ -7,6 +7,7 @@ use std::{
 use aworkit_protocol::StableId;
 use aworkit_trusted_core::{ProjectCoordinator, WorkspaceBindingV1};
 
+#[derive(Clone)]
 pub(crate) struct ChatWorkspaceStore {
     root: PathBuf,
 }

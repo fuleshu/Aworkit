@@ -68,6 +68,8 @@ function configuration(): SettingsConfigurationV2 {
     },
     projects: [],
     appearance: { mode: "system", fontScale: 1 },
+    chatDefaults: {},
+    layout: {},
   };
 }
 

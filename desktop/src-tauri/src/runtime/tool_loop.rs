@@ -1699,16 +1699,15 @@ impl BoundFileToolAuthorityV1 {
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         self.run_events.publish_tool_started(call);
         let result =
-            self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, false);
+            self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation);
         self.publish_tool_outcome(call, &result);
         result.and_then(|settled| {
             self.compress_settlement(outer_invocation_id, call, settled, cancellation)
         })
     }
 
-    /// Same broker flow with delivery scoped to exactly this invocation's
-    /// outbox entry. Subagent children use it so their deliveries never scan
-    /// an in-flight sibling dispatch as abandoned.
+    /// Child entry point. Every invocation now uses the same scoped delivery,
+    /// so both sibling Chats and child tools remain independent.
     pub(crate) fn invoke_v1_scoped(
         &self,
         outer_invocation_id: &StableId,
@@ -1716,13 +1715,7 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
-        self.run_events.publish_tool_started(call);
-        let result =
-            self.invoke_v1_with_delivery(outer_invocation_id, turn, call, cancellation, true);
-        self.publish_tool_outcome(call, &result);
-        result.and_then(|settled| {
-            self.compress_settlement(outer_invocation_id, call, settled, cancellation)
-        })
+        self.invoke_v1(outer_invocation_id, turn, call, cancellation)
     }
 
     fn invoke_v1_with_delivery(
@@ -1731,7 +1724,6 @@ impl BoundFileToolAuthorityV1 {
         turn: u32,
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
-        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         let (broker, proposal, replayed) = self.prepare_broker(outer_invocation_id, turn, call)?;
         let proposal_id = proposal.proposal_id.clone();
@@ -1750,7 +1742,6 @@ impl BoundFileToolAuthorityV1 {
                 &proposal_id,
                 challenge,
                 cancellation,
-                scoped_delivery,
             ),
             _ => self.complete_broker_decision(
                 broker,
@@ -1759,7 +1750,6 @@ impl BoundFileToolAuthorityV1 {
                 replayed,
                 call,
                 cancellation,
-                scoped_delivery,
             ),
         }
     }
@@ -1795,7 +1785,6 @@ impl BoundFileToolAuthorityV1 {
             call,
             response,
             cancellation,
-            false,
         )
     }
 
@@ -1806,7 +1795,6 @@ impl BoundFileToolAuthorityV1 {
         call: &ModelToolCallV1,
         response: &ApprovalResponseV1,
         cancellation: &CancellationToken,
-        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         let (broker, proposal, replayed) = self.prepare_broker(outer_invocation_id, turn, call)?;
         let proposal_id = proposal.proposal_id.clone();
@@ -1868,7 +1856,6 @@ impl BoundFileToolAuthorityV1 {
                 replayed,
                 call,
                 cancellation,
-                scoped_delivery,
             ),
         }
     }
@@ -1994,7 +1981,6 @@ impl BoundFileToolAuthorityV1 {
         replayed: bool,
         call: &ModelToolCallV1,
         cancellation: &CancellationToken,
-        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         if cancellation.is_cancelled() {
             return Err(WorkflowPipelineError::Host(
@@ -2020,16 +2006,9 @@ impl BoundFileToolAuthorityV1 {
                 context: self.context.clone(),
                 run_events: self.run_events.clone(),
             };
-            // Top-level deliveries drain every pending outbox; nested
-            // deliveries (subagent children) target exactly this invocation
-            // so the in-flight parent dispatch is not seen as abandoned.
-            let delivery = if scoped_delivery {
-                broker
-                    .deliver_pending_dispatch_for(&invocation_id, &host)
-                    .map(|_| 0_usize)
-            } else {
-                broker.deliver_dispatches(&host)
-            };
+            // Other Chats and nested agents may own pending dispatches. Only
+            // this invocation may be delivered or classified as interrupted.
+            let delivery = broker.deliver_pending_dispatch_for(&invocation_id, &host);
             self.reconcile_outcome(&broker, &invocation_id)?;
             if self.runtime.ledger.settlement(&invocation_id)?.is_none() {
                 return Err(broker_error(
@@ -4386,7 +4365,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_drain_uses_each_pending_records_manifest() {
+    fn dispatch_is_scoped_to_its_invocation_and_frozen_manifest() {
         let root = TempDir::new().expect("root");
         let workspace_a = root.path().join("workspace-a");
         let workspace_b = root.path().join("workspace-b");
@@ -4505,19 +4484,20 @@ mod tests {
         let (pending_a, _) = stage_pending(&authority_a, &outer_a, &call_a);
         let settled_b = authority_b
             .invoke_v1(&outer_b, 1, &call_b, &CancellationToken::default())
-            .expect("second Run drains both manifests");
+            .expect("second Run executes only its own invocation");
         assert_eq!(settled_b.result.content["content"], "second run");
         assert!(
             runtime
                 .records
                 .outcome(&pending_a)
-                .expect("stale pending outcome")
-                .is_some()
+                .expect("sibling pending outcome")
+                .is_none()
         );
+        assert!(runtime.ledger.settlement(&pending_a).expect("sibling settlement").is_none());
 
         let settled_a = authority_a
             .invoke_v1(&outer_a, 1, &call_a, &CancellationToken::default())
-            .expect("first Run reconciles without replay");
+            .expect("first Run resumes its own pending dispatch");
         assert_eq!(settled_a.result.content["content"], "first run");
         assert!(settled_a.activity.replayed);
         assert!(
@@ -4602,7 +4582,7 @@ mod tests {
         )
         .expect("branch switch");
         let broker = DurableInvocationBroker::new(runtime.ledger.clone(), TOOL_APPROVAL_TTL_MILLIS);
-        let _ = broker.deliver_dispatches(&FileToolHostPortV1 {
+        let _ = broker.deliver_pending_dispatch_for(&pending_c, &FileToolHostPortV1 {
             runtime: runtime.clone(),
             context: authority_c.context.clone(),
             run_events: authority_c.run_events.clone(),
@@ -4642,7 +4622,6 @@ mod tests {
                 true,
                 &call_c,
                 &CancellationToken::default(),
-                false,
             )
             .expect("definite pre-start rejection must return to the model");
         assert!(rejected.result.is_error);

@@ -332,6 +332,21 @@ pre {
   min-width: 0;
   position: relative;
 }
+
+.chat-busy-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  margin: 0 2px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: chat-busy-spin 0.9s linear infinite;
+}
+@keyframes chat-busy-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-busy-icon { animation: none; }
+}
 .navigation-pane .chat-history-link {
   min-width: 0;
   padding-right: 2px;

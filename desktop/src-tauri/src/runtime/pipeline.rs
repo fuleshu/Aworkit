@@ -349,6 +349,7 @@ pub enum WorkflowPipelineError {
 /// Long-lived service seam. It owns no editable settings representation.
 mod approval_control;
 
+#[derive(Clone)]
 pub struct WorkflowExecutionPipeline {
     root: PathBuf,
     projects: ProjectCoordinator,
@@ -367,6 +368,10 @@ pub struct WorkflowExecutionPipeline {
 }
 
 impl WorkflowExecutionPipeline {
+    /// Share host/ledger ownership but route all execution facts to this Chat.
+    pub(crate) fn with_chat_events(&self, event_committer: Arc<dyn SemanticEventCommitter>) -> Self {
+        Self { event_committer, ..self.clone() }
+    }
     pub fn open(data_root: impl AsRef<Path>) -> Result<Self, WorkflowPipelineError> {
         Self::open_with_credential_store(data_root, Arc::new(NativeCredentialStore::new()))
     }
@@ -729,9 +734,9 @@ impl WorkflowExecutionPipeline {
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?,
         };
 
-        self.reconcile_persisted_outcomes(&broker)?;
+        self.reconcile_persisted_outcomes(&broker, &broker_invocation_id)?;
         if self.ledger.settlement(&broker_invocation_id)?.is_none() {
-            self.prepare_pending_leases(&broker, &lease_authority)?;
+            self.prepare_pending_leases(&broker, &lease_authority, &broker_invocation_id)?;
             let host_port = PipelineHostPort {
                 images: super::images::ChatImageStore::new(&self.root),
                 host: self.host.clone(),
@@ -749,8 +754,8 @@ impl WorkflowExecutionPipeline {
             // The broker commits DispatchAttempted before this call. A transport
             // error or an old attempted dispatch is conservatively settled by
             // the broker and is never automatically replayed.
-            let _ = broker.deliver_dispatches(&host_port);
-            self.reconcile_persisted_outcomes(&broker)?;
+            let _ = broker.deliver_pending_dispatch_for(&broker_invocation_id, &host_port);
+            self.reconcile_persisted_outcomes(&broker, &broker_invocation_id)?;
         }
 
         if self.ledger.settlement(&broker_invocation_id)?.is_none()
@@ -1144,7 +1149,7 @@ impl WorkflowExecutionPipeline {
                 };
                 self.records.record_outcome(&record)?;
                 let broker = DurableInvocationBroker::new(self.ledger.clone(), APPROVAL_TTL_MILLIS);
-                self.reconcile_persisted_outcomes(&broker)?;
+                self.reconcile_persisted_outcomes(&broker, &broker_invocation_id)?;
                 let (outcome_hash, _uncertain) = self
                     .ledger
                     .settlement(&broker_invocation_id)?
@@ -1221,8 +1226,10 @@ impl WorkflowExecutionPipeline {
         &self,
         broker: &DurableInvocationBroker,
         authority: &PipelineLeaseAuthority,
+        invocation_id: &StableId,
     ) -> Result<(), WorkflowPipelineError> {
         for outbox in broker.pending_dispatches().map_err(broker_error)? {
+            if &outbox.dispatch.invocation_id != invocation_id { continue; }
             let record = self
                 .records
                 .execution_for_dispatch(&outbox.dispatch)?
@@ -1481,8 +1488,10 @@ impl WorkflowExecutionPipeline {
     fn reconcile_persisted_outcomes(
         &self,
         broker: &DurableInvocationBroker,
+        invocation_id: &StableId,
     ) -> Result<(), WorkflowPipelineError> {
         for outcome in self.records.outcomes()? {
+            if &outcome.invocation_id != invocation_id { continue; }
             let events = self
                 .ledger
                 .events(&outcome.invocation_id)

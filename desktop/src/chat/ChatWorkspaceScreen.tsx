@@ -20,6 +20,7 @@ import { controlsFor } from "./composer";
 import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
+import { ComposerDrafts } from "./composerDrafts";
 import { useChatErrorNotices } from "./useChatErrorNotices";
 import type { ChatIntent, TimelineItem } from "./types";
 import {
@@ -72,6 +73,7 @@ export function ChatWorkspaceScreen({
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
+  const composerDrafts = useMemo(() => new ComposerDrafts(), []);
   const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const inspector = usePaneWidth(320, 280, 420);
@@ -247,7 +249,6 @@ export function ChatWorkspaceScreen({
     )
       return;
     handledNewChatRequest.current = newChatRequest;
-    if (runtime.snapshot.chat.recoveryPending) return;
     setSelectedTimelineId(null);
     void runtime.dispatch(commandIds.createIntent("new_chat"));
   }, [commandIds, newChatRequest, runtime]);
@@ -306,7 +307,7 @@ export function ChatWorkspaceScreen({
       </>
     );
   const chat = snapshot.chat;
-  const runFailure = useMemo(() => {
+  const runFailure = (() => {
     const failed = runtime.events.filter(
       (event) => event.kind === "execution.failed" && event.eventId !== dismissedRunFailure,
     );
@@ -321,7 +322,7 @@ export function ChatWorkspaceScreen({
           ? payload.body
           : "The trusted core recorded this failure. Inspect Run details for the exact record.",
     };
-  }, [runtime.events, dismissedRunFailure]);
+  })();
   const dismissRunFailure = (id: string) => setDismissedRunFailure(id);
   const visibleChat = liveTurnRunning
     ? { ...chat, phase: "running" as const }
@@ -402,8 +403,8 @@ export function ChatWorkspaceScreen({
             <div>
               <strong>Choose how to recover this command.</strong>
               <p>
-                Aworkit preserved the exact staged command. Resume replays that
-                command; normal input, New Chat, and Stop remain locked.
+                Aworkit preserved the exact staged command. Resume recovers that
+                command. You can open other Chats or create a New Chat while this one awaits recovery.
               </p>
             </div>
             <div className="recovery-actions">
@@ -501,6 +502,7 @@ export function ChatWorkspaceScreen({
           onAction={cardAction}
         />
         <ChatComposer
+          drafts={composerDrafts}
           key={chat.chatId + (defaultWorkflowId ?? "")}
           approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
             disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
@@ -528,7 +530,7 @@ export function ChatWorkspaceScreen({
             }} />}
           projects={snapshot.projects}
           stale={runtime.stale}
-            pending={runtime.pendingCommandIds.size > 0 && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0}
+            pending={(runtime.pendingCommandIds.size > 0 || snapshot.activeChatIds?.includes(chat.chatId) === true) && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0}
           workflows={workflows}
           defaultWorkflowId={defaultWorkflowId}
           workflowChecking={workflowChecking}

@@ -19,10 +19,11 @@ use super::{
     pipeline::MAXIMUM_WORKFLOW_SNAPSHOT_BYTES,
     provider_health::ProviderHealth,
     settings_v2::{
-        AppearanceConfigurationV2, AppearanceModeV2, CredentialMetadataConfigurationV2,
-        ModelConfigurationV2, ModelTargetV2, ModelTierResolutionV2, ProjectConfigurationV2,
-        ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2,
-        WorkspaceConfigurationV2, WorkspaceKindV2,
+        AppearanceConfigurationV2, AppearanceModeV2, ChatDefaultsConfigurationV2,
+        CredentialMetadataConfigurationV2, LayoutConfigurationV2, ModelConfigurationV2,
+        ModelTargetV2, ModelTierResolutionV2, ProjectConfigurationV2, ProviderConfigurationV2,
+        SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, WorkspaceConfigurationV2,
+        WorkspaceKindV2,
     },
 };
 
@@ -75,9 +76,14 @@ pub(crate) struct ProviderDocument {
     pub credential_revision: Option<u64>,
 }
 
+#[derive(Clone)]
 pub(crate) struct CanonicalDocuments {
     repository: RepositoryRoot,
     settings_version: u64,
+    /// Monotonic version of Settings **edits**. It moves only when a caller saves
+    /// the document, so a host-owned write such as the remembered Chat defaults
+    /// cannot invalidate an editor's optimistic snapshot.
+    settings_edit_version: u64,
     settings: SettingsDocument,
     library_version: u64,
     default_workflow_id: String,
@@ -132,6 +138,7 @@ impl CanonicalDocuments {
         Ok(Self {
             repository,
             settings_version,
+            settings_edit_version: settings_version,
             settings,
             library_version,
             default_workflow_id,
@@ -143,10 +150,15 @@ impl CanonicalDocuments {
         &self.settings
     }
 
+    /// The Settings version a caller edits against and displays.
+    pub(crate) fn settings_edit_version(&self) -> u64 {
+        self.settings_edit_version
+    }
+
     pub(crate) fn settings_snapshot(&self, health: &ProviderHealth) -> SettingsSnapshot {
         let provider = legacy_provider(&self.settings);
         SettingsSnapshot {
-            version: self.settings_version,
+            version: self.settings_edit_version,
             appearance: appearance_name(self.settings.appearance.mode).into(),
             portable_history_enabled: self.settings.data.portable_history_enabled,
             project_roots: self
@@ -170,6 +182,47 @@ impl CanonicalDocuments {
         expected_version: u64,
         settings: SettingsDocument,
     ) -> Result<u64, String> {
+        self.save_settings_edit(expected_version, self.stored_settings_version(), settings)
+    }
+
+    /// Persists one Settings edit.
+    ///
+    /// `expected_edit_version` is the optimistic fence the caller read;
+    /// `expected_stored_version` is the document version the host last wrote.
+    /// They differ only when a host-owned change (such as the remembered Chat
+    /// defaults) advanced the document without invalidating the caller's
+    /// snapshot, which is exactly the case this keeps working.
+    pub(crate) fn save_settings_edit(
+        &mut self,
+        expected_edit_version: u64,
+        expected_stored_version: u64,
+        settings: SettingsDocument,
+    ) -> Result<u64, String> {
+        if expected_edit_version != self.settings_edit_version {
+            return Err(format!(
+                "settings version conflict: expected {expected_edit_version}, actual {}",
+                self.settings_edit_version
+            ));
+        }
+        let saved = self.save_settings_in_place(expected_stored_version, settings)?;
+        self.settings_edit_version = self.settings_edit_version.saturating_add(1);
+        Ok(saved)
+    }
+
+    /// The document version the host last wrote, for a caller that must run the
+    /// optimistic lock itself.
+    pub(crate) fn stored_settings_version(&self) -> u64 {
+        self.settings_version
+    }
+
+    /// Persists one host-owned Settings change without moving the Settings edit
+    /// version. Callers must pass the version they read, so the document is still
+    /// written under an optimistic lock.
+    pub(crate) fn save_settings_in_place(
+        &mut self,
+        expected_version: u64,
+        mut settings: SettingsDocument,
+    ) -> Result<u64, String> {
         if expected_version != self.settings_version {
             return Err(format!(
                 "settings version conflict: expected {expected_version}, actual {}",
@@ -192,10 +245,53 @@ impl CanonicalDocuments {
         Ok(saved.version)
     }
 
+    /// Records the Chat selections a new Chat should start from.
+    ///
+    /// This is a host-owned convenience cache, not a Settings edit: it runs with
+    /// the version the host already holds, is never submitted by the Settings
+    /// editor, and a failure leaves the previous defaults in place rather than
+    /// failing the turn that recorded them.
+    pub(crate) fn remember_chat_defaults(
+        &mut self,
+        defaults: ChatDefaultsConfigurationV2,
+    ) -> Result<(), String> {
+        if self.settings.chat_defaults == defaults {
+            return Ok(());
+        }
+        let mut settings = self.settings.clone();
+        settings.chat_defaults = defaults;
+        // A host-owned write still advances the document version, because the
+        // Settings editor and the credential reconciliation both fence on it.
+        // Remembering a selection happens once per changed selection, so this is
+        // not a hot path, and the editor simply reads the new version on its next
+        // snapshot.
+        self.save_settings(self.settings_version, settings)
+            .map(|_| ())
+    }
+
+    /// The persisted desktop window placement and panel separators.
+    pub(crate) fn layout(&self) -> LayoutConfigurationV2 {
+        self.settings.layout.clone()
+    }
+
+    /// Persists the desktop window placement and panel separators.
+    ///
+    /// This is a host-owned write: it advances the stored document without
+    /// requiring a Settings edit, and an unusable placement is discarded rather
+    /// than written, so a bad measurement can never make the app unopenable.
+    pub(crate) fn update_layout(&mut self, layout: LayoutConfigurationV2) -> Result<(), String> {
+        let mut settings = self.settings.clone();
+        settings.layout = layout;
+        if settings.layout.validate().is_err() {
+            return Err("desktop layout is outside its persisted bounds".into());
+        }
+        self.save_settings_in_place(self.settings_version, settings)
+            .map(|_| ())
+    }
+
     pub(crate) fn workflow_snapshot(&self) -> WorkflowSnapshot {
         self.workflow_snapshot_for(&self.default_workflow_id)
     }
-
     pub(crate) fn workflow_snapshot_for(&self, workflow_id: &str) -> WorkflowSnapshot {
         match self.workflows.get(workflow_id) {
             Some(state) => WorkflowSnapshot {

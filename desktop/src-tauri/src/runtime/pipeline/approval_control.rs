@@ -237,7 +237,7 @@ impl WorkflowExecutionPipeline {
         };
         if let Some(outcome) = outcome {
             let broker = DurableInvocationBroker::new(self.ledger.clone(), APPROVAL_TTL_MILLIS);
-            self.reconcile_persisted_outcomes(&broker)?;
+            self.reconcile_persisted_outcomes(&broker, &invocation_id)?;
             result.outcome_hash = self
                 .ledger
                 .settlement(&invocation_id)?

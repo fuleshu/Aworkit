@@ -79,6 +79,7 @@ const runtimeEventSchema = z
   })
   .strict();
 const runtimeSnapshotSchema = z.object({
+  activeChatIds: z.array(z.string()).default([]),
   contextModel: z.object({ name: z.string(), contextWindow: z.number().positive().nullable() }).nullable().optional(),
   version: z.number().int().nonnegative(),
   throughSequence: z.number().int().nonnegative(),
@@ -97,6 +98,7 @@ const receiptSchema = z.object({
   reason: z.string().nullable(),
 });
 export interface RuntimeSnapshot {
+  readonly activeChatIds?: readonly string[];
   readonly contextModel?: import("./contextProjection").ContextModel | null;
   readonly version: number;
   readonly throughSequence: number;
@@ -117,7 +119,7 @@ export interface RuntimeReceipt {
 }
 export interface ChatCorePort {
   contextModel?(chatId: string, workflowId: string | null): Promise<import("./contextProjection").ContextModel | null>;
-  snapshot(afterSequence: number): Promise<RuntimeSnapshot>;
+  snapshot(afterSequence: number, chatId?: string): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
   subscribeEvents?(
     listener: (event: CoreEventEnvelope) => void,
@@ -127,6 +129,7 @@ export interface ChatCorePort {
 export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
   const parsed = runtimeSnapshotSchema.parse(input);
   return {
+    activeChatIds: parsed.activeChatIds,
     contextModel: parsed.contextModel,
     version: parsed.version,
     throughSequence: parsed.throughSequence,
@@ -184,9 +187,9 @@ export class TauriChatCorePort implements ChatCorePort {
     return z.object({ name: z.string(), contextWindow: z.number().positive().nullable() }).nullable()
       .parse(await invoke("desktop_context_model", { chatId, workflowId }));
   }
-  public async snapshot(afterSequence: number): Promise<RuntimeSnapshot> {
+  public async snapshot(afterSequence: number, chatId?: string): Promise<RuntimeSnapshot> {
     return normalizeRuntimeSnapshot(
-      await invoke("desktop_snapshot", { afterSequence }),
+      await invoke("desktop_snapshot", { afterSequence, chatId }),
     );
   }
   public async command(

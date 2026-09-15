@@ -477,12 +477,11 @@ describe("Chat native-port recovery contracts", () => {
     expect(input).toHaveValue("preserve this draft");
   });
 
-  it("shows fail-after-stage recovery immediately and unlocks New Chat only after abandonment", async () => {
+  it("shows fail-after-stage recovery while allowing a separate New Chat", async () => {
     const user = userEvent.setup();
     const onNewChat = vi.fn();
-    const confirm = vi.fn(async () => true);
     const commands: ChatIntent[] = [];
-    let state: "normal" | "recovery" | "abandoned" | "new" = "normal";
+    let state: "normal" | "recovery" | "new" = "normal";
     const normal = {
       ...snapshot(1, "Staged failure Chat", [{ sequence: 1 }]),
       chat: {
@@ -499,18 +498,6 @@ describe("Chat native-port recovery contracts", () => {
         ...normal.chat,
         phase: "paused" as const,
         recoveryPending: true,
-      },
-    };
-    const abandoned = {
-      ...snapshot(2, "Staged failure Chat", [
-        { sequence: 1 },
-        { sequence: 2 },
-      ]),
-      chat: {
-        ...normal.chat,
-        phase: "failed" as const,
-        recoveryPending: false,
-        expectedVersion: 2,
       },
     };
     const newChatSnapshot = snapshot(3, "New Chat", [
@@ -540,22 +527,13 @@ describe("Chat native-port recovery contracts", () => {
       async snapshot() {
         if (state === "normal") return normal;
         if (state === "recovery") return recovery;
-        return state === "abandoned" ? abandoned : newChatProjection;
+        return newChatProjection;
       },
       async command(intent) {
         commands.push(intent);
         if (intent.type === "enqueue") {
           state = "recovery";
           throw new Error("provider failed after durable command staging");
-        }
-        if (intent.type === "abandon_recovery") {
-          state = "abandoned";
-          return {
-            commandId: intent.commandId,
-            accepted: true,
-            currentVersion: 2,
-            reason: null,
-          };
         }
         if (intent.type === "new_chat") {
           state = "new";
@@ -571,16 +549,12 @@ describe("Chat native-port recovery contracts", () => {
     };
 
     function FailureRecoveryHarness(): React.JSX.Element {
-      const [recoveryPending, setRecoveryPending] = useState(false);
       const [newChatRequest, setNewChatRequest] = useState(0);
       return (
         <>
           <NavigationPane
             route="chat"
             collapsed={false}
-            newChatDisabledReason={
-              recoveryPending ? "Resolve interrupted command first" : null
-            }
             onNavigate={() => undefined}
             onNewChat={() => {
               onNewChat();
@@ -589,11 +563,9 @@ describe("Chat native-port recovery contracts", () => {
             onToggleCollapsed={() => undefined}
           />
           <ChatWorkspaceScreen
-            confirmRecoveryAbandon={confirm}
             corePort={port}
             newChatRequest={newChatRequest}
             pollIntervalMs={60_000}
-            onRecoveryPendingChange={setRecoveryPending}
           />
         </>
       );
@@ -608,19 +580,9 @@ describe("Chat native-port recovery contracts", () => {
     ).toBeVisible();
     expect(input).toBeDisabled();
     const newChat = screen.getByRole("button", { name: /New Chat/ });
-    expect(newChat).toBeDisabled();
+    expect(newChat).toBeEnabled();
     expect(commands.map(({ type }) => type)).toEqual(["enqueue"]);
 
-    await user.click(
-      screen.getByRole("button", { name: "Abandon as uncertain" }),
-    );
-    await waitFor(() =>
-      expect(commands.map(({ type }) => type)).toEqual([
-        "enqueue",
-        "abandon_recovery",
-      ]),
-    );
-    await waitFor(() => expect(newChat).toBeEnabled());
     await user.click(newChat);
     expect(onNewChat).toHaveBeenCalledOnce();
     expect(
@@ -629,7 +591,6 @@ describe("Chat native-port recovery contracts", () => {
     await waitFor(() =>
       expect(commands.map(({ type }) => type)).toEqual([
         "enqueue",
-        "abandon_recovery",
         "new_chat",
       ]),
     );
@@ -688,7 +649,7 @@ describe("Chat native-port recovery contracts", () => {
     expect(screen.getByRole("textbox", { name: "Chat input" })).toBeDisabled();
   });
 
-  it("keeps New Chat locked until confirmed uncertain abandonment is committed", async () => {
+  it("requires confirmation for abandonment while keeping New Chat available", async () => {
     const user = userEvent.setup();
     const onNewChat = vi.fn();
     const confirm = vi
@@ -737,17 +698,11 @@ describe("Chat native-port recovery contracts", () => {
     };
 
     function RecoveryHarness(): React.JSX.Element {
-      const [recoveryPending, setRecoveryPending] = useState(false);
       return (
         <>
           <NavigationPane
             route="chat"
             collapsed={false}
-            newChatDisabledReason={
-              recoveryPending
-                ? "Resume the interrupted command before starting a New Chat"
-                : null
-            }
             onNavigate={() => undefined}
             onNewChat={onNewChat}
             onToggleCollapsed={() => undefined}
@@ -756,7 +711,6 @@ describe("Chat native-port recovery contracts", () => {
             confirmRecoveryAbandon={confirm}
             corePort={port}
             pollIntervalMs={60_000}
-            onRecoveryPendingChange={setRecoveryPending}
           />
         </>
       );
@@ -766,12 +720,8 @@ describe("Chat native-port recovery contracts", () => {
       <RecoveryHarness />,
     );
     const newChat = screen.getByRole("button", { name: /New Chat/ });
-    await waitFor(() => expect(newChat).toBeDisabled());
-    expect(newChat).toHaveAttribute(
-      "title",
-      "Resume the interrupted command before starting a New Chat",
-    );
-    const abandon = screen.getByRole("button", {
+    expect(newChat).toBeEnabled();
+    const abandon = await screen.findByRole("button", {
       name: "Abandon as uncertain",
     });
     await user.click(abandon);
@@ -780,7 +730,7 @@ describe("Chat native-port recovery contracts", () => {
       expect.stringContaining("without calling its provider or tools"),
     );
     expect(commands).toEqual([]);
-    expect(newChat).toBeDisabled();
+    expect(newChat).toBeEnabled();
 
     await user.click(abandon);
     await waitFor(() => expect(commands).toHaveLength(1));

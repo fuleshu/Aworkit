@@ -21,6 +21,11 @@ import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
+import {
+  captureWindowFrame,
+  createDesktopLayoutPort,
+  type DesktopLayout,
+} from "./shell/desktopLayout";
 import { usePaneWidth } from "./shell/usePaneWidth";
 import { useSettingsNavigation } from "./shell/settingsNavigation";
 import { NotificationStore } from "./notifications/NotificationStore";
@@ -57,8 +62,46 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   const mainRef = useRef<HTMLElement>(null);
   const { route, mountedRoutes, visit, navigate, back, registerLeaveGuard, returnLabel } = useSettingsNavigation(mainRef, store);
   const workflowLibraryPort = useMemo(() => createWorkflowLibraryPort(), []);
-  const navigation = usePaneWidth(208, 184, 640);
+  const layoutPort = useMemo(() => createDesktopLayoutPort(), []);
+  const [desktopLayout, setDesktopLayout] = useState<DesktopLayout>({});
+  const navigation = usePaneWidth(208, 184, 640, desktopLayout.historyPaneWidth);
   const { width: navigationWidth, setWidth: setNavigationWidth } = navigation;
+  const inspectorWidth = useRef<number | undefined>(undefined);
+  // The persisted placement arrives asynchronously, so the frame is re-seated
+  // once it does. The window opens at the platform default for that first frame
+  // rather than blocking startup on a disk read.
+  useEffect(() => {
+    let current = true;
+    void layoutPort
+      .snapshot()
+      .then((layout) => {
+        if (current) setDesktopLayout(layout);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [layoutPort]);
+  // The geometry is captured when the window is going away, which is the only
+  // moment this session's final placement is known. `pagehide` covers both a
+  // normal close and a renderer teardown.
+  useEffect(() => {
+    const capture = () => {
+      void (async () => {
+        const frame = await captureWindowFrame();
+        await layoutPort
+          .commit(frame, {
+            historyPaneWidth: navigationWidth,
+            ...(inspectorWidth.current === undefined
+              ? {}
+              : { inspectorPaneWidth: inspectorWidth.current }),
+          })
+          .catch(() => undefined);
+      })();
+    };
+    window.addEventListener("pagehide", capture);
+    return () => window.removeEventListener("pagehide", capture);
+  }, [layoutPort, navigationWidth]);
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
   const [historyActionRequest, setHistoryActionRequest] =
@@ -82,9 +125,8 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
     { kind: "confirmation" }
   > | null>(null);
   const openNewChat = useCallback(() => {
-    if (chatRecoveryPending !== false) return;
     navigate("chat", () => setNewChatRequest((request) => request + 1));
-  }, [chatRecoveryPending, navigate]);
+  }, [navigate]);
   const requestHistoryAction = useCallback(
     (
       type: ChatHistoryActionRequest["type"],
@@ -199,26 +241,19 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         onNavigate={navigate}
         onNewChat={openNewChat}
         newChatDisabledReason={
-          chatRecoveryPending === null
-            ? "Checking interrupted-command recovery state before starting a New Chat"
-            : chatRecoveryPending
-            ? "Resume the interrupted command before starting a New Chat"
-            : null
+          chatRuntimeState === null ? "Loading Chats"
+            : chatRuntimeState.stale ? "Resynchronize Chat history before changing it" : null
         }
         onToggleCollapsed={() => setCollapsed((value) => !value)}
-        history={chatRuntimeState?.snapshot.history}
+        history={chatRuntimeState?.snapshot.history.map(entry => ({ ...entry, busy: chatRuntimeState.snapshot.activeChatIds?.includes(entry.chatId) ?? false }))}
         projects={chatRuntimeState?.snapshot.projects}
         selectedChatId={chatRuntimeState?.snapshot.chat.chatId}
         historyDisabledReason={
           chatRuntimeState === null
             ? "Loading Chat history"
-            : chatRecoveryPending
-              ? "Resolve the interrupted Chat command before changing history"
-              : chatRuntimeState.stale
+            : chatRuntimeState.stale
                 ? "Resynchronize Chat history before changing it"
-                : chatRuntimeState.pending
-                  ? "Wait for the current Chat command to commit"
-                  : null
+                : null
         }
         onSelectChat={(chatId) => {
           navigate("chat", () => {

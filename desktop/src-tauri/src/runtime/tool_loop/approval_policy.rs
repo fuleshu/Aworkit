@@ -43,7 +43,6 @@ impl BoundFileToolAuthorityV1 {
         proposal_id: &StableId,
         challenge: ApprovalChallengeV1,
         cancellation: &CancellationToken,
-        scoped_delivery: bool,
     ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
         if cancellation.is_cancelled() {
             return Err(WorkflowPipelineError::Host(
@@ -201,7 +200,6 @@ impl BoundFileToolAuthorityV1 {
                     now_epoch_millis: current_epoch_millis(),
                 },
                 cancellation,
-                scoped_delivery,
             ),
             None => Err(WorkflowPipelineError::ToolApproval(pending)),
         }

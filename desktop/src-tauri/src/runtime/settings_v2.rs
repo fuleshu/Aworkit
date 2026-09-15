@@ -76,6 +76,17 @@ pub struct SettingsConfigurationV2 {
     pub data: DataConfigurationV2,
     pub projects: Vec<ProjectConfigurationV2>,
     pub appearance: AppearanceConfigurationV2,
+    /// Last Chat selections reused when a new Chat is created. Documents
+    /// written before this section existed load with nothing remembered, which
+    /// falls back to the configured approval default and the library default
+    /// workflow.
+    #[serde(default)]
+    pub chat_defaults: ChatDefaultsConfigurationV2,
+    /// Persisted desktop window placement and panel separator layout. Written
+    /// by the desktop host when the window closes, never by the Settings
+    /// editor.
+    #[serde(default)]
+    pub layout: LayoutConfigurationV2,
 }
 
 impl Default for SettingsConfigurationV2 {
@@ -93,13 +104,15 @@ impl Default for SettingsConfigurationV2 {
             data: DataConfigurationV2::default(),
             projects: Vec::new(),
             appearance: AppearanceConfigurationV2::default(),
+            chat_defaults: ChatDefaultsConfigurationV2::default(),
+            layout: LayoutConfigurationV2::default(),
         }
     }
 }
 
 impl SettingsConfigurationV2 {
     /// Validates the full document, including all cross-section references.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&mut self) -> Result<(), String> {
         if self.schema_version != SETTINGS_SCHEMA_VERSION_V2 {
             return Err(format!(
                 "settings schemaVersion must be {SETTINGS_SCHEMA_VERSION_V2}, got {}",
@@ -236,6 +249,13 @@ impl SettingsConfigurationV2 {
             project.validate()?;
         }
         self.appearance.validate()?;
+        self.chat_defaults.validate()?;
+        // Layout is written by the desktop host, not the Settings editor. An
+        // out-of-range placement must never be able to fail a load: it is
+        // discarded, and the window opens at its platform default instead.
+        if self.layout.validate().is_err() {
+            self.layout = LayoutConfigurationV2::default();
+        }
         Ok(())
     }
 
@@ -1914,8 +1934,108 @@ impl AppearanceConfigurationV2 {
     }
 }
 
-pub(crate) fn standard_model_tiers() -> Vec<ModelTierConfigurationV2> {
-    STANDARD_TIERS
+/// The last Chat selections reused when a new Chat is created.
+///
+/// Every field is optional: a document written before this section existed, or
+/// after clearing a selection, remembers nothing and falls back to the
+/// configured approval default and the library default workflow.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatDefaultsConfigurationV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<super::approvals::ApprovalMode>,
+}
+
+impl ChatDefaultsConfigurationV2 {
+    fn validate(&self) -> Result<(), String> {
+        validate_optional_stable_id("remembered workflow id", self.workflow_id.as_deref())?;
+        validate_optional_stable_id("remembered project id", self.project_id.as_deref())?;
+        Ok(())
+    }
+}
+
+/// Persisted desktop window placement and panel separator layout.
+///
+/// `x`/`y`/`width`/`height` are the outer window frame in physical pixels,
+/// exactly as the operating system reports them. Restoring them preserves the
+/// frame the user actually positioned, so a framed window is never re-seated
+/// with its client size and does not drift smaller on every restart. Panel
+/// separators are persisted separately because they are logical, not physical.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LayoutConfigurationV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_pane_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_pane_width: Option<u32>,
+    /// Device pixel ratio the persisted frame was captured at. Panel separators
+    /// are logical pixels, so restoring them on a display with a different
+    /// ratio scales them instead of applying a physical measurement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_factor: Option<f64>,
+}
+
+impl LayoutConfigurationV2 {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if let Some(x) = self.x
+            && x.unsigned_abs() > MAXIMUM_WINDOW_COORDINATE_V2.unsigned_abs()
+        {
+            return Err(format!(
+                "layout x must be within {MAXIMUM_WINDOW_COORDINATE_V2} pixels"
+            ));
+        }
+        if let Some(y) = self.y
+            && y.unsigned_abs() > MAXIMUM_WINDOW_COORDINATE_V2.unsigned_abs()
+        {
+            return Err(format!(
+                "layout y must be within {MAXIMUM_WINDOW_COORDINATE_V2} pixels"
+            ));
+        }
+        for (label, value) in [("width", self.width), ("height", self.height)] {
+            if let Some(value) = value
+                && !(1..=MAXIMUM_WINDOW_DIMENSION_V2).contains(&value)
+            {
+                return Err(format!(
+                    "layout {label} must be between 1 and {MAXIMUM_WINDOW_DIMENSION_V2} pixels"
+                ));
+            }
+        }
+        for (label, value) in [
+            ("historyPaneWidth", self.history_pane_width),
+            ("inspectorPaneWidth", self.inspector_pane_width),
+        ] {
+            if let Some(value) = value
+                && !(1..=MAXIMUM_PANE_WIDTH_V2).contains(&value)
+            {
+                return Err(format!(
+                    "layout {label} must be between 1 and {MAXIMUM_PANE_WIDTH_V2} pixels"
+                ));
+            }
+        }
+        if let Some(scale) = self.scale_factor
+            && (!scale.is_finite() || !(MINIMUM_SCALE_FACTOR_V2..=MAXIMUM_SCALE_FACTOR_V2).contains(&scale))
+        {
+            return Err(format!(
+                "layout scaleFactor must be between {MINIMUM_SCALE_FACTOR_V2} and {MAXIMUM_SCALE_FACTOR_V2}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn standard_model_tiers() -> Vec<ModelTierConfigurationV2> {    STANDARD_TIERS
         .iter()
         .map(|(id, name)| ModelTierConfigurationV2 {
             id: (*id).into(),
@@ -2653,7 +2773,7 @@ mod tests {
 
     #[test]
     fn default_document_has_all_standard_tiers_and_is_valid() {
-        let settings = SettingsConfigurationV2::default();
+        let mut settings = SettingsConfigurationV2::default();
         settings.validate().unwrap();
         assert_eq!(
             settings

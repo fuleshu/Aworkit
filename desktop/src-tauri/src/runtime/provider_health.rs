@@ -100,6 +100,7 @@ struct ProviderHealthDocumentV1 {
 }
 
 /// Versioned native projection store for provider health.
+#[derive(Clone)]
 pub(crate) struct ProviderHealthRegistry {
     repository: RepositoryRoot,
     version: u64,

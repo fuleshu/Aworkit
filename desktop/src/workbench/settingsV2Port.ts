@@ -614,6 +614,9 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
       projects: [],
       appearance: { mode: "system", fontScale: 1 },
       approvals: { defaultMode: "ask_for_approval" },
+      // A fresh profile remembers nothing and has no persisted window placement.
+      chatDefaults: {},
+      layout: {},
     },
     providerHealth: [],
   };

@@ -17,14 +17,14 @@ use aworkit_desktop::presentation::{
 use aworkit_desktop::runtime::{
     CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
     DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
-    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, McpProbeRequestV2, McpProbeResultV2,
-    ModelDiscoveryRequestV2, ModelDiscoveryResultV2, ProjectProbeRequestV2, ProjectProbeResultV2,
-    ProviderProbeRequestV2, ProviderProbeResultV2, ProviderTestInput, ProviderTestResult,
-    RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot, SettingsV2CommitInput,
-    SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2, UiCommandInput, UiCommandReceipt,
-    WorkflowCancellationController, WorkflowCommitInput, WorkflowCreateInput,
-    WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot, WorkflowRenameInput,
-    WorkflowSnapshot, WorkflowTargetInput,
+    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, LayoutConfigurationV2,
+    McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
+    ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
+    ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
+    SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
+    UiCommandInput, UiCommandReceipt, WorkflowCancellationController, WorkflowCommitInput,
+    WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot,
+    WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
 use tauri::{Emitter, Manager};
@@ -32,9 +32,8 @@ use tauri::{Emitter, Manager};
 type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
 
 /// Runs every potentially contended runtime access away from Tauri's IPC/UI
-/// dispatcher. A Chat execution deliberately owns the mutable runtime while it
-/// settles, but waiting for that ownership must never stall WebView rendering
-/// or delivery of live activity events.
+/// dispatcher. Chat execution uses separate workers, so these coordinator
+/// accesses never wait for a model or tool invocation to finish.
 async fn runtime_worker<T, F>(
     runtime: SharedRuntime,
     operation: &'static str,
@@ -106,6 +105,58 @@ fn native_window_action(
     aworkit_desktop::presentation::apply_window_action(&window, action)
 }
 
+/// The persisted desktop placement, read once when the shell mounts.
+#[tauri::command]
+async fn desktop_layout(runtime: tauri::State<'_, SharedRuntime>) -> Result<LayoutConfigurationV2, String> {
+    runtime_worker(runtime, "desktop layout", |runtime| Ok(runtime.layout())).await
+}
+
+/// Records the outer window frame and panel separators.
+///
+/// `width`/`height` are the **outer** frame in physical pixels, exactly as the
+/// operating system reports them, so restoring them re-seats the same frame the
+/// user positioned. A framed window would otherwise drift smaller on every
+/// restart by twice its border inset. Panel separators are logical pixels and
+/// carry the device pixel ratio they were captured at so a different display
+/// scales them instead of misreading them as physical.
+#[tauri::command]
+async fn desktop_layout_commit(
+    runtime: tauri::State<'_, SharedRuntime>,
+    frame: Option<CapturedFrameV1>,
+    history_pane_width: Option<u32>,
+    inspector_pane_width: Option<u32>,
+) -> Result<(), String> {
+    runtime_worker(runtime, "desktop layout commit", move |runtime| {
+        let mut layout = runtime.layout();
+        if let Some(frame) = frame {
+            layout.x = Some(frame.x);
+            layout.y = Some(frame.y);
+            layout.width = Some(frame.width);
+            layout.height = Some(frame.height);
+            layout.scale_factor = Some(frame.scale_factor);
+        }
+        if let Some(width) = history_pane_width {
+            layout.history_pane_width = Some(width);
+        }
+        if let Some(width) = inspector_pane_width {
+            layout.inspector_pane_width = Some(width);
+        }
+        runtime.settings_commit_layout(layout)
+    })
+    .await
+}
+
+/// The exact outer frame measured natively, never a renderer estimate.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapturedFrameV1 {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+}
+
 #[tauri::command]
 fn native_notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
     aworkit_desktop::presentation::show_notification(&app, title, body)
@@ -139,11 +190,12 @@ async fn native_pick_folder(app: tauri::AppHandle) -> Option<tauri_plugin_dialog
 async fn desktop_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
     after_sequence: u64,
+    chat_id: Option<String>,
 ) -> Result<RuntimeSnapshot, String> {
     runtime_worker(
         Arc::clone(runtime.inner()),
         "desktop snapshot",
-        move |runtime| runtime.snapshot(after_sequence),
+        move |runtime| runtime.snapshot_for_chat(after_sequence, chat_id.as_deref()),
     )
     .await
 }
@@ -248,10 +300,7 @@ async fn desktop_command(
     let cancellation = cancellation.inner().clone();
     let runtime = Arc::clone(runtime.inner());
     let result = tauri::async_runtime::spawn_blocking(move || {
-        runtime
-            .lock()
-            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
-            .command(command)
+        aworkit_desktop::runtime::dispatch_chat_command(runtime, command)
     })
     .await
     .map_err(|error| format!("desktop command worker failed: {error}"))
@@ -744,6 +793,18 @@ fn main() {
             .with_management_repair(management);
             app.manage(runtime.cancellation_controller());
             app.manage(runtime.image_store());
+            // The frame the user positioned is the outer frame in physical
+            // pixels, so it is re-seated with the outer position and outer size.
+            // Reusing the client size would shrink the window by its border inset
+            // on every restart.
+            let saved_layout = runtime.layout();
+            aworkit_desktop::presentation::restore_window_layout(
+                app.handle(),
+                &saved_layout,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("aworkit: could not restore the saved window placement: {error}");
+            });
             app.manage(Arc::new(Mutex::new(runtime)));
             Ok(())
         })
@@ -763,6 +824,8 @@ fn main() {
                 desktop_snapshot,
                 desktop_context_model,
                 desktop_command,
+                desktop_layout,
+                desktop_layout_commit,
                 approval_project_grants,
                 approval_filesystem_grants,
                 approval_revoke_filesystem_grant,

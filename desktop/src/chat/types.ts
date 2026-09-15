@@ -40,6 +40,7 @@ export interface ChatProjectChoice {
 
 /** Immutable sidebar summary projected from the native Chat history index. */
 export interface ChatHistoryEntry {
+  readonly busy?: boolean;
   readonly chatId: string;
   readonly runId: string;
   readonly title: string;
@@ -132,7 +133,7 @@ export interface EvidenceRecord {
     | "opaque";
 }
 
-export type ChatIntent =
+export type ChatIntent = { readonly targetId?: string } & (
   | { readonly type: "compact_context"; readonly commandId: string; readonly targetId: string; readonly nodeId: string; readonly baseSequence: number }
   | { readonly type: "edit_context"; readonly commandId: string; readonly targetId: string;
       readonly nodeId: string; readonly baseSequence: number; readonly document: import("./contextProjection").ContextDocument }
@@ -183,4 +184,4 @@ export type ChatIntent =
       readonly choice?: import("./approvals").ApprovalChoice;
       readonly filesystem?: import("./approvals").FilesystemSelection;
       readonly reason?: string;
-    };
+    });

@@ -40,7 +40,7 @@ impl DesktopRuntime {
     pub(super) fn populate_context_model(&self, snapshot: &mut RuntimeSnapshot) -> Result<(), String> {
         if snapshot.context_model.as_ref().is_some_and(|model| model.context_window.is_some()) { return Ok(()); }
         let settings = self.documents.settings();
-        let model = if let Some(frozen) = self.history.current_frozen_context()? {
+        let model = if let Some(frozen) = self.history.frozen_context(&StableId::parse(snapshot.chat.chat_id.clone()).map_err(|e| e.to_string())?)? {
             let context = frozen.context;
             settings.providers.iter().find(|provider| provider.id == context.provider_id
                 && provider.base_url == context.provider_base_url && provider.kind == context.provider_kind)

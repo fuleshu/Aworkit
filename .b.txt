@@ -1,0 +1,35 @@
+﻿cargo :    Compiling aworkit-desktop v0.1.0 (C:\src\Aworkit\desktop\src-tauri)
+At line:1 char:129
++ ... ew($false); cargo build --manifest-path desktop\src-tauri\Cargo.toml  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling aw...ktop\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unused attribute
+    --> src\runtime\service.rs:2463:5
+     |
+2463 |     #[must_use]
+     |     ^^^^^^^^^^^ help: remove this attribute
+     |
+note: attribute also specified here
+    --> src\runtime\service.rs:2461:5
+     |
+2461 |     #[must_use]
+     |     ^^^^^^^^^^^
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a 
+future release!
+     = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `settings_edit_version` is never used
+   --> src\runtime\documents.rs:154:19
+    |
+120 | impl CanonicalDocuments {
+    | ----------------------- method in this implementation
+...
+154 |     pub(crate) fn settings_edit_version(&self) -> u64 {
+    |                   ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `aworkit-desktop` (lib) generated 2 warnings (run `cargo fix --lib -p aworkit-desktop` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.04s

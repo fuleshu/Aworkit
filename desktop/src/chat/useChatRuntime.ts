@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatIntent } from "./types";
+import { useChatMaintenance } from "./useChatMaintenance";
 import {
   createChatCorePort,
   type ChatCorePort,
@@ -52,23 +53,23 @@ export function useChatRuntime(
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const snapshotRef = useRef<RuntimeSnapshot | null>(null);
   const eventsRef = useRef<RuntimeEvent[]>([]);
-  const bufferedRef = useRef<Map<number, RuntimeEvent>>(new Map());
+  const bufferedRef = useRef<Map<string, RuntimeEvent>>(new Map());
   const initializedRef = useRef(false);
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
   const flushTimerRef = useRef<number | undefined>(undefined);
-  const pendingRef = useRef<Set<string>>(new Set());
-  const maintenanceRef = useRef(false);
-  const drainingRef = useRef(false);
-  const queueRef = useRef<Array<{chatId:string; intent:Extract<ChatIntent,{type:"enqueue"}>}>>([]);
-  const [maintenancePending,setMaintenancePending] = useState(false);
-  const [queueVersion,setQueueVersion] = useState(0);
+  const pendingRef = useRef(new Map<string, string>());
+  const generationRef = useRef(0);
+  const snapshotRequestsRef = useRef({ requested: 0, applied: 0 });
+  const navigatingRef = useRef(false);
+  const navigationTail = useRef(Promise.resolve());
+  const errorsRef = useRef(new Map<string, RuntimeErrorNotice>());
   const eventReadyRef = useRef<Promise<void>>(Promise.resolve());
   const nextErrorIdRef = useRef(0);
   const lastFailureRef = useRef<string | null>(null);
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<RuntimeErrorNotice | null>(null);
-  const [pendingCommandIds, setPending] = useState<ReadonlySet<string>>(
+  const [allPendingCommandIds, setPending] = useState<ReadonlySet<string>>(
     new Set(),
   );
 
@@ -87,6 +88,7 @@ export function useChatRuntime(
   }, []);
 
   const dismissError = useCallback((): void => {
+    if (snapshotRef.current) errorsRef.current.delete(snapshotRef.current.chat.chatId);
     setError(null);
   }, []);
 
@@ -155,7 +157,7 @@ export function useChatRuntime(
         }
         bufferEvent(bufferedRef.current, event);
         const head = eventsRef.current.length;
-        drainContiguous(eventsRef.current, bufferedRef.current);
+        drainContiguous(eventsRef.current, bufferedRef.current, event.streamId);
         if (eventsRef.current.length === head) return;
         // Only streamed content may be deferred. A drained batch that carries
         // any lifecycle fact publishes in this same call, because synchronous
@@ -178,7 +180,7 @@ export function useChatRuntime(
         throw new Error("trusted-core snapshot contains a foreign Chat stream");
       }
       const merged = mergeCanonicalEvents(
-        full ? [] : eventsRef.current,
+        full && next.chat.chatId !== snapshotRef.current?.chat.chatId ? [] : eventsRef.current,
         next.events,
       );
       if (full && merged.length < next.throughSequence) {
@@ -194,6 +196,7 @@ export function useChatRuntime(
       assertContiguous(merged);
       initializedRef.current = true;
       snapshotRef.current = next;
+      setError(errorsRef.current.get(next.chat.chatId) ?? null);
       setSnapshot(next);
       publishEvents(merged);
     },
@@ -201,8 +204,13 @@ export function useChatRuntime(
   );
 
   const resynchronize = useCallback(async (replaceStream = false): Promise<boolean> => {
+    const generation = generationRef.current;
+    const request = ++snapshotRequestsRef.current.requested;
+    const chatId = replaceStream ? undefined : snapshotRef.current?.chat.chatId;
     try {
-      const next = await port.snapshot(0);
+      const next = await port.snapshot(0, chatId);
+      if (generation !== generationRef.current || request < snapshotRequestsRef.current.applied || (!replaceStream && navigatingRef.current)) return true;
+      if (chatId !== undefined && next.chat.chatId !== chatId) return true;
       if (
         !replaceStream &&
         snapshotRef.current !== null &&
@@ -213,10 +221,12 @@ export function useChatRuntime(
         );
       }
       replaceSnapshot(next, true);
+      snapshotRequestsRef.current.applied = request;
       setStale(false);
       markHealthy();
       return true;
     } catch (failure) {
+      if (generation !== generationRef.current || request < snapshotRequestsRef.current.applied) return true;
       failProjection(failure);
       return false;
     } finally {
@@ -225,24 +235,26 @@ export function useChatRuntime(
   }, [failProjection, markHealthy, port, replaceSnapshot]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    // A running command is driven exclusively by pushed committed events. The
-    // desktop runtime owns the command during execution, so polling here would
-    // only queue a blocked snapshot call behind it.
-    if (pendingRef.current.size > 0) return;
+    if (navigatingRef.current) return;
     const current = snapshotRef.current;
+    const generation = generationRef.current;
     if (current === null) {
       await resynchronize();
       return;
     }
+    const request = ++snapshotRequestsRef.current.requested;
     try {
-      const next = await port.snapshot(current.throughSequence);
+      const next = await port.snapshot(current.throughSequence, current.chat.chatId);
+      if (generation !== generationRef.current || request < snapshotRequestsRef.current.applied || navigatingRef.current || next.chat.chatId !== current.chat.chatId) return;
       if (next.throughSequence < current.throughSequence) {
         throw new Error("trusted-core snapshot moved backwards");
       }
       replaceSnapshot(next, false);
+      snapshotRequestsRef.current.applied = request;
       setStale(false);
       markHealthy();
     } catch (failure) {
+      if (generation !== generationRef.current || request < snapshotRequestsRef.current.applied) return;
       failProjection(failure);
     }
   }, [failProjection, markHealthy, port, replaceSnapshot, resynchronize]);
@@ -289,19 +301,30 @@ export function useChatRuntime(
     async (intent: ChatIntent, expectedVersion?: number): Promise<boolean> => {
       const current = snapshotRef.current;
       if (current === null || stale) return false;
-      pendingRef.current.add(intent.commandId);
+      const navigation = replacesSelectedChat(intent);
+      const chatId = intent.targetId ?? current.chat.chatId;
+      pendingRef.current.set(intent.commandId, chatId);
       setPending((value) => new Set([...value, intent.commandId]));
+      if (navigation) { generationRef.current += 1; navigatingRef.current = true; }
+      const commandError = (failure: unknown) => {
+        const notice = { id: ++nextErrorIdRef.current, message: message(failure) };
+        errorsRef.current.set(chatId, notice);
+        if (snapshotRef.current?.chat.chatId === chatId) setError(notice);
+      };
       try {
         await eventReadyRef.current;
-        const receipt = await port.command(intent, expectedVersion ?? current.version);
+        const version = expectedVersion ?? (chatId === current.chat.chatId ? current.version : (await port.snapshot(0, chatId)).version);
+        const receipt = await port.command(intent, version);
         if (!receipt.accepted) {
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";
           await resynchronize(replacesSelectedChat(intent));
-          reportError(reason);
+          commandError(reason);
           return false;
         }
-        return await resynchronize(replacesSelectedChat(intent));
+        errorsRef.current.delete(chatId);
+        await resynchronize(replacesSelectedChat(intent));
+        return true;
       } catch (failure) {
         const failureMessage = message(failure);
         // The command response can be lost after a stream-changing mutation
@@ -314,9 +337,10 @@ export function useChatRuntime(
           snapshotRef.current?.chat.chatId === intent.targetId
         )
           return true;
-        reportError(failureMessage);
+        commandError(failureMessage);
         return false;
       } finally {
+        if (navigation) navigatingRef.current = false;
         pendingRef.current.delete(intent.commandId);
         setPending((value) => {
           const next = new Set(value);
@@ -325,41 +349,18 @@ export function useChatRuntime(
         });
       }
     },
-    [port, reportError, resynchronize, stale],
+    [port, resynchronize, stale],
   );
 
-  const dispatch = useCallback(async(intent:ChatIntent,expectedVersion?:number):Promise<boolean>=>{
-    if (intent.type === "enqueue" && (maintenanceRef.current || drainingRef.current || queueRef.current.length > 0)) {
-      const current=snapshotRef.current;
-      if (!current || stale || current.chat.recoveryPending) return false;
-      if (!queueRef.current.some(entry=>entry.intent.commandId===intent.commandId)) {
-        queueRef.current.push({chatId:current.chat.chatId,intent});
-        setQueueVersion(v=>v+1);
-      }
-      return true;
-    }
-    if (intent.type !== "compact_context") return execute(intent,expectedVersion);
-    maintenanceRef.current=true;setMaintenancePending(true);
-    try { return await execute(intent,expectedVersion); }
-    finally { maintenanceRef.current=false;setMaintenancePending(false); }
-  },[execute,stale]);
-
-  useEffect(()=>{
-    if (maintenancePending || drainingRef.current || stale || !queueRef.current.length || snapshot?.chat.recoveryPending) return;
-    drainingRef.current=true;
-    void (async()=>{
-      try {
-        while(queueRef.current.length) {
-          const entry=queueRef.current[0],current=snapshotRef.current;
-          if (!current || current.chat.chatId!==entry.chatId || current.chat.recoveryPending) break;
-          // Each command gets the settled predecessor's current history fence.
-          // Failed/uncertain admission retains its original ID and queued text.
-          if (!await execute(entry.intent)) break;
-          queueRef.current.shift();setQueueVersion(v=>v+1);
-        }
-      } finally {drainingRef.current=false;}
-    })();
-  },[maintenancePending,queueVersion,stale,execute,snapshot?.chat.chatId,snapshot?.chat.recoveryPending]);
+  const maintenance = useChatMaintenance(execute);
+  const dispatch = useCallback((intent: ChatIntent, version?: number): Promise<boolean> => {
+    const captured = { ...intent, targetId: intent.targetId ?? snapshotRef.current?.chat.chatId } as ChatIntent;
+    if (!replacesSelectedChat(intent)) return maintenance.dispatch(captured, version);
+    const result = navigationTail.current.then(() => maintenance.dispatch(captured, version));
+    navigationTail.current = result.then(() => {}, () => {});
+    return result;
+  }, [maintenance.dispatch]);
+  const pendingCommandIds = new Set([...allPendingCommandIds].filter(id => pendingRef.current.get(id) === snapshot?.chat.chatId));
 
   return {
     contextModel,
@@ -369,8 +370,8 @@ export function useChatRuntime(
     loading,
     error,
     pendingCommandIds,
-    maintenancePending,
-    queuedMaintenanceInputs:queueRef.current.filter(entry=>entry.chatId===snapshot?.chat.chatId).map(entry=>entry.intent.input),
+    maintenancePending: maintenance.pending(snapshot?.chat.chatId ?? ""),
+    queuedMaintenanceInputs: maintenance.inputs(snapshot?.chat.chatId ?? ""),
     dispatch,
     resynchronize,
     dismissError,
@@ -388,23 +389,26 @@ function message(error: unknown): string {
 }
 
 function bufferEvent(
-  buffered: Map<number, RuntimeEvent>,
+  buffered: Map<string, RuntimeEvent>,
   event: RuntimeEvent,
 ): void {
-  const existing = buffered.get(event.sequence);
+  const key = `${event.streamId}:${event.sequence}`;
+  const existing = buffered.get(key);
   if (existing !== undefined) assertSameEnvelope(existing, event);
-  else buffered.set(event.sequence, event);
+  else buffered.set(key, event);
 }
 
 function drainContiguous(
   events: RuntimeEvent[],
-  buffered: Map<number, RuntimeEvent>,
+  buffered: Map<string, RuntimeEvent>,
+  streamId: string,
 ): void {
   for (;;) {
     const sequence = events.length + 1;
-    const event = buffered.get(sequence);
+    const key = `${streamId}:${sequence}`;
+    const event = buffered.get(key);
     if (event === undefined) return;
-    buffered.delete(sequence);
+    buffered.delete(key);
     events.push(event);
   }
 }

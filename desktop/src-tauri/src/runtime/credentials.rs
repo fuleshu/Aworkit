@@ -16,6 +16,7 @@ use super::settings_v2::CredentialMetadataConfigurationV2;
 const API_KEY_FIELD: &str = "api_key";
 
 pub(crate) struct CredentialVault {
+    store: Arc<dyn PlatformCredentialStorePort>,
     broker: SecretBroker,
     lease_ordinal: u64,
 }
@@ -25,12 +26,13 @@ impl CredentialVault {
         store: Arc<dyn PlatformCredentialStorePort>,
         credentials: &[CredentialMetadataConfigurationV2],
     ) -> Result<Self, String> {
-        Self::from_broker(SecretBroker::with_store(store), credentials)
+        Self::from_broker(SecretBroker::with_store(store.clone()), credentials, store)
     }
 
     fn from_broker(
         mut broker: SecretBroker,
         credentials: &[CredentialMetadataConfigurationV2],
+        store: Arc<dyn PlatformCredentialStorePort>,
     ) -> Result<Self, String> {
         for metadata in credentials {
             let credential = parse_ref(&metadata.credential_ref)?;
@@ -48,9 +50,15 @@ impl CredentialVault {
                 .map_err(|error| format!("cannot restore credential metadata: {error}"))?;
         }
         Ok(Self {
+            store,
             broker,
             lease_ordinal: 0,
         })
+    }
+
+    /// New command-local broker. Only opaque metadata is copied, never secret values.
+    pub(crate) fn fork(&self, metadata: &[CredentialMetadataConfigurationV2]) -> Result<Self, String> {
+        Self::with_store(self.store.clone(), metadata)
     }
 
     /// Places an API key at a caller-preallocated opaque reference. The caller

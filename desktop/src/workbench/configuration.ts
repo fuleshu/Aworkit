@@ -463,6 +463,32 @@ export const appearanceConfigurationSchema = z
   })
   .strict();
 
+/** Selections a new Chat starts from, written by the host after each turn. */
+export const chatDefaultsConfigurationSchema = z
+  .object({
+    workflowId: stableIdSchema.optional(),
+    projectId: stableIdSchema.optional(),
+    approvalMode: z
+      .enum(["ask_for_approval", "approve_for_me", "full_access"])
+      .optional(),
+  })
+  .strict()
+  .default({});
+
+/** Window placement and panel separators, written by the desktop host. */
+export const layoutConfigurationSchema = z
+  .object({
+    x: z.number().int().optional(),
+    y: z.number().int().optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    historyPaneWidth: z.number().int().positive().optional(),
+    inspectorPaneWidth: z.number().int().positive().optional(),
+    scaleFactor: z.number().positive().optional(),
+  })
+  .strict()
+  .default({});
+
 export const settingsConfigurationV2Schema = z
   .object({
     approvals: z.object({ defaultMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).default("ask_for_approval") }).strict().default({ defaultMode: "ask_for_approval" }),
@@ -477,6 +503,8 @@ export const settingsConfigurationV2Schema = z
     data: dataConfigurationSchema,
     projects: z.array(projectConfigurationSchema),
     appearance: appearanceConfigurationSchema,
+    chatDefaults: chatDefaultsConfigurationSchema,
+    layout: layoutConfigurationSchema,
   })
   .strict();
 

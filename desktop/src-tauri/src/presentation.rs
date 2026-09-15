@@ -1,7 +1,7 @@
 //! Native presentation bindings shared by the Tauri command boundary.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Runtime, Theme, WebviewWindow, menu::*};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Theme, WebviewWindow, menu::*};
 use tauri_plugin_dialog::{DialogExt, FilePath, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 
@@ -141,6 +141,33 @@ pub fn apply_window_action<R: Runtime>(
         NativeWindowActionV1::Close => window.close(),
     }
     .map_err(|error| error.to_string())
+}
+
+/// Re-seats the main window at its persisted outer frame.
+///
+/// The stored frame is the outer frame in physical pixels, so both the outer
+/// position and the outer size are applied. Restoring a client size here would
+/// shrink a framed window by twice its border inset on every restart. A
+/// partially stored or unusable placement is ignored field by field, leaving the
+/// platform default rather than refusing to open the window.
+pub fn restore_window_layout<R: Runtime>(
+    app: &AppHandle<R>,
+    layout: &crate::runtime::LayoutConfigurationV2,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    if let (Some(x), Some(y)) = (layout.x, layout.y) {
+        window
+            .set_position(tauri::PhysicalPosition::new(x, y))
+            .map_err(|error| error.to_string())?;
+    }
+    if let (Some(width), Some(height)) = (layout.width, layout.height) {
+        window
+            .set_size(tauri::PhysicalSize::new(width.max(1), height.max(1)))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn show_notification<R: Runtime>(

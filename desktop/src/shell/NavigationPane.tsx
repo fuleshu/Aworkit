@@ -319,7 +319,9 @@ function ChatHistoryRow({
           }
         }}
       >
-        <span className="nav-icon" aria-hidden="true">○</span>
+        {entry.busy
+          ? <span className="chat-busy-icon" role="img" aria-label="Running" title="Running" />
+          : <span className="nav-icon" aria-hidden="true">○</span>}
         <span>{entry.title}</span>
       </button>
       <div className="chat-history-actions" ref={actionsRef}>
@@ -369,6 +371,7 @@ function ChatHistoryRow({
             <button
               role="menuitem"
               title="Create a new Chat with this conversation as its parent"
+              disabled={entry.busy}
               type="button"
               onClick={() => invoke(() => onForkChat?.(entry.chatId))}
             >
@@ -378,6 +381,7 @@ function ChatHistoryRow({
               className="danger-menu-item"
               role="menuitem"
               title="Delete this Chat from history"
+              disabled={entry.busy}
               type="button"
               onClick={() => invoke(() => onDeleteChat?.(entry.chatId))}
             >

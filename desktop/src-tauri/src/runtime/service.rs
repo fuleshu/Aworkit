@@ -1,4 +1,5 @@
 mod context_edit;
+mod concurrent;
 mod context_model;
 mod mcp_definitions;
 mod mcp_selection;
@@ -76,11 +77,12 @@ use super::{
         probe_project, probe_tool_with_api_key,
     },
     settings_v2::{
-        AppearanceModeV2, BuiltInToolConfigurationV2, CredentialMetadataConfigurationV2,
-        DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1, ExtensionConfigurationV2,
-        IntegrationTransportV2, ModelConfigurationV2, ModelTargetV2, ModelTierConfigurationV2,
-        ModelTierResolutionV2, ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2,
-        SettingsConfigurationV2, validate_extension_lifecycle_update, validate_http_url,
+        AppearanceModeV2, BuiltInToolConfigurationV2, ChatDefaultsConfigurationV2,
+        CredentialMetadataConfigurationV2, DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1,
+        ExtensionConfigurationV2, IntegrationTransportV2, LayoutConfigurationV2,
+        ModelConfigurationV2, ModelTargetV2, ModelTierConfigurationV2, ModelTierResolutionV2,
+        ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2,
+        validate_extension_lifecycle_update, validate_http_url,
         validate_unavailable_executor_enablement_update,
     },
     tool_loop::{
@@ -106,6 +108,7 @@ pub(crate) mod approval_control;
 use approval_control::parse_approval_resolution;
 
 trait WorkflowPipelinePort: Send + Sync {
+    fn for_chat(&self, _events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> { None }
     fn validate_approval_target(
         &self,
         _decision_id: &str,
@@ -150,6 +153,9 @@ trait WorkflowPipelinePort: Send + Sync {
 }
 
 impl WorkflowPipelinePort for WorkflowExecutionPipeline {
+    fn for_chat(&self, events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> {
+        Some(Arc::new(self.with_chat_events(events)))
+    }
     fn validate_approval_target(
         &self,
         decision_id: &str,
@@ -201,6 +207,8 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
 /// Native composition root for the currently supported desktop workflow.
 pub struct DesktopRuntime {
+    chat_commands: super::concurrency::ChatCommands,
+    worker_feedback: Option<concurrent::WorkerFeedback>,
     chat_workspaces: super::chat_workspace::ChatWorkspaceStore,
     tool_plugin_directory: std::path::PathBuf,
     approvals: super::approvals::ApprovalStore,
@@ -336,6 +344,8 @@ impl DesktopRuntime {
         std::fs::create_dir_all(&tool_plugin_directory)
             .map_err(|error| format!("Cannot create tool plugin folder: {error}"))?;
         let mut runtime = Self {
+            chat_commands: Default::default(),
+            worker_feedback: None,
             chat_workspaces: super::chat_workspace::ChatWorkspaceStore::new(&data_root),
             tool_plugin_directory,
             images: super::images::ChatImageStore::new(&data_root),
@@ -631,26 +641,23 @@ impl DesktopRuntime {
         self
     }
 
-    pub fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
-        let mut snapshot = self.history.snapshot(after_sequence)?;
+    fn snapshot_history(&self, history: &ChatHistory, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
+        let mut snapshot = history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
         self.populate_context_model(&mut snapshot)?;
-        let fallback_mode = self
-            .history
+        let fallback_mode = history
             .current_frozen_context()?
             .and_then(|record| record.context.approval_mode)
             .unwrap_or(self.documents.settings().approvals.default_mode);
         snapshot.chat.approval_mode = self.approvals.mode(&snapshot.chat.chat_id, fallback_mode)?;
-        let history_head = self.history.head()?;
-        let pending = self
-            .history
+        let history_head = history.head()?;
+        let pending = history
             .pending_effect_command_at_head(history_head)?
             .is_some();
-        if pending {
-            let frozen = self
-                .history
+        if pending && !self.chat_commands.active_ids().contains(&snapshot.chat.chat_id) {
+            let frozen = history
                 .pending_context_at_head(history_head)?
-                .or(self.history.current_frozen_context()?);
+                .or(history.current_frozen_context()?);
             if let Some(frozen) = frozen {
                 let context = frozen.context;
                 snapshot.chat.chat_id = context.identity.chat_id.to_string();
@@ -736,6 +743,7 @@ impl DesktopRuntime {
     }
 
     pub fn command(&mut self, input: UiCommandInput) -> Result<UiCommandReceipt, String> {
+        self.guard_navigation(&input)?;
         self.command_fenced(input, None)
     }
 
@@ -749,7 +757,7 @@ impl DesktopRuntime {
     /// keeps its own fence.
     fn command_fenced(
         &mut self,
-        input: UiCommandInput,
+        mut input: UiCommandInput,
         replay_fence: Option<u64>,
     ) -> Result<UiCommandReceipt, String> {
         if input.schema_version != 1 {
@@ -759,6 +767,27 @@ impl DesktopRuntime {
             ));
         }
         validate_command_id(&input.command_id)?;
+        // Resolve the remembered selections before anything is fingerprinted or
+        // staged, so the durable pending-start record carries the values the Chat
+        // actually runs with. Recovery replays that exact record.
+        if input.action == "start" {
+            let workflow_id = self.requested_workflow_id(&input.payload)?;
+            if let Some(payload) = input.payload.as_object_mut() {
+                payload.insert("workflowId".into(), Value::String(workflow_id));
+            }
+            if input.payload.get("projectId").is_none()
+                && let Some(project_id) = self
+                    .documents
+                    .settings()
+                    .chat_defaults
+                    .project_id
+                    .clone()
+            {
+                if let Some(payload) = input.payload.as_object_mut() {
+                    payload.insert("projectId".into(), Value::String(project_id));
+                }
+            }
+        }
         let fingerprint = command_fingerprint(&input)?;
         if let Some(receipt) = self.history.replay(&input.command_id, &fingerprint)? {
             return Ok(receipt);
@@ -766,7 +795,7 @@ impl DesktopRuntime {
         if let Some(processed) = self.processed.get(&input.command_id) {
             return replay_processed(processed, &fingerprint);
         }
-        if let Some(pending) = self
+        if !super::concurrency::is_navigation(&input.action) && let Some(pending) = self
             .history
             .pending_effect_command_at_head(self.history.head()?)?
             && !matches!(
@@ -783,8 +812,7 @@ impl DesktopRuntime {
         }
         if matches!(
             input.action.as_str(),
-            "new_chat"
-                | "start"
+            "start"
                 | "enqueue"
                 | "resume"
                 | "abandon_recovery"
@@ -908,7 +936,6 @@ impl DesktopRuntime {
         input: UiCommandInput,
         fingerprint: String,
     ) -> Result<UiCommandReceipt, String> {
-        self.history.ensure_expected(input.expected_version)?;
         let target_id = required_chat_target(&input)?;
         let parent = self.history.identity(&target_id)?;
         let child = identity_for_seed(&format!("{}:fork", input.command_id))?;
@@ -1119,7 +1146,10 @@ impl DesktopRuntime {
             self.history.ensure_expected(fence)?;
         }
         if input.action == "start" {
-            let workflow_id = string_field(&input.payload, "workflowId")?;
+            // A first Chat opens from the selections the last Chat ran with. The
+            // renderer may still send an explicit choice; an empty one means "use
+            // what I used last", which is exactly the remembered default.
+            let workflow_id = self.requested_workflow_id(&input.payload)?;
             let workflow = self.documents.workflow_snapshot_for(&workflow_id);
             if workflow.document.is_null() {
                 return Err(format!(
@@ -1153,7 +1183,18 @@ impl DesktopRuntime {
         let mut conversation = self.history.conversation()?;
         let (frozen, persist_frozen_context) = match input.action.as_str() {
             "start" => {
-                let selected_project_id = optional_project_id(&input.payload)?;
+                // An absent project selection means "use the last one", which is
+                // how a remembered project becomes the default for a new Chat. An
+                // explicit null is the user choosing no project and is honored.
+                let selected_project_id = optional_project_id(&input.payload)?.or_else(|| {
+                    input.payload.get("projectId").is_none().then(|| {
+                        self.documents
+                            .settings()
+                            .chat_defaults
+                            .project_id
+                            .clone()
+                    })?
+                });
                 if !conversation.is_empty() && !command_started {
                     return Err("the current Chat is already started; enqueue follow-up input or start a New Chat".into());
                 }
@@ -1613,6 +1654,24 @@ impl DesktopRuntime {
         let receipt =
             self.history
                 .append(&input.command_id, &fingerprint, self.history.head()?, facts)?;
+        // The turn is durable, so the selections a new Chat should start from are
+        // now the ones this Chat actually ran with. Remembering them never fails
+        // the turn: a Settings write problem leaves the previous defaults.
+        if !manual {
+            let remembered = ChatDefaultsConfigurationV2 {
+                workflow_id: Some(context.workflow_id.to_string()),
+                project_id: context
+                    .project
+                    .as_ref()
+                    .map(|project| project.project_id.clone()),
+                approval_mode: frozen.context.approval_mode,
+            };
+            if let Some(feedback) = &mut self.worker_feedback {
+                feedback.defaults = Some(remembered);
+            } else if let Err(error) = self.documents.remember_chat_defaults(remembered) {
+                eprintln!("aworkit: could not remember the last Chat selections: {error}");
+            }
+        }
         Ok((receipt, result.status))
     }
 
@@ -1899,6 +1958,28 @@ impl DesktopRuntime {
             .append(&input.command_id, &fingerprint, self.history.head()?, facts)
     }
 
+    /// The workflow a first Chat should run.
+    ///
+    /// An explicit selection wins. An empty or absent one means "the workflow the
+    /// last Chat ran", read from the remembered Chat defaults, so a new Chat is
+    /// never blocked on a selection the user already made.
+    fn requested_workflow_id(&self, payload: &Value) -> Result<String, String> {
+        let requested = payload
+            .get("workflowId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if !requested.is_empty() {
+            return Ok(requested.to_owned());
+        }
+        self.documents
+            .settings()
+            .chat_defaults
+            .workflow_id
+            .clone()
+            .ok_or_else(|| "Select a saved workflow before sending.".to_owned())
+    }
+
     fn prepare_workflow_context(
         &mut self,
         command: &UiCommandInput,
@@ -1921,7 +2002,7 @@ impl DesktopRuntime {
                 Err("the current Chat already has a different frozen execution context".into())
             };
         }
-        let workflow_id = string_field(&command.payload, "workflowId")?;
+        let workflow_id = self.requested_workflow_id(&command.payload)?;
         let mut workflow = self.documents.workflow_snapshot_for(&workflow_id);
         if workflow.document.is_null() {
             return Err(format!(
@@ -2270,6 +2351,10 @@ impl DesktopRuntime {
         exact_provider: &ProviderConfigurationV2,
         health: ProviderHealth,
     ) -> Result<bool, String> {
+        if let Some(feedback) = &mut self.worker_feedback {
+            feedback.health.push((exact_provider.clone(), health));
+            return Ok(true);
+        }
         let saved_providers = self.documents.settings().providers.clone();
         self.provider_health
             .set_exact(&saved_providers, exact_provider, health)
@@ -2374,6 +2459,23 @@ impl DesktopRuntime {
 
     /// Returns the complete secret-free Settings v2 projection.
     #[must_use]
+    /// The persisted desktop window placement and panel separators.
+    #[must_use]
+    pub fn layout(&self) -> LayoutConfigurationV2 {
+        self.documents.layout()
+    }
+
+    /// Records the desktop window placement and panel separators.
+    ///
+    /// The desktop host supplies measurements it took itself; an unusable one is
+    /// rejected here and reported, never written.
+    pub fn settings_commit_layout(
+        &mut self,
+        layout: LayoutConfigurationV2,
+    ) -> Result<(), String> {
+        self.documents.update_layout(layout)
+    }
+
     pub fn settings_v2_snapshot(&self) -> SettingsV2Snapshot {
         let provider_health = self
             .documents
@@ -2392,6 +2494,9 @@ impl DesktopRuntime {
         SettingsV2Snapshot {
             tool_plugin_directory: self.tool_plugin_directory.to_string_lossy().into_owned(),
             tool_plugins: super::tool_registry::discovery::discover(&self.tool_plugin_directory),
+            // The Settings version is the stored document version, which a
+            // host-owned write such as the remembered Chat defaults also
+            // advances. The editor reads it again on its next snapshot.
             version: self.settings_snapshot().version,
             schema_version: SETTINGS_SCHEMA_VERSION_V2,
             settings: self.documents.settings().clone(),
@@ -2657,7 +2762,7 @@ impl DesktopRuntime {
         }
         let next_version = match self
             .documents
-            .save_settings(input.expected_version, next_settings)
+            .save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next_settings)
         {
             Ok(version) => version,
             Err(commit_error) => {
@@ -2726,9 +2831,10 @@ impl DesktopRuntime {
                 input.expected_version
             ));
         }
-        input.settings.validate()?;
-        input.settings.validate_installed_runtime_consumers()?;
-        for server in &input.settings.mcp_servers {
+        let mut settings = input.settings;
+        settings.validate()?;
+        settings.validate_installed_runtime_consumers()?;
+        for server in &settings.mcp_servers {
             if server.enabled {
                 if let Some(pin) = &server.plugin {
                     super::tool_registry::discovery::verify(pin)?;
@@ -2736,15 +2842,10 @@ impl DesktopRuntime {
             }
         }
         let previous = self.documents.settings().clone();
-        validate_credential_metadata_update(&previous, &input.settings)?;
-        validate_extension_lifecycle_update(&previous, &input.settings)?;
-        validate_unavailable_executor_enablement_update(&previous, &input.settings)?;
-        for extension in input
-            .settings
-            .extensions
-            .iter()
-            .filter(|extension| extension.enabled)
-        {
+        validate_credential_metadata_update(&previous, &settings)?;
+        validate_extension_lifecycle_update(&previous, &settings)?;
+        validate_unavailable_executor_enablement_update(&previous, &settings)?;
+        for extension in settings.extensions.iter().filter(|extension| extension.enabled) {
             verify_registered_extension_v2(extension).map_err(|error| {
                 format!(
                     "extension '{}' has enabled legacy metadata whose verified identity is unavailable: {error}",
@@ -2754,7 +2855,7 @@ impl DesktopRuntime {
         }
         let next_version = self
             .documents
-            .save_settings(input.expected_version, input.settings)?;
+            .save_settings(input.expected_version, settings)?;
         let provider_health_warning = self.reconcile_provider_health();
         let receipt = UiCommandReceipt {
             command_id: input.command_id.clone(),
@@ -2850,7 +2951,7 @@ impl DesktopRuntime {
         if let Err(error) = next.validate_installed_runtime_consumers() {
             return Err(self.credential_operation_error(error));
         }
-        let next_version = match self.documents.save_settings(input.expected_version, next) {
+        let next_version = match self.documents.save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next) {
             Ok(version) => version,
             Err(error) => {
                 return Err(format!(
@@ -2956,7 +3057,7 @@ impl DesktopRuntime {
         )?;
         let next_version = self
             .documents
-            .save_settings(input.expected_version, next)
+            .save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next)
             .map_err(|error| {
                 format!(
                     "{error}; credential reconciliation remains durably pending until the profile is reopened"
@@ -3249,7 +3350,7 @@ impl DesktopRuntime {
         next.extensions[index] = registered;
         next.validate()?;
         next.validate_installed_runtime_consumers()?;
-        let next_version = self.documents.save_settings(input.expected_version, next)?;
+        let next_version = self.documents.save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next)?;
         let receipt = UiCommandReceipt {
             command_id: input.command_id.clone(),
             accepted: true,
@@ -4531,6 +4632,7 @@ mod tests {
     };
 
     mod context_edit;
+    mod concurrency;
     mod context_model;
     mod credentialed_web_search;
     mod image_chat;
@@ -5484,6 +5586,72 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_remembers_its_selections_for_the_next_one() {
+        // The last Chat's workflow and project are remembered in the canonical
+        // Settings document, survive a later Settings save, and become the
+        // default for a new Chat that selects nothing itself.
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let workspace = root.path().join("remember-workspace");
+        fs::create_dir(&workspace).unwrap();
+        let mut runtime = runtime(&root, provider.clone());
+        configure_project_read_workflow(&mut runtime, Some(&workspace), true);
+
+        runtime
+            .command(project_tool_start("chat.remember-selections", "remember me"))
+            .unwrap();
+        let remembered = runtime.documents.settings().chat_defaults.clone();
+        assert_eq!(
+            remembered.workflow_id.as_deref(),
+            Some("workflow.simple-chat")
+        );
+        assert_eq!(remembered.project_id.as_deref(), Some("project.tool-test"));
+
+        // An ordinary Settings save must not drop the remembered section, which
+        // is exactly what a model-facing full-document save would otherwise do.
+        let mut settings = runtime.settings_v2_snapshot().settings;
+        settings.appearance.font_scale = 1.25;
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.after-remembering".into(),
+                expected_version: runtime.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+        assert_eq!(
+            runtime
+                .documents
+                .settings()
+                .chat_defaults
+                .workflow_id
+                .as_deref(),
+            Some("workflow.simple-chat")
+        );
+
+        // A new Chat that sends an empty workflow selection inherits the
+        // remembered one and runs, instead of failing on a missing selection.
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.remembered-new-chat".into(),
+                expected_version: runtime.history.head().unwrap(),
+                action: "new_chat".into(),
+                target_id: None,
+                payload: json!({}),
+            })
+            .unwrap();
+        let mut inherited = send("chat.remembered-start", 0, "continue in a new chat");
+        inherited.payload["workflowId"] = Value::String(String::new());
+        runtime.command(inherited).unwrap();
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            runtime.snapshot(0).unwrap().chat.workflow_id.as_deref(),
+            Some("workflow.simple-chat"),
+            "the remembered workflow started the new Chat"
+        );
+    }
+
+    #[test]
     fn recovery_closes_dangling_spans_before_it_replays_the_staged_command() {
         // A process that ended mid-effect leaves the run and node spans open, and
         // no terminal fact can commit while a child span is open. Recovery must
@@ -5699,7 +5867,7 @@ mod tests {
     }
 
     #[test]
-    fn staged_follow_up_survives_restart_and_cannot_be_orphaned_by_a_new_chat() {
+    fn staged_follow_up_survives_restart_and_navigation_always_stays_available() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
@@ -5727,20 +5895,40 @@ mod tests {
         let projection = reopened.snapshot(0).unwrap();
         assert_eq!(projection.chat.phase, "paused");
         assert!(projection.chat.recovery_pending);
+        let interrupted_chat = projection.chat.chat_id.clone();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
-        let new_chat_error = reopened
+        // Navigation is never fenced by an interrupted effect command. Leaving the
+        // Chat is always safe, and refusing it would trap the user in a Chat whose
+        // only exits are resume or abandon.
+        reopened
             .command(UiCommandInput {
                 schema_version: 1,
-                command_id: "chat.recovery-unsafe-new".into(),
+                command_id: "chat.recovery-safe-new".into(),
                 expected_version: 6,
                 action: "new_chat".into(),
                 target_id: None,
                 payload: json!({}),
             })
-            .unwrap_err();
-        assert!(new_chat_error.contains("interrupted effect-bearing"));
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+            .unwrap();
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            1,
+            "navigation never issues provider work"
+        );
 
+        // The staged command survives the navigation and is still the exact one
+        // recovery replays once the interrupted Chat is selected again.
+        reopened
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.recovery-reselect".into(),
+                expected_version: reopened.history.head().unwrap(),
+                action: "select_chat".into(),
+                target_id: Some(interrupted_chat.clone()),
+                payload: json!({}),
+            })
+            .unwrap();
+        assert!(reopened.snapshot(0).unwrap().chat.recovery_pending);
         reopened
             .command(UiCommandInput {
                 schema_version: 1,
@@ -6053,7 +6241,9 @@ mod tests {
 
         let mut reopened = runtime(&root, provider.clone());
         let settings = reopened.settings_snapshot();
-        assert_eq!(settings.version, 2);
+        // The first turn also remembered its selections, which is one more
+        // durable Settings write on top of the initial configuration.
+        assert_eq!(settings.version, 3);
         assert_eq!(settings.provider.model, "fixture-model");
         assert_eq!(
             reopened
@@ -8094,7 +8284,7 @@ mod tests {
         let replacement = commit_provider(
             &mut runtime,
             "settings.session-key.replace",
-            2,
+            3,
             "https://provider.example/v1",
             "fixture-model",
             "replace",
@@ -8145,7 +8335,7 @@ mod tests {
         let error = runtime
             .settings_v2_delete_credential(CredentialDeleteInputV2 {
                 command_id: "settings.session-key.delete-active".into(),
-                expected_version: 3,
+                expected_version: 4,
                 credential_ref: first_ref.clone(),
             })
             .unwrap_err();
@@ -8163,7 +8353,7 @@ mod tests {
         runtime
             .settings_v2_delete_credential(CredentialDeleteInputV2 {
                 command_id: "settings.session-key.delete-released".into(),
-                expected_version: 3,
+                expected_version: 4,
                 credential_ref: first_ref.clone(),
             })
             .unwrap();
@@ -8225,7 +8415,7 @@ mod tests {
         commit_provider(
             &mut runtime,
             "settings.future.provider",
-            2,
+            3,
             "http://127.0.0.1:9999/v1",
             "future-model",
             "keep",
@@ -8389,7 +8579,7 @@ mod tests {
         runtime
             .settings_v2_commit(SettingsV2CommitInput {
                 command_id: "settings.project.future".into(),
-                expected_version: 3,
+                expected_version: 4,
                 settings: changed,
             })
             .unwrap();

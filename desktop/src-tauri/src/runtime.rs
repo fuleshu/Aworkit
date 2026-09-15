@@ -5,6 +5,7 @@
 
 mod approvals;
 mod cancellation;
+mod concurrency;
 mod chat_workspace;
 mod compaction;
 mod context_inspection;
@@ -33,6 +34,7 @@ mod repeat_tool_reminder;
 mod run_events;
 mod semantic_events;
 mod service;
+pub use concurrency::dispatch_chat_command;
 mod settings_diagnostics;
 mod settings_v2;
 mod tool_loop;
