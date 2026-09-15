@@ -67,7 +67,9 @@ pub fn install_application_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         .text("aworkit.settings", "Settings…")
         .separator()
         .close_window()
-        .quit()
+        .item(&MenuItemBuilder::with_id("aworkit.quit", "Quit")
+            .accelerator("CmdOrCtrl+Q")
+            .build(app)?)
         .build()?;
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo()
@@ -102,6 +104,15 @@ pub fn install_application_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
 
 pub fn forward_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     let id = event.id().as_ref();
+    // Route Quit through the same awaited layout save as the caption close.
+    if id == "aworkit.quit" {
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(error) = window.close() {
+                eprintln!("aworkit: could not request close: {error}");
+            }
+        }
+        return;
+    }
     if id.starts_with("aworkit.") {
         let _ = app.emit("aworkit:native-menu", id);
     }
@@ -141,68 +152,6 @@ pub fn apply_window_action<R: Runtime>(
         NativeWindowActionV1::Close => window.close(),
     }
     .map_err(|error| error.to_string())
-}
-
-/// Re-seats the main window at its persisted outer frame.
-///
-/// The stored frame is the outer frame in physical pixels, so both the outer
-/// position and the outer size are applied. Restoring a client size here would
-/// shrink a framed window by twice its border inset on every restart. A
-/// partially stored or unusable placement is ignored field by field, leaving the
-/// platform default rather than refusing to open the window.
-pub fn restore_window_layout<R: Runtime>(
-    app: &AppHandle<R>,
-    layout: &crate::runtime::LayoutConfigurationV2,
-) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    if let (Some(width), Some(height)) = (layout.width, layout.height) {
-        window
-            .set_size(tauri::PhysicalSize::new(width.max(1), height.max(1)))
-            .map_err(|error| error.to_string())?;
-    }
-    if let (Some(x), Some(y)) = (layout.x, layout.y)
-        && stored_position_is_reachable(&window, layout)
-    {
-        window
-            .set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-/// Whether the stored frame's title bar lands on a currently attached display.
-///
-/// A placement saved while another display was attached would otherwise open the
-/// window where the user can neither see nor grab it, so only the position is
-/// skipped and the stored size still applies. A display query that fails is not
-/// read as "no display attached": a platform that cannot enumerate monitors keeps
-/// restoring what it stored.
-fn stored_position_is_reachable<R: Runtime>(
-    window: &tauri::WebviewWindow<R>,
-    layout: &crate::runtime::LayoutConfigurationV2,
-) -> bool {
-    let (Some(x), Some(y)) = (layout.x, layout.y) else {
-        return false;
-    };
-    let Ok(monitors) = window.available_monitors() else {
-        return true;
-    };
-    if monitors.is_empty() {
-        return true;
-    }
-    // The middle of the title-bar strip is the smallest part of the frame the
-    // user needs in order to bring the window back into view.
-    let probe_x = i64::from(x) + i64::from(layout.width.unwrap_or(0) / 2);
-    let probe_y = i64::from(y) + 8;
-    monitors.iter().any(|monitor| {
-        let left = i64::from(monitor.position().x);
-        let top = i64::from(monitor.position().y);
-        let right = left + i64::from(monitor.size().width);
-        let bottom = top + i64::from(monitor.size().height);
-        probe_x >= left && probe_x < right && probe_y >= top && probe_y < bottom
-    })
 }
 
 pub fn show_notification<R: Runtime>(

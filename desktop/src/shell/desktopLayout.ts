@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Persisted desktop window placement and panel separators. */
+/** Outer frame in physical pixels; separator preferences in CSS pixels. */
 export interface DesktopLayout {
   readonly x?: number;
   readonly y?: number;
@@ -9,87 +9,35 @@ export interface DesktopLayout {
   readonly historyPaneWidth?: number;
   readonly inspectorPaneWidth?: number;
   readonly scaleFactor?: number;
+  readonly maximized?: boolean;
 }
 
-/** The outer window frame measured natively, never a renderer estimate. */
-export interface CapturedFrame {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-  readonly scaleFactor: number;
-}
+export type PaneWidths = Pick<DesktopLayout, "historyPaneWidth" | "inspectorPaneWidth">;
 
 export interface DesktopLayoutPort {
   snapshot(): Promise<DesktopLayout>;
-  commit(
-    frame: CapturedFrame | null,
-    panes: { historyPaneWidth?: number; inspectorPaneWidth?: number },
-  ): Promise<void>;
+  commit(panes: PaneWidths): Promise<void>;
 }
 
 function isNative(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-/** Reads and records the desktop window frame and panel separators. */
+/** The host owns frame capture and the awaited native close lifecycle. */
 export class TauriDesktopLayoutPort implements DesktopLayoutPort {
   public async snapshot(): Promise<DesktopLayout> {
     if (!isNative()) return {};
     return (await invoke("desktop_layout")) as DesktopLayout;
   }
 
-  public async commit(
-    frame: CapturedFrame | null,
-    panes: { historyPaneWidth?: number; inspectorPaneWidth?: number },
-  ): Promise<void> {
+  public async commit(panes: PaneWidths): Promise<void> {
     if (!isNative()) return;
+    // Pointer coordinates are fractional at non-integral DPI/zoom. The native
+    // schema uses u32; sending a fraction rejects the whole separator update.
     await invoke("desktop_layout_commit", {
-      frame,
-      historyPaneWidth: panes.historyPaneWidth ?? null,
-      inspectorPaneWidth: panes.inspectorPaneWidth ?? null,
+      historyPaneWidth: panes.historyPaneWidth === undefined ? null : Math.round(panes.historyPaneWidth),
+      inspectorPaneWidth: panes.inspectorPaneWidth === undefined ? null : Math.round(panes.inspectorPaneWidth),
     });
-  }
-}
-
-/**
- * Measures the main window's outer frame in physical pixels.
- *
- * `outerPosition`/`outerSize` are the frame the user actually positioned and
- * resized, so capturing them lets startup re-seat the same window. Reading the
- * inner size instead would lose the border and title bar, and the window would
- * drift smaller on every restart.
- *
- * A minimized window reports a sentinel position and a maximized or fullscreen
- * window reports the screen it covers; capturing either would re-seat a normal
- * window somewhere the user never put it, so those states capture nothing and
- * the last real placement is kept.
- */
-export async function captureWindowFrame(): Promise<CapturedFrame | null> {
-  if (!isNative()) return null;
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const window = getCurrentWindow();
-    const [minimized, maximized, fullscreen] = await Promise.all([
-      window.isMinimized(),
-      window.isMaximized(),
-      window.isFullscreen(),
-    ]);
-    if (minimized || maximized || fullscreen) return null;
-    const [position, size, scaleFactor] = await Promise.all([
-      window.outerPosition(),
-      window.outerSize(),
-      window.scaleFactor(),
-    ]);
-    return {
-      x: position.x,
-      y: position.y,
-      width: size.width,
-      height: size.height,
-      scaleFactor,
-    };
-  } catch {
-    return null;
   }
 }
 

@@ -17,7 +17,7 @@ use aworkit_desktop::presentation::{
 use aworkit_desktop::runtime::{
     CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
     DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
-    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, LayoutConfigurationV2,
+    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
     McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
     ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
     ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
@@ -27,7 +27,9 @@ use aworkit_desktop::runtime::{
     WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager};
+
+mod desktop_layout;
 
 type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
 
@@ -103,112 +105,6 @@ fn native_window_action(
     action: NativeWindowActionV1,
 ) -> Result<(), String> {
     aworkit_desktop::presentation::apply_window_action(&window, action)
-}
-
-/// The persisted desktop placement, read once when the shell mounts.
-#[tauri::command]
-async fn desktop_layout(runtime: tauri::State<'_, SharedRuntime>) -> Result<LayoutConfigurationV2, String> {
-    runtime_worker(Arc::clone(runtime.inner()), "desktop layout", |runtime| Ok(runtime.layout())).await
-}
-
-/// Records the outer window frame and panel separators.
-///
-/// `width`/`height` are the **outer** frame in physical pixels, exactly as the
-/// operating system reports them, so restoring them re-seats the same frame the
-/// user positioned. A framed window would otherwise drift smaller on every
-/// restart by twice its border inset. Panel separators are logical pixels.
-#[tauri::command]
-async fn desktop_layout_commit(
-    runtime: tauri::State<'_, SharedRuntime>,
-    frame: Option<CapturedFrameV1>,
-    history_pane_width: Option<u32>,
-    inspector_pane_width: Option<u32>,
-) -> Result<(), String> {
-    runtime_worker(Arc::clone(runtime.inner()), "desktop layout commit", move |runtime| {
-        let mut layout = runtime.layout();
-        if let Some(frame) = frame {
-            apply_measured_frame(&mut layout, frame);
-        }
-        if let Some(width) = history_pane_width {
-            layout.history_pane_width = Some(width);
-        }
-        if let Some(width) = inspector_pane_width {
-            layout.inspector_pane_width = Some(width);
-        }
-        runtime.settings_commit_layout(layout)
-    })
-    .await
-}
-
-/// The exact outer frame measured natively, never a renderer estimate.
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CapturedFrameV1 {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    scale_factor: f64,
-}
-
-/// Copies a measured frame into the persisted placement.
-///
-/// Only the frame fields move; the panel separators the renderer reported are
-/// preserved, because a window measurement says nothing about the panels.
-fn apply_measured_frame(layout: &mut LayoutConfigurationV2, frame: CapturedFrameV1) {
-    layout.x = Some(frame.x);
-    layout.y = Some(frame.y);
-    layout.width = Some(frame.width);
-    layout.height = Some(frame.height);
-    layout.scale_factor = Some(frame.scale_factor);
-}
-
-/// The outer frame the user actually positioned, if it is a placement worth
-/// restoring.
-///
-/// A minimized window reports a sentinel position, and a maximized or fullscreen
-/// window reports the screen it covers; restoring either would re-seat a normal
-/// window somewhere the user never put it, so those states keep the last real
-/// placement instead.
-fn restorable_window_frame(window: &tauri::Window<tauri::Wry>) -> Option<CapturedFrameV1> {
-    if window.is_minimized().unwrap_or(false)
-        || window.is_maximized().unwrap_or(false)
-        || window.is_fullscreen().unwrap_or(false)
-    {
-        return None;
-    }
-    let position = window.outer_position().ok()?;
-    let size = window.outer_size().ok()?;
-    Some(CapturedFrameV1 {
-        x: position.x,
-        y: position.y,
-        width: size.width,
-        height: size.height,
-        scale_factor: window.scale_factor().ok()?,
-    })
-}
-
-/// Persists the placement of a window that is closing.
-///
-/// The renderer's unload handler races the webview teardown, so the frame the
-/// user is closing with is measured here, before the window goes away. The
-/// coordinator lock is only held for the duration of a document write, and a
-/// busy lock skips the write rather than keeping the window open.
-fn record_closing_window_layout(window: &tauri::Window<tauri::Wry>) {
-    let Some(runtime) = window.app_handle().try_state::<SharedRuntime>() else {
-        return;
-    };
-    let Some(frame) = restorable_window_frame(window) else {
-        return;
-    };
-    let Ok(mut runtime) = runtime.inner().try_lock() else {
-        return;
-    };
-    let mut layout = runtime.layout();
-    apply_measured_frame(&mut layout, frame);
-    if let Err(error) = runtime.settings_commit_layout(layout) {
-        eprintln!("aworkit: could not record the closing window placement: {error}");
-    }
 }
 
 #[tauri::command]
@@ -851,12 +747,9 @@ fn main() {
             .with_management_repair(management);
             app.manage(runtime.cancellation_controller());
             app.manage(runtime.image_store());
-            // The frame the user positioned is the outer frame in physical
-            // pixels, so it is re-seated with the outer position and outer size.
-            // Reusing the client size would shrink the window by its border inset
-            // on every restart.
+            // Restore physical outer bounds before exposing renderer preferences.
             let saved_layout = runtime.layout();
-            aworkit_desktop::presentation::restore_window_layout(
+            desktop_layout::restore_window_layout(
                 app.handle(),
                 &saved_layout,
             )
@@ -864,6 +757,7 @@ fn main() {
                 eprintln!("aworkit: could not restore the saved window placement: {error}");
             });
             app.manage(Arc::new(Mutex::new(runtime)));
+            app.manage(desktop_layout::LayoutSession::new(saved_layout));
             Ok(())
         })
         .invoke_handler(|invoke| {
@@ -882,8 +776,8 @@ fn main() {
                 desktop_snapshot,
                 desktop_context_model,
                 desktop_command,
-                desktop_layout,
-                desktop_layout_commit,
+                desktop_layout::desktop_layout,
+                desktop_layout::desktop_layout_commit,
                 approval_project_grants,
                 approval_filesystem_grants,
                 approval_revoke_filesystem_grant,
@@ -928,14 +822,7 @@ fn main() {
             ];
             handler(invoke)
         })
-        .on_window_event(|window, event| {
-            // The main window's final placement is written while the close is
-            // still a request, so it is durable even if the renderer's unload
-            // handler never gets to run.
-            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
-                record_closing_window_layout(window);
-            }
-        })
+        .on_window_event(desktop_layout::on_window_event)
         .on_menu_event(aworkit_desktop::presentation::forward_menu_event)
         .plugin(tauri_plugin_opener::init())
         .run(context)

@@ -5749,6 +5749,7 @@ mod tests {
         let provider = Arc::new(FixtureProvider::new());
         let mut desktop = runtime(&root, provider.clone());
         let layout = LayoutConfigurationV2 {
+            maximized: false,
             // A negative coordinate is a real window position on a multi-monitor
             // desktop and must survive exactly.
             x: Some(-1280),

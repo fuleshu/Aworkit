@@ -1968,6 +1968,9 @@ impl ChatDefaultsConfigurationV2 {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LayoutConfigurationV2 {
+    /// Reopen maximized while retaining the last normal outer frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub maximized: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1988,7 +1991,8 @@ pub struct LayoutConfigurationV2 {
 }
 
 impl LayoutConfigurationV2 {
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    /// Validate native measurements before staging or persisting them.
+    pub fn validate(&self) -> Result<(), String> {
         if let Some(x) = self.x
             && x.unsigned_abs() > MAXIMUM_WINDOW_COORDINATE_V2.unsigned_abs()
         {

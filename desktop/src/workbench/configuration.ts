@@ -483,6 +483,7 @@ export const layoutConfigurationSchema = z
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     historyPaneWidth: z.number().int().positive().optional(),
+    maximized: z.boolean().optional(),
     inspectorPaneWidth: z.number().int().positive().optional(),
     scaleFactor: z.number().positive().optional(),
   })

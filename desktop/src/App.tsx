@@ -22,7 +22,6 @@ import { ManagementScreen } from "./shell/ManagementScreen";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
 import {
-  captureWindowFrame,
   createDesktopLayoutPort,
   type DesktopLayout,
 } from "./shell/desktopLayout";
@@ -66,10 +65,8 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   const [desktopLayout, setDesktopLayout] = useState<DesktopLayout>({});
   const navigation = usePaneWidth(208, 184, 640, desktopLayout.historyPaneWidth);
   const { width: navigationWidth, setWidth: setNavigationWidth } = navigation;
-  const inspectorWidth = useRef<number | undefined>(undefined);
-  // The persisted placement arrives asynchronously, so the frame is re-seated
-  // once it does. The window opens at the platform default for that first frame
-  // rather than blocking startup on a disk read.
+  // The native host restores the frame. The renderer hydrates only separators;
+  // initial/default widths must never be written over the saved preferences.
   useEffect(() => {
     let current = true;
     void layoutPort
@@ -77,31 +74,11 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
       .then((layout) => {
         if (current) setDesktopLayout(layout);
       })
-      .catch(() => undefined);
+      .catch((error) => console.error("Could not load desktop layout", error));
     return () => {
       current = false;
     };
   }, [layoutPort]);
-  // The geometry is captured when the window is going away, which is the only
-  // moment this session's final placement is known. `pagehide` covers both a
-  // normal close and a renderer teardown.
-  useEffect(() => {
-    const capture = () => {
-      void (async () => {
-        const frame = await captureWindowFrame();
-        await layoutPort
-          .commit(frame, {
-            historyPaneWidth: navigationWidth,
-            ...(inspectorWidth.current === undefined
-              ? {}
-              : { inspectorPaneWidth: inspectorWidth.current }),
-          })
-          .catch(() => undefined);
-      })();
-    };
-    window.addEventListener("pagehide", capture);
-    return () => window.removeEventListener("pagehide", capture);
-  }, [layoutPort, navigationWidth]);
   const [collapsed, setCollapsed] = useState(false);
   const [newChatRequest, setNewChatRequest] = useState(0);
   const [historyActionRequest, setHistoryActionRequest] =
@@ -285,13 +262,17 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         value={navigationWidth}
         min={184}
         max={navigation.max}
+        onPreview={(width) => {
+          const shell = mainRef.current?.parentElement;
+          if (shell) shell.style.gridTemplateColumns = `${collapsed ? 44 : width}px 6px minmax(0, 1fr)`;
+        }}
         onChange={(width) => {
           setNavigationWidth(width);
           // A finished drag is the settle point; committing per frame would write
           // the document dozens of times for one gesture.
           void layoutPort
-            .commit(null, { historyPaneWidth: width })
-            .catch(() => undefined);
+            .commit({ historyPaneWidth: width })
+            .catch((error) => setNotification({ kind: "notification", title: "Could not save desktop layout", body: String(error) }));
         }}
       />
       <section
@@ -317,10 +298,9 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 onRuntimeSnapshotChange={updateChatRuntimeState}
                 storedInspectorWidth={desktopLayout.inspectorPaneWidth}
                 onInspectorWidthChange={(width) => {
-                  inspectorWidth.current = width;
                   void layoutPort
-                    .commit(null, { inspectorPaneWidth: width })
-                    .catch(() => undefined);
+                    .commit({ inspectorPaneWidth: width })
+                    .catch((error) => setNotification({ kind: "notification", title: "Could not save desktop layout", body: String(error) }));
                 }}
               />
             </div>
