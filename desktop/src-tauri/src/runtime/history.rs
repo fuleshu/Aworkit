@@ -1280,6 +1280,10 @@ impl ChatHistory {
             expected_version: head,
             disabled_reason: None,
             recovery_pending: false,
+            // The reducer knows only the durable Chat events; the host publishes
+            // the remembered New Chat selections in `snapshot_history`.
+            remembered_workflow_id: None,
+            remembered_project_id: None,
         };
         let state_hash = canonical_hash(&json!({
             "throughSequence": head,

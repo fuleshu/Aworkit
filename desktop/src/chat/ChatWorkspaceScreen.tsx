@@ -48,6 +48,9 @@ interface ChatWorkspaceScreenProps {
     title: string,
     body: string,
   ) => Promise<boolean>;
+  /** Persisted Run-details separator position, applied once when it arrives. */
+  readonly storedInspectorWidth?: number;
+  readonly onInspectorWidthChange?: (width: number) => void;
 }
 
 export interface ChatHistoryActionRequest {
@@ -70,13 +73,15 @@ export function ChatWorkspaceScreen({
   onRecoveryPendingChange,
   onRuntimeSnapshotChange,
   confirmRecoveryAbandon = browserRecoveryConfirmation,
+  storedInspectorWidth,
+  onInspectorWidthChange,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const composerDrafts = useMemo(() => new ComposerDrafts(), []);
   const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const inspector = usePaneWidth(320, 280, 420);
+  const inspector = usePaneWidth(320, 280, 420, storedInspectorWidth);
   const { width: inspectorWidth, setWidth: setInspectorWidth } = inspector;
   const chatLayoutRef = useRef<HTMLElement>(null);
   const inspectorRef = inspector.ref;
@@ -549,7 +554,10 @@ export function ChatWorkspaceScreen({
           min={280}
           value={inspectorWidth}
           onPreview={previewInspectorWidth}
-          onChange={setInspectorWidth}
+          onChange={(width) => {
+            setInspectorWidth(width);
+            onInspectorWidthChange?.(width);
+          }}
         />
       )}
       {inspectorOpen && (

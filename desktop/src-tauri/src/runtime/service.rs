@@ -648,8 +648,17 @@ impl DesktopRuntime {
         let fallback_mode = history
             .current_frozen_context()?
             .and_then(|record| record.context.approval_mode)
+            // An unstarted Chat has no frozen decision yet, so it opens on the mode
+            // the last Chat ran with. An explicit per-Chat choice is recorded in the
+            // approval store and still wins over this fallback.
+            .or(self.documents.settings().chat_defaults.approval_mode)
             .unwrap_or(self.documents.settings().approvals.default_mode);
         snapshot.chat.approval_mode = self.approvals.mode(&snapshot.chat.chat_id, fallback_mode)?;
+        // An unstarted Chat's composer opens on the selections the host would
+        // resolve for a New Chat, so what the user sees is what the Run uses.
+        let remembered = &self.documents.settings().chat_defaults;
+        snapshot.chat.remembered_workflow_id = remembered.workflow_id.clone();
+        snapshot.chat.remembered_project_id = remembered.project_id.clone();
         let history_head = history.head()?;
         let pending = history
             .pending_effect_command_at_head(history_head)?
@@ -1658,13 +1667,22 @@ impl DesktopRuntime {
         // now the ones this Chat actually ran with. Remembering them never fails
         // the turn: a Settings write problem leaves the previous defaults.
         if !manual {
+            // The mode the Chat is running with now, not the one its frozen context
+            // opened with: a change during the Chat is the later selection.
+            let approval_mode = self
+                .approvals
+                .mode(
+                    context.identity.chat_id.as_str(),
+                    frozen.context.approval_mode.unwrap_or_default(),
+                )
+                .unwrap_or_else(|_| frozen.context.approval_mode.unwrap_or_default());
             let remembered = ChatDefaultsConfigurationV2 {
                 workflow_id: Some(context.workflow_id.to_string()),
                 project_id: context
                     .project
                     .as_ref()
                     .map(|project| project.project_id.clone()),
-                approval_mode: frozen.context.approval_mode,
+                approval_mode: Some(approval_mode),
             };
             if let Some(feedback) = &mut self.worker_feedback {
                 feedback.defaults = Some(remembered);
@@ -2194,7 +2212,11 @@ impl DesktopRuntime {
             ),
             approval_mode: Some(self.approvals.mode(
                 identity.chat_id.as_str(),
-                self.documents.settings().approvals.default_mode,
+                self.documents
+                    .settings()
+                    .chat_defaults
+                    .approval_mode
+                    .unwrap_or(self.documents.settings().approvals.default_mode),
             )?),
             schema_version: 1,
             identity,
@@ -2457,8 +2479,6 @@ impl DesktopRuntime {
         self.documents.settings_snapshot(&health)
     }
 
-    /// Returns the complete secret-free Settings v2 projection.
-    #[must_use]
     /// The persisted desktop window placement and panel separators.
     #[must_use]
     pub fn layout(&self) -> LayoutConfigurationV2 {
@@ -2476,6 +2496,8 @@ impl DesktopRuntime {
         self.documents.update_layout(layout)
     }
 
+    /// Returns the complete secret-free Settings v2 projection.
+    #[must_use]
     pub fn settings_v2_snapshot(&self) -> SettingsV2Snapshot {
         let provider_health = self
             .documents
@@ -2762,7 +2784,7 @@ impl DesktopRuntime {
         }
         let next_version = match self
             .documents
-            .save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next_settings)
+            .save_settings(input.expected_version, next_settings)
         {
             Ok(version) => version,
             Err(commit_error) => {
@@ -2842,6 +2864,16 @@ impl DesktopRuntime {
             }
         }
         let previous = self.documents.settings().clone();
+        // The remembered New Chat selections and the window placement are
+        // host-owned. A generic full-document save that carries neither keeps the
+        // stored ones, exactly as stored credential metadata is protected: a
+        // caller that does not know about them cannot erase them.
+        if settings.chat_defaults == ChatDefaultsConfigurationV2::default() {
+            settings.chat_defaults = previous.chat_defaults.clone();
+        }
+        if settings.layout == LayoutConfigurationV2::default() {
+            settings.layout = previous.layout.clone();
+        }
         validate_credential_metadata_update(&previous, &settings)?;
         validate_extension_lifecycle_update(&previous, &settings)?;
         validate_unavailable_executor_enablement_update(&previous, &settings)?;
@@ -2951,7 +2983,7 @@ impl DesktopRuntime {
         if let Err(error) = next.validate_installed_runtime_consumers() {
             return Err(self.credential_operation_error(error));
         }
-        let next_version = match self.documents.save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next) {
+        let next_version = match self.documents.save_settings(input.expected_version, next) {
             Ok(version) => version,
             Err(error) => {
                 return Err(format!(
@@ -3057,7 +3089,7 @@ impl DesktopRuntime {
         )?;
         let next_version = self
             .documents
-            .save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next)
+            .save_settings(input.expected_version, next)
             .map_err(|error| {
                 format!(
                     "{error}; credential reconciliation remains durably pending until the profile is reopened"
@@ -3350,7 +3382,7 @@ impl DesktopRuntime {
         next.extensions[index] = registered;
         next.validate()?;
         next.validate_installed_runtime_consumers()?;
-        let next_version = self.documents.save_settings_edit(input.expected_version, self.documents.stored_settings_version(), next)?;
+        let next_version = self.documents.save_settings(input.expected_version, next)?;
         let receipt = UiCommandReceipt {
             command_id: input.command_id.clone(),
             accepted: true,
@@ -4624,11 +4656,12 @@ mod tests {
     use super::super::provider::ProviderCompletion;
     use super::*;
     use crate::runtime::{
-        CredentialMetadataConfigurationV2, ExtensionConfigurationV2, ExtensionStatusV2,
-        ExternalAgentCapabilitiesV2, ExternalAgentConfigurationV2, IntegrationTransportV2,
-        McpServerConfigurationV2, ModelTierConfigurationV2, ModelTierKindV2, ModelTierResolutionV2,
-        ProjectConfigurationV2, ProviderCommitInput, ProviderConfigurationV2,
-        ProviderSettingsSnapshot, WorkspaceConfigurationV2, WorkspaceKindV2,
+        ApprovalMode, CredentialMetadataConfigurationV2, ExtensionConfigurationV2,
+        ExtensionStatusV2, ExternalAgentCapabilitiesV2, ExternalAgentConfigurationV2,
+        IntegrationTransportV2, McpServerConfigurationV2, ModelTierConfigurationV2,
+        ModelTierKindV2, ModelTierResolutionV2, ProjectConfigurationV2, ProviderCommitInput,
+        ProviderConfigurationV2, ProviderSettingsSnapshot, WorkspaceConfigurationV2,
+        WorkspaceKindV2,
     };
 
     mod context_edit;
@@ -5587,8 +5620,8 @@ mod tests {
 
     #[test]
     fn a_chat_remembers_its_selections_for_the_next_one() {
-        // The last Chat's workflow and project are remembered in the canonical
-        // Settings document, survive a later Settings save, and become the
+        // The last Chat's workflow, project and approval mode are remembered in the
+        // canonical Settings document, survive a later Settings save, and become the
         // default for a new Chat that selects nothing itself.
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
@@ -5606,6 +5639,34 @@ mod tests {
             Some("workflow.simple-chat")
         );
         assert_eq!(remembered.project_id.as_deref(), Some("project.tool-test"));
+
+        // The remembered mode is the one the Chat is running with now, not the one
+        // its frozen context opened with, so a change during the Chat carries over.
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.remember-selections-mode".into(),
+                expected_version: runtime.history.head().unwrap(),
+                action: "approval_mode".into(),
+                target_id: None,
+                payload: json!({"mode":"approve_for_me"}),
+            })
+            .unwrap();
+        let mut follow_up = send(
+            "chat.remember-selections-follow-up",
+            runtime.history.head().unwrap(),
+            "carry on",
+        );
+        follow_up.action = "enqueue".into();
+        runtime.command(follow_up).unwrap();
+        assert_eq!(
+            runtime
+                .documents
+                .settings()
+                .chat_defaults
+                .approval_mode,
+            Some(ApprovalMode::ApproveForMe)
+        );
 
         // An ordinary Settings save must not drop the remembered section, which
         // is exactly what a model-facing full-document save would otherwise do.
@@ -5629,7 +5690,8 @@ mod tests {
         );
 
         // A new Chat that sends an empty workflow selection inherits the
-        // remembered one and runs, instead of failing on a missing selection.
+        // remembered one and runs, instead of failing on a missing selection, and
+        // it opens on the remembered approval mode before anything runs.
         runtime
             .command(UiCommandInput {
                 schema_version: 1,
@@ -5640,15 +5702,101 @@ mod tests {
                 payload: json!({}),
             })
             .unwrap();
+        assert_eq!(
+            runtime.snapshot(0).unwrap().chat.approval_mode,
+            ApprovalMode::ApproveForMe,
+            "the remembered approval mode is the new Chat's opening selection"
+        );
+        let projected = runtime.snapshot(0).unwrap().chat;
+        assert_eq!(
+            projected.remembered_workflow_id.as_deref(),
+            Some("workflow.simple-chat"),
+            "an unstarted Chat publishes the workflow it would inherit"
+        );
+        assert_eq!(
+            projected.remembered_project_id.as_deref(),
+            Some("project.tool-test"),
+            "an unstarted Chat publishes the project it would inherit"
+        );
         let mut inherited = send("chat.remembered-start", 0, "continue in a new chat");
         inherited.payload["workflowId"] = Value::String(String::new());
         runtime.command(inherited).unwrap();
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
         assert_eq!(
             runtime.snapshot(0).unwrap().chat.workflow_id.as_deref(),
             Some("workflow.simple-chat"),
             "the remembered workflow started the new Chat"
         );
+        assert_eq!(
+            runtime
+                .history
+                .current_frozen_context()
+                .unwrap()
+                .unwrap()
+                .context
+                .approval_mode,
+            Some(ApprovalMode::ApproveForMe),
+            "the frozen context opened on the remembered approval mode"
+        );
+    }
+
+    #[test]
+    fn desktop_layout_round_trips_through_a_reopen_and_leaves_settings_editable() {
+        // The window frame and panel separators are host-owned state: they survive
+        // a restart, they never invalidate the rest of the document, and the
+        // version they advance is the one the Settings editor reads next.
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut desktop = runtime(&root, provider.clone());
+        let layout = LayoutConfigurationV2 {
+            // A negative coordinate is a real window position on a multi-monitor
+            // desktop and must survive exactly.
+            x: Some(-1280),
+            y: Some(40),
+            width: Some(1600),
+            height: Some(1000),
+            history_pane_width: Some(240),
+            inspector_pane_width: Some(360),
+            scale_factor: Some(1.5),
+        };
+        desktop.settings_commit_layout(layout.clone()).unwrap();
+        assert_eq!(desktop.layout(), layout);
+        drop(desktop);
+
+        let mut reopened = runtime(&root, provider);
+        assert_eq!(reopened.layout(), layout, "the placement survived the reopen");
+
+        let mut settings = reopened.settings_v2_snapshot().settings;
+        settings.appearance.font_scale = 1.25;
+        reopened
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.after-layout".into(),
+                expected_version: reopened.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+        assert_eq!(reopened.layout(), layout, "an edit preserved the placement");
+
+        // A generic save that carries neither host-owned section keeps both,
+        // because a caller that does not know about them cannot erase them.
+        let mut stripped = reopened.settings_v2_snapshot().settings;
+        stripped.chat_defaults = ChatDefaultsConfigurationV2::default();
+        stripped.layout = LayoutConfigurationV2::default();
+        reopened
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.stripped-host-sections".into(),
+                expected_version: reopened.settings_v2_snapshot().version,
+                settings: stripped,
+            })
+            .unwrap();
+        assert_eq!(reopened.layout(), layout, "a generic save kept the placement");
+
+        // An unusable placement is rejected at the boundary rather than written,
+        // so a bad measurement can never make the app unopenable.
+        let mut unusable = reopened.layout();
+        unusable.width = Some(0);
+        assert!(reopened.settings_commit_layout(unusable).is_err());
+        assert_eq!(reopened.layout(), layout);
     }
 
     #[test]

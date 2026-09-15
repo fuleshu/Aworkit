@@ -83,11 +83,19 @@ export function ChatComposer({
     ...emptyComposer,
     workflowId: chat.lockedWorkflow
       ? (chat.workflowId ?? "")
-      : (defaultWorkflowId ??
+      : (chat.rememberedWorkflowId ??
+        defaultWorkflowId ??
         (workflows === undefined
           ? bundledDefaultWorkflowId
           : workflowOptions[0]?.id) ??
         ""),
+    // The host remembers the last Chat's project; only a project that is still
+    // selectable becomes this Chat's opening selection.
+    projectId:
+      chat.lockedWorkflow ||
+      !projects.some(({ projectId }) => projectId === chat.rememberedProjectId)
+        ? null
+        : (chat.rememberedProjectId ?? null),
   }, drafts);
   useEffect(() => {
     onWorkflowChange?.(state.workflowId);

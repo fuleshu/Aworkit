@@ -1980,9 +1980,9 @@ pub struct LayoutConfigurationV2 {
     pub history_pane_width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inspector_pane_width: Option<u32>,
-    /// Device pixel ratio the persisted frame was captured at. Panel separators
-    /// are logical pixels, so restoring them on a display with a different
-    /// ratio scales them instead of applying a physical measurement.
+    /// Device pixel ratio the persisted frame was captured at. The frame itself
+    /// is physical, so it is re-seated unchanged; the ratio records which display
+    /// produced the placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<f64>,
 }

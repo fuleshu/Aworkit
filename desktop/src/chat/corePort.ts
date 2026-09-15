@@ -36,6 +36,8 @@ const chatProjectionSchema = z.object({
   queuedInputs: z.array(z.string()),
   expectedVersion: z.number().int().nonnegative(),
   disabledReason: z.string().nullable().optional(),
+  rememberedWorkflowId: z.string().nullable().optional(),
+  rememberedProjectId: z.string().nullable().optional(),
 });
 const chatProjectChoiceSchema = z.object({
   projectId: z.string().min(1),

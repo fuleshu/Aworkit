@@ -27,7 +27,7 @@ use aworkit_desktop::runtime::{
     WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
 use aworkit_local_store::RedactionSet;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WindowEvent};
 
 type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
 
@@ -116,9 +116,7 @@ async fn desktop_layout(runtime: tauri::State<'_, SharedRuntime>) -> Result<Layo
 /// `width`/`height` are the **outer** frame in physical pixels, exactly as the
 /// operating system reports them, so restoring them re-seats the same frame the
 /// user positioned. A framed window would otherwise drift smaller on every
-/// restart by twice its border inset. Panel separators are logical pixels and
-/// carry the device pixel ratio they were captured at so a different display
-/// scales them instead of misreading them as physical.
+/// restart by twice its border inset. Panel separators are logical pixels.
 #[tauri::command]
 async fn desktop_layout_commit(
     runtime: tauri::State<'_, SharedRuntime>,
@@ -129,11 +127,7 @@ async fn desktop_layout_commit(
     runtime_worker(Arc::clone(runtime.inner()), "desktop layout commit", move |runtime| {
         let mut layout = runtime.layout();
         if let Some(frame) = frame {
-            layout.x = Some(frame.x);
-            layout.y = Some(frame.y);
-            layout.width = Some(frame.width);
-            layout.height = Some(frame.height);
-            layout.scale_factor = Some(frame.scale_factor);
+            apply_measured_frame(&mut layout, frame);
         }
         if let Some(width) = history_pane_width {
             layout.history_pane_width = Some(width);
@@ -155,6 +149,66 @@ struct CapturedFrameV1 {
     width: u32,
     height: u32,
     scale_factor: f64,
+}
+
+/// Copies a measured frame into the persisted placement.
+///
+/// Only the frame fields move; the panel separators the renderer reported are
+/// preserved, because a window measurement says nothing about the panels.
+fn apply_measured_frame(layout: &mut LayoutConfigurationV2, frame: CapturedFrameV1) {
+    layout.x = Some(frame.x);
+    layout.y = Some(frame.y);
+    layout.width = Some(frame.width);
+    layout.height = Some(frame.height);
+    layout.scale_factor = Some(frame.scale_factor);
+}
+
+/// The outer frame the user actually positioned, if it is a placement worth
+/// restoring.
+///
+/// A minimized window reports a sentinel position, and a maximized or fullscreen
+/// window reports the screen it covers; restoring either would re-seat a normal
+/// window somewhere the user never put it, so those states keep the last real
+/// placement instead.
+fn restorable_window_frame(window: &tauri::Window<tauri::Wry>) -> Option<CapturedFrameV1> {
+    if window.is_minimized().unwrap_or(false)
+        || window.is_maximized().unwrap_or(false)
+        || window.is_fullscreen().unwrap_or(false)
+    {
+        return None;
+    }
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(CapturedFrameV1 {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        scale_factor: window.scale_factor().ok()?,
+    })
+}
+
+/// Persists the placement of a window that is closing.
+///
+/// The renderer's unload handler races the webview teardown, so the frame the
+/// user is closing with is measured here, before the window goes away. The
+/// coordinator lock is only held for the duration of a document write, and a
+/// busy lock skips the write rather than keeping the window open.
+fn record_closing_window_layout(window: &tauri::Window<tauri::Wry>) {
+    let Some(runtime) = window.app_handle().try_state::<SharedRuntime>() else {
+        return;
+    };
+    let Some(frame) = restorable_window_frame(window) else {
+        return;
+    };
+    let Ok(mut runtime) = runtime.inner().try_lock() else {
+        return;
+    };
+    let mut layout = runtime.layout();
+    apply_measured_frame(&mut layout, frame);
+    if let Err(error) = runtime.settings_commit_layout(layout) {
+        eprintln!("aworkit: could not record the closing window placement: {error}");
+    }
 }
 
 #[tauri::command]
@@ -758,15 +812,19 @@ fn main() {
                 aworkit_desktop::web_renderer::qa::start(app.handle().clone(), report);
                 return Ok(());
             }
-            aworkit_desktop::presentation::install_application_menu(app.handle())?;
+            // Every startup step names itself: a failure here aborts the whole
+            // application, so the report must say which part refused to start.
+            aworkit_desktop::presentation::install_application_menu(app.handle())
+                .map_err(|error| std::io::Error::other(format!("application menu: {error}")))?;
             if let Some(window) = app.get_webview_window("main") {
-                aworkit_desktop::menu_typography::install(&window).map_err(std::io::Error::other)?;
+                aworkit_desktop::menu_typography::install(&window)
+                    .map_err(|error| std::io::Error::other(format!("menu typography: {error}")))?;
             }
             app.manage(aworkit_desktop::system_text_scale::SystemTextScale::observe(app.handle()));
             let app_data_root = app
                 .path()
                 .app_data_dir()
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
+                .map_err(|error| std::io::Error::other(format!("app data directory: {error}")))?;
             // Debug-only profile isolation for native WebView regression QA.
             #[cfg(debug_assertions)]
             let app_data_root = std::env::var_os("AWORKIT_QA_PROFILE")
@@ -775,7 +833,7 @@ fn main() {
             let repair_root = app_data_root.join("repair");
             let ledger = Arc::new(
                 LocalRepairLedgerAdapter::for_store_root(repair_root, RedactionSet::default())
-                    .map_err(|error| std::io::Error::other(error.to_string()))?,
+                    .map_err(|error| std::io::Error::other(format!("repair ledger: {error}")))?,
             );
             let management = ManagementRepairGateway::with_durable_ledger(ledger);
             let committed_events: Arc<dyn CommittedChatEventPort> =
@@ -789,7 +847,7 @@ fn main() {
                     app.handle().clone(),
                 )),
             )
-            .map_err(std::io::Error::other)?
+            .map_err(|error| std::io::Error::other(format!("desktop runtime: {error}")))?
             .with_management_repair(management);
             app.manage(runtime.cancellation_controller());
             app.manage(runtime.image_store());
@@ -869,6 +927,14 @@ fn main() {
                 native_pick_folder
             ];
             handler(invoke)
+        })
+        .on_window_event(|window, event| {
+            // The main window's final placement is written while the close is
+            // still a request, so it is durable even if the renderer's unload
+            // handler never gets to run.
+            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+                record_closing_window_layout(window);
+            }
         })
         .on_menu_event(aworkit_desktop::presentation::forward_menu_event)
         .plugin(tauri_plugin_opener::init())

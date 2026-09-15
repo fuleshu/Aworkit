@@ -27,6 +27,13 @@ export interface ChatProjection {
   readonly queuedInputs: readonly string[];
   readonly expectedVersion: number;
   readonly disabledReason?: string;
+  /**
+   * The workflow and project a New Chat inherits when it chooses nothing itself.
+   * An unstarted Chat's composer opens on these, so the visible selection is the
+   * one the host would resolve for the Run.
+   */
+  readonly rememberedWorkflowId?: string | null;
+  readonly rememberedProjectId?: string | null;
 }
 
 export interface ChatProjectChoice {

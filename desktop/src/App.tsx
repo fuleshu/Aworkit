@@ -285,7 +285,14 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         value={navigationWidth}
         min={184}
         max={navigation.max}
-        onChange={setNavigationWidth}
+        onChange={(width) => {
+          setNavigationWidth(width);
+          // A finished drag is the settle point; committing per frame would write
+          // the document dozens of times for one gesture.
+          void layoutPort
+            .commit(null, { historyPaneWidth: width })
+            .catch(() => undefined);
+        }}
       />
       <section
         id="main-surface"
@@ -308,6 +315,13 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 historyActionRequest={historyActionRequest}
                 onRecoveryPendingChange={setChatRecoveryPending}
                 onRuntimeSnapshotChange={updateChatRuntimeState}
+                storedInspectorWidth={desktopLayout.inspectorPaneWidth}
+                onInspectorWidthChange={(width) => {
+                  inspectorWidth.current = width;
+                  void layoutPort
+                    .commit(null, { inspectorPaneWidth: width })
+                    .catch(() => undefined);
+                }}
               />
             </div>
           )}

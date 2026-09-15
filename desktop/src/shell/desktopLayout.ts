@@ -59,12 +59,23 @@ export class TauriDesktopLayoutPort implements DesktopLayoutPort {
  * resized, so capturing them lets startup re-seat the same window. Reading the
  * inner size instead would lose the border and title bar, and the window would
  * drift smaller on every restart.
+ *
+ * A minimized window reports a sentinel position and a maximized or fullscreen
+ * window reports the screen it covers; capturing either would re-seat a normal
+ * window somewhere the user never put it, so those states capture nothing and
+ * the last real placement is kept.
  */
 export async function captureWindowFrame(): Promise<CapturedFrame | null> {
   if (!isNative()) return null;
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const window = getCurrentWindow();
+    const [minimized, maximized, fullscreen] = await Promise.all([
+      window.isMinimized(),
+      window.isMaximized(),
+      window.isFullscreen(),
+    ]);
+    if (minimized || maximized || fullscreen) return null;
     const [position, size, scaleFactor] = await Promise.all([
       window.outerPosition(),
       window.outerSize(),

@@ -66,6 +66,11 @@ pub struct ChatProjectionDto {
     pub expected_version: u64,
     pub disabled_reason: Option<String>,
     pub recovery_pending: bool,
+    /// The selections the host resolves for a New Chat that chooses nothing
+    /// itself, published so an unstarted Chat's composer opens on the same
+    /// workflow and project the Run would actually use.
+    pub remembered_workflow_id: Option<String>,
+    pub remembered_project_id: Option<String>,
 }
 
 /// Sidebar-safe summary of one durable Chat stream. Deleted Chats are

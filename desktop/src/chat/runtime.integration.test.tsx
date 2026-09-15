@@ -250,6 +250,93 @@ describe("Chat native-port recovery contracts", () => {
     ]);
   });
 
+  it("opens an unstarted Chat on the selections it would inherit", async () => {
+    // The host publishes the remembered New Chat selections, and the composer
+    // opens on exactly those so the visible choice is the one the Run uses.
+    const user = userEvent.setup();
+    const intents: ChatIntent[] = [];
+    render(
+      <ChatComposer
+        chat={{
+          ...runningChat,
+          phase: "draft",
+          lockedWorkflow: false,
+          workflowId: null,
+          projectId: null,
+          rememberedWorkflowId: "workflow.test",
+          rememberedProjectId: "project.atlas",
+        }}
+        projects={[
+          {
+            projectId: "project.atlas",
+            name: "Project Atlas",
+            workspaceKind: "local_directory",
+          },
+        ]}
+        workflows={[
+          { id: "workflow.simple-chat", name: "Simple Chat" },
+          { id: "workflow.test", name: "Test workflow" },
+        ]}
+        defaultWorkflowId="workflow.simple-chat"
+        nextCommandId={() => "command.remembered"}
+        pending={false}
+        stale={false}
+        onSubmit={async (intent) => {
+          intents.push(intent);
+          return true;
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Workflow for the first Chat input" }),
+    ).toHaveValue("workflow.test");
+    expect(
+      screen.getByRole("combobox", { name: "Project for the first Chat input" }),
+    ).toHaveValue("project.atlas");
+    await user.type(screen.getByRole("textbox", { name: "Chat input" }), "go on");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(intents).toEqual([
+      expect.objectContaining({
+        type: "start",
+        workflowId: "workflow.test",
+        projectId: "project.atlas",
+      }),
+    ]);
+  });
+
+  it("does not preselect a remembered project that is no longer selectable", () => {
+    render(
+      <ChatComposer
+        chat={{
+          ...runningChat,
+          phase: "draft",
+          lockedWorkflow: false,
+          workflowId: null,
+          projectId: null,
+          rememberedProjectId: "project.deleted",
+        }}
+        projects={[
+          {
+            projectId: "project.atlas",
+            name: "Project Atlas",
+            workspaceKind: "local_directory",
+          },
+        ]}
+        workflows={[{ id: "workflow.simple-chat", name: "Simple Chat" }]}
+        defaultWorkflowId="workflow.simple-chat"
+        nextCommandId={() => "command.stale-project"}
+        pending={false}
+        stale={false}
+        onSubmit={async () => true}
+      />,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Project for the first Chat input" }),
+    ).toHaveValue("");
+  });
+
   it("reuses the stable command ID after an uncertain result and clears only after confirmation", async () => {
     const user = userEvent.setup();
     const intents: ChatIntent[] = [];
