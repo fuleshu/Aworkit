@@ -17,7 +17,7 @@ impl ChatCommandWorker {
     pub(crate) fn execute(&mut self, command: UiCommandInput) -> Result<UiCommandReceipt, String> {
         let result = self.runtime.command(command);
         // Refresh the compact sidebar summary even if this Chat is hidden.
-        if let Err(error) = self.runtime.history.snapshot(0) {
+        if let Err(error) = self.runtime.history.snapshot(u64::MAX) {
             eprintln!("aworkit: could not refresh Chat summary: {error}");
         }
         result
@@ -105,7 +105,7 @@ impl DesktopRuntime {
         chat_id: Option<&str>,
     ) -> Result<RuntimeSnapshot, String> {
         let history = match chat_id {
-            Some(id) => self.history.for_chat(id)?,
+            Some(id) => self.history.for_chat_query(id)?,
             None => self.history.clone(),
         };
         let mut snapshot = self.snapshot_history(&history, after_sequence)?;
@@ -135,7 +135,7 @@ impl DesktopRuntime {
                     "Resolve this Chat's interrupted command before deleting or forking it.".into(),
                 );
             }
-            let snapshot = history.snapshot(0)?;
+            let snapshot = history.snapshot(u64::MAX)?;
             if snapshot.chat.phase == "awaiting_approval" {
                 return Err(
                     "Resolve this Chat's pending approval before deleting or forking it.".into(),

@@ -29,6 +29,8 @@ use super::settings_v2::{
     ProviderConfigurationV2,
 };
 
+mod feed;
+
 pub(crate) const CHAT_ID: &str = "chat.local";
 const BRANCH_ID: &str = "main";
 const SESSION_AGGREGATE_ID: &str = "chat.frozen-sessions";
@@ -263,6 +265,15 @@ impl ChatHistory {
         })
     }
 
+    /// Read queries share the one discardable decoded stream. Binding the
+    /// identity avoids reloading navigation metadata for every event page.
+    pub(crate) fn for_chat_query(&self, chat_id: &str) -> Result<Self, String> {
+        Ok(Self {
+            bound_identity: Some(self.identity(chat_id)?),
+            ..self.clone()
+        })
+    }
+
     /// Reads the indexed stream head without loading or parsing event payloads.
     fn head_for_chat(&self, chat_id: &StableId) -> Result<u64, String> {
         self.store
@@ -310,6 +321,10 @@ impl ChatHistory {
             }
         }
         Ok(None)
+    }
+
+    pub(crate) fn replay_navigation(&self, command_id: &str, command_hash: &str) -> Result<Option<UiCommandReceipt>, String> {
+        history_index::replay(&self.store, command_id, command_hash)
     }
 
     pub(crate) fn append(
@@ -639,7 +654,9 @@ impl ChatHistory {
         history_head: u64,
     ) -> Result<Option<PendingChatCommandV1>, String> {
         let selected_chat_id = self.selected_identity()?.chat_id;
-        let chat_events = self.events_for_chat(&selected_chat_id)?;
+        let chat_events = self.store.events_of_kinds(selected_chat_id.as_str(), BRANCH_ID, &[
+            "message.assistant", "context.manual-completed", "context.manual-failed", "approval.requested", "execution.failed", "chat.turn_stopped",
+        ]).map_err(|e| e.to_string())?;
         // Decode the profile-level session aggregate exactly once. The former
         // nested lookup reopened and revalidated every frozen context for each
         // staged command, making every history selection quadratic in the
@@ -1232,9 +1249,12 @@ impl ChatHistory {
             chat_id: indexed.chat_id.clone(),
             run_id: indexed.run_id.clone(),
         };
-        let all_events = self.events_for_chat(&identity.chat_id)?;
-        let head = u64::try_from(all_events.len())
-            .map_err(|_| "Chat history sequence is exhausted".to_owned())?;
+        let head = self.head_for_chat(&identity.chat_id)?;
+        let all_events = if after_sequence == u64::MAX {
+            Arc::new(self.store.events_of_kinds(identity.chat_id.as_str(), BRANCH_ID, &[
+                "chat.started", "chat.cancelled", "message.user", "message.assistant", "approval.requested", "approval.resolved", "chat.turn_stopped", "context.manual-completed", "context.manual-failed", "execution.failed", "tool.completed", "tool.failed",
+            ]).map_err(|e| e.to_string())?)
+        } else { self.events()? };
         let current = all_events.clone();
         let frozen = self.frozen_context(&identity.chat_id)?;
         let evidence = evidence(&current);
@@ -1291,7 +1311,12 @@ impl ChatHistory {
             "chat": &chat,
             "evidence": &evidence,
         }))?;
-        let summary = sidebar_summary(&current, frozen.as_ref(), &indexed.created_at);
+        let mut summary = sidebar_summary(&current, frozen.as_ref(), &indexed.created_at);
+        summary.head_sequence = head;
+        if after_sequence == u64::MAX {
+            summary.updated_at = self.store.latest_event_time(identity.chat_id.as_str(), BRANCH_ID)
+                .map_err(|e| e.to_string())?.unwrap_or_else(|| indexed.created_at.clone());
+        }
         if indexed.summary.as_ref() != Some(&summary) {
             history_index::append_summaries(
                 &self.store,
@@ -1302,7 +1327,7 @@ impl ChatHistory {
         let history = Self::history_entries(index);
         let stream_id = identity.chat_id.to_string();
         let events = all_events
-            .into_iter()
+            .iter()
             .enumerate()
             .filter_map(|(offset, event)| {
                 let sequence = u64::try_from(offset).ok()?.checked_add(1)?;
@@ -1311,12 +1336,13 @@ impl ChatHistory {
                         &stream_id,
                         BRANCH_ID,
                         sequence,
-                        SemanticEventDraft::new(event.kind, event.payload),
+                        SemanticEventDraft::new(event.kind.clone(), event.payload.clone()),
                     )
                 })
             })
             .collect();
         Ok(RuntimeSnapshot {
+            event_window: None,
             active_chat_ids: Vec::new(),
             context_model: frozen.as_ref().map(|record| super::dto::ContextModelDto {
                 name: record.context.model_name.clone(),

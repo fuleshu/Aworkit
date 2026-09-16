@@ -21,3 +21,7 @@ Keep summary_target unset (it already is) so you never load a second model.
 deepseek harness:
 All three resolved. Let me record them in the contract.
 [records contract in an md file]
+
+Also noting from earlier that adashi_qa list_jobs still returns full run logs (~772 KB) — unrelated to these changes, but still the biggest context risk if the new coding_workflow calls it.
+
+changed mcp server location, but did not release old mcp server file

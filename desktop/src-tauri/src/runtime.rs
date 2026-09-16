@@ -67,6 +67,7 @@ pub use pipeline::{
 };
 pub use semantic_events::{CommittedChatEventPort, CoreEventEnvelope};
 pub use service::DesktopRuntime;
+pub use service::ChatFeedReader;
 pub use settings_diagnostics::{
     ProjectProbeRequestV2, ProjectProbeResultV2, ToolProbeRequestV2, ToolProbeResultV2,
 };

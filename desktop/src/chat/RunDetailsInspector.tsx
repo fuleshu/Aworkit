@@ -11,6 +11,7 @@ import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
 import { RawJsonView } from "./RawJsonView";
 
 interface RunDetailsInspectorProps {
+  readonly partial?: boolean;
   readonly chat: ChatProjection;
   readonly events: readonly RuntimeEvent[];
   readonly items: readonly TimelineItem[];
@@ -22,6 +23,7 @@ interface RunDetailsInspectorProps {
 
 /** Contextual, human-readable Run inspector with raw data kept as an expert view. */
 export function RunDetailsInspector({
+  partial = false,
   chat,
   events,
   items,
@@ -32,8 +34,8 @@ export function RunDetailsInspector({
 }: RunDetailsInspectorProps): React.JSX.Element {
   const [tab, setTab] = useState<"details" | "raw">("details");
   const view = useMemo(
-    () => projectRunDetails({ chat, items, events, records, selectedId }),
-    [chat, events, items, records, selectedId],
+    () => projectRunDetails({ chat, items, events, records, selectedId, partial }),
+    [chat, events, items, records, selectedId, partial],
   );
   return (
     <aside className="run-details-inspector" aria-label="Run details">
@@ -87,6 +89,7 @@ export function RunDetailsInspector({
         ))}
       </nav>
       <div className="run-details-content" id="run-details-panel" role="tabpanel">
+        {partial && <p className="inspector-window-note">Showing loaded activity. Scroll up in the Chat to include earlier activity.</p>}
         {tab === "details" ? (
           <DetailsView sections={view.sections} summary={view.summary} onSelect={onSelect} />
         ) : (

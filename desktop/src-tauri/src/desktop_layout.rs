@@ -15,6 +15,10 @@ pub struct LayoutSession {
 }
 
 impl LayoutSession {
+    pub fn restore(&self, layout: LayoutConfigurationV2) -> Result<(), String> {
+        *self.layout.lock().map_err(|_| "desktop layout lock is unavailable")? = layout;
+        Ok(())
+    }
     pub fn new(layout: LayoutConfigurationV2) -> Self {
         Self {
             layout: Mutex::new(layout),
@@ -31,9 +35,11 @@ impl LayoutSession {
 
 /// Returns the last native layout including separators acknowledged this session.
 #[tauri::command]
-pub fn desktop_layout(
+pub async fn desktop_layout(
     session: tauri::State<'_, LayoutSession>,
+    runtime: tauri::State<'_, SharedRuntime>,
 ) -> Result<LayoutConfigurationV2, String> {
+    runtime_worker(Arc::clone(runtime.inner()), "layout startup", |_| Ok(())).await?;
     session.snapshot()
 }
 

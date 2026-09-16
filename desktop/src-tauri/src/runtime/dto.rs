@@ -113,6 +113,8 @@ pub struct EvidenceRecordDto {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window: Option<ChatEventWindow>,
     #[serde(default)]
     pub active_chat_ids: Vec<String>,
     /// Frozen model metadata for context inspection, including legacy Chats.
@@ -125,6 +127,24 @@ pub struct RuntimeSnapshot {
     pub history: Vec<ChatHistoryEntryDto>,
     pub projects: Vec<ProjectChoiceDto>,
     pub evidence: Vec<EvidenceRecordDto>,
+    pub events: Vec<CoreEventEnvelope>,
+}
+
+/// A contiguous loaded range plus exact support for spans crossing its edge.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatEventWindow {
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+    pub head_sequence: u64,
+    pub has_more: bool,
+    pub supporting_events: Vec<CoreEventEnvelope>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatEventPage {
+    pub window: ChatEventWindow,
     pub events: Vec<CoreEventEnvelope>,
 }
 

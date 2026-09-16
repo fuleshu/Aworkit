@@ -3,6 +3,8 @@ mod concurrent;
 mod context_model;
 mod mcp_definitions;
 mod mcp_selection;
+mod snapshot_page;
+pub use snapshot_page::ChatFeedReader;
 mod tool_plugins;
 
 use std::{
@@ -798,7 +800,10 @@ impl DesktopRuntime {
             }
         }
         let fingerprint = command_fingerprint(&input)?;
-        if let Some(receipt) = self.history.replay(&input.command_id, &fingerprint)? {
+        let replay = if super::concurrency::is_navigation(&input.action) {
+            self.history.replay_navigation(&input.command_id, &fingerprint)?
+        } else { self.history.replay(&input.command_id, &fingerprint)? };
+        if let Some(receipt) = replay {
             return Ok(receipt);
         }
         if let Some(processed) = self.processed.get(&input.command_id) {

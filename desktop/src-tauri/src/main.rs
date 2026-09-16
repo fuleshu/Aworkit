@@ -4,11 +4,11 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use aworkit_desktop::management::{
-    LocalRepairLedgerAdapter, ManagementRepairCommandInput, ManagementRepairGateway,
+    ManagementRepairCommandInput,
     ManagementRepairProjectionDto, ManagementRepairReceipt,
 };
 use aworkit_desktop::presentation::{
@@ -20,18 +20,19 @@ use aworkit_desktop::runtime::{
     ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
     McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
     ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
-    ProviderTestInput, ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
+    ProviderTestInput, ProviderTestResult, SettingsCommitInput, SettingsSnapshot,
     SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
     UiCommandInput, UiCommandReceipt, WorkflowCancellationController, WorkflowCommitInput,
     WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot,
     WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
 };
-use aworkit_local_store::RedactionSet;
 use tauri::{Emitter, Manager};
 
 mod desktop_layout;
+mod desktop_snapshot;
+mod desktop_bootstrap;
 
-type SharedRuntime = Arc<Mutex<DesktopRuntime>>;
+type SharedRuntime = Arc<desktop_bootstrap::RuntimeHost>;
 
 /// Runs every potentially contended runtime access away from Tauri's IPC/UI
 /// dispatcher. Chat execution uses separate workers, so these coordinator
@@ -136,20 +137,6 @@ async fn native_pick_folder(app: tauri::AppHandle) -> Option<tauri_plugin_dialog
     aworkit_desktop::presentation::pick_folder(&app)
 }
 
-#[tauri::command]
-async fn desktop_snapshot(
-    runtime: tauri::State<'_, SharedRuntime>,
-    after_sequence: u64,
-    chat_id: Option<String>,
-) -> Result<RuntimeSnapshot, String> {
-    runtime_worker(
-        Arc::clone(runtime.inner()),
-        "desktop snapshot",
-        move |runtime| runtime.snapshot_for_chat(after_sequence, chat_id.as_deref()),
-    )
-    .await
-}
-
 /// Resolve the visible Chat's model capacity without changing its frozen context.
 #[tauri::command]
 async fn desktop_context_model(
@@ -250,7 +237,7 @@ async fn desktop_command(
     let cancellation = cancellation.inner().clone();
     let runtime = Arc::clone(runtime.inner());
     let result = tauri::async_runtime::spawn_blocking(move || {
-        aworkit_desktop::runtime::dispatch_chat_command(runtime, command)
+        aworkit_desktop::runtime::dispatch_chat_command(runtime.shared()?, command)
     })
     .await
     .map_err(|error| format!("desktop command worker failed: {error}"))
@@ -726,38 +713,7 @@ fn main() {
             let app_data_root = std::env::var_os("AWORKIT_QA_PROFILE")
                 .map(PathBuf::from)
                 .unwrap_or(app_data_root);
-            let repair_root = app_data_root.join("repair");
-            let ledger = Arc::new(
-                LocalRepairLedgerAdapter::for_store_root(repair_root, RedactionSet::default())
-                    .map_err(|error| std::io::Error::other(format!("repair ledger: {error}")))?,
-            );
-            let management = ManagementRepairGateway::with_durable_ledger(ledger);
-            let committed_events: Arc<dyn CommittedChatEventPort> =
-                Arc::new(TauriCommittedChatEvents {
-                    app: app.handle().clone(),
-                });
-            let runtime = DesktopRuntime::open_with_web_renderer(
-                app_data_root.join("runtime"),
-                committed_events,
-                Arc::new(aworkit_desktop::web_renderer::NativeWebRenderer::new(
-                    app.handle().clone(),
-                )),
-            )
-            .map_err(|error| std::io::Error::other(format!("desktop runtime: {error}")))?
-            .with_management_repair(management);
-            app.manage(runtime.cancellation_controller());
-            app.manage(runtime.image_store());
-            // Restore physical outer bounds before exposing renderer preferences.
-            let saved_layout = runtime.layout();
-            desktop_layout::restore_window_layout(
-                app.handle(),
-                &saved_layout,
-            )
-            .unwrap_or_else(|error| {
-                eprintln!("aworkit: could not restore the saved window placement: {error}");
-            });
-            app.manage(Arc::new(Mutex::new(runtime)));
-            app.manage(desktop_layout::LayoutSession::new(saved_layout));
+            desktop_bootstrap::start(app.handle(), app_data_root);
             Ok(())
         })
         .invoke_handler(|invoke| {
@@ -773,7 +729,9 @@ fn main() {
                 chat_image_import,
                 chat_image_preview,
                 chat_image_thumbnail,
-                desktop_snapshot,
+                desktop_snapshot::desktop_snapshot,
+                desktop_snapshot::desktop_chat_snapshot,
+                desktop_snapshot::desktop_chat_events,
                 desktop_context_model,
                 desktop_command,
                 desktop_layout::desktop_layout,

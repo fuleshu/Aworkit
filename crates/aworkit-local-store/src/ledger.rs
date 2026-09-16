@@ -32,6 +32,8 @@ use crate::{
 const MAX_PAGE_SIZE: u32 = 512;
 const SUPPORTED_SEMANTIC_SCHEMA: u16 = 1;
 
+mod queries;
+
 /// Legacy v1 facade retained for callers while process-neutral ports use
 /// [`aworkit_protocol::EventV1`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

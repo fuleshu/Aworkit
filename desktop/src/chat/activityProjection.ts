@@ -33,6 +33,7 @@ interface SpanProjection {
  */
 export function projectSemanticTimeline(
   events: readonly RuntimeEvent[],
+  firstSequence = 1,
 ): TimelineItem[] {
   const ordered = [...events].sort(
     (left, right) => left.sequence - right.sequence,
@@ -68,11 +69,10 @@ export function projectSemanticTimeline(
     if (item !== undefined) facts.push(item);
   }
 
-  const visibleSpanIds = new Set(
-    [...spans.values()].filter(shouldRenderSpan).map((span) => span.spanId),
-  );
+  const belongsToWindow = (span: SpanProjection) => shouldRenderSpan(span) && span.sourceEvents.some(event => event.sequence >= firstSequence);
+  const visibleSpanIds = new Set([...spans.values()].filter(belongsToWindow).map(span => span.spanId));
   const spanItems = [...spans.values()]
-    .filter(shouldRenderSpan)
+    .filter(belongsToWindow)
     .map((span) =>
       spanItem(
         span,

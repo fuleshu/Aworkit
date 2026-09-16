@@ -14,8 +14,14 @@ import { ApprovalActions } from "./ApprovalActions";
 import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
 import { useTimelineFollow } from "./useTimelineFollow";
+import { useHistoryScroll } from "./useHistoryScroll";
+import { ChatBusy } from "./ChatBusy";
 
 interface ConversationTimelineProps {
+  readonly hasOlder?: boolean;
+  readonly olderLoading?: boolean;
+  readonly olderError?: string | null;
+  readonly onLoadOlder?: () => Promise<void>;
   readonly active?: boolean;
   readonly items: readonly TimelineItem[];
   readonly selectedId: string | null;
@@ -30,6 +36,7 @@ interface ConversationTimelineProps {
 
 /** Virtualized semantic transcript; the complete ordered item list stays outside widget state. */
 export function ConversationTimeline({
+  hasOlder = false, olderLoading = false, olderError, onLoadOlder,
   items,
   selectedId,
   actionsDisabled = false,
@@ -72,6 +79,8 @@ export function ConversationTimeline({
   const restoring = useTimelineReturn(active, scrollRef, presentedItems.map(item => item.id), pinnedToEnd,
     index => virtualizer.scrollToIndex(index, { align: "start" }));
   const follow = useTimelineFollow(active, scrollRef, pinnedToEnd, restoring);
+  const loadOlder = useHistoryScroll(scrollRef, pinnedToEnd, presentedItems.map(item => item.id), virtualizer.getTotalSize(), hasOlder, olderLoading, onLoadOlder,
+    index => virtualizer.scrollToIndex(index, { align: "start" }));
   useEffect(() => {
     if (!active) return;
     let scrollFrame: number | null = null;
@@ -152,6 +161,9 @@ export function ConversationTimeline({
       role="log"
       tabIndex={0}
     >
+      {hasOlder && <div className="chat-history-loader">
+        {olderLoading ? <ChatBusy label="Loading earlier activity…" /> : <button type="button" title="Load earlier activity without moving your reading position" onClick={() => void loadOlder()}>{olderError ? "Retry loading earlier activity" : "Load earlier activity"}</button>}
+      </div>}
       {items.length === 0 ? (
         <p className="empty-state timeline-empty">
           No messages yet. Configure a provider in Settings, then send the

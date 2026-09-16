@@ -218,8 +218,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         onNavigate={navigate}
         onNewChat={openNewChat}
         newChatDisabledReason={
-          chatRuntimeState === null ? "Loading Chats"
-            : chatRuntimeState.stale ? "Resynchronize Chat history before changing it" : null
+          chatRuntimeState === null ? "Loading Chats" : null
         }
         onToggleCollapsed={() => setCollapsed((value) => !value)}
         history={chatRuntimeState?.snapshot.history.map(entry => ({ ...entry, busy: chatRuntimeState.snapshot.activeChatIds?.includes(entry.chatId) ?? false }))}
@@ -228,9 +227,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         historyDisabledReason={
           chatRuntimeState === null
             ? "Loading Chat history"
-            : chatRuntimeState.stale
-                ? "Resynchronize Chat history before changing it"
-                : null
+            : null
         }
         onSelectChat={(chatId) => {
           navigate("chat", () => {

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChatBusy } from "./ChatBusy";
+import "./chatLoading.css";
 import { PaneSplitter } from "../shell/PaneSplitter";
 import { usePaneWidth } from "../shell/usePaneWidth";
 import { useProjectedNotification } from "../notifications/NotificationContext";
@@ -127,8 +129,8 @@ export function ChatWorkspaceScreen({
   const resolvedContextModel = useContextModel(runtime.contextModel, projectedChatId,
     snapshot?.chat.workflowId ?? selectedWorkflowId, snapshot?.contextModel, active);
   const timelineItems = useMemo(
-    () => (snapshot === null ? [] : projectSemanticTimeline(runtime.events)),
-    [snapshot, runtime.events],
+    () => projectSemanticTimeline(runtime.events, runtime.firstSequence),
+    [runtime.events, runtime.firstSequence],
   );
   const liveTurnRunning = useMemo(
     () => snapshot !== null && hasOpenSemanticSpan(runtime.events)
@@ -249,8 +251,7 @@ export function ChatWorkspaceScreen({
   useEffect(() => {
     if (
       newChatRequest <= handledNewChatRequest.current ||
-      runtime.snapshot === null ||
-      runtime.stale
+      runtime.snapshot === null
     )
       return;
     handledNewChatRequest.current = newChatRequest;
@@ -261,8 +262,7 @@ export function ChatWorkspaceScreen({
     if (
       historyActionRequest === null ||
       historyActionRequest.requestId <= handledHistoryActionRequest.current ||
-      runtime.snapshot === null ||
-      runtime.stale
+      runtime.snapshot === null
     )
       return;
     handledHistoryActionRequest.current = historyActionRequest.requestId;
@@ -291,9 +291,7 @@ export function ChatWorkspaceScreen({
   if (runtime.loading && snapshot === null)
     return (
       <>
-        <section className="route-loading" role="status">
-          Connecting to the trusted core…
-        </section>
+        <section className="chat-layout"><main className="chat-main"><ChatBusy label="Opening your chats…" /></main></section>
       </>
     );
   if (snapshot === null)
@@ -497,7 +495,7 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
         ) : null}
-        <ConversationTimeline
+        {runtime.loading ? <ChatBusy /> : <ConversationTimeline
           key={chat.chatId}
           active={active}
           items={timelineItems}
@@ -505,7 +503,11 @@ export function ChatWorkspaceScreen({
           actionsDisabled={runtime.pendingCommandIds.size > 0}
           onSelect={selectTimelineItem}
           onAction={cardAction}
-        />
+          hasOlder={runtime.hasOlderEvents}
+          olderLoading={runtime.olderLoading}
+          olderError={runtime.olderError}
+          onLoadOlder={runtime.loadOlder}
+        />}
         <ChatComposer
           drafts={composerDrafts}
           key={chat.chatId + (defaultWorkflowId ?? "")}
@@ -535,7 +537,7 @@ export function ChatWorkspaceScreen({
             }} />}
           projects={snapshot.projects}
           stale={runtime.stale}
-            pending={(runtime.pendingCommandIds.size > 0 || snapshot.activeChatIds?.includes(chat.chatId) === true) && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0}
+            pending={runtime.loading || ((runtime.pendingCommandIds.size > 0 || snapshot.activeChatIds?.includes(chat.chatId) === true) && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0)}
           workflows={workflows}
           defaultWorkflowId={defaultWorkflowId}
           workflowChecking={workflowChecking}
@@ -562,6 +564,7 @@ export function ChatWorkspaceScreen({
       )}
       {inspectorOpen && (
         <RunDetailsInspector
+          partial={runtime.hasOlderEvents}
           chat={visibleChat}
           events={runtime.events}
           items={timelineItems}

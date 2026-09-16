@@ -80,7 +80,16 @@ const runtimeEventSchema = z
     payload: z.unknown(),
   })
   .strict();
+const eventWindowSchema = z.object({
+  firstSequence: z.number().int().positive(), lastSequence: z.number().int().nonnegative(),
+  headSequence: z.number().int().nonnegative(), hasMore: z.boolean(),
+  supportingEvents: z.array(runtimeEventSchema),
+});
+const eventPageSchema = z.object({ window: eventWindowSchema, events: z.array(runtimeEventSchema) });
+export type ChatEventWindow = z.infer<typeof eventWindowSchema>;
+export type ChatEventPage = z.infer<typeof eventPageSchema>;
 const runtimeSnapshotSchema = z.object({
+  eventWindow: eventWindowSchema.optional(),
   activeChatIds: z.array(z.string()).default([]),
   contextModel: z.object({ name: z.string(), contextWindow: z.number().positive().nullable() }).nullable().optional(),
   version: z.number().int().nonnegative(),
@@ -100,6 +109,7 @@ const receiptSchema = z.object({
   reason: z.string().nullable(),
 });
 export interface RuntimeSnapshot {
+  readonly eventWindow?: ChatEventWindow;
   readonly activeChatIds?: readonly string[];
   readonly contextModel?: import("./contextProjection").ContextModel | null;
   readonly version: number;
@@ -120,6 +130,7 @@ export interface RuntimeReceipt {
   readonly reason: string | null;
 }
 export interface ChatCorePort {
+  olderEvents?(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage>;
   contextModel?(chatId: string, workflowId: string | null): Promise<import("./contextProjection").ContextModel | null>;
   snapshot(afterSequence: number, chatId?: string): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
@@ -131,6 +142,7 @@ export interface ChatCorePort {
 export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
   const parsed = runtimeSnapshotSchema.parse(input);
   return {
+    eventWindow: parsed.eventWindow,
     activeChatIds: parsed.activeChatIds,
     contextModel: parsed.contextModel,
     version: parsed.version,
@@ -190,9 +202,22 @@ export class TauriChatCorePort implements ChatCorePort {
       .parse(await invoke("desktop_context_model", { chatId, workflowId }));
   }
   public async snapshot(afterSequence: number, chatId?: string): Promise<RuntimeSnapshot> {
-    return normalizeRuntimeSnapshot(
-      await invoke("desktop_snapshot", { afterSequence, chatId }),
+    const snapshot = normalizeRuntimeSnapshot(
+      await invoke("desktop_chat_snapshot", { afterSequence, chatId }),
     );
+    const events = [...snapshot.events];
+    const support = [...(snapshot.eventWindow?.supportingEvents ?? [])];
+    let cursor = snapshot.eventWindow?.lastSequence ?? snapshot.throughSequence;
+    while (cursor < snapshot.throughSequence) {
+      const page = eventPageSchema.parse(await invoke("desktop_chat_events", { chatId: snapshot.chat.chatId, afterSequence: cursor, throughSequence: snapshot.throughSequence }));
+      if (!page.events.length || page.events[0].sequence !== cursor + 1) throw new Error("Chat recovery did not advance contiguously");
+      events.push(...page.events); support.push(...page.window.supportingEvents);
+      cursor = page.window.lastSequence;
+    }
+    return { ...snapshot, events, ...(snapshot.eventWindow ? { eventWindow: { ...snapshot.eventWindow, lastSequence: cursor, supportingEvents: support } } : {}) };
+  }
+  public async olderEvents(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage> {
+    return eventPageSchema.parse(await invoke("desktop_chat_events", { chatId, afterSequence: 0, beforeSequence, throughSequence }));
   }
   public async command(
     intent: ChatIntent,

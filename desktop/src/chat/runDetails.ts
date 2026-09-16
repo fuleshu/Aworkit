@@ -55,6 +55,7 @@ export interface RunDetailsView {
 }
 
 interface RunDetailsInput {
+  readonly partial?: boolean;
   readonly chat: ChatProjection;
   readonly items: readonly TimelineItem[];
   readonly events: readonly RuntimeEvent[];
@@ -182,9 +183,9 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
   });
   return {
     scope: "run",
-    title: "Entire run",
+    title: input.partial ? "Loaded activity" : "Entire run",
     status: input.chat.phase,
-    breadcrumbs: [{ id: null, label: "Entire run" }],
+    breadcrumbs: [{ id: null, label: input.partial ? "Loaded activity" : "Entire run" }],
     summary: compactFields([
       field("Status", phaseLabel(input.chat.phase), input.chat.phase),
       input.chat.workflowName !== null
