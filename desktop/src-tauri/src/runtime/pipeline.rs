@@ -7,6 +7,7 @@
 
 #[path = "compaction/provider.rs"]
 mod compaction_provider;
+mod frozen_tools;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -552,10 +553,11 @@ impl WorkflowExecutionPipeline {
             }
             return Ok((existing, true));
         }
-        let prepared = self.prepare(request, protocol, descriptor)?;
-        if let Some(existing_run) = self
+        let existing_run = self
             .records
-            .execution_for_chat_or_run(&request.chat_id, &request.run_id)?
+            .execution_for_chat_or_run(&request.chat_id, &request.run_id)?;
+        let prepared = self.prepare(request, protocol, descriptor, existing_run.as_ref())?;
+        if let Some(existing_run) = existing_run
             && !prepared.same_frozen_run(&existing_run)
         {
             return Err(WorkflowPipelineError::Store(
@@ -585,7 +587,7 @@ impl WorkflowExecutionPipeline {
             .as_ref()
             .map(StoredSecretBindingV1::from_metadata)
             .transpose()?;
-        let tools = freeze_file_tool_bindings(&request.tools)?;
+        let tools = frozen_tools::freeze(&request.tools, Some(&existing.tool_bindings))?;
         let stored_messages = existing
             .worker_proposal
             .payload
@@ -1250,6 +1252,7 @@ impl WorkflowExecutionPipeline {
         request: &WorkflowExecutionRequestV1,
         protocol: ProviderProtocolV1,
         descriptor: &CapabilityDescriptor,
+        existing_run: Option<&PreparedExecutionRecordV1>,
     ) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
         let capability_id = stable(protocol.capability_id())?;
         let secret = request
@@ -1267,7 +1270,10 @@ impl WorkflowExecutionPipeline {
             request_timeout_seconds: request.provider.request_timeout_seconds,
             maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
-        let tool_bindings = freeze_file_tool_bindings(&request.tools)?;
+        let tool_bindings = frozen_tools::freeze(
+            &request.tools,
+            existing_run.map(|existing| existing.tool_bindings.as_slice()),
+        )?;
         let (nodes, transitions, entry_nodes, model_node_id) = compile_graph_snapshot(
             request,
             descriptor,
@@ -2559,6 +2565,7 @@ impl CommittedWorkerResultPortV1 for CommittedWorkerAck {
 
 #[derive(Clone)]
 struct PipelineRecordStore {
+    cache: crate::runtime::record_cache::RecordCache,
     store: LocalHistoryStore,
     write_lock: Arc<Mutex<()>>,
 }
@@ -2566,6 +2573,7 @@ struct PipelineRecordStore {
 impl PipelineRecordStore {
     fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
+            cache: Default::default(),
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             write_lock: Arc::new(Mutex::new(())),
         })
@@ -2579,7 +2587,11 @@ impl PipelineRecordStore {
             .write_lock
             .lock()
             .map_err(|_| WorkflowPipelineError::Store("record lock poisoned".into()))?;
-        for value in self.execution_values()? {
+        for value in self.events_matching("pipeline.execution-prepared", |value| {
+            value["requestId"] == record.request_id.as_str()
+                || (value["snapshot"]["chatId"] == record.snapshot.chat_id.as_str()
+                    && value["snapshot"]["runId"] == record.snapshot.run_id.as_str())
+        })? {
             if value.get("requestId").and_then(Value::as_str) == Some(record.request_id.as_str()) {
                 let existing = decode_execution(value)?;
                 return if existing == *record {
@@ -2659,9 +2671,9 @@ impl PipelineRecordStore {
     ) -> Result<(), WorkflowPipelineError> {
         let expected_head = self
             .store
-            .events(PIPELINE_CHAT_ID, STORE_BRANCH_ID)
+            .head_sequence(PIPELINE_CHAT_ID, STORE_BRANCH_ID)
             .map_err(local_store_error)?
-            .len() as u64;
+            .unwrap_or(0);
         let event_id = digest_id(
             "record.event",
             &format!("{}:{}", kind, canonical_hash(&record)?),
@@ -2693,7 +2705,9 @@ impl PipelineRecordStore {
         &self,
         request_id: &StableId,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for value in self.execution_values()? {
+        for value in self.events_matching("pipeline.execution-prepared", |value| {
+            value["requestId"] == request_id.as_str()
+        })? {
             if value.get("requestId").and_then(Value::as_str) == Some(request_id.as_str()) {
                 return decode_execution(value).map(Some);
             }
@@ -2701,15 +2715,13 @@ impl PipelineRecordStore {
         Ok(None)
     }
 
-    fn execution_values(&self) -> Result<Vec<Value>, WorkflowPipelineError> {
-        self.events_of_kind("pipeline.execution-prepared")
-    }
-
     fn execution_for_dispatch(
         &self,
         dispatch: &ApprovedDispatchV1,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for value in self.execution_values()? {
+        for value in self.events_matching("pipeline.execution-prepared", |value| {
+            value.pointer("/brokerProposal/proposal_id").and_then(Value::as_str) == Some(dispatch.proposal_id.as_str())
+        })? {
             if value
                 .pointer("/brokerProposal/proposal_id")
                 .and_then(Value::as_str)
@@ -2726,7 +2738,9 @@ impl PipelineRecordStore {
         chat_id: &StableId,
         run_id: &StableId,
     ) -> Result<Option<PreparedExecutionRecordV1>, WorkflowPipelineError> {
-        for value in self.execution_values()? {
+        for value in self.events_matching("pipeline.execution-prepared", |value| {
+            value["snapshot"]["chatId"] == chat_id.as_str() || value["snapshot"]["runId"] == run_id.as_str()
+        })? {
             let chat_matches =
                 value.pointer("/snapshot/chatId").and_then(Value::as_str) == Some(chat_id.as_str());
             let run_matches =
@@ -2750,7 +2764,10 @@ impl PipelineRecordStore {
         invocation_id: &StableId,
     ) -> Result<Option<ProviderOutcomeRecordV1>, WorkflowPipelineError> {
         Ok(self
-            .outcomes()?
+            .events_matching("pipeline.provider-outcome", |value| value["invocationId"] == invocation_id.as_str())?
+            .into_iter()
+            .map(|value| serde_json::from_value(value).map_err(json_error))
+            .collect::<Result<Vec<ProviderOutcomeRecordV1>, _>>()?
             .into_iter()
             .find(|outcome| &outcome.invocation_id == invocation_id))
     }
@@ -2763,14 +2780,13 @@ impl PipelineRecordStore {
     }
 
     fn events_of_kind(&self, kind: &str) -> Result<Vec<Value>, WorkflowPipelineError> {
-        Ok(self
-            .store
-            .events(PIPELINE_CHAT_ID, STORE_BRANCH_ID)
-            .map_err(local_store_error)?
-            .into_iter()
-            .filter(|event| event.kind == kind)
-            .filter_map(|event| event.payload.get("record").cloned())
-            .collect())
+        self.events_matching(kind, |_| true)
+    }
+
+    fn events_matching(&self, kind: &str, predicate: impl Fn(&Value) -> bool) -> Result<Vec<Value>, WorkflowPipelineError> {
+        self.cache.select(&self.store, PIPELINE_CHAT_ID, STORE_BRANCH_ID, Some(kind), |event| {
+            event.payload.get("record").filter(|record| predicate(record)).cloned()
+        }).map_err(WorkflowPipelineError::Store)
     }
 
     fn store_pending_approval(
@@ -2844,6 +2860,7 @@ impl PipelineRecordStore {
 
 #[derive(Clone)]
 pub(super) struct LocalInvocationLedger {
+    cache: crate::runtime::record_cache::RecordCache,
     store: LocalHistoryStore,
     write_lock: Arc<Mutex<()>>,
     aggregate_id: String,
@@ -2863,6 +2880,7 @@ impl LocalInvocationLedger {
         worker_destination: &str,
     ) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
+            cache: Default::default(),
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             write_lock: Arc::new(Mutex::new(())),
             aggregate_id: aggregate_id.to_owned(),
@@ -2871,22 +2889,12 @@ impl LocalInvocationLedger {
         })
     }
 
-    fn broker_events(&self) -> Result<Vec<InvocationLedgerEventV1>, BrokerError> {
-        self.store
-            .events(&self.aggregate_id, STORE_BRANCH_ID)
-            .map_err(|_| BrokerError::Unavailable)?
+    fn broker_events_matching(&self, predicate: impl Fn(&Value) -> bool) -> Result<Vec<InvocationLedgerEventV1>, BrokerError> {
+        self.cache.select(&self.store, &self.aggregate_id, STORE_BRANCH_ID, None, |event| {
+            event.payload.get("event").filter(|value| predicate(value)).cloned()
+        }).map_err(|_| BrokerError::Unavailable)?
             .into_iter()
-            .filter(|event| event.kind.starts_with("broker."))
-            .map(|event| {
-                event
-                    .payload
-                    .get("event")
-                    .cloned()
-                    .ok_or(BrokerError::Unavailable)
-                    .and_then(|value| {
-                        serde_json::from_value(value).map_err(|_| BrokerError::Unavailable)
-                    })
-            })
+            .map(|value| serde_json::from_value(value).map_err(|_| BrokerError::Unavailable))
             .collect()
     }
 
@@ -2899,11 +2907,10 @@ impl LocalInvocationLedger {
             .write_lock
             .lock()
             .map_err(|_| BrokerError::Unavailable)?;
-        let existing = self
+        let expected_head = self
             .store
-            .events(&self.aggregate_id, STORE_BRANCH_ID)
-            .map_err(|_| BrokerError::Unavailable)?;
-        let expected_head = u64::try_from(existing.len()).map_err(|_| BrokerError::Unavailable)?;
+            .head_sequence(&self.aggregate_id, STORE_BRANCH_ID)
+            .map_err(|_| BrokerError::Unavailable)?.unwrap_or(0);
         let batch_identity = canonical_hash(&json!({"events":events,"outbox":outbox}))
             .map_err(|_| BrokerError::Unavailable)?;
         let persisted_events = events
@@ -3021,7 +3028,10 @@ impl LocalInvocationLedger {
         }
         let wanted: BTreeSet<&StableId> = proposal_ids.iter().collect();
         let mut resolved = BTreeMap::new();
-        for event in self.broker_events().map_err(broker_error)? {
+        for event in self.broker_events_matching(|event| {
+            event.pointer("/Proposed/proposal/proposal_id").and_then(Value::as_str)
+                .is_some_and(|id| wanted.iter().any(|wanted| wanted.as_str() == id))
+        }).map_err(broker_error)? {
             if let InvocationLedgerEventV1::Proposed {
                 invocation_id,
                 proposal,
@@ -3059,7 +3069,9 @@ impl InvocationLedgerPortV1 for LocalInvocationLedger {
         invocation_id: &StableId,
     ) -> Result<Vec<InvocationLedgerEventV1>, BrokerError> {
         Ok(self
-            .broker_events()?
+            .broker_events_matching(|event| event.as_object().is_some_and(|variants| {
+                variants.values().any(|fields| fields["invocation_id"].as_str() == Some(invocation_id.as_str()))
+            }))?
             .into_iter()
             .filter(|event| broker_event_invocation_id(event) == invocation_id)
             .collect())
@@ -3749,6 +3761,7 @@ fn broker_error(error: BrokerError) -> WorkflowPipelineError {
 #[cfg(test)]
 mod tests {
     mod approval_modes;
+    mod frozen_tools;
     use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
@@ -5456,7 +5469,7 @@ mod tests {
             .get(&protocol)
             .expect("provider descriptor");
         let prepared = pipeline
-            .prepare(&execution_request, protocol, descriptor)
+            .prepare(&execution_request, protocol, descriptor, None)
             .expect("prepare");
         pipeline
             .records

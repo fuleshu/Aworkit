@@ -10,7 +10,7 @@ import { connectNativeWebView } from "./native-webview.mjs";
 const root = resolve(`src-tauri/target/native-concurrency-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, "aworkit-desktop.exe");
-await copyFile(resolve("src-tauri/target/debug/aworkit-desktop.exe"), executable);
+await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
 const requests = [], releases = new Map();
 const provider = createServer(async (request, response) => {
   if (request.method !== "POST") {
@@ -36,7 +36,8 @@ const provider = createServer(async (request, response) => {
 });
 provider.listen(0, "127.0.0.1"); await once(provider, "listening");
 const origin = `http://127.0.0.1:${provider.address().port}/v1`;
-const port = 9291;
+const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
+const port = reservation.address().port; await new Promise(done => reservation.close(done));
 let child, view, logs = "";
 const delay = () => new Promise(done => setTimeout(done, 100));
 async function start() {
@@ -74,7 +75,7 @@ async function type(text) {
 const snapshot = (id) => view.evaluate(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0,chatId:${JSON.stringify(id ?? null)}})`);
 const select = id => click(`[data-chat-id="${id}"] .chat-history-link`).then(() => waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId===${JSON.stringify(id)})`));
 async function send(label) {
-  await type(label); await click('.composer-submit[aria-label="Send"]');
+  await type(label); await click('.composer-submit:is([aria-label="Send"],[aria-label="Queue"])');
   for (let n = 0; !releases.has(label) && n < 200; n++) await delay();
   assert.ok(releases.has(label), `provider received and held ${label}`);
   return (await snapshot()).chat.chatId;
@@ -85,8 +86,9 @@ try {
   await view.evaluate(`(async()=>{const invoke=window.__TAURI_INTERNALS__.invoke;const s=await invoke('settings_snapshot');
     await invoke('settings_commit',{command:{commandId:'concurrency.provider',expectedVersion:s.version,appearance:'light',portableHistoryEnabled:false,provider:{baseUrl:${JSON.stringify(origin)},model:'concurrent-fixture',credentialAction:'keep',apiKey:null}}});
     const v=await invoke('settings_v2_snapshot');for(const p of v.settings.providers)for(const m of p.models){m.capabilities=['text','tools'];m.contextWindow=32768;}
+    for(const t of v.settings.tools)if(['tool.shell.host','tool.python.host'].includes(t.id))t.enabled=true;
     await invoke('settings_v2_commit',{command:{commandId:'concurrency.models',expectedVersion:v.version,settings:v.settings}});
-    const w=await invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'});w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=[];
+    const w=await invoke('workflow_snapshot',{workflowId:'workflow.simple-chat'});w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=['tool.shell.host','tool.python.host'];
     await invoke('workflow_commit',{command:{commandId:'concurrency.workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});
     await invoke('workflow_set_default',{command:{commandId:'concurrency.default',workflowId:'workflow.simple-chat'}});
   })()`);
@@ -127,6 +129,19 @@ try {
   assert.ok(sa.events.some(e => e.kind === "chat.turn_stopped"));
   assert.ok(!JSON.stringify(sa.events).includes("Concurrent B"));
   assert.ok(!JSON.stringify(sb.events).includes("Concurrent A"));
+  // Stop ends only the response. The same Chat/Run accepts another input using
+  // its frozen native shell/Python definitions, even after Settings changes.
+  await select(a);
+  const resumed = await send("Continue A after Stop");
+  assert.equal(resumed, a);
+  releases.get("Continue A after Stop")();
+  await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.activeChatIds.length===0)");
+  const continued = await snapshot(a);
+  assert.equal(continued.chat.runId, sa.chat.runId);
+  assert.equal(continued.chat.phase, 'waiting_input');
+  assert.ok(continued.events.some(e=>e.kind==='message.assistant'&&JSON.stringify(e).includes('Finished Continue A after Stop')));
+  assert.ok(!continued.events.some(e=>e.kind==='execution.failed'));
+  await view.screenshot(resolve(root, 'stopped-chat-continued.png'));
   await select(b);
   await waitFor("document.querySelector('.timeline-scroll')?.textContent.includes('Finished Concurrent B')");
   await view.screenshot(resolve(root, "completed-chat.png"));
@@ -137,15 +152,20 @@ try {
   await stop(); releases.get("Recovery C")();
   await start();
   await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.recoveryPending)");
-  assert.equal(requests.length, 3, "restart does not replay a pending effect");
+  assert.equal(requests.length, 4, "restart does not replay a pending effect");
+  await select(a);
+  assert.equal(await send("Continue A after restart"), a);
+  releases.get("Continue A after restart")();
+  await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.activeChatIds.length===0)");
+  assert.equal((await snapshot(a)).chat.runId, sa.chat.runId);
   await click("button.new-chat");
   await waitFor("Boolean(document.querySelector('.composer-submit[aria-label=\"Send\"]'))");
   const d = await send("After recovery"); releases.get("After recovery")();
   await waitFor("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.activeChatIds.length===0)");
   assert.equal((await snapshot(recovery)).chat.recoveryPending, true);
   assert.equal((await snapshot()).chat.chatId, d);
-  assert.equal(requests.length, 4);
-  await writeFile(resolve(root, "result.json"), JSON.stringify({ passed: true, chats: { a, b, c, recovery, d }, providerCalls: requests.length, checks: ["overlap", "navigation", "busy icons", "draft retention", "Stop isolation", "Settings preservation", "event isolation", "restart recovery isolation"] }, null, 2));
+  assert.equal(requests.length, 6);
+  await writeFile(resolve(root, "result.json"), JSON.stringify({ passed: true, chats: { a, b, c, recovery, d }, providerCalls: requests.length, checks: ["overlap", "navigation", "busy icons", "draft retention", "Stop isolation", "Stop continuation", "restart continuation", "Settings preservation", "event isolation", "restart recovery isolation"] }, null, 2));
   console.log(JSON.stringify({ passed: true, root, providerCalls: requests.length }));
 } catch (error) {
   console.error("Native artifacts:", root, error);

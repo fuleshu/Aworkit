@@ -81,7 +81,7 @@ impl RunEventStream {
     /// Shared view of the committed stream for the read-only scans a model turn
     /// performs several times; a durable committer serves all of them from one
     /// decoded snapshot instead of a fresh history read per caller.
-    pub(crate) fn context_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+    pub(crate) fn context_events_shared(&self) -> Result<super::semantic_events::SharedEvents, String> {
         self.committer.committed_events_shared()
     }
     pub(crate) fn context_event(
@@ -1059,14 +1059,14 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
 fn rehydrate_state(
     request_id: &str,
     run_id: &str,
-    events: &[CoreEventEnvelope],
+    events: &[Arc<CoreEventEnvelope>],
 ) -> RunEventState {
     let mut state = RunEventState::default();
     let mut model_nodes = Vec::new();
     let mut tool_nodes = Vec::new();
     let mut agent_loops = Vec::new();
     let mut subagents = Vec::new();
-    for event in events {
+    for event in events.iter().map(AsRef::as_ref) {
         if event.payload.get("requestId").and_then(Value::as_str) != Some(request_id)
             || event.payload.get("runId").and_then(Value::as_str) != Some(run_id)
         {

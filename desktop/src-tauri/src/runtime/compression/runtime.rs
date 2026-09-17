@@ -121,6 +121,7 @@ impl BoundFileToolAuthorityV1 {
         // capability, not permission to relearn other Chats' preferences.
         let archives: Vec<_> = events
             .iter()
+            .map(AsRef::as_ref)
             .filter(|e| {
                 e.kind == "context.compression"
                     && same_owner(&scope.payload, &e.payload)
@@ -220,6 +221,7 @@ impl FileToolDispatcherV1 {
                     && same_owner(&scope.payload, &e.payload)
                     && e.payload["retrievable"] == true
             })
+            .map(AsRef::as_ref)
             .collect();
         if request.operation == "search" && request.reference.is_none() {
             let result = archive_search::search(

@@ -30,6 +30,8 @@ use super::settings_v2::{
 };
 
 mod feed;
+mod stream_cache;
+use stream_cache::{DecodedStream, StreamCache, StreamCaches};
 
 pub(crate) const CHAT_ID: &str = "chat.local";
 const BRANCH_ID: &str = "main";
@@ -201,34 +203,10 @@ pub(crate) struct ChatHistory {
     committed_events: Arc<dyn CommittedChatEventPort>,
     /// Validated view of the selected Chat's stream.
     ///
-    /// A live turn commits one semantic event per streamed provider chunk. Reading
-    /// and re-validating the complete stream for each of those commits made the
-    /// visible stream rate decay with the size of the Chat, so the span ledger is
-    /// carried forward and only the decoded event snapshot is rebuilt — at most
-    /// once per turn — when a reader asks for it.
+    /// Both span validation and decoded snapshots advance incrementally. Readers
+    /// retain immutable snapshots whose payloads are shared across appends.
     stream: Arc<Mutex<StreamCache>>,
-}
-
-/// Span-ledger state plus the decoded events it was derived from.
-#[derive(Default)]
-struct StreamCache {
-    chat_id: Option<String>,
-    /// Durable head reflected by `spans`; a mismatch means a writer moved the
-    /// stream behind this handle and the whole view must be rebuilt.
-    head: u64,
-    spans: SpanLedgerState,
-    /// Decoded events for one head. Any commit drops it, so a streaming turn
-    /// never carries a stale copy and readers rebuild it once per turn.
-    decoded: Option<DecodedStream>,
-}
-
-#[derive(Default)]
-struct DecodedStream {
-    head: u64,
-    events: Arc<Vec<Event>>,
-    /// Committed envelopes derived from `events`, built on first demand because
-    /// most turns only need the stored events.
-    envelopes: Option<Arc<Vec<CoreEventEnvelope>>>,
+    streams: Arc<StreamCaches>,
 }
 
 impl ChatHistory {
@@ -244,6 +222,7 @@ impl ChatHistory {
             metadata_lock: Arc::new(Mutex::new(())),
             committed_events,
             stream: Arc::new(Mutex::new(StreamCache::default())),
+            streams: Arc::new(StreamCaches::default()),
         };
         history.initialize_history_index(data_root)?;
         history.ensure_history_summaries()?;
@@ -260,16 +239,17 @@ impl ChatHistory {
     pub(crate) fn for_chat(&self, chat_id: &str) -> Result<Self, String> {
         Ok(Self {
             bound_identity: Some(self.identity(chat_id)?),
-            stream: Arc::new(Mutex::new(StreamCache::default())),
+            stream: self.streams.get(chat_id),
             ..self.clone()
         })
     }
 
-    /// Read queries share the one discardable decoded stream. Binding the
+    /// Read queries share the incrementally maintained decoded stream. Binding the
     /// identity avoids reloading navigation metadata for every event page.
     pub(crate) fn for_chat_query(&self, chat_id: &str) -> Result<Self, String> {
         Ok(Self {
             bound_identity: Some(self.identity(chat_id)?),
+            stream: self.streams.get(chat_id),
             ..self.clone()
         })
     }
@@ -523,8 +503,8 @@ impl ChatHistory {
         events
             .iter()
             .filter_map(|event| match event.kind.as_str() {
-                "message.user" => Some(message_from_event(event.clone(), "user")),
-                "message.assistant" => Some(message_from_event(event.clone(), "assistant")),
+                "message.user" => Some(message_from_event(event.as_ref().clone(), "user")),
+                "message.assistant" => Some(message_from_event(event.as_ref().clone(), "assistant")),
                 _ => None,
             })
             .collect()
@@ -1253,7 +1233,7 @@ impl ChatHistory {
         let all_events = if after_sequence == u64::MAX {
             Arc::new(self.store.events_of_kinds(identity.chat_id.as_str(), BRANCH_ID, &[
                 "chat.started", "chat.cancelled", "message.user", "message.assistant", "approval.requested", "approval.resolved", "chat.turn_stopped", "context.manual-completed", "context.manual-failed", "execution.failed", "tool.completed", "tool.failed",
-            ]).map_err(|e| e.to_string())?)
+            ]).map_err(|e| e.to_string())?.into_iter().map(Arc::new).collect())
         } else { self.events()? };
         let current = all_events.clone();
         let frozen = self.frozen_context(&identity.chat_id)?;
@@ -1370,10 +1350,10 @@ impl ChatHistory {
         }))
     }
 
-    fn events(&self) -> Result<Arc<Vec<Event>>, String> {
+    fn events(&self) -> Result<Arc<Vec<Arc<Event>>>, String> {
         let chat_id = self.selected_identity()?.chat_id;
-        let head = self.head_for_chat(&chat_id)?;
         let mut cache = self.lock_stream();
+        let head = self.head_for_chat(&chat_id)?;
         self.refresh_spans(&mut cache, &chat_id, head)?;
         let decoded = self.decoded_stream(&mut cache, &chat_id, head)?;
         Ok(Arc::clone(&decoded.events))
@@ -1391,10 +1371,8 @@ impl ChatHistory {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Rebuilds the cached span ledger when the durable head is no longer the one
-    /// it was derived from. A writer outside this handle (repair, import, another
-    /// reader) can move the stream, so the indexed head is the cache validator
-    /// rather than a trust assumption.
+    /// Reconciles external commits from the previous durable head. A different
+    /// Chat or truncated stream starts a new recovery view.
     fn refresh_spans(
         &self,
         cache: &mut StreamCache,
@@ -1404,50 +1382,27 @@ impl ChatHistory {
         if cache.chat_id.as_deref() == Some(chat_id.as_str()) && cache.head == head {
             return Ok(());
         }
-        let events = self.events_for_chat(chat_id)?;
-        let mut spans = SpanLedgerState::default();
-        for event in &events {
-            observe_existing_span(&mut spans, &event.kind, &event.payload);
-        }
-        cache.chat_id = Some(chat_id.as_str().to_owned());
-        cache.head = head;
-        cache.spans = spans;
-        cache.decoded = Some(DecodedStream {
-            head,
-            events: Arc::new(events),
-            envelopes: None,
-        });
-        Ok(())
+        cache.synchronize(&self.store, chat_id.as_str(), head)
     }
 
-    /// Decoded events for `head`, reading once when a commit dropped the snapshot.
+    /// Decoded events through `head`, extending the retained snapshot as needed.
     fn decoded_stream<'a>(
         &self,
         cache: &'a mut StreamCache,
         chat_id: &StableId,
         head: u64,
     ) -> Result<&'a mut DecodedStream, String> {
-        if cache
-            .decoded
-            .as_ref()
-            .is_none_or(|decoded| decoded.head != head)
-        {
-            cache.decoded = Some(DecodedStream {
-                head,
-                events: Arc::new(self.events_for_chat(chat_id)?),
-                envelopes: None,
-            });
-        }
-        Ok(cache.decoded.as_mut().expect("decoded stream"))
+        cache.synchronize(&self.store, chat_id.as_str(), head)?;
+        Ok(&mut cache.decoded)
     }
 
     /// Shared committed envelopes for read-only scans that must not deep-clone.
     pub(crate) fn committed_events_shared(
         &self,
-    ) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+    ) -> Result<super::semantic_events::SharedEvents, String> {
         let chat_id = self.selected_identity()?.chat_id;
-        let head = self.head_for_chat(&chat_id)?;
         let mut cache = self.lock_stream();
+        let head = self.head_for_chat(&chat_id)?;
         self.refresh_spans(&mut cache, &chat_id, head)?;
         let decoded = self.decoded_stream(&mut cache, &chat_id, head)?;
         if decoded.envelopes.is_none() {
@@ -1460,12 +1415,12 @@ impl ChatHistory {
                     let sequence = u64::try_from(offset)
                         .expect("bounded history offset")
                         .saturating_add(1);
-                    envelope(
+                    Arc::new(envelope(
                         &stream_id,
                         BRANCH_ID,
                         sequence,
                         SemanticEventDraft::new(event.kind.clone(), event.payload.clone()),
-                    )
+                    ))
                 })
                 .collect::<Vec<_>>();
             decoded.envelopes = Some(Arc::new(built));
@@ -1507,9 +1462,9 @@ impl SemanticEventCommitter for ChatHistory {
             return Ok(Vec::new());
         }
         let chat_id = self.selected_identity()?.chat_id;
-        let expected_head = self.head_for_chat(&chat_id)?;
         let committed = {
             let mut cache = self.lock_stream();
+            let expected_head = self.head_for_chat(&chat_id)?;
             match self.commit_locked(&mut cache, &chat_id, expected_head, drafts) {
                 Ok(committed) => committed,
                 Err(error) => {
@@ -1525,10 +1480,10 @@ impl SemanticEventCommitter for ChatHistory {
     }
 
     fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
-        Ok(self.committed_events_shared()?.as_ref().clone())
+        Ok(self.committed_events_shared()?.iter().map(|e| e.as_ref().clone()).collect())
     }
 
-    fn committed_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
+    fn committed_events_shared(&self) -> Result<super::semantic_events::SharedEvents, String> {
         ChatHistory::committed_events_shared(self)
     }
 }
@@ -1536,9 +1491,8 @@ impl SemanticEventCommitter for ChatHistory {
 impl ChatHistory {
     /// Validates and persists one semantic batch against the carried ledger.
     ///
-    /// Streaming calls this once per provider chunk: the span ledger advances in
-    /// place and only the decoded snapshot is dropped, so no chunk pays for
-    /// re-reading or re-validating the Chat's whole history.
+    /// The ledger and shared snapshots advance only after durable commit; no
+    /// successful append invalidates already decoded historical payloads.
     fn commit_locked(
         &self,
         cache: &mut StreamCache,
@@ -1569,8 +1523,7 @@ impl ChatHistory {
         if matches!(outcome, CommitOutcome::Existing(_)) {
             return Err("semantic event commit unexpectedly resolved as an existing batch".into());
         }
-        cache.head = expected_head.saturating_add(event_count);
-        cache.decoded = None;
+        cache.append_committed(&committed, expected_head.saturating_add(event_count));
         Ok(committed)
     }
 }
@@ -1582,9 +1535,9 @@ struct SpanLedgerState {
     parents: BTreeMap<String, String>,
 }
 
-fn validate_span_drafts(history: &[Event], drafts: &[SemanticEventDraft]) -> Result<(), String> {
+fn validate_span_drafts(history: &[impl std::borrow::Borrow<Event>], drafts: &[SemanticEventDraft]) -> Result<(), String> {
     let mut state = SpanLedgerState::default();
-    for event in history {
+    for event in history.iter().map(std::borrow::Borrow::borrow) {
         observe_existing_span(&mut state, &event.kind, &event.payload);
     }
     apply_span_drafts(&mut state, drafts)
@@ -1795,7 +1748,8 @@ fn legacy_chat_segments(events: Vec<Event>) -> Result<Vec<(ChatIdentityV1, Vec<E
         .collect()
 }
 
-fn projected_phase(events: &[Event]) -> &'static str {
+fn projected_phase(events: &[impl std::borrow::Borrow<Event>]) -> &'static str {
+    let events: Vec<&Event> = events.iter().map(std::borrow::Borrow::borrow).collect();
     if events.iter().any(|event| event.kind == "chat.cancelled") {
         return "cancelled";
     }
@@ -1832,12 +1786,13 @@ fn projected_phase(events: &[Event]) -> &'static str {
 /// Folds only the selected canonical stream into the compact sidebar row.
 /// Other Chat streams are never opened during an ordinary snapshot.
 fn sidebar_summary(
-    events: &[Event],
+    events: &[impl std::borrow::Borrow<Event>],
     frozen: Option<&FrozenChatExecutionRecordV1>,
     created_at: &str,
 ) -> ChatSummaryProjection {
     let title = events
         .iter()
+        .map(std::borrow::Borrow::borrow)
         .find(|event| event.kind == "message.user")
         .and_then(|event| event.payload.get("body"))
         .and_then(Value::as_str)
@@ -1845,6 +1800,7 @@ fn sidebar_summary(
         .unwrap_or_else(|| "New Chat".into());
     let updated_at = events
         .iter()
+        .map(std::borrow::Borrow::borrow)
         .rev()
         .find_map(event_created_at)
         .unwrap_or_else(|| created_at.to_owned());
@@ -2339,7 +2295,8 @@ mod tests {
     }
 }
 
-fn evidence(events: &[Event]) -> Vec<EvidenceRecordDto> {
+fn evidence(events: &[impl std::borrow::Borrow<Event>]) -> Vec<EvidenceRecordDto> {
+    let events: Vec<&Event> = events.iter().map(std::borrow::Borrow::borrow).collect();
     events
         .iter()
         .filter(|event| {

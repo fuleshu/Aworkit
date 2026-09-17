@@ -3274,6 +3274,7 @@ struct ToolOutcomeRecordV1 {
 
 #[derive(Clone)]
 struct ToolRecordStore {
+    cache: crate::runtime::record_cache::RecordCache,
     instruction_locks: Arc<Mutex<BTreeMap<String, std::sync::Weak<Mutex<()>>>>>,
     store: LocalHistoryStore,
     write_lock: Arc<Mutex<()>>,
@@ -3282,6 +3283,7 @@ struct ToolRecordStore {
 impl ToolRecordStore {
     fn open(path: &Path) -> Result<Self, WorkflowPipelineError> {
         Ok(Self {
+            cache: Default::default(),
             store: LocalHistoryStore::open(path).map_err(local_store_error)?,
             instruction_locks: Arc::new(Mutex::new(BTreeMap::new())),
             write_lock: Arc::new(Mutex::new(())),
@@ -3344,7 +3346,10 @@ impl ToolRecordStore {
             "exchange": exchange,
         });
         if let Some(existing) = self
-            .events("pipeline.model-tool-exchange")?
+            .events_matching("pipeline.model-tool-exchange", |candidate| {
+                candidate["outerInvocationId"] == outer_invocation_id.as_str()
+                    && candidate["turn"] == u64::from(turn)
+            })?
             .into_iter()
             .find(|candidate| {
                 candidate.get("outerInvocationId").and_then(Value::as_str)
@@ -3399,7 +3404,9 @@ impl ToolRecordStore {
         &self,
         proposal_id: &StableId,
     ) -> Result<Option<ToolInvocationRecordV1>, WorkflowPipelineError> {
-        self.events("pipeline.tool-invocation-prepared")?
+        self.events_matching("pipeline.tool-invocation-prepared", |record| {
+            record.pointer("/proposal/proposal_id").and_then(Value::as_str) == Some(proposal_id.as_str())
+        })?
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(json_error))
             .collect::<Result<Vec<ToolInvocationRecordV1>, _>>()
@@ -3421,7 +3428,7 @@ impl ToolRecordStore {
         &self,
         invocation_id: &StableId,
     ) -> Result<Option<ToolOutcomeRecordV1>, WorkflowPipelineError> {
-        self.events("pipeline.tool-outcome")?
+        self.events_matching("pipeline.tool-outcome", |record| record["invocationId"] == invocation_id.as_str())?
             .into_iter()
             .map(|value| serde_json::from_value(value).map_err(json_error))
             .collect::<Result<Vec<ToolOutcomeRecordV1>, _>>()
@@ -3433,14 +3440,14 @@ impl ToolRecordStore {
     }
 
     fn events(&self, kind: &str) -> Result<Vec<Value>, WorkflowPipelineError> {
-        Ok(self
-            .store
-            .events(TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID)
-            .map_err(local_store_error)?
-            .into_iter()
-            .filter(|event| event.kind == kind)
-            .filter_map(|event| event.payload.get("record").cloned())
-            .collect())
+        self.events_matching(kind, |_| true)
+    }
+
+    /// Borrow the cached kind index and clone only selected records.
+    fn events_matching(&self, kind: &str, predicate: impl Fn(&Value) -> bool) -> Result<Vec<Value>, WorkflowPipelineError> {
+        self.cache.select(&self.store, TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID, Some(kind), |event| {
+            event.payload.get("record").filter(|record| predicate(record)).cloned()
+        }).map_err(WorkflowPipelineError::Store)
     }
 
     fn append(
@@ -3453,13 +3460,11 @@ impl ToolRecordStore {
             .write_lock
             .lock()
             .map_err(|_| WorkflowPipelineError::Store("tool record lock poisoned".into()))?;
-        let head = self
+        let expected_head = self
             .store
-            .events(TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID)
+            .head_sequence(TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID)
             .map_err(local_store_error)?
-            .len();
-        let expected_head = u64::try_from(head)
-            .map_err(|_| WorkflowPipelineError::Store("tool record sequence exhausted".into()))?;
+            .unwrap_or(0);
         self.store
             .commit(&CommitBatch {
                 chat_id: TOOL_RECORD_CHAT_ID.into(),

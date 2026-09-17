@@ -137,12 +137,13 @@ pub(crate) struct ContextSelection {
 /// Match a model request to its graph node; child-agent prompts have separate ownership.
 pub(crate) fn model_node<'a>(
     event: &'a CoreEventEnvelope,
-    events: &'a [CoreEventEnvelope],
+    events: &'a [impl std::borrow::Borrow<CoreEventEnvelope>],
 ) -> Option<&'a str> {
     let mut parent = event.payload.get("parentSpanId")?.as_str()?;
     for _ in 0..32 {
         let ancestor = events
             .iter()
+            .map(std::borrow::Borrow::borrow)
             .find(|e| e.kind == "span.started" && e.span_id.as_deref() == Some(parent))?;
         if ancestor.payload["spanKind"] == "external_agent" {
             return None;
@@ -157,9 +158,10 @@ pub(crate) fn model_node<'a>(
 
 /// The latest prompt for a node plus its final answer, or a subsequently saved edit.
 pub(crate) fn select_context(
-    events: &[CoreEventEnvelope],
+    events: &[impl std::borrow::Borrow<CoreEventEnvelope>],
     node_id: &str,
 ) -> Result<ContextSelection, String> {
+    let events: Vec<&CoreEventEnvelope> = events.iter().map(std::borrow::Borrow::borrow).collect();
     let source = events
         .iter()
         .rev()
@@ -169,7 +171,7 @@ pub(crate) fn select_context(
                 && event.payload["child"].is_null())
                 || (event.kind == "span.started"
                     && event.payload["spanKind"] == "model_call"
-                    && model_node(event, events) == Some(node_id))
+                    && model_node(event, &events) == Some(node_id))
         })
         .ok_or("No model context is available for this node.")?;
     let mut document = if matches!(
@@ -214,10 +216,11 @@ pub(crate) fn select_context(
 /// Apply an explicit revision to this node only, then add subsequent conversation
 /// and this invocation's new exchanges. Historical tool calls are context, never executed.
 pub(crate) fn apply_edit(
-    events: &[CoreEventEnvelope],
+    events: &[impl std::borrow::Borrow<CoreEventEnvelope>],
     node_id: &str,
     current: &mut ModelToolRequestV1,
 ) -> Result<(), String> {
+    let events: Vec<&CoreEventEnvelope> = events.iter().map(std::borrow::Borrow::borrow).collect();
     let Some(edit) = events
         .iter()
         .rev()

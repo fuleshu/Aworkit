@@ -169,7 +169,11 @@ impl BoundFileToolAuthorityV1 {
         let mut exchanges: Vec<_> = self
             .runtime
             .records
-            .events("pipeline.model-tool-exchange")
+            .events_matching("pipeline.model-tool-exchange", |e| {
+                e["outerInvocationId"] == outer && e["turn"].as_u64().is_some_and(|t| {
+                    t as usize > after && through.is_none_or(|end| t as usize <= end)
+                })
+            })
             .map_err(|e| e.to_string())?
             .into_iter()
             .filter(|e| e["outerInvocationId"] == outer)

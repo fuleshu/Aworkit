@@ -14,13 +14,15 @@ fn timestamp(event: &CoreEventEnvelope) -> Option<OffsetDateTime> {
 }
 
 /// Retain Chat provenance but refresh "today" from each new committed user input.
-pub(super) fn context(events: &[CoreEventEnvelope]) -> String {
+pub(super) fn context(events: &[impl std::borrow::Borrow<CoreEventEnvelope>]) -> String {
     let started = events
         .iter()
+        .map(std::borrow::Borrow::borrow)
         .find(|event| event.kind == "chat.started")
         .and_then(timestamp);
     let current = events
         .iter()
+        .map(std::borrow::Borrow::borrow)
         .rev()
         .filter(|event| event.kind == "message.user")
         .find_map(timestamp)

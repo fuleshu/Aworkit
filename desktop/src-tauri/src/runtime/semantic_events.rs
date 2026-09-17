@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+/// Immutable snapshots share event payloads across appends. Copying a snapshot's
+/// index copies only Arc pointers, never historical model inputs or checkpoints.
+pub(crate) type SharedEvents = Arc<Vec<Arc<CoreEventEnvelope>>>;
+
 /// One immutable event from the canonical Chat/Branch stream.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,8 +61,8 @@ pub(crate) trait SemanticEventCommitter: Send + Sync {
     /// model turn. Returning a shared snapshot lets a durable committer reuse one
     /// decoded stream instead of re-reading and deep-cloning history for each
     /// caller; committers without a cache keep the owning behaviour.
-    fn committed_events_shared(&self) -> Result<Arc<Vec<CoreEventEnvelope>>, String> {
-        Ok(Arc::new(self.committed_events()?))
+    fn committed_events_shared(&self) -> Result<SharedEvents, String> {
+        Ok(Arc::new(self.committed_events()?.into_iter().map(Arc::new).collect()))
     }
 }
 

@@ -406,7 +406,9 @@ impl BoundFileToolAuthorityV1 {
         let exchanges = self
             .runtime
             .records
-            .events("pipeline.model-tool-exchange")
+            .events_matching("pipeline.model-tool-exchange", |e| {
+                e["outerInvocationId"] == outer.as_str() && e["turn"].as_u64() == Some(through as u64)
+            })
             .map_err(|e| e.to_string())?;
         let calls: BTreeSet<String> = exchanges
             .iter()
@@ -416,59 +418,38 @@ impl BoundFileToolAuthorityV1 {
             .flatten()
             .filter_map(|part| part["call"]["callId"].as_str().map(str::to_owned))
             .collect();
-        let invocations: Vec<ToolInvocationRecordV1> = self
-            .runtime
-            .records
-            .events("pipeline.tool-invocation-prepared")
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?;
-        let outcomes: Vec<ToolOutcomeRecordV1> = self
-            .runtime
-            .records
-            .events("pipeline.tool-outcome")
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?;
-        // One ledger load resolves every stored proposal. Resolving them one at a
-        // time reloaded the whole broker ledger per record and dominated the turn.
-        let proposals: Vec<StableId> = invocations
-            .iter()
-            .map(|invocation| invocation.proposal.proposal_id.clone())
-            .collect();
-        let resolved = self
-            .runtime
-            .ledger
-            .invocation_ids_for_proposals(&proposals)
-            .map_err(|e| e.to_string())?;
-        let identities: Vec<_> = invocations
-            .iter()
-            .filter_map(|invocation| {
-                resolved
-                    .get(&invocation.proposal.proposal_id)
-                    .map(|id| (id.clone(), invocation))
-            })
-            .collect();
-        let mut accepted: BTreeSet<_> = identities
-            .iter()
-            .filter(|(_, i)| i.outer_invocation_id == *outer && calls.contains(&i.call.call_id))
-            .map(|(id, _)| id.clone())
-            .collect();
-        loop {
-            let before = accepted.len();
-            for (id, invocation) in &identities {
-                if accepted.contains(&invocation.outer_invocation_id) {
-                    accepted.insert(id.clone());
+        // Follow only this exchange's calls and their nested invocations. The
+        // kind index is borrowed; unrelated frozen tool records are not cloned
+        // or deserialized on every model turn.
+        let mut frontier = BTreeSet::from([outer.to_string()]);
+        let mut accepted = BTreeSet::new();
+        let mut identities = Vec::new();
+        let mut roots = true;
+        while !frontier.is_empty() {
+            let invocations: Vec<ToolInvocationRecordV1> = self.runtime.records
+                .events_matching("pipeline.tool-invocation-prepared", |record| {
+                    record["outerInvocationId"].as_str().is_some_and(|id| frontier.contains(id))
+                        && (!roots || record["call"]["callId"].as_str().is_some_and(|id| calls.contains(id)))
+                }).map_err(|e| e.to_string())?.into_iter().map(serde_json::from_value)
+                .collect::<Result<_,_>>().map_err(|e| e.to_string())?;
+            let proposals: Vec<_> = invocations.iter().map(|i| i.proposal.proposal_id.clone()).collect();
+            let resolved = self.runtime.ledger.invocation_ids_for_proposals(&proposals).map_err(|e| e.to_string())?;
+            frontier.clear();
+            for invocation in invocations {
+                if let Some(id) = resolved.get(&invocation.proposal.proposal_id) {
+                    if accepted.insert(id.clone()) {
+                        frontier.insert(id.to_string());
+                        identities.push((id.clone(), invocation));
+                    }
                 }
             }
-            if accepted.len() == before {
-                break;
-            }
+            roots = false;
         }
+        let outcomes: Vec<ToolOutcomeRecordV1> = self.runtime.records
+            .events_matching("pipeline.tool-outcome", |record| record["invocationId"].as_str()
+                .is_some_and(|id| accepted.iter().any(|accepted| accepted.as_str() == id)))
+            .map_err(|e| e.to_string())?.into_iter().map(serde_json::from_value)
+            .collect::<Result<_,_>>().map_err(|e| e.to_string())?;
         Ok(identities
             .iter()
             .filter(|(id, i)| {

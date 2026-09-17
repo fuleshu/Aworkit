@@ -62,7 +62,7 @@ Do not treat a grep result as the artifact. Drill into the locator before acting
 
 
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=616 -->
+<!-- adashi:generated revision=624 -->
 # Architecture (generated)
 Generated from the Adashi design model; do not edit, change the model.
 Top layer: 14 of 96 elements, 2 of 309 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.

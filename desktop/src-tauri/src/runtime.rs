@@ -26,6 +26,7 @@ mod mcp;
 mod mcp_tools;
 mod model_tool_loop;
 mod pipeline;
+mod record_cache;
 mod plan_contract;
 mod project_scope;
 mod provider;
