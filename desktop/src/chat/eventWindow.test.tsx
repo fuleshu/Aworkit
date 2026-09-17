@@ -65,3 +65,23 @@ it("rejects gaps inside the loaded range without requiring the omitted prefix", 
   await waitFor(()=>expect(result.current.stale).toBe(true));
   expect(result.current.error?.message).toContain("gap");
 });
+
+it("continues past raw pages with no earlier visible activity", async () => {
+  const next = snapshot("a", 101, 110);
+  let calls = 0;
+  const invisible = (first:number,last:number) => events("a",first,last).map(event=>({...event,kind:"context.checkpoint"}));
+  const port:ChatCorePort={
+    async snapshot(){return next;}, async command(){throw Error("unused");},
+    async olderEvents(_id,before) {
+      calls++;
+      const first=before-10;
+      return {events:calls===1?invisible(first,before-1):events("a",first,before-1),window:{firstSequence:first,lastSequence:before-1,headSequence:110,hasMore:true,supportingEvents:[]}};
+    },
+  };
+  const {result}=renderHook(()=>useChatRuntime(port,60000));
+  await waitFor(()=>expect(result.current.firstSequence).toBe(101));
+  await act(async()=>{await result.current.loadOlder();});
+  expect(calls).toBe(2);
+  expect(result.current.firstSequence).toBe(81);
+  expect(result.current.events.filter(event=>event.sequence>=101)).toEqual(next.events);
+});

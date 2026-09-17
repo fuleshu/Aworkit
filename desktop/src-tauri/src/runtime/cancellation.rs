@@ -9,6 +9,8 @@ use std::{
 
 use aworkit_capability_host::CancellationToken;
 
+pub(crate) type JobStopper = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub struct WorkflowCancellationController {
     state: Arc<Mutex<CancellationState>>,
@@ -16,6 +18,7 @@ pub struct WorkflowCancellationController {
 
 #[derive(Default)]
 struct CancellationState {
+    stop_jobs: Option<JobStopper>,
     active: BTreeMap<String, ActiveWorkflow>,
     pending: BTreeMap<String, PendingStopRequestV1>,
     requested: BTreeMap<String, StopRequestV1>,
@@ -46,6 +49,10 @@ pub(crate) struct ActiveWorkflowGuard {
 }
 
 impl WorkflowCancellationController {
+    /// Job control remains available while a model pass is suspended for approval.
+    pub(crate) fn set_job_stopper(&self, stop: JobStopper) {
+        if let Ok(mut state) = self.state.lock() { state.stop_jobs = Some(stop); }
+    }
     pub(crate) fn register(
         &self,
         chat_id: &str,
@@ -90,6 +97,7 @@ impl WorkflowCancellationController {
             .state
             .lock()
             .map_err(|_| "workflow cancellation state is unavailable".to_owned())?;
+        if let Some(stop) = &state.stop_jobs { stop(chat_id); }
         let Some(active) = state.active.get(chat_id) else {
             if let Some(pending) = state.pending.get(chat_id) {
                 return if pending.command_id == command_id && pending.chat_id == chat_id {
@@ -237,5 +245,15 @@ mod tests {
         assert!(b.is_cancelled());
         assert_eq!(controller.take_request("chat.a", "run.a").unwrap().command_id, "stop.a");
         assert_eq!(controller.take_request("chat.b", "run.b").unwrap().command_id, "stop.b");
+    }
+
+    #[test]
+    fn stop_reaches_jobs_while_workflow_is_suspended() {
+        let controller = WorkflowCancellationController::default();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let sink = observed.clone();
+        controller.set_job_stopper(Arc::new(move |owner| sink.lock().unwrap().push(owner.to_owned())));
+        assert!(!controller.request_stop("chat.suspended", "stop.suspended").unwrap());
+        assert_eq!(*observed.lock().unwrap(), ["chat.suspended"]);
     }
 }

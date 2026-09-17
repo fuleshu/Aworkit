@@ -504,6 +504,7 @@ impl WorkflowExecutionPipeline {
         mut self,
         cancellation_controller: WorkflowCancellationController,
     ) -> Self {
+        cancellation_controller.set_job_stopper(self.file_tool_authority.job_stopper());
         self.cancellation_controller = cancellation_controller;
         self
     }

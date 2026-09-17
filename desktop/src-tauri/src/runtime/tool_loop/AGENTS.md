@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=594 -->
+<!-- adashi:generated revision=611 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -11,6 +11,7 @@ Boundaries crossing this folder:
 
 Bound here:
 - file `desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs`
+- file `desktop/src-tauri/src/runtime/tool_loop/jobs.rs`
 
 [Showing 1 of 1 design element(s) bound here, 12 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
 <!-- adashi:architecture:end -->

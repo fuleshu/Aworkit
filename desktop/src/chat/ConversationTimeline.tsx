@@ -16,6 +16,7 @@ import { useTimelineReturn } from "./useTimelineReturn";
 import { useTimelineFollow } from "./useTimelineFollow";
 import { useHistoryScroll } from "./useHistoryScroll";
 import { ChatBusy } from "./ChatBusy";
+import { FeedStatus } from "./FeedStatus";
 
 interface ConversationTimelineProps {
   readonly hasOlder?: boolean;
@@ -222,6 +223,8 @@ export function TimelineCard({
   readonly onSelect: (id: string) => void;
   readonly onAction: ConversationTimelineProps["onAction"];
 }): React.JSX.Element {
+  if (metadataOf(item).feedStatus === true)
+    return <FeedStatus item={item} selected={selected} onSelect={onSelect} />;
   if (isModelCallSpan(item))
     return (
       <ModelCallBlock item={item} selected={selected} onSelect={onSelect} />

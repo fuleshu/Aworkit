@@ -386,8 +386,8 @@
     {
       "id": "tool.shell.host",
       "name": "Host shell",
-      "description": "Execute a bounded command on the host.",
-      "instructions": "Use shell commands to perform requested actions or obtain evidence. Commands run with host authority; the working directory is not a sandbox. Assess the actual exit status and output.",
+      "description": "Execute a host command, yielding a job ID when it continues past the initial wait.",
+      "instructions": "Use shell commands to perform requested actions or obtain evidence. Commands run with host authority; the working directory is not a sandbox. With job_output, job_input, job_stop and job_list enabled, commands yield after at most 10 seconds and continue as managed jobs. Collect output, stop, or explicitly keep jobs before finishing. Chats without job controls retain bounded legacy execution. Assess actual exit status and output.",
       "executor": "shell.host",
       "requiresProject": false,
       "execution": "shell",
@@ -414,8 +414,8 @@
         },
         {
           "key": "timeoutSeconds",
-          "label": "Timeout (seconds)",
-          "help": "Upper bound for this tool: timeout (seconds).",
+          "label": "Initial wait (seconds)",
+          "help": "With job controls enabled this is a soft wait, capped at 10 seconds. Without job controls it remains the legacy hard timeout.",
           "kind": "integer",
           "readOnly": false,
           "minimum": 1,
@@ -1224,6 +1224,211 @@
         ]
       },
       "providerName": "screenshot"
+    },
+    {
+      "id": "tool.shell.start",
+      "name": "Start shell job",
+      "description": "Start a managed host shell command and return a job ID immediately. Use for servers, desktop apps, builds or any long command.",
+      "instructions": "Use job_output for status/output, job_input for stdin and job_stop to stop the entire process tree. A job runs until it exits, is stopped, exceeds its output resource limit, or Aworkit exits. Before finishing collect completed jobs and stop or explicitly keep running jobs.",
+      "executor": "shell.start",
+      "requiresProject": false,
+      "execution": "shell",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144,
+            "description": "Command in the configured shell dialect."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Keep a stdin pipe for job_input; defaults to true. This is a pipe, not a terminal."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "providerName": "shell_start"
+    },
+    {
+      "id": "tool.job.output",
+      "name": "Read job output",
+      "description": "Read new output and status from a Chat-owned job, optionally waiting up to 60 seconds.",
+      "instructions": "Use returned cursor to replay or resume output. Without cursor the durable last-read position is used. A wait expiration leaves the process running. Read again when moreOutput is true.",
+      "executor": "job.output",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+          },
+          "cursor": {
+            "type": "object",
+            "properties": {
+              "stdout": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stderr": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "stdout",
+              "stderr"
+            ],
+            "additionalProperties": false,
+            "description": "Byte offsets from a previous response; omit for new output."
+          },
+          "waitMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000,
+            "description": "Soft wait for new output or exit, in milliseconds; default 0."
+          },
+          "maximumBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144,
+            "description": "Maximum returned bytes; default 65536."
+          }
+        },
+        "required": [
+          "jobId"
+        ]
+      },
+      "providerName": "job_output"
+    },
+    {
+      "id": "tool.job.input",
+      "name": "Send job input",
+      "description": "Queue stdin for a running Chat-owned job.",
+      "instructions": "Send only input supported by the running program. Include a newline when required. Queue acceptance is not proof the program processed the input; inspect job_output.",
+      "executor": "job.input",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 16384,
+            "description": "Exact stdin text, including newlines if required."
+          },
+          "closeStdin": {
+            "type": "boolean",
+            "description": "Close stdin after queued text; default false."
+          }
+        },
+        "required": [
+          "jobId",
+          "text"
+        ]
+      },
+      "providerName": "job_input"
+    },
+    {
+      "id": "tool.job.stop",
+      "name": "Stop shell job",
+      "description": "Stop a Chat-owned process tree and collect available output.",
+      "instructions": "Stops the tree even if its original shell has exited. Inspect treeEmpty and error; do not claim cleanup succeeded without evidence.",
+      "executor": "job.stop",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+          }
+        },
+        "required": [
+          "jobId"
+        ]
+      },
+      "providerName": "job_stop"
+    },
+    {
+      "id": "tool.job.list",
+      "name": "List shell jobs",
+      "description": "List jobs belonging to the current Chat.",
+      "instructions": "Check jobs after interruption or before finishing. Job IDs from other Chats are not accessible.",
+      "executor": "job.list",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "providerName": "job_list"
+    },
+    {
+      "id": "tool.job.keep",
+      "name": "Keep shell job running",
+      "description": "Explicitly retain a running service after this response, subject to the approval policy.",
+      "instructions": "Only use when leaving the process running is intended. Give a concrete reason and report the retained job ID to the user. Retention lasts until stopped or Aworkit exits; it does not detach a process from supervision.",
+      "executor": "job.keep",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Why the process should remain running after the response."
+          }
+        },
+        "required": [
+          "jobId",
+          "reason"
+        ]
+      },
+      "providerName": "job_keep"
     }
   ]
 }

@@ -12,7 +12,7 @@ pub(crate) fn project_grant(
 ) -> Option<ProjectApprovalGrant> {
     // Workspace operations need no standing grant. External file operations
     // must never inherit a permission labelled "in project".
-    if binding.file_access_version.is_some() {
+    if binding.file_access_version.is_some() || binding.capability_id == jobs::KEEP {
         return None;
     }
     let project_key = context.project_key.as_ref()?;

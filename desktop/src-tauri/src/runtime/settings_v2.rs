@@ -1234,7 +1234,7 @@ impl BuiltInToolConfigurationV2 {
                 require_config_string(self, "authorityMode", "run_subagent")?;
                 require_config_bool(self, "requiresApproval", true)
             }
-            "tool.image.read" | "tool.screenshot" => {
+            "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" => {
                 let manifest = super::tool_registry::native_tool(&self.id)
                     .ok_or_else(|| format!("missing native tool '{}'", self.id))?;
                 require_tool_project_scope(self, manifest.requires_project)?;
@@ -2811,7 +2811,8 @@ mod tests {
                 "tool.workspace_instructions",
                 "tool.context",
                 "tool.image.read",
-                "tool.screenshot"
+                "tool.screenshot",
+                "tool.shell.start", "tool.job.output", "tool.job.input", "tool.job.stop", "tool.job.list", "tool.job.keep",
             ]
         );
         assert!(settings.tools.iter().all(|tool| !tool.enabled));

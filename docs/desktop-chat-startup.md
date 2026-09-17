@@ -18,6 +18,14 @@ context without pulling in their unrelated children. The inspector labels
 partial history as loaded activity. The complete canonical records remain in
 SQLite; no history-length or message-length ceiling is introduced.
 
+The conversation feed hides agent/workflow containers as structural parents;
+their exact inputs, outputs and hierarchy remain in Run details. Parent failures
+appear as compact notices at their terminal sequence. Model and tool calls keep
+their original IDs and chronological positions. Older loading continues across
+raw pages that only hydrate an already visible call until it can prepend an
+earlier activity (or reaches the beginning). Native QA verifies that the original
+activity's row index increases and its viewport offset remains unchanged.
+
 The native event loop creates the window and starts storage, migrations and
 recovery on a blocking worker. Page reads release the coordinator and use
 independent SQLite reader connections. Metadata queries exclude unrelated

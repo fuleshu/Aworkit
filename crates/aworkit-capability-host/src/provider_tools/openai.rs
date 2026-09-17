@@ -59,11 +59,12 @@ pub(crate) fn openai_tool_request(
                 }
             }
         }
-        messages.push(json!({
+        let mut assistant = json!({
             "role": "assistant",
             "content": if text.is_empty() { Value::Null } else { Value::String(text) },
-            "tool_calls": calls,
-        }));
+        });
+        if !calls.is_empty() { assistant["tool_calls"] = json!(calls); }
+        messages.push(assistant);
         for result in &exchange.results {
             let call = exchange
                 .assistant_content

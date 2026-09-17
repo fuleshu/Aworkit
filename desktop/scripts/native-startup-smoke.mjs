@@ -62,17 +62,24 @@ try {
     if(command==='desktop_chat_events' && args.beforeSequence) { const result=await response.clone().json(); if(result.window) window.__feedReads.push({first:result.window.firstSequence,last:result.window.lastSequence,before:args.beforeSequence,events:result.events.length}); else window.__feedErrors.push(result); await new Promise(resolve=>setTimeout(resolve,250)); }
     return response;
   }`);
-  if (snapshot.firstSequence > 1) {
+  const prepends = [];
+  let beforeSequence = snapshot.firstSequence;
+  for (let round = 0; round < 3 && beforeSequence > 1; round++) {
+    const readStart = await view.evaluate('window.__feedReads.length');
     await view.evaluate(`{const scroll=document.querySelector('.timeline-scroll');scroll.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));scroll.scrollTop=0;scroll.dispatchEvent(new Event('scroll'));}`);
     await until(`!!document.querySelector('.chat-history-loader .chat-busy')`, 'local older-history spinner');
-    await view.evaluate(`{const scroll=document.querySelector('.timeline-scroll');const top=scroll.getBoundingClientRect().top;const row=[...scroll.querySelectorAll('[data-timeline-id]')].find(r=>r.getBoundingClientRect().bottom>top);window.__anchor=row?{id:row.dataset.timelineId,offset:row.getBoundingClientRect().top-top}:null;}`);
-    await until(`window.__feedReads.length>0&&!document.querySelector('.chat-history-loader .chat-busy')`, 'older activity');
+    await view.evaluate(`{const scroll=document.querySelector('.timeline-scroll');const top=scroll.getBoundingClientRect().top;const row=[...scroll.querySelectorAll('[data-timeline-id]')].find(r=>r.getBoundingClientRect().bottom>top);window.__anchor=row?{id:row.dataset.timelineId,index:Number(row.dataset.index),model:!!row.querySelector('.model-call-block'),offset:row.getBoundingClientRect().top-top}:null;}`);
+    await until(`window.__feedReads.length>${readStart}&&!document.querySelector('.chat-history-loader .chat-busy')`, 'older activity');
     await pause(200);
-    olderRead = await view.evaluate(`({page:window.__feedReads[0],anchor:window.__anchor,offset:(()=>{const scroll=document.querySelector('.timeline-scroll'),row=[...scroll.querySelectorAll('[data-timeline-id]')].find(r=>r.dataset.timelineId===window.__anchor?.id);return row?row.getBoundingClientRect().top-scroll.getBoundingClientRect().top:null})()})`);
-    assert.equal(olderRead.page.last, snapshot.firstSequence-1, 'older page joins current window exactly');
-    assert.ok(olderRead.page.first < snapshot.firstSequence, 'upward scrolling loads earlier activity');
+    olderRead = await view.evaluate(`({page:window.__feedReads[${readStart}],first:window.__feedReads.at(-1).first,pages:window.__feedReads.length-${readStart},anchor:window.__anchor,...(()=>{const scroll=document.querySelector('.timeline-scroll'),row=[...scroll.querySelectorAll('[data-timeline-id]')].find(r=>r.dataset.timelineId===window.__anchor?.id);return {offset:row?row.getBoundingClientRect().top-scroll.getBoundingClientRect().top:null,index:row?Number(row.dataset.index):null,top:scroll.scrollTop}})()})`);
+    assert.equal(olderRead.page.last, beforeSequence-1, 'older page joins current window exactly');
+    assert.ok(olderRead.page.first < beforeSequence, 'upward scrolling loads earlier activity');
+    assert.ok(olderRead.index > olderRead.anchor.index, `Older activity must be prepended above the existing row: ${JSON.stringify(olderRead)}`);
     assert.ok(olderRead.offset !== null && Math.abs(olderRead.offset-olderRead.anchor.offset)<8, `Reading position moved: ${JSON.stringify(olderRead)}`);
+    beforeSequence = olderRead.first;
+    prepends.push(olderRead);
   }
+  if (prepends.length) await view.screenshot(resolve(root, 'history-prepended.png'));
   const otherChats = await view.evaluate(`Array.from(document.querySelectorAll('[data-chat-id]')).map(e=>e.dataset.chatId).filter(id=>id!==${JSON.stringify(snapshot.chatId)}).slice(0,2)`);
   if (otherChats.length === 2) {
     await view.evaluate(`window.__holdChat=${JSON.stringify(otherChats[0])}; document.querySelector('[data-chat-id="'+window.__holdChat+'"] .chat-history-link').click()`);
@@ -102,7 +109,7 @@ try {
   await view.screenshot(resolve(root, 'startup.png'));
   const maxFrameGapMs = await view.evaluate('Math.max(...window.__frameGaps)');
   assert.ok(maxFrameGapMs < 1000, `Renderer froze during loading: ${maxFrameGapMs} ms`);
-  result = { passed: true, readyMs, maxProbeMs, maxFrameGapMs, olderRead, switching, ...snapshot };
+  result = { passed: true, readyMs, maxProbeMs, maxFrameGapMs, prepends, switching, ...snapshot };
   console.log(JSON.stringify(result));
 } catch (error) {
   const diagnostic = await view?.evaluate(`({reads:window.__feedReads,requests:window.__feedRequests,errors:window.__feedErrors,busy:document.querySelector('.chat-history-loader')?.innerText,anchor:window.__anchor,top:document.querySelector('.timeline-scroll')?.scrollTop,frames:Math.max(...(window.__frameGaps??[0]))})`).catch(()=>null);

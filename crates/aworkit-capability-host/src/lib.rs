@@ -56,6 +56,8 @@ mod normalize;
 mod openai_compatible;
 mod plugin;
 mod process;
+mod process_session;
+pub use process_session::{ProcessSession, ProcessSnapshot, ProcessOutput, ProcessOutputCursor};
 mod provider_tools;
 mod provider_transport;
 mod registry;

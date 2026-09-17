@@ -102,6 +102,11 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
         invocation: &ShellInvocationV1,
         cancellation: &CancellationToken,
     ) -> Result<ControlledProcessResult, ToolAdapterError> {
+        Ok(self.platform.execute(&Self::shell_spec(invocation)?, cancellation)?)
+    }
+
+    /// Shared launch preparation for immediate shell calls and managed sessions.
+    pub fn shell_spec(invocation: &ShellInvocationV1) -> Result<ProcessSpecV1, ToolAdapterError> {
         if invocation.mode != ToolAuthorityModeV1::HostShell {
             return Err(ToolAdapterError::AuthorityModeMismatch);
         }
@@ -136,14 +141,15 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
         };
         #[cfg(not(windows))]
         let arguments = vec!["-c".to_owned(), invocation.command_text.clone()];
-        self.execute(
-            invocation.shell_program.clone(),
+        Ok(ProcessSpecV1 {
+            program: invocation.shell_program.clone(),
             arguments,
-            invocation.working_directory.clone(),
-            crate::shell::environment(&invocation.environment),
-            &invocation.limits,
-            cancellation,
-        )
+            working_directory: invocation.working_directory.clone(),
+            environment: crate::shell::environment(&invocation.environment),
+            timeout: invocation.limits.timeout,
+            maximum_output_bytes: invocation.limits.maximum_output_bytes,
+            cancellation_grace: invocation.limits.cancellation_grace,
+        })
     }
 
     pub fn execute_python(

@@ -258,6 +258,7 @@ name = "aworkit-capability-host"
 version = "0.1.0"
 dependencies = [
  "aworkit-process",
+ "aworkit-process-platform",
  "aworkit-protocol",
  "base64 0.22.1",
  "cap-std",
@@ -285,6 +286,7 @@ dependencies = [
  "sha1",
  "sha2",
  "sse-stream",
+ "tempfile",
  "thiserror 2.0.20",
  "tiktoken-rs",
  "tokio",
@@ -368,6 +370,15 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "aworkit-process-platform"
+version = "0.1.0"
+dependencies = [
+ "command-group",
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

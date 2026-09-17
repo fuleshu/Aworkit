@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 base64 = "0.22"
 aworkit-process = { path = "../aworkit-process" }
+aworkit-process-platform = { path = "../aworkit-process-platform" }
 aworkit-protocol = { path = "../aworkit-protocol" }
 cap-std = "4.0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
@@ -35,6 +36,7 @@ sha2 = "0.10"
 sha1 = "0.10"
 sse-stream = "0.2.4"
 thiserror = "2"
+tempfile = "3"
 tiktoken-rs = "0.12"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"

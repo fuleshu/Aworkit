@@ -252,6 +252,7 @@ name = "aworkit-capability-host"
 version = "0.1.0"
 dependencies = [
  "aworkit-process",
+ "aworkit-process-platform",
  "aworkit-protocol",
  "base64 0.22.1",
  "cap-std",
@@ -345,6 +346,15 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "aworkit-process-platform"
+version = "0.1.0"
+dependencies = [
+ "command-group",
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

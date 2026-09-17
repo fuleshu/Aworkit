@@ -26,6 +26,7 @@ use super::{
 };
 
 mod approval_turn;
+mod job_completion;
 mod provider_recovery;
 
 pub(crate) use provider_recovery::provider_recovery_notice;
@@ -95,6 +96,9 @@ fn provider_report_notice(error: &ProviderError, recovery: u32) -> String {
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    /// Runtime facts; implementations must not accept model claims as job settlement.
+    fn outstanding_jobs(&self) -> Result<Option<String>, String> { Ok(None) }
+    fn stop_unkept_jobs(&self) {}
     fn legacy_context_identity(&self) -> bool {
         true
     }
@@ -344,6 +348,7 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut timeout_recoveries = 0_u32;
     let mut repeat_tool_reminder = RepeatToolReminderStateV1::default();
     let mut pending_runtime_notice = None;
+    let mut job_completion = job_completion::CompletionGuard::default();
     let mut recovery = ProviderRecoveryBudget::default();
     let mut turn = 1_u32;
 
@@ -379,6 +384,11 @@ pub(crate) fn execute_model_tool_loop_v1(
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
 
         if turn_output.calls.is_empty() {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
+                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                turn = turn.saturating_add(1);
+                continue;
+            }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
                 return Err(failure(
@@ -403,6 +413,7 @@ pub(crate) fn execute_model_tool_loop_v1(
             });
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
+        job_completion.progressed();
         for call in &turn_output.calls {
             let settled = authority
                 .invoke(request.outer_invocation_id, turn, call, cancellation)
@@ -513,7 +524,10 @@ fn execute_tool_turn_with_timeout_recovery(
             cancellation,
         )
         .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
-    let retry_notice = runtime_notice;
+    let mut retry_notice = runtime_notice;
+    if let Some(jobs) = authority.outstanding_jobs().map_err(ModelToolLoopErrorV1::ToolAuthority)? {
+        append_runtime_notices(&mut retry_notice, vec![format!("Current shell jobs (other work may continue while they run): {jobs}")]);
+    }
     let mut provider_request = ModelToolRequestV1 {
         context_messages,
         input: request.input.clone(),
@@ -681,6 +695,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut timeout_recoveries = 0_u32;
     let mut repeat_tool_reminder = RepeatToolReminderStateV1::default();
     let mut pending_runtime_notice = None;
+    let mut job_completion = job_completion::CompletionGuard::default();
     let mut recovery = ProviderRecoveryBudget::default();
     let mut turn = 1_u32;
 
@@ -715,6 +730,11 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         if turn_output.calls.is_empty() {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
+                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                turn = turn.saturating_add(1);
+                continue;
+            }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
                 return Err(failure(
@@ -739,6 +759,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             }));
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
+        job_completion.progressed();
         for call in &turn_output.calls {
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
@@ -858,6 +879,7 @@ pub(crate) fn resume_model_tool_loop_v1(
     let mut timeout_recoveries = pending.timeout_recoveries;
     let mut repeat_tool_reminder = pending.repeat_tool_reminder;
     let mut pending_runtime_notice = pending.pending_runtime_notice;
+    let mut job_completion = job_completion::CompletionGuard::default();
     let mut recovery = ProviderRecoveryBudget::default();
 
     let mut turn = pending.turn.saturating_add(1);
@@ -892,6 +914,11 @@ pub(crate) fn resume_model_tool_loop_v1(
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         if turn_output.calls.is_empty() {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
+                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                turn = turn.saturating_add(1);
+                continue;
+            }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
                 return Err(failure(
@@ -916,6 +943,7 @@ pub(crate) fn resume_model_tool_loop_v1(
             }));
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
+        job_completion.progressed();
         for call in &turn_output.calls {
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)

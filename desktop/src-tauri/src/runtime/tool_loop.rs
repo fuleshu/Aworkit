@@ -30,6 +30,7 @@ use std::{
 
 pub(crate) mod approval_policy;
 mod mcp_approval;
+mod jobs;
 
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
@@ -192,6 +193,9 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         "tool.workspace_instructions",
         SKILL_CAPABILITY_ID,
         "tool.context",
+        jobs::OUTPUT,
+        jobs::LIST,
+        jobs::STOP,
         image_tools::READ,
         FILE_READ_CAPABILITY_ID,
         FILE_SEARCH_CAPABILITY_ID,
@@ -449,6 +453,7 @@ pub(crate) enum StoredFileToolLimitV1 {
         timeout_seconds: usize,
         maximum_output_bytes: usize,
     },
+    Job { operation: String },
     Python {
         timeout_seconds: usize,
         maximum_output_bytes: usize,
@@ -540,6 +545,12 @@ pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
+        (jobs::START, CapabilityKind::Shell, "host.jobs", jobs::schema(jobs::START), SideEffectClass::NonIdempotent, true),
+        (jobs::OUTPUT, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::OUTPUT), SideEffectClass::ReadOnly, false),
+        (jobs::INPUT, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::INPUT), SideEffectClass::NonIdempotent, false),
+        (jobs::STOP, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::STOP), SideEffectClass::IdempotentWrite, false),
+        (jobs::LIST, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::LIST), SideEffectClass::ReadOnly, false),
+        (jobs::KEEP, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::KEEP), SideEffectClass::IdempotentWrite, false),
         (
             image_tools::READ,
             CapabilityKind::FileRead,
@@ -903,9 +914,10 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumBytes"),
                 },
             ),
+            "shell.start" | "job.output" | "job.input" | "job.stop" | "job.list" | "job.keep" => jobs::freeze(&requested.capability_id, &requested.configuration)?,
             "shell.host" => (
                 SHELL_PROVIDER_NAME.to_owned(),
-                "Run one bounded host shell command; the working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
+                "Run a host shell command. With job controls enabled, long commands yield a job ID and continue running. The working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
                 shell_schema(),
                 StoredFileToolLimitV1::Shell {
                     timeout_seconds: *freeze_configuration(
@@ -1041,7 +1053,7 @@ pub(crate) fn freeze_file_tool_bindings(
         let mut options = requested.options.clone();
         if options.instructions.is_some() && options.executable.is_none() {
             options.executable = match requested.capability_id.as_str() {
-                SHELL_CAPABILITY_ID => Some(
+                SHELL_CAPABILITY_ID | jobs::START => Some(
                     shell_program()
                         .map_err(|error| invalid_tool(&error))?
                         .to_string_lossy()
@@ -1208,6 +1220,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             FILE_EDIT_CAPABILITY_ID => FILE_EDIT_ADAPTER_ID,
             FILE_WRITE_CAPABILITY_ID => FILE_WRITE_ADAPTER_ID,
             SHELL_CAPABILITY_ID => SHELL_ADAPTER_ID,
+            id if jobs::is_job(id) => "adapter.host-tools.jobs",
             PYTHON_CAPABILITY_ID => PYTHON_ADAPTER_ID,
             TODO_CAPABILITY_ID => TODO_ADAPTER_ID,
             WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_ADAPTER_ID,
@@ -1245,11 +1258,16 @@ pub(crate) struct FileToolAuthorityRuntimeV1 {
     web_documents: super::web_documents::WebDocumentStore,
     lease_authority: Arc<ToolLeaseAuthority>,
     pub(crate) mcp: Arc<McpToolRuntimeV1>,
+    jobs: Arc<jobs::JobRegistry>,
     generation: ProcessGeneration,
     core_key: Arc<CoreAuthenticationKey>,
 }
 
 impl FileToolAuthorityRuntimeV1 {
+    pub(crate) fn job_stopper(&self) -> super::cancellation::JobStopper {
+        let jobs = Arc::downgrade(&self.jobs);
+        Arc::new(move |owner| { if let Some(jobs) = jobs.upgrade() { jobs.stop_all(owner); } })
+    }
     #[cfg(test)]
     pub(super) fn recorded_exchanges(&self) -> Result<Vec<Value>, String> {
         self.records
@@ -1296,6 +1314,7 @@ impl FileToolAuthorityRuntimeV1 {
             ),
             lease_authority: Arc::new(ToolLeaseAuthority::new(generation, credential_store)),
             mcp: Arc::new(McpToolRuntimeV1::new(generation)),
+            jobs: jobs::JobRegistry::open(database.parent().ok_or_else(|| invalid_tool("job root unavailable"))?.join("shell-jobs")).map_err(WorkflowPipelineError::Store)?,
             generation,
             core_key,
         })
@@ -1321,6 +1340,7 @@ impl FileToolAuthorityRuntimeV1 {
         run_events: Arc<RunEventStream>,
     ) -> BoundFileToolAuthorityV1 {
         debug_assert!(run_events.belongs_to(context.request_id.as_str(), context.run_id.as_str()));
+        self.jobs.attach(&context.chat_id, context.cancellation.clone());
         BoundFileToolAuthorityV1 {
             runtime: self.clone(),
             context,
@@ -1556,6 +1576,10 @@ pub(crate) struct BoundFileToolAuthorityV1 {
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
+    fn outstanding_jobs(&self) -> Result<Option<String>, String> {
+        self.runtime.jobs.completion_notice(&self.context.chat_id)
+    }
+    fn stop_unkept_jobs(&self) { self.runtime.jobs.stop_unkept(&self.context.chat_id); }
     fn legacy_context_identity(&self) -> bool {
         self.context
             .model_context
@@ -2361,6 +2385,7 @@ impl AdmittedInvocationDispatcherV1 for FileToolDispatcherV1 {
     ) -> Self::Output {
         let outcome = self.execute(envelope, cancellation);
         self.records.record_outcome(&outcome)?;
+        self.runtime.jobs.acknowledge(&self.context.chat_id, &outcome.result).map_err(WorkflowPipelineError::Store)?;
         Ok(outcome)
     }
 }
@@ -2592,6 +2617,9 @@ impl FileToolDispatcherV1 {
                     timeout_seconds,
                     maximum_output_bytes,
                 } => {
+                    if jobs::controls_available(&self.context.bindings) {
+                        return self.start_shell_job(Duration::from_secs(*timeout_seconds as u64), *maximum_output_bytes, false, cancellation);
+                    }
                     let command = self.record.call.arguments["command"]
                         .as_str()
                         .ok_or_else(|| "command is invalid".to_owned())?;
@@ -2628,6 +2656,7 @@ impl FileToolDispatcherV1 {
                         host_process_result_summary("Shell command", &run, *timeout_seconds as u64);
                     Ok((value, summary))
                 }
+                StoredFileToolLimitV1::Job { operation } => self.execute_job(operation, cancellation),
                 StoredFileToolLimitV1::Python {
                     timeout_seconds,
                     maximum_output_bytes,
@@ -2763,9 +2792,10 @@ impl FileToolDispatcherV1 {
                     // A command the runtime killed (deadline or cancellation) is a
                     // failed invocation, not a command that merely returned non-zero;
                     // the model must be able to tell those apart.
+                    StoredFileToolLimitV1::Job { .. } => !result["error"].is_null(),
                     StoredFileToolLimitV1::Shell { .. }
                     | StoredFileToolLimitV1::Python { .. } => {
-                        result["timedOut"] == true || result["cancelled"] == true
+                        result["timedOut"] == true || result["cancelled"] == true || !result["error"].is_null()
                     }
                     _ => false,
                 },
@@ -3536,6 +3566,7 @@ fn validate_call_arguments(
     binding: &StoredFileToolBindingV1,
     arguments: &Value,
 ) -> Result<(), WorkflowPipelineError> {
+    if let StoredFileToolLimitV1::Job { operation } = &binding.limit { return jobs::validate(operation, arguments); }
     let object = arguments
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
@@ -3567,6 +3598,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Edit { .. } => BTreeSet::from(["path", "old_string", "new_string"]),
         StoredFileToolLimitV1::Write { .. } => BTreeSet::from(["path", "content"]),
         StoredFileToolLimitV1::Shell { .. } => BTreeSet::from(["command"]),
+        StoredFileToolLimitV1::Job { .. } => unreachable!("validated above"),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
         StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit", "freshness"]),
@@ -3640,6 +3672,7 @@ fn validate_call_arguments(
         }
     }
     match binding.limit {
+        StoredFileToolLimitV1::Job { .. } => unreachable!("validated above"),
         StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead => {
             if object.get("path").and_then(Value::as_str).is_none() {
                 return Err(invalid_tool("image path must be text"));
@@ -4050,7 +4083,7 @@ pub(crate) fn resolve_tool_executable(
 ) -> Result<String, String> {
     let path = if let Some(path) = configured {
         stable_executable(PathBuf::from(path), "tool executable")?
-    } else if id == SHELL_CAPABILITY_ID {
+    } else if matches!(id, SHELL_CAPABILITY_ID | jobs::START) {
         shell_program()?
     } else {
         python_program()?
@@ -4151,6 +4184,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         FILE_EDIT_CAPABILITY_ID => FILE_EDIT_SCOPE,
         FILE_WRITE_CAPABILITY_ID => FILE_WRITE_SCOPE,
         SHELL_CAPABILITY_ID => SHELL_SCOPE,
+        id if jobs::is_job(id) => "host.jobs",
         PYTHON_CAPABILITY_ID => PYTHON_SCOPE,
         TODO_CAPABILITY_ID => TODO_SCOPE,
         SKILL_CAPABILITY_ID => "skills.read",

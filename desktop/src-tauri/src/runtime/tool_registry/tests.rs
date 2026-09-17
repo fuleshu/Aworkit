@@ -40,7 +40,7 @@ fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
     malformed["tools"][1] = malformed["tools"][0].clone();
     assert!(NativeToolPlugin::parse(&malformed.to_string()).is_err());
     malformed = serde_json::from_str(BUNDLED).unwrap();
-    malformed["tools"][0]["fields"] = json!([]);
+    malformed["tools"].as_array_mut().unwrap().iter_mut().find(|tool| tool["id"] == "tool.files.read").unwrap()["fields"] = json!([]);
     assert!(NativeToolPlugin::parse(&malformed.to_string()).is_err());
 }
 

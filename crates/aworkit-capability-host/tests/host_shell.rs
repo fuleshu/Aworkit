@@ -1,5 +1,7 @@
 //! Real Windows shell regressions: date dialect, nested quoting and installed-tool discovery.
 #![cfg(windows)]
+// Match Tauri's GUI process: a console-subsystem test parent can mask a popup.
+#![windows_subsystem = "windows"]
 use aworkit_capability_host::{
     BuiltInProcessTools, CancellationToken, HostToolLimitsV1, NativeProcessPort, ShellInvocationV1,
     ToolAuthorityModeV1,
@@ -7,6 +9,8 @@ use aworkit_capability_host::{
 use std::{collections::BTreeMap, path::PathBuf};
 
 fn run(shell: PathBuf, command: &str) -> String {
+    let temporary = tempfile::tempdir().unwrap();
+    let temporary_path = temporary.path().to_string_lossy().into_owned();
     let result = BuiltInProcessTools::new(NativeProcessPort)
         .execute_shell(
             &ShellInvocationV1 {
@@ -14,7 +18,10 @@ fn run(shell: PathBuf, command: &str) -> String {
                 shell_program: shell,
                 command_text: command.into(),
                 working_directory: None,
-                environment: BTreeMap::new(),
+                environment: BTreeMap::from([
+                    ("TEMP".into(), temporary_path.clone()),
+                    ("TMP".into(), temporary_path),
+                ]),
                 limits: HostToolLimitsV1::default(),
             },
             &CancellationToken::default(),
@@ -67,4 +74,20 @@ fn configured_powershell_can_read_date_and_call_installed_commands() {
         "Get-Date -Format 'yyyy-MM-dd'; cmd /d /c echo nested-command-ok",
     );
     assert!(text.contains("nested-command-ok"), "{text}");
+}
+
+#[test]
+fn host_shells_do_not_allocate_a_console_window() {
+    // Query the child process itself: a hidden parent alone does not prevent
+    // a GUI-hosted shell from allocating a new console when it is spawned.
+    let probe = concat!(
+        "Add-Type ('using System; using System.Runtime.InteropServices; ",
+        "public static class ConsoleProbe { [DllImport(' + [char]34 + ",
+        "'kernel32.dll' + [char]34 + ')] public static extern IntPtr GetConsoleWindow(); }'); ",
+        "[ConsoleProbe]::GetConsoleWindow().ToInt64()",
+    );
+    let powershell = system32().join("WindowsPowerShell/v1.0/powershell.exe");
+    assert_eq!(run(powershell, probe).trim(), "0");
+    let nested = format!("powershell -NoProfile -NonInteractive -Command \"{probe}\"");
+    assert_eq!(run(system32().join("cmd.exe"), &nested).trim(), "0");
 }

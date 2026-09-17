@@ -2,9 +2,8 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    io::Read,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -14,9 +13,6 @@ use std::{
 };
 
 use aworkit_process::identity::ExecutableIdentityV1;
-use command_group::{CommandGroup, GroupChild};
-#[cfg(unix)]
-use command_group::{Signal, UnixChildExt};
 use thiserror::Error;
 
 const MAX_OUTPUT: usize = 256 * 1024;
@@ -24,7 +20,6 @@ const MAX_ARGUMENTS: usize = 4096;
 const MAX_ARGUMENT_BYTES: usize = 256 * 1024;
 const MAX_ENVIRONMENT_ENTRIES: usize = 1024;
 const MAX_ENVIRONMENT_BYTES: usize = 256 * 1024;
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const COOPERATIVE_GRACE: Duration = Duration::from_millis(100);
 
 /// Compatibility request retained for the early built-in adapters.
@@ -242,102 +237,76 @@ impl ProcessRunner {
         request: &ProcessSpecV1,
         cancellation: &CancellationToken,
     ) -> Result<ControlledProcessResult, ProcessError> {
-        validate_request(request)?;
+        let directory = tempfile::tempdir()?;
         if cancellation.is_cancelled() {
             return Err(ProcessError::CancelledBeforeLaunch);
         }
-        let executable_path = std::fs::canonicalize(&request.program)
-            .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
-        let executable = ExecutableIdentityV1::open(&executable_path)
-            .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
-        let mut command = Command::new(&executable.canonical_path);
-        command.env_clear();
-        // Host commands and their descendants must be able to find installed tools.
-        // Keep executable discovery without copying credentials or unrelated app state.
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        // Winsock name resolution needs SystemRoot even for an absolute executable.
-        // Keep the OS baseline without inheriting credentials or app variables.
-        #[cfg(windows)]
-        if let Some(system_root) = std::env::var_os("SystemRoot") {
-            command.env("SystemRoot", system_root);
-        }
-        crate::shell::command_arguments(&mut command, &executable.canonical_path, &request.arguments);
-        command
-            .envs(&request.environment)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(path) = &request.working_directory {
-            command.current_dir(std::fs::canonicalize(path)?);
-        }
-        let mut child = command.group_spawn()?;
-        if !ExecutableIdentityV1::open(&executable.canonical_path)
-            .is_ok_and(|observed| observed == executable)
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(ProcessError::ExecutableIdentityMismatch);
-        }
-        let process_group_id = child.id();
-        let stdout = child
-            .inner()
-            .stdout
-            .take()
-            .ok_or(ProcessError::MissingPipe)?;
-        let stderr = child
-            .inner()
-            .stderr
-            .take()
-            .ok_or(ProcessError::MissingPipe)?;
-        let stdout_reader = spawn_reader(stdout, request.maximum_output_bytes);
-        let stderr_reader = spawn_reader(stderr, request.maximum_output_bytes);
+        let session = crate::ProcessSession::start(request, directory.path(), false)?;
         let started = Instant::now();
-        let (status, termination, cleanup) = loop {
-            if let Some(status) = child.try_wait()? {
-                break (status.code(), ProcessTermination::Exited, false);
+        let mut termination = ProcessTermination::Exited;
+        loop {
+            let snapshot = session.snapshot()?;
+            if !snapshot.running {
+                break;
             }
             if cancellation.is_cancelled() {
-                let status = terminate_group(&mut child, request.cancellation_grace)?;
-                break (status, ProcessTermination::Cancelled, true);
+                termination = ProcessTermination::Cancelled;
+                session.stop();
+            } else if started.elapsed() >= request.timeout {
+                termination = ProcessTermination::TimedOut;
+                session.stop();
             }
-            if started.elapsed() >= request.timeout {
-                let status = terminate_group(&mut child, request.cancellation_grace)?;
-                break (status, ProcessTermination::TimedOut, true);
-            }
-            thread::sleep(POLL_INTERVAL);
-        };
-        let mut stdout = stdout_reader
-            .join()
-            .map_err(|_| ProcessError::ReaderPanicked)??;
-        let mut stderr = stderr_reader
-            .join()
-            .map_err(|_| ProcessError::ReaderPanicked)??;
-        let total = stdout.bytes.len().saturating_add(stderr.bytes.len());
-        if total > request.maximum_output_bytes {
-            let stderr_limit = request
-                .maximum_output_bytes
-                .saturating_sub(stdout.bytes.len());
-            stderr.bytes.truncate(stderr_limit);
-            stderr.truncated = true;
-            if stdout.bytes.len() > request.maximum_output_bytes {
-                stdout.bytes.truncate(request.maximum_output_bytes);
-                stdout.truncated = true;
-                stderr.bytes.clear();
-            }
+            thread::sleep(Duration::from_millis(5));
         }
-        let output_truncated = stdout.truncated || stderr.truncated;
+        let output = session.output(
+            crate::ProcessOutputCursor::default(),
+            request.maximum_output_bytes,
+            Duration::ZERO,
+            cancellation,
+        )?;
+        if let Some(error) = output.snapshot.error {
+            return Err(ProcessError::Supervision(error));
+        }
         Ok(ControlledProcessResult {
-            status,
-            stdout: stdout.bytes,
-            stderr: stderr.bytes,
+            status: output.snapshot.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
             termination,
-            process_group_id,
-            output_truncated,
-            tree_cleanup_attempted: cleanup,
+            process_group_id: output.snapshot.process_id,
+            output_truncated: output.more,
+            tree_cleanup_attempted: termination != ProcessTermination::Exited,
         })
     }
+}
+
+pub(crate) fn prepare_command(
+    request: &ProcessSpecV1,
+) -> Result<(Command, ExecutableIdentityV1), ProcessError> {
+    validate_request(request)?;
+    let executable_path = std::fs::canonicalize(&request.program)
+        .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
+    let executable = ExecutableIdentityV1::open(&executable_path)
+        .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
+    let mut command = Command::new(&executable.canonical_path);
+    command.env_clear();
+    // Host commands and their descendants must be able to find installed tools.
+    // Keep executable discovery without copying credentials or unrelated app state.
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    // Winsock name resolution needs SystemRoot even for an absolute executable.
+    // Keep the OS baseline without inheriting credentials or app variables.
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system_root);
+    }
+    crate::shell::command_arguments(&mut command, &executable.canonical_path, &request.arguments);
+    command.envs(&request.environment);
+    if let Some(path) = &request.working_directory {
+        command.current_dir(std::fs::canonicalize(path)?);
+    }
+
+    Ok((command, executable))
 }
 
 fn validate_request(request: &ProcessSpecV1) -> Result<(), ProcessError> {
@@ -386,56 +355,10 @@ fn validate_request(request: &ProcessSpecV1) -> Result<(), ProcessError> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct CapturedOutput {
-    bytes: Vec<u8>,
-    truncated: bool,
-}
-
-fn spawn_reader(
-    mut source: impl Read + Send + 'static,
-    maximum: usize,
-) -> thread::JoinHandle<Result<CapturedOutput, std::io::Error>> {
-    thread::spawn(move || {
-        let mut bytes = Vec::with_capacity(maximum.min(16 * 1024));
-        let mut buffer = [0_u8; 8192];
-        let mut truncated = false;
-        loop {
-            let count = source.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            let remaining = maximum.saturating_sub(bytes.len());
-            let accepted = remaining.min(count);
-            bytes.extend_from_slice(&buffer[..accepted]);
-            truncated |= accepted != count;
-        }
-        Ok(CapturedOutput { bytes, truncated })
-    })
-}
-
-fn terminate_group(child: &mut GroupChild, grace: Duration) -> Result<Option<i32>, ProcessError> {
-    #[cfg(not(unix))]
-    let _ = grace; // Windows has no graceful signal phase before kill.
-    #[cfg(unix)]
-    {
-        let _ = child.signal(Signal::SIGTERM);
-        let started = Instant::now();
-        while started.elapsed() < grace {
-            if let Some(status) = child.try_wait()? {
-                return Ok(status.code());
-            }
-            thread::sleep(POLL_INTERVAL);
-        }
-    }
-    if child.try_wait()?.is_none() {
-        child.kill()?;
-    }
-    Ok(child.wait()?.code())
-}
-
 #[derive(Debug, Error)]
 pub enum ProcessError {
+    #[error("process supervision failed: {0}")]
+    Supervision(String),
     #[error("process I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("argument vector exceeds its bound")]

@@ -92,7 +92,9 @@ pub(crate) fn anthropic_tool_request(
                 }))
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
-        messages.push(json!({"role":"user","content":results}));
+        if !results.is_empty() {
+            messages.push(json!({"role":"user","content":results}));
+        }
     }
     for context in request.context_messages.iter().filter(|c| {
         c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len()

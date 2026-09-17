@@ -2,6 +2,7 @@
 members = [
   "crates/aworkit-protocol",
   "crates/aworkit-process",
+  "crates/aworkit-process-platform",
   "crates/aworkit-trusted-core",
   "crates/aworkit-workflow-worker",
   "crates/aworkit-capability-host",

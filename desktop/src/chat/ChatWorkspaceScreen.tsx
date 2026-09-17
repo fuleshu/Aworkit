@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatBusy } from "./ChatBusy";
+import { conversationFeed } from "./conversationFeed";
 import "./chatLoading.css";
 import { PaneSplitter } from "../shell/PaneSplitter";
 import { usePaneWidth } from "../shell/usePaneWidth";
@@ -129,9 +130,10 @@ export function ChatWorkspaceScreen({
   const resolvedContextModel = useContextModel(runtime.contextModel, projectedChatId,
     snapshot?.chat.workflowId ?? selectedWorkflowId, snapshot?.contextModel, active);
   const timelineItems = useMemo(
-    () => projectSemanticTimeline(runtime.events, runtime.firstSequence),
-    [runtime.events, runtime.firstSequence],
+    () => projectSemanticTimeline(runtime.events),
+    [runtime.events],
   );
+  const feedItems = useMemo(() => conversationFeed(timelineItems, runtime.firstSequence), [timelineItems, runtime.firstSequence]);
   const liveTurnRunning = useMemo(
     () => snapshot !== null && hasOpenSemanticSpan(runtime.events)
       && (snapshot.chat.phase !== "awaiting_approval" || runtime.pendingCommandIds.size > 0),
@@ -498,7 +500,7 @@ export function ChatWorkspaceScreen({
         {runtime.loading ? <ChatBusy /> : <ConversationTimeline
           key={chat.chatId}
           active={active}
-          items={timelineItems}
+          items={feedItems}
           selectedId={selectedTimelineId}
           actionsDisabled={runtime.pendingCommandIds.size > 0}
           onSelect={selectTimelineItem}

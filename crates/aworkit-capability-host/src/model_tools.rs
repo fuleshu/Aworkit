@@ -459,7 +459,10 @@ fn validate_exchange(
             ModelAssistantContentV1::Text { .. } => None,
         })
         .collect::<Vec<_>>();
-    if calls.is_empty() || exchange.results.len() != calls.len() {
+    // A runtime completion barrier may retain a text-only attempted response
+    // before asking the provider to resolve asynchronous work. No tool results
+    // may be invented for that turn; real calls still require exact pairing.
+    if exchange.assistant_content.is_empty() || exchange.results.len() != calls.len() {
         return Err(invalid_tool_request());
     }
 

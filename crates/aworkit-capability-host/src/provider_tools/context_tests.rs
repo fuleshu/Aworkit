@@ -11,6 +11,29 @@ use crate::{
 use serde_json::json;
 
 #[test]
+fn completion_reminder_preserves_text_without_inventing_tool_results() {
+    let request = ModelToolRequestV1 {
+        input: json!("Finish the task"), parameters: Default::default(), tools: Vec::new(), context_messages: Vec::new(),
+        exchanges: vec![ModelToolExchangeV1 { assistant_content: vec![ModelAssistantContentV1::Text { text: "Done".into() }], results: Vec::new() }],
+        retry_notice: Some("Collect job.test before finishing".into()),
+    };
+    crate::model_tools::validate_tool_request(&request).unwrap();
+    for body in [openai_tool_request("fixture", &request, &OpenAiRequestParametersV1::default()).unwrap(), anthropic_tool_request("fixture", 100, &request).unwrap()] {
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert!(messages[1].get("tool_calls").is_none());
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "Collect job.test before finishing");
+    }
+    let gemini = gemini_tool_request(&request).unwrap();
+    assert_eq!(gemini["contents"].as_array().unwrap().len(), 3);
+    assert_eq!(gemini["contents"][1]["parts"][0]["text"], "Done");
+    let mut invalid = request;
+    invalid.exchanges[0].results.push(ModelToolResultV1 { call_id: "invented".into(), content: json!({}), is_error: false, images: Vec::new() });
+    assert!(crate::model_tools::validate_tool_request(&invalid).is_err());
+}
+
+#[test]
 fn materialized_image_context_uses_image_budget_and_still_bounds_metadata() {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use sha2::{Digest, Sha256};

@@ -103,7 +103,9 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
                 Ok(json!({"functionResponse":Value::Object(function)}))
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
-        contents.push(json!({"role":"user","parts":result_parts}));
+        if !result_parts.is_empty() {
+            contents.push(json!({"role":"user","parts":result_parts}));
+        }
     }
     for context in request.context_messages.iter().filter(|c| {
         c.after_input_messages.is_none() && c.after_exchanges == request.exchanges.len()

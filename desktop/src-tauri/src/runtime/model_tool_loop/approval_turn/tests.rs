@@ -88,6 +88,8 @@ struct Authority {
     resolved: Mutex<Vec<String>>,
     committed: Mutex<Vec<ModelToolExchangeV1>>,
     second_approval: bool,
+    unresolved_jobs: bool,
+    cleanup_requested: Mutex<bool>,
 }
 fn settled(call: &ModelToolCallV1, approved: bool) -> SettledModelToolCallV1 {
     SettledModelToolCallV1 {
@@ -114,6 +116,10 @@ fn settled(call: &ModelToolCallV1, approved: bool) -> SettledModelToolCallV1 {
     }
 }
 impl ModelToolInvocationPortV1 for Authority {
+    fn outstanding_jobs(&self) -> Result<Option<String>, String> {
+        Ok(self.unresolved_jobs.then(|| "Before finishing, collect job.test".into()))
+    }
+    fn stop_unkept_jobs(&self) { *self.cleanup_requested.lock().unwrap() = true; }
     fn invoke(
         &self,
         _: &StableId,
@@ -320,4 +326,31 @@ fn older_single_call_checkpoints_still_resume() {
     );
     assert_eq!(checkpoint.exchanges[0].results.len(), 1);
     assert_eq!(checkpoint.exchanges[0].results[0].call_id, "shell");
+}
+
+#[test]
+fn completion_guard_survives_approval_resume_and_bounds_refusal() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let gateway = FrozenModelGateway::new(vec![Box::new(Provider(observed.clone()))]);
+    let authority = Authority { unresolved_jobs: true, ..Default::default() };
+    let id = StableId::parse("outer.job-resume").unwrap();
+    let cancellation = CancellationToken::default();
+    let checkpoint = pending(execute_model_tool_loop_approval_v1(&gateway, request(&id), &authority, &cancellation).unwrap());
+    let failure = resume_model_tool_loop_v1(&gateway, request(&id), &authority, &checkpoint, true, 1, &cancellation).err().expect("must reject completion");
+    assert!(failure.to_string().contains("unresolved shell jobs"), "{failure}");
+    assert!(*authority.cleanup_requested.lock().unwrap());
+    assert_eq!(observed.lock().unwrap().len(), 6);
+    assert_eq!(authority.committed.lock().unwrap().len(), 5);
+    assert!(observed.lock().unwrap().last().unwrap().retry_notice.as_ref().unwrap().contains("job.test"));
+}
+
+#[test]
+fn legacy_loop_also_cannot_finish_with_outstanding_jobs() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let gateway = FrozenModelGateway::new(vec![Box::new(Provider(observed))]);
+    let authority = Authority { unresolved_jobs: true, ..Default::default() };
+    let id = StableId::parse("outer.job-legacy").unwrap();
+    let failure = execute_model_tool_loop_v1(&gateway, request(&id), &authority, &CancellationToken::default()).unwrap_err();
+    assert!(failure.to_string().contains("unresolved shell jobs"), "{failure}");
+    assert!(*authority.cleanup_requested.lock().unwrap());
 }
