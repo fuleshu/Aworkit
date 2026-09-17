@@ -1,12 +1,13 @@
 //! Installed job schemas and frozen authority mapping.
 use super::super::*;
 pub const START: &str = "tool.shell.start";
+pub const PYTHON_START: &str = "tool.python.start";
 pub const OUTPUT: &str = "tool.job.output";
 pub const INPUT: &str = "tool.job.input";
 pub const STOP: &str = "tool.job.stop";
 pub const LIST: &str = "tool.job.list";
 pub const KEEP: &str = "tool.job.keep";
-pub const IDS: [&str; 6] = [START, OUTPUT, INPUT, STOP, LIST, KEEP];
+pub const IDS: [&str; 7] = [START, OUTPUT, INPUT, STOP, LIST, KEEP, PYTHON_START];
 pub fn is_job(id: &str) -> bool {
     IDS.contains(&id)
 }
@@ -45,6 +46,7 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
         .ok_or_else(|| invalid_tool("job arguments must be an object"))?;
     let (allowed, required): (&[&str], &[&str]) = match operation {
         "shell_start" => (&["command", "interactive"], &["command"]),
+        "python_start" => (&["script", "interactive"], &["script"]),
         "job_output" => (&["jobId", "cursor", "waitMs", "maximumBytes"], &["jobId"]),
         "job_input" => (&["jobId", "text", "closeStdin"], &["jobId", "text"]),
         "job_stop" => (&["jobId"], &["jobId"]),
@@ -60,6 +62,7 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
     for (key, max, empty) in [
         ("jobId", 80, false),
         ("command", 262144, false),
+        ("script", 262144, false),
         ("text", 16384, true),
         ("reason", 2048, false),
     ] {

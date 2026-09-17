@@ -114,14 +114,13 @@ fn tool_options_reject_invalid_execution_and_preserve_the_resolved_path() {
         ..Default::default()
     };
     assert!(options.validate("mcp").is_err());
-    let mut tool = native_defaults()
-        .into_iter()
-        .find(|tool| tool.id == "tool.shell.host")
-        .unwrap();
-    tool.options = options;
-    let frozen = freeze_settings(&tool).unwrap();
-    assert!(std::path::Path::new(frozen.options.executable.as_ref().unwrap()).is_absolute());
-    assert_eq!(freeze_settings(&frozen).unwrap(), frozen);
+    for id in ["tool.shell.host", "tool.shell.start", "tool.python.host", "tool.python.start"] {
+        let mut tool = native_defaults().into_iter().find(|tool| tool.id == id).unwrap();
+        tool.options = options.clone();
+        let frozen = freeze_settings(&tool).unwrap();
+        assert!(std::path::Path::new(frozen.options.executable.as_ref().unwrap()).is_absolute());
+        assert_eq!(freeze_settings(&frozen).unwrap(), frozen);
+    }
 }
 
 #[test]

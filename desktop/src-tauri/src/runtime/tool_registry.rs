@@ -269,7 +269,7 @@ pub(crate) fn freeze_settings(
     if frozen.options.instructions.is_none() {
         frozen.options.instructions = native_tool(&tool.id).map(|entry| entry.instructions.clone());
     }
-    if matches!(tool.id.as_str(), "tool.shell.host" | "tool.shell.start" | "tool.python.host") {
+    if matches!(tool.id.as_str(), "tool.shell.host" | "tool.shell.start" | "tool.python.host" | "tool.python.start") {
         frozen.options.executable = Some(super::tool_loop::resolve_tool_executable(
             &tool.id,
             frozen.options.executable.as_deref(),

@@ -102,7 +102,9 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
         invocation: &ShellInvocationV1,
         cancellation: &CancellationToken,
     ) -> Result<ControlledProcessResult, ToolAdapterError> {
-        Ok(self.platform.execute(&Self::shell_spec(invocation)?, cancellation)?)
+        Ok(self
+            .platform
+            .execute(&Self::shell_spec(invocation)?, cancellation)?)
     }
 
     /// Shared launch preparation for immediate shell calls and managed sessions.
@@ -157,6 +159,14 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
         invocation: &PythonInvocationV1,
         cancellation: &CancellationToken,
     ) -> Result<ControlledProcessResult, ToolAdapterError> {
+        Ok(self
+            .platform
+            .execute(&Self::python_spec(invocation)?, cancellation)?)
+    }
+
+    /// Shared validation and launch preparation for Python calls and managed jobs.
+    /// Callers may add `-u` before `-c` for incremental managed-job output.
+    pub fn python_spec(invocation: &PythonInvocationV1) -> Result<ProcessSpecV1, ToolAdapterError> {
         match invocation.mode {
             ToolAuthorityModeV1::HostPython => {}
             ToolAuthorityModeV1::SandboxedPython => {
@@ -170,19 +180,26 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
         {
             return Err(ToolAdapterError::InputBound);
         }
-        let mut arguments = Vec::with_capacity(invocation.arguments.len() + 2);
+        if invocation.limits.maximum_output_bytes == 0
+            || invocation.limits.maximum_output_bytes > MAX_TOOL_OUTPUT_BYTES
+            || invocation.limits.timeout.is_zero()
+        {
+            return Err(ToolAdapterError::InputBound);
+        }
+        let mut arguments = Vec::with_capacity(invocation.arguments.len() + 3);
         arguments.push("-I".to_owned());
         arguments.push("-c".to_owned());
         arguments.push(invocation.script.clone());
         arguments.extend(invocation.arguments.clone());
-        self.execute(
-            invocation.interpreter.clone(),
+        Ok(ProcessSpecV1 {
+            program: invocation.interpreter.clone(),
             arguments,
-            invocation.working_directory.clone(),
-            invocation.environment.clone(),
-            &invocation.limits,
-            cancellation,
-        )
+            working_directory: invocation.working_directory.clone(),
+            environment: invocation.environment.clone(),
+            timeout: invocation.limits.timeout,
+            maximum_output_bytes: invocation.limits.maximum_output_bytes,
+            cancellation_grace: invocation.limits.cancellation_grace,
+        })
     }
 
     fn execute(

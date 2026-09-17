@@ -3,6 +3,54 @@ use super::{registry::JobRegistry, *};
 use aworkit_capability_host::ProcessSpecV1;
 use std::time::Instant;
 
+#[test]
+fn python_jobs_validate_code_and_require_every_frozen_control() {
+    assert!(
+        validate(
+            "python_start",
+            &json!({"script":"print(1)","interactive":true})
+        )
+        .is_ok()
+    );
+    for args in [
+        json!({"command":"print(1)"}),
+        json!({"script":""}),
+        json!({"script":"x\u{0000}"}),
+        json!({"script":"x".repeat(262145)}),
+        json!({"script":"print(1)","interactive":"true"}),
+        json!({"script":"print(1)","interpreter":"unauthorized.exe"}),
+    ] {
+        assert!(validate("python_start", &args).is_err(), "{args}");
+    }
+    let bindings = freeze_file_tool_bindings(
+        &IDS.iter()
+            .map(|id| WorkflowToolBindingV1 {
+                capability_id: (*id).into(),
+                configuration: json!({}),
+                credential_bindings: Vec::new(),
+                definition: None,
+                options: Default::default(),
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(controls_available(&bindings));
+    for missing in [OUTPUT, INPUT, STOP, LIST] {
+        let partial = bindings
+            .iter()
+            .filter(|b| b.capability_id != missing)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!controls_available(&partial));
+    }
+    // Launch and retention are optional for ordinary Python to yield safely.
+    let controls = bindings
+        .into_iter()
+        .filter(|b| [OUTPUT, INPUT, STOP, LIST].contains(&b.capability_id.as_str()))
+        .collect::<Vec<_>>();
+    assert!(controls_available(&controls));
+}
+
 fn spec(command: &str) -> ProcessSpecV1 {
     BuiltInProcessTools::<NativeProcessPort>::shell_spec(&ShellInvocationV1 {
         mode: ToolAuthorityModeV1::HostShell,

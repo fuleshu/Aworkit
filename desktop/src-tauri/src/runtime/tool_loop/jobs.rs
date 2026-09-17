@@ -1,10 +1,11 @@
-//! Chat-owned shell jobs. The broker authorizes each operation; this registry owns
+//! Chat-owned process jobs. The broker authorizes each operation; this registry owns
 //! process lifetime beyond any one invocation and persists identity without replay.
 mod contract;
 mod registry;
 #[cfg(test)]
 mod tests;
 use super::*;
+use aworkit_capability_host::ProcessSpecV1;
 pub(super) use contract::*;
 pub(super) use registry::JobRegistry;
 
@@ -18,6 +19,14 @@ impl FileToolDispatcherV1 {
         let args = &self.record.call.arguments;
         if operation == "shell_start" {
             return self.start_shell_job(
+                Duration::ZERO,
+                65536,
+                args["interactive"].as_bool().unwrap_or(true),
+                cancellation,
+            );
+        }
+        if operation == "python_start" {
+            return self.start_python_job(
                 Duration::ZERO,
                 65536,
                 args["interactive"].as_bool().unwrap_or(true),
@@ -38,12 +47,6 @@ impl FileToolDispatcherV1 {
         interactive: bool,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
-        if !controls_available(&self.context.bindings) {
-            return Err("Managed shell execution requires job_output, job_input, job_stop and job_list in this Chat's frozen tools. Enable them and create a new Chat.".into());
-        }
-        if cancellation.is_cancelled() || self.context.cancellation.is_cancelled() {
-            return Err("shell launch cancelled".into());
-        }
         let spec = BuiltInProcessTools::<NativeProcessPort>::shell_spec(&ShellInvocationV1 {
             mode: ToolAuthorityModeV1::HostShell,
             shell_program: self
@@ -68,10 +71,66 @@ impl FileToolDispatcherV1 {
             },
         })
         .map_err(|e| e.to_string())?;
+        self.start_process_job(&spec, "Shell", wait, interactive, cancellation)
+    }
+
+    /// Python shares the exact job lifecycle, authority and final-response gate with shell.
+    pub(super) fn start_python_job(
+        &self,
+        wait: Duration,
+        maximum: usize,
+        interactive: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<(Value, String), String> {
+        let mut spec = BuiltInProcessTools::<NativeProcessPort>::python_spec(&PythonInvocationV1 {
+            mode: ToolAuthorityModeV1::HostPython,
+            interpreter: self
+                .record
+                .binding
+                .options
+                .executable
+                .as_ref()
+                .map(PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(python_program)?,
+            script: self.record.call.arguments["script"]
+                .as_str()
+                .ok_or("script is invalid")?
+                .to_owned(),
+            arguments: Vec::new(),
+            working_directory: Some(self.record.workspace.root.clone()),
+            environment: BTreeMap::new(),
+            limits: HostToolLimitsV1 {
+                timeout: Duration::from_secs(30),
+                maximum_output_bytes: maximum,
+                cancellation_grace: Duration::from_millis(100),
+            },
+        })
+        .map_err(|e| e.to_string())?;
+        // File-backed stdout would otherwise buffer progress until the script exits.
+        // Preserve -I and the legacy Python argv while making managed jobs unbuffered.
+        spec.arguments.insert(1, "-u".into());
+        self.start_process_job(&spec, "Python", wait, interactive, cancellation)
+    }
+
+    fn start_process_job(
+        &self,
+        spec: &ProcessSpecV1,
+        label: &str,
+        wait: Duration,
+        interactive: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<(Value, String), String> {
+        if !controls_available(&self.context.bindings) {
+            return Err("Managed execution requires job_output, job_input, job_stop and job_list in this Chat's frozen tools. Enable them and create a new Chat.".into());
+        }
+        if cancellation.is_cancelled() || self.context.cancellation.is_cancelled() {
+            return Err(format!("{label} launch cancelled"));
+        }
         let id = self.runtime.jobs.start(
             &self.context.chat_id,
             self.record.proposal.proposal_id.as_str(),
-            &spec,
+            spec,
             interactive,
             self.context.cancellation.clone(),
         )?;
@@ -79,14 +138,14 @@ impl FileToolDispatcherV1 {
             &self.context.chat_id,
             &id,
             None,
-            maximum,
+            spec.maximum_output_bytes,
             wait.min(Duration::from_secs(10)),
             cancellation,
         )?;
         let summary = if value["running"] == true {
-            format!("Shell continues as {id}. Use job_output or job_stop.")
+            format!("{label} continues as {id}. Use job_output or job_stop.")
         } else {
-            format!("Shell job {id} finished.")
+            format!("{label} job {id} finished.")
         };
         Ok((value, summary))
     }

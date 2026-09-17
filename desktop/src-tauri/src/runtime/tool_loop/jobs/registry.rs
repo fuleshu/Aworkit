@@ -470,7 +470,7 @@ impl JobRegistry {
                 )
             })
             .collect::<Vec<_>>();
-        Ok((!unresolved.is_empty()).then(|| format!("Before finishing this response, resolve these shell jobs: {}. Use job_output to read/wait, job_input to send stdin, job_stop to stop the process tree, or job_keep with an explicit reason if leaving a service running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.", unresolved.join("; "))))
+        Ok((!unresolved.is_empty()).then(|| format!("Before finishing this response, resolve these process jobs: {}. Use job_output to read/wait, job_input to send stdin, job_stop to stop the process tree, or job_keep with an explicit reason if leaving a service running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.", unresolved.join("; "))))
     }
 }
 

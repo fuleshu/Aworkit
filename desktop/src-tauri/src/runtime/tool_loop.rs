@@ -307,10 +307,11 @@ fn tool_approval_copy(call: &ModelToolCallV1) -> (String, String) {
                 )
             }
         }
-        PYTHON_CAPABILITY_ID => {
+        PYTHON_CAPABILITY_ID | jobs::PYTHON_START => {
             let code = call
                 .arguments
-                .get("code")
+                .get("script")
+                .or_else(|| call.arguments.get("code"))
                 .and_then(Value::as_str)
                 .unwrap_or(arguments.as_str());
             (
@@ -546,6 +547,7 @@ pub(crate) fn file_tool_descriptors()
     let mut descriptors = BTreeMap::new();
     for (capability_id, kind, scope, schema, side_effect, workspace) in [
         (jobs::START, CapabilityKind::Shell, "host.jobs", jobs::schema(jobs::START), SideEffectClass::NonIdempotent, true),
+        (jobs::PYTHON_START, CapabilityKind::Python, "host.jobs", jobs::schema(jobs::PYTHON_START), SideEffectClass::NonIdempotent, true),
         (jobs::OUTPUT, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::OUTPUT), SideEffectClass::ReadOnly, false),
         (jobs::INPUT, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::INPUT), SideEffectClass::NonIdempotent, false),
         (jobs::STOP, CapabilityKind::Plugin, "host.jobs", jobs::schema(jobs::STOP), SideEffectClass::IdempotentWrite, false),
@@ -914,7 +916,7 @@ pub(crate) fn freeze_file_tool_bindings(
                     .expect("frozen maximumBytes"),
                 },
             ),
-            "shell.start" | "job.output" | "job.input" | "job.stop" | "job.list" | "job.keep" => jobs::freeze(&requested.capability_id, &requested.configuration)?,
+            "shell.start" | "python.start" | "job.output" | "job.input" | "job.stop" | "job.list" | "job.keep" => jobs::freeze(&requested.capability_id, &requested.configuration)?,
             "shell.host" => (
                 SHELL_PROVIDER_NAME.to_owned(),
                 "Run a host shell command. With job controls enabled, long commands yield a job ID and continue running. The working directory is not a sandbox. Approval follows the selected mode.".to_owned(),
@@ -950,7 +952,7 @@ pub(crate) fn freeze_file_tool_bindings(
             ),
             "python.host" => (
                 PYTHON_PROVIDER_NAME.to_owned(),
-                "Run one bounded isolated-interpreter Python script on the host; follows the selected approval mode.".to_owned(),
+                "Run an isolated-interpreter Python script on the host. With job controls bound, return a job ID after a soft wait; otherwise use bounded legacy execution.".to_owned(),
                 python_schema(),
                 StoredFileToolLimitV1::Python {
                     timeout_seconds: *freeze_configuration(
@@ -1059,7 +1061,7 @@ pub(crate) fn freeze_file_tool_bindings(
                         .to_string_lossy()
                         .into_owned(),
                 ),
-                PYTHON_CAPABILITY_ID => Some(
+                PYTHON_CAPABILITY_ID | jobs::PYTHON_START => Some(
                     python_program()
                         .map_err(|error| invalid_tool(&error))?
                         .to_string_lossy()
@@ -2661,6 +2663,9 @@ impl FileToolDispatcherV1 {
                     timeout_seconds,
                     maximum_output_bytes,
                 } => {
+                    if jobs::controls_available(&self.context.bindings) {
+                        return self.start_python_job(Duration::from_secs(*timeout_seconds as u64), *maximum_output_bytes, false, cancellation);
+                    }
                     let script = self.record.call.arguments["script"]
                         .as_str()
                         .ok_or_else(|| "script is invalid".to_owned())?;

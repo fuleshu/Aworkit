@@ -450,8 +450,8 @@
     {
       "id": "tool.python.host",
       "name": "Host Python",
-      "description": "Execute a bounded Python script on the host.",
-      "instructions": "Use Python when computation or scripting helps accomplish the task. Report actual execution results. Interpreter isolation does not sandbox filesystem or network access.",
+      "description": "Execute a host Python script, yielding a job ID when it continues past the initial wait.",
+      "instructions": "Use Python when computation or scripting helps accomplish the task. With job_output, job_input, job_stop and job_list bound, the initial wait is soft and capped at 10 seconds. Use the returned job ID to read output, wait or stop; do not restart the script after a soft wait. Use python_start when stdin or an immediate job ID is needed. Without all four controls this tool retains a hard timeout. Report actual execution results. Interpreter isolation does not sandbox filesystem or network access.",
       "executor": "python.host",
       "requiresProject": false,
       "execution": "python",
@@ -486,8 +486,8 @@
         },
         {
           "key": "timeoutSeconds",
-          "label": "Timeout (seconds)",
-          "help": "Upper bound for this tool: timeout (seconds).",
+          "label": "Initial wait (seconds)",
+          "help": "With all four job controls bound, wait at most 10 seconds before returning a live job ID. Without them, this remains the hard timeout.",
           "kind": "integer",
           "readOnly": false,
           "minimum": 1,
@@ -1274,7 +1274,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+            "description": "Job ID returned by shell, shell_start, python, python_start or job_list in this Chat."
           },
           "cursor": {
             "type": "object",
@@ -1332,7 +1332,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+            "description": "Job ID returned by shell, shell_start, python, python_start or job_list in this Chat."
           },
           "text": {
             "type": "string",
@@ -1353,9 +1353,9 @@
     },
     {
       "id": "tool.job.stop",
-      "name": "Stop shell job",
+      "name": "Stop job",
       "description": "Stop a Chat-owned process tree and collect available output.",
-      "instructions": "Stops the tree even if its original shell has exited. Inspect treeEmpty and error; do not claim cleanup succeeded without evidence.",
+      "instructions": "Stops the tree even if its original shell or Python interpreter has exited. Inspect treeEmpty and error; do not claim cleanup succeeded without evidence.",
       "executor": "job.stop",
       "requiresProject": false,
       "execution": "native",
@@ -1369,7 +1369,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+            "description": "Job ID returned by shell, shell_start, python, python_start or job_list in this Chat."
           }
         },
         "required": [
@@ -1380,7 +1380,7 @@
     },
     {
       "id": "tool.job.list",
-      "name": "List shell jobs",
+      "name": "List jobs",
       "description": "List jobs belonging to the current Chat.",
       "instructions": "Check jobs after interruption or before finishing. Job IDs from other Chats are not accessible.",
       "executor": "job.list",
@@ -1398,7 +1398,7 @@
     },
     {
       "id": "tool.job.keep",
-      "name": "Keep shell job running",
+      "name": "Keep job running",
       "description": "Explicitly retain a running service after this response, subject to the approval policy.",
       "instructions": "Only use when leaving the process running is intended. Give a concrete reason and report the retained job ID to the user. Retention lasts until stopped or Aworkit exits; it does not detach a process from supervision.",
       "executor": "job.keep",
@@ -1414,7 +1414,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "Job ID returned by shell, shell_start or job_list in this Chat."
+            "description": "Job ID returned by shell, shell_start, python, python_start or job_list in this Chat."
           },
           "reason": {
             "type": "string",
@@ -1429,6 +1429,35 @@
         ]
       },
       "providerName": "job_keep"
+    },
+    {
+      "id": "tool.python.start",
+      "name": "Start Python job",
+      "description": "Start a managed host Python script with unbuffered output and return a job ID immediately.",
+      "instructions": "Requires job_output, job_input, job_stop and job_list in this Chat. Use job_output for status/output, job_input for stdin and job_stop to stop the entire process tree. Before finishing collect completed jobs and stop or explicitly keep running jobs. Uses the configured isolated Python interpreter; host filesystem and network access are not sandboxed.",
+      "executor": "python.start",
+      "requiresProject": false,
+      "execution": "python",
+      "configuration": {},
+      "fields": [],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "script": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144,
+            "description": "Python code to run in the configured interpreter."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Keep a stdin pipe for job_input; defaults to true. This is a pipe, not a terminal."
+          }
+        },
+        "required": ["script"]
+      },
+      "providerName": "python_start"
     }
   ]
 }
