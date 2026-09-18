@@ -347,6 +347,7 @@ impl ProviderEnginePortV1 for AnthropicMessagesProvider {
         emit(ModelEventV1::Usage {
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
+            cache: Default::default(),
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }

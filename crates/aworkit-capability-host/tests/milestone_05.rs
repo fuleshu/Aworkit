@@ -1015,6 +1015,7 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
                 ModelEventV1::Usage {
                     input_tokens: 2,
                     output_tokens: 1,
+                    cache: Default::default(),
                 },
             ],
             acceptance: ProviderAcceptanceV1::Accepted,
@@ -1075,6 +1076,7 @@ fn model_gateway_enforces_frozen_fallback_stream_usage_bounds_and_cancellation()
             events: vec![ModelEventV1::Usage {
                 input_tokens: 0,
                 output_tokens: 0,
+                cache: Default::default(),
             }],
             acceptance: ProviderAcceptanceV1::Accepted,
             calls: late_calls.clone(),
@@ -1156,6 +1158,7 @@ fn an_oversized_request_is_a_context_condition_not_a_plan_defect() {
         events: vec![ModelEventV1::Usage {
             input_tokens: 0,
             output_tokens: 0,
+            cache: Default::default(),
         }],
         acceptance: ProviderAcceptanceV1::Accepted,
         calls: calls.clone(),

@@ -245,6 +245,7 @@ pub(crate) fn normalize_gemini_tool_response(
     events.push(ModelToolEventV1::Usage {
         input_tokens: required_u64(usage, "promptTokenCount")?,
         output_tokens,
+        cache: Default::default(),
     });
     Ok(events)
 }

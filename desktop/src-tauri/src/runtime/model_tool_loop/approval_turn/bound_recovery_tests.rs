@@ -123,6 +123,7 @@ impl ProviderEnginePortV1 for Provider {
         emit(ModelToolEventV1::Usage {
             input_tokens: 10,
             output_tokens: 10,
+            cache: Default::default(),
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }

@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from "./corePort";
 import { prettyJson } from "./jsonPresentation";
+import { cacheUsageFields } from "./cacheUsage";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
 
 export interface RunDetailField {
@@ -158,6 +159,7 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
         usage.input + usage.output > 0
           ? field("Total tokens", (usage.input + usage.output).toLocaleString())
           : undefined,
+        ...cacheUsageFields(input.events),
       ]),
     });
   }
@@ -166,7 +168,7 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
   if (reviews.length > 0) {
     const reviewInput = reviews.reduce((sum, event) => sum + numberAt(event.payload, "inputTokens"), 0);
     const reviewOutput = reviews.reduce((sum, event) => sum + numberAt(event.payload, "outputTokens"), 0);
-    sections.push({ kind: "fields", title: "Approval review usage", fields: [field("Reviews", String(reviews.length)), field("Input tokens", reviewInput.toLocaleString()), field("Output tokens", reviewOutput.toLocaleString())] });
+    sections.push({ kind: "fields", title: "Approval review usage", fields: [field("Reviews", String(reviews.length)), field("Input tokens", reviewInput.toLocaleString()), field("Output tokens", reviewOutput.toLocaleString()), ...cacheUsageFields(reviews, true)] });
   }
   if (searchUsage.length > 0) {
     sections.push({
@@ -303,6 +305,7 @@ function modelDetailFields(
       : undefined,
     usage.input > 0 ? field("Input tokens", usage.input.toLocaleString()) : undefined,
     usage.output > 0 ? field("Output tokens", usage.output.toLocaleString()) : undefined,
+    ...cacheUsageFields(events),
   ]);
 }
 

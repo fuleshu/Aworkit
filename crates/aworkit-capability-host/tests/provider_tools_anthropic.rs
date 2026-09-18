@@ -171,7 +171,8 @@ fn anthropic_tool_use_and_result_round_trip_exact_wire_and_usage() {
         first[2],
         ModelToolEventV1::Usage {
             input_tokens: 16,
-            output_tokens: 5
+            output_tokens: 5,
+            cache: Default::default(),
         }
     );
 
@@ -184,7 +185,8 @@ fn anthropic_tool_use_and_result_round_trip_exact_wire_and_usage() {
             },
             ModelToolEventV1::Usage {
                 input_tokens: 21,
-                output_tokens: 8
+                output_tokens: 8,
+                cache: Default::default(),
             }
         ]
     );

@@ -715,7 +715,7 @@ impl BoundFileToolAuthorityV1 {
                 let output = project_model_tool_events(&raw);
                 outcome.input_tokens = outcome.input_tokens.saturating_add(output.input_tokens);
                 outcome.output_tokens = outcome.output_tokens.saturating_add(output.output_tokens);
-                let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":metadata.policy.max_tokens,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens});
+                let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":metadata.policy.max_tokens,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
                 let result = result.map_err(|e|e.to_string()).and_then(|_evidence| {
                     if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
                     // Match Harness text projection. Auxiliary tool requests

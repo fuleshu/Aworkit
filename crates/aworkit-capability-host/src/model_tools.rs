@@ -222,6 +222,8 @@ pub enum ModelToolEventV1 {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+        #[serde(default, skip_serializing_if = "crate::ModelCacheUsageV1::is_empty")]
+        cache: crate::ModelCacheUsageV1,
     },
 }
 

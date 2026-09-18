@@ -425,9 +425,11 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
             ModelToolEventV1::Usage {
                 input_tokens,
                 output_tokens,
+                cache,
             } => emit(ModelEventV1::Usage {
                 input_tokens,
                 output_tokens,
+                cache,
             }),
             ModelToolEventV1::ToolCall { .. } => Err(ProviderError::Failed(
                 "OpenAI text completion unexpectedly requested a tool".to_owned(),
@@ -1006,7 +1008,7 @@ mod tests {
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"Hello from "},"finish_reason":null}]})),
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"content":"fixture"},"finish_reason":null}]})),
                 format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),
-                format!("data: {}\n\n", json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}})),
+                format!("data: {}\n\n", json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10,"prompt_cache_hit_tokens":5,"prompt_cache_miss_tokens":2}})),
                 "data: [DONE]\n\n".to_owned(),
             ].concat();
             FixtureResponse {
@@ -1058,6 +1060,7 @@ mod tests {
                 ModelEventV1::Usage {
                     input_tokens: 7,
                     output_tokens: 3,
+                    cache: crate::ModelCacheUsageV1 { cached_input_tokens: Some(5), cache_miss_input_tokens: Some(2) },
                 },
             ]
         );

@@ -30,6 +30,7 @@ impl ApprovalStore {
             CREATE TABLE IF NOT EXISTS approval_results (decision_id TEXT PRIMARY KEY, body TEXT NOT NULL);
         ").map_err(error)?;
         migrate_project_grants(&mut connection)?;
+        super::permission_migration::migrate(&mut connection)?;
         Ok(store)
     }
 

@@ -202,6 +202,7 @@ pub(crate) fn normalize_anthropic_tool_response(
     events.push(ModelToolEventV1::Usage {
         input_tokens,
         output_tokens: required_u64(usage, "output_tokens")?,
+        cache: Default::default(),
     });
     Ok(events)
 }

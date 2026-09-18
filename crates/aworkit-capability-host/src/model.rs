@@ -92,6 +92,8 @@ pub enum ModelEventV1 {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+        #[serde(skip_serializing_if = "crate::ModelCacheUsageV1::is_empty")]
+        cache: crate::ModelCacheUsageV1,
     },
 }
 
@@ -279,6 +281,18 @@ impl FrozenModelGateway {
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         self.execute_with_observer(plan, request, cancellation, None)
+    }
+
+    /// Captures reviewer usage, including usage emitted before a provider error,
+    /// without forwarding independent review output to the acting assistant.
+    pub fn execute_review_with_observer(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelRequestV1,
+        cancellation: &CancellationToken,
+        observer: &dyn ModelEventObserverV1,
+    ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
+        self.execute_with_observer(plan, request, cancellation, Some(observer))
     }
 
     fn execute_with_observer(
@@ -537,9 +551,11 @@ fn model_event_to_tool_event(event: ModelEventV1) -> ModelToolEventV1 {
         ModelEventV1::Usage {
             input_tokens,
             output_tokens,
+            cache,
         } => ModelToolEventV1::Usage {
             input_tokens,
             output_tokens,
+            cache,
         },
     }
 }

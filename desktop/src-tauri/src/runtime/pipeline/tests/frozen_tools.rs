@@ -52,6 +52,7 @@ impl ProviderEnginePortV1 for ContinuationProvider {
         emit(ModelToolEventV1::Usage {
             input_tokens: 7,
             output_tokens: 3,
+            cache: Default::default(),
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }

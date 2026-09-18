@@ -3894,6 +3894,7 @@ mod tests {
                     emit(ModelEventV1::Usage {
                         input_tokens: 7,
                         output_tokens: 0,
+                        cache: Default::default(),
                     })?;
                     return Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted);
                 }
@@ -3902,6 +3903,7 @@ mod tests {
                     emit(ModelEventV1::Usage {
                         input_tokens: 7,
                         output_tokens: 100_000,
+                        cache: Default::default(),
                     })?;
                     return Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted);
                 }
@@ -3911,6 +3913,7 @@ mod tests {
             emit(ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3,
+                cache: Default::default(),
             })?;
             Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted)
         }
@@ -4010,6 +4013,7 @@ mod tests {
             emit(ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3,
+                cache: Default::default(),
             })?;
             Ok(ProviderAcceptanceV1::Accepted)
         }
@@ -4191,6 +4195,7 @@ mod tests {
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 5,
                     output_tokens: 2,
+                    cache: Default::default(),
                 })?;
                 return Ok(ProviderAcceptanceV1::Accepted);
             }
@@ -4204,6 +4209,7 @@ mod tests {
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 9,
                     output_tokens: 2,
+                    cache: Default::default(),
                 })?;
                 return Ok(ProviderAcceptanceV1::Accepted);
             }
@@ -4234,6 +4240,7 @@ mod tests {
                     emit(ModelToolEventV1::Usage {
                         input_tokens: 5,
                         output_tokens: 2,
+                        cache: Default::default(),
                     })?;
                     return Ok(ProviderAcceptanceV1::Accepted);
                 }
@@ -4253,6 +4260,7 @@ mod tests {
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 5,
                     output_tokens: 2,
+                    cache: Default::default(),
                 })?;
                 return Ok(ProviderAcceptanceV1::Accepted);
             }
@@ -4284,6 +4292,7 @@ mod tests {
                     emit(ModelToolEventV1::Usage {
                         input_tokens: 5,
                         output_tokens: 2,
+                        cache: Default::default(),
                     })?;
                     return Ok(ProviderAcceptanceV1::Accepted);
                 }
@@ -4294,6 +4303,7 @@ mod tests {
             emit(ModelToolEventV1::Usage {
                 input_tokens: 9,
                 output_tokens: 4,
+                cache: Default::default(),
             })?;
             Ok(ProviderAcceptanceV1::Accepted)
         }
@@ -6554,6 +6564,7 @@ mod tests {
             emit(ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3,
+                cache: Default::default(),
             })?;
             Ok(ProviderAcceptanceV1::Accepted)
         }
@@ -6588,6 +6599,7 @@ mod tests {
                 emit(ModelToolEventV1::Usage {
                     input_tokens: 5,
                     output_tokens: 2,
+                    cache: Default::default(),
                 })?;
                 return Ok(ProviderAcceptanceV1::Accepted);
             }
@@ -6609,6 +6621,7 @@ mod tests {
             emit(ModelToolEventV1::Usage {
                 input_tokens: 9,
                 output_tokens: 4,
+                cache: Default::default(),
             })?;
             Ok(ProviderAcceptanceV1::Accepted)
         }

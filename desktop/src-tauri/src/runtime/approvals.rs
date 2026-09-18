@@ -5,7 +5,14 @@
 
 mod filesystem;
 mod filesystem_store;
+pub(crate) mod permission_identity;
+mod permission_migration;
+#[cfg(test)]
+mod permission_migration_tests;
+pub(crate) mod review_context;
 pub(crate) mod reviewer;
+#[cfg(test)]
+mod reviewer_tests;
 #[cfg(test)]
 pub use filesystem::FilesystemLocation;
 pub use filesystem::{
@@ -125,7 +132,7 @@ pub struct ProjectApprovalGrant {
 
 impl ProjectApprovalGrant {
     /// A project approval remembers the tool, not one invocation's arguments.
-    /// The project/workspace and complete frozen tool binding still match exactly.
+    /// The project/workspace and execution authority must still match exactly.
     pub(crate) fn set_tool_scope(&mut self) {
         let (scope, action_hash) = match self.capability_id.as_str() {
             "tool.files.edit" | "tool.files.write" => ("Files in this project", "project_files"),

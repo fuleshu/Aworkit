@@ -151,7 +151,7 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             json!({"choices":[{"index":0,"delta":{"content":"The README describes "},"finish_reason":null}]}),
             json!({"choices":[{"index":0,"delta":{"content":"Aworkit."},"finish_reason":null}]}),
             json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
-            json!({"choices":[],"usage":{"prompt_tokens":24,"completion_tokens":6,"total_tokens":30}}),
+            json!({"choices":[],"usage":{"prompt_tokens":24,"completion_tokens":6,"total_tokens":30,"prompt_cache_hit_tokens":20,"prompt_cache_miss_tokens":4,"prompt_tokens_details":{"cached_tokens":20}}}),
         ])
     });
     let provider = provider(&origin, 1024 * 1024);
@@ -174,7 +174,8 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             },
             ModelToolEventV1::Usage {
                 input_tokens: 12,
-                output_tokens: 7
+                output_tokens: 7,
+                cache: Default::default(),
             },
             ModelToolEventV1::ToolCall {
                 call: match &first[5] {
@@ -202,7 +203,8 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             },
             ModelToolEventV1::Usage {
                 input_tokens: 24,
-                output_tokens: 6
+                output_tokens: 6,
+                cache: aworkit_capability_host::ModelCacheUsageV1 { cached_input_tokens: Some(20), cache_miss_input_tokens: Some(4) },
             }
         ]
     );
@@ -235,7 +237,8 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses() {
             },
             ModelToolEventV1::Usage {
                 input_tokens: 1,
-                output_tokens: 1
+                output_tokens: 1,
+                cache: Default::default(),
             }
         ]
     );

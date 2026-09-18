@@ -1,16 +1,14 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=624 -->
+<!-- adashi:generated revision=632 -->
 # Architecture — `desktop/scripts` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
 
+- **Chat/Run Lifecycle Service** (Component) — Responsibilities: Owns command handling and legal transitions for the one-Chat/one-Run/ses…
 - **Harness Context Revision & Lineage Store** (Component) — Responsibilities: Maintains the Run's structured, inspectable Harness Context as logical i…
 
 Boundaries crossing this folder:
-- Branch, Parallel, For-Each & Join Coordinator -> Harness Context Revision & Lineage Store: Forks all branch heads from one explicit parent and invokes the frozen reconciliation cont…
+- Desktop Command & Event API -> Chat/Run Lifecycle Service: Dispatches idempotent versioned Chat/Run commands and receives domain rejection or committ…
 
-Bound here:
-- file `desktop/scripts/native-continuation-performance.mjs`
-
-[Showing 1 of 1 design element(s) bound here, 7 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+[Showing 2 of 2 design element(s) bound here, 19 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
 <!-- adashi:architecture:end -->

@@ -187,7 +187,8 @@ fn gemini_function_call_and_response_preserve_signature_and_exact_usage() {
         first[1],
         ModelToolEventV1::Usage {
             input_tokens: 13,
-            output_tokens: 10
+            output_tokens: 10,
+            cache: Default::default(),
         }
     );
 
@@ -200,7 +201,8 @@ fn gemini_function_call_and_response_preserve_signature_and_exact_usage() {
             },
             ModelToolEventV1::Usage {
                 input_tokens: 27,
-                output_tokens: 7
+                output_tokens: 7,
+                cache: Default::default(),
             }
         ]
     );

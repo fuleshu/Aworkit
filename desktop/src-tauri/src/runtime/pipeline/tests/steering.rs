@@ -62,6 +62,7 @@ impl ProviderEnginePortV1 for SteeringProvider {
         emit(ModelEventV1::Usage {
             input_tokens: 12,
             output_tokens: 6,
+            cache: Default::default(),
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }

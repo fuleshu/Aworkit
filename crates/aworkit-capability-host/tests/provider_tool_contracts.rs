@@ -109,6 +109,7 @@ fn frozen_gateway_bounds_normalized_tool_call_payloads() {
             ModelToolEventV1::Usage {
                 input_tokens: 1,
                 output_tokens: 1,
+                cache: Default::default(),
             },
         ],
     })]);

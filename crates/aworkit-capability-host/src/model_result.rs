@@ -28,6 +28,8 @@ pub enum ModelResultEventV1 {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+        #[serde(skip_serializing_if = "crate::ModelCacheUsageV1::is_empty")]
+        cache: crate::ModelCacheUsageV1,
     },
 }
 
@@ -42,6 +44,7 @@ pub struct ModelTurnProjectionV1 {
     pub calls: Vec<ModelToolCallV1>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache: crate::ModelCacheUsageV1,
     pub compacted_events: Vec<ModelResultEventV1>,
 }
 
@@ -69,7 +72,8 @@ pub fn project_model_events(events: &[ModelEventV1]) -> ModelTurnProjectionV1 {
             ModelEventV1::Usage {
                 input_tokens,
                 output_tokens,
-            } => projection.usage(*input_tokens, *output_tokens),
+                cache,
+            } => projection.usage(*input_tokens, *output_tokens, *cache),
         }
     }
     projection.finish()
@@ -96,7 +100,8 @@ pub fn project_model_tool_events(events: &[ModelToolEventV1]) -> ModelTurnProjec
             ModelToolEventV1::Usage {
                 input_tokens,
                 output_tokens,
-            } => projection.usage(*input_tokens, *output_tokens),
+                cache,
+            } => projection.usage(*input_tokens, *output_tokens, *cache),
         }
     }
     projection.finish()
@@ -117,6 +122,7 @@ struct ProjectionBuilder {
     calls: Vec<ModelToolCallV1>,
     input_tokens: u64,
     output_tokens: u64,
+    cache: crate::ModelCacheUsageV1,
     compacted_events: Vec<ModelResultEventV1>,
     assistant_index: Option<usize>,
     reasoning_raw_index: Option<usize>,
@@ -181,12 +187,14 @@ impl ProjectionBuilder {
             .push(ModelResultEventV1::ToolCall { call: call.clone() });
     }
 
-    fn usage(&mut self, input_tokens: u64, output_tokens: u64) {
+    fn usage(&mut self, input_tokens: u64, output_tokens: u64, cache: crate::ModelCacheUsageV1) {
         self.input_tokens = input_tokens;
         self.output_tokens = output_tokens;
+        self.cache = cache;
         let event = ModelResultEventV1::Usage {
             input_tokens,
             output_tokens,
+            cache,
         };
         if let Some(index) = self.usage_index {
             self.compacted_events[index] = event;
@@ -203,6 +211,7 @@ impl ProjectionBuilder {
             calls: self.calls,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            cache: self.cache,
             compacted_events: self.compacted_events,
         }
     }
@@ -236,6 +245,7 @@ mod tests {
             ModelEventV1::Usage {
                 input_tokens: 8,
                 output_tokens: 3,
+                cache: Default::default(),
             },
         ];
 
@@ -279,6 +289,7 @@ mod tests {
             ModelToolEventV1::Usage {
                 input_tokens: 5,
                 output_tokens: 2,
+                cache: Default::default(),
             },
         ];
 

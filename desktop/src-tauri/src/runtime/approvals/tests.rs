@@ -42,6 +42,9 @@ fn project_grant_covers_different_scripts_but_not_other_tools_bindings_or_projec
     next.arguments = json!({"script":"print(2 + 3)"});
     assert_eq!(first, project_grant(&context, &binding, &next).unwrap());
     assert_eq!(first.scope, "Python scripts in this project");
+    binding.description = "New documentation".into();
+    binding.options.instructions = Some("New instructions".into());
+    assert_eq!(first, project_grant(&context, &binding, &next).unwrap());
     let other = ApprovalContext {
         project_key: Some("other-project".into()),
         ..context.clone()

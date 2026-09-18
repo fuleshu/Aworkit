@@ -50,6 +50,7 @@ impl ProviderEnginePortV1 for Summarizer {
         emit(ModelToolEventV1::Usage {
             input_tokens: 7000,
             output_tokens: 50,
+            cache: Default::default(),
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }

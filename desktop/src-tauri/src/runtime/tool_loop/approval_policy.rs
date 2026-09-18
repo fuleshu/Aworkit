@@ -16,7 +16,7 @@ pub(crate) fn project_grant(
         return None;
     }
     let project_key = context.project_key.as_ref()?;
-    let binding_hash = approvals::digest(binding);
+    let binding_hash = approvals::permission_identity::binding_hash(binding);
     let mut grant = ProjectApprovalGrant {
         id: String::new(),
         project_key: project_key.clone(),
@@ -139,16 +139,13 @@ impl BoundFileToolAuthorityV1 {
                         .model_gateway
                         .as_ref()
                         .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-                    let exchanges: Vec<_> = self
-                        .runtime
-                        .records
-                        .events("pipeline.model-tool-exchange")?
-                        .into_iter()
-                        .filter(|value| {
-                            value.get("outerInvocationId").and_then(Value::as_str)
-                                == Some(outer_invocation_id.as_str())
-                        })
-                        .collect();
+                    let records = &self.runtime.records;
+                    let exchanges = records.cache.recent(&records.store, TOOL_RECORD_CHAT_ID, STORE_BRANCH_ID,
+                        "pipeline.model-tool-exchange", approvals::review_context::RECENT_EXCHANGES, |event| {
+                            let record = event.payload.get("record")?;
+                            (record["outerInvocationId"] == outer_invocation_id.as_str())
+                                .then(|| approvals::review_context::exchange_evidence(record))
+                        }).map_err(WorkflowPipelineError::Store)?;
                     let review = approvals::review_action(
                         gateway,
                         self.context
@@ -165,6 +162,9 @@ impl BoundFileToolAuthorityV1 {
                         &json!({"root":self.context.workspace.root,"project":self.context.approvals.project_name,"fileAccess":file_access}),
                         cancellation,
                     );
+                    // One accounting event per actual review attempt, including
+                    // cancellation. Reusing a stored decision incurs no new usage.
+                    self.run_events.publish_approval_review(call, &review);
                     if cancellation.is_cancelled() {
                         return Err(WorkflowPipelineError::Host(
                             "Approval review cancelled".into(),
@@ -176,7 +176,6 @@ impl BoundFileToolAuthorityV1 {
                     review
                 }
             };
-            self.run_events.publish_approval_review(call, &review);
             pending
                 .summary
                 .push_str(&format!("\n\nAutomatic review: {}", review.reason));

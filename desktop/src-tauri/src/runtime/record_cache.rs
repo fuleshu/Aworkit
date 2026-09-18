@@ -26,6 +26,30 @@ impl RecordCache {
         chat: &str,
         branch: &str,
         kind: Option<&str>,
+        select: impl FnMut(&Event) -> Option<T>,
+    ) -> Result<Vec<T>, String> {
+        self.select_ordered(store, chat, branch, kind, None, select)
+    }
+
+    pub(super) fn recent<T>(
+        &self,
+        store: &LocalHistoryStore,
+        chat: &str,
+        branch: &str,
+        kind: &str,
+        limit: usize,
+        select: impl FnMut(&Event) -> Option<T>,
+    ) -> Result<Vec<T>, String> {
+        self.select_ordered(store, chat, branch, Some(kind), Some(limit), select)
+    }
+
+    fn select_ordered<T>(
+        &self,
+        store: &LocalHistoryStore,
+        chat: &str,
+        branch: &str,
+        kind: Option<&str>,
+        recent: Option<usize>,
         mut select: impl FnMut(&Event) -> Option<T>,
     ) -> Result<Vec<T>, String> {
         let mut index = self.0.lock().map_err(|_| "record cache lock poisoned")?;
@@ -65,17 +89,23 @@ impl RecordCache {
                 index.head = sequence;
             }
         }
-        Ok(if let Some(kind) = kind {
-            index
-                .kinds
-                .get(kind)
-                .into_iter()
-                .flatten()
-                .filter_map(|e| select(e))
-                .collect()
+        let events = if let Some(kind) = kind {
+            index.kinds.get(kind).map(Vec::as_slice).unwrap_or_default()
         } else {
-            index.events.iter().filter_map(|e| select(e)).collect()
-        })
+            &index.events
+        };
+        if let Some(limit) = recent {
+            let mut selected: Vec<_> = events
+                .iter()
+                .rev()
+                .filter_map(|e| select(e))
+                .take(limit)
+                .collect();
+            selected.reverse();
+            Ok(selected)
+        } else {
+            Ok(events.iter().filter_map(|e| select(e)).collect())
+        }
     }
 }
 
@@ -129,6 +159,13 @@ mod tests {
         append(2, "z.proposed");
         assert_eq!(read(Some("z.proposed")), vec![0, 2]);
         assert_eq!(read(None), vec![0, 1, 2]);
+        let mut visited = 0;
+        let recent = cache.recent(&store, "records", "main", "z.proposed", 1, |event| {
+            visited += 1;
+            Some(event.payload["record"].as_u64().unwrap())
+        }).unwrap();
+        assert_eq!(recent, vec![2]);
+        assert_eq!(visited, 1, "stop projecting after the selected evidence bound");
         assert_eq!(address, Arc::as_ptr(&cache.0.lock().unwrap().events[0]));
     }
 }

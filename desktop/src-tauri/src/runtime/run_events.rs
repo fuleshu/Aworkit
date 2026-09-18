@@ -229,6 +229,7 @@ impl RunEventStream {
                 "callId":call.call_id,"capabilityId":call.capability_id,
                 "decision":review.decision,"reason":review.reason,
                 "inputTokens":review.input_tokens,"outputTokens":review.output_tokens,
+                "cache":review.cache,
             }),
         ));
     }
@@ -826,7 +827,7 @@ impl ModelRunEventObserver {
         ));
     }
 
-    fn usage(&self, input_tokens: u64, output_tokens: u64) {
+    fn usage(&self, input_tokens: u64, output_tokens: u64, cache: aworkit_capability_host::ModelCacheUsageV1) {
         let Some(span_id) = self.current_model_span() else {
             return;
         };
@@ -839,6 +840,7 @@ impl ModelRunEventObserver {
                 "spanId": span_id,
                 "inputTokens": input_tokens,
                 "outputTokens": output_tokens,
+                "cache": cache,
                 "createdAt": now_label(),
             }),
         ));
@@ -1013,7 +1015,8 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
             ModelEventV1::Usage {
                 input_tokens,
                 output_tokens,
-            } => self.usage(*input_tokens, *output_tokens),
+                cache,
+            } => self.usage(*input_tokens, *output_tokens, *cache),
         }
     }
 
@@ -1033,7 +1036,8 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
             ModelToolEventV1::Usage {
                 input_tokens,
                 output_tokens,
-            } => self.usage(*input_tokens, *output_tokens),
+                cache,
+            } => self.usage(*input_tokens, *output_tokens, *cache),
         }
     }
 
@@ -1265,6 +1269,7 @@ mod tests {
         observer.model_tool_event(&ModelToolEventV1::Usage {
             input_tokens: 11,
             output_tokens: 7,
+            cache: aworkit_capability_host::ModelCacheUsageV1 { cached_input_tokens: Some(8), cache_miss_input_tokens: Some(3) },
         });
         observer.model_turn_completed(&json!({"toolCall":"call.1"}), "completed");
         stream.publish_tool_started(&call);
@@ -1293,6 +1298,8 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.kind == "span.usage"
                 && event.payload.get("inputTokens").and_then(Value::as_u64) == Some(11)
+                && event.payload["cache"]["cachedInputTokens"] == 8
+                && event.payload["cache"]["cacheMissInputTokens"] == 3
                 && event.payload.get("outputTokens").and_then(Value::as_u64) == Some(7)
         }));
         assert_eq!(

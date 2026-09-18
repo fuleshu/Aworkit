@@ -289,6 +289,7 @@ fn consume_usage(
     emit(ModelToolEventV1::Usage {
         input_tokens: required_u64(usage, "prompt_tokens")?,
         output_tokens: required_u64(usage, "completion_tokens")?,
+        cache: crate::ModelCacheUsageV1::from_openai(usage),
     })
 }
 

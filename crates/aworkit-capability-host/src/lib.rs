@@ -52,6 +52,8 @@ mod model;
 pub mod model_images;
 mod model_result;
 mod model_tools;
+mod model_usage;
+pub use model_usage::ModelCacheUsageV1;
 mod normalize;
 mod openai_compatible;
 mod plugin;

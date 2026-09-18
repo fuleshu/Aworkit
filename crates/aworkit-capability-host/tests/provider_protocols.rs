@@ -212,7 +212,8 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
             ModelEventV1::AssistantOutput("openai".to_owned()),
             ModelEventV1::Usage {
                 input_tokens: 7,
-                output_tokens: 3
+                output_tokens: 3,
+                cache: Default::default(),
             }
         ]
     );
@@ -276,7 +277,8 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
             ModelEventV1::AssistantOutput("hello anthropic".to_owned()),
             ModelEventV1::Usage {
                 input_tokens: 16,
-                output_tokens: 4
+                output_tokens: 4,
+                cache: Default::default(),
             }
         ]
     );
@@ -340,7 +342,8 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
             ModelEventV1::AssistantOutput("hello gemini".to_owned()),
             ModelEventV1::Usage {
                 input_tokens: 12,
-                output_tokens: 12
+                output_tokens: 12,
+                cache: Default::default(),
             }
         ]
     );
