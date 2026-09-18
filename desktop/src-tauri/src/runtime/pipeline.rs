@@ -8,6 +8,7 @@
 #[path = "compaction/provider.rs"]
 mod compaction_provider;
 mod frozen_tools;
+mod steering;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -203,6 +204,8 @@ pub struct WorkflowExecutionRequestV1 {
     pub model_parameters: BTreeMap<String, Value>,
     pub model_context: Value,
     pub compact_node: Option<String>,
+    /// A user-stopped pass to steer, never a completed-turn follow-up.
+    pub steer_from_request_id: Option<StableId>,
     /// Hash of the complete secret-free Chat/Run context frozen at first send.
     /// It binds saved-workflow and resolution provenance into the authority
     /// snapshot without copying editable Settings into the provider payload.
@@ -247,6 +250,7 @@ impl WorkflowExecutionRequestV1 {
             model_parameters: BTreeMap::new(),
             model_context: json!({}),
             compact_node: None,
+            steer_from_request_id: None,
             approvals: Default::default(),
             frozen_context_hash: DEFAULT_FROZEN_CONTEXT_HASH.to_owned(),
             workspace: None,
@@ -539,6 +543,7 @@ impl WorkflowExecutionPipeline {
             .get(&protocol)
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
         validate_request(request, protocol, descriptor)?;
+        self.validate_steering(request)?;
         if let Some(existing) = self.records.execution(&request.request_id)? {
             self.validate_existing_request_semantics(request, &existing)?;
             if self.existing_request_can_still_start_effect(&existing)? {
@@ -659,6 +664,7 @@ impl WorkflowExecutionPipeline {
             || existing.snapshot.budget != replay_budget
             || stored_messages != request_messages
             || existing.worker_proposal.payload["compactNode"] != json!(request.compact_node)
+            || existing.worker_proposal.payload["steerFromRequestId"] != json!(request.steer_from_request_id)
             || !workspace_matches
             || !workspace_identity_matches
             || !saved_nodes_match
@@ -1080,9 +1086,11 @@ impl WorkflowExecutionPipeline {
             prepared.deadline_epoch_millis,
             Some(&pending),
             Some(approved),
+            None,
             &cancellation,
             Some(&graph_observer),
         );
+        self.records.store_stopped_pass(&prepared.request_id, pass.stopped_state.as_ref())?;
         model_observer.settle(graph_pass_live_status(pass.status));
         run_events
             .ensure_healthy()
@@ -1436,6 +1444,7 @@ impl WorkflowExecutionPipeline {
         let payload = json!({
             "context": context,
             "compactNode": request.compact_node,
+            "steerFromRequestId": request.steer_from_request_id,
             "config": {"workflow": request.workflow_snapshot},
         });
         let worker_proposal = WorkerInvocationProposalContractV1 {
@@ -2379,6 +2388,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .workspace
                 .clone()
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            let stopped = self.records.steering_for(&self.prepared)?;
             let authority = self.file_tool_authority.bind_with_run_events(
                 FrozenFileToolAuthorityContextV1 {
                     chat_id: self.prepared.snapshot.chat_id.to_string(),
@@ -2401,7 +2411,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     cancellation: cancellation.clone(),
                 },
                 run_events.clone(),
-            );
+            ).with_steering_node(stopped.as_ref().map(|state| state.node_id.clone()));
             let compiled = compile_graph_pass(&workflow, &self.prepared.tool_bindings)
                 .map_err(|error| WorkflowPipelineError::InvalidInput(error))?;
             let graph_observer = |activity: &GraphNodeActivityV1| {
@@ -2456,10 +2466,12 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     self.prepared.deadline_epoch_millis,
                     None,
                     None,
+                    stopped.as_ref(),
                     cancellation,
                     Some(&graph_observer),
                 )
             };
+            self.records.store_stopped_pass(&self.prepared.request_id, pass.stopped_state.as_ref())?;
             model_observer.settle(graph_pass_live_status(pass.status));
             run_events
                 .ensure_healthy()
@@ -3760,6 +3772,7 @@ fn broker_error(error: BrokerError) -> WorkflowPipelineError {
 
 #[cfg(test)]
 mod tests {
+    mod steering;
     mod approval_modes;
     mod frozen_tools;
     use crate::runtime::documents::bundled_workflow_template;

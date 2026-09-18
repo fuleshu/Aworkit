@@ -53,6 +53,11 @@ impl PassMachine<'_> {
             role: "user".into(),
             content: value_text(&self.incoming_value(&node.id)),
         });
+        if self.steered_node.as_deref() == Some(node.id.as_str()) {
+            if let Some(message) = self.conversation.last().filter(|message| message.role == "user") {
+                messages.push(message.clone());
+            }
+        }
         let messages = context::merge_system_messages(messages);
         let plan = ModelResolutionPlanV1 {
             candidates: vec![ModelCandidateV1 {

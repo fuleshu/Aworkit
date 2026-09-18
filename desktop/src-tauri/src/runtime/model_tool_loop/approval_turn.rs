@@ -63,6 +63,10 @@ pub(super) fn resume_pending_turn(
     record_settlement(request, pending, &mut exchange, &calls[index], settled);
 
     for call in &calls[index + 1..] {
+        if cancellation.is_cancelled() {
+            exchange.results.push(not_executed_after_stop(call));
+            continue;
+        }
         if !approved {
             // Do not run further actions from an already issued batch after a
             // user rejection. Retain a correlated non-execution result for each
@@ -102,6 +106,16 @@ pub(super) fn resume_pending_turn(
     pending.exchanges.push(exchange);
     pending.pending_exchange = None;
     Ok(true)
+}
+
+pub(super) fn not_executed_after_stop(call: &ModelToolCallV1) -> ModelToolResultV1 {
+    ModelToolResultV1 {
+        images: Vec::new(),
+        call_id: call.call_id.clone(),
+        content: serde_json::json!({"error":"not_executed_after_stop",
+            "detail":"Not executed: the user stopped this response before this tool was dispatched. Reconsider this request using the user's next message."}),
+        is_error: true,
+    }
 }
 
 fn record_settlement(

@@ -1,6 +1,7 @@
 mod context_edit;
 mod concurrent;
 mod context_model;
+mod steering;
 mod mcp_definitions;
 mod mcp_selection;
 mod snapshot_page;
@@ -110,6 +111,7 @@ pub(crate) mod approval_control;
 use approval_control::parse_approval_resolution;
 
 trait WorkflowPipelinePort: Send + Sync {
+    fn stopped_node(&self, _request_id: &StableId) -> Result<Option<String>, String> { Ok(None) }
     fn for_chat(&self, _events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> { None }
     fn validate_approval_target(
         &self,
@@ -155,6 +157,9 @@ trait WorkflowPipelinePort: Send + Sync {
 }
 
 impl WorkflowPipelinePort for WorkflowExecutionPipeline {
+    fn stopped_node(&self, request_id: &StableId) -> Result<Option<String>, String> {
+        WorkflowExecutionPipeline::stopped_node(self, request_id).map_err(|error| error.to_string())
+    }
     fn for_chat(&self, events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> {
         Some(Arc::new(self.with_chat_events(events)))
     }
@@ -1318,6 +1323,7 @@ impl DesktopRuntime {
             current_epoch_millis()?,
         );
         execution_request.frozen_context_hash = frozen.context_hash.clone();
+        execution_request.steer_from_request_id = self.steering_request_id(&input)?;
         execution_request.approvals = super::approvals::ApprovalContext {
             mode: context.approval_mode.unwrap_or_default(),
             chat_id: context.identity.chat_id.to_string(),
@@ -1430,6 +1436,7 @@ impl DesktopRuntime {
                     "schemaVersion": 1,
                     "requestId": input.command_id,
                     "runId": context.identity.run_id,
+                    "steerFromRequestId": execution_request.steer_from_request_id,
                     "status": "running",
                     "createdAt": created_at,
                 }),
@@ -1696,49 +1703,6 @@ impl DesktopRuntime {
             }
         }
         Ok((receipt, result.status))
-    }
-
-    /// Converts a controller-requested cancellation into a non-terminal Chat
-    /// turn boundary. Provider/tool outcome evidence already committed before
-    /// cancellation remains visible; no partial assistant message is invented.
-    fn settle_requested_stop(
-        &mut self,
-        input: &UiCommandInput,
-        fingerprint: &str,
-        result: &WorkflowExecutionResultV1,
-    ) -> Result<Option<UiCommandReceipt>, String> {
-        let Some(stop) = self
-            .cancellation_controller
-            .take_request(result.chat_id.as_str(), result.run_id.as_str())
-        else {
-            return Ok(None);
-        };
-        let created_at = now_label();
-        let mut facts = self
-            .history
-            .open_span_terminal_facts("cancelled", "Response stopped by the user.", &created_at)?
-            .into_iter()
-            .map(|fact| ("span.cancelled", fact))
-            .collect::<Vec<_>>();
-        facts.push((
-            "chat.turn_stopped",
-            json!({
-                "createdAt": created_at,
-                "stopCommandId": stop.command_id,
-                "commandId": input.command_id,
-                "chatId": stop.chat_id,
-                "runId": stop.run_id,
-                "body": "Response stopped by the user."
-            }),
-        ));
-        self.history
-            .append(
-                input.command_id.as_str(),
-                fingerprint,
-                self.history.head()?,
-                facts,
-            )
-            .map(Some)
     }
 
     /// Applies one committed approval decision to a durably suspended graph

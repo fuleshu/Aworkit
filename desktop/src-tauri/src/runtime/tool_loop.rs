@@ -1347,6 +1347,7 @@ impl FileToolAuthorityRuntimeV1 {
             runtime: self.clone(),
             context,
             run_events,
+            steering_node: None,
         }
     }
 
@@ -1575,6 +1576,7 @@ pub(crate) struct BoundFileToolAuthorityV1 {
     runtime: FileToolAuthorityRuntimeV1,
     context: FrozenFileToolAuthorityContextV1,
     run_events: Arc<RunEventStream>,
+    steering_node: Option<String>,
 }
 
 impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
@@ -3007,6 +3009,7 @@ impl FileToolDispatcherV1 {
                 runtime: self.runtime.clone(),
                 context: self.context.clone(),
                 run_events: self.run_events.clone(),
+                steering_node: None,
             },
         };
         let guidance = super::tool_registry::instruction_block(

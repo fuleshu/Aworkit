@@ -761,6 +761,10 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         let mut results = Vec::with_capacity(turn_output.calls.len());
         job_completion.progressed();
         for call in &turn_output.calls {
+            if cancellation.is_cancelled() {
+                results.push(approval_turn::not_executed_after_stop(call));
+                continue;
+            }
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -945,6 +949,10 @@ pub(crate) fn resume_model_tool_loop_v1(
         let mut results = Vec::with_capacity(turn_output.calls.len());
         job_completion.progressed();
         for call in &turn_output.calls {
+            if cancellation.is_cancelled() {
+                results.push(approval_turn::not_executed_after_stop(call));
+                continue;
+            }
             let settled = authority
                 .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {

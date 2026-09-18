@@ -149,7 +149,9 @@ impl BoundFileToolAuthorityV1 {
         let query = format!("{} {}", question, call.arguments);
         let path = call.arguments["path"].as_str().unwrap_or("");
         if cancellation.is_cancelled() {
-            return Err(invalid_tool("Compression cancelled"));
+            // The tool already settled. Stop may skip this optional projection,
+            // but must not discard its result before the exchange is committed.
+            return Ok(settled);
         }
         let started = std::time::Instant::now();
         let compressed = compression::compress(
@@ -177,7 +179,7 @@ impl BoundFileToolAuthorityV1 {
             } })
         });
         if cancellation.is_cancelled() {
-            return Err(invalid_tool("Compression cancelled"));
+            return Ok(settled);
         }
         if let Some(result) = compressed {
             let payload = json!({"ownerKey":scope.payload["ownerKey"],"nodeId":scope.payload["nodeId"],"child":scope.payload["child"],"reference":key,"outer":outer,

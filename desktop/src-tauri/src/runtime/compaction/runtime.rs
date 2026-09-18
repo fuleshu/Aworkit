@@ -20,6 +20,12 @@ impl aworkit_capability_host::ModelEventObserverV1 for SummaryCapture {
 }
 
 impl BoundFileToolAuthorityV1 {
+    /// A steered text-only model consumes the new canonical user message,
+    /// without appending its original graph input a second time.
+    pub(crate) fn with_steering_node(mut self, node: Option<String>) -> Self {
+        self.steering_node = node;
+        self
+    }
     pub(crate) fn compact_existing(
         &self,
         gateway: &FrozenModelGateway,
@@ -96,6 +102,7 @@ impl BoundFileToolAuthorityV1 {
             output_units,
             approval: None,
             pending_state: None,
+            stopped_state: None,
             activity: Vec::new(),
             tool_activity: Vec::new(),
             exchanges: Vec::new(),
@@ -280,7 +287,7 @@ impl BoundFileToolAuthorityV1 {
             same.then_some(through),
         )?;
         if !same {
-            if !conversation_context {
+            if !conversation_context && self.steering_node.as_deref() != Some(owner.node_id.as_str()) {
                 for message in request.input["messages"]
                     .as_array()
                     .into_iter()

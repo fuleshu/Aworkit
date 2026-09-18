@@ -25,6 +25,8 @@ use sha2::{Digest, Sha256};
 
 mod context;
 mod model_call;
+mod steering;
+pub(crate) use steering::StoppedGraphPassV1;
 
 use super::{
     documents::validate_v1_executable_catalog,
@@ -125,6 +127,8 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub run_id: String,
     pub values: BTreeMap<String, Value>,
     pub completed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_edges: Option<BTreeSet<usize>>,
     pub pending_node_id: String,
     pub title: String,
     pub message: String,
@@ -174,6 +178,7 @@ pub(crate) struct GraphPassOutcomeV1 {
     pub error: Option<String>,
     pub approval: Option<GraphApprovalRequestV1>,
     pub pending_state: Option<PendingGraphPassStateV1>,
+    pub stopped_state: Option<StoppedGraphPassV1>,
     pub activity: Vec<GraphNodeActivityV1>,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
     pub exchanges: Vec<ModelToolExchangeV1>,
@@ -433,6 +438,7 @@ struct PassMachine<'a> {
     final_text: Option<String>,
     pending_tool_approval: Option<(GraphApprovalRequestV1, AgentLoopSuspensionV1)>,
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
+    steered_node: Option<String>,
     activity_observer: Option<&'a dyn Fn(&GraphNodeActivityV1)>,
 }
 
@@ -441,12 +447,16 @@ impl<'a> PassMachine<'a> {
         mut self,
         pending: Option<&PendingGraphPassStateV1>,
         approval_decision: Option<bool>,
+        stopped: Option<&StoppedGraphPassV1>,
         cancellation: &CancellationToken,
     ) -> GraphPassOutcomeV1 {
         if let Some(pending) = pending {
             self.values = pending.values.clone();
             self.completed = pending.completed.clone();
             self.executed = pending.completed.iter().cloned().collect();
+            if let Some(edges) = &pending.active_edges {
+                self.active_edges = edges.clone();
+            }
             self.activity = pending.activity.clone();
             self.tool_activity = pending.tool_activity.clone();
             self.exchanges = pending.exchanges.clone();
@@ -461,6 +471,11 @@ impl<'a> PassMachine<'a> {
                 .clone()
                 .map(|suspension| (suspension, approval_decision));
         }
+        if let Some(stopped) = stopped {
+            if let Err(error) = self.restore_stopped(stopped) {
+                return self.failed_outcome(error);
+            }
+        }
         for node_id in &self.compiled.topological_order {
             if self.executed.contains(node_id) {
                 continue;
@@ -472,8 +487,13 @@ impl<'a> PassMachine<'a> {
                 self.push_activity(node, "skipped", "branch not taken");
                 continue;
             }
-            if cancellation.is_cancelled() {
-                return self.failed_outcome("graph pass was cancelled".to_owned());
+            // Finish pure graph bookkeeping after the last model response. A
+            // Stop racing with completion must not leave a continuation that
+            // only replays stale output and silently ignores the next input.
+            if cancellation.is_cancelled()
+                && matches!(node.node_type.as_str(), "agent" | "model_call" | "tool" | "approval")
+            {
+                return self.stopped_outcome(node, "graph pass was cancelled".to_owned(), false);
             }
             self.push_activity(node, "started", "running");
             let value = if node.node_type == "approval" {
@@ -513,6 +533,9 @@ impl<'a> PassMachine<'a> {
                     }
                     AgentResumeOutcomeV1::Failed(error) => {
                         self.push_activity(node, "failed", &error);
+                        if cancellation.is_cancelled() {
+                            return self.stopped_outcome(node, error, true);
+                        }
                         return self.failed_outcome(error);
                     }
                 }
@@ -521,6 +544,9 @@ impl<'a> PassMachine<'a> {
                     Ok(value) => value,
                     Err(error) => {
                         self.push_activity(node, "failed", &error);
+                        if cancellation.is_cancelled() {
+                            return self.stopped_outcome(node, error, true);
+                        }
                         return self.failed_outcome(error);
                     }
                 }
@@ -554,6 +580,7 @@ impl<'a> PassMachine<'a> {
             run_id: self.run_id.to_owned(),
             values: self.values.clone(),
             completed: self.completed.clone(),
+            active_edges: Some(self.active_edges.clone()),
             pending_node_id: suspension.node_id.clone(),
             title: approval.title.clone(),
             message: approval.message.clone(),
@@ -577,6 +604,7 @@ impl<'a> PassMachine<'a> {
             error: None,
             approval: Some(approval),
             pending_state: Some(pending_state),
+            stopped_state: None,
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
             exchanges: self.exchanges.clone(),
@@ -1205,6 +1233,7 @@ impl<'a> PassMachine<'a> {
             run_id: self.run_id.to_owned(),
             values: self.values.clone(),
             completed: self.completed.clone(),
+            active_edges: Some(self.active_edges.clone()),
             pending_node_id: node.id.clone(),
             title,
             message,
@@ -1228,6 +1257,7 @@ impl<'a> PassMachine<'a> {
             error: None,
             approval: Some(approval),
             pending_state: Some(pending_state),
+            stopped_state: None,
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
             exchanges: self.exchanges.clone(),
@@ -1245,6 +1275,7 @@ impl<'a> PassMachine<'a> {
             error: Some(error),
             approval: None,
             pending_state: None,
+            stopped_state: None,
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
             exchanges: self.exchanges.clone(),
@@ -1262,6 +1293,7 @@ impl<'a> PassMachine<'a> {
             error: None,
             approval: None,
             pending_state: None,
+            stopped_state: None,
             activity: self.activity.clone(),
             tool_activity: self.tool_activity.clone(),
             exchanges: self.exchanges.clone(),
@@ -1294,6 +1326,7 @@ pub(crate) fn execute_graph_pass_observed(
     _deadline_epoch_millis: u64,
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
+    stopped: Option<&StoppedGraphPassV1>,
     cancellation: &CancellationToken,
     activity_observer: Option<&dyn Fn(&GraphNodeActivityV1)>,
 ) -> GraphPassOutcomeV1 {
@@ -1326,9 +1359,10 @@ pub(crate) fn execute_graph_pass_observed(
         final_text: None,
         pending_tool_approval: None,
         resume_agent_suspension: None,
+        steered_node: None,
         activity_observer,
     };
-    machine.run(pending, approval_decision, cancellation)
+    machine.run(pending, approval_decision, stopped, cancellation)
 }
 
 /// Extracts the closed request overrides owned by a model-consuming workflow
