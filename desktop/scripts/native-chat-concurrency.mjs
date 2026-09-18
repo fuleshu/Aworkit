@@ -78,6 +78,8 @@ async function send(label) {
   await type(label); await click('.composer-submit:is([aria-label="Send"],[aria-label="Queue"])');
   for (let n = 0; !releases.has(label) && n < 200; n++) await delay();
   assert.ok(releases.has(label), `provider received and held ${label}`);
+  await waitFor("document.querySelector('textarea[aria-label=\"Chat input\"]')?.value === ''");
+  assert.ok(await view.evaluate(`document.querySelector('.timeline-scroll')?.textContent.includes(${JSON.stringify(label)})`), "sent message is visible before response completion");
   return (await snapshot()).chat.chatId;
 }
 try {
@@ -108,6 +110,7 @@ try {
   await type("Unsent draft C");
   await select(a);
   await waitFor("document.querySelector('.timeline-scroll')?.textContent.includes('Concurrent A')");
+  await waitFor("document.querySelector('textarea[aria-label=\"Chat input\"]')?.value === ''");
   assert.ok(!await view.evaluate("document.querySelector('.timeline-scroll')?.textContent.includes('Concurrent B')"));
   // A busy target cannot be deleted, even through direct IPC.
   assert.match(await view.evaluate(`window.__TAURI_INTERNALS__.invoke('desktop_command',{command:{schemaVersion:1,commandId:'concurrency.delete-active',expectedVersion:0,action:'delete_chat',targetId:${JSON.stringify(b)},payload:{}}}).then(()=>'',String)`), /Stop this Chat/);

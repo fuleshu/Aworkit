@@ -512,6 +512,7 @@ export function ChatWorkspaceScreen({
         />}
         <ChatComposer
           drafts={composerDrafts}
+          committedEvents={runtime.events}
           key={chat.chatId + (defaultWorkflowId ?? "")}
           approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
             disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}

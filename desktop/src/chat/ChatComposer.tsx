@@ -9,7 +9,7 @@ import {
   updateComposer,
   type ComposerState,
 } from "./composer";
-import type { ChatProjectChoice, ChatProjection } from "./types";
+import type { ChatProjectChoice, ChatProjection, CoreEventEnvelope } from "./types";
 import {
   bundledDefaultWorkflowId,
   bundledWorkflowTemplates,
@@ -22,6 +22,7 @@ export interface WorkflowOption {
 
 interface ChatComposerProps {
   readonly drafts?: ComposerDrafts;
+  readonly committedEvents?: readonly CoreEventEnvelope[];
   readonly contextUsage?: React.ReactNode;
   readonly approvalControl?: React.ReactNode;
   readonly status?: React.ReactNode;
@@ -46,6 +47,7 @@ interface ChatComposerProps {
 /** Local IME-safe composer; only a committed core result is allowed to clear its draft. */
 export function ChatComposer({
   drafts,
+  committedEvents = [],
   contextUsage,
   approvalControl,
   status,
@@ -79,7 +81,7 @@ export function ChatComposer({
             { id: chat.workflowId, name: chat.workflowName ?? chat.workflowId },
           ]
     : workflowOptions;
-  const { state, setState, retryIntent, setRetryIntent, submitting, setSubmitting } = useComposerDraft(chat.chatId, {
+  const { state, setState, retryIntent, setRetryIntent, submitting, setSubmitting, confirmSubmission } = useComposerDraft(chat.chatId, {
     ...emptyComposer,
     workflowId: chat.lockedWorkflow
       ? (chat.workflowId ?? "")
@@ -97,6 +99,16 @@ export function ChatComposer({
         ? null
         : (chat.rememberedProjectId ?? null),
   }, drafts);
+  useEffect(() => {
+    if (retryIntent === null) return;
+    // The same committed event renders the user message in the transcript.
+    // Match its request and Chat, never its text (which may be repeated).
+    if (committedEvents.some(event =>
+      event.streamId === chat.chatId && event.kind === "message.user"
+      && typeof event.payload === "object" && event.payload !== null
+      && "requestId" in event.payload && event.payload.requestId === retryIntent.commandId
+    )) confirmSubmission(retryIntent.commandId);
+  }, [committedEvents, chat.chatId, retryIntent, confirmSubmission]);
   useEffect(() => {
     onWorkflowChange?.(state.workflowId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,10 +145,7 @@ export function ChatComposer({
         });
       setRetryIntent(intent);
       if (await onSubmit(intent)) {
-        setRetryIntent(null);
-        setState((current) =>
-          updateComposer(current, { draft: "", attachments: [] }),
-        );
+        confirmSubmission(intent.commandId);
       }
     } catch {
       /* The exact disabled reason remains visible next to the control. */

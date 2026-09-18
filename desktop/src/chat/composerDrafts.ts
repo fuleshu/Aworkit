@@ -38,8 +38,19 @@ export function useComposerDraft(id: string, initial: ComposerState, provided?: 
   const store = provided ?? local;
   const read = useCallback(() => store.get(id, initial), [store, id, initial]);
   const draft = useSyncExternalStore(store.subscribe, read);
+  // A message event can confirm the input before the response's receipt arrives.
+  // Ignore that later receipt if this draft has already moved on.
+  const confirmSubmission = useCallback((commandId: string) => {
+    if (store.get(id, initial).retryIntent?.commandId !== commandId) return;
+    store.update(id, current => ({
+      ...current,
+      retryIntent: null,
+      state: { ...current.state, draft: "", attachments: [] },
+    }));
+  }, [store, id, initial]);
   return {
     ...draft,
+    confirmSubmission,
     setState: (change: (state: ComposerState) => ComposerState) => store.update(id, current => ({ ...current, state: change(current.state) })),
     setRetryIntent: (retryIntent: ChatIntent | null) => store.update(id, current => ({ ...current, retryIntent })),
     setSubmitting: (submitting: boolean) => store.update(id, current => ({ ...current, submitting })),

@@ -23,7 +23,7 @@ export const emptyComposer: ComposerState = {
   imeComposing: false,
 };
 
-/** Local-only text and IME state. Drafts are cleared solely after an accepted receipt. */
+/** Local-only text and IME state. Clear drafts after committed input or an accepted receipt. */
 export function updateComposer(
   state: ComposerState,
   patch: Partial<ComposerState>,
