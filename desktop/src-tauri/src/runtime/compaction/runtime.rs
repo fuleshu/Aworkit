@@ -235,6 +235,12 @@ impl BoundFileToolAuthorityV1 {
                 .as_ref()
                 .is_none_or(|(seq, _)| edit.sequence > *seq)
         }) {
+            // An edit owns context already admitted for this invocation. Do not
+            // re-add its initial graph context (or revive a deliberately removed
+            // copy); only context from later exchange boundaries is new.
+            if let Some((_, snapshot)) = previous.as_ref().filter(|(_, s)| s.outer == outer.as_str()) {
+                request.context_messages.retain(|m| m.after_exchanges > snapshot.through);
+            }
             crate::runtime::context_inspection::apply_edit(&events, &owner.node_id, request)?;
             return Ok(None);
         }

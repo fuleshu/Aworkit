@@ -270,6 +270,9 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     pub agent_context: Option<AgentContextV1>,
     pub outer_invocation_id: &'a StableId,
     pub input: Value,
+    /// Frozen context at local exchange boundary zero. Durable restoration
+    /// rebases it after prior history and imports it only once per invocation.
+    pub initial_context: Vec<aworkit_capability_host::ModelToolContextV1>,
     pub parameters: BTreeMap<String, Value>,
     pub definitions: Vec<ModelToolDefinitionV1>,
     pub binding_id: String,
@@ -529,7 +532,12 @@ fn execute_tool_turn_with_timeout_recovery(
         append_runtime_notices(&mut retry_notice, vec![format!("Current shell jobs (other work may continue while they run): {jobs}")]);
     }
     let mut provider_request = ModelToolRequestV1 {
-        context_messages,
+        context_messages: request
+            .initial_context
+            .iter()
+            .cloned()
+            .chain(context_messages)
+            .collect(),
         input: request.input.clone(),
         parameters: request.parameters.clone(),
         tools: request.definitions.clone(),

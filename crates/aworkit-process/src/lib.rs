@@ -15,6 +15,7 @@
 //! Registry poisoning is an internal invariant failure rather than a recoverable
 //! operating-system boundary condition.
 
+pub mod command;
 pub mod filesystem;
 pub mod identity;
 pub mod ipc;

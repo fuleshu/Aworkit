@@ -785,14 +785,16 @@ impl<'a> PassMachine<'a> {
         let outer = instruction_agent_outer(
             self.outer_invocation_id,
             node,
-            self.tool_authority.legacy_context_identity(),
+            self.tool_authority.legacy_context_identity()
+                && node.tool_bindings.iter().any(|binding| binding.is_callable()),
         );
         let messages = context::agent_messages(
             node,
-            value_text(&self.incoming_agent_context(&node.id)),
             &self.conversation,
             self.tool_authority.project_context(),
         );
+        let initial_context =
+            context::agent_turn_context(value_text(&self.incoming_agent_context(&node.id)));
         let context = json!({"messages": messages});
         let definitions = node
             .tool_bindings
@@ -803,6 +805,7 @@ impl<'a> PassMachine<'a> {
         let parameters = node_model_parameters(&node.configuration);
         if definitions.is_empty() {
             return match self.execute_text_turn(
+                &outer,
                 &ModelResolutionPlanV1 {
                     candidates: vec![ModelCandidateV1 {
                         binding_id: self.model_binding_id.to_owned(),
@@ -816,6 +819,7 @@ impl<'a> PassMachine<'a> {
                     parameters,
                 },
                 Some(&agent_context(node)),
+                &initial_context,
                 None,
                 cancellation,
             ) {
@@ -843,6 +847,7 @@ impl<'a> PassMachine<'a> {
                 agent_context: Some(agent_context(node)),
                 outer_invocation_id: &outer,
                 input: context,
+                initial_context,
                 parameters,
                 definitions,
                 binding_id: self.model_binding_id.to_owned(),
@@ -911,15 +916,18 @@ impl<'a> PassMachine<'a> {
 
     fn execute_text_turn(
         &mut self,
+        context_outer: &StableId,
         plan: &ModelResolutionPlanV1,
         mut request: ModelRequestV1,
         agent: Option<&AgentContextV1>,
+        initial_context: &[aworkit_capability_host::ModelToolContextV1],
         retry_notice: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<ModelDispatchEvidenceV1, ProviderError> {
         let mut context = super::context_inspection::ContextDocument::from_input(&request.input)
             .map_err(ProviderError::Failed)?
             .request();
+        context.context_messages.extend_from_slice(initial_context);
         context.parameters = request.parameters.clone();
         context.retry_notice = retry_notice.map(str::to_owned);
         let preparation = self
@@ -927,7 +935,7 @@ impl<'a> PassMachine<'a> {
             .manage_model_context(
                 self.gateway,
                 plan,
-                self.outer_invocation_id,
+                context_outer,
                 0,
                 agent,
                 &mut context,
@@ -987,7 +995,7 @@ impl<'a> PassMachine<'a> {
                         .manage_model_context(
                             self.gateway,
                             plan,
-                            self.outer_invocation_id,
+                            context_outer,
                             0,
                             agent,
                             &mut recorded_context,
@@ -1037,7 +1045,7 @@ impl<'a> PassMachine<'a> {
                     let output = project_model_events(&evidence.events);
                     self.tool_authority
                         .record_context_usage(
-                            self.outer_invocation_id,
+                            context_outer,
                             agent,
                             &recorded_context,
                             output.input_tokens,
@@ -1068,7 +1076,6 @@ impl<'a> PassMachine<'a> {
         );
         let messages = context::agent_messages(
             node,
-            value_text(&self.incoming_agent_context(&node.id)),
             &self.conversation,
             self.tool_authority.project_context(),
         );
@@ -1083,6 +1090,9 @@ impl<'a> PassMachine<'a> {
             agent_context: Some(agent_context(node)),
             outer_invocation_id: &outer,
             input: context,
+            initial_context: context::agent_turn_context(value_text(
+                &self.incoming_agent_context(&node.id),
+            )),
             parameters: node_model_parameters(&node.configuration),
             definitions,
             binding_id: self.model_binding_id.to_owned(),

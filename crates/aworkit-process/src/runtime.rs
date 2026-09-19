@@ -10,7 +10,7 @@ use std::{
 };
 
 use aworkit_protocol::ProcessGeneration;
-use command_group::{CommandGroup, GroupChild};
+use command_group::GroupChild;
 #[cfg(unix)]
 use command_group::{Signal, UnixChildExt};
 use sha2::{Digest, Sha256};
@@ -167,7 +167,7 @@ impl NativeProcessRegistry {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = command.group_spawn()?;
+        let mut child = crate::command::spawn_background_group(&mut command)?;
         if !ExecutableIdentityV1::open(&executable.canonical_path)
             .is_ok_and(|observed| observed == executable)
         {
@@ -334,7 +334,7 @@ impl NativeProcessRegistry {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let child = command.group_spawn()?;
+        let child = crate::command::spawn_background_group(&mut command)?;
         if !ExecutableIdentityV1::open(&executable.canonical_path)
             .is_ok_and(|observed| observed == executable)
         {

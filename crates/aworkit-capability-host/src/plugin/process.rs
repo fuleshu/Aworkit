@@ -9,7 +9,7 @@ use std::{
 };
 
 use aworkit_process::identity::ExecutableIdentityV1;
-use command_group::{CommandGroup, GroupChild};
+use command_group::GroupChild;
 #[cfg(unix)]
 use command_group::{Signal, UnixChildExt};
 use thiserror::Error;
@@ -101,7 +101,7 @@ impl NativePluginProcessV1 {
         if let Some(directory) = &spec.working_directory {
             command.current_dir(std::fs::canonicalize(directory)?);
         }
-        let mut child = command.group_spawn()?;
+        let mut child = aworkit_process::command::spawn_background_group(&mut command)?;
         if !ExecutableIdentityV1::open(&executable.canonical_path)
             .is_ok_and(|observed| observed == executable)
         {

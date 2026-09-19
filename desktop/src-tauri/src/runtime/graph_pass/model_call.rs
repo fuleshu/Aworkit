@@ -72,12 +72,14 @@ impl PassMachine<'_> {
         loop {
             let evidence = self
                 .execute_text_turn(
+                    &instruction_agent_outer(self.outer_invocation_id, node, false),
                     &plan,
                     ModelRequestV1 {
                         input: json!({"messages": messages}),
                         parameters: parameters.clone(),
                     },
                     None,
+                    &[],
                     correction_notice.as_deref(),
                     cancellation,
                 )

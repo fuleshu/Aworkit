@@ -3037,6 +3037,7 @@ impl FileToolDispatcherV1 {
                 ),
                 outer_invocation_id: &envelope.invocation_id,
                 input: child_input,
+                initial_context: Vec::new(),
                 parameters: BTreeMap::new(),
                 definitions,
                 binding_id: binding_id.clone(),

@@ -27,6 +27,7 @@ impl BoundedStdioTransport {
         command: &mut Command,
         maximum_message_bytes: usize,
     ) -> Result<Self, std::io::Error> {
+        aworkit_process::command::configure_background_command(command.as_std_mut());
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

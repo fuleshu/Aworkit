@@ -23,6 +23,7 @@ fn request(id: &StableId) -> ModelToolLoopRequestV1<'_> {
         agent_context: None,
         outer_invocation_id: id,
         input: json!("Can you see Adashi?"),
+        initial_context: Vec::new(),
         parameters: BTreeMap::new(),
         definitions: ["read", "shell", "adashi"]
             .into_iter()

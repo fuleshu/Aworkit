@@ -81,6 +81,60 @@ fn gateway(
         },
     )
 }
+
+#[test]
+fn new_turn_context_preserves_prefix_and_is_admitted_once_after_reopen() {
+    for callable in [true, false] {
+        let mut f = Fixture::with_tools(if callable { &[FILE_READ_CAPABILITY_ID] } else { &[] });
+        f.authority.context.model_context = json!({"policy":{"auto":false}});
+        f.committer.commit(vec![SemanticEventDraft::new("message.user", json!({"body":"first"}))]).unwrap();
+        let (gateway, calls, plan) = gateway(|_| panic!("No auxiliary call needed"));
+        let prepare = |f: &Fixture, outer: &str, label: &str| {
+            let mut request = f.request();
+            request.input["messages"].as_array_mut().unwrap().insert(0,
+                json!({"role":"system","content":"Frozen agent instructions"}));
+            request.context_messages.push(ModelToolContextV1 {
+                content: label.into(), role: Some("user".into()), ..Default::default()
+            });
+            f.authority.manage_model_context(&gateway, &plan, &stable(outer).unwrap(), 0,
+                Some(&f.agent), &mut request, &CancellationToken::default(), Trigger::Pressure).unwrap();
+            request
+        };
+        let first = prepare(&f, "outer.first", "PLAN ONE");
+        assert_eq!(c::units(&first).unwrap(), c::units(&prepare(&f, "outer.first", "PLAN ONE")).unwrap());
+        f.committer.commit(vec![
+            SemanticEventDraft::new("message.assistant", json!({"body":"First answer"})),
+            SemanticEventDraft::new("message.user", json!({"body":"New user request"})),
+        ]).unwrap();
+        f.authority.runtime.records = Arc::new(ToolRecordStore::open(&f.root.path().join("events.sqlite3")).unwrap());
+        let second = prepare(&f, "outer.second", "PLAN TWO");
+        let prefix = c::units(&first).unwrap();
+        let units = c::units(&second).unwrap();
+        assert_eq!(second.input, first.input, "Frozen header and base history stay byte-stable");
+        assert_eq!(&units[..prefix.len()], prefix.as_slice());
+        let tail = serde_json::to_string(&units[prefix.len()..]).unwrap();
+        assert!(tail.find("New user request").unwrap() < tail.find("PLAN TWO").unwrap());
+        assert_eq!(serde_json::to_string(&units).unwrap().matches("PLAN ONE").count(), 1);
+        assert_eq!(tail.matches("PLAN TWO").count(), 1);
+        let replay = prepare(&f, "outer.second", "PLAN TWO");
+        assert_eq!(units, c::units(&replay).unwrap());
+        for keep_plan in [true, false] {
+            let mut edited = second.clone();
+            if !keep_plan {
+                edited.context_messages.retain(|m| m.content != "PLAN TWO");
+            }
+            f.committer.commit(vec![SemanticEventDraft::new("context.edited", json!({
+                "nodeId": f.agent.node_id,
+                "document": crate::runtime::context_inspection::ContextDocument::from_request(&edited)
+            }))]).unwrap();
+            let resumed = prepare(&f, "outer.second", "PLAN TWO");
+            assert_eq!(c::units(&edited).unwrap(), c::units(&resumed).unwrap(),
+                "Edits neither duplicate nor resurrect admitted graph context");
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    }
+}
+
 fn history(f: &mut Fixture) -> (StableId, ModelToolRequestV1) {
     f.authority.context.review_messages[0].content =
         "Established requirements and implementation history. ".repeat(1800);

@@ -12,6 +12,16 @@ fn python_executable() -> Option<PathBuf> {
         .into_iter()
         .map(PathBuf::from)
         .find(|path| path.is_file())
+        .or_else(|| {
+            let mut command = std::process::Command::new("python");
+            command.args(["-c", "import sys; print(sys.executable)"]);
+            aworkit_process::command::configure_background_command(&mut command);
+            command.output().ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|path| PathBuf::from(path.trim()))
+                .filter(|path| path.is_file())
+        })
 }
 
 fn config(

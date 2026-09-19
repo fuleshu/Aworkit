@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use command_group::{CommandGroup, GroupChild};
+use command_group::GroupChild;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -530,8 +530,7 @@ struct ManagedGroupChild {
 
 impl ManagedGroupChild {
     fn spawn(command: &mut Command) -> Result<Self, CodexAppServerProbeError> {
-        command
-            .group_spawn()
+        aworkit_process::command::spawn_background_group(command)
             .map(|child| Self { child: Some(child) })
             .map_err(|_| CodexAppServerProbeError::Launch)
     }

@@ -16,7 +16,7 @@ use aworkit_protocol::{
     WorkerFrozenRunSnapshotV1, WorkerHandshakeV1, WorkerOutputEnvelopeV1, WorkerOutputKindV1,
     decode_frame, encode_frame,
 };
-use command_group::{CommandGroup, GroupChild};
+use command_group::GroupChild;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -498,8 +498,7 @@ impl ProcessWorkerSupervisorV1 {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = command
-            .group_spawn()
+        let mut child = aworkit_process::command::spawn_background_group(&mut command)
             .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
         if !ExecutableIdentityV1::open(&self.executable.canonical_path)
             .is_ok_and(|observed| observed == self.executable)

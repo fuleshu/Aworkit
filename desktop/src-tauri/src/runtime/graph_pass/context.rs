@@ -62,7 +62,6 @@ fn next_agents<'a>(graph: &'a CompiledGraphPassV1, node_id: &str) -> Vec<&'a Com
 /// MCP operation names that may be shortened in provider aliases.
 pub(super) fn agent_messages(
     node: &CompiledGraphNodeV1,
-    upstream: String,
     conversation: &[WorkflowMessageV1],
     project: Option<Value>,
 ) -> Vec<WorkflowMessageV1> {
@@ -74,12 +73,6 @@ pub(super) fn agent_messages(
         .filter(|value| !value.trim().is_empty())
     {
         sections.push(instructions.to_owned());
-    }
-    if !upstream.trim().is_empty() {
-        sections.push(format!(
-            "Additional context from earlier graph steps:\n{}",
-            truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES)
-        ));
     }
     if node
         .tool_bindings
@@ -151,6 +144,24 @@ pub(super) fn agent_messages(
     }
     messages.extend_from_slice(conversation);
     merge_system_messages(messages)
+}
+
+/// Graph output changes each user turn. Admit it at this invocation's tail,
+/// using the existing exchange cursor so checkpoints retain it exactly once.
+/// It is generated context, not a new system instruction or user request.
+pub(super) fn agent_turn_context(upstream: String) -> Vec<aworkit_capability_host::ModelToolContextV1> {
+    if upstream.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![aworkit_capability_host::ModelToolContextV1 {
+        after_exchanges: 0,
+        role: Some("user".into()),
+        content: format!(
+            "Additional context from earlier graph steps (generated context for this turn, not a user instruction):\n{}",
+            truncate_utf8(upstream, MAXIMUM_AGENT_CONTEXT_BYTES)
+        ),
+        ..Default::default()
+    }]
 }
 
 pub(super) fn project_message(project: Value) -> WorkflowMessageV1 {
