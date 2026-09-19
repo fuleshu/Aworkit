@@ -2,6 +2,8 @@
 use super::*;
 use crate::runtime::{compaction, model_tool_loop};
 
+pub(crate) mod compatibility;
+
 pub(super) const APPROVAL_HANDOFF: &str = "This action requires approval beyond the child's existing permissions. It was not executed. Return it to the parent agent to handle through its normal approval policy; do not retry or use a workaround.";
 const SCOPE_EVENT: &str = "context.delegation-scope";
 

@@ -119,8 +119,21 @@ export const credentialMetadataConfigurationSchema = z
   })
   .strict();
 
+/**
+ * Tool configuration fields a newer build added to an already persisted
+ * contract. Documents written before the field existed stay readable: the
+ * trusted core accepts the older shape and only newly frozen Runs acquire the
+ * new contract, so the editor must accept it too. A field that is present is
+ * still validated against the installed adapter below.
+ */
+const OPTIONAL_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> = {
+  "tool.web_fetch": ["renderWhenNeeded"],
+  "tool.web_extract": ["renderWhenNeeded"],
+  "tool.subagent": ["inheritParentTools"],
+};
+
 const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> =
-  Object.fromEntries(nativeTools.map(tool => [tool.id, Object.keys(tool.configuration).filter(key => key !== "renderWhenNeeded")]));
+  Object.fromEntries(nativeTools.map(tool => [tool.id, Object.keys(tool.configuration).filter(key => !(OPTIONAL_TOOL_CONFIGURATION_KEYS[tool.id] ?? []).includes(key))]));
 
 export const toolOptionsSchema = z.object({
   instructions: z.string().refine(value => new TextEncoder().encode(value).length <= 32768 && !value.includes("\0"), "Instructions must be at most 32 KiB and contain no NUL characters.").optional(),
@@ -156,10 +169,14 @@ export const builtInToolConfigurationSchema = z
     if (tool.options?.executable !== undefined && manifest?.execution !== "shell" && manifest?.execution !== "python")
       context.addIssue({ code: "custom", path: ["options", "executable"], message: "This tool uses a native executor; it does not launch a configurable program." });
     const baseExpected = BUILT_IN_TOOL_CONFIGURATION_KEYS[tool.id];
+    if (baseExpected === undefined) return;
     const isWebExtraction = tool.id === "tool.web_fetch" || tool.id === "tool.web_extract";
-    const expected = isWebExtraction && tool.configuration.renderWhenNeeded !== undefined
-      ? [...(baseExpected ?? []), "renderWhenNeeded"] : baseExpected;
-    if (expected === undefined) return;
+    const expected = [
+      ...baseExpected,
+      ...(OPTIONAL_TOOL_CONFIGURATION_KEYS[tool.id] ?? []).filter(
+        (key) => tool.configuration[key] !== undefined,
+      ),
+    ];
     const actual = Object.keys(tool.configuration).sort();
     if (
       actual.length !== expected.length ||
@@ -196,7 +213,9 @@ export const builtInToolConfigurationSchema = z
                 (value.renderWhenNeeded === undefined || typeof value.renderWhenNeeded === "boolean") &&
                 typeof value.maximumDownloadBytes === "number" && Number.isInteger(value.maximumDownloadBytes) && value.maximumDownloadBytes >= 1 && value.maximumDownloadBytes <= 8_388_608 &&
                 typeof value.maximumExtractBytes === "number" && Number.isInteger(value.maximumExtractBytes) && value.maximumExtractBytes >= 1 && value.maximumExtractBytes <= 32_768
-              : true;
+              : tool.id === "tool.subagent"
+                ? subagentConfigurationIsValid(tool)
+                : true;
     if (!validImplementedContract)
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -205,6 +224,18 @@ export const builtInToolConfigurationSchema = z
           "Configuration exceeds or contradicts the installed persistence-safe adapter contract.",
       });
   });
+
+/**
+ * The trusted core keeps the pre-upgrade subagent contract readable and freezes
+ * the inherited-tool contract only for new Chats. An explicit false is never
+ * persisted: the installed adapter always inherits the parent's selected tools.
+ */
+function subagentConfigurationIsValid(tool: {
+  readonly configuration: Readonly<Record<string, unknown>>;
+}): boolean {
+  const inheritParentTools = tool.configuration.inheritParentTools;
+  return inheritParentTools === undefined || inheritParentTools === true;
+}
 
 function webSearchConfigurationIsValid(tool: {
   readonly requiresProject: boolean;

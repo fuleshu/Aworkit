@@ -2262,7 +2262,10 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
                 != Some(dispatch.payload_hash.as_str())
             || record.manifest_binding.capability_id != dispatch.capability_id
             || record.manifest_binding.adapter_version != descriptor.version
-            || record.manifest_binding.descriptor_hash != descriptor.version_hash
+            || (record.manifest_binding.descriptor_hash != descriptor.version_hash
+                && !subagent::compatibility::accepts_legacy(
+                    &record.binding, descriptor, &record.manifest_binding.descriptor_hash,
+                ))
         {
             return Err(BrokerError::IdentityConflict);
         }
@@ -2296,6 +2299,9 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
         {
             return Ok(DeliveryAcceptanceV1::RejectedDefinitelyNotStarted);
         }
+        // A known compatible legacy binding retains its persisted authority.
+        // The trusted host envelope targets the installed adapter; the stored
+        // binding still enforces its original child scope and call arguments.
         let mut envelope = ApprovedInvocationEnvelopeV1 {
             schema_version: SchemaVersion::V1,
             invocation_id: dispatch.invocation_id.clone(),

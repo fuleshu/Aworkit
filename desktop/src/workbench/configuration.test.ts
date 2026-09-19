@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   builtInToolConfigurationSchema,
   settingsConfigurationV2Schema,
+  settingsV2SnapshotSchema,
   validateSettingsConfiguration,
   type SettingsConfigurationV2,
+  type SettingsV2Snapshot,
 } from "./configuration";
 import { settingsDraftIssues } from "./settings-v2/settingsDraft";
 import { nativeToolDefaults } from "./toolRegistry";
@@ -83,6 +85,36 @@ describe("Settings configuration v2", () => {
       expect(tool.requiresProject).toBe(false);
       expect(builtInToolConfigurationSchema.safeParse({ ...tool, requiresProject: true }).success).toBe(false);
     }
+  });
+
+  it("reads the exact snapshot projection of a pre-upgrade subagent contract", () => {
+    const settings = { ...configuration(), tools: nativeToolDefaults() };
+    const subagent = settings.tools.find((tool) => tool.id === "tool.subagent")!;
+    const snapshot = (): SettingsV2Snapshot => ({
+      toolPluginDirectory: "C:/profile/tool-plugins",
+      toolPlugins: [],
+      version: 7,
+      schemaVersion: 2,
+      settings,
+      providerHealth: [],
+    });
+
+    // A profile whose stored subagent contract predates the inherited-tool
+    // field must stay readable: the trusted core accepts both shapes and only
+    // newly frozen Runs acquire the new contract.
+    delete subagent.configuration.inheritParentTools;
+    expect(settingsV2SnapshotSchema.safeParse(snapshot()).success).toBe(true);
+
+    subagent.configuration.inheritParentTools = true;
+    expect(settingsV2SnapshotSchema.safeParse(snapshot()).success).toBe(true);
+
+    // The installed adapter never persists an explicit false or a stray field.
+    subagent.configuration.inheritParentTools = false;
+    expect(settingsV2SnapshotSchema.safeParse(snapshot()).success).toBe(false);
+
+    delete subagent.configuration.inheritParentTools;
+    subagent.configuration.maximumTurns = 4;
+    expect(settingsV2SnapshotSchema.safeParse(snapshot()).success).toBe(false);
   });
   it("validates bounded provider runtime controls", () => {
     const value = configuration();

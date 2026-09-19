@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=632 -->
+<!-- adashi:generated revision=662 -->
 # Architecture — `crates/aworkit-capability-host/src` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -9,7 +9,7 @@ These responsibilities are already owned here: extend them, do not duplicate.
 
 Bound here:
 - file `crates/aworkit-capability-host/src/model_tools.rs`
-- file `crates/aworkit-capability-host/src/process_session.rs`
+- file `crates/aworkit-capability-host/src/model_usage.rs`
 
-[Showing 2 of 2 design element(s) bound here, 16 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+[Showing 2 of 2 design element(s) bound here, 17 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
 <!-- adashi:architecture:end -->

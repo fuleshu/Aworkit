@@ -24,16 +24,9 @@ impl WorkflowExecutionPipeline {
             .records
             .execution(source)?
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-        let old_config = &previous.worker_proposal.payload["config"]["workflow"];
         if source == &request.request_id
             || previous.snapshot.chat_id != request.chat_id
             || previous.snapshot.run_id != request.run_id
-            || old_config != &request.workflow_snapshot
-            || !previous
-                .snapshot
-                .nodes
-                .iter()
-                .any(|node| node.config["frozenContextHash"] == request.frozen_context_hash)
             || self.records.stopped_pass(source)?.is_none()
         {
             return Err(WorkflowPipelineError::InvalidInput(

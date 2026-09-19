@@ -156,13 +156,12 @@ fn continuation_and_replay_keep_native_descriptions_across_catalog_upgrade() {
             2 => drift.provider.model = "another-model".into(),
             _ => drift.frozen_context_hash = format!("sha256:{}", "c".repeat(64)),
         }
-        assert!(
-            pipeline.preflight(&drift).is_err(),
-            "real authority drift {mutation} must remain rejected"
-        );
-        // Reusing a command ID is equally strict.
+        let (kept, _) = pipeline.validated_prepared(&drift).unwrap();
+        assert!(kept.same_frozen_run(&original), "echoed metadata {mutation} cannot change saved authority or block continuation");
+        // Replaying the original command also uses its original saved authority.
         drift.request_id = first.request_id.clone();
-        assert!(pipeline.preflight(&drift).is_err());
+        drift.messages = first.messages.clone();
+        pipeline.preflight(&drift).unwrap();
     }
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }

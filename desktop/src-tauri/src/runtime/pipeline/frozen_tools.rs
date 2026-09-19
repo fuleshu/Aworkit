@@ -1,11 +1,10 @@
 //! Native tool descriptions are part of the frozen model context, not live catalog data.
 use super::*;
 
-/// Validate the requested configuration normally, then preserve native descriptions
-/// from the original prepared Run. Rebuilding presentation text after an upgrade
-/// changes the graph hash and falsely rejects an otherwise identical continuation.
-/// All executable schemas, limits, options, secrets and MCP definitions still pass
-/// through the existing strict frozen-run / exact-request equality checks.
+/// New Chats freeze the requested bindings without a previous definition.
+/// Upgrade fixtures can retain historical native descriptions when materializing
+/// an old snapshot. Live continuation reuses its saved record in continuation.rs
+/// directly and never resolves or re-freezes tool bindings through this helper.
 pub(super) fn freeze(
     requested: &[WorkflowToolBindingV1],
     previous: Option<&[StoredFileToolBindingV1]>,

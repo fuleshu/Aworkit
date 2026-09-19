@@ -1,18 +1,18 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=632 -->
+<!-- adashi:generated revision=662 -->
 # Architecture — `docs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
 
-- **Desktop App Shell & Navigation** (Component) — Responsibilities: Implements the persistent Tauri desktop frame, required left-navigation…
-- **Settings & Capability Resolution** (Component) — Responsibilities: Presents progressively disclosed providers/standard and custom tiers/cre…
+- **Aworkit Model & Provider Gateway** (Component) — Responsibilities: Executes model requests through Aworkit-owned contracts and performs onl…
+- **Invocation Lifecycle & Cross-Platform Process Runtime** (Component) — Responsibilities: Coordinates invocation-local deadlines, cooperative cancellation, forced…
 
 Also bound here:
-Chat/Run Lifecycle Service, Capability Invocation Broker, Harness Context Revision & Lineage Store, …
+Desktop App Shell & Navigation, Settings & Capability Resolution, Chat/Run Lifecycle Service, …
 
 Bound here:
-- file `docs/chat-concurrency.md`
-- file `docs/chat-steering.md`
+- file `docs/agent-prefix-cache.md`
+- file `docs/approval-cache-accounting.md`
 
-[Showing 2 of 6 design element(s) bound here, 53 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+[Showing 2 of 10 design element(s) bound here, 81 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
 <!-- adashi:architecture:end -->

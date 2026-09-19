@@ -122,7 +122,7 @@ fn verify_steering(stop_at: usize, node_id: &str) {
     assert!(pipeline.preflight(&foreign).is_err());
     let mut changed = steer.clone();
     changed.frozen_context_hash = format!("sha256:{}", "c".repeat(64));
-    assert!(pipeline.preflight(&changed).is_err());
+    pipeline.preflight(&changed).expect("stopped Chat uses saved configuration despite echoed metadata drift");
     record_message(&events, "Steer once");
     control.stop_at.store(stop_at + 1, Ordering::SeqCst);
     let interrupted_again = pipeline.execute(steer.clone()).unwrap();

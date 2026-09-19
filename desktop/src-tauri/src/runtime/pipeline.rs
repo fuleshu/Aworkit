@@ -8,6 +8,7 @@
 #[path = "compaction/provider.rs"]
 mod compaction_provider;
 mod frozen_tools;
+mod continuation;
 mod steering;
 
 use std::{
@@ -537,15 +538,10 @@ impl WorkflowExecutionPipeline {
         &self,
         request: &WorkflowExecutionRequestV1,
     ) -> Result<(PreparedExecutionRecordV1, bool), WorkflowPipelineError> {
-        let protocol = ProviderProtocolV1::parse(&request.provider.kind)?;
-        let descriptor = self
-            .descriptors
-            .get(&protocol)
-            .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-        validate_request(request, protocol, descriptor)?;
+        continuation::validate_messages(request)?;
         self.validate_steering(request)?;
         if let Some(existing) = self.records.execution(&request.request_id)? {
-            self.validate_existing_request_semantics(request, &existing)?;
+            continuation::validate_replay(request, &existing)?;
             if self.existing_request_can_still_start_effect(&existing)? {
                 let workspace = existing
                     .workspace
@@ -558,124 +554,20 @@ impl WorkflowExecutionPipeline {
             }
             return Ok((existing, true));
         }
-        let existing_run = self
+        if let Some(existing_run) = self
             .records
-            .execution_for_chat_or_run(&request.chat_id, &request.run_id)?;
-        let prepared = self.prepare(request, protocol, descriptor, existing_run.as_ref())?;
-        if let Some(existing_run) = existing_run
-            && !prepared.same_frozen_run(&existing_run)
+            .execution_for_chat_or_run(&request.chat_id, &request.run_id)?
         {
-            return Err(WorkflowPipelineError::Store(
-                "Chat/Run identity was reused with changed frozen authority".to_owned(),
-            ));
+            return continuation::prepare(request, existing_run).map(|prepared| (prepared, false));
         }
-        Ok((prepared, false))
-    }
-
-    fn validate_existing_request_semantics(
-        &self,
-        request: &WorkflowExecutionRequestV1,
-        existing: &PreparedExecutionRecordV1,
-    ) -> Result<(), WorkflowPipelineError> {
-        let provider = StoredProviderBindingV1 {
-            kind: request.provider.kind.clone(),
-            base_url: request.provider.base_url.clone(),
-            model: request.provider.model.clone(),
-            parameters: request.model_parameters.clone(),
-            model_context: request.model_context.clone(),
-            request_timeout_seconds: request.provider.request_timeout_seconds,
-            maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
-        };
-        let secret = request
-            .provider
-            .credential
-            .as_ref()
-            .map(StoredSecretBindingV1::from_metadata)
-            .transpose()?;
-        let tools = frozen_tools::freeze(&request.tools, Some(&existing.tool_bindings))?;
-        let stored_messages = existing
-            .worker_proposal
-            .payload
-            .get("context")
-            .and_then(|context| context.get("messages"))
-            .cloned()
+        let protocol = ProviderProtocolV1::parse(&request.provider.kind)?;
+        let descriptor = self
+            .descriptors
+            .get(&protocol)
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-        let request_messages = serde_json::to_value(&request.messages).map_err(json_error)?;
-        let workspace_matches = match &request.workspace {
-            Some(workspace) => existing.workspace.as_ref() == Some(workspace),
-            None => existing.workspace.as_ref().is_some_and(|workspace| {
-                workspace.root == self.root.join("core").join("unscoped-workspace")
-            }),
-        };
-        let workspace_identity_matches = existing.workspace.as_ref().is_some_and(|workspace| {
-            serde_json::to_value(&workspace.identity)
-                .is_ok_and(|identity| identity == existing.snapshot.workspace_identity)
-        });
-        let saved_nodes_match = request
-            .workflow_snapshot
-            .get("nodes")
-            .and_then(Value::as_array)
-            .is_some_and(|nodes| {
-                nodes.len() == existing.snapshot.nodes.len()
-                    && nodes.iter().all(|saved| {
-                        let node_id = saved.get("id").and_then(Value::as_str);
-                        existing.snapshot.nodes.iter().any(|frozen| {
-                            Some(frozen.node_id.as_str()) == node_id
-                                && frozen.config.get("savedNode") == Some(saved)
-                        })
-                    })
-            });
-        let saved_edges_match = request
-            .workflow_snapshot
-            .get("edges")
-            .and_then(Value::as_array)
-            .is_some_and(|edges| {
-                edges.len() == existing.snapshot.transitions.len()
-                    && edges.iter().all(|edge| {
-                        existing.snapshot.transitions.iter().any(|transition| {
-                            edge.get("id").and_then(Value::as_str)
-                                == Some(transition.transition_id.as_str())
-                                && edge.get("source").and_then(Value::as_str)
-                                    == Some(transition.from_node.as_str())
-                                && edge.get("target").and_then(Value::as_str)
-                                    == Some(transition.to_node.as_str())
-                        })
-                    })
-            });
-        let frozen_context_matches = existing.snapshot.nodes.iter().any(|node| {
-            node.config.get("frozenContextHash").and_then(Value::as_str)
-                == Some(request.frozen_context_hash.as_str())
-        });
-        let identity_matches = existing.request_id == request.request_id
-            && existing.snapshot.chat_id == request.chat_id
-            && existing.snapshot.run_id == request.run_id
-            && existing.snapshot.snapshot_id == digest_id("snapshot", request.run_id.as_str())?;
-        // Old prepared runs retain their signed reservation metadata. Token/cost
-        // ceilings are no longer execution semantics, including during recovery.
-        let mut replay_budget = request.budget.clone();
-        replay_budget.tokens = existing.snapshot.budget.tokens;
-        replay_budget.cost_micros = existing.snapshot.budget.cost_micros;
-        if !identity_matches
-            || existing.provider != provider
-            || existing.secret != secret
-            || existing.tool_bindings != tools
-            || existing.project_branch != request.project_branch
-            || existing.approvals != request.approvals
-            || existing.snapshot.budget != replay_budget
-            || stored_messages != request_messages
-            || existing.worker_proposal.payload["compactNode"] != json!(request.compact_node)
-            || existing.worker_proposal.payload["steerFromRequestId"] != json!(request.steer_from_request_id)
-            || !workspace_matches
-            || !workspace_identity_matches
-            || !saved_nodes_match
-            || !saved_edges_match
-            || !frozen_context_matches
-        {
-            return Err(WorkflowPipelineError::Store(
-                "request ID was reused with changed frozen execution semantics".to_owned(),
-            ));
-        }
-        Ok(())
+        validate_request(request, protocol, descriptor)?;
+        let prepared = self.prepare(request, protocol, descriptor, None)?;
+        Ok((prepared, false))
     }
 
     fn existing_request_can_still_start_effect(
@@ -1355,9 +1247,7 @@ impl WorkflowExecutionPipeline {
                 .or_else(|| dynamic_descriptors.get(descriptor_key))
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
             let binding = file_tool_capability_binding_with_nodes(
-                tool,
-                descriptor,
-                vec!["agent".to_owned(), "tool".to_owned()],
+                tool, descriptor, vec!["agent".to_owned(), "tool".to_owned()],
             )?;
             capability_bindings.push(binding);
         }
@@ -1680,6 +1570,7 @@ impl PreparedExecutionRecordV1 {
         }
     }
 
+    #[cfg(test)]
     fn same_frozen_run(&self, other: &Self) -> bool {
         self.snapshot == other.snapshot
             && self.manifest == other.manifest
@@ -3485,40 +3376,6 @@ fn validate_request(
                 .to_owned(),
         ));
     }
-    if request.messages.iter().any(|message| {
-        !matches!(message.role.as_str(), "system" | "user" | "assistant")
-            || (message.content.is_empty() && message.images.is_empty())
-            || (!message.images.is_empty() && message.role != "user")
-            || message.content.contains('\0')
-    }) || request
-        .messages
-        .last()
-        .is_none_or(|message| message.role != "user")
-    {
-        return Err(WorkflowPipelineError::InvalidInput(
-            "messages require supported roles, non-empty content, and a final user turn".to_owned(),
-        ));
-    }
-    aworkit_capability_host::model_images::validate_image_attachments(
-        &request
-            .messages
-            .iter()
-            .flat_map(|message| message.images.clone())
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|e| WorkflowPipelineError::InvalidInput(e.to_string()))?;
-    // Node instructions belong to the frozen workflow JSON. Conversation
-    // history cannot inject a competing provider system layer.
-    if request
-        .messages
-        .iter()
-        .any(|message| message.role == "system")
-    {
-        return Err(WorkflowPipelineError::InvalidInput(
-            "workflow conversations must not embed a system message; instructions belong to the frozen JSON nodes"
-                .to_owned(),
-        ));
-    }
     // Conversation history is never rejected or trimmed for its size. The
     // model's context window is the request budget; context compaction and
     // provider overflow recovery keep the dispatchable selection inside it.
@@ -3777,6 +3634,7 @@ mod tests {
     mod steering;
     mod approval_modes;
     mod frozen_tools;
+    mod descriptor_upgrade;
     mod subagent_tools;
     use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
@@ -4609,17 +4467,21 @@ mod tests {
                 content: "read it again".into(),
             },
         ]);
-        assert!(matches!(
-            restarted.preflight(&follow_up),
-            Err(WorkflowPipelineError::Authority(_))
-        ));
+        restarted.preflight(&follow_up).expect("Chat input is accepted");
+        let unavailable_workspace = restarted.execute(follow_up.clone()).unwrap();
+        assert_eq!(
+            unavailable_workspace.status,
+            WorkflowExecutionStatusV1::FailedDefinitelyNotStarted,
+            "workspace availability is enforced before effects, not by re-freezing the Chat"
+        );
         assert_eq!(restarted_calls.load(Ordering::SeqCst), 0);
+        assert!(restarted_results.lock().unwrap().is_empty());
         assert!(
             restarted
                 .records
                 .execution(&follow_up.request_id)
                 .expect("follow-up record lookup")
-                .is_none()
+                .is_some()
         );
     }
 
@@ -5120,15 +4982,12 @@ mod tests {
         changed_protocol.run_id = stable("run.pipeline-protocol-0").expect("protocol Run ID");
         changed_protocol.provider.kind = "anthropic".to_owned();
         changed_protocol.provider.base_url = "http://127.0.0.1:9876".to_owned();
-        assert!(matches!(
-            pipeline.execute(changed_protocol),
-            Err(WorkflowPipelineError::Store(_))
-        ));
+        assert!(pipeline.execute(changed_protocol).unwrap().replayed);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
-    fn follow_up_reuses_one_frozen_run_and_changed_authority_fails_before_effect() {
+    fn follow_up_reuses_one_frozen_run_despite_echoed_configuration_drift() {
         let root = TempDir::new().expect("root");
         let (pipeline, credential_store, metadata, calls, _) =
             setup(&root, ScriptedBehavior::Succeed);
@@ -5239,11 +5098,10 @@ mod tests {
         let mut drifted = request(metadata);
         drifted.request_id = stable("command.pipeline-drifted").expect("drifted request");
         drifted.frozen_context_hash = format!("sha256:{}", "b".repeat(64));
-        assert!(matches!(
-            pipeline.execute(drifted),
-            Err(WorkflowPipelineError::Store(_))
-        ));
-        assert_eq!(restart_calls.load(Ordering::SeqCst), 0);
+        let continued = pipeline.execute(drifted).expect("saved Chat configuration takes precedence");
+        assert_eq!(continued.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(continued.snapshot_hash, first.snapshot_hash);
+        assert_eq!(restart_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

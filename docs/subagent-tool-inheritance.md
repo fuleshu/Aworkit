@@ -40,6 +40,21 @@ original read-only authority and definitions. Old Settings remain readable and
 acquire the new contract when starting a new Chat; continuing a stopped Chat
 does not mutate its authority. Recursive delegation remains unavailable.
 
+Adashi task 102 (id 103), linked to `aworkit.trusted_core.snapshot_freezer`
+and `aworkit.workflow_worker.subagent`, removes the continuation re-freeze gate.
+Only a new Chat compiles and freezes configuration. Later input and Stop/Continue
+reuse the persisted snapshot, manifest, provider, workspace and tool bindings
+directly, with fresh pass state and messages. Catalog or compiler changes and
+echoed desktop metadata cannot invalidate an existing Chat or replace its saved
+configuration. Explicit Chat approval-mode changes still apply. Duplicate
+commands reuse their recorded results and must retain their original input
+and Chat ownership.
+
+The native host supports the exact pre-`readOnly` subagent descriptor at tool
+dispatch while retaining that binding's original child scope and argument
+validation. This permits old Chats to keep using delegation after an upgrade.
+Operation permissions continue to apply when an operation is dispatched.
+
 Behavioral tests cover real child file writes/edits, shell and Python execution,
 MCP dispatch, exact parent selection, explicit research filtering, approval
 handoff and parent resumption, replay, sibling job isolation, Chat cancellation,
