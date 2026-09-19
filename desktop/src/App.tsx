@@ -61,6 +61,13 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   const mainRef = useRef<HTMLElement>(null);
   const { route, mountedRoutes, visit, navigate, back, registerLeaveGuard, returnLabel } = useSettingsNavigation(mainRef, store);
   const workflowLibraryPort = useMemo(() => createWorkflowLibraryPort(), []);
+  // A refresh signal, not a second copy of the library: any surface that
+  // changed stored workflows tells the others to re-read the native projection.
+  const [libraryRevision, setLibraryRevision] = useState(0);
+  const noteWorkflowLibraryChange = useCallback(
+    () => setLibraryRevision((revision) => revision + 1),
+    [],
+  );
   const layoutPort = useMemo(() => createDesktopLayoutPort(), []);
   const [desktopLayout, setDesktopLayout] = useState<DesktopLayout>({});
   const navigation = usePaneWidth(208, 184, 640, desktopLayout.historyPaneWidth);
@@ -291,6 +298,8 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 }
                 newChatRequest={newChatRequest}
                 historyActionRequest={historyActionRequest}
+                libraryPort={workflowLibraryPort}
+                libraryRevision={libraryRevision}
                 onRecoveryPendingChange={setChatRecoveryPending}
                 onRuntimeSnapshotChange={updateChatRuntimeState}
                 storedInspectorWidth={desktopLayout.inspectorPaneWidth}
@@ -308,6 +317,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 active={route === "workflows"}
                 document={starterWorkflow}
                 libraryPort={workflowLibraryPort}
+                onLibraryChange={noteWorkflowLibraryChange}
                 onOpenSettings={() => navigate("settings")}
                 onRun={openNewChat}
                 runBlockedReason={

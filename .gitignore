@@ -8,3 +8,5 @@ desktop/src-tauri/target/
 /.tmp-gh.html
 /.pnpm-store/v11
 /desktop/%SystemDrive%/ProgramData/Microsoft/Windows/Caches
+/%SystemDrive%/ProgramData/Microsoft/Windows/Caches
+/crates/aworkit-capability-host/%SystemDrive%/ProgramData/Microsoft/Windows/Caches

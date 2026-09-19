@@ -722,7 +722,15 @@ impl BoundFileToolAuthorityV1 {
                 outcome.input_tokens = outcome.input_tokens.saturating_add(output.input_tokens);
                 outcome.output_tokens = outcome.output_tokens.saturating_add(output.output_tokens);
                 let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":metadata.policy.max_tokens,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
-                let result = result.map_err(|e|e.to_string()).and_then(|_evidence| {
+                // Keep the provider's own verdict typed: the Agent loop reports
+                // it to the model, while an internal condition stays a real
+                // authority failure.
+                let mut provider_error = None;
+                let result = result.map_err(|error| {
+                    let message = error.to_string();
+                    provider_error = Some(error);
+                    message
+                }).and_then(|_evidence| {
                     if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
                     // Match Harness text projection. Auxiliary tool requests
                     // remain raw evidence only; this path has no tool dispatcher.
@@ -745,8 +753,22 @@ impl BoundFileToolAuthorityV1 {
                     Ok(()) => outcome.changed = true,
                     Err(error) => {
                         if cancellation.is_cancelled() || trigger == c::Trigger::Manual {
-                            outcome.error = Some(error);
+                            match provider_error {
+                                // An explicit "compact now" command is the user's
+                                // own action with no model turn waiting, so the
+                                // provider's diagnostic is reported as its failure.
+                                Some(provider) if trigger == c::Trigger::Manual => {
+                                    outcome.error = Some(provider.to_string());
+                                }
+                                // Automatic compaction that the provider refused
+                                // keeps the selection unchanged and tells the model.
+                                Some(provider) => outcome.provider_error = Some(provider),
+                                None => outcome.error = Some(error),
+                            }
                             return Ok(outcome);
+                        }
+                        if provider_error.is_some() {
+                            outcome.provider_error = provider_error;
                         }
                         self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":error}))?;
                         break;

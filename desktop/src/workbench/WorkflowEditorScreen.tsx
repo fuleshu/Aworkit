@@ -56,6 +56,8 @@ interface WorkflowEditorScreenProps {
   readonly onOpenSettings?: () => void;
   readonly onRun?: () => void;
   readonly runBlockedReason?: string;
+  /** Reports that the stored workflow library changed, so other surfaces reload it. */
+  readonly onLibraryChange?: () => void;
 }
 
 /** Lossless visual document editor with an explicit native-execution gate. */
@@ -68,6 +70,7 @@ export function WorkflowEditorScreen({
   onOpenSettings,
   onRun,
   runBlockedReason,
+  onLibraryChange,
   active = true,
 }: WorkflowEditorScreenProps): React.JSX.Element {
   const port = useMemo(
@@ -269,6 +272,9 @@ export function WorkflowEditorScreen({
       setRetryCommandId(null);
       setError(null);
       setNotice("Workflow saved by the trusted core.");
+      // The stored document is the library's naming truth: a save that changed
+      // the name must republish the entry labels to every library consumer.
+      await refreshLibraryQuietly();
     } catch (failure) {
       const failureMessage =
         failure instanceof Error ? failure.message : String(failure);
@@ -334,9 +340,26 @@ export function WorkflowEditorScreen({
     }
   };
 
+  /**
+   * Reloads the stored library projection. The stored document is the only
+   * naming truth, so every accepted library mutation republishes the entries
+   * and tells other surfaces to reload them.
+   */
   const refreshLibrary = async (): Promise<void> => {
     if (libraryPort === undefined) return;
     setLibrary(await libraryPort.snapshot());
+    onLibraryChange?.();
+  };
+
+  /** Refreshes the library without turning its failure into a command failure. */
+  const refreshLibraryQuietly = async (): Promise<void> => {
+    try {
+      await refreshLibrary();
+    } catch (failure) {
+      setLibraryError(
+        failure instanceof Error ? failure.message : String(failure),
+      );
+    }
   };
 
   const runLibraryAction = async (action: () => Promise<void>): Promise<void> => {
@@ -366,8 +389,10 @@ export function WorkflowEditorScreen({
         template,
       })
       .then(async (receipt) => {
-        await refreshLibrary();
+        // The accepted create opens its workflow even if the follow-up read of
+        // the library fails; the failure is reported, never silently ignored.
         setActiveWorkflowId(receipt.workflowId);
+        await refreshLibrary();
       })
       .catch((failure: unknown) =>
         setLibraryError(
@@ -395,6 +420,26 @@ export function WorkflowEditorScreen({
         workflowId,
         name: name.trim(),
       });
+      if (workflowId !== activeWorkflowId) return;
+      // Renaming rewrites the stored document. The open editor adopts that
+      // document instead of keeping an older copy that would write the
+      // previous name back on the next save.
+      const reloaded = await port.snapshot(workflowId);
+      if (!dirty) {
+        applySnapshot(reloaded);
+        return;
+      }
+      // Unsaved edits survive the rename: they keep their draft, the stored
+      // renamed name, and the renamed document's version as the save base.
+      setProjectedVersion(reloaded.version);
+      setStoredEditable(reloaded.editable);
+      setSavedFingerprint(serializeWorkflow(reloaded.document));
+      setEditor((state) =>
+        editWorkflow(state, (current) => ({ ...current, name: name.trim() })),
+      );
+      setNotice(
+        "Renamed the stored workflow. Unsaved edits were kept and now save over the renamed document.",
+      );
     });
   };
 

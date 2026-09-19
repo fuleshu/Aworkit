@@ -2,8 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 export const maxImageBytes = 5 * 1024 * 1024;
-export const maxImageContextBytes = 12 * 1024 * 1024;
-export const maxImages = 20;
 export const imageAttachmentSchema = z
   .object({
     id: z.string().regex(/^[a-f0-9]{64}$/),
@@ -13,23 +11,19 @@ export const imageAttachmentSchema = z
   })
   .strict();
 export type ImageAttachment = z.infer<typeof imageAttachmentSchema>;
-export const imageAttachmentsSchema = z
-  .array(imageAttachmentSchema)
-  .max(maxImages);
+/// No image count and no total image-size limit: a Chat carries exactly the
+/// images it holds. Only each attachment is validated individually.
+export const imageAttachmentsSchema = z.array(imageAttachmentSchema);
 
 // Only the browser preview uses this ephemeral store. Native Chat always reads
 // its durable, validated profile store through the dedicated image IPC port.
 const previewImages = new Map<string, string>();
 
+/** Validates each attachment; the number and total size of images are never limited. */
 export function validateImageSelection(
   images: readonly ImageAttachment[],
 ): void {
-  if (
-    images.length > maxImages ||
-    images.reduce((sum, image) => sum + image.byteLength, 0) >
-      maxImageContextBytes
-  )
-    throw new Error("Add up to 20 images, totalling at most 12 MiB.");
+  for (const image of images) imageAttachmentSchema.parse(image);
 }
 
 function fileDataUrl(file: File): Promise<string> {

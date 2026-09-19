@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   importChatImage,
-  maxImageContextBytes,
-  maxImages,
   validateImageSelection,
   type ImageAttachment,
 } from "./images";
 
 /** Serializes imports, retains existing attachments on failure, and prevents a
- * slow file read from adding images to a different Chat after navigation. */
+ * slow file read from adding images to a different Chat after navigation. Any
+ * number of images may be added; there is no count or total-size limit. */
 export function useChatImages(
   images: readonly ImageAttachment[],
   onChange: (images: readonly ImageAttachment[]) => void,
@@ -29,13 +28,6 @@ export function useChatImages(
     setImporting(true);
     setError(null);
     try {
-      if (
-        images.length + files.length > maxImages ||
-        images.reduce((sum, image) => sum + image.byteLength, 0) +
-          files.reduce((sum, file) => sum + file.size, 0) >
-          maxImageContextBytes
-      )
-        throw new Error("Add up to 20 images, totalling at most 12 MiB.");
       const added: ImageAttachment[] = [];
       for (const file of files) {
         if (!mounted.current) return;

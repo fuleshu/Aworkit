@@ -36,11 +36,11 @@ pub(crate) mod subagent;
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
     BuiltInProcessTools, CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind,
-    ControlledProcessResult, FileAuthority, FileGrepRequestV1, FileListRequestV1,
+    FileAuthority, FileGrepRequestV1, FileListRequestV1,
     FileReadRequestV1, FileSearchRequestV1,
     FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, InjectionTargetV1, McpCallKindV1,
     McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelToolCallV1, ModelToolDefinitionV1,
-    ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1, ProcessTermination,
+    ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1,
     ProjectFiles,
     PythonInvocationV1, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
     SecretDeliveryV1 as HostSecretDeliveryV1, SecretFieldPlanV1, SecretLeaseClientV1,
@@ -546,6 +546,29 @@ impl StoredFileToolBindingV1 {
 /// Builds the complete attested built-in descriptor matrix for this desktop
 /// generation. Approval classes live in the frozen manifest bindings; the
 /// descriptor declares only capability semantics and side-effect classes.
+/// Control capabilities implied by a bound host-process capability. Reading,
+/// feeding, stopping or explicitly retaining a process the Chat was already
+/// authorised to start is not new authority, so these are never a separate
+/// enable decision that could leave a Chat on a second, legacy behaviour.
+pub(crate) fn implied_job_control_ids(bound: &[String]) -> Vec<&'static str> {
+    let launches_process = bound.iter().any(|id| {
+        matches!(
+            id.as_str(),
+            "tool.shell.host" | "tool.shell.start" | "tool.python.host" | "tool.python.start"
+        )
+    });
+    if !launches_process {
+        return Vec::new();
+    }
+    vec![
+        jobs::OUTPUT,
+        jobs::INPUT,
+        jobs::STOP,
+        jobs::LIST,
+        jobs::KEEP,
+    ]
+}
+
 pub(crate) fn file_tool_descriptors()
 -> Result<BTreeMap<String, CapabilityDescriptor>, WorkflowPipelineError> {
     let mut descriptors = BTreeMap::new();
@@ -2619,94 +2642,30 @@ impl FileToolDispatcherV1 {
                 | StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
                 | StoredFileToolLimitV1::Edit { .. } | StoredFileToolLimitV1::Write { .. } =>
                     self.execute_file(&files, &file_path, &path, cancellation),
+                // One behaviour everywhere: host shell and host Python always run
+                // as supervised jobs. Their lifetime ends at exit, an explicit
+                // stop, or an output limit - never at a wall-clock deadline.
+                // `timeout_seconds` is retained only so older frozen records keep
+                // decoding; it is no longer a deadline.
                 StoredFileToolLimitV1::Shell {
-                    timeout_seconds,
+                    timeout_seconds: _,
                     maximum_output_bytes,
-                } => {
-                    if jobs::controls_available(&self.context.bindings) {
-                        return self.start_shell_job(Duration::from_secs(*timeout_seconds as u64), *maximum_output_bytes, false, cancellation);
-                    }
-                    let command = self.record.call.arguments["command"]
-                        .as_str()
-                        .ok_or_else(|| "command is invalid".to_owned())?;
-                    let tools = BuiltInProcessTools::new(NativeProcessPort);
-                    let run = tools
-                        .execute_shell(
-                            &ShellInvocationV1 {
-                                mode: ToolAuthorityModeV1::HostShell,
-                                shell_program: self
-                                    .record
-                                    .binding
-                                    .options
-                                    .executable
-                                    .as_ref()
-                                    .map(PathBuf::from)
-                                    .map(Ok)
-                                    .unwrap_or_else(shell_program)?,
-                                command_text: command.to_owned(),
-                                working_directory: Some(self.record.workspace.root.clone()),
-                                environment: BTreeMap::new(),
-                                limits: HostToolLimitsV1 {
-                                    timeout: Duration::from_secs(*timeout_seconds as u64),
-                                    maximum_output_bytes: *maximum_output_bytes,
-                                    cancellation_grace: Duration::from_millis(100),
-                                },
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
-                    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
-                    let value = host_process_result_value(&run, stdout, stderr);
-                    let summary =
-                        host_process_result_summary("Shell command", &run, *timeout_seconds as u64);
-                    Ok((value, summary))
-                }
+                } => self.start_shell_job(
+                    Duration::from_secs(10),
+                    *maximum_output_bytes,
+                    false,
+                    cancellation,
+                ),
                 StoredFileToolLimitV1::Job { operation } => self.execute_job(operation, cancellation),
                 StoredFileToolLimitV1::Python {
-                    timeout_seconds,
+                    timeout_seconds: _,
                     maximum_output_bytes,
-                } => {
-                    if jobs::controls_available(&self.context.bindings) {
-                        return self.start_python_job(Duration::from_secs(*timeout_seconds as u64), *maximum_output_bytes, false, cancellation);
-                    }
-                    let script = self.record.call.arguments["script"]
-                        .as_str()
-                        .ok_or_else(|| "script is invalid".to_owned())?;
-                    let tools = BuiltInProcessTools::new(NativeProcessPort);
-                    let run = tools
-                        .execute_python(
-                            &PythonInvocationV1 {
-                                mode: ToolAuthorityModeV1::HostPython,
-                                interpreter: self
-                                    .record
-                                    .binding
-                                    .options
-                                    .executable
-                                    .as_ref()
-                                    .map(PathBuf::from)
-                                    .map(Ok)
-                                    .unwrap_or_else(python_program)?,
-                                script: script.to_owned(),
-                                arguments: Vec::new(),
-                                working_directory: Some(self.record.workspace.root.clone()),
-                                environment: BTreeMap::new(),
-                                limits: HostToolLimitsV1 {
-                                    timeout: Duration::from_secs(*timeout_seconds as u64),
-                                    maximum_output_bytes: *maximum_output_bytes,
-                                    cancellation_grace: Duration::from_millis(100),
-                                },
-                            },
-                            cancellation,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
-                    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
-                    let value = host_process_result_value(&run, stdout, stderr);
-                    let summary =
-                        host_process_result_summary("Python script", &run, *timeout_seconds as u64);
-                    Ok((value, summary))
-                }
+                } => return self.start_python_job(
+                    Duration::from_secs(10),
+                    *maximum_output_bytes,
+                    false,
+                    cancellation,
+                ),
                 StoredFileToolLimitV1::Todo => {
                     let todos = self.record.call.arguments["todos"].clone();
                     self.records
@@ -3295,59 +3254,6 @@ fn legacy_manifest(manifest: &AuthorityManifestV1) -> AuthorityManifest {
             })
             .collect(),
         summary: manifest.summary.clone(),
-    }
-}
-
-/// Complete bounded-process facts for one host shell or Python invocation.
-///
-/// The exit status alone cannot distinguish a command that failed from a command
-/// the runtime killed at its deadline: on Windows a killed process reports exit
-/// code 1 with partial output. The termination fact must travel with the result so
-/// the model does not retry a command that was simply too slow for the configured
-/// limit.
-fn host_process_result_value(
-    run: &ControlledProcessResult,
-    stdout: String,
-    stderr: String,
-) -> Value {
-    json!({
-        "stdout": stdout,
-        "stderr": stderr,
-        "exitCode": run.status,
-        "termination": match run.termination {
-            ProcessTermination::Exited => "exited",
-            ProcessTermination::TimedOut => "timed_out",
-            ProcessTermination::Cancelled => "cancelled",
-        },
-        "timedOut": run.termination == ProcessTermination::TimedOut,
-        "cancelled": run.termination == ProcessTermination::Cancelled,
-        "outputTruncated": run.output_truncated,
-    })
-}
-
-/// Names the real outcome, including the exact deadline that stopped the command.
-fn host_process_result_summary(
-    label: &str,
-    run: &ControlledProcessResult,
-    timeout_seconds: u64,
-) -> String {
-    let truncation = if run.output_truncated {
-        " Its output was truncated at the configured byte limit."
-    } else {
-        ""
-    };
-    match run.termination {
-        ProcessTermination::TimedOut => format!(
-            "{label} was killed after the {timeout_seconds} second limit expired, so it never finished; the output above is partial. Retry with a narrower command or raise this tool's timeout in Settings.{truncation}"
-        ),
-        ProcessTermination::Cancelled => format!(
-            "{label} was cancelled before it finished; the output above is partial.{truncation}"
-        ),
-        ProcessTermination::Exited => match run.status {
-            Some(0) => format!("{label} completed successfully.{truncation}"),
-            Some(code) => format!("{label} exited with status {code}.{truncation}"),
-            None => format!("{label} ended without reporting an exit status.{truncation}"),
-        },
     }
 }
 

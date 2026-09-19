@@ -257,3 +257,75 @@ fn image_reference_validation_rejects_paths_and_oversized_metadata() {
     image.byte_length = usize::MAX;
     assert!(model_images::validate_image_attachments(&[image.clone(), image]).is_err());
 }
+
+/// There is no image count and no aggregate image-byte allowance. A Chat that
+/// holds far more images than the old 20-image/12 MiB allowance sends all of
+/// them in one request, with no omission notice of any kind.
+#[test]
+fn every_image_of_a_large_chat_reaches_the_provider() {
+    /// Well past the removed allowance, and past any count a provider bills as
+    /// ordinary: the request must still carry them all.
+    const IMAGES: usize = 64;
+    let (origin, server) = start_fixture(1, move |_index, request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let parts = messages[0]["content"].as_array().unwrap();
+        let images = parts
+            .iter()
+            .filter(|part| part["type"] == "image_url")
+            .count();
+        assert_eq!(
+            images, IMAGES,
+            "every referenced image is materialized and sent"
+        );
+        assert!(
+            messages
+                .iter()
+                .filter_map(|message| message["content"].as_str())
+                .all(|content| !content.contains("Aworkit dispatch notice")),
+            "nothing is withheld, so nothing is reported as omitted"
+        );
+        FixtureResponse::sse(vec![
+            json!({"choices":[{"index":0,"delta":{"content":"Understood"},"finish_reason":null}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":4}}),
+        ])
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        OpenAiCompatibleProviderConfig::new(
+            "vision",
+            "v1",
+            format!("{origin}/v1"),
+            "vision",
+            None,
+            OpenAiCompatibleLimitsV1::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let gateway =
+        FrozenModelGateway::new(vec![Box::new(provider)]).with_image_resolver(Arc::new(Images));
+    let plan = ModelResolutionPlanV1 {
+        candidates: vec![ModelCandidateV1 {
+            binding_id: "vision".into(),
+            version_hash: "v1".into(),
+        }],
+        maximum_input_bytes: 16 * 1024,
+        maximum_output_bytes: 4096,
+    };
+    let images = vec![attachment(); IMAGES];
+    let request = ModelToolRequestV1 {
+        input: json!({"messages":[{"role":"user","content":"Compare these","images":images}]}),
+        parameters: Default::default(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        context_messages: Vec::new(),
+        retry_notice: None,
+    };
+    let canonical = request.clone();
+    gateway.execute_tool_turn(&plan, &request).unwrap();
+    assert_eq!(
+        request, canonical,
+        "materializing a large image set never rewrites durable history"
+    );
+    server.join().unwrap();
+}

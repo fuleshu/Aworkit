@@ -113,3 +113,33 @@ fn context_rejects_bad_roles_broken_tool_pairs_and_materialized_image_data() {
     });
     assert!(doc.validate().is_err());
 }
+
+/// A long Chat can hold any number of images and any total image size. There is
+/// no aggregate image budget in Aworkit: the provider's image capacity is the
+/// only limit, and a provider rejection of it is reported to the model rather
+/// than ending the Agent node. Applying such a budget in the durable checkpoint
+/// ended Agent nodes with "tool authority rejected the provider request".
+#[test]
+fn accumulated_image_context_is_never_bounded_by_a_durable_checkpoint() {
+    let mut doc = document();
+    doc.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 0,
+        content: "Image evidence".into(),
+        images: (0..25)
+            .map(|index| {
+                json!({
+                    "id": format!("{:064x}", index + 1),
+                    "name": format!("image-{index}.png"),
+                    "mimeType": "image/png",
+                    "byteLength": 4 * 1024 * 1024,
+                })
+            })
+            .collect(),
+        ..Default::default()
+    });
+    doc.validate()
+        .expect("image count and total image bytes are never a durable limit");
+    // A single malformed image is still rejected.
+    doc.context_messages[0].images[0]["id"] = json!("../private");
+    assert!(doc.validate().is_err());
+}

@@ -79,16 +79,18 @@ const provider = createServer(async (req, res) => {
         assert.ok(turn<15,'Python parent should have exited');
         message=call('job_output',{jobId:last.jobId,waitMs:500});
       }
-    } else if (phase === 'legacy') {
-      if (turn === 1) message=call('python_start',{script:"raise RuntimeError('must never launch without controls')"});
+    } else if (phase === 'implied') {
+      // The workflow never selected the control tools for this Chat, so control
+      // must be implied by the capability itself: one behaviour everywhere.
+      if (turn === 1) message=call('python',{script:'import time; print("start",flush=True); time.sleep(60)'});
       else if (turn === 2) {
-        assert.ok(JSON.stringify(last).includes('Managed execution requires job_output'),JSON.stringify(last));
-        message=call('python',{script:'import time; time.sleep(60)'});
+        assert.ok(last.jobId,JSON.stringify(last));
+        assert.notEqual(last.timedOut,true,JSON.stringify(last));
+        message=call('job_stop',{jobId:last.jobId});
       }
       else {
-        assert.equal(last.error?.timedOut,true,JSON.stringify(last));
-        assert.equal(last.jobId,undefined,JSON.stringify(last));
-        message={content:'Legacy Python without controls retains its hard timeout.'};
+        assert.equal(last.status,'stopped',JSON.stringify(last));
+        message={content:'Control tools are implied by the host Python capability.'};
       }
     }
     events.push({phase,turn,last,message});
@@ -170,17 +172,18 @@ try {
   if (python) {
     phase='descendant'; turn=0;
     await send('Start Python with a child process, wait for the parent to exit, then stop the tree.');
-    // A fresh Chat without the controls must retain the legacy hard timeout.
+    // A fresh Chat whose workflow never selected the control tools must still
+    // obtain managed jobs, because control is implied by the capability.
     await view.evaluate(`(async()=>{const i=window.__TAURI_INTERNALS__.invoke;
       const w=await i('workflow_snapshot',{workflowId:'workflow.simple-chat'});
       w.document.nodes.find(n=>n.type==='agent').configuration.toolIds=['tool.workspace_instructions','tool.python.host','tool.python.start'];
-      await i('workflow_commit',{command:{commandId:'python.legacy-workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
+      await i('workflow_commit',{command:{commandId:'python.implied-workflow',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
     await click('Workflows');
     const previous = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
     await click('Run');
     await waitFor(`window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId!==${JSON.stringify(previous)})`);
-    phase='legacy'; turn=0;
-    await send('Run Python without job controls and verify its bounded legacy timeout.');
+    phase='implied'; turn=0;
+    await send('Run Python without selecting the control tools and verify the job still yields and can be stopped.');
   }
   await writeFile(resolve(root, 'requests.json'), JSON.stringify({requests,events}, null, 2));
   await view.screenshot(resolve(root, 'verified.png'));

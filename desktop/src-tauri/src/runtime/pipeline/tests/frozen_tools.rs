@@ -177,7 +177,7 @@ fn dynamic_mcp_descriptions_still_require_the_exact_frozen_definition() {
     }];
     let saved = freeze_file_tool_bindings(&requested).unwrap();
     requested[0].definition.as_mut().unwrap().description = "Changed remote tool".into();
-    let changed = super::super::frozen_tools::freeze(&requested, Some(&saved)).unwrap();
+    let changed = super::super::frozen_tools::effective(&requested, Some(&saved)).unwrap();
     assert_ne!(changed, saved, "MCP definition drift must not be hidden");
 }
 

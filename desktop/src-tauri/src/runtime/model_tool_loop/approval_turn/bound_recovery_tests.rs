@@ -214,8 +214,109 @@ impl ModelToolInvocationPortV1 for Stuck {
     }
 }
 
+/// A context authority whose auxiliary compaction request the provider rejected.
+/// The rejection reaches the loop through the authority channel, where a limit
+/// must not be able to end the Agent node.
+struct CompactionProviderFailure {
+    rejected: AtomicUsize,
+}
+
+impl ModelToolInvocationPortV1 for CompactionProviderFailure {
+    fn manage_model_context(
+        &self,
+        _: &FrozenModelGateway,
+        _: &ModelResolutionPlanV1,
+        _: &StableId,
+        _: usize,
+        _: Option<&AgentContextV1>,
+        _: &mut ModelToolRequestV1,
+        _: &CancellationToken,
+        _: Trigger,
+    ) -> Result<Preparation, String> {
+        if self.rejected.fetch_add(1, Ordering::SeqCst) > 0 {
+            return Ok(Preparation::default());
+        }
+        Ok(Preparation {
+            provider_error: Some(ProviderError::Failed(
+                "this model accepts at most 20 images per request".into(),
+            )),
+            ..Default::default()
+        })
+    }
+    fn invoke(
+        &self,
+        _: &StableId,
+        _: u32,
+        call: &ModelToolCallV1,
+        _: &CancellationToken,
+    ) -> Result<SettledModelToolCallV1, String> {
+        Ok(SettledModelToolCallV1 {
+            result: ModelToolResultV1 {
+                images: Vec::new(),
+                call_id: call.call_id.clone(),
+                content: json!("settled"),
+                is_error: false,
+            },
+            activity: activity(call),
+        })
+    }
+    fn commit_exchange(
+        &self,
+        _: &StableId,
+        _: u32,
+        _: &ModelToolExchangeV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 fn gateway(provider: impl ProviderEnginePortV1 + 'static) -> FrozenModelGateway {
     FrozenModelGateway::new(vec![Box::new(provider)])
+}
+
+/// Records every dispatched request and answers immediately, so a test can read
+/// exactly what the model was told.
+struct Answering {
+    observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
+}
+
+impl Answering {
+    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>) -> Self {
+        Self { observed }
+    }
+}
+
+impl ProviderEnginePortV1 for Answering {
+    fn binding_id(&self) -> &str {
+        "model"
+    }
+    fn version_hash(&self) -> &str {
+        "v1"
+    }
+    fn execute(
+        &self,
+        _: &ModelRequestV1,
+        _: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        unreachable!()
+    }
+    fn execute_tool_turn_cancellable(
+        &self,
+        request: &ModelToolRequestV1,
+        _: &CancellationToken,
+        emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        self.observed.lock().unwrap().push(request.clone());
+        emit(ModelToolEventV1::AssistantOutput {
+            text: "Done with what I have.".into(),
+        })?;
+        emit(ModelToolEventV1::Usage {
+            input_tokens: 10,
+            output_tokens: 10,
+            cache: Default::default(),
+        })?;
+        Ok(ProviderAcceptanceV1::Accepted)
+    }
 }
 
 #[test]
@@ -297,6 +398,43 @@ fn a_failure_that_cannot_change_is_surfaced_instead_of_looping() {
         turns.len(),
         2,
         "one report and one surfaced failure, with no further turns"
+    );
+}
+
+#[test]
+fn a_rejected_compaction_request_is_reported_to_the_model_instead_of_failing_the_node() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.test").unwrap();
+
+    // The auxiliary compaction request is rejected by the provider while the
+    // acting request's context carries an over-limit image selection. That
+    // rejection arrives through the context-authority channel, which must report
+    // it on the frozen route instead of ending the Agent node.
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(Answering::new(observed.clone())),
+        tool_request(&id, user_input()),
+        &CompactionProviderFailure {
+            rejected: AtomicUsize::new(0),
+        },
+        &CancellationToken::default(),
+    )
+    .unwrap_or_else(|failure| {
+        panic!("a provider-rejected compaction request must not end the node: {failure}")
+    });
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion")
+    };
+    assert_eq!(outcome.assistant_text, "Done with what I have.");
+
+    let turns = observed.lock().unwrap();
+    let notice = turns[0]
+        .retry_notice
+        .as_deref()
+        .expect("the model is told about the rejected compaction request");
+    assert!(notice.contains("Aworkit recovery notice"));
+    assert!(
+        notice.contains("this model accepts at most 20 images per request"),
+        "the provider's own diagnostic reaches the model: {notice}"
     );
 }
 

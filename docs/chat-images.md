@@ -62,8 +62,15 @@ capabilities, including OpenAI-compatible `supports_vision` and input modalities
 Enabling the switch does not add vision to a text-only model.
 
 The initial implementation accepts PNG, JPEG and WebP, up to 5 MiB per image,
-8000 pixels per side, and 20 images / 12 MiB in the accumulated Chat image context.
-Provider-specific limits can be lower. Images are not silently resized or omitted.
+8000 pixels per side. Those are per-attachment validity rules; they are checked
+when an image is added and never limit how many images a message or a Chat may
+hold.
+
+**There is no image count limit and no total image-size limit.** A Chat sends
+every image it holds on every request. The model's own context window and the
+provider are the only capacity limits, exactly as for text. If a provider
+rejects a request for its own image capacity, that failure is reported to the
+model, which continues and decides what to do — it never ends the Run.
 
 Small thumbnails are decoded serially outside the WebView. Full-resolution bytes
 are loaded for the expanded preview and model submission.

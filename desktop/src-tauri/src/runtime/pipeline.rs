@@ -77,6 +77,7 @@ use super::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
         ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
         file_tool_capability_binding_with_nodes, file_tool_descriptors, freeze_file_tool_bindings,
+        implied_job_control_ids,
         mcp_tool_descriptor,
     },
 };
@@ -1171,7 +1172,7 @@ impl WorkflowExecutionPipeline {
             request_timeout_seconds: request.provider.request_timeout_seconds,
             maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
         };
-        let tool_bindings = frozen_tools::freeze(
+        let tool_bindings = frozen_tools::effective(
             &request.tools,
             existing_run.map(|existing| existing.tool_bindings.as_slice()),
         )?;
@@ -3169,6 +3170,24 @@ fn compile_graph_snapshot(
                             invalid_workflow("agent binds a tool with no frozen native binding")
                         })?;
                     node_tools.push(binding);
+                }
+                // Job control rides with the capability that launches work, so a
+                // node that may start a host shell or Python process can always
+                // read, feed or stop it.
+                let bound = node_tools
+                    .iter()
+                    .map(|tool| tool.capability_id.clone())
+                    .collect::<Vec<_>>();
+                for implied in implied_job_control_ids(&bound) {
+                    if node_tools.iter().any(|tool| tool.capability_id == implied) {
+                        continue;
+                    }
+                    if let Some(binding) = tool_bindings
+                        .iter()
+                        .find(|binding| binding.capability_id == implied)
+                    {
+                        node_tools.push(binding.clone());
+                    }
                 }
                 (
                     WorkerExecutorKindV1::Agent,

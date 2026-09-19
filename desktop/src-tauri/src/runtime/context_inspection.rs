@@ -119,8 +119,13 @@ impl ContextDocument {
             images.extend(refs);
         }
         images.extend(self.exchanges.iter().flat_map(|e| &e.results).flat_map(|r| r.images.clone()));
-        aworkit_capability_host::model_images::validate_image_attachments(&images)
-            .map_err(|e| e.to_string())?;
+        // A durable context is not a provider request: it may accumulate more
+        // images than one dispatch accepts, and dispatch fits that budget while
+        // telling the model what was omitted. Only each image itself is checked
+        // here, so a long Chat never fails its Agent node on image count.
+        for image in &images {
+            image.validate().map_err(|e| e.to_string())?;
+        }
         self.request()
             .validate()
             .map_err(|e| format!("Invalid model context: {e}"))

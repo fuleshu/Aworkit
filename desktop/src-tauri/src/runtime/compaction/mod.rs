@@ -53,6 +53,11 @@ pub(crate) struct Snapshot {
 #[derive(Default)]
 pub(crate) struct Preparation {
     pub error: Option<String>,
+    /// A provider failure inside the auxiliary compaction request. It is
+    /// reported to the model on the same frozen route: a rejected summary
+    /// request says nothing certain about the acting request, so it never ends
+    /// the Agent node or the Run.
+    pub provider_error: Option<aworkit_capability_host::ProviderError>,
     pub durable: bool,
     pub changed: bool,
     pub input_tokens: u64,

@@ -945,6 +945,12 @@ impl<'a> PassMachine<'a> {
             .map_err(ProviderError::Failed)?;
         self.input_units = self.input_units.saturating_add(preparation.input_tokens);
         self.output_units = self.output_units.saturating_add(preparation.output_tokens);
+        // An auxiliary compaction request the provider rejected is reported to
+        // the model on this turn; it does not prove the acting request fails, so
+        // it never ends the Agent node.
+        let compaction_notice = preparation.provider_error.as_ref().map(|error| {
+            provider_recovery_notice(error).unwrap_or_else(|| error.to_string())
+        });
         if let Some(error) = preparation.error {
             return Err(ProviderError::Failed(error));
         }
@@ -954,6 +960,12 @@ impl<'a> PassMachine<'a> {
             ));
         }
         let mut recorded_context = context.clone();
+        if let Some(notice) = compaction_notice {
+            recorded_context.retry_notice = Some(match recorded_context.retry_notice.take() {
+                Some(existing) => format!("{existing}\n\n{notice}"),
+                None => notice,
+            });
+        }
         let mut overflow_retries = 0;
         loop {
             let mut context = recorded_context.clone();

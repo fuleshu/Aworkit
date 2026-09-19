@@ -42,6 +42,8 @@ interface ChatWorkspaceScreenProps {
   readonly onReveal?: (after: () => void) => void;
   readonly workflowPort?: Pick<WorkflowCorePort, "snapshot">;
   readonly libraryPort?: WorkflowLibraryPort;
+  /** Bumped by any surface that changed the stored workflow library. */
+  readonly libraryRevision?: number;
   readonly onRecoveryPendingChange?: (pending: boolean) => void;
   readonly onRuntimeSnapshotChange?: (
     snapshot: RuntimeSnapshot,
@@ -73,6 +75,7 @@ export function ChatWorkspaceScreen({
   onReveal,
   workflowPort,
   libraryPort,
+  libraryRevision = 0,
   onRecoveryPendingChange,
   onRuntimeSnapshotChange,
   confirmRecoveryAbandon = browserRecoveryConfirmation,
@@ -163,9 +166,11 @@ export function ChatWorkspaceScreen({
     route: "chat", summary: "Waiting for the Chat command to commit…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
   });
 
-  // Load the saved-workflow library once so the composer can list and default
-  // to the profile default workflow.
+  // The saved-workflow library is re-read whenever this surface becomes active
+  // or another surface reports a change. A workflow created or renamed after
+  // this Chat mounted must still appear in the composer's Workflow list.
   useEffect(() => {
+    if (!active) return;
     const port: WorkflowLibraryPort =
       libraryPort ?? createWorkflowLibraryPort();
     let current = true;
@@ -180,25 +185,26 @@ export function ChatWorkspaceScreen({
         setWorkflows(entries);
         setDefaultWorkflowId(library.defaultWorkflowId);
         setSelectedWorkflowId((currentId) =>
-          currentId ?? library.defaultWorkflowId,
+          currentId !== null &&
+          entries.some((entry) => entry.id === currentId)
+            ? currentId
+            : library.defaultWorkflowId,
         );
       })
       .catch((failure: unknown) => {
-        if (current) {
-          setWorkflows([]);
-          setDefaultWorkflowId(null);
-          setSelectedWorkflowId(null);
+        if (current)
+          // Keep the last known entries usable; the failure is reported instead
+          // of blanking a projectable list.
           setWorkflowReadinessError(
             failure instanceof Error
               ? `Could not load the workflow library: ${failure.message}`
               : "Could not load the workflow library.",
           );
-        }
       });
     return () => {
       current = false;
     };
-  }, [libraryPort]);
+  }, [libraryPort, libraryRevision, active]);
   useEffect(() => {
     const reentered = active && !wasActive.current;
     wasActive.current = active;

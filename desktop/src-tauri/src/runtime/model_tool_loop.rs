@@ -93,6 +93,30 @@ fn provider_report_notice(error: &ProviderError, recovery: u32) -> String {
     )
 }
 
+/// Reports one provider failure on the frozen request as model-visible context,
+/// preserving any notice already pending for this turn. Returns whether a report
+/// was granted, so the caller can surface a failure that can never change.
+///
+/// Every failure the authority owns is reported here: the provider rejecting the
+/// acting request, and the provider rejecting the auxiliary compaction request.
+/// A limit or a provider error therefore does not end the Agent node on its own:
+/// the model is told and decides.
+fn report_provider_failure(
+    recovery: &mut ProviderRecoveryBudget,
+    error: &ProviderError,
+    provider_request: &mut ModelToolRequestV1,
+) -> bool {
+    let pending = provider_request.retry_notice.take();
+    let reported = recovery.note(error, provider_request);
+    let granted = reported.is_some();
+    provider_request.retry_notice = match (pending, reported) {
+        (Some(pending), Some(notice)) => Some(format!("{pending}\n\n{notice}")),
+        (Some(pending), None) => Some(pending),
+        (None, reported) => reported,
+    };
+    granted
+}
+
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
@@ -576,6 +600,12 @@ fn execute_tool_turn_with_timeout_recovery(
         .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
     *input_tokens = input_tokens.saturating_add(preparation.input_tokens);
     *output_tokens = output_tokens.saturating_add(preparation.output_tokens);
+    // A provider failure inside the auxiliary compaction request is reported on
+    // this turn's frozen request. It is not an authority rejection and must not
+    // end the node: the model, not a limit, decides how to continue.
+    if let Some(error) = &preparation.provider_error {
+        report_provider_failure(recovery, error, &mut provider_request);
+    }
     if let Some(error) = preparation.error {
         return Err(ModelToolLoopErrorV1::ToolAuthority(error));
     }
@@ -606,6 +636,9 @@ fn execute_tool_turn_with_timeout_recovery(
                     .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
                 *input_tokens = input_tokens.saturating_add(reduction.input_tokens);
                 *output_tokens = output_tokens.saturating_add(reduction.output_tokens);
+                if let Some(error) = &reduction.provider_error {
+                    report_provider_failure(recovery, error, &mut provider_request);
+                }
                 if let Some(error) = reduction.error {
                     return Err(ModelToolLoopErrorV1::ToolAuthority(error));
                 }
@@ -616,7 +649,7 @@ fn execute_tool_turn_with_timeout_recovery(
                     // The selection is already as small as the authority can
                     // make it. Report the condition to the model instead of
                     // ending the Run.
-                    if recovery.note(&error, &mut provider_request).is_none() {
+                    if !report_provider_failure(recovery, &error, &mut provider_request) {
                         return Err(error.into());
                     }
                     continue;
@@ -630,7 +663,7 @@ fn execute_tool_turn_with_timeout_recovery(
                 // Every provider failure that is not cancellation becomes the
                 // model's next turn: the exact failure is reported on the same
                 // frozen route and the Agent decides what to do about it.
-                if recovery.note(&error, &mut provider_request).is_none() {
+                if !report_provider_failure(recovery, &error, &mut provider_request) {
                     return Err(error.into());
                 }
             }

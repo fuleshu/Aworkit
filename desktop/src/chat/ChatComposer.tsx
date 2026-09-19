@@ -117,6 +117,16 @@ export function ChatComposer({
     setRetryIntent(null);
     setState((current) => updateComposer(current, patch));
   };
+  // A library that arrives after this draft was created still supplies the
+  // opening selection; an unlocked composer with no workflow cannot send, so the
+  // first available default repairs it instead of leaving it unselectable.
+  const fallbackWorkflowId = defaultWorkflowId ?? workflowOptions[0]?.id ?? "";
+  useEffect(() => {
+    if (chat.lockedWorkflow || state.workflowId !== "") return;
+    if (fallbackWorkflowId === "") return;
+    edit({ workflowId: fallbackWorkflowId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.lockedWorkflow, state.workflowId, fallbackWorkflowId]);
   const {
     addFiles,
     importing,

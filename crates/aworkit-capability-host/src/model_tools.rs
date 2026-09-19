@@ -297,7 +297,6 @@ fn normalize_messages(
     let mut messages = Vec::with_capacity(entries.len());
     let mut saw_conversation = false;
     let mut text_bytes = 0_usize;
-    let mut image_references = Vec::new();
     for entry in entries {
         let object = entry.as_object().ok_or_else(invalid_tool_request)?;
         if object
@@ -324,8 +323,13 @@ fn normalize_messages(
             .transpose()
             .map_err(|_| invalid_tool_request())?
             .unwrap_or_default();
-        image_references.extend(images.iter().map(|image| image.attachment.clone()));
-        crate::model_images::validate_image_attachments(&image_references)?;
+        // Each image is validated on its own. How many images one provider
+        // request accepts is a dispatch budget, not a request-shape rule: the
+        // gateway fits the dispatch copy and tells the model what was left out,
+        // so a Chat that accumulated more images never fails its Agent node.
+        for image in &images {
+            image.attachment.validate()?;
+        }
         if !images.is_empty() && role != ModelInputRoleV1::User {
             return Err(invalid_tool_request());
         }
@@ -365,8 +369,7 @@ fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), Provider
     let mut images = normalize_model_input(&request.input)?
         .into_iter()
         .flat_map(|m| m.images.into_iter().map(|image| image.attachment))
-        .collect::<Vec<_>>();
-    let mut compact_contexts = Vec::new();
+        .collect::<Vec<_>>();    let mut compact_contexts = Vec::new();
     for context in &request.context_messages {
         if !matches!(context.role.as_deref(), None | Some("user" | "assistant")) {
             return Err(invalid_tool_request());
@@ -399,7 +402,12 @@ fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), Provider
             .flat_map(|e| &e.results)
             .flat_map(|r| r.images.clone()),
     );
-    crate::model_images::validate_image_attachments(&images)?;
+    // Image structure is per-image here; the provider's per-request image
+    // budget belongs to dispatch, which fits the dispatch copy and reports the
+    // omission to the model instead of failing the node.
+    for image in &images {
+        image.validate()?;
+    }
     request.projected_input()?;
     if request.context_messages.iter().any(|message| {
         message.after_exchanges > request.exchanges.len()
