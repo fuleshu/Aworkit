@@ -970,16 +970,24 @@
     {
       "id": "tool.subagent",
       "name": "Subagent delegation",
-      "description": "Delegate a bounded independent task to a child agent.",
-      "instructions": "Delegate when an independent subtask benefits from a separate agent. Give the child a concrete objective and sufficient context. Assess its returned evidence before using the result.",
+      "description": "Delegate a task using this Agent's tools and existing permissions. Optional readOnly restricts the child to research.",
+      "instructions": "Delegate an independent task with a concrete objective, file ownership and sufficient context. The child inherits this Agent's selected tools except delegation itself. Use readOnly=true for research-only work. Children can use existing permissions but return approval-dependent actions to you without requesting approval or an automatic review. Handle those actions through your own tools and normal approval policy. Assess returned evidence, changed files and outstanding jobs before reporting completion.",
       "executor": "subagent",
       "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "run_subagent",
+        "inheritParentTools": true,
         "requiresApproval": true
       },
       "fields": [
+        {
+          "key": "inheritParentTools",
+          "label": "Inherit parent tools",
+          "help": "Children use this Agent's selected tools and existing permissions. Individual delegations can request read-only access.",
+          "kind": "boolean",
+          "readOnly": true
+        },
         {
           "key": "authorityMode",
           "label": "Authority boundary",
@@ -1007,6 +1015,11 @@
           "context": {
             "type": "string",
             "maxLength": 32768
+          },
+          "readOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Restrict this child to known read-only tools; otherwise inherit this Agent's selected tools."
           }
         },
         "required": [

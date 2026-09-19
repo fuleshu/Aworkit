@@ -1229,7 +1229,14 @@ impl BuiltInToolConfigurationV2 {
                 )
             }
             "tool.subagent" => {
-                require_exact_config_keys(self, &["authorityMode", "requiresApproval"])?;
+                // Old Settings remain readable; only newly frozen Runs acquire
+                // the inherited-tool contract. Existing Chat authority is fixed.
+                if self.configuration.contains_key("inheritParentTools") {
+                    require_exact_config_keys(self, &["authorityMode", "requiresApproval", "inheritParentTools"])?;
+                    require_config_bool(self, "inheritParentTools", true)?;
+                } else {
+                    require_exact_config_keys(self, &["authorityMode", "requiresApproval"])?;
+                }
                 require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "run_subagent")?;
                 require_config_bool(self, "requiresApproval", true)
@@ -3238,6 +3245,13 @@ mod tests {
         assert!(settings.normalize_legacy_agent_turn_limits());
         assert!(!settings.normalize_legacy_agent_turn_limits());
         settings.validate().expect("normalized settings");
+        let subagent = settings.tools.iter_mut().find(|t| t.id == "tool.subagent").unwrap();
+        subagent.configuration.remove("inheritParentTools");
+        let old = subagent.clone();
+        let frozen = crate::runtime::tool_registry::freeze_settings(subagent).unwrap();
+        assert_eq!(frozen.configuration["inheritParentTools"], true);
+        assert_eq!(subagent.configuration, old.configuration, "only the new Chat snapshot changes");
+        settings.validate().expect("pre-upgrade Settings remain valid");
     }
 
     #[test]

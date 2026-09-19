@@ -36,7 +36,7 @@ impl FileToolDispatcherV1 {
         let value = self
             .runtime
             .jobs
-            .control(owner, operation, args, cancellation)?;
+            .control_scoped(owner, self.context.delegation.as_ref().map(StableId::as_str), operation, args, cancellation)?;
         Ok((value, format!("{operation} completed.")))
     }
 
@@ -127,9 +127,10 @@ impl FileToolDispatcherV1 {
         if cancellation.is_cancelled() || self.context.cancellation.is_cancelled() {
             return Err(format!("{label} launch cancelled"));
         }
-        let id = self.runtime.jobs.start(
+        let id = self.runtime.jobs.start_scoped(
             &self.context.chat_id,
             self.record.proposal.proposal_id.as_str(),
+            Some(self.record.outer_invocation_id.as_str()),
             spec,
             interactive,
             self.context.cancellation.clone(),

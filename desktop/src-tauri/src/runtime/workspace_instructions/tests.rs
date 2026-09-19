@@ -98,6 +98,7 @@ impl Fixture {
         };
         let committer = ephemeral_semantic_event_committer();
         let context = FrozenFileToolAuthorityContextV1 {
+            delegation: None,
             chat_id: "chat.instructions".into(),
             approvals: super::super::super::approvals::ApprovalContext {
                 chat_id: "chat.instructions".into(),

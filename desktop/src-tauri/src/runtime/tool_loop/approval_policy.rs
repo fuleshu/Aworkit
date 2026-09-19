@@ -122,6 +122,9 @@ impl BoundFileToolAuthorityV1 {
             || filesystem_saved
         {
             Some(true)
+        } else if self.context.delegation.is_some() {
+            // A child cannot buy a model review or open a human approval.
+            Some(false)
         } else if mode == ApprovalMode::ApproveForMe {
             let review = match store
                 .review(challenge.invocation_id.as_str())

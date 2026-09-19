@@ -6,6 +6,22 @@ import {
 import type { RuntimeEvent } from "./corePort";
 
 describe("canonical semantic timeline projection", () => {
+  it("attributes native child speech and tools to the subagent during streaming and replay", () => {
+    const running = [
+      span(1, "span.started", "parent", { spanKind: "agent_loop" }),
+      span(2, "span.started", "delegate", { spanKind: "tool_call", capabilityId: "tool.subagent", parentSpanId: "parent" }),
+      span(3, "span.started", "child", { spanKind: "model_call", parentSpanId: "delegate" }),
+      span(4, "span.content_delta", "child", { channel: "assistant_output", append: "I wrote the module." }),
+      span(5, "span.started", "child-write", { spanKind: "tool_call", capabilityId: "tool.files.write", parentSpanId: "delegate" }),
+      span(6, "span.started", "parent-next", { spanKind: "model_call", parentSpanId: "parent" }),
+    ];
+    for (const events of [running, [...running, span(7, "span.completed", "child", { status: "completed" })]]) {
+      const items = projectSemanticTimeline(events);
+      expect(items.find(i => i.id === "child")).toMatchObject({ actor: "subagent", body: "I wrote the module." });
+      expect(items.find(i => i.id === "child-write")).toMatchObject({ actor: "subagent" });
+      expect(items.find(i => i.id === "parent-next")).toMatchObject({ actor: "model" });
+    }
+  });
   it("projects settled native tool images and rejects forged or failed previews", () => {
     const image = { id: "a".repeat(64), name: "screenshot.png", mimeType: "image/png", byteLength: 123 };
     const project = (capabilityId: string, images: unknown, isError = false) => projectSemanticTimeline([

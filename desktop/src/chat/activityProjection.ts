@@ -354,7 +354,11 @@ function spanActor(
   const visited = new Set<string>();
   while (current !== undefined && !visited.has(current.spanId)) {
     visited.add(current.spanId);
-    if (current.spanKind === "external_agent") return "subagent";
+    if (
+      current.spanKind === "external_agent" ||
+      (current.spanKind === "tool_call" &&
+        current.metadata.capabilityId === "tool.subagent")
+    ) return "subagent";
     current =
       current.parentSpanId === undefined
         ? undefined

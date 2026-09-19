@@ -1040,6 +1040,7 @@ impl WorkflowExecutionPipeline {
             .map_err(WorkflowPipelineError::InvalidInput)?;
         let authority = self.file_tool_authority.bind_with_run_events(
             FrozenFileToolAuthorityContextV1 {
+                delegation: None,
                 chat_id: prepared.snapshot.chat_id.to_string(),
                 approvals: prepared.approvals.clone(),
                 review_messages: pending.conversation.clone(),
@@ -2391,6 +2392,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
             let stopped = self.records.steering_for(&self.prepared)?;
             let authority = self.file_tool_authority.bind_with_run_events(
                 FrozenFileToolAuthorityContextV1 {
+                    delegation: None,
                     chat_id: self.prepared.snapshot.chat_id.to_string(),
                     approvals: self.prepared.approvals.clone(),
                     review_messages: conversation.clone(),
@@ -3775,6 +3777,7 @@ mod tests {
     mod steering;
     mod approval_modes;
     mod frozen_tools;
+    mod subagent_tools;
     use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
@@ -4136,11 +4139,7 @@ mod tests {
                         // marker appended to its single user message; the parent
                         // delegates once, the child reads and searches, and both
                         // loops finish with the fixed completion text.
-                        let child_turn = request.input["messages"]
-                            .as_array()
-                            .and_then(|messages| messages.first())
-                            .and_then(|message| message["content"].as_str())
-                            .is_some_and(|content| content.contains("Relevant context:"));
+                        let child_turn = !request.tools.iter().any(|tool| tool.capability_id == SUBAGENT_CAPABILITY_ID);
                         if child_turn {
                             emit(tool_call(
                                 "call.read",
@@ -4170,11 +4169,7 @@ mod tests {
                         json!({"task":"Nested delegation attempt."}),
                     ))?,
                     ToolScriptV1::SubagentLoop => {
-                        let child_turn = request.input["messages"]
-                            .as_array()
-                            .and_then(|messages| messages.first())
-                            .and_then(|message| message["content"].as_str())
-                            .is_some_and(|content| content.contains("Relevant context:"));
+                        let child_turn = !request.tools.iter().any(|tool| tool.capability_id == SUBAGENT_CAPABILITY_ID);
                         if child_turn {
                             emit(tool_call(
                                 "call.loop-read",
@@ -4272,11 +4267,7 @@ mod tests {
             if matches!(self.script, ToolScriptV1::SubagentLoop) {
                 // The child keeps requesting the same read until the advisory
                 // repeat reminder prompts it to finish normally.
-                let child_turn = request.input["messages"]
-                    .as_array()
-                    .and_then(|messages| messages.first())
-                    .and_then(|message| message["content"].as_str())
-                    .is_some_and(|content| content.contains("Relevant context:"));
+                let child_turn = !request.tools.iter().any(|tool| tool.capability_id == SUBAGENT_CAPABILITY_ID);
                 if child_turn
                     && !request
                         .retry_notice

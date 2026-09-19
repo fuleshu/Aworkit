@@ -89,7 +89,7 @@ use super::{
         validate_unavailable_executor_enablement_update,
     },
     tool_loop::{
-        SUBAGENT_CAPABILITY_ID, SUBAGENT_CHILD_TOOL_IDS, WorkflowToolBindingV1,
+        WorkflowToolBindingV1,
         WorkflowToolCredentialBindingV1,
     },
 };
@@ -3944,34 +3944,6 @@ fn freeze_graph_bindings(
             });
         }
     }
-    // `tool.subagent` owns a fresh child loop whose declared contract includes
-    // the enabled read-only child subset. Freeze those bindings with the Run
-    // even though they are not exposed to the parent agent node. The generic
-    // graph compiler still exposes only the toolIds written in that node's JSON.
-    if seen.contains(SUBAGENT_CAPABILITY_ID) {
-        for child_id in SUBAGENT_CHILD_TOOL_IDS {
-            if seen.contains(child_id) {
-                continue;
-            }
-            let configured = settings
-                .tools
-                .iter()
-                .find(|tool| tool.id == child_id)
-                .ok_or_else(|| format!("subagent child tool '{child_id}' is not installed"))?;
-            if !configured.enabled {
-                continue;
-            }
-            seen.insert(child_id.to_owned());
-            let snapshot = super::tool_registry::freeze_settings(configured)?;
-            tools.push(FrozenToolBindingV1 {
-                tool_id: child_id.to_owned(),
-                tool_hash: canonical_hash(&snapshot)?,
-                tool_snapshot: snapshot,
-                credentials: freeze_tool_credentials(configured, settings)?,
-                definition: None,
-            });
-        }
-    }
     Ok(FrozenWorkflowAgentV1 {
         // Preserve the durable field for old Chat records without deriving
         // execution behavior from the removed Agent timeoutSeconds setting.
@@ -4603,6 +4575,7 @@ fn replay_create_receipt(
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::tool_loop::SUBAGENT_CAPABILITY_ID;
     use std::{
         fs,
         path::Path,
@@ -5267,7 +5240,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_freeze_includes_enabled_child_tools_without_adding_parent_tool_ids() {
+    fn subagent_freeze_does_not_add_tools_outside_the_parent_selection() {
         let mut settings = SettingsConfigurationV2::default();
         for tool_id in [SUBAGENT_CAPABILITY_ID, "tool.files.read", "tool.todo"] {
             settings
@@ -5289,12 +5262,12 @@ mod tests {
                 .iter()
                 .map(|tool| tool.tool_id.as_str())
                 .collect::<Vec<_>>(),
-            vec![SUBAGENT_CAPABILITY_ID, "tool.files.read", "tool.todo"]
+            vec![SUBAGENT_CAPABILITY_ID]
         );
         assert_eq!(
             workflow["nodes"][1]["configuration"]["toolIds"],
             json!([SUBAGENT_CAPABILITY_ID]),
-            "child bindings belong to subagent semantics, not the parent JSON tool list"
+            "enabled Settings tools are not authority for a delegated child"
         );
     }
 

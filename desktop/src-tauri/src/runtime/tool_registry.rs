@@ -254,6 +254,11 @@ pub(crate) fn freeze_settings(
     tool: &BuiltInToolConfigurationV2,
 ) -> Result<BuiltInToolConfigurationV2, String> {
     let mut frozen = tool.clone();
+    if tool.id == "tool.subagent" {
+        // This runs only for a new Chat. Saved pre-upgrade Settings acquire
+        // the new contract without changing any existing frozen Run.
+        frozen.configuration.insert("inheritParentTools".into(), Value::Bool(true));
+    }
     if tool.id == "tool.workspace_instructions" {
         let resolved = super::tool_loop::workspace_instructions::configuration(
             &serde_json::to_value(&tool.configuration).map_err(|e| e.to_string())?,

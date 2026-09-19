@@ -96,6 +96,9 @@ fn provider_report_notice(error: &ProviderError, recovery: u32) -> String {
 /// Trusted-core boundary used by the provider loop. Implementations must
 /// durably settle a call before returning its provider-facing result.
 pub(crate) trait ModelToolInvocationPortV1 {
+    /// A delegated invocation can return an unmet permission to its parent
+    /// after committing the current exchange, without another provider call.
+    fn handoff_notice(&self) -> Option<String> { None }
     /// Runtime facts; implementations must not accept model claims as job settlement.
     fn outstanding_jobs(&self) -> Result<Option<String>, String> { Ok(None) }
     fn stop_unkept_jobs(&self) {}
@@ -417,7 +420,7 @@ pub(crate) fn execute_model_tool_loop_v1(
         }
         let mut results = Vec::with_capacity(turn_output.calls.len());
         job_completion.progressed();
-        for call in &turn_output.calls {
+        for (index, call) in turn_output.calls.iter().enumerate() {
             let settled = authority
                 .invoke(request.outer_invocation_id, turn, call, cancellation)
                 .map_err(|error| {
@@ -442,6 +445,15 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &mut pending_runtime_notice,
                 repeat_tool_reminder.observe_calls(std::slice::from_ref(call)),
             );
+            if authority.handoff_notice().is_some() {
+                // Balance the provider transcript without executing remaining
+                // proposals after the child has returned its scope to its parent.
+                results.extend(turn_output.calls[index + 1..].iter().map(|pending| ModelToolResultV1 {
+                    call_id: pending.call_id.clone(), images: Vec::new(), is_error: true,
+                    content: serde_json::json!({"error":"not_executed","detail":"Child returned to parent for approval before this call executed."}),
+                }));
+                break;
+            }
         }
         let exchange = ModelToolExchangeV1 {
             assistant_content: turn_output.assistant_content,
@@ -461,6 +473,12 @@ pub(crate) fn execute_model_tool_loop_v1(
                 )
             })?;
         exchanges.push(exchange);
+        if let Some(assistant_text) = authority.handoff_notice() {
+            return Ok(ModelToolLoopOutcomeV1 {
+                assistant_text, input_tokens, output_tokens, attempted_model_turns,
+                settled_tool_calls, timeout_recoveries, exchanges, activities,
+            });
+        }
         turn = turn.saturating_add(1);
     }
 }

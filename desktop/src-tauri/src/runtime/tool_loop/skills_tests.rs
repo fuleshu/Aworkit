@@ -78,6 +78,7 @@ fn skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable() {
     let binding = file_tool_capability_binding(&tool, &descriptors[SKILL_CAPABILITY_ID]).unwrap();
     assert!(!tool.requires_approval);
     let mut authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+        delegation: None,
         chat_id: "chat.skills".into(),
         approvals: Default::default(),
         review_messages: vec![super::super::pipeline::WorkflowMessageV1 {

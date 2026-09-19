@@ -72,6 +72,31 @@ fn long_command() -> &'static str {
         "sleep 20"
     }
 }
+
+#[test]
+fn subagent_jobs_isolate_siblings_but_remain_owned_and_cancelled_by_the_chat() {
+    let root = tempfile::tempdir().unwrap();
+    let jobs = JobRegistry::open(root.path().join("jobs")).unwrap();
+    let cancellation = CancellationToken::default();
+    let a = jobs.start_scoped("chat", "launch.a", Some("child.a"), &spec(long_command()), true, cancellation.clone()).unwrap();
+    let b = jobs.start_scoped("chat", "launch.b", Some("child.b"), &spec(long_command()), true, cancellation.clone()).unwrap();
+    assert_eq!(jobs.list_scoped("chat", Some("child.a")).unwrap()["jobs"][0]["jobId"], a);
+    assert_eq!(jobs.list_scoped("chat", None).unwrap()["jobs"].as_array().unwrap().len(), 2);
+    for operation in ["job_output", "job_input", "job_stop", "job_keep"] {
+        assert!(jobs.control_scoped("chat", Some("child.a"), operation, &json!({"jobId":b,"text":"x","reason":"x"}), &cancellation).is_err());
+    }
+    let notice = jobs.completion_notice_scoped("chat", Some("child.a")).unwrap().unwrap();
+    assert!(notice.contains(&a));
+    assert!(!notice.contains(&b));
+    jobs.stop_unkept_scoped("chat", Some("child.a"));
+    wait_terminal(&jobs, "chat", &a);
+    assert!(jobs.completion_notice_scoped("chat", Some("child.a")).unwrap().is_none());
+    assert!(jobs.completion_notice("chat").unwrap().is_some());
+    assert_eq!(jobs.output("chat", &b, None, 4096, Duration::ZERO, &cancellation).unwrap()["running"], true);
+    cancellation.cancel();
+    wait_terminal(&jobs, "chat", &b);
+    assert!(jobs.completion_notice("chat").unwrap().is_none());
+}
 fn wait_terminal(jobs: &JobRegistry, owner: &str, id: &str) -> Value {
     let start = Instant::now();
     loop {

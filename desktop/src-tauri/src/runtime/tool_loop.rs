@@ -31,6 +31,7 @@ use std::{
 pub(crate) mod approval_policy;
 mod mcp_approval;
 mod jobs;
+pub(crate) mod subagent;
 
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
@@ -470,6 +471,9 @@ pub(crate) enum StoredFileToolLimitV1 {
         render_when_needed: bool,
     },
     Subagent {
+        /// Absent in old frozen Chats, whose read-only contract remains intact.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inherit_parent_tools: bool,
         /// Compatibility sink for bindings frozen before child turn caps were
         /// removed. New bindings omit this obsolete value.
         #[serde(default, rename = "maximum_turns", skip_serializing)]
@@ -1018,24 +1022,7 @@ pub(crate) fn freeze_file_tool_bindings(
                 web_extract_schema(),
                 web::freeze_web_configuration(&requested.configuration)?,
             ),
-            "subagent" => (
-                SUBAGENT_PROVIDER_NAME.to_owned(),
-                "Delegate one read-only subtask to a fresh subagent context; follows the selected approval mode.".to_owned(),
-                subagent_schema(),
-                StoredFileToolLimitV1::Subagent {
-                    legacy_maximum_turns: {
-                        freeze_configuration(
-                            &requested.configuration,
-                            &[
-                                ("authorityMode", Value::String("run_subagent".into())),
-                                ("requiresApproval", Value::Bool(true)),
-                            ],
-                            &[],
-                        )?;
-                        None
-                    },
-                },
-            ),
+            "subagent" => subagent::freeze(requested)?,
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => freeze_mcp_binding(requested)?,
             _ => return Err(invalid_tool("tool binding has no installed native adapter")),
         };
@@ -1546,6 +1533,8 @@ fn tool_lease_id(
 
 #[derive(Clone)]
 pub(crate) struct FrozenFileToolAuthorityContextV1 {
+    /// A native child may use existing permissions but cannot request new approval.
+    pub delegation: Option<StableId>,
     pub chat_id: String,
     pub approvals: super::approvals::ApprovalContext,
     pub review_messages: Vec<super::pipeline::WorkflowMessageV1>,
@@ -1601,6 +1590,9 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
         cancellation: &CancellationToken,
         trigger: super::compaction::Trigger,
     ) -> Result<super::compaction::Preparation, String> {
+        if let Some(agent) = agent {
+            self.register_delegation_scope(outer, agent, request)?;
+        }
         self.manage_context(
             gateway,
             plan,
@@ -1847,13 +1839,17 @@ impl BoundFileToolAuthorityV1 {
             BrokerDecisionV1::Denied => {
                 // The rejection is durably recorded by the broker; the model
                 // receives an explicit denial result.
-                let reason = self.denial_reason(&response.invocation_id)?;
+                let reason = if self.context.delegation.is_some() {
+                    subagent::APPROVAL_HANDOFF.to_owned()
+                } else {
+                    self.denial_reason(&response.invocation_id)?
+                };
                 let denied = SettledModelToolCallV1 {
                     result: ModelToolResultV1 {
                         images: Vec::new(),
                         call_id: call.call_id.clone(),
                         content: json!({
-                            "error": "user_rejected",
+                            "error": if self.context.delegation.is_some() { "parent_approval_required" } else { "user_rejected" },
                             "detail": reason,
                         }),
                         is_error: true,
@@ -2960,234 +2956,7 @@ impl FileToolDispatcherV1 {
         }
     }
 
-    /// Runs a subagent child loop: a fresh model/tool conversation
-    /// over the same frozen gateway with the read-only, approval-free child
-    /// tool subset. The child cannot delegate further (the subagent tool is
-    /// excluded from its definitions and port). The child's own tool calls
-    /// still settle through the durable broker; its model turns are covered by
-    /// the parent pass-level settlement like any other model work.
-    fn run_subagent(
-        &self,
-        envelope: &ApprovedInvocationEnvelopeV1,
-        cancellation: &CancellationToken,
-    ) -> Result<(Value, String), String> {
-        let task = self.record.call.arguments["task"]
-            .as_str()
-            .ok_or_else(|| "subagent task is invalid".to_owned())?;
-        let context_text = self
-            .record
-            .call
-            .arguments
-            .get("context")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let gateway = self
-            .context
-            .model_gateway
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires a frozen model gateway".to_owned())?;
-        let binding_id = self
-            .context
-            .model_binding_id
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires the frozen model binding".to_owned())?;
-        let version_hash = self
-            .context
-            .model_version_hash
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires the frozen model version".to_owned())?;
-        let definitions = self
-            .context
-            .bindings
-            .iter()
-            .filter(|binding| SUBAGENT_CHILD_TOOL_IDS.contains(&binding.capability_id.as_str()))
-            .filter(|binding| binding.is_callable())
-            .map(StoredFileToolBindingV1::definition)
-            .collect::<Vec<_>>();
-        let child_authority = SubagentToolPortV1 {
-            inner: &BoundFileToolAuthorityV1 {
-                runtime: self.runtime.clone(),
-                context: self.context.clone(),
-                run_events: self.run_events.clone(),
-                steering_node: None,
-            },
-        };
-        let guidance = super::tool_registry::instruction_block(
-            self.context
-                .bindings
-                .iter()
-                .filter(|binding| SUBAGENT_CHILD_TOOL_IDS.contains(&binding.capability_id.as_str()))
-                .map(|binding| (binding.capability_id.as_str(), &binding.options)),
-        );
-        let mut messages = Vec::new();
-        if !guidance.is_empty() {
-            messages.push(json!({"role":"system","content":guidance}));
-        }
-        messages.push(
-            json!({"role":"user","content":format!("{task}\n\nRelevant context:\n{context_text}")}),
-        );
-        let child_input = json!({"messages":messages});
-        match execute_model_tool_loop_v1(
-            gateway,
-            ModelToolLoopRequestV1 {
-                agent_context: Some(
-                    child_authority
-                        .inner
-                        .child_instruction_context(&envelope.invocation_id)?,
-                ),
-                outer_invocation_id: &envelope.invocation_id,
-                input: child_input,
-                initial_context: Vec::new(),
-                parameters: BTreeMap::new(),
-                definitions,
-                binding_id: binding_id.clone(),
-                binding_version_hash: version_hash.clone(),
-                maximum_input_bytes: SUBAGENT_MAXIMUM_INPUT_BYTES,
-                maximum_output_bytes: SUBAGENT_MAXIMUM_OUTPUT_BYTES,
-                maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
-                maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
-            },
-            &child_authority,
-            cancellation,
-        ) {
-            Ok(completed) => {
-                let value = json!({
-                    "finalText": completed.assistant_text,
-                    "modelTurns": completed.attempted_model_turns,
-                    "toolCalls": completed.settled_tool_calls,
-                    "inputTokens": completed.input_tokens,
-                    "outputTokens": completed.output_tokens,
-                });
-                Ok((
-                    value,
-                    format!(
-                        "Subagent completed in {} model turn(s) with {} tool call(s).",
-                        completed.attempted_model_turns, completed.settled_tool_calls
-                    ),
-                ))
-            }
-            Err(failure) => Err(format!("subagent failed: {}", failure.error)),
-        }
-    }
 }
-
-/// Read-only, approval-free tool port for subagent children. The allowed set
-/// excludes the subagent tool itself (capping v1 depth at one) and every
-/// approval-requiring tool.
-struct SubagentToolPortV1<'a> {
-    inner: &'a BoundFileToolAuthorityV1,
-}
-
-impl ModelToolInvocationPortV1 for SubagentToolPortV1<'_> {
-    fn manage_model_context(
-        &self,
-        gateway: &aworkit_capability_host::FrozenModelGateway,
-        plan: &aworkit_capability_host::ModelResolutionPlanV1,
-        outer: &StableId,
-        through: usize,
-        agent: Option<&super::model_tool_loop::AgentContextV1>,
-        request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken,
-        trigger: super::compaction::Trigger,
-    ) -> Result<super::compaction::Preparation, String> {
-        self.inner.manage_context(
-            gateway,
-            plan,
-            outer,
-            through,
-            agent,
-            request,
-            cancellation,
-            trigger,
-        )
-    }
-    fn record_context_usage(
-        &self,
-        outer: &StableId,
-        agent: Option<&super::model_tool_loop::AgentContextV1>,
-        request: &aworkit_capability_host::ModelToolRequestV1,
-        input: u64,
-        output: u64,
-        assistant_tokens: u64,
-    ) -> Result<(), String> {
-        self.inner
-            .context_usage(outer, agent, request, input, output, assistant_tokens)
-    }
-    fn prepare_automatic_context(
-        &self,
-        outer: &StableId,
-        after_exchanges: usize,
-        agent: &super::model_tool_loop::AgentContextV1,
-        request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken,
-    ) -> Result<(), String> {
-        self.inner
-            .workspace_context(outer, after_exchanges, agent, request, cancellation)
-    }
-    fn prepare_context(
-        &self,
-        outer: &StableId,
-        after_exchanges: usize,
-        definitions: &[ModelToolDefinitionV1],
-        cancellation: &CancellationToken,
-    ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
-        self.inner
-            .skill_context(outer, after_exchanges, definitions, false, cancellation)
-    }
-
-    fn invoke(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        call: &ModelToolCallV1,
-        cancellation: &CancellationToken,
-    ) -> Result<SettledModelToolCallV1, String> {
-        self.guard(call)?;
-        self.inner
-            .invoke_v1_scoped(outer_invocation_id, turn, call, cancellation)
-            .map_err(|error| error.to_string())
-    }
-
-    fn invoke_extended(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        call: &ModelToolCallV1,
-        cancellation: &CancellationToken,
-    ) -> Result<ToolInvokeV1, String> {
-        self.guard(call)?;
-        match self
-            .inner
-            .invoke_v1_scoped(outer_invocation_id, turn, call, cancellation)
-        {
-            Ok(settled) => Ok(ToolInvokeV1::Settled(settled)),
-            Err(WorkflowPipelineError::ToolApproval(challenge)) => {
-                Ok(ToolInvokeV1::Approval(challenge))
-            }
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    fn commit_exchange(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        exchange: &ModelToolExchangeV1,
-    ) -> Result<(), String> {
-        self.inner
-            .commit_exchange(outer_invocation_id, turn, exchange)
-    }
-}
-
-impl SubagentToolPortV1<'_> {
-    fn guard(&self, call: &ModelToolCallV1) -> Result<(), String> {
-        if !SUBAGENT_CHILD_TOOL_IDS.contains(&call.capability_id.as_str()) {
-            return Err("tool is not available to subagent children".to_owned());
-        }
-        Ok(())
-    }
-}
-
 fn shell_program() -> Result<PathBuf, String> {
     #[cfg(windows)]
     let candidate = std::env::var_os("ComSpec")
@@ -3624,6 +3393,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. } => {
             BTreeSet::from(["url", "documentId", "offset", "feedContent"])
         }
+        StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         // MCP argument shapes are server-defined; the frozen validator only
         // bounds the payload. The session layer enforces the exact discovered
@@ -3641,6 +3411,9 @@ fn validate_call_arguments(
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation")
         }
         StoredFileToolLimitV1::Subagent { .. } => {
+            if object.get("readOnly").is_some_and(|v| !v.is_boolean()) {
+                return Err(invalid_tool("readOnly must be boolean"));
+            }
             // The subagent context slice is optional; the task is required.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
         }
@@ -4479,6 +4252,7 @@ mod tests {
         )
         .expect("capability binding");
         let authority_a = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            delegation: None,
             chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
@@ -4502,6 +4276,7 @@ mod tests {
             cancellation: CancellationToken::default(),
         });
         let authority_b = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            delegation: None,
             chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
@@ -4559,6 +4334,7 @@ mod tests {
         );
 
         let expired_authority = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            delegation: None,
             chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
@@ -4600,6 +4376,7 @@ mod tests {
         )
         .expect("frozen HEAD");
         let authority_c = runtime.bind(FrozenFileToolAuthorityContextV1 {
+            delegation: None,
             chat_id: "chat.fixture".into(),
             approvals: Default::default(),
             review_messages: Vec::new(),
@@ -4915,10 +4692,16 @@ mod tests {
         assert_eq!(
             binding.limit,
             StoredFileToolLimitV1::Subagent {
+                inherit_parent_tools: false,
                 legacy_maximum_turns: None
             }
         );
         assert!(binding.requires_approval);
+        assert!(binding.input_schema["properties"].get("readOnly").is_none());
+        let stored = serde_json::to_value(&binding).unwrap();
+        assert!(stored["limit"].get("inherit_parent_tools").is_none());
+        let restored: StoredFileToolBindingV1 = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), stored, "old frozen authority must not change on reload");
         assert!(matches!(
             freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
                 options: Default::default(),

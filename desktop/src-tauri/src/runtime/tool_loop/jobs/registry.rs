@@ -21,6 +21,9 @@ struct Record {
     id: String,
     owner: String,
     invocation: String,
+    /// The Agent/child invocation that launched this job; old jobs remain root-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
     command: Vec<String>,
     snapshot: ProcessSnapshot,
     cursor: ProcessOutputCursor,
@@ -151,12 +154,16 @@ impl JobRegistry {
     }
 
     pub fn stop_unkept(&self, owner: &str) {
+        self.stop_unkept_scoped(owner, None);
+    }
+
+    pub fn stop_unkept_scoped(&self, owner: &str, scope: Option<&str>) {
         if let Ok(state) = self.state.lock() {
-            for entry in state
-                .entries
-                .values()
-                .filter(|e| e.record.owner == owner && e.record.kept.is_none())
-            {
+            for entry in state.entries.values().filter(|e| {
+                e.record.owner == owner
+                    && e.record.kept.is_none()
+                    && scope.is_none_or(|scope| e.record.scope.as_deref() == Some(scope))
+            }) {
                 if let Some(session) = &entry.session {
                     session.stop();
                 }
@@ -174,10 +181,24 @@ impl JobRegistry {
         }
     }
 
+    #[cfg(test)]
     pub fn start(
         &self,
         owner: &str,
         invocation: &str,
+        spec: &ProcessSpecV1,
+        interactive: bool,
+        cancellation: CancellationToken,
+    ) -> Result<String, String> {
+        self.start_scoped(owner, invocation, None, spec, interactive, cancellation)
+    }
+
+    /// Scope is supplied by the trusted invocation context, never model arguments.
+    pub fn start_scoped(
+        &self,
+        owner: &str,
+        invocation: &str,
+        scope: Option<&str>,
         spec: &ProcessSpecV1,
         interactive: bool,
         cancellation: CancellationToken,
@@ -241,6 +262,7 @@ impl JobRegistry {
             id: id.clone(),
             owner: owner.into(),
             invocation: invocation.into(),
+            scope: scope.map(str::to_owned),
             command: spec.arguments.clone(),
             snapshot: ProcessSnapshot {
                 running: true,
@@ -338,6 +360,7 @@ impl JobRegistry {
         )
     }
 
+    #[cfg(test)]
     pub fn control(
         &self,
         owner: &str,
@@ -345,11 +368,30 @@ impl JobRegistry {
         args: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
+        self.control_scoped(owner, None, operation, args, cancellation)
+    }
+
+    pub fn control_scoped(
+        &self,
+        owner: &str,
+        scope: Option<&str>,
+        operation: &str,
+        args: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, String> {
         self.refresh()?;
         if operation == "job_list" {
-            return self.list(owner);
+            return self.list_scoped(owner, scope);
         }
         let id = args["jobId"].as_str().ok_or("jobId missing")?;
+        if let Some(scope) = scope {
+            let state = self.state.lock().map_err(err)?;
+            if owned(&state, owner, id)?.record.scope.as_deref() != Some(scope) {
+                return Err(
+                    "job is not owned by this subagent; ask the parent to handle it".into(),
+                );
+            }
+        }
         if operation == "job_output" {
             let cursor = args
                 .get("cursor")
@@ -436,15 +478,23 @@ impl JobRegistry {
         save(&state.connection, &record)
     }
 
-    fn list(&self, owner: &str) -> Result<Value, String> {
+    pub fn list_scoped(&self, owner: &str, scope: Option<&str>) -> Result<Value, String> {
         let state = self.state.lock().map_err(err)?;
         Ok(
-            json!({"jobs":state.entries.values().filter(|e| e.record.owner == owner).map(|e| json!({"jobId":e.record.id,"running":e.record.snapshot.running,"exitCode":e.record.snapshot.exit_code,"error":e.record.snapshot.error,"collected":e.record.collected,"kept":e.record.kept,"cursor":e.record.cursor})).collect::<Vec<_>>()}),
+            json!({"jobs":state.entries.values().filter(|e| e.record.owner == owner && scope.is_none_or(|s| e.record.scope.as_deref() == Some(s))).map(|e| json!({"jobId":e.record.id,"running":e.record.snapshot.running,"exitCode":e.record.snapshot.exit_code,"error":e.record.snapshot.error,"collected":e.record.collected,"kept":e.record.kept,"cursor":e.record.cursor})).collect::<Vec<_>>()}),
         )
     }
 
     /// A runtime gate, independent of model promises to clean up later.
     pub fn completion_notice(&self, owner: &str) -> Result<Option<String>, String> {
+        self.completion_notice_scoped(owner, None)
+    }
+
+    pub fn completion_notice_scoped(
+        &self,
+        owner: &str,
+        scope: Option<&str>,
+    ) -> Result<Option<String>, String> {
         self.refresh()?;
         let state = self.state.lock().map_err(err)?;
         let unresolved = state
@@ -452,6 +502,7 @@ impl JobRegistry {
             .values()
             .filter(|e| {
                 e.record.owner == owner
+                    && scope.is_none_or(|scope| e.record.scope.as_deref() == Some(scope))
                     && if e.record.snapshot.running {
                         e.record.kept.is_none()
                     } else {
