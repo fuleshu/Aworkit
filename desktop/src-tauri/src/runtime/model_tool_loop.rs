@@ -328,8 +328,14 @@ pub(crate) struct ModelToolLoopOutcomeV1 {
 pub(crate) enum ModelToolLoopErrorV1 {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    /// The trusted core refused to settle or authorise a requested capability.
     #[error("tool authority rejected the provider request: {0}")]
     ToolAuthority(String),
+    /// The trusted core could not prepare the model-visible context. Context
+    /// preparation is not tool authority: a checkpoint or revision that cannot
+    /// be projected is a context condition, never an authority decision.
+    #[error("context preparation failed: {0}")]
+    Context(String),
     #[error("Agent model/tool budget is exhausted: {0}")]
     Budget(&'static str),
     #[error("provider accepted the Agent turn but returned no final assistant text")]
@@ -597,7 +603,7 @@ fn execute_tool_turn_with_timeout_recovery(
             cancellation,
             super::compaction::Trigger::Pressure,
         )
-        .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+        .map_err(ModelToolLoopErrorV1::Context)?;
     *input_tokens = input_tokens.saturating_add(preparation.input_tokens);
     *output_tokens = output_tokens.saturating_add(preparation.output_tokens);
     // A provider failure inside the auxiliary compaction request is reported on
@@ -607,7 +613,7 @@ fn execute_tool_turn_with_timeout_recovery(
         report_provider_failure(recovery, error, &mut provider_request);
     }
     if let Some(error) = preparation.error {
-        return Err(ModelToolLoopErrorV1::ToolAuthority(error));
+        return Err(ModelToolLoopErrorV1::Context(error));
     }
     if preparation.durable {
         *exchanges = provider_request.exchanges.clone();
@@ -633,14 +639,14 @@ fn execute_tool_turn_with_timeout_recovery(
                         cancellation,
                         super::compaction::Trigger::ContextOverflow,
                     )
-                    .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+                    .map_err(ModelToolLoopErrorV1::Context)?;
                 *input_tokens = input_tokens.saturating_add(reduction.input_tokens);
                 *output_tokens = output_tokens.saturating_add(reduction.output_tokens);
                 if let Some(error) = &reduction.provider_error {
                     report_provider_failure(recovery, error, &mut provider_request);
                 }
                 if let Some(error) = reduction.error {
-                    return Err(ModelToolLoopErrorV1::ToolAuthority(error));
+                    return Err(ModelToolLoopErrorV1::Context(error));
                 }
                 if cancellation.is_cancelled() {
                     return Err(ProviderError::Cancelled.into());
@@ -683,7 +689,7 @@ fn execute_tool_turn_with_timeout_recovery(
                         })
                         .tokens(),
                     )
-                    .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
+                    .map_err(ModelToolLoopErrorV1::Context)?;
                 return Ok(evidence);
             }
         }

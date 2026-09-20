@@ -166,6 +166,35 @@ impl BoundFileToolAuthorityV1 {
             .transpose()
     }
 
+    /// Recorded history is preserved evidence, never a claim on a pass's tool
+    /// selection. When a checkpoint or a saved revision calls a capability this
+    /// pass does not select, its recorded projection is declined and the
+    /// condition is committed so the Chat explains why a pass ran on fresh
+    /// context instead of ending the Agent node.
+    fn record_declined_selection(
+        &self,
+        owner: &AgentContextV1,
+        source: &str,
+        capabilities: &[String],
+    ) -> Result<(), String> {
+        self.run_events.context_event(
+            "context.selection-declined",
+            json!({
+                "ownerKey": self.context_key(),
+                "nodeId": owner.node_id,
+                "child": owner.child,
+                "source": source,
+                "capabilities": capabilities,
+                "body": format!(
+                    "Recorded context was not restored: it calls {} that this pass does not select. \
+                     Committed evidence is unchanged; this pass continues on its current context.",
+                    capabilities.join(", ")
+                ),
+            }),
+        )?;
+        Ok(())
+    }
+
     fn append_completed_exchanges(
         &self,
         request: &mut ModelToolRequestV1,
@@ -220,17 +249,13 @@ impl BoundFileToolAuthorityV1 {
             .cloned()
             .collect();
         let previous = self.context_snapshot(owner)?;
-        let edit = owner
+        let mut edit = owner
             .child
             .is_none()
-            .then(|| {
-                events
-                    .iter()
-                    .rev()
-                    .find(|e| e.kind == "context.edited" && e.payload["nodeId"] == owner.node_id)
-            })
+            .then(|| crate::runtime::context_inspection::saved_edit(&events, &owner.node_id))
+            .transpose()?
             .flatten();
-        if edit.is_some_and(|edit| {
+        if edit.as_ref().is_some_and(|edit| {
             previous
                 .as_ref()
                 .is_none_or(|(seq, _)| edit.sequence > *seq)
@@ -238,10 +263,23 @@ impl BoundFileToolAuthorityV1 {
             // An edit owns context already admitted for this invocation. Do not
             // re-add its initial graph context (or revive a deliberately removed
             // copy); only context from later exchange boundaries is new.
+            //
+            // The selection is this pass's interface; the revision supplies
+            // history. A revision whose recorded calls name a capability this
+            // pass no longer selects cannot be projected at all, so the pass
+            // keeps its own fresh context and the next checkpoint replaces the
+            // unrepresentable one.
+            let mut edit = edit.take().expect("checked edit");
+            if let crate::runtime::context_inspection::ContextAdmissionV1::Unavailable(capabilities) =
+                crate::runtime::context_inspection::admit_edit(&mut edit, &request.tools)
+            {
+                self.record_declined_selection(owner, "edit", &capabilities)?;
+                return Ok(None);
+            }
             if let Some((_, snapshot)) = previous.as_ref().filter(|(_, s)| s.outer == outer.as_str()) {
                 request.context_messages.retain(|m| m.after_exchanges > snapshot.through);
             }
-            crate::runtime::context_inspection::apply_edit(&events, &owner.node_id, request)?;
+            crate::runtime::context_inspection::apply_edit(&events, &edit, request)?;
             return Ok(None);
         }
         let Some((sequence, snapshot)) = previous else {
@@ -258,10 +296,12 @@ impl BoundFileToolAuthorityV1 {
             }
             return Ok(None);
         };
-        if snapshot.document.tools != request.tools {
-            return Err("Context checkpoint tools differ from the frozen Agent selection".into());
-        }
+        // A checkpoint records the selection of the pass that wrote it. The
+        // acting node's frozen selection is this pass's interface, so it is
+        // adopted here rather than compared: a refreshed description, schema or
+        // provider alias never invalidates a Chat's committed history.
         let mut restored = snapshot.document.request();
+        restored.tools = request.tools.clone();
         restored.parameters = request.parameters.clone();
         // System layers are current workflow facts. Changing them invalidates an
         // anchor but cannot resurrect shadowed conversation or tool results.
@@ -367,6 +407,24 @@ impl BoundFileToolAuthorityV1 {
             restored.context_messages.push(context);
         }
         restored.retry_notice = request.retry_notice.clone();
+        // Every recorded call the restored selection will carry must be
+        // representable under this pass's selection: the checkpoint's own
+        // exchanges and the exchanges appended from committed records alike.
+        // Recorded calls are re-pointed at the provider name this pass offers for
+        // the same capability id; a call whose capability this pass no longer
+        // selects cannot be projected at all, so the projection is declined and
+        // the pass keeps its own fresh context. The checkpoint saved at the end of
+        // this turn then replaces the unrepresentable one. Committed evidence is
+        // never rewritten, and no tool interface change ends the Agent node.
+        if let crate::runtime::context_inspection::ContextAdmissionV1::Unavailable(capabilities) =
+            crate::runtime::context_inspection::admit_current_tools(
+                &mut restored.exchanges,
+                &request.tools,
+            )
+        {
+            self.record_declined_selection(owner, "checkpoint", &capabilities)?;
+            return Ok(None);
+        }
         let anchor = events
             .iter()
             .rev()

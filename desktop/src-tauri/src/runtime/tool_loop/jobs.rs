@@ -121,9 +121,15 @@ impl FileToolDispatcherV1 {
         interactive: bool,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
-        if !controls_available(&self.context.bindings) {
-            return Err("Managed execution requires job_output, job_input, job_stop and job_list in this Chat's frozen tools. Enable them and create a new Chat.".into());
-        }
+        // Job control is intrinsic: the controls accompany the capability that
+        // launches work, so every frozen selection that can reach this dispatch
+        // already holds them. A Chat is never left on a second, older behaviour
+        // by a switch that happened to stay off, and no bookkeeping state of a
+        // Chat may refuse to start work the Chat is authorised to run.
+        debug_assert!(
+            controls_available(&self.context.bindings),
+            "job control accompanies a bound host shell/Python capability"
+        );
         if cancellation.is_cancelled() || self.context.cancellation.is_cancelled() {
             return Err(format!("{label} launch cancelled"));
         }

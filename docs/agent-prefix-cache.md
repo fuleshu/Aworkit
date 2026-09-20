@@ -32,6 +32,30 @@ the edit can retain or remove it without duplication or resurrection on resume.
 This uses the existing checkpoint/event store; it adds no cache, background task,
 extra provider call or full-history reconstruction.
 
+## Tool interface and recorded history (September 19, 2026)
+
+Tool definitions are interface, not history. Every pass resolves its frozen tool
+selection from this build, while a Chat keeps only the authority that selects
+capabilities. A checkpoint or a saved context revision therefore records the
+interface of the pass that wrote it, and continuing a Chat whose checkpoint
+predates a refreshed description, schema or provider alias restores its committed
+history under the current selection: recorded calls are re-pointed at the provider
+name this pass offers for the same capability id, and the checkpoint's own
+definitions are never offered to a provider.
+
+A recorded call whose capability the pass no longer selects cannot be represented
+in a provider request at all. That projection is declined and recorded as
+`context.selection-declined`; the pass continues on its own current context and
+its next checkpoint replaces the unrepresentable one. Neither case ends the Agent
+node, and no committed evidence is rewritten.
+
+Comparing the checkpoint's definitions with the acting selection instead (and
+failing the pass on any difference) ended Agent nodes with "tool authority
+rejected the provider request: Context checkpoint tools differ from the frozen
+Agent selection" for every continuation once an interface changed — a context
+condition reported as an authority decision. Context preparation failures are now
+reported as `context preparation failed`, distinct from a tool-authority refusal.
+
 ## Compatibility and proof
 
 Existing checkpoints remain readable. Their first request after upgrading can

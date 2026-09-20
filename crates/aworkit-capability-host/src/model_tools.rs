@@ -323,10 +323,9 @@ fn normalize_messages(
             .transpose()
             .map_err(|_| invalid_tool_request())?
             .unwrap_or_default();
-        // Each image is validated on its own. How many images one provider
-        // request accepts is a dispatch budget, not a request-shape rule: the
-        // gateway fits the dispatch copy and tells the model what was left out,
-        // so a Chat that accumulated more images never fails its Agent node.
+        // Every image is validated on its own. There is no image count or
+        // aggregate image-byte allowance in Aworkit: a request carries exactly
+        // the images its Chat holds, so accumulating images never fails a node.
         for image in &images {
             image.attachment.validate()?;
         }

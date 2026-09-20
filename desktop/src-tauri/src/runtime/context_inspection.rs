@@ -2,7 +2,8 @@
 
 use super::semantic_events::CoreEventEnvelope;
 use aworkit_capability_host::{
-    ModelToolContextV1, ModelToolDefinitionV1, ModelToolExchangeV1, ModelToolRequestV1,
+    ModelAssistantContentV1, ModelToolContextV1, ModelToolDefinitionV1, ModelToolExchangeV1,
+    ModelToolRequestV1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -119,16 +120,65 @@ impl ContextDocument {
             images.extend(refs);
         }
         images.extend(self.exchanges.iter().flat_map(|e| &e.results).flat_map(|r| r.images.clone()));
-        // A durable context is not a provider request: it may accumulate more
-        // images than one dispatch accepts, and dispatch fits that budget while
-        // telling the model what was omitted. Only each image itself is checked
-        // here, so a long Chat never fails its Agent node on image count.
+        // A durable context is never bounded by an image count or a total image
+        // size: every image a Chat holds stays in it, and only each image itself
+        // is checked here.
         for image in &images {
             image.validate().map_err(|e| e.to_string())?;
         }
         self.request()
             .validate()
             .map_err(|e| format!("Invalid model context: {e}"))
+    }
+}
+
+/// Admission of a durable recorded selection under this pass's frozen tools.
+///
+/// Tool definitions are interface, not history: this build resolves them for
+/// every pass and a Chat keeps only the authority that selects capabilities. A
+/// checkpoint or a saved edit therefore records the selection of the pass that
+/// wrote it, while the acting node's frozen selection is the only set a provider
+/// may be offered now. Adopting the current interface is the normal case; a
+/// recorded call whose capability this pass no longer selects cannot be
+/// represented in a provider request at all.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ContextAdmissionV1 {
+    /// The recorded history is representable under the current selection.
+    Admitted,
+    /// Capabilities the recorded history calls that this pass does not select.
+    /// Durable evidence stays untouched and the caller keeps its own context.
+    Unavailable(Vec<String>),
+}
+
+/// Re-points recorded calls at the provider name this pass offers for their
+/// capability. `capability_id` is the immutable identity that settles a call, so
+/// a refreshed description, schema or provider alias never invalidates committed
+/// history, and no recorded projection is ever rewritten in the event store.
+pub(crate) fn admit_current_tools(
+    exchanges: &mut [ModelToolExchangeV1],
+    tools: &[ModelToolDefinitionV1],
+) -> ContextAdmissionV1 {
+    let mut unavailable: Vec<String> = Vec::new();
+    for exchange in exchanges {
+        for content in exchange.assistant_content.iter_mut() {
+            if let ModelAssistantContentV1::ToolCall { call } = content {
+                match tools
+                    .iter()
+                    .find(|tool| tool.capability_id == call.capability_id)
+                {
+                    Some(definition) => call.name.clone_from(&definition.name),
+                    None if !unavailable.contains(&call.capability_id) => {
+                        unavailable.push(call.capability_id.clone());
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    if unavailable.is_empty() {
+        ContextAdmissionV1::Admitted
+    } else {
+        ContextAdmissionV1::Unavailable(unavailable)
     }
 }
 
@@ -218,25 +268,64 @@ pub(crate) fn select_context(
     })
 }
 
-/// Apply an explicit revision to this node only, then add subsequent conversation
-/// and this invocation's new exchanges. Historical tool calls are context, never executed.
-pub(crate) fn apply_edit(
+/// The most recent explicit revision saved for one node, with the sequence that
+/// owns it. Decoding is separate from applying so a caller can decide admission
+/// before it mutates anything.
+#[derive(Clone, Debug)]
+pub(crate) struct SavedContextEditV1 {
+    pub sequence: u64,
+    pub document: ContextDocument,
+}
+
+/// Decode the latest saved revision for this node, if any.
+pub(crate) fn saved_edit(
     events: &[impl std::borrow::Borrow<CoreEventEnvelope>],
     node_id: &str,
-    current: &mut ModelToolRequestV1,
-) -> Result<(), String> {
-    let events: Vec<&CoreEventEnvelope> = events.iter().map(std::borrow::Borrow::borrow).collect();
-    let Some(edit) = events
+) -> Result<Option<SavedContextEditV1>, String> {
+    events
         .iter()
+        .map(std::borrow::Borrow::borrow)
         .rev()
-        .find(|e| e.kind == "context.edited" && e.payload["nodeId"] == node_id)
-    else {
-        return Ok(());
-    };
-    let mut document: ContextDocument =
-        serde_json::from_value(edit.payload["document"].clone()).map_err(|e| e.to_string())?;
-    if document.tools != current.tools {
-        return Err("Saved context tools differ from this node's frozen tools.".into());
+        .find(|event| event.kind == "context.edited" && event.payload["nodeId"] == node_id)
+        .map(|event| {
+            serde_json::from_value(event.payload["document"].clone())
+                .map(|document| SavedContextEditV1 {
+                    sequence: event.sequence,
+                    document,
+                })
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
+}
+
+/// Admit a saved revision's recorded calls under this pass's frozen tools, in
+/// place, so a caller can decide admission before it mutates its own request.
+pub(crate) fn admit_edit(
+    edit: &mut SavedContextEditV1,
+    tools: &[ModelToolDefinitionV1],
+) -> ContextAdmissionV1 {
+    admit_current_tools(&mut edit.document.exchanges, tools)
+}
+
+/// Apply an explicit revision to this node only, then add subsequent conversation
+/// and this invocation's new exchanges. Historical tool calls are context, never executed.
+///
+/// The revision records the interface of the pass that saved it, while the acting
+/// node's frozen selection is the only set a provider may be offered. The current
+/// definitions are therefore adopted; a revision whose recorded calls name a
+/// capability this pass no longer selects cannot be represented at all and is
+/// declined, leaving the caller's request untouched.
+pub(crate) fn apply_edit(
+    events: &[impl std::borrow::Borrow<CoreEventEnvelope>],
+    edit: &SavedContextEditV1,
+    current: &mut ModelToolRequestV1,
+) -> Result<ContextAdmissionV1, String> {
+    let events: Vec<&CoreEventEnvelope> = events.iter().map(std::borrow::Borrow::borrow).collect();
+    let mut document = edit.document.clone();
+    if let ContextAdmissionV1::Unavailable(capabilities) =
+        admit_current_tools(&mut document.exchanges, &current.tools)
+    {
+        return Ok(ContextAdmissionV1::Unavailable(capabilities));
     }
     // Messages committed after the edit are added once, at the end of its prefix.
     for event in events.iter().filter(|e| e.sequence > edit.sequence) {
@@ -267,7 +356,9 @@ pub(crate) fn apply_edit(
     current.input = document.input;
     current.context_messages = document.context_messages;
     current.exchanges = document.exchanges;
-    Ok(())
+    // The pass keeps its own tool definitions: the revision supplied history and
+    // recorded calls were already re-pointed at this pass's provider names.
+    Ok(ContextAdmissionV1::Admitted)
 }
 
 #[cfg(test)]

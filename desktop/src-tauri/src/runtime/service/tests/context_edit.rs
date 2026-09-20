@@ -1,5 +1,7 @@
 use super::*;
-use crate::runtime::context_inspection::{ContextDocument, apply_edit, select_context};
+use crate::runtime::context_inspection::{
+    ContextAdmissionV1, ContextDocument, apply_edit, saved_edit, select_context,
+};
 
 #[test]
 fn manual_compaction_settles_without_conversation_messages_and_fork_keeps_selection() {
@@ -154,7 +156,11 @@ fn context_edit_commits_once_reopens_and_preserves_conversation() {
         "Revised prompt"
     );
     let mut next = ContextDocument::from_input(&input).unwrap().request();
-    apply_edit(&snapshot.events, "agent.1", &mut next).unwrap();
+    let edit = saved_edit(&snapshot.events, "agent.1").unwrap().unwrap();
+    assert_eq!(
+        apply_edit(&snapshot.events, &edit, &mut next).unwrap(),
+        ContextAdmissionV1::Admitted
+    );
     assert_eq!(next.input["messages"][0]["content"], "Revised prompt");
     assert_eq!(next.context_messages[0].content, "Revised answer");
     let unchanged = UiCommandInput {

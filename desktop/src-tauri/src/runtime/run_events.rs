@@ -207,11 +207,34 @@ impl RunEventStream {
             .map(str::to_owned);
         drop(state);
         if let Some(node_id) = node_id {
-            super::context_inspection::apply_edit(
-                &self.committer.committed_events_shared()?,
-                &node_id,
-                request,
-            )?;
+            let events = self.committer.committed_events_shared()?;
+            let Some(mut edit) = super::context_inspection::saved_edit(&events, &node_id)? else {
+                return Ok(());
+            };
+            // A saved revision supplies history; this pass supplies the tool
+            // interface, so the current definitions are adopted. A revision whose
+            // recorded calls name a capability this pass no longer selects is
+            // declined rather than allowed to end the call.
+            if let super::context_inspection::ContextAdmissionV1::Unavailable(capabilities) =
+                super::context_inspection::admit_edit(&mut edit, &request.tools)
+            {
+                self.publish(SemanticEventDraft::new(
+                    "context.selection-declined",
+                    json!({
+                        "requestId": self.request_id,
+                        "runId": self.run_id,
+                        "nodeId": node_id,
+                        "source": "edit",
+                        "capabilities": capabilities,
+                        "body": format!(
+                            "A saved context revision was not applied: it calls {} that this pass does not select. Committed evidence is unchanged.",
+                            capabilities.join(", ")
+                        ),
+                    }),
+                ));
+                return Ok(());
+            }
+            super::context_inspection::apply_edit(&events, &edit, request)?;
         }
         Ok(())
     }

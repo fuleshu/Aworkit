@@ -412,6 +412,7 @@ function projectFact(
   }
   if (event.kind === "context.compacted" && fact.strategy !== "summary") return baseItem(event, fact, { kind: "step", title: "Tool results compacted", status: "completed" });
   if (event.kind === "context.compaction-warning") return baseItem(event, fact, { kind: "step", title: "Context compaction", status: "warning" });
+  if (event.kind === "context.selection-declined") return { ...baseItem(event, fact, { kind: "step", title: "Recorded context not restored", status: "warning" }), body: string(fact.body) ?? "" };
   if (event.kind === "context.compaction-started") {
     const ended = terminalEvents.find(e => e.kind === "context.compaction-ended" && record(e.payload).compactionId === fact.compactionId);
     const error = ended && string(record(ended.payload).error);

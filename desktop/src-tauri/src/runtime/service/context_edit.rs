@@ -47,7 +47,7 @@ impl DesktopRuntime {
         }
         edit.document.validate()?;
         if edit.document.tools != original.document.tools {
-            return Err("Tool definitions are frozen for this Chat. Edit messages, injected context and exchanges; change tools in a new workflow.".into());
+            return Err("This editor revises messages, injected context and recorded exchanges. The workflow and this build resolve the tool selection; change tools in the workflow, not in a Chat.".into());
         }
         if edit.document == original.document {
             let receipt = UiCommandReceipt {

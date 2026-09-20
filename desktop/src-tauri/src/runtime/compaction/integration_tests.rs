@@ -612,6 +612,209 @@ fn successive_actual_compactions_rearm_missing_scopes_and_preserve_partial_survi
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
+/// Commits a checkpoint that records the tool interface of an earlier build: the
+/// descriptions of that pass plus a recorded call under the provider alias or the
+/// capability of that pass.
+fn commit_stale_checkpoint(
+    f: &Fixture,
+    outer: &str,
+    request: &ModelToolRequestV1,
+    capability_id: &str,
+    name: &str,
+) {
+    let mut document = crate::runtime::context_inspection::ContextDocument::from_request(request);
+    for tool in &mut document.tools {
+        tool.description = "Superseded description from an earlier build.".into();
+    }
+    document.exchanges = request.exchanges.clone();
+    for exchange in &mut document.exchanges {
+        for content in exchange.assistant_content.iter_mut() {
+            if let aworkit_capability_host::ModelAssistantContentV1::ToolCall { call } = content {
+                call.capability_id = capability_id.into();
+                call.name = name.into();
+            }
+        }
+    }
+    let snapshot = c::Snapshot {
+        node_id: f.agent.node_id.clone(),
+        child: None,
+        outer: outer.into(),
+        through: document.exchanges.len(),
+        conversation_cursor: 0,
+        conversation_sequence: None,
+        document,
+        anchor: None,
+    };
+    let owner_key = c::hash(&json!({
+        "chat": f.authority.context.chat_id,
+        "branch": f.authority.context.project_branch
+    }));
+    f.committer
+        .commit(vec![SemanticEventDraft::new(
+            "context.checkpoint",
+            json!({
+                "ownerKey": owner_key,
+                "nodeId": f.agent.node_id,
+                "child": null,
+                "pressureTokens": 1,
+                "pressureReported": false,
+                "snapshot": snapshot,
+            }),
+        )])
+        .unwrap();
+}
+
+/// A checkpoint records the interface of the pass that wrote it, while every pass
+/// resolves its own interface from this build and a Chat owns only the authority
+/// that selects capabilities. Continuing a Chat whose checkpoint predates a
+/// refreshed description, schema or provider alias must restore its committed
+/// history under the current selection: comparing the two interfaces instead
+/// ended Agent nodes with "tool authority rejected the provider request:
+/// Context checkpoint tools differ from the frozen Agent selection".
+#[test]
+fn checkpoint_with_an_older_tool_interface_restores_under_the_current_selection() {
+    let mut f = Fixture::new();
+    let (outer, request) = history(&mut f);
+    commit_stale_checkpoint(&f, outer.as_str(), &request, FILE_READ_CAPABILITY_ID, "read_legacy");
+    let (gateway, calls, plan) = gateway(|_| panic!("No auxiliary call needed"));
+    let mut next = f.request();
+    f.prepare(outer.as_str(), 0, &mut next);
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.error.is_none(), "{:?}", prepared.error);
+    assert!(calls.lock().unwrap().is_empty());
+    assert_eq!(next.tools, request.tools, "the pass keeps its own selection");
+    assert_eq!(
+        next.exchanges, request.exchanges,
+        "the recorded call is re-pointed at the provider name this pass offers"
+    );
+    assert!(
+        !f.committer
+            .committed_events()
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "context.selection-declined")
+    );
+}
+
+/// A recorded call whose capability this pass no longer selects cannot be
+/// represented in a provider request. The projection is declined, the condition
+/// is committed, and the pass continues on its own context: committed evidence
+/// stays untouched and no tool interface change can end an Agent node.
+#[test]
+fn checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node() {
+    let mut f = Fixture::new();
+    let (outer, request) = history(&mut f);
+    commit_stale_checkpoint(&f, outer.as_str(), &request, "tool.shell.host", "shell");
+    let (gateway, calls, plan) = gateway(|_| panic!("No auxiliary call needed"));
+    let mut next = f.request();
+    f.prepare(outer.as_str(), 0, &mut next);
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.error.is_none(), "{:?}", prepared.error);
+    assert!(calls.lock().unwrap().is_empty());
+    let events = f.committer.committed_events().unwrap();
+    let declined = events
+        .iter()
+        .find(|e| e.kind == "context.selection-declined")
+        .expect("the declined projection is recorded");
+    assert_eq!(
+        declined.payload["capabilities"][0],
+        json!("tool.shell.host"),
+        "the condition names the capability this pass cannot offer"
+    );
+    assert!(next.exchanges.is_empty());
+    assert!(
+        events
+            .iter()
+            .any(|e| e.kind == "context.checkpoint" && e.sequence > declined.sequence),
+        "the pass saves its own checkpoint, so the next turn is consistent again"
+    );
+}
+
+/// Exchanges are also appended from committed records, not only from the
+/// checkpoint. Those records were written by the pass that settled them, so they
+/// name their calls under the provider alias of that build too. Every call the
+/// restored selection carries is admitted before it can reach a provider.
+#[test]
+fn appended_committed_exchanges_are_admitted_under_the_current_selection() {
+    let mut f = Fixture::new();
+    let (outer, request) = history(&mut f);
+    let mut legacy = request.exchanges[0].clone();
+    for content in legacy.assistant_content.iter_mut() {
+        if let aworkit_capability_host::ModelAssistantContentV1::ToolCall { call } = content {
+            call.name = "read_legacy".into();
+        }
+    }
+    f.authority.commit_exchange(&outer, 2, &legacy).unwrap();
+    commit_stale_checkpoint(
+        &f,
+        outer.as_str(),
+        &request,
+        FILE_READ_CAPABILITY_ID,
+        FILE_READ_PROVIDER_NAME,
+    );
+    let (gateway, calls, plan) = gateway(|_| panic!("No auxiliary call needed"));
+    let mut next = f.request();
+    f.prepare(outer.as_str(), 0, &mut next);
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len() + 1,
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.error.is_none(), "{:?}", prepared.error);
+    assert!(calls.lock().unwrap().is_empty());
+    assert_eq!(next.exchanges.len(), 2, "{:?}", next.exchanges);
+    for exchange in &next.exchanges {
+        for content in &exchange.assistant_content {
+            if let aworkit_capability_host::ModelAssistantContentV1::ToolCall { call } = content {
+                assert!(
+                    next.tools.iter().any(|tool| {
+                        tool.capability_id == call.capability_id && tool.name == call.name
+                    }),
+                    "recorded call {} is not offered by this pass",
+                    call.name
+                );
+            }
+        }
+    }
+    assert!(!f.committer
+        .committed_events()
+        .unwrap()
+        .iter()
+        .any(|e| e.kind == "context.selection-declined"));
+}
+
 #[test]
 fn checkpoint_isolation_covers_chat_node_branch_and_child() {
     for dimension in ["chat", "node", "branch", "child"] {
