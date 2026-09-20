@@ -1,7 +1,23 @@
-//! Upgrade regression: a stopped Run keeps its original native tool definitions.
+//! A later pass of an existing Chat adopts the current documents: the graph, the
+//! bound tool set and the interfaces this build actually offers. Authority, the
+//! workspace binding and committed evidence travel from the saved Chat.
 use super::*;
 
-struct ContinuationProviderFactory(Arc<AtomicUsize>);
+/// Counts provider work and records the tool definitions the model was offered.
+#[derive(Default)]
+struct ContinuationControl {
+    calls: AtomicUsize,
+    offered_descriptions: Mutex<Vec<String>>,
+}
+
+struct ContinuationProviderFactory(Arc<ContinuationControl>);
+
+struct ContinuationProvider {
+    binding: String,
+    version: String,
+    control: Arc<ContinuationControl>,
+}
+
 impl ProviderFactoryV1 for ContinuationProviderFactory {
     fn create(
         &self,
@@ -9,29 +25,36 @@ impl ProviderFactoryV1 for ContinuationProviderFactory {
         _: &StoredProviderBindingV1,
         _: Option<Zeroizing<String>>,
     ) -> Result<Box<dyn ProviderEnginePortV1>, String> {
-        Ok(Box::new(ContinuationProvider(ScriptedProvider {
-            calls: self.0.clone(),
+        Ok(Box::new(ContinuationProvider {
             binding: descriptor.capability_id.clone(),
             version: descriptor.version_hash.clone(),
-            behavior: ScriptedBehavior::Succeed,
-            observed_inputs: None,
-        })))
+            control: self.0.clone(),
+        }))
     }
 }
-struct ContinuationProvider(ScriptedProvider);
+
 impl ProviderEnginePortV1 for ContinuationProvider {
     fn binding_id(&self) -> &str {
-        self.0.binding_id()
+        &self.binding
     }
     fn version_hash(&self) -> &str {
-        self.0.version_hash()
+        &self.version
     }
     fn execute(
         &self,
-        request: &ModelRequestV1,
+        _: &ModelRequestV1,
         emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
-        self.0.execute(request, emit)
+        self.control.calls.fetch_add(1, Ordering::SeqCst);
+        emit(ModelEventV1::AssistantOutput(
+            "adopted the current documents".into(),
+        ))?;
+        emit(ModelEventV1::Usage {
+            input_tokens: 7,
+            output_tokens: 3,
+            cache: Default::default(),
+        })?;
+        Ok(ProviderAcceptanceV1::Accepted)
     }
     fn execute_tool_turn_cancellable(
         &self,
@@ -39,15 +62,14 @@ impl ProviderEnginePortV1 for ContinuationProvider {
         _: &CancellationToken,
         emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
-        assert!(
-            request
-                .tools
-                .iter()
-                .all(|tool| tool.description.starts_with("Original frozen description"))
-        );
-        self.0.calls.fetch_add(1, Ordering::SeqCst);
+        self.control
+            .offered_descriptions
+            .lock()
+            .unwrap()
+            .extend(request.tools.iter().map(|tool| tool.description.clone()));
+        self.control.calls.fetch_add(1, Ordering::SeqCst);
         emit(ModelToolEventV1::AssistantOutput {
-            text: "continued with original tool definitions".into(),
+            text: "adopted the current documents".into(),
         })?;
         emit(ModelToolEventV1::Usage {
             input_tokens: 7,
@@ -78,15 +100,19 @@ fn native_request(metadata: CredentialMetadataV1) -> WorkflowExecutionRequestV1 
     request
 }
 
+/// The interface the model is offered re-resolves from this build, so a Chat
+/// frozen before a tool improved adopts the improvement in its next pass while
+/// the authority it was frozen with does not change.
 #[test]
-fn continuation_and_replay_keep_native_descriptions_across_catalog_upgrade() {
+fn later_pass_re_resolves_the_interface_and_keeps_saved_authority() {
     let root = TempDir::new().unwrap();
-    let (pipeline, credentials, metadata, calls, _) = setup(&root, ScriptedBehavior::Succeed);
+    let control = Arc::new(ContinuationControl::default());
+    let (pipeline, credentials, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
     drop(pipeline);
     let pipeline = WorkflowExecutionPipeline::compose(
         root.path(),
-        credentials.clone(),
-        Arc::new(ContinuationProviderFactory(calls.clone())),
+        credentials,
+        Arc::new(ContinuationProviderFactory(control.clone())),
     )
     .unwrap();
     let first = native_request(metadata);
@@ -95,79 +121,171 @@ fn continuation_and_replay_keep_native_descriptions_across_catalog_upgrade() {
     let current = pipeline
         .prepare(&first, protocol, descriptor, None)
         .unwrap();
+    // The saved Chat carries the catalog text it was frozen with.
     let mut old_catalog = current.clone();
     for tool in &mut old_catalog.tool_bindings {
         tool.description = format!("Original frozen description for {}", tool.capability_id);
     }
-    // Materialize the valid graph/manifest that the old catalog would have produced.
-    let original = pipeline
-        .prepare(&first, protocol, descriptor, Some(&old_catalog))
-        .unwrap();
-    assert!(
-        !current.same_frozen_run(&original),
-        "re-freezing catalog text reproduced the mismatch"
-    );
-    pipeline.records.record_execution(&original).unwrap();
-    let result = pipeline.execute(first.clone()).unwrap();
-    assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    drop(pipeline);
+    pipeline.records.record_execution(&old_catalog).unwrap();
 
+    let mut followup = first.clone();
+    followup.request_id = stable("command.later-pass").unwrap();
+    followup.messages.push(WorkflowMessageV1 {
+        role: "user".into(),
+        content: "Continue after the capability edit".into(),
+        images: Vec::new(),
+    });
+    let (prepared, replayed) = pipeline.validated_prepared(&followup).unwrap();
+    assert!(!replayed);
+    // The interface comes from this build, not from the saved catalog text.
+    for tool in &prepared.tool_bindings {
+        let fresh = current
+            .tool_bindings
+            .iter()
+            .find(|fresh| fresh.capability_id == tool.capability_id)
+            .unwrap();
+        assert_eq!(tool.description, fresh.description);
+        assert_eq!(tool.input_schema, fresh.input_schema);
+        assert_eq!(tool.provider_name, fresh.provider_name);
+    }
+    // Authority and the saved configuration stay with the Chat.
+    for saved in &old_catalog.tool_bindings {
+        let carried = prepared
+            .tool_bindings
+            .iter()
+            .find(|tool| tool.capability_id == saved.capability_id)
+            .unwrap();
+        assert_eq!(carried.options, saved.options);
+        assert_eq!(carried.requires_approval, saved.requires_approval);
+        assert_eq!(carried.secret, saved.secret);
+        assert_eq!(carried.file_access_version, saved.file_access_version);
+        assert_eq!(carried.internal_id, saved.internal_id);
+        assert_eq!(carried.configuration, saved.configuration);
+        assert_eq!(carried.limit, saved.limit);
+    }
+    assert_eq!(prepared.snapshot, old_catalog.snapshot);
+    assert_eq!(prepared.provider, old_catalog.provider);
+
+    // An echoed approval mode, provider or context hash is not new authority and
+    // cannot replace the saved configuration.
+    let mut drifted = followup.clone();
+    drifted.request_id = stable("command.later-pass-drift").unwrap();
+    drifted.tools[0].options.approval_mode =
+        Some(crate::runtime::approvals::ApprovalMode::FullAccess);
+    drifted.provider.model = "another-model".into();
+    drifted.frozen_context_hash = format!("sha256:{}", "c".repeat(64));
+    let (kept, _) = pipeline.validated_prepared(&drifted).unwrap();
+    assert_eq!(kept.tool_bindings[0].options, old_catalog.tool_bindings[0].options);
+    assert_eq!(kept.provider, old_catalog.provider);
+    assert_eq!(kept.snapshot, old_catalog.snapshot);
+
+    // An exact command replay keeps its identity and does no provider work.
+    let (_, replayed) = pipeline.validated_prepared(&first).unwrap();
+    assert!(replayed);
+    assert_eq!(control.calls.load(Ordering::SeqCst), 0);
+}
+
+/// The current document decides which capabilities a pass may call: a tool the
+/// user binds mid-Chat is frozen for it, offered to the model immediately, bound
+/// in the broker's manifest and listed for the worker, while everything the Chat
+/// already held keeps the authority it was frozen with.
+#[test]
+fn later_pass_adopts_a_capability_bound_mid_chat() {
+    let root = TempDir::new().unwrap();
+    let control = Arc::new(ContinuationControl::default());
+    let (pipeline, credentials, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    drop(pipeline);
     let pipeline = WorkflowExecutionPipeline::compose(
         root.path(),
         credentials,
-        Arc::new(ContinuationProviderFactory(calls.clone())),
+        Arc::new(ContinuationProviderFactory(control.clone())),
     )
     .unwrap();
-    assert!(pipeline.execute(first.clone()).unwrap().replayed);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "restart must not replay settled effects"
-    );
+    let first = native_request(metadata);
+    let (original, _) = pipeline.validated_prepared(&first).unwrap();
+    pipeline.records.record_execution(&original).unwrap();
+
+    let bound = ["tool.shell.host", "tool.python.host", "tool.todo"];
     let mut followup = first.clone();
-    followup.request_id = stable("command.after-stop").unwrap();
+    followup.request_id = stable("command.bound-mid-chat").unwrap();
     followup.messages.push(WorkflowMessageV1 {
         role: "user".into(),
-        content: "Continue after Stop".into(),
+        content: "Use the task list you reported missing".into(),
         images: Vec::new(),
     });
-    pipeline.preflight(&followup).unwrap();
-    let second = pipeline.execute(followup.clone()).unwrap();
-    assert_eq!(second.snapshot_hash, result.snapshot_hash);
-    assert_eq!(second.authority_manifest_id, result.authority_manifest_id);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    let saved = pipeline
-        .records
-        .execution(&followup.request_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(saved.tool_bindings, original.tool_bindings);
-
-    for mutation in 0..4 {
-        let mut drift = followup.clone();
-        drift.request_id = stable(&format!("command.real-drift-{mutation}")).unwrap();
-        match mutation {
-            0 => drift.tools[0].configuration["timeoutSeconds"] = json!(2),
-            1 => {
-                drift.tools[0].options.approval_mode =
-                    Some(crate::runtime::approvals::ApprovalMode::FullAccess)
-            }
-            2 => drift.provider.model = "another-model".into(),
-            _ => drift.frozen_context_hash = format!("sha256:{}", "c".repeat(64)),
-        }
-        let (kept, _) = pipeline.validated_prepared(&drift).unwrap();
-        assert!(kept.same_frozen_run(&original), "echoed metadata {mutation} cannot change saved authority or block continuation");
-        // Replaying the original command also uses its original saved authority.
-        drift.request_id = first.request_id.clone();
-        drift.messages = first.messages.clone();
-        pipeline.preflight(&drift).unwrap();
+    followup.workflow_snapshot["nodes"][1]["configuration"]["toolIds"] = json!(bound);
+    followup.tools.push(WorkflowToolBindingV1 {
+        capability_id: "tool.todo".into(),
+        configuration: json!({"authorityMode": "run_todo"}),
+        options: Default::default(),
+        credential_bindings: Vec::new(),
+        definition: None,
+    });
+    let (prepared, _) = pipeline.validated_prepared(&followup).unwrap();
+    // The pass runs the current document.
+    assert_eq!(
+        prepared.worker_proposal.payload["config"]["workflow"],
+        followup.workflow_snapshot
+    );
+    assert_eq!(prepared.snapshot, original.snapshot);
+    // The capability is bound, listed for the worker and bound for the broker.
+    assert!(
+        prepared
+            .tool_bindings
+            .iter()
+            .any(|tool| tool.capability_id == "tool.todo")
+    );
+    let todo_ref = stable("tool.todo").unwrap();
+    assert!(
+        prepared
+            .agent_checkpoint
+            .config
+            .allowed_tool_capability_refs
+            .contains(&todo_ref)
+    );
+    let manifest_binding = prepared
+        .manifest
+        .capability_bindings
+        .iter()
+        .find(|binding| binding.capability_id == todo_ref)
+        .expect("the broker must be able to settle the newly bound capability");
+    assert!(manifest_binding.enabled && manifest_binding.compatible);
+    // An already held capability keeps the authority it was frozen with.
+    for saved in original
+        .tool_bindings
+        .iter()
+        .filter(|tool| tool.capability_id != "tool.todo")
+    {
+        let carried = prepared
+            .tool_bindings
+            .iter()
+            .find(|tool| tool.capability_id == saved.capability_id)
+            .unwrap();
+        assert_eq!(carried.options, saved.options);
+        assert_eq!(carried.requires_approval, saved.requires_approval);
+        assert_eq!(carried.secret, saved.secret);
+        assert_eq!(carried.limit, saved.limit);
     }
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    // A capability the document binds but the desktop cannot resolve blocks the
+    // pass instead of running with an unresolved tool.
+    let mut unresolved = followup.clone();
+    unresolved.request_id = stable("command.unresolved-tool").unwrap();
+    unresolved.tools.pop();
+    assert!(pipeline.validated_prepared(&unresolved).is_err());
+
+    // A document that is not an executable v1 workflow blocks the pass too.
+    let mut broken = followup.clone();
+    broken.request_id = stable("command.broken-document").unwrap();
+    broken.workflow_snapshot = json!({"obsoleteEditorFormat": true});
+    assert!(pipeline.validated_prepared(&broken).is_err());
+    assert_eq!(control.calls.load(Ordering::SeqCst), 0);
 }
 
+/// An MCP definition change is adopted as the current interface, never hidden:
+/// the invocation keeps its own record of the interface it actually used.
 #[test]
-fn dynamic_mcp_descriptions_still_require_the_exact_frozen_definition() {
+fn dynamic_mcp_definition_change_is_adopted_rather_than_hidden() {
     let mut requested = vec![WorkflowToolBindingV1 {
         capability_id: MCP_FIXTURE_CAPABILITY.into(),
         configuration: json!({"serverId": MCP_FIXTURE_SERVER,"tool": MCP_FIXTURE_TOOL}),
@@ -185,7 +303,7 @@ fn dynamic_mcp_descriptions_still_require_the_exact_frozen_definition() {
 /// database. Preflight is exercised in a temporary store without provider effects.
 #[test]
 #[ignore = "set AWORKIT_CAPTURED_EXECUTION to a locally exported prepared record"]
-fn captured_chat_continuation_preflight_preserves_original_authority() {
+fn captured_chat_continuation_adopts_the_current_document_without_widening_authority() {
     let path = std::env::var("AWORKIT_CAPTURED_EXECUTION").unwrap();
     let original: PreparedExecutionRecordV1 =
         serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
@@ -222,6 +340,7 @@ fn captured_chat_continuation_preflight_preserves_original_authority() {
     followup.budget = original.snapshot.budget.clone();
     followup.maximum_timeout_recoveries = original.maximum_timeout_recoveries;
     followup.mcp_servers = original.mcp_manifests.values().cloned().collect();
+    // The current document is the one the capture recorded for this Chat.
     followup.workflow_snapshot = original.worker_proposal.payload["config"]["workflow"].clone();
     followup.frozen_context_hash = original.snapshot.nodes[0].config["frozenContextHash"]
         .as_str()
@@ -253,18 +372,28 @@ fn captured_chat_continuation_preflight_preserves_original_authority() {
                 .collect(),
         })
         .collect();
-    let protocol = ProviderProtocolV1::parse(&followup.provider.kind).unwrap();
-    let freshly_refrozen = pipeline
-        .prepare(&followup, protocol, &pipeline.descriptors[&protocol], None)
-        .unwrap();
-    assert!(
-        !freshly_refrozen.same_frozen_run(&original),
-        "capture reproduces catalog drift"
-    );
     let (resumed, _) = pipeline
         .validated_prepared(&followup)
-        .expect("original Chat must continue");
-    assert!(resumed.same_frozen_run(&original));
+        .expect("the captured Chat must continue");
+    // Authority, Chat identity and the recorded workspace carry over.
+    assert_eq!(resumed.snapshot, original.snapshot);
+    assert_eq!(resumed.workspace, original.workspace);
+    assert_eq!(resumed.provider, original.provider);
+    for binding in &original.manifest.capability_bindings {
+        assert!(
+            resumed
+                .manifest
+                .capability_bindings
+                .iter()
+                .any(|candidate| candidate == binding),
+            "the authority ceiling must not shrink"
+        );
+    }
+    // The interface and the document are the current ones.
+    assert_eq!(
+        resumed.worker_proposal.payload["config"]["workflow"],
+        followup.workflow_snapshot
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,

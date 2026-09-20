@@ -92,6 +92,21 @@ const provider = createServer(async (req, res) => {
         assert.equal(last.status,'stopped',JSON.stringify(last));
         message={content:'Control tools are implied by the host Python capability.'};
       }
+    } else if (phase === 'midchat') {
+      // A capability the user adds while the Chat waits must reach the very next
+      // pass of the same Chat, without a New Chat and without re-running work.
+      const names = (body.tools ?? []).map(t => t.function.name);
+      if (turn === 1) {
+        assert.ok(!names.includes('todo'), `the Chat started without the task-list tool: ${JSON.stringify(names)}`);
+        message = {content:'The task-list tool is not available in this Chat.'};
+      } else if (turn === 2) {
+        assert.ok(names.includes('todo'), `a tool added mid-Chat must be offered in the next pass: ${JSON.stringify(names)}`);
+        message = call('todo', {todos:[{content:'Verify the mid-Chat tool without a new Chat',status:'in_progress'}]});
+      } else {
+        assert.ok(JSON.stringify(last).includes('Verify the mid-Chat tool'), JSON.stringify(last));
+        assert.notEqual(last?.error, 'tool_not_started', JSON.stringify(last));
+        message = {content:'The tool added mid-Chat was callable in the same Chat.'};
+      }
     }
     events.push({phase,turn,last,message});
     res.setHeader('Content-Type', 'text/event-stream');
@@ -169,6 +184,24 @@ try {
   const started=Date.now();
   await send(`Run another long ${language} command, inspect both jobs, then stop both trees.`);
   assert.ok(Date.now()-started<25000,'ordinary process call must yield instead of blocking until exit');
+  // Enabling a tool and binding it to the agent mid-Chat must reach the next
+  // pass of the same Chat: the workflow document and Settings are the current
+  // documents, while Chat identity and authority stay frozen.
+  phase='midchat'; turn=0;
+  await send('Report which tools this Chat offers without starting a new Chat.');
+  const chatBeforeEdit = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
+  await view.evaluate(`(async()=>{const i=window.__TAURI_INTERNALS__.invoke;
+    const v=await i('settings_v2_snapshot');
+    v.settings.tools.find(t=>t.id==='tool.todo').enabled=true;
+    await i('settings_v2_commit',{command:{commandId:'midchat.enable-tool',expectedVersion:v.version,settings:v.settings}});
+    const w=await i('workflow_snapshot',{workflowId:'workflow.simple-chat'});
+    const agent=w.document.nodes.find(n=>n.type==='agent');
+    agent.configuration.toolIds=[...new Set([...agent.configuration.toolIds,'tool.todo'])];
+    await i('workflow_commit',{command:{commandId:'midchat.bind-tool',expectedVersion:w.version,workflowId:'workflow.simple-chat',document:w.document}});})()`);
+  await send('Use the task-list tool you reported missing.');
+  const chatAfterEdit = await view.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_snapshot',{afterSequence:0}).then(s=>s.chat.chatId)");
+  assert.equal(chatAfterEdit, chatBeforeEdit, 'the added tool must be usable without a new Chat');
+  assert.ok(events.some(e=>e.phase==='midchat'&&e.turn===2));
   if (python) {
     phase='descendant'; turn=0;
     await send('Start Python with a child process, wait for the parent to exit, then stop the tree.');

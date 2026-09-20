@@ -79,10 +79,12 @@ impl PipelineRecordStore {
         let previous = self
             .execution(&source)?
             .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+        // Ownership is Chat, Run and pass identity. The document may legitimately
+        // differ from the stopped pass: the next pass adopts the current
+        // documents, and the recorded position is validated against the graph
+        // this pass actually compiles.
         if previous.snapshot.chat_id != prepared.snapshot.chat_id
             || previous.snapshot.run_id != prepared.snapshot.run_id
-            || previous.worker_proposal.payload["config"]
-                != prepared.worker_proposal.payload["config"]
         {
             return Err(WorkflowPipelineError::IncompleteEvidence);
         }

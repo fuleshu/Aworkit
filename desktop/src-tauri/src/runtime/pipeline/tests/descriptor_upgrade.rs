@@ -3,9 +3,9 @@ use super::*;
 use crate::runtime::tool_loop::subagent::compatibility;
 
 #[test]
-fn continuation_uses_saved_configuration_without_catalog_or_compiler_resolution() {
+fn later_pass_adopts_the_current_document_and_ignores_echoed_provider_and_budget() {
     let root = TempDir::new().unwrap();
-    let (mut pipeline, _, metadata, calls, _) = setup(&root, ScriptedBehavior::Succeed);
+    let (pipeline, _, metadata, calls, _) = setup(&root, ScriptedBehavior::Succeed);
     let first = request(metadata);
     let completed = pipeline.execute(first.clone()).unwrap();
     assert_eq!(completed.status, WorkflowExecutionStatusV1::Succeeded);
@@ -15,18 +15,16 @@ fn continuation_uses_saved_configuration_without_catalog_or_compiler_resolution(
         .unwrap()
         .unwrap();
 
-    pipeline.file_tool_descriptors.clear();
     let mut followup = first.clone();
-    followup.request_id = stable("command.catalog-independent-continuation").unwrap();
+    followup.request_id = stable("command.later-pass-document").unwrap();
     followup.messages.push(WorkflowMessageV1 {
         role: "user".into(),
-        content: "Continue with the saved configuration".into(),
+        content: "Continue with the current documents".into(),
         images: vec![],
     });
-    // These echoes would fail parsing, compilation and freezing if the
-    // continuation path still tried to rebuild the existing Chat.
+    // The Chat keeps its frozen provider and budget: echoed provider metadata is
+    // not new authority and cannot replace the saved configuration.
     followup.provider.kind = "removed-from-catalog".into();
-    followup.workflow_snapshot = json!({"obsoleteEditorFormat": true});
     followup.frozen_context_hash = "obsolete-context-hash".into();
     followup.budget.turns = 0;
     let (prepared, replay) = pipeline.validated_prepared(&followup).unwrap();
@@ -40,9 +38,10 @@ fn continuation_uses_saved_configuration_without_catalog_or_compiler_resolution(
         prepared.worker_proposal.payload["context"]["messages"],
         json!(followup.messages)
     );
+    // The pass compiles and runs the document the request carries.
     assert_eq!(
-        prepared.worker_proposal.payload["config"],
-        original.worker_proposal.payload["config"]
+        prepared.worker_proposal.payload["config"]["workflow"],
+        followup.workflow_snapshot
     );
     let continued = pipeline.execute(followup.clone()).unwrap();
     assert_eq!(continued.status, WorkflowExecutionStatusV1::Succeeded);
@@ -50,6 +49,13 @@ fn continuation_uses_saved_configuration_without_catalog_or_compiler_resolution(
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert!(pipeline.execute(followup.clone()).unwrap().replayed);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    // A current document that is not an executable v1 workflow blocks the pass
+    // instead of silently running the saved graph.
+    let mut broken = followup.clone();
+    broken.request_id = stable("command.later-pass-broken-document").unwrap();
+    broken.workflow_snapshot = json!({"obsoleteEditorFormat": true});
+    assert!(pipeline.preflight(&broken).is_err());
 
     // Deduplication still distinguishes actual input and Chat ownership.
     let mut different_input = followup.clone();

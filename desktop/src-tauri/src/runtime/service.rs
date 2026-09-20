@@ -1,6 +1,7 @@
 mod context_edit;
 mod concurrent;
 mod context_model;
+mod current_configuration;
 mod steering;
 mod mcp_definitions;
 mod mcp_selection;
@@ -1275,6 +1276,14 @@ impl DesktopRuntime {
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
+        // A later pass runs the documents as they are now, so a workflow,
+        // Settings or capability edit reaches this pass of the same Chat. A
+        // first input keeps the configuration it just froze.
+        let pass = if input.action == "start" {
+            None
+        } else {
+            Some(self.resolve_current_pass(context)?)
+        };
         if conversation
             .iter()
             .any(|message| !message.images.is_empty())
@@ -1351,48 +1360,17 @@ impl DesktopRuntime {
             .project
             .as_ref()
             .and_then(|project| project.branch.clone());
-        execution_request.tools = context
-            .tools
-            .iter()
-            .map(|tool| {
-                Ok(WorkflowToolBindingV1 {
-                    options: tool.tool_snapshot.options.clone(),
-                    capability_id: tool.tool_id.clone(),
-                    configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
-                        .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
-                    credential_bindings: tool
-                        .tool_snapshot
-                        .credential_bindings
-                        .iter()
-                        .map(|binding| {
-                            let metadata = tool
-                                .credentials
-                                .iter()
-                                .find(|metadata| {
-                                    metadata.credential_ref.as_str() == binding.credential_ref
-                                })
-                                .ok_or_else(|| {
-                                    format!(
-                                        "frozen tool '{}' is missing credential metadata for '{}'",
-                                        tool.tool_id, binding.credential_ref
-                                    )
-                                })?;
-                            Ok(WorkflowToolCredentialBindingV1 {
-                                name: binding.name.clone(),
-                                credential_ref: metadata.credential_ref.clone(),
-                                field: binding.field.clone(),
-                                field_names: metadata.field_names.clone(),
-                                revision: metadata.revision,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, String>>()?,
-                    definition: tool.definition.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let pass_tools: &[FrozenToolBindingV1] = match &pass {
+            Some(pass) => &pass.tools,
+            None => &context.tools,
+        };
+        execution_request.tools = request_tool_bindings(pass_tools)?;
         execution_request.mcp_servers = self.restore_frozen_mcp(context)?;
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
-        execution_request.workflow_snapshot = context.workflow_snapshot.clone();
+        execution_request.workflow_snapshot = match &pass {
+            Some(pass) => pass.document.clone(),
+            None => context.workflow_snapshot.clone(),
+        };
         // One outer graph execution is brokered. Agent-internal provider and
         // tool calls are telemetry, not termination budgets. The authority
         // deadline fields carry the pipeline's no-aggregate-deadline sentinel;
@@ -3798,6 +3776,33 @@ struct FrozenWorkflowAgentV1 {
     tools: Vec<FrozenToolBindingV1>,
 }
 
+/// Freezes one installed, enabled built-in capability through the same path a
+/// first-input freeze uses. A capability that is missing or disabled fails
+/// closed: an edit can bind a tool the user enabled, never invent one.
+fn freeze_builtin_tool(
+    tool_id: &str,
+    settings: &SettingsConfigurationV2,
+) -> Result<FrozenToolBindingV1, String> {
+    let configured = settings
+        .tools
+        .iter()
+        .find(|tool| tool.id == tool_id)
+        .ok_or_else(|| format!("workflow tool '{tool_id}' is not installed"))?;
+    if !configured.enabled {
+        return Err(format!(
+            "workflow tool '{tool_id}' is disabled in saved Settings"
+        ));
+    }
+    let snapshot = super::tool_registry::freeze_settings(configured)?;
+    Ok(FrozenToolBindingV1 {
+        tool_id: tool_id.to_owned(),
+        tool_hash: canonical_hash(&snapshot)?,
+        tool_snapshot: snapshot,
+        credentials: freeze_tool_credentials(configured, settings)?,
+        definition: None,
+    })
+}
+
 /// Freezes the tool subset for a catalog-valid graph workflow. The retained
 /// run-deadline value is legacy frozen-context metadata and is not enforced.
 /// the union of every agent/tool node's bindings, resolved only against saved
@@ -3924,24 +3929,7 @@ fn freeze_graph_bindings(
                 });
                 continue;
             }
-            let configured = settings
-                .tools
-                .iter()
-                .find(|tool| tool.id == tool_id)
-                .ok_or_else(|| format!("workflow tool '{tool_id}' is not installed"))?;
-            if !configured.enabled {
-                return Err(format!(
-                    "workflow tool '{tool_id}' is disabled in saved Settings"
-                ));
-            }
-            let snapshot = super::tool_registry::freeze_settings(configured)?;
-            tools.push(FrozenToolBindingV1 {
-                tool_id,
-                tool_hash: canonical_hash(&snapshot)?,
-                tool_snapshot: snapshot,
-                credentials: freeze_tool_credentials(configured, settings)?,
-                definition: None,
-            });
+            tools.push(freeze_builtin_tool(&tool_id, settings)?);
         }
     }
     Ok(FrozenWorkflowAgentV1 {
@@ -3950,6 +3938,52 @@ fn freeze_graph_bindings(
         run_deadline_millis: DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000),
         tools,
     })
+}
+
+/// Maps one pass's frozen tool bindings into the request shape the pipeline
+/// consumes. Options and credential metadata travel with the binding; the
+/// pipeline restores them from the saved Chat for a capability it already held.
+fn request_tool_bindings(
+    tools: &[FrozenToolBindingV1],
+) -> Result<Vec<WorkflowToolBindingV1>, String> {
+    tools
+        .iter()
+        .map(|tool| {
+            Ok(WorkflowToolBindingV1 {
+                options: tool.tool_snapshot.options.clone(),
+                capability_id: tool.tool_id.clone(),
+                configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
+                    .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
+                credential_bindings: tool
+                    .tool_snapshot
+                    .credential_bindings
+                    .iter()
+                    .map(|binding| {
+                        let metadata = tool
+                            .credentials
+                            .iter()
+                            .find(|metadata| {
+                                metadata.credential_ref.as_str() == binding.credential_ref
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "frozen tool '{}' is missing credential metadata for '{}'",
+                                    tool.tool_id, binding.credential_ref
+                                )
+                            })?;
+                        Ok(WorkflowToolCredentialBindingV1 {
+                            name: binding.name.clone(),
+                            credential_ref: metadata.credential_ref.clone(),
+                            field: binding.field.clone(),
+                            field_names: metadata.field_names.clone(),
+                            revision: metadata.revision,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+                definition: tool.definition.clone(),
+            })
+        })
+        .collect()
 }
 
 fn freeze_tool_credentials(
@@ -8492,8 +8526,14 @@ mod tests {
         }
     }
 
+    /// A later pass of an existing Chat adopts the current documents — node, edge
+    /// and agent tool ids and the bound tool set — so a capability the user
+    /// enabled in response to what the model reported missing reaches the very
+    /// next pass without a New Chat. Chat identity, the authority ceiling and the
+    /// frozen provider carry over; a Settings edit that is not document-derived
+    /// still feeds only the next Chat.
     #[test]
-    fn active_chat_stays_frozen_while_settings_and_workflow_edits_feed_the_next_chat() {
+    fn later_pass_adopts_the_current_document_while_chat_identity_stays_frozen() {
         let root = TempDir::new().unwrap();
         let provider = Arc::new(FixtureProvider::new());
         let mut runtime = runtime(&root, provider.clone());
@@ -8502,11 +8542,45 @@ mod tests {
         let first_projection = runtime.snapshot(0).unwrap().chat;
         assert_ne!(first_projection.chat_id, "chat.local");
         assert_ne!(first_projection.run_id, "run.local");
+        assert!(provider.execution_requests.lock().unwrap()[0].tools.is_empty());
 
+        // The user enables a tool and binds it to the agent while the Chat waits.
+        let mut settings = runtime.settings_v2_snapshot();
+        settings
+            .settings
+            .tools
+            .iter_mut()
+            .find(|tool| tool.id == "tool.todo")
+            .unwrap()
+            .enabled = true;
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "midchat.enable.tool".into(),
+                expected_version: settings.version,
+                settings: settings.settings,
+            })
+            .unwrap();
+        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
+        workflow.document["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["type"] == "agent")
+            .unwrap()["configuration"]["toolIds"] = json!(["tool.todo"]);
+        runtime
+            .workflow_commit(WorkflowCommitInput {
+                command_id: "midchat.bind.tool".into(),
+                expected_version: workflow.version,
+                document: workflow.document.clone(),
+                workflow_id: Some("workflow.simple-chat".into()),
+            })
+            .unwrap();
+
+        let settings_version = runtime.settings_snapshot().version;
         commit_provider(
             &mut runtime,
             "settings.future.provider",
-            3,
+            settings_version,
             "http://127.0.0.1:9999/v1",
             "future-model",
             "keep",
@@ -8514,7 +8588,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
+        workflow = runtime.workflow_snapshot_for("workflow.simple-chat".into());
         workflow.document["name"] = Value::String("Future Simple Chat".into());
         runtime
             .workflow_commit(WorkflowCommitInput {
@@ -8527,11 +8601,12 @@ mod tests {
         drop(runtime);
         let mut runtime = self::runtime(&root, provider.clone());
 
+        let version = runtime.snapshot(0).unwrap().version;
         runtime
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.frozen.follow-up".into(),
-                expected_version: 6,
+                expected_version: version,
                 action: "enqueue".into(),
                 target_id: Some(first_projection.chat_id.clone()),
                 payload: json!({"input":"again"}),
@@ -8547,6 +8622,18 @@ mod tests {
         );
         assert_eq!(requests[0].provider.model, "fixture-model");
         assert_eq!(requests[1].provider.model, "fixture-model");
+        // The pass runs the current document and offers the newly bound tool.
+        assert_eq!(
+            requests[1].workflow_snapshot["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["type"] == "agent")
+                .unwrap()["configuration"]["toolIds"],
+            json!(["tool.todo"])
+        );
+        assert_eq!(requests[1].tools.len(), 1);
+        assert_eq!(requests[1].tools[0].capability_id, "tool.todo");
         let first_chat_id = requests[0].chat_id.clone();
         let first_run_id = requests[0].run_id.clone();
         let first_context_hash = requests[0].frozen_context_hash.clone();
@@ -8556,7 +8643,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.future.new".into(),
-                expected_version: 11,
+                expected_version: runtime.snapshot(0).unwrap().version,
                 action: "new_chat".into(),
                 target_id: Some(first_projection.chat_id),
                 payload: json!({}),

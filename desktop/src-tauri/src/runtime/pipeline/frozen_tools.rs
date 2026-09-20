@@ -3,10 +3,17 @@
 //! second, older behaviour by a switch that happened to stay off.
 use super::*;
 
-/// The effective bindings for one Chat: the requested capabilities plus the
-/// control tools implied by a bound host shell/Python capability. A saved set
-/// supplies authority only; frozen hashes, schemas and descriptions never
-/// shadow an improved tool.
+/// The effective bindings for one pass: the capabilities the current workflow
+/// document binds, plus the control tools implied by a bound host shell/Python
+/// capability.
+///
+/// The document decides *which* capabilities the pass may call. A capability the
+/// Chat already held keeps the configuration it was frozen with, because that
+/// configuration — executable identity, approval mode, child inheritance — is its
+/// authority contract, and the interface is re-derived from it by this build. A
+/// capability the Chat never held is frozen from the current document through the
+/// same path as a first-input freeze, so the approval class this build derives is
+/// the one the broker settles at the point of use instead of silently granting it.
 pub(super) fn effective(
     requested: &[WorkflowToolBindingV1],
     previous: Option<&[StoredFileToolBindingV1]>,
@@ -24,6 +31,16 @@ pub(super) fn effective(
             complete.push(implied);
         }
     }
+    if let Some(previous) = previous {
+        for tool in &mut complete {
+            if let Some(saved) = previous
+                .iter()
+                .find(|saved| saved.capability_id == tool.capability_id)
+            {
+                tool.configuration = saved.configuration.clone();
+            }
+        }
+    }
     let mut bindings = freeze_file_tool_bindings(&complete)?;
     if let Some(previous) = previous {
         for binding in &mut bindings {
@@ -36,48 +53,6 @@ pub(super) fn effective(
         }
     }
     Ok(bindings)
-}
-
-/// An existing Chat re-resolves its interface from this build, so a Chat frozen
-/// before a tool improved adopts the improvement in its next pass - including the
-/// control tools that serve a host shell/Python capability it already holds.
-pub(super) fn complete_saved(
-    saved: &[StoredFileToolBindingV1],
-) -> Result<Vec<StoredFileToolBindingV1>, WorkflowPipelineError> {
-    let requested: Vec<WorkflowToolBindingV1> = saved.iter().map(request_from_saved).collect();
-    effective(&requested, Some(saved))
-}
-
-fn request_from_saved(saved: &StoredFileToolBindingV1) -> WorkflowToolBindingV1 {
-    WorkflowToolBindingV1 {
-        // Options are frozen authority (executable identity, approval mode) and
-        // are restored after the refresh instead of being revalidated as new.
-        options: Default::default(),
-        capability_id: saved.capability_id.clone(),
-        configuration: saved.configuration.clone(),
-        credential_bindings: saved
-            .secret
-            .iter()
-            .map(
-                |secret| super::super::tool_loop::WorkflowToolCredentialBindingV1 {
-                    name: secret.name.clone(),
-                    credential_ref: secret.credential_ref.clone(),
-                    field: secret.field.clone(),
-                    field_names: secret.field_names.clone(),
-                    revision: secret.revision,
-                },
-            )
-            .collect(),
-        definition: saved
-            .capability_id
-            .starts_with(MCP_CAPABILITY_PREFIX)
-            .then(|| aworkit_capability_host::ModelToolDefinitionV1 {
-                capability_id: saved.capability_id.clone(),
-                name: saved.provider_name.clone(),
-                description: saved.description.clone(),
-                input_schema: saved.input_schema.clone(),
-            }),
-    }
 }
 
 fn implied_requests(bound: &[String]) -> Vec<WorkflowToolBindingV1> {
@@ -93,7 +68,11 @@ fn implied_requests(bound: &[String]) -> Vec<WorkflowToolBindingV1> {
         .collect()
 }
 
-/// Authority travels from the saved Chat; interface fields do not.
+/// Authority and saved configuration travel from the Chat; interface fields do
+/// not. The executable identity, approval class, credential binding and
+/// file-access contract a capability was frozen with stay exactly as the Chat
+/// holds them, so an improvement to a tool reaches the model while an edit can
+/// never widen what that tool is allowed to do.
 fn restore_authority(binding: &mut StoredFileToolBindingV1, saved: &StoredFileToolBindingV1) {
     binding.options = saved.options.clone();
     binding.requires_approval = saved.requires_approval;
