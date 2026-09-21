@@ -17,7 +17,11 @@ afterEach(() => {
 function preUpgradeProjection(): unknown {
   const tools = nativeToolDefaults();
   const subagent = tools.find((tool) => tool.id === "tool.subagent")!;
-  delete subagent.configuration.inheritParentTools;
+  // Every configuration field a newer build added to the frozen subagent
+  // contract: the pre-upgrade document carries none of them.
+  for (const key of ["inheritParentTools", "maximumDepth", "maximumChildren"]) {
+    delete subagent.configuration[key];
+  }
   return {
     toolPluginDirectory: "C:/profile/tool-plugins",
     toolPlugins: [],

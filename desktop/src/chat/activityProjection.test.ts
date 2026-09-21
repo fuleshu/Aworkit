@@ -22,6 +22,19 @@ describe("canonical semantic timeline projection", () => {
       expect(items.find(i => i.id === "parent-next")).toMatchObject({ actor: "model" });
     }
   });
+  it("attributes forked and controlling subagent tools to the subagent actor", () => {
+    for (const capabilityId of ["tool.subagent_fork", "tool.subagent_list", "tool.subagent_message", "tool.subagent_cancel"]) {
+      const items = projectSemanticTimeline([
+        span(1, "span.started", "parent", { spanKind: "agent_loop" }),
+        span(2, "span.started", "control", { spanKind: "tool_call", capabilityId, parentSpanId: "parent" }),
+        span(3, "span.completed", "control", { status: "completed" }),
+      ]);
+      expect(items.find(item => item.id === "control")).toMatchObject({
+        kind: "subagent",
+        actor: "subagent",
+      });
+    }
+  });
   it("projects settled native tool images and rejects forged or failed previews", () => {
     const image = { id: "a".repeat(64), name: "screenshot.png", mimeType: "image/png", byteLength: 123 };
     const project = (capabilityId: string, images: unknown, isError = false) => projectSemanticTimeline([

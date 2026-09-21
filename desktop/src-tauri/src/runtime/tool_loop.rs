@@ -77,7 +77,7 @@ use super::{
         mcp_fallback_label, mcp_provider_name, portable_frozen_name, split_mcp_capability,
     },
     model_tool_loop::{
-        ModelToolInvocationPortV1, ModelToolLoopRequestV1, PROVIDER_TIMEOUT_RECOVERIES_V1,
+        ModelToolInvocationPortV1, PROVIDER_TIMEOUT_RECOVERIES_V1,
         SettledModelToolCallV1, ToolInvokeV1, execute_model_tool_loop_v1,
     },
     pipeline::{CoreAuthenticationKey, LocalInvocationLedger, WorkflowPipelineError},
@@ -165,12 +165,33 @@ pub(crate) const PROJECT_FILE_WRITE_MAXIMUM_BYTES_V1: u64 = 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_DOWNLOAD_BYTES_V1: u64 = 8 * 1024 * 1024;
 pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub(crate) const SUBAGENT_CAPABILITY_ID: &str = "tool.subagent";
+pub(crate) const SUBAGENT_FORK_CAPABILITY_ID: &str = "tool.subagent_fork";
+pub(crate) const SUBAGENT_LIST_CAPABILITY_ID: &str = "tool.subagent_list";
+pub(crate) const SUBAGENT_MESSAGE_CAPABILITY_ID: &str = "tool.subagent_message";
+pub(crate) const SUBAGENT_CANCEL_CAPABILITY_ID: &str = "tool.subagent_cancel";
+/// Every delegation and control tool. A child never inherits one: it cannot
+/// delegate again and cannot list, message or cancel its own or sibling scopes.
+pub(crate) const SUBAGENT_PARENT_TOOL_IDS: [&str; 5] = [
+    SUBAGENT_CAPABILITY_ID,
+    SUBAGENT_FORK_CAPABILITY_ID,
+    SUBAGENT_LIST_CAPABILITY_ID,
+    SUBAGENT_MESSAGE_CAPABILITY_ID,
+    SUBAGENT_CANCEL_CAPABILITY_ID,
+];
+pub(crate) fn is_subagent_tool(capability_id: &str) -> bool {
+    SUBAGENT_PARENT_TOOL_IDS.contains(&capability_id)
+}
 const SUBAGENT_PROVIDER_NAME: &str = "spawn_subagent";
+const SUBAGENT_FORK_PROVIDER_NAME: &str = "fork_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
-// A delegation carries the parent's chosen task and context verbatim. Only the
-// shared runaway guard applies; the child model's own context window governs how
-// much it can accept.
+/// Structural delegation bounds frozen into a new Chat. Depth 1 keeps nested
+/// delegation unavailable, matching the approved inheritance contract.
+pub(crate) const SUBAGENT_DEFAULT_MAXIMUM_DEPTH: u32 = 1;
+pub(crate) const SUBAGENT_DEFAULT_MAXIMUM_CHILDREN: u32 = 32;
+/// Declared bounds of the inherited parent projection a fork may carry.
+pub(crate) const SUBAGENT_DEFAULT_FORK_ITEMS: u32 = 40;
+pub(crate) const SUBAGENT_DEFAULT_FORK_BYTES: u32 = 32 * 1024;
 const SUBAGENT_MAXIMUM_TASK_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
 const SUBAGENT_MAXIMUM_CONTEXT_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_REQUEST_BYTES;
 // The child Agent keeps the same runaway guard as its parent; the model's
@@ -213,6 +234,8 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         WEB_SEARCH_CAPABILITY_ID,
         WEB_FETCH_CAPABILITY_ID,
         WEB_EXTRACT_CAPABILITY_ID,
+        SUBAGENT_LIST_CAPABILITY_ID,
+        SUBAGENT_CANCEL_CAPABILITY_ID,
     ])
 }
 
@@ -489,12 +512,60 @@ pub(crate) enum StoredFileToolLimitV1 {
         /// removed. New bindings omit this obsolete value.
         #[serde(default, rename = "maximum_turns", skip_serializing)]
         legacy_maximum_turns: Option<usize>,
+        /// Structural admission bounds. Omitted at their defaults so legacy
+        /// bindings re-encode byte-identically.
+        #[serde(
+            default = "subagent_default_maximum_depth",
+            skip_serializing_if = "subagent_depth_is_default"
+        )]
+        maximum_depth: u32,
+        #[serde(
+            default = "subagent_default_maximum_children",
+            skip_serializing_if = "subagent_children_is_default"
+        )]
+        maximum_children: u32,
+    },
+    /// Forked delegation: the child context begins from a declared, bounded
+    /// projection of the delegating Agent's committed conversation.
+    SubagentFork {
+        maximum_items: usize,
+        maximum_bytes: usize,
+        #[serde(
+            default = "subagent_default_maximum_depth",
+            skip_serializing_if = "subagent_depth_is_default"
+        )]
+        maximum_depth: u32,
+        #[serde(
+            default = "subagent_default_maximum_children",
+            skip_serializing_if = "subagent_children_is_default"
+        )]
+        maximum_children: u32,
+    },
+    /// Owner-isolated listing, continuation or cancellation of a child scope.
+    SubagentControl {
+        operation: String,
     },
     Mcp {
         server_id: String,
         tool_name: String,
         schema_hash: String,
     },
+}
+
+fn subagent_default_maximum_depth() -> u32 {
+    SUBAGENT_DEFAULT_MAXIMUM_DEPTH
+}
+
+fn subagent_default_maximum_children() -> u32 {
+    SUBAGENT_DEFAULT_MAXIMUM_CHILDREN
+}
+
+fn subagent_depth_is_default(value: &u32) -> bool {
+    *value == SUBAGENT_DEFAULT_MAXIMUM_DEPTH
+}
+
+fn subagent_children_is_default(value: &u32) -> bool {
+    *value == SUBAGENT_DEFAULT_MAXIMUM_CHILDREN
 }
 
 /// Decodes the current frozen tool limit while upgrading the only historical
@@ -741,6 +812,38 @@ pub(crate) fn file_tool_descriptors()
             SUBAGENT_SCOPE,
             subagent_schema(),
             SideEffectClass::NonIdempotent,
+            false,
+        ),
+        (
+            SUBAGENT_FORK_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_SCOPE,
+            native_tool_schema(SUBAGENT_FORK_CAPABILITY_ID),
+            SideEffectClass::NonIdempotent,
+            false,
+        ),
+        (
+            SUBAGENT_LIST_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_SCOPE,
+            native_tool_schema(SUBAGENT_LIST_CAPABILITY_ID),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            SUBAGENT_MESSAGE_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_SCOPE,
+            native_tool_schema(SUBAGENT_MESSAGE_CAPABILITY_ID),
+            SideEffectClass::NonIdempotent,
+            false,
+        ),
+        (
+            SUBAGENT_CANCEL_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_SCOPE,
+            native_tool_schema(SUBAGENT_CANCEL_CAPABILITY_ID),
+            SideEffectClass::IdempotentWrite,
             false,
         ),
     ] {
@@ -1078,6 +1181,10 @@ pub(crate) fn freeze_file_tool_bindings(
                 web::freeze_web_configuration(&requested.configuration)?,
             ),
             "subagent" => subagent::freeze(requested)?,
+            "subagent_fork" => subagent::freeze_fork(requested)?,
+            "subagent_list" | "subagent_message" | "subagent_cancel" => {
+                subagent::freeze_control(&requested.capability_id, requested)?
+            }
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => freeze_mcp_binding(requested)?,
             _ => return Err(invalid_tool("tool binding has no installed native adapter")),
         };
@@ -1272,6 +1379,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             WEB_FETCH_CAPABILITY_ID => WEB_FETCH_ADAPTER_ID,
             WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_ADAPTER_ID,
             SUBAGENT_CAPABILITY_ID => SUBAGENT_ADAPTER_ID,
+            id if is_subagent_tool(id) => SUBAGENT_ADAPTER_ID,
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_ADAPTER_ID,
             _ => return Err(WorkflowPipelineError::IncompleteEvidence),
         })?,
@@ -2839,7 +2947,15 @@ impl FileToolDispatcherV1 {
                     tool_name,
                     schema_hash,
                 } => self.run_mcp_tool(envelope, server_id, tool_name, schema_hash, cancellation),
-                StoredFileToolLimitV1::Subagent { .. } => self.run_subagent(envelope, cancellation),
+                StoredFileToolLimitV1::Subagent { .. } => {
+                    self.run_subagent(envelope, cancellation)
+                }
+                StoredFileToolLimitV1::SubagentFork { .. } => {
+                    self.run_subagent_fork(envelope, cancellation)
+                }
+                StoredFileToolLimitV1::SubagentControl { operation } => {
+                    self.run_subagent_control(operation, envelope, cancellation)
+                }
             }
         })();
         let result = result.and_then(|(mut value, summary)| {
@@ -3398,7 +3514,7 @@ fn validate_call_arguments(
     let object = arguments
         .as_object()
         .ok_or_else(|| invalid_tool("tool arguments must be an object"))?;
-    let expected_keys: BTreeSet<&str> = match binding.limit {
+    let expected_keys: BTreeSet<&str> = match &binding.limit {
         StoredFileToolLimitV1::Context { .. } => {
             aworkit_capability_host::context_compression::retrieval::Request::parse(arguments)
                 .map_err(|e| invalid_tool(&e))?;
@@ -3441,6 +3557,13 @@ fn validate_call_arguments(
         }
         StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
+        StoredFileToolLimitV1::SubagentFork { .. } => BTreeSet::from(["task", "context", "readOnly"]),
+        StoredFileToolLimitV1::SubagentControl { operation } => match operation.as_str() {
+            "list" => BTreeSet::new(),
+            "message" => BTreeSet::from(["childId", "message"]),
+            "cancel" => BTreeSet::from(["childId"]),
+            _ => return Err(invalid_tool("unknown subagent control operation")),
+        },
         // MCP argument shapes are server-defined; the frozen validator only
         // bounds the payload. The session layer enforces the exact discovered
         // schema hash before the peer sees the call.
@@ -3456,7 +3579,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Screenshot => {
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation")
         }
-        StoredFileToolLimitV1::Subagent { .. } => {
+        StoredFileToolLimitV1::Subagent { .. } | StoredFileToolLimitV1::SubagentFork { .. } => {
             if object.get("readOnly").is_some_and(|v| !v.is_boolean()) {
                 return Err(invalid_tool("readOnly must be boolean"));
             }
@@ -3509,7 +3632,7 @@ fn validate_call_arguments(
             ));
         }
     }
-    match binding.limit {
+    match &binding.limit {
         StoredFileToolLimitV1::Job { .. } => unreachable!("validated above"),
         StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead => {
             if object.get("path").and_then(Value::as_str).is_none() {
@@ -3694,7 +3817,7 @@ fn validate_call_arguments(
                     .ok_or_else(|| invalid_tool("web fetch url is empty or oversized"))?;
             }
         }
-        StoredFileToolLimitV1::Subagent { .. } => {
+        StoredFileToolLimitV1::Subagent { .. } | StoredFileToolLimitV1::SubagentFork { .. } => {
             object
                 .get("task")
                 .and_then(Value::as_str)
@@ -3712,6 +3835,9 @@ fn validate_call_arguments(
                     })
                     .ok_or_else(|| invalid_tool("subagent context is oversized or malformed"))?;
             }
+        }
+        StoredFileToolLimitV1::SubagentControl { operation } => {
+            subagent::validate_control(operation.as_str(), arguments)?;
         }
         StoredFileToolLimitV1::Read { .. } => {}
         // MCP argument payloads were bounded in the shape check above; the
@@ -3989,8 +4115,14 @@ fn web_extract_schema() -> Value {
 }
 
 fn subagent_schema() -> Value {
-    super::tool_registry::native_tool("tool.subagent")
-        .expect("installed native tool")
+    native_tool_schema(SUBAGENT_CAPABILITY_ID)
+}
+
+/// Installed schema of one native tool, used to build the frozen matrix and
+/// dispatch descriptors for tools whose schema is compile-time owned.
+pub(crate) fn native_tool_schema(capability_id: &str) -> Value {
+    super::tool_registry::native_tool(capability_id)
+        .unwrap_or_else(|| panic!("installed native tool {capability_id}"))
         .input_schema
         .clone()
 }
@@ -4049,6 +4181,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         WEB_FETCH_CAPABILITY_ID => WEB_FETCH_SCOPE,
         WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_SCOPE,
         SUBAGENT_CAPABILITY_ID => SUBAGENT_SCOPE,
+        id if is_subagent_tool(id) => SUBAGENT_SCOPE,
         id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_SCOPE,
         _ => "invalid",
     }
@@ -4762,7 +4895,9 @@ mod tests {
             binding.limit,
             StoredFileToolLimitV1::Subagent {
                 inherit_parent_tools: false,
-                legacy_maximum_turns: None
+                legacy_maximum_turns: None,
+                maximum_depth: SUBAGENT_DEFAULT_MAXIMUM_DEPTH,
+                maximum_children: SUBAGENT_DEFAULT_MAXIMUM_CHILDREN
             }
         );
         assert!(binding.requires_approval);

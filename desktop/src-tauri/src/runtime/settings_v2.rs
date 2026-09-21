@@ -1236,17 +1236,32 @@ impl BuiltInToolConfigurationV2 {
             "tool.subagent" => {
                 // Old Settings remain readable; only newly frozen Runs acquire
                 // the inherited-tool contract. Existing Chat authority is fixed.
+                let mut keys = vec!["authorityMode", "requiresApproval"];
                 if self.configuration.contains_key("inheritParentTools") {
-                    require_exact_config_keys(self, &["authorityMode", "requiresApproval", "inheritParentTools"])?;
-                    require_config_bool(self, "inheritParentTools", true)?;
-                } else {
-                    require_exact_config_keys(self, &["authorityMode", "requiresApproval"])?;
+                    keys.push("inheritParentTools");
                 }
+                if self.configuration.contains_key("maximumDepth") {
+                    keys.push("maximumDepth");
+                }
+                if self.configuration.contains_key("maximumChildren") {
+                    keys.push("maximumChildren");
+                }
+                require_exact_config_keys(self, &keys)?;
                 require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "run_subagent")?;
-                require_config_bool(self, "requiresApproval", true)
+                require_config_bool(self, "requiresApproval", true)?;
+                if self.configuration.contains_key("inheritParentTools") {
+                    require_config_bool(self, "inheritParentTools", true)?;
+                }
+                if self.configuration.contains_key("maximumDepth") {
+                    require_config_u64(self, "maximumDepth", 0, 8)?;
+                }
+                if self.configuration.contains_key("maximumChildren") {
+                    require_config_u64(self, "maximumChildren", 1, 256)?;
+                }
+                Ok(())
             }
-            "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" => {
+            "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" | "tool.subagent_fork" | "tool.subagent_list" | "tool.subagent_message" | "tool.subagent_cancel" => {
                 let manifest = super::tool_registry::native_tool(&self.id)
                     .ok_or_else(|| format!("missing native tool '{}'", self.id))?;
                 require_tool_project_scope(self, manifest.requires_project)?;
@@ -2820,6 +2835,10 @@ mod tests {
                 "tool.web_fetch",
                 "tool.web_extract",
                 "tool.subagent",
+                "tool.subagent_fork",
+                "tool.subagent_list",
+                "tool.subagent_message",
+                "tool.subagent_cancel",
                 "tool.skill",
                 "tool.workspace_instructions",
                 "tool.context",

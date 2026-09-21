@@ -24,6 +24,7 @@ fn request(id: &StableId) -> ModelToolLoopRequestV1<'_> {
         outer_invocation_id: id,
         input: json!("Can you see Adashi?"),
         initial_context: Vec::new(),
+        initial_exchanges: Vec::new(),
         parameters: BTreeMap::new(),
         definitions: ["read", "shell", "adashi"]
             .into_iter()

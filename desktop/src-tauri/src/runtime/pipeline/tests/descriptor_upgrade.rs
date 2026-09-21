@@ -223,6 +223,8 @@ fn subagent_descriptor_compatibility_does_not_accept_unknown_hashes_or_other_con
     binding.limit = crate::runtime::tool_loop::StoredFileToolLimitV1::Subagent {
         inherit_parent_tools: true,
         legacy_maximum_turns: None,
+        maximum_depth: crate::runtime::tool_loop::SUBAGENT_DEFAULT_MAXIMUM_DEPTH,
+        maximum_children: crate::runtime::tool_loop::SUBAGENT_DEFAULT_MAXIMUM_CHILDREN,
     };
     assert!(!compatibility::accepts_legacy(
         &binding,

@@ -50,6 +50,7 @@ fn tool_request(id: &StableId, input: Value) -> ModelToolLoopRequestV1<'_> {
         outer_invocation_id: id,
         input,
         initial_context: Vec::new(),
+        initial_exchanges: Vec::new(),
         parameters: BTreeMap::new(),
         definitions: vec![ModelToolDefinitionV1 {
             capability_id: "tool.files.read".into(),

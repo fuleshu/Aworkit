@@ -61,6 +61,17 @@ pub(crate) struct RunEventStream {
     publish_lock: Mutex<()>,
     state: Mutex<RunEventState>,
     pending_delta: Mutex<Option<PendingDelta>>,
+    /// Latest delegating-Agent conversation prefix. A forked child projects a
+    /// bounded prefix from this snapshot, so the same fork is reproducible.
+    parent_conversation: Mutex<Option<ParentConversationV1>>,
+}
+
+/// The conversation prefix the delegating Agent had committed when its tools
+/// became callable in the current model turn.
+#[derive(Clone)]
+pub(crate) struct ParentConversationV1 {
+    pub input: Value,
+    pub exchanges: Vec<aworkit_capability_host::ModelToolExchangeV1>,
 }
 
 impl RunEventStream {
@@ -285,9 +296,35 @@ impl RunEventStream {
             publish_lock: Mutex::new(()),
             state: Mutex::new(state),
             pending_delta: Mutex::new(None),
+            parent_conversation: Mutex::new(None),
         };
         stream.ensure_root_span();
         stream
+    }
+
+    /// Captures the delegating Agent's conversation prefix for this model turn.
+    /// Only the top-level Agent authority calls this: delegated children leave
+    /// their parent's snapshot untouched.
+    pub(crate) fn record_parent_turn(
+        &self,
+        input: &Value,
+        exchanges: &[aworkit_capability_host::ModelToolExchangeV1],
+    ) {
+        *self
+            .parent_conversation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(ParentConversationV1 {
+            input: input.clone(),
+            exchanges: exchanges.to_vec(),
+        });
+    }
+
+    /// Latest captured delegating-Agent conversation prefix, if any.
+    pub(crate) fn parent_conversation(&self) -> Option<ParentConversationV1> {
+        self.parent_conversation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     pub(crate) fn belongs_to(&self, request_id: &str, run_id: &str) -> bool {

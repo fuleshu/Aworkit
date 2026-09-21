@@ -4,6 +4,23 @@ import type { TimelineItem, TimelineKind } from "./types";
 
 type FactPayload = Record<string, unknown>;
 
+/**
+ * Delegation and child-control capabilities all belong to the subagent actor,
+ * so forked, listed, messaged and cancelled children stay attributed to the
+ * delegated scope rather than looking like ordinary parent tool calls.
+ */
+const SUBAGENT_CAPABILITIES = new Set([
+  "tool.subagent",
+  "tool.subagent_fork",
+  "tool.subagent_list",
+  "tool.subagent_message",
+  "tool.subagent_cancel",
+]);
+
+function isSubagentCapability(capability: unknown): boolean {
+  return typeof capability === "string" && SUBAGENT_CAPABILITIES.has(capability);
+}
+
 interface SpanProjection {
   readonly spanId: string;
   parentSpanId?: string;
@@ -357,7 +374,7 @@ function spanActor(
     if (
       current.spanKind === "external_agent" ||
       (current.spanKind === "tool_call" &&
-        current.metadata.capabilityId === "tool.subagent")
+        isSubagentCapability(current.metadata.capabilityId))
     ) return "subagent";
     current =
       current.parentSpanId === undefined
@@ -374,7 +391,7 @@ function spanTimelineKind(span: SpanProjection): TimelineKind {
   if (span.spanKind === "external_agent") return "subagent";
   if (span.spanKind === "tool_call") {
     const capability = string(span.metadata.capabilityId) ?? "";
-    if (capability === "tool.subagent") return "subagent";
+    if (isSubagentCapability(capability)) return "subagent";
     if (capability.startsWith("mcp.")) return "mcp";
     return "tool";
   }

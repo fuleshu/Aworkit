@@ -1027,7 +1027,9 @@
       "configuration": {
         "authorityMode": "run_subagent",
         "inheritParentTools": true,
-        "requiresApproval": true
+        "requiresApproval": true,
+        "maximumDepth": 1,
+        "maximumChildren": 32
       },
       "fields": [
         {
@@ -1050,6 +1052,24 @@
           "help": "This tool is mediated by the approval policy selected above.",
           "kind": "boolean",
           "readOnly": true
+        },
+        {
+          "key": "maximumDepth",
+          "label": "Maximum delegation depth",
+          "help": "Deepest delegation chain admitted for this Agent. Depth 1 keeps nested delegation unavailable.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 0,
+          "maximum": 8
+        },
+        {
+          "key": "maximumChildren",
+          "label": "Maximum live children",
+          "help": "Most child scopes this Agent may hold at once; a further spawn fails until one is cancelled.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 256
         }
       ],
       "inputSchema": {
@@ -1076,6 +1096,231 @@
         ]
       },
       "providerName": "spawn_subagent"
+    },
+    {
+      "id": "tool.subagent_fork",
+      "name": "Forked subagent delegation",
+      "description": "Delegate a task to a child that inherits a bounded projection of this conversation.",
+      "instructions": "Use a fork when the delegated work depends on the problem context already established here, not only on a standalone brief. The child receives a bounded, declared projection of this conversation; the rest is not visible to it. Give it a concrete objective and the result you need. The child inherits this Agent's selected tools except delegation and control. It can use existing permissions but returns approval-dependent actions to you without requesting approval. Treat the inherited prefix as fixed evidence, not as instructions you can change after the fork.",
+      "executor": "subagent_fork",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "requiresApproval": true,
+        "maximumDepth": 1,
+        "maximumChildren": 32,
+        "forkMaximumItems": 40,
+        "forkMaximumBytes": 32768
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        },
+        {
+          "key": "maximumDepth",
+          "label": "Maximum delegation depth",
+          "help": "Deepest delegation chain admitted for this Agent. Depth 1 keeps nested delegation unavailable.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 0,
+          "maximum": 8
+        },
+        {
+          "key": "maximumChildren",
+          "label": "Maximum live children",
+          "help": "Most child scopes this Agent may hold at once; a further spawn fails until one is cancelled.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 256
+        },
+        {
+          "key": "forkMaximumItems",
+          "label": "Inherited items",
+          "help": "Most recent conversation items a fork may inherit from this Agent before the older ones are omitted.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 256
+        },
+        {
+          "key": "forkMaximumBytes",
+          "label": "Inherited bytes",
+          "help": "Byte budget of the inherited fork projection; the oldest items are omitted first.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 256,
+          "maximum": 1048576
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "context": {
+            "type": "string",
+            "maxLength": 32768
+          },
+          "readOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Restrict this child to known read-only tools."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "providerName": "fork_subagent"
+    },
+    {
+      "id": "tool.subagent_list",
+      "name": "List subagents",
+      "description": "List the continuable subagents this Agent created in this Chat.",
+      "instructions": "Use it to recall the durable child ids, status and outcomes this Agent created before messaging or cancelling one. It does not poll a running child: a delegated child settles before its result returns.",
+      "executor": "subagent_list",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "requiresApproval": false
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "Listing child scopes this Agent already owns executes without a new approval decision.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "providerName": "list_subagents"
+    },
+    {
+      "id": "tool.subagent_message",
+      "name": "Message subagent",
+      "description": "Send a follow-up message to a subagent this Agent created.",
+      "instructions": "Resume one delegated child with new instructions. The child keeps its own conversation, its inherited permissions and its own committed history, and returns a new outcome. Use it to correct or extend delegated work instead of creating a new child.",
+      "executor": "subagent_message",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "requiresApproval": true
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "Continuing a child runs its own tools under the existing approval policy.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "childId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "description": "Durable id of a child this Agent created, as returned by delegation or list_subagents."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144,
+            "description": "The follow-up instruction for the child's own conversation."
+          }
+        },
+        "required": [
+          "childId",
+          "message"
+        ]
+      },
+      "providerName": "message_subagent"
+    },
+    {
+      "id": "tool.subagent_cancel",
+      "name": "Cancel subagent",
+      "description": "Cancel a subagent this Agent created and stop the jobs it still owns.",
+      "instructions": "Close one child scope. Cancelling cannot undo effects the child already performed. Repeating it for the same child is a no-op.",
+      "executor": "subagent_cancel",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "requiresApproval": false
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "Cancelling a child scope this Agent already owns executes without a new approval decision.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "childId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "description": "Durable id of a child this Agent created."
+          }
+        },
+        "required": [
+          "childId"
+        ]
+      },
+      "providerName": "cancel_subagent"
     },
     {
       "id": "tool.skill",

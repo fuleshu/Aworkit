@@ -159,6 +159,12 @@ pub(crate) trait ModelToolInvocationPortV1 {
     }
     /// Preserve typed instruction references in ordinary model request history.
     fn record_text_context(&self, _input: &Value, _context: &ModelToolRequestV1) {}
+    /// Records the exact conversation prefix the delegating Agent had committed
+    /// when this turn's tools became callable. A forked child builds its
+    /// declared projection from that snapshot, so the same fork always yields
+    /// the same child prefix. Delegated children deliberately do not forward
+    /// this: only their delegating parent records it.
+    fn observe_parent_turn(&self, _input: &Value, _exchanges: &[ModelToolExchangeV1]) {}
     /// Last Agent preparation step, after any visible-context replacement.
     fn prepare_automatic_context(
         &self,
@@ -300,6 +306,10 @@ pub(crate) struct ModelToolLoopRequestV1<'a> {
     /// Frozen context at local exchange boundary zero. Durable restoration
     /// rebases it after prior history and imports it only once per invocation.
     pub initial_context: Vec<aworkit_capability_host::ModelToolContextV1>,
+    /// Exchanges this invocation continues from. Empty for a fresh invocation;
+    /// a resumed child conversation supplies its committed prefix so the model
+    /// sees the same durable history without replaying any settled effect.
+    pub initial_exchanges: Vec<ModelToolExchangeV1>,
     pub parameters: BTreeMap<String, Value>,
     pub definitions: Vec<ModelToolDefinitionV1>,
     pub binding_id: String,
@@ -375,7 +385,7 @@ pub(crate) fn execute_model_tool_loop_v1(
             .saturating_add(TOOL_CONTEXT_HEADROOM_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
-    let mut exchanges = Vec::new();
+    let mut exchanges = request.initial_exchanges.clone();
     let mut activities = Vec::new();
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
@@ -386,7 +396,9 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut pending_runtime_notice = None;
     let mut job_completion = job_completion::CompletionGuard::default();
     let mut recovery = ProviderRecoveryBudget::default();
-    let mut turn = 1_u32;
+    let mut turn = u32::try_from(exchanges.len())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
 
     loop {
         let evidence = execute_tool_turn_with_timeout_recovery(
@@ -618,6 +630,10 @@ fn execute_tool_turn_with_timeout_recovery(
     if preparation.durable {
         *exchanges = provider_request.exchanges.clone();
     }
+    // The delegating Agent publishes the exact prefix its tools can fork from.
+    // This is captured before dispatch, so every call in the turn sees the same
+    // deterministic projection input.
+    authority.observe_parent_turn(&provider_request.input, &provider_request.exchanges);
     let mut overflow_retries = 0;
     loop {
         if cancellation.is_cancelled() {
@@ -751,7 +767,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             .saturating_add(TOOL_CONTEXT_HEADROOM_BYTES),
         maximum_output_bytes: request.maximum_output_bytes,
     };
-    let mut exchanges = Vec::new();
+    let mut exchanges = request.initial_exchanges.clone();
     let mut activities = Vec::new();
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
@@ -762,7 +778,9 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut pending_runtime_notice = None;
     let mut job_completion = job_completion::CompletionGuard::default();
     let mut recovery = ProviderRecoveryBudget::default();
-    let mut turn = 1_u32;
+    let mut turn = u32::try_from(exchanges.len())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
 
     loop {
         let evidence = execute_tool_turn_with_timeout_recovery(

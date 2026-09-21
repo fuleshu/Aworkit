@@ -129,7 +129,7 @@ export const credentialMetadataConfigurationSchema = z
 const OPTIONAL_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> = {
   "tool.web_fetch": ["renderWhenNeeded"],
   "tool.web_extract": ["renderWhenNeeded"],
-  "tool.subagent": ["inheritParentTools"],
+  "tool.subagent": ["inheritParentTools", "maximumDepth", "maximumChildren"],
 };
 
 const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> =

@@ -9,7 +9,6 @@ Enabled Settings tools and tools selected only by other workflow nodes are not
 inherited. Optional `readOnly: true` narrows this selection to the established
 native research tools and MCP tools declaring both `readOnlyHint: true` and
 `destructiveHint: false`. MCP auto-approval is not a read-only classification.
-
 The trusted context records node and tool identities once per Agent invocation.
 Children reuse the same frozen gateway, tool definitions, options, workspace,
 credentials and broker. This metadata is durable but is not added to model
@@ -59,3 +58,74 @@ Behavioral tests cover real child file writes/edits, shell and Python execution,
 MCP dispatch, exact parent selection, explicit research filtering, approval
 handoff and parent resumption, replay, sibling job isolation, Chat cancellation,
 legacy delegation, and UI actor attribution. Scripted providers avoid API costs.
+
+## Continuable, forked and controllable children
+
+Adashi task 112 (id 112), design `aworkit.workflow_worker.subagent`,
+`aworkit.workflow_worker.context_store`, `aworkit.workflow_worker.limits` and
+`aworkit.workflow_worker.suspension`, extends delegation beyond the one-shot
+child. The inherited-tool contract is unchanged; the new behavior is additive
+and every new tool is a separate frozen binding.
+
+Each child now owns a durable `ChildContextFrameV1` in the Chat's machine-local
+operational record store: child identity, delegating Agent node, parent
+invocation, lineage, depth, declared inherited identities, read-only mode, the
+immutable prompt prefix, the child's own committed exchanges, status, counters,
+result text, blocked approval actions and timestamps. Later revisions of one
+child supersede earlier ones, so a Run resumes a child from its newest head.
+Frames are keyed by child id and revision: a replayed pass re-appends at most the
+same revision and never rewrites an acknowledged child head.
+
+`tool.subagent` still runs the child to completion synchronously, but the result
+now carries `childId`, `status`, `headRevision` and the child's own job
+inventory. A settled child stays resumable for the rest of the Run.
+
+`tool.subagent_fork` creates a child from a declared, bounded projection of the
+delegating Agent's committed conversation rather than a standalone brief. The
+projection is part of the frozen delegation contract: `forkMaximumItems` and
+`forkMaximumBytes` bound how many recent conversation items are inherited, the
+oldest are omitted first, and the newest item always survives. System
+instructions are never inherited. The projection hashes deterministically, so
+the same parent revision and the same frozen bounds always produce the same
+child prefix. The projection is captured once per model turn before dispatch, so
+every call in a turn forks the same deterministic prefix.
+
+`tool.subagent_list`, `tool.subagent_message` and `tool.subagent_cancel` are the
+owner-isolated controls. They resolve the delegating Agent from the same frozen
+identity scope a spawn uses, then restrict to children of that Chat, Run and
+Agent node. A child never inherits any delegation or control tool, so a child
+cannot delegate again or reach a sibling. `subagent_message` resumes the child's
+own conversation at its committed head with one new user message and returns a
+new outcome; the child's prompt prefix, inherited tools and authority stay
+identical across turns. `subagent_cancel` closes the scope and stops the jobs
+the child still owns; repeating it for the same child is a no-op success. A
+cancelled child cannot be continued and reports `cancelled` without an error.
+
+Operator isolation and failures. A child call still uses the existing durable
+broker, filesystem boundaries and standing grants. `parent_approval_required`,
+contract failures and provider failures remain the parent's decision under the
+frozen attempt policy; an uncertain child outcome is never retried
+automatically. A refused spawn or a failed child turn is a failed tool result
+the parent model can read, not a node failure.
+
+Limits are admitted before any child context exists and charged to the parent
+scope. `maximumDepth` (default 1) keeps nested delegation unavailable, exactly
+as the approved inheritance contract states, and refuses a child whose depth
+would exceed it. `maximumChildren` (default 32) counts the Agent's live
+(cancelled children excluded) scopes and refuses the spawn that would exceed it.
+`subagent_list` shows the durable identities, so an exhausted bound is
+recoverable by cancelling a finished child instead of guessing. There is still
+no model-turn, elapsed-time or request-size cap: the provider and the model's
+context window remain the only budgets.
+
+Evidence and recovery. The existing subagent spans and cards are unchanged, and
+the parent transcript still receives only the declared child outcome. Because
+the frame and every child tool settlement are durable and keyed, recovery
+restores child lineage and committed invocation ids and never re-runs an
+acknowledged child effect. Replayed commands reuse their committed provider
+responses, and a continuation after replay still resumes from the same head.
+
+Tests cover real continuation across turns with a stable child prefix, fork
+projection inheritance and reproducibility, the frozen projection bound, list /
+cancel idempotency and closed-scope messaging, unknown-child refusal, fan-out
+and depth exhaustion before child creation, and replay without re-execution.
