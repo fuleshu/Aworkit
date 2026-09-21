@@ -162,6 +162,7 @@ fn cancel(
         ..frame
     };
     dispatcher.persist_child(&updated)?;
+    publish_child_fact(&dispatcher.run_events, &updated, ChildStatusV1::Cancelled)?;
     Ok((
         updated.outcome(dispatcher.child_jobs(&child_id)?),
         format!("Cancelled subagent {child_id} and stopped its remaining jobs."),

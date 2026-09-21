@@ -137,7 +137,12 @@ impl FileToolDispatcherV1 {
         self.runtime
             .records
             .record_subagent_child(&updated)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        super::subagent::publish_child_fact(
+            &self.run_events,
+            &updated,
+            super::subagent::ChildStatusV1::Cancelled,
+        )
     }
 
     pub(super) fn start_shell_job(

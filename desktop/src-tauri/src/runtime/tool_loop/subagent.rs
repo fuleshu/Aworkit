@@ -23,6 +23,12 @@ use worker::{ChildTurnRequestV1, ChildTurnV1, execute_child_turns};
 
 pub(super) const APPROVAL_HANDOFF: &str = "This action requires approval beyond the child's existing permissions. It was not executed. Return it to the parent agent to handle through its normal approval policy; do not retry or use a workaround.";
 const SCOPE_EVENT: &str = "context.delegation-scope";
+/// Bounded child lifecycle fact the desktop folds into its subagent catalog.
+///
+/// It carries identity, status and counters only. The child's conversation and
+/// evidence stay operational and are never merged into the semantic transcript,
+/// so this is deliberately a `context.*` fact rather than a timeline activity.
+pub(crate) const CHILD_FACT: &str = "context.subagent-child";
 /// Role instructions of every child conversation. The child is always isolated
 /// from the parent transcript unless a fork declares a bounded projection.
 const CHILD_ROLE_INSTRUCTIONS: &str = "You are a delegated subagent. The supplied definitions are your exact tools; they do not describe the parent agent's tools. Execute the assigned work using those tools and report observed changes and test results concisely. Your permissions are fixed at delegation. If a required operation needs approval or an unavailable tool, return the specific blocker to the parent promptly; do not retry it through another tool or emit a large ready-to-paste implementation. Background jobs belong to this Chat, but you may control only jobs you started. Resolve them before finishing.";
@@ -652,6 +658,7 @@ impl FileToolDispatcherV1 {
         let error = turn.error.clone();
         let frame = apply_turn(prepared.frame, turn);
         self.persist_child(&frame)?;
+        publish_child_fact(&self.run_events, &frame, frame.status)?;
         if let Some(error) = error {
             return Err(error);
         }
@@ -669,6 +676,7 @@ impl FileToolDispatcherV1 {
     ) -> Result<Value, String> {
         let prepared = self.prepare_child(spawn, admission)?;
         self.persist_child(&prepared.frame)?;
+        publish_child_fact(&self.run_events, &prepared.frame, ChildStatusV1::Running)?;
         let child_id = prepared.frame.child_id.clone();
         let job_child_id = child_id.clone();
         let chat_id = prepared.frame.chat_id.clone();
@@ -682,6 +690,7 @@ impl FileToolDispatcherV1 {
             child_id.clone(),
         );
         let runtime = request.runtime.clone();
+        let fact_stream = self.run_events.clone();
         let outer = envelope.invocation_id.clone();
         let job_id = self.runtime.jobs.clone().start_child_scoped(
             &self.context.chat_id,
@@ -698,6 +707,7 @@ impl FileToolDispatcherV1 {
                     .records
                     .record_subagent_child(&frame)
                     .map_err(|problem| problem.to_string())?;
+                let _ = publish_child_fact(&fact_stream, &frame, frame.status);
                 if let Some(error) = error {
                     return Err(error);
                 }
@@ -734,6 +744,8 @@ impl FileToolDispatcherV1 {
             child_id.clone(),
         );
         let runtime = request.runtime.clone();
+        let fact_stream = self.run_events.clone();
+        publish_child_fact(&fact_stream, &frame, ChildStatusV1::Running)?;
         let outer = envelope.invocation_id.clone();
         let job_id = self.runtime.jobs.clone().start_child_scoped(
             &self.context.chat_id,
@@ -751,6 +763,7 @@ impl FileToolDispatcherV1 {
                     .records
                     .record_subagent_child(&frame)
                     .map_err(|problem| problem.to_string())?;
+                let _ = publish_child_fact(&fact_stream, &frame, frame.status);
                 if let Some(error) = error {
                     return Err(error);
                 }
@@ -783,6 +796,7 @@ impl FileToolDispatcherV1 {
         let error = turn.error.clone();
         let updated = apply_turn(frame, turn);
         self.persist_child(&updated)?;
+        publish_child_fact(&self.run_events, &updated, updated.status)?;
         if let Some(error) = error {
             return Err(error);
         }
@@ -1089,4 +1103,41 @@ fn apply_turn(mut frame: SubagentChildFrameV1, turn: ChildTurnV1) -> SubagentChi
     frame.output_tokens = frame.output_tokens.saturating_add(turn.output_tokens);
     frame.updated_at = crate::runtime::history::now_label();
     frame
+}
+
+/// Bounded child lifecycle fact. Later facts for one child supersede earlier
+/// ones, so the desktop folds the newest status per childId.
+fn child_fact(frame: &SubagentChildFrameV1, status: ChildStatusV1) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "childId": frame.child_id,
+        "chatId": frame.chat_id,
+        "runId": frame.run_id,
+        "nodeId": frame.node_id,
+        "parentInvocationId": frame.parent_invocation_id,
+        "kind": frame.kind,
+        "status": status.as_str(),
+        "depth": frame.depth,
+        "task": frame.task,
+        "modelTurns": frame.model_turns,
+        "toolCalls": frame.tool_calls,
+        "inputTokens": frame.input_tokens,
+        "outputTokens": frame.output_tokens,
+        "headRevision": frame.head_revision,
+        "createdAt": frame.created_at,
+        "updatedAt": frame.updated_at,
+    })
+}
+
+/// Commits one child lifecycle fact so the desktop catalog updates without a
+/// model turn. A caller that cannot commit leaves the durable frame as the
+/// authoritative record and reports the failure.
+pub(crate) fn publish_child_fact(
+    run_events: &RunEventStream,
+    frame: &SubagentChildFrameV1,
+    status: ChildStatusV1,
+) -> Result<(), String> {
+    run_events
+        .context_event(CHILD_FACT, child_fact(frame, status))
+        .map(|_| ())
 }
