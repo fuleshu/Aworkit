@@ -41,6 +41,8 @@ pub enum CapabilityKindV1 {
     WebFetch,
     Todo,
     Goal,
+    AskUser,
+    Browse,
     Subagent,
     Mcp,
     Plugin,

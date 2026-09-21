@@ -152,6 +152,7 @@ impl ModelToolInvocationPortV1 for Authority {
                 call_id: call.call_id.clone(),
                 title: "Review".into(),
                 summary: "Review".into(),
+                question: None,
             }))
         } else {
             Ok(ToolInvokeV1::Settled(settled(call, true)))

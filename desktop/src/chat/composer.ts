@@ -42,6 +42,8 @@ export function canSubmit(
   if (state.draft.trim() === "" && state.attachments.length === 0)
     return "Enter a message or add an image before sending.";
   if (chat.disabledReason !== undefined) return chat.disabledReason;
+  if (chat.phase === "awaiting_answer")
+    return "Answer or skip the agent's question to continue this Run.";
   if (["cancelled", "completed", "failed"].includes(chat.phase))
     return "This Chat is terminal. Start a new Chat to send another message.";
   if (!chat.lockedWorkflow) {
@@ -94,6 +96,7 @@ export function controlsFor(
     chat.phase === "running" ||
     chat.phase === "paused" ||
     chat.phase === "awaiting_approval" ||
+    chat.phase === "awaiting_answer" ||
     chat.phase === "cancelling"
   )
     return ["cancel"];

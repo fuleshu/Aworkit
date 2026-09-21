@@ -482,7 +482,7 @@ impl FileToolDispatcherV1 {
         // hand a child a delegation or control tool.
         context.bindings = tool_ids
             .iter()
-            .filter(|id| !is_subagent_tool(id))
+            .filter(|id| !is_owner_only_tool(id))
             .map(|id| {
                 self.context
                     .bindings
@@ -982,7 +982,7 @@ impl FileToolDispatcherV1 {
         // selection, not the Run's whole binding catalog.
         let child_bindings: Vec<&StoredFileToolBindingV1> = tool_ids
             .iter()
-            .filter(|id| !is_subagent_tool(id))
+            .filter(|id| !is_owner_only_tool(id))
             .filter_map(|id| {
                 self.context
                     .bindings

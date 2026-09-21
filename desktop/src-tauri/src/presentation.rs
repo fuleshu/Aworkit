@@ -201,11 +201,18 @@ pub fn show_message<R: Runtime>(
     Ok(())
 }
 
-pub fn pick_file<R: Runtime>(app: &AppHandle<R>) -> Option<FilePath> {
-    app.dialog()
-        .file()
-        .set_title("Open Aworkit file")
-        .blocking_pick_file()
+/// Bound on the extension filter a question may request.
+pub const MAXIMUM_PICK_EXTENSIONS: usize = 16;
+
+/// Opens the operating system's file chooser. `extensions` narrows the visible
+/// files when the caller knows what it needs; an empty list offers everything.
+pub fn pick_file<R: Runtime>(app: &AppHandle<R>, extensions: &[String]) -> Option<FilePath> {
+    let mut dialog = app.dialog().file().set_title("Open Aworkit file");
+    if !extensions.is_empty() {
+        let filters = extensions.iter().map(String::as_str).collect::<Vec<_>>();
+        dialog = dialog.add_filter("Requested files", &filters);
+    }
+    dialog.blocking_pick_file()
 }
 
 pub fn pick_folder<R: Runtime>(app: &AppHandle<R>) -> Option<FilePath> {

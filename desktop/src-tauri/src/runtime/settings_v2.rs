@@ -1271,7 +1271,7 @@ impl BuiltInToolConfigurationV2 {
                 }
                 Ok(())
             }
-            "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" | "tool.subagent_fork" | "tool.subagent_list" | "tool.subagent_message" | "tool.subagent_cancel" => {
+            "tool.ask_user" | "tool.browse" | "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" | "tool.subagent_fork" | "tool.subagent_list" | "tool.subagent_message" | "tool.subagent_cancel" => {
                 let manifest = super::tool_registry::native_tool(&self.id)
                     .ok_or_else(|| format!("missing native tool '{}'", self.id))?;
                 require_tool_project_scope(self, manifest.requires_project)?;
@@ -2871,6 +2871,8 @@ mod tests {
                 "tool.python.host",
                 "tool.todo",
                 "tool.goal",
+                "tool.ask_user",
+                "tool.browse",
                 "tool.web_search",
                 "tool.web_fetch",
                 "tool.web_extract",

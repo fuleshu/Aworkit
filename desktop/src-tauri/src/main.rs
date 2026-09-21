@@ -129,8 +129,15 @@ async fn native_message(app: tauri::AppHandle, title: String, body: String) -> R
 }
 
 #[tauri::command]
-async fn native_pick_file(app: tauri::AppHandle) -> Option<tauri_plugin_dialog::FilePath> {
-    aworkit_desktop::presentation::pick_file(&app)
+async fn native_pick_file(
+    app: tauri::AppHandle,
+    extensions: Option<Vec<String>>,
+) -> Option<tauri_plugin_dialog::FilePath> {
+    let extensions = extensions.unwrap_or_default();
+    if extensions.len() > aworkit_desktop::presentation::MAXIMUM_PICK_EXTENSIONS {
+        return None;
+    }
+    aworkit_desktop::presentation::pick_file(&app, &extensions)
 }
 
 #[tauri::command]

@@ -22,6 +22,7 @@ const labels: Record<TimelineItem["kind"], string> = {
   external_agent: "External agent",
   artifact: "Artifact",
   approval: "Approval",
+  question: "Question",
   route: "Route",
   todo: "Task list",
   goal: "Chat goal",

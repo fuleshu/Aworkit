@@ -338,7 +338,7 @@ impl ModelToolInvocationPortV1 for SubagentToolPortV1 {
 
 impl SubagentToolPortV1 {
     fn guard(&self, call: &ModelToolCallV1) -> Result<(), String> {
-        if is_subagent_tool(&call.capability_id) {
+        if is_owner_only_tool(&call.capability_id) {
             return Err("tool is not available to subagent children".to_owned());
         }
         if !self

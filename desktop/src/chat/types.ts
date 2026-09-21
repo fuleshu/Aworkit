@@ -6,6 +6,7 @@ export type RunPhase =
   | "waiting_input"
   | "paused"
   | "awaiting_approval"
+  | "awaiting_answer"
   | "cancelling"
   | "cancelled"
   | "completed"
@@ -73,6 +74,7 @@ export type TimelineKind =
   | "external_agent"
   | "artifact"
   | "approval"
+  | "question"
   | "route"
   | "todo"
   | "goal"
@@ -98,7 +100,7 @@ export interface TimelineItem {
   readonly reasoningCategory?: "summary" | "progress" | "source_provided";
   readonly createdAt: string;
   readonly status?: string;
-  readonly action?: "approve" | "reject" | "retry" | "fork" | "continue";
+  readonly action?: "approve" | "reject" | "answer" | "retry" | "fork" | "continue";
   readonly raw?: unknown;
   readonly metadata?: unknown;
   readonly input?: unknown;
@@ -183,6 +185,20 @@ export type ChatIntent = { readonly targetId?: string } & (
       readonly commandId: string;
       readonly targetId: string;
       readonly pinned: boolean;
+    }
+  | {
+      /**
+       * One answer to a model question. It is not an approval decision: the
+       * core validates it against the durable question before it is delivered.
+       */
+      readonly type: "question";
+      readonly commandId: string;
+      readonly targetId: string;
+      readonly questionId: string;
+      readonly optionId?: string;
+      readonly freeText?: string;
+      readonly path?: string;
+      readonly cancelled?: boolean;
     }
   | {
       readonly type: "approval";

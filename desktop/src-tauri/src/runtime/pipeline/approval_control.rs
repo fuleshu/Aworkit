@@ -193,7 +193,7 @@ impl WorkflowExecutionPipeline {
 
     /// Covers a crash after the provider outcome or next gate was durable but
     /// before the UI-facing approval receipt was written. No provider is called.
-    fn recover_committed_approval(
+    pub(super) fn recover_committed_approval(
         &self,
         prepared: &PreparedExecutionRecordV1,
         pending: &PendingGraphPassStateV1,
@@ -211,6 +211,10 @@ impl WorkflowExecutionPipeline {
         if outcome.is_none() && next.is_none() {
             return Ok(None);
         }
+        let suspended_question = pending
+            .agent_loop
+            .as_ref()
+            .and_then(|agent| agent.pending.challenge.question.clone());
         let mut result = WorkflowExecutionResultV1 {
             request_id: prepared.request_id.clone(),
             chat_id: prepared.snapshot.chat_id.clone(),
@@ -221,7 +225,11 @@ impl WorkflowExecutionPipeline {
             worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
             broker_invocation_id: invocation_id.clone(),
             outcome_hash: String::new(),
-            status: WorkflowExecutionStatusV1::AwaitingApproval,
+            status: if suspended_question.is_some() {
+                WorkflowExecutionStatusV1::AwaitingAnswer
+            } else {
+                WorkflowExecutionStatusV1::AwaitingApproval
+            },
             assistant_text: None,
             reasoning: None,
             error: None,
@@ -268,6 +276,7 @@ impl WorkflowExecutionPipeline {
                     .unwrap_or_else(|| "source_provided".into()),
             });
             result.approval = Some(GraphApprovalRequestV1 {
+                question: suspended_question,
                 filesystem: next
                     .agent_loop
                     .as_ref()

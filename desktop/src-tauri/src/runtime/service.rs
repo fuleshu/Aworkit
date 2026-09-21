@@ -111,7 +111,7 @@ const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
 
 pub(crate) mod approval_control;
 mod goal_control;
-use approval_control::parse_approval_resolution;
+use approval_control::{parse_approval_resolution, parse_question_answer};
 
 trait WorkflowPipelinePort: Send + Sync {
     fn stopped_node(&self, _request_id: &StableId) -> Result<Option<String>, String> { Ok(None) }
@@ -139,6 +139,25 @@ trait WorkflowPipelinePort: Send + Sync {
         _resolution: &super::approvals::ApprovalResolution,
     ) -> Result<WorkflowExecutionResultV1, String> {
         Err("approval resume is not available from this pipeline".into())
+    }
+
+    fn validate_question_target(
+        &self,
+        _question_id: &str,
+        _chat_id: &str,
+        _answer: &Value,
+    ) -> Result<(), String> {
+        Err("question validation is not available from this pipeline".into())
+    }
+
+    /// Delivers one user answer to a suspended question and resumes the pass.
+    fn resume_question(
+        &self,
+        _question_id: &str,
+        _chat_id: &str,
+        _answer: &Value,
+    ) -> Result<WorkflowExecutionResultV1, String> {
+        Err("question resume is not available from this pipeline".into())
     }
 
     fn run_todo_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
@@ -212,6 +231,28 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
         resolution: &super::approvals::ApprovalResolution,
     ) -> Result<WorkflowExecutionResultV1, String> {
         WorkflowExecutionPipeline::resume_approval_choice(self, decision_id, resolution)
+            .map_err(|error| error.to_string())
+    }
+
+    fn validate_question_target(
+        &self,
+        question_id: &str,
+        chat_id: &str,
+        answer: &Value,
+    ) -> Result<(), String> {
+        let answer = parse_question_answer(answer)?;
+        WorkflowExecutionPipeline::validate_question_target(self, question_id, chat_id, &answer)
+            .map_err(|error| error.to_string())
+    }
+
+    fn resume_question(
+        &self,
+        question_id: &str,
+        chat_id: &str,
+        answer: &Value,
+    ) -> Result<WorkflowExecutionResultV1, String> {
+        let answer = parse_question_answer(answer)?;
+        WorkflowExecutionPipeline::resume_question(self, question_id, chat_id, &answer)
             .map_err(|error| error.to_string())
     }
 
@@ -878,7 +919,7 @@ impl DesktopRuntime {
             .pending_effect_command_at_head(self.history.head()?)?
             && !matches!(
                 input.action.as_str(),
-                "resume" | "abandon_recovery" | "approval"
+                "resume" | "abandon_recovery" | "approval" | "question"
             )
             && (input.command_id != pending.command.command_id
                 || fingerprint != pending.command_hash)
@@ -896,6 +937,7 @@ impl DesktopRuntime {
                 | "abandon_recovery"
                 | "cancel"
                 | "approval"
+                | "question"
                 | "approval_mode"
                 | "set_goal"
                 | "edit_context"
@@ -946,6 +988,7 @@ impl DesktopRuntime {
                 .complete_workflow_input(input, fingerprint, replay_fence)
                 .map(|(receipt, _status)| receipt),
             "approval" => self.complete_approval(input, fingerprint),
+            "question" => self.complete_question(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
             "set_goal" => self.change_goal(input, fingerprint),
             "edit_context" => self.edit_context(input, fingerprint),
@@ -1623,36 +1666,20 @@ impl DesktopRuntime {
                     facts.push(("message.assistant", fact));
                 }
             }
-            WorkflowExecutionStatusV1::AwaitingApproval => {
+            WorkflowExecutionStatusV1::AwaitingApproval
+            | WorkflowExecutionStatusV1::AwaitingAnswer => {
                 facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
                     &created_at,
                 )?);
-                let approval = result.approval.ok_or_else(|| {
-                    "authority pipeline reported an approval suspension without a decision identity"
-                        .to_owned()
-                })?;
-                facts.push((
-                    "span.updated",
-                    run_waiting_fact(&result.request_id, &result.run_id, &created_at),
-                ));
-                facts.push((
-                    "approval.requested",
-                    json!({
-                        "createdAt": created_at,
-                        "commandId": input.command_id,
-                        "decisionId": approval.decision_id,
-                        "nodeId": approval.node_id,
-                        "title": approval.title,
-                        "body": approval.message,
-                        "projectScope": approval.project_scope,
-                        "filesystem": approval.filesystem,
-                        "frozenContextHash": frozen.context_hash,
-                        "invocationId": result.broker_invocation_id,
-                    }),
-                ));
+                facts.extend(suspension_facts(
+                    &result,
+                    &input.command_id,
+                    &frozen.context_hash,
+                    &created_at,
+                )?);
             }
             status => {
                 facts.extend(run_state_facts(
@@ -1821,6 +1848,104 @@ impl DesktopRuntime {
         if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
             return Ok(receipt);
         }
+        self.commit_resumed_result(&input, &fingerprint, &frozen, result)
+    }
+
+    /// Delivers the user's answer to a suspended question and resumes the pass.
+    ///
+    /// The answer is committed before the resume, exactly like an approval
+    /// decision, so a crash between the two leaves a durable answer that
+    /// recovery re-delivers once instead of asking the question again.
+    fn complete_question(
+        &mut self,
+        input: UiCommandInput,
+        fingerprint: String,
+    ) -> Result<UiCommandReceipt, String> {
+        let command_started = self.history.command_started(&input.command_id)?;
+        if !command_started {
+            self.history.ensure_expected(input.expected_version)?;
+        }
+        let question_id = string_field(&input.payload, "questionId")?;
+        let answer = parse_question_answer(&input.payload)?;
+        let frozen = self.history.current_frozen_context()?.ok_or_else(|| {
+            "the current Chat has no durable frozen execution context for a question".to_owned()
+        })?;
+        if !command_started {
+            self.pipeline.validate_question_target(
+                &question_id,
+                frozen.context.identity.chat_id.as_str(),
+                &serde_json::to_value(&answer).map_err(|error| error.to_string())?,
+            )?;
+        }
+        self.history.stage_effect_command(PendingChatCommandV1 {
+            schema_version: 1,
+            frozen_context_hash: frozen.context_hash.clone(),
+            command_hash: fingerprint.clone(),
+            command: input.clone(),
+        })?;
+        if !command_started {
+            let created_at = now_label();
+            self.history.begin_effect_command(
+                &input.command_id,
+                &fingerprint,
+                input.expected_version,
+                vec![
+                    (
+                        "command.started",
+                        json!({
+                            "schemaVersion": 1,
+                            "requestId": input.command_id,
+                            "runId": frozen.context.identity.run_id,
+                            "status": "running",
+                            "createdAt": created_at,
+                        }),
+                    ),
+                    (
+                        if answer.cancelled {
+                            "question.cancelled"
+                        } else {
+                            "question.answered"
+                        },
+                        json!({
+                            "createdAt": created_at,
+                            "requestId": input.command_id,
+                            "runId": frozen.context.identity.run_id,
+                            "questionId": question_id,
+                            "optionId": answer.option_id,
+                            "freeText": answer.free_text,
+                            "path": answer.path,
+                            "cancelled": answer.cancelled,
+                            "frozenContextHash": frozen.context_hash,
+                        }),
+                    ),
+                ],
+            )?;
+        }
+        let result = self
+            .pipeline
+            .resume_question(
+                &question_id,
+                frozen.context.identity.chat_id.as_str(),
+                &serde_json::to_value(&answer).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        if let Some(receipt) = self.settle_requested_stop(&input, &fingerprint, &result)? {
+            return Ok(receipt);
+        }
+        self.commit_resumed_result(&input, &fingerprint, &frozen, result)
+    }
+
+    /// Commits the facts of one resumed pass.
+    ///
+    /// An approval decision and a question answer resume the same way, so the
+    /// terminal-outcome projection is shared rather than duplicated.
+    fn commit_resumed_result(
+        &mut self,
+        input: &UiCommandInput,
+        fingerprint: &str,
+        frozen: &FrozenChatExecutionRecordV1,
+        result: WorkflowExecutionResultV1,
+    ) -> Result<UiCommandReceipt, String> {
         let created_at = now_label();
         let context = &frozen.context;
         let mut facts = Vec::new();
@@ -1898,36 +2023,20 @@ impl DesktopRuntime {
                 ));
                 facts.push(("message.assistant", fact));
             }
-            WorkflowExecutionStatusV1::AwaitingApproval => {
+            WorkflowExecutionStatusV1::AwaitingApproval
+            | WorkflowExecutionStatusV1::AwaitingAnswer => {
                 facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
                     &created_at,
                 )?);
-                let approval = result.approval.ok_or_else(|| {
-                    "authority pipeline reported a second approval without a decision identity"
-                        .to_owned()
-                })?;
-                facts.push((
-                    "span.updated",
-                    run_waiting_fact(&result.request_id, &result.run_id, &created_at),
-                ));
-                facts.push((
-                    "approval.requested",
-                    json!({
-                        "createdAt": created_at,
-                        "commandId": input.command_id,
-                        "decisionId": approval.decision_id,
-                        "nodeId": approval.node_id,
-                        "title": approval.title,
-                        "body": approval.message,
-                        "projectScope": approval.project_scope,
-                        "filesystem": approval.filesystem,
-                        "frozenContextHash": frozen.context_hash,
-                        "invocationId": result.broker_invocation_id,
-                    }),
-                ));
+                facts.extend(suspension_facts(
+                    &result,
+                    &input.command_id,
+                    &frozen.context_hash,
+                    &created_at,
+                )?);
             }
             status => {
                 facts.extend(run_state_facts(
@@ -4341,14 +4450,87 @@ fn run_terminal_fact(
     })
 }
 
-fn run_waiting_fact(request_id: &StableId, run_id: &StableId, created_at: &str) -> Value {
+/// The committed facts for one durable suspension.
+///
+/// A pass stops for exactly one reason: an authority decision the user must
+/// make, or a question the model asked. Both are the same suspension, so both
+/// report the waiting span and exactly one decision fact.
+fn suspension_facts(
+    result: &WorkflowExecutionResultV1,
+    command_id: &str,
+    frozen_context_hash: &str,
+    created_at: &str,
+) -> Result<Vec<(&'static str, Value)>, String> {
+    let suspension = result.approval.clone().ok_or_else(|| {
+        "authority pipeline reported a suspension without a decision identity".to_owned()
+    })?;
+    let mut facts = vec![(
+        "span.updated",
+        run_waiting_fact(
+            &result.request_id,
+            &result.run_id,
+            created_at,
+            suspension.question.is_some(),
+        ),
+    )];
+    match &suspension.question {
+        Some(question) => {
+            facts.push((
+                "question.asked",
+                json!({
+                    "createdAt": created_at,
+                    "commandId": command_id,
+                    "questionId": suspension.decision_id,
+                    "nodeId": suspension.node_id,
+                    "title": suspension.title,
+                    "prompt": question.prompt,
+                    "kind": question.kind,
+                    "options": question.options,
+                    "allowFreeText": question.allow_free_text,
+                    "defaultOptionId": question.default_option_id,
+                    "frozenContextHash": frozen_context_hash,
+                    "invocationId": result.broker_invocation_id,
+                }),
+            ));
+        }
+        None => {
+            facts.push((
+                "approval.requested",
+                json!({
+                    "createdAt": created_at,
+                    "commandId": command_id,
+                    "decisionId": suspension.decision_id,
+                    "nodeId": suspension.node_id,
+                    "title": suspension.title,
+                    "body": suspension.message,
+                    "projectScope": suspension.project_scope,
+                    "filesystem": suspension.filesystem,
+                    "frozenContextHash": frozen_context_hash,
+                    "invocationId": result.broker_invocation_id,
+                }),
+            ));
+        }
+    }
+    Ok(facts)
+}
+
+fn run_waiting_fact(
+    request_id: &StableId,
+    run_id: &StableId,
+    created_at: &str,
+    question: bool,
+) -> Value {
     json!({
         "schemaVersion": 1,
         "requestId": request_id,
         "runId": run_id,
         "spanId": format!("span.run.{run_id}.{request_id}"),
         "status": "waiting",
-        "body": "Run is waiting for approval.",
+        "body": if question {
+            "Run is waiting for the user's answer."
+        } else {
+            "Run is waiting for approval."
+        },
         "createdAt": created_at,
     })
 }
@@ -4360,6 +4542,7 @@ const fn execution_status_name(status: WorkflowExecutionStatusV1) -> &'static st
         WorkflowExecutionStatusV1::FailedKnownStarted => "failed_known_started",
         WorkflowExecutionStatusV1::OutcomeUncertain => "outcome_uncertain",
         WorkflowExecutionStatusV1::AwaitingApproval => "awaiting_approval",
+        WorkflowExecutionStatusV1::AwaitingAnswer => "awaiting_answer",
     }
 }
 

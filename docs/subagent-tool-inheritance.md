@@ -256,3 +256,58 @@ authoritative interruption that a stale running fact cannot overwrite), the
 child-scoped feed filter and paging, the workspace flow from the delegating tool
 block to the read-only child view, the Settings preference and its restart and
 generic-save durability, and the Rust catalog and child-page reads.
+
+## Model questions and user-chosen paths
+
+Adashi tasks 114 (id 114) and 121 (id 121), design
+`aworkit.workflow_worker.suspension`, `aworkit.desktop_ui.conversation`,
+`aworkit.desktop_ui.composer`, `aworkit.trusted_core.chat_lifecycle` and
+`aworkit.capability_host.tool_runtime`.
+
+A model can now stop and ask. `tool.ask_user` submits a typed question — a
+prompt, one to eight labelled options, an optional free-text allowance and an
+optional default — and `tool.browse` asks the user to choose a file or a folder.
+Both are frozen native capabilities with `authorityMode` `run_question` and
+`run_browse`, owner-scoped per Chat, idempotent by command id, side-effect free,
+and excluded from the delegated-subagent selection: a child that needs an answer
+returns the blocked action to its parent instead of asking the user itself.
+
+One suspension, not a second channel. A question reuses the whole approval
+suspension: the same broker proposal and invocation identity, the same pending
+graph-pass record, the same owner scope, resume nonce and no-replay frontier.
+`GraphApprovalRequestV1` carries an optional question beside the approval
+payload, and the pass reports `GraphPassStatusV1::AwaitingAnswer`, which becomes
+`WorkflowExecutionStatusV1::AwaitingAnswer` and the durable `awaiting_answer`
+phase. The service commits `question.asked` instead of `approval.requested`, and
+only the suspending reason differs.
+
+The question tools never reach an executor. The tool loop settles them where an
+approval would be resolved: with no recorded answer it suspends with the
+question, and with one it returns the answer as the call's ordinary result. That
+is what makes the answer deliverable exactly once — the resume re-invokes the
+same call, finds the recorded answer and settles it, so a replayed resume
+re-delivers instead of running anything, a repeated delivery of the same answer
+returns the committed outcome, a different answer is refused, and an unanswered
+question is never answered by an ordinary message, a retry, a restart or a
+default.
+
+Desktop. A committed question renders twice from one projection: a `question`
+timeline card that keeps the prompt, the offered options and the answer in
+chronology, and a modal `<dialog>` that is the focused answering surface. The
+dialog opens when an unanswered question arrives, can be dismissed with "Decide
+later" without answering — the card stays answerable and is never re-opened on
+its own — and closes by itself once the answer commits. `tool.browse` renders the
+same dialog with the operating system's own chooser behind a "Choose file…" or
+"Choose folder…" button; a dismissed chooser leaves the dialog unchanged, and
+"Skip" returns `cancelled: true` so the model continues from an ordinary result
+rather than an error. While the Run is `awaiting_answer` the composer disables
+ordinary send and queue and keeps the unsent draft; the answer can only be given
+through the dialog.
+
+Tests cover the suspension shape and kind, the delivered answer reaching the
+model exactly once, the replayed answer, the refusal of a different answer, the
+unknown and foreign question ids, an offered-option check, the cancelled
+question as an ordinary result, the chosen path, and — on the desktop side — the
+dialog's labels, options, free text, declared default, skip, decide-later,
+operating-system chooser and rejected-answer states plus the workspace's
+auto-open, durable card, answer dispatch, dismissal and close-on-commit.

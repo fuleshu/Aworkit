@@ -19,7 +19,8 @@ export interface NativePresentationAdapter {
   notify(title: string, body: string): Promise<void>;
   confirm(title: string, body: string): Promise<boolean>;
   message(title: string, body: string): Promise<void>;
-  pickFile(): Promise<string | null>;
+  /** `extensions` narrows a file choice; an empty list offers everything. */
+  pickFile(extensions?: readonly string[]): Promise<string | null>;
   pickFolder(): Promise<string | null>;
 }
 

@@ -36,7 +36,9 @@ use super::{
         provider_recovery_notice, resume_model_tool_loop_v1,
     },
     pipeline::{MAXIMUM_PROVIDER_REQUEST_BYTES, WorkflowMessageV1},
-    tool_loop::{StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1},
+    tool_loop::{
+        StoredFileToolBindingV1, ToolApprovalChallengeV1, WorkflowToolActivityV1, question,
+    },
 };
 
 pub(crate) const MAXIMUM_GRAPH_NODES: usize = 64;
@@ -100,6 +102,12 @@ pub struct GraphNodeActivityV1 {
     pub output: Option<Value>,
 }
 
+/// The one durable suspension a graph pass reports.
+///
+/// A pass stops for exactly one reason at a time: an authority decision the
+/// user must make, or a question the model asked. A question reuses the whole
+/// approval suspension — identity, owner scope, resume nonce and no-replay
+/// frontier — and only replaces the decision payload with the question.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphApprovalRequestV1 {
@@ -111,6 +119,10 @@ pub struct GraphApprovalRequestV1 {
     pub node_id: String,
     pub title: String,
     pub message: String,
+    /// Set when this suspension is the model asking the user a question rather
+    /// than requesting an authority decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<question::QuestionChallengeV1>,
 }
 
 /// Durable prefix snapshot written when a pass suspends at an approval node.
@@ -169,6 +181,7 @@ pub(crate) enum GraphPassStatusV1 {
     Succeeded,
     Failed,
     AwaitingApproval,
+    AwaitingAnswer,
 }
 
 #[derive(Clone, Debug)]
@@ -624,8 +637,15 @@ impl<'a> PassMachine<'a> {
             settled_tool_calls: self.settled_tool_calls,
             timeout_recoveries: self.timeout_recoveries,
         };
+        // A question is the same suspension with a different reason, so the
+        // pass reports exactly one pending decision either way.
+        let status = if approval.question.is_some() {
+            GraphPassStatusV1::AwaitingAnswer
+        } else {
+            GraphPassStatusV1::AwaitingApproval
+        };
         GraphPassOutcomeV1 {
-            status: GraphPassStatusV1::AwaitingApproval,
+            status,
             assistant_text: None,
             error: None,
             approval: Some(approval),
@@ -1283,6 +1303,7 @@ impl<'a> PassMachine<'a> {
             }
         }
         let approval = GraphApprovalRequestV1 {
+            question: None,
             filesystem: None,
             project_scope: None,
             decision_id: decision_id.clone(),
@@ -1459,6 +1480,7 @@ fn tool_approval_request(
     GraphApprovalRequestV1 {
         filesystem: challenge.filesystem.clone(),
         project_scope: challenge.project_scope.clone(),
+        question: challenge.question.clone(),
         decision_id: challenge.decision_id.clone(),
         node_id: node_id.to_owned(),
         title: if challenge.title.trim().is_empty() {

@@ -331,6 +331,11 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 onRecoveryPendingChange={setChatRecoveryPending}
                 onRuntimeSnapshotChange={updateChatRuntimeState}
                 subagentView={subagentView}
+                pickPath={async (kind, extensions) =>
+                  kind === "folder"
+                    ? adapters.nativePresentation.pickFolder()
+                    : adapters.nativePresentation.pickFile(extensions)
+                }
                 storedInspectorWidth={desktopLayout.inspectorPaneWidth}
                 onInspectorWidthChange={(width) => {
                   void layoutPort

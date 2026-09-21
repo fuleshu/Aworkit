@@ -19,7 +19,9 @@ import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
 import { GoalControl } from "./GoalControl";
+import { QuestionDialog } from "./QuestionDialog";
 import { SubagentConversation } from "./SubagentConversation";
+import { questionFromMetadata, type QuestionAnswerInput } from "./question";
 import { SubagentDialog } from "./SubagentDialog";
 import { SubagentTabs } from "./SubagentTabs";
 import {
@@ -83,6 +85,14 @@ interface ChatWorkspaceScreenProps {
   readonly onInspectorWidthChange?: (width: number) => void;
   /** Global delegated-subagent tab presentation preference. */
   readonly subagentView?: SubagentViewPreference;
+  /**
+   * The operating system's own file and folder choosers. A browse question
+   * opens them while its dialog is up; without them the dialog says so.
+   */
+  readonly pickPath?: (
+    kind: "file" | "folder",
+    extensions: readonly string[],
+  ) => Promise<string | null>;
 }
 
 export interface ChatHistoryActionRequest {
@@ -109,6 +119,7 @@ export function ChatWorkspaceScreen({
   storedInspectorWidth,
   onInspectorWidthChange,
   subagentView = DEFAULT_SUBAGENT_VIEW,
+  pickPath,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
@@ -152,6 +163,13 @@ export function ChatWorkspaceScreen({
   const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
     useState(false);
   const [stopPending, setStopPending] = useState(false);
+  // The question dialog is a focused surface over the durable question card:
+  // dismissing it never answers the question and never hides the card.
+  const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
+  const [dismissedQuestions, setDismissedQuestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const autoOpenedQuestion = useRef<string | null>(null);
   const handledNewChatRequest = useRef(0);
   const handledHistoryActionRequest = useRef(0);
   const wasActive = useRef(active);
@@ -270,6 +288,51 @@ export function ChatWorkspaceScreen({
           ),
     [activeChild, childFeed.events, childFeed.firstSequence, childFeed.support],
   );
+  const pendingQuestion = useMemo(
+    () =>
+      timelineItems.find(
+        (item) => item.kind === "question" && item.status === "pending",
+      ) ?? null,
+    [timelineItems],
+  );
+  useEffect(() => {
+    const id = pendingQuestion?.id ?? null;
+    if (id === null || dismissedQuestions.has(id) || autoOpenedQuestion.current === id)
+      return;
+    // A newly asked question raises its dialog once. A question the user closed
+    // stays on its card and is never raised again on its own.
+    autoOpenedQuestion.current = id;
+    setOpenQuestionId(id);
+  }, [dismissedQuestions, pendingQuestion]);
+  const dialogQuestion = useMemo(() => {
+    if (openQuestionId === null) return null;
+    const item = timelineItems.find(
+      (candidate) => candidate.id === openQuestionId && candidate.kind === "question",
+    );
+    if (item === undefined || item.status !== "pending") return null;
+    return questionFromMetadata(item.metadata, item.id) ?? null;
+  }, [openQuestionId, timelineItems]);
+  useEffect(() => {
+    // An answered or cancelled question closes its dialog by itself.
+    if (openQuestionId !== null && dialogQuestion === null)
+      setOpenQuestionId(null);
+  }, [dialogQuestion, openQuestionId]);
+  const answerQuestion = useCallback(
+    (questionId: string, answer: QuestionAnswerInput) => {
+      void runtime.dispatch({
+        type: "question",
+        commandId: commandIds.createIntent("enqueue").commandId,
+        targetId: projectedChatId ?? "",
+        questionId,
+        ...answer,
+      });
+    },
+    [commandIds, projectedChatId, runtime],
+  );
+  const dismissQuestion = useCallback((questionId: string) => {
+    setDismissedQuestions((current) => new Set(current).add(questionId));
+    setOpenQuestionId(null);
+  }, []);
   const openChildTab = useCallback(
     (childId: string) => updateTabs((state) => openSubagentTab(state, childId)),
     [updateTabs],
@@ -505,6 +568,17 @@ export function ChatWorkspaceScreen({
     targetId: string,
     details?: ApprovalActionDetails,
   ) => {
+    if (action === "answer") {
+      // Answering a question opens its dialog; the answer itself is a typed
+      // intent the dialog sends once the user confirms it.
+      setOpenQuestionId(targetId);
+      setDismissedQuestions((current) => {
+        const next = new Set(current);
+        next.delete(targetId);
+        return next;
+      });
+      return;
+    }
     const intent = timelineActionIntent(
       action,
       targetId,
@@ -777,6 +851,26 @@ export function ChatWorkspaceScreen({
           }}
         />
       )}
+      {dialogQuestion !== null && (
+        <QuestionDialog
+          key={dialogQuestion.questionId}
+          question={dialogQuestion}
+          busy={runtime.pendingCommandIds.size > 0}
+          error={
+            runtime.stale
+              ? "The projection is stale. Resynchronize before answering."
+              : null
+          }
+          pickPath={pickPath}
+          onAnswer={(answer) => {
+            answerQuestion(dialogQuestion.questionId, answer);
+            // A submitted answer hides the dialog immediately; the durable card
+            // and the committed phase remain the source of truth.
+            setOpenQuestionId(null);
+          }}
+          onDismiss={() => dismissQuestion(dialogQuestion.questionId)}
+        />
+      )}
       {inspectorOpen && (
         <RunDetailsInspector
           partial={runtime.hasOlderEvents}
@@ -794,7 +888,7 @@ export function ChatWorkspaceScreen({
 }
 
 export function timelineActionIntent(
-  action: NonNullable<TimelineItem["action"]>,
+  action: Exclude<NonNullable<TimelineItem["action"]>, "answer">,
   targetId: string,
   commandId: string,
   details?: import("./approvals").ApprovalActionDetails,

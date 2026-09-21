@@ -11,6 +11,8 @@ import {
 import { prettyJson } from "./jsonPresentation";
 import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
+import { MarkdownContent } from "./MarkdownContent";
+import { questionFromMetadata } from "./question";
 import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
 import { useTimelineFollow } from "./useTimelineFollow";
@@ -407,6 +409,39 @@ export function TimelineCard({
         )}
       </article>
     );
+  if (item.kind === "question") {
+    return (
+      <article
+        className={`activity-card question-card ${selected ? "selected" : ""}`}
+        aria-label={`Question: ${item.title}`}
+      >
+        <button
+          className="activity-heading activity-select-heading"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
+          <span className="activity-icon">?</span>
+          <strong>{item.title}</strong>
+          <span className={`status ${item.status ?? ""}`}>{item.status ?? "pending"}</span>
+        </button>
+        <div className="question-prompt">
+          <MarkdownContent>{item.body ?? ""}</MarkdownContent>
+        </div>
+        <QuestionCardActions
+          actionsDisabled={actionsDisabled}
+          item={item}
+          onAction={onAction}
+        />
+        {card.inspectable && (
+          <details className="activity-raw">
+            <summary>Inspect source record</summary>
+            <pre>{safeJson(item.raw ?? item.metadata ?? item)}</pre>
+          </details>
+        )}
+      </article>
+    );
+  }
   if (item.kind === "subagent") {
     const speech = subagentFinalText(item);
     return (
@@ -683,6 +718,63 @@ function statusIcon(item: TimelineItem): string {
 
 function isBusy(status: string | undefined): boolean {
   return status === "running" || status === "started" || status === "queued";
+}
+
+/**
+ * The durable question card: the prompt, the options that were offered, and the
+ * answer once there is one. Answering opens the modal dialog; the card keeps the
+ * question inspectable after it is answered or skipped.
+ */
+function QuestionCardActions({
+  item,
+  actionsDisabled,
+  onAction,
+}: {
+  readonly item: TimelineItem;
+  readonly actionsDisabled: boolean;
+  readonly onAction: ConversationTimelineProps["onAction"];
+}): React.JSX.Element {
+  const question = questionFromMetadata(item.metadata, item.id);
+  const fact = metadataOf(item);
+  const answered =
+    typeof fact.optionId === "string"
+      ? fact.optionId
+      : typeof fact.path === "string"
+        ? fact.path
+        : typeof fact.freeText === "string"
+          ? fact.freeText
+          : null;
+  return (
+    <div className="question-card-actions">
+      {question !== undefined && question.options.length > 0 && (
+        <ul className="question-card-options">
+          {question.options.map((option) => (
+            <li key={option.id}>{option.label}</li>
+          ))}
+        </ul>
+      )}
+      {item.action === "answer" ? (
+        <div className="activity-actions">
+          <button
+            type="button"
+            disabled={actionsDisabled}
+            title="Open the question dialog and answer the agent"
+            onClick={() => onAction("answer", item.id)}
+          >
+            Answer
+          </button>
+        </div>
+      ) : (
+        <p className="question-card-answer">
+          {item.status === "skipped"
+            ? "Skipped: the agent continued without this answer."
+            : answered === null
+              ? "Answered."
+              : `Answered: ${answered}`}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function metadataOf(item: TimelineItem): Record<string, unknown> {

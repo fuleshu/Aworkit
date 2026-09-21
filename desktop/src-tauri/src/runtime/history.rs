@@ -1758,6 +1758,26 @@ fn projected_phase(events: &[impl std::borrow::Borrow<Event>]) -> &'static str {
     // state of the Chat. Like the reference harness, the attempt stays in the log
     // for inspection while the Chat remains open for the next turn; only an
     // explicit cancellation stops it.
+    // A question is the other way one Run waits for one user decision. It uses
+    // the same open/resolved shape as an approval, so the phase is derived the
+    // same way and an answered question leaves the waiting phase.
+    let has_open_question = events
+        .iter()
+        .filter(|event| event.kind == "question.asked")
+        .any(|event| {
+            let question_id = event
+                .payload
+                .get("questionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            !events.iter().any(|resolved| {
+                matches!(
+                    resolved.kind.as_str(),
+                    "question.answered" | "question.cancelled"
+                ) && resolved.payload.get("questionId").and_then(Value::as_str)
+                    == Some(question_id)
+            })
+        });
     let has_open_approval = events
         .iter()
         .filter(|event| event.kind == "approval.requested")
@@ -1773,7 +1793,9 @@ fn projected_phase(events: &[impl std::borrow::Borrow<Event>]) -> &'static str {
                         == Some(decision_id)
             })
         });
-    if has_open_approval {
+    if has_open_question {
+        "awaiting_answer"
+    } else if has_open_approval {
         "awaiting_approval"
     } else if events.iter().any(|event| event.kind == "chat.turn_stopped") {
         "waiting_input"

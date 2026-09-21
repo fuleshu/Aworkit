@@ -29,8 +29,10 @@ export const defaultDesktopAdapters: DesktopAdapters = {
     async message(title, body): Promise<void> {
       dispatch({ kind: "notification", title, body });
     },
-    async pickFile(): Promise<string | null> {
-      const native = await invokeNativeResult<string | null>("native_pick_file");
+    async pickFile(extensions: readonly string[] = []): Promise<string | null> {
+      const native = await invokeNativeResult<string | null>("native_pick_file", {
+        extensions: extensions.length === 0 ? null : [...extensions],
+      });
       return native.available ? native.value : null;
     },
     async pickFolder(): Promise<string | null> {

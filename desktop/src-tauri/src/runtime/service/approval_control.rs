@@ -4,6 +4,7 @@ use super::*;
 use crate::runtime::approvals::{
     ApprovalChoice, ApprovalMode, ApprovalResolution, ProjectApprovalGrant,
 };
+use crate::runtime::tool_loop::question::QuestionAnswerV1;
 
 pub(crate) fn parse_approval_resolution(payload: &Value) -> Result<ApprovalResolution, String> {
     let resolution = if let Some(choice) = payload.get("choice") {
@@ -102,4 +103,32 @@ impl DesktopRuntime {
             )],
         )
     }
+}
+
+
+/// Parses one typed user answer from a question command payload. The answer is
+/// only a value: whether it is acceptable for the question it answers is
+/// decided against the durable question, never by the renderer.
+pub(crate) fn parse_question_answer(payload: &Value) -> Result<QuestionAnswerV1, String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "question command payload must be an object".to_owned())?;
+    let text = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let cancelled = object
+        .get("cancelled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok(QuestionAnswerV1 {
+        option_id: text("optionId"),
+        free_text: text("freeText"),
+        path: text("path"),
+        cancelled,
+    })
 }

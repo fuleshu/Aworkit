@@ -12,6 +12,7 @@ mod file_access;
 pub(crate) mod filesystem_permissions;
 mod file_operations;
 mod goal;
+pub(crate) mod question;
 mod image_tools;
 #[path = "compression/runtime.rs"]
 mod result_compression;
@@ -99,6 +100,8 @@ pub(crate) const SHELL_CAPABILITY_ID: &str = "tool.shell.host";
 pub(crate) const PYTHON_CAPABILITY_ID: &str = "tool.python.host";
 pub(crate) const TODO_CAPABILITY_ID: &str = "tool.todo";
 pub(crate) const GOAL_CAPABILITY_ID: &str = "tool.goal";
+pub(crate) const ASK_USER_CAPABILITY_ID: &str = "tool.ask_user";
+pub(crate) const BROWSE_CAPABILITY_ID: &str = "tool.browse";
 pub(crate) const SKILL_CAPABILITY_ID: &str = "tool.skill";
 pub(crate) const WEB_SEARCH_CAPABILITY_ID: &str = "tool.web_search";
 pub(crate) const WEB_FETCH_CAPABILITY_ID: &str = "tool.web_fetch";
@@ -113,6 +116,8 @@ const SHELL_PROVIDER_NAME: &str = "shell";
 const PYTHON_PROVIDER_NAME: &str = "python";
 const TODO_PROVIDER_NAME: &str = "todo";
 const GOAL_PROVIDER_NAME: &str = "goal";
+const ASK_USER_PROVIDER_NAME: &str = "ask_user";
+const BROWSE_PROVIDER_NAME: &str = "browse";
 const WEB_SEARCH_PROVIDER_NAME: &str = "web_search";
 const WEB_FETCH_PROVIDER_NAME: &str = "web_fetch";
 const WEB_EXTRACT_PROVIDER_NAME: &str = "web_extract";
@@ -126,6 +131,8 @@ const SHELL_ADAPTER_ID: &str = "adapter.host-tools.shell";
 const PYTHON_ADAPTER_ID: &str = "adapter.host-tools.python";
 const TODO_ADAPTER_ID: &str = "adapter.run-tools.todo";
 const GOAL_ADAPTER_ID: &str = "adapter.run-tools.goal";
+const ASK_USER_ADAPTER_ID: &str = "adapter.run-tools.ask-user";
+const BROWSE_ADAPTER_ID: &str = "adapter.run-tools.browse";
 const WEB_SEARCH_ADAPTER_ID: &str = "adapter.web-tools.search";
 const WEB_FETCH_ADAPTER_ID: &str = "adapter.web-tools.fetch";
 const WEB_EXTRACT_ADAPTER_ID: &str = "adapter.web-tools.extract";
@@ -139,6 +146,8 @@ const SHELL_SCOPE: &str = "host.shell";
 const PYTHON_SCOPE: &str = "host.python";
 const TODO_SCOPE: &str = "run.todo";
 const GOAL_SCOPE: &str = "run.goal";
+const ASK_USER_SCOPE: &str = "run.question";
+const BROWSE_SCOPE: &str = "run.browse";
 const WEB_SEARCH_SCOPE: &str = "web.search";
 const WEB_FETCH_SCOPE: &str = "web.fetch";
 const WEB_EXTRACT_SCOPE: &str = "web.extract";
@@ -290,6 +299,11 @@ pub struct ToolApprovalChallengeV1 {
     #[serde(default)]
     pub title: String,
     pub summary: String,
+    /// Set when this suspension asks the user a question instead of requesting
+    /// an authority decision. Question tools reuse the approval challenge so
+    /// the suspension frame, resume nonce and owner isolation are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<question::QuestionChallengeV1>,
 }
 
 fn tool_approval_challenge(
@@ -300,6 +314,7 @@ fn tool_approval_challenge(
     ToolApprovalChallengeV1 {
         filesystem: None,
         project_scope: None,
+        question: None,
         decision_id: challenge.invocation_id.to_string(),
         invocation_id: challenge.invocation_id.to_string(),
         nonce: challenge.nonce.to_string(),
@@ -495,6 +510,11 @@ pub(crate) enum StoredFileToolLimitV1 {
     /// is a state machine (active/completed/cleared), so the frozen limit is
     /// the configuration-free variant exactly like `Todo`.
     Goal,
+    /// Asks the user a question. Both question tools are answered by the user
+    /// rather than executed, so the frozen limit carries no parameters.
+    AskUser,
+    /// Asks the user to choose a file or a folder through the OS dialog.
+    Browse,
     WebSearch {
         configuration: WebSearchConfigurationV1,
     },
@@ -788,6 +808,22 @@ pub(crate) fn file_tool_descriptors()
             CapabilityKind::Goal,
             GOAL_SCOPE,
             goal_schema(),
+            SideEffectClass::Pure,
+            false,
+        ),
+        (
+            ASK_USER_CAPABILITY_ID,
+            CapabilityKind::AskUser,
+            ASK_USER_SCOPE,
+            question_schema(ASK_USER_CAPABILITY_ID),
+            SideEffectClass::Pure,
+            false,
+        ),
+        (
+            BROWSE_CAPABILITY_ID,
+            CapabilityKind::Browse,
+            BROWSE_SCOPE,
+            question_schema(BROWSE_CAPABILITY_ID),
             SideEffectClass::Pure,
             false,
         ),
@@ -1169,6 +1205,32 @@ pub(crate) fn freeze_file_tool_bindings(
                     StoredFileToolLimitV1::Goal,
                 )
             }
+            "ask_user" => {
+                freeze_configuration(
+                    &requested.configuration,
+                    &[("authorityMode", Value::String("run_question".into()))],
+                    &[],
+                )?;
+                (
+                    ASK_USER_PROVIDER_NAME.to_owned(),
+                    "Ask the user a question and wait for their answer. Use it when only the user can decide, offer short labelled options instead of guessing, and do not ask again once they answer.".to_owned(),
+                    question_schema(ASK_USER_CAPABILITY_ID),
+                    StoredFileToolLimitV1::AskUser,
+                )
+            }
+            "browse" => {
+                freeze_configuration(
+                    &requested.configuration,
+                    &[("authorityMode", Value::String("run_browse".into()))],
+                    &[],
+                )?;
+                (
+                    BROWSE_PROVIDER_NAME.to_owned(),
+                    "Ask the user to choose a file or a folder through the operating system dialog. State what you need it for; the user chooses the path, and a dismissed dialog returns cancelled: true.".to_owned(),
+                    question_schema(BROWSE_CAPABILITY_ID),
+                    StoredFileToolLimitV1::Browse,
+                )
+            }
             "web_search" => (
                 WEB_SEARCH_PROVIDER_NAME.to_owned(),
                 "Search the web with frozen provider routing, retry, cache, and keyless-rescue settings; return a requested number of bounded title/snippet/url results.".to_owned(),
@@ -1384,6 +1446,8 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             PYTHON_CAPABILITY_ID => PYTHON_ADAPTER_ID,
             TODO_CAPABILITY_ID => TODO_ADAPTER_ID,
             GOAL_CAPABILITY_ID => GOAL_ADAPTER_ID,
+            ASK_USER_CAPABILITY_ID => ASK_USER_ADAPTER_ID,
+            BROWSE_CAPABILITY_ID => BROWSE_ADAPTER_ID,
             WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_ADAPTER_ID,
             WEB_FETCH_CAPABILITY_ID => WEB_FETCH_ADAPTER_ID,
             WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_ADAPTER_ID,
@@ -1545,6 +1609,26 @@ impl FileToolAuthorityRuntimeV1 {
         goal: &Value,
     ) -> Result<(), WorkflowPipelineError> {
         self.records.record_goal_state(run_id, goal)
+    }
+
+    /// The user's recorded answer to one question, if there is one. The resume
+    /// path records it and the suspended tool call reads it, so an answer is
+    /// delivered exactly once and an unanswered question is never answered for
+    /// the user.
+    pub(crate) fn question_answer_for(
+        &self,
+        question_id: &str,
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
+        self.records.question_answer(question_id)
+    }
+
+    /// Records one user answer before the suspended pass resumes.
+    pub(crate) fn record_question_answer_for(
+        &self,
+        question_id: &str,
+        answer: &Value,
+    ) -> Result<(), WorkflowPipelineError> {
+        self.records.record_question_answer(question_id, answer)
     }
 }
 
@@ -1975,6 +2059,9 @@ impl BoundFileToolAuthorityV1 {
                 current_epoch_millis(),
             )
             .map_err(broker_error)?;
+        if let Some(settled) = self.settle_question(call, decision.clone()) {
+            return settled;
+        }
         match decision {
             BrokerDecisionV1::AwaitingApproval(challenge) => self.review_tool_approval(
                 outer_invocation_id,
@@ -2046,6 +2133,9 @@ impl BoundFileToolAuthorityV1 {
                 current_epoch_millis(),
             )
             .map_err(broker_error)?;
+        if let Some(settled) = self.settle_question(call, decision.clone()) {
+            return settled;
+        }
         let decision = match decision {
             BrokerDecisionV1::AwaitingApproval(_) => {
                 // A replayed proposal yields the pending challenge; resolve it
@@ -2137,6 +2227,19 @@ impl BoundFileToolAuthorityV1 {
         result: &Value,
         summary: &str,
     ) -> Result<(), WorkflowPipelineError> {
+        self.records_settled_outcome(invocation_id, call, result, summary, true)
+    }
+
+    /// Records one settled outcome that never reached an executor, so a replayed
+    /// resume re-delivers it instead of running anything again.
+    fn records_settled_outcome(
+        &self,
+        invocation_id: &StableId,
+        call: &ModelToolCallV1,
+        result: &Value,
+        summary: &str,
+        is_error: bool,
+    ) -> Result<(), WorkflowPipelineError> {
         if self.runtime.records.outcome(invocation_id)?.is_some() {
             return Ok(());
         }
@@ -2149,10 +2252,90 @@ impl BoundFileToolAuthorityV1 {
                 capability_id: call.capability_id.clone(),
                 path: String::new(),
                 result: result.clone(),
-                is_error: true,
+                is_error,
                 summary: summary.to_owned(),
             })
             .map(|_| ())
+    }
+
+    /// Settles a question capability, or leaves it to the approval path.
+    ///
+    /// A question tool never reaches an executor. The first attempt suspends
+    /// with the question; the resumed attempt finds the answer the user already
+    /// recorded and settles the same call with it. Recording the answer before
+    /// the resume is what makes it deliverable exactly once, and a question
+    /// with no recorded answer is never answered for the user.
+    fn settle_question(
+        &self,
+        call: &ModelToolCallV1,
+        decision: BrokerDecisionV1,
+    ) -> Option<Result<SettledModelToolCallV1, WorkflowPipelineError>> {
+        if !is_question_tool(&call.capability_id) {
+            return None;
+        }
+        Some(self.settle_question_inner(call, decision))
+    }
+
+    fn settle_question_inner(
+        &self,
+        call: &ModelToolCallV1,
+        decision: BrokerDecisionV1,
+    ) -> Result<SettledModelToolCallV1, WorkflowPipelineError> {
+        let BrokerDecisionV1::AwaitingApproval(challenge) = decision else {
+            return Err(invalid_tool(
+                "a question capability is always answered by the user",
+            ));
+        };
+        let asked = question::challenge(call).map_err(|error| invalid_tool(&error))?;
+        let invocation_id = challenge.invocation_id.clone();
+        let Some(recorded) = self
+            .runtime
+            .records
+            .question_answer(invocation_id.as_str())?
+        else {
+            // No answer yet: suspend with the question itself. The graph pass
+            // commits this as a question rather than an authority decision.
+            self.run_events.publish_tool_waiting(
+                call,
+                "Waiting for the user's answer.".into(),
+                json!({"question": asked}),
+            );
+            let mut pending = tool_approval_challenge(&challenge, call);
+            pending.question = Some(asked);
+            return Err(WorkflowPipelineError::ToolApproval(pending));
+        };
+        let answer: question::QuestionAnswerV1 =
+            serde_json::from_value(recorded).map_err(|error| {
+                WorkflowPipelineError::Store(format!("recorded question answer is invalid: {error}"))
+            })?;
+        question::validate_answer(&asked, &answer)
+            .map_err(WorkflowPipelineError::Store)?;
+        let (content, summary) = question::result(&asked, &answer);
+        self.records_settled_outcome(
+            &invocation_id,
+            call,
+            &content,
+            &summary,
+            false,
+        )?;
+        Ok(SettledModelToolCallV1 {
+            result: ModelToolResultV1 {
+                images: Vec::new(),
+                call_id: call.call_id.clone(),
+                content,
+                is_error: false,
+            },
+            activity: WorkflowToolActivityV1 {
+                call_id: call.call_id.clone(),
+                invocation_id,
+                capability_id: call.capability_id.clone(),
+                path: String::new(),
+                status: "completed".into(),
+                summary,
+                outcome_hash: String::new(),
+                replayed: false,
+            },
+        })
     }
 
     fn prepare_broker(
@@ -2866,6 +3049,12 @@ impl FileToolDispatcherV1 {
                     false,
                     cancellation,
                 ),
+                StoredFileToolLimitV1::AskUser | StoredFileToolLimitV1::Browse => {
+                    // A question is answered by the user, never executed. The
+                    // question path settles it before dispatch; reaching the
+                    // executor means the suspension was bypassed.
+                    Err("a question is answered by the user and is never executed".into())
+                }
                 StoredFileToolLimitV1::Todo => {
                     let todos = self.record.call.arguments["todos"].clone();
                     self.records
@@ -3355,6 +3544,35 @@ impl ToolRecordStore {
         )
     }
 
+    /// Records one user answer to a question, keyed by the durable question
+    /// identity. Recording before the resume is what makes the answer
+    /// deliverable exactly once: a replayed resume re-reads the same value.
+    pub(crate) fn record_question_answer(
+        &self,
+        question_id: &str,
+        answer: &Value,
+    ) -> Result<(), WorkflowPipelineError> {
+        let key = digest_id("record.question-answer", question_id)?;
+        self.append(
+            "pipeline.question-answer",
+            &key,
+            json!({"schemaVersion": 1, "questionId": question_id, "answer": answer}),
+        )
+    }
+
+    /// The recorded answer to one question, if the user has answered it.
+    pub(crate) fn question_answer(
+        &self,
+        question_id: &str,
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
+        Ok(self
+            .events("pipeline.question-answer")?
+            .into_iter()
+            .filter(|value| value.get("questionId").and_then(Value::as_str) == Some(question_id))
+            .last()
+            .and_then(|value| value.get("answer").cloned()))
+    }
+
     /// Latest immutable todo-list snapshot for the Run; the newest recorded
     /// event is the live task list shown in the UI.
     pub(crate) fn todo_state(
@@ -3561,6 +3779,14 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Job { .. } => unreachable!("validated above"),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
+        StoredFileToolLimitV1::AskUser => BTreeSet::from([
+            "prompt",
+            "options",
+            "allowFreeText",
+            "defaultOptionId",
+            "title",
+        ]),
+        StoredFileToolLimitV1::Browse => BTreeSet::from(["prompt", "kind", "title"]),
         StoredFileToolLimitV1::Goal => BTreeSet::from(["operation", "goal", "note"]),
         StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit", "freshness"]),
         StoredFileToolLimitV1::WebFetch { .. }
@@ -3626,6 +3852,14 @@ fn validate_call_arguments(
             // The operation is required; the objective and note are optional
             // because complete and clear need neither.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation")
+        }
+        StoredFileToolLimitV1::AskUser => {
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("prompt")
+        }
+        StoredFileToolLimitV1::Browse => {
+            observed_keys.is_subset(&expected_keys)
+                && observed_keys.contains("prompt")
+                && observed_keys.contains("kind")
         }
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID =>
@@ -3795,6 +4029,8 @@ fn validate_call_arguments(
             }
         }
         StoredFileToolLimitV1::Goal => goal::validate(object)?,
+        StoredFileToolLimitV1::AskUser => question::validate_ask_user(object)?,
+        StoredFileToolLimitV1::Browse => question::validate_browse(object)?,
         StoredFileToolLimitV1::WebSearch { .. } => {
             object
                 .get("query")
@@ -4110,6 +4346,27 @@ fn todo_schema() -> Value {
 
 fn goal_schema() -> Value {
     goal::schema()
+}
+
+/// The manifest schema of one question capability. Both question tools are
+/// answered by the user, so neither has an executor-visible argument contract.
+fn question_schema(capability_id: &str) -> Value {
+    super::tool_registry::native_tool(capability_id)
+        .expect("installed native tool")
+        .input_schema
+        .clone()
+}
+
+/// Whether this capability asks the user a question and therefore suspends the
+/// Run for an answer instead of executing anything.
+pub(crate) fn is_question_tool(capability_id: &str) -> bool {
+    matches!(capability_id, ASK_USER_CAPABILITY_ID | BROWSE_CAPABILITY_ID)
+}
+
+/// Tools a delegated child never receives: further delegation and control, and
+/// the question capabilities, because a child cannot answer for the user.
+pub(crate) fn is_owner_only_tool(capability_id: &str) -> bool {
+    is_subagent_tool(capability_id) || is_question_tool(capability_id)
 }
 
 /// Whether a recorded goal snapshot still carries an objective. Exposed to the

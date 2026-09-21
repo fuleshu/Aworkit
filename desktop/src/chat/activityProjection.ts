@@ -58,6 +58,7 @@ export function projectSemanticTimeline(
   const spans = new Map<string, SpanProjection>();
   const facts: TimelineItem[] = [];
   const approvalResolutions = new Map<string, boolean>();
+  const questionAnswers = new Map<string, FactPayload>();
   const terminalEvents = ordered.filter(
     (event) =>
       event.kind === "execution.failed" || event.kind === "chat.cancelled" || event.kind === "context.compaction-ended",
@@ -70,6 +71,13 @@ export function projectSemanticTimeline(
     if (decisionId !== undefined)
       approvalResolutions.set(decisionId, fact.approved === true);
   }
+  for (const event of ordered) {
+    if (event.kind !== "question.answered" && event.kind !== "question.cancelled")
+      continue;
+    const fact = payload(event);
+    const questionId = string(fact.questionId);
+    if (questionId !== undefined) questionAnswers.set(questionId, fact);
+  }
 
   for (const event of ordered) {
     const fact = payload(event);
@@ -81,6 +89,7 @@ export function projectSemanticTimeline(
       event,
       fact,
       approvalResolutions,
+      questionAnswers,
       terminalEvents,
     );
     if (item !== undefined) facts.push(item);
@@ -423,6 +432,7 @@ function projectFact(
   event: RuntimeEvent,
   fact: FactPayload,
   approvalResolutions: ReadonlyMap<string, boolean>,
+  questionAnswers: ReadonlyMap<string, FactPayload>,
   terminalEvents: readonly RuntimeEvent[],
 ): TimelineItem | undefined {
   if (event.kind === "context.edited") {
@@ -473,6 +483,28 @@ function projectFact(
   // Resolution updates the original approval card above instead of creating a
   // second card with stale action buttons.
   if (event.kind === "approval.resolved") return undefined;
+  if (event.kind === "question.asked") {
+    const questionId = string(fact.questionId);
+    const answer =
+      questionId === undefined ? undefined : questionAnswers.get(questionId);
+    const terminal = terminalEvents.find(
+      (candidate) => candidate.sequence > event.sequence,
+    );
+    return {
+      ...baseItem(event, fact, {
+        kind: "question",
+        title: string(fact.title) ?? "Question",
+        status: questionStatus(answer, terminal?.kind),
+      }),
+      id: questionId ?? event.eventId,
+      // The card is the durable surface; only an unanswered question offers the
+      // dialog again, and its answer is never inferred from anything else.
+      action: answer === undefined && terminal === undefined ? "answer" : undefined,
+    };
+  }
+  // The answer updates the question card above instead of adding a second one.
+  if (event.kind === "question.answered" || event.kind === "question.cancelled")
+    return undefined;
   if (event.kind === "execution.failed") {
     return baseItem(event, fact, {
       kind: "error",
@@ -483,6 +515,21 @@ function projectFact(
   if (event.kind === "tool.todo") return todoCard(event, fact);
   if (event.kind === "tool.goal") return goalCard(event, fact);
   return projectLegacyActivity(event, fact);
+}
+
+/** The waiting, answered or cancelled state of one model question. */
+function questionStatus(
+  answer: FactPayload | undefined,
+  terminalKind: string | undefined,
+): string {
+  if (answer !== undefined) {
+    if (answer.cancelled === true) return "skipped";
+    if (string(answer.path) !== undefined) return "answered";
+    return "answered";
+  }
+  if (terminalKind === "chat.cancelled") return "cancelled";
+  if (terminalKind === "execution.failed") return "failed";
+  return "pending";
 }
 
 function approvalStatus(

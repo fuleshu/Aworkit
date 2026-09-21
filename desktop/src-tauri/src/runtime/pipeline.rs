@@ -292,6 +292,8 @@ pub enum WorkflowExecutionStatusV1 {
     FailedKnownStarted,
     OutcomeUncertain,
     AwaitingApproval,
+    /// The model asked the user a question and the Run is waiting for it.
+    AwaitingAnswer,
 }
 
 /// Bounded provider-supplied reasoning retained with the canonical Run result.
@@ -355,6 +357,7 @@ pub enum WorkflowPipelineError {
 
 /// Long-lived service seam. It owns no editable settings representation.
 mod approval_control;
+mod question_control;
 
 #[derive(Clone)]
 pub struct WorkflowExecutionPipeline {
@@ -697,7 +700,12 @@ impl WorkflowExecutionPipeline {
                 .records
                 .pending_approval_for_invocation(&broker_invocation_id)?
         {
-            // The graph pass is durably suspended at an approval gate.
+            // The graph pass is durably suspended at one gate: an authority
+            // decision, or a question the model asked.
+            let question = pending
+                .agent_loop
+                .as_ref()
+                .and_then(|agent| agent.pending.challenge.question.clone());
             return Ok(WorkflowExecutionResultV1 {
                 request_id: prepared.request_id,
                 chat_id: prepared.snapshot.chat_id.clone(),
@@ -708,7 +716,11 @@ impl WorkflowExecutionPipeline {
                 worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
                 broker_invocation_id,
                 outcome_hash: String::new(),
-                status: WorkflowExecutionStatusV1::AwaitingApproval,
+                status: if question.is_some() {
+                    WorkflowExecutionStatusV1::AwaitingAnswer
+                } else {
+                    WorkflowExecutionStatusV1::AwaitingApproval
+                },
                 assistant_text: None,
                 reasoning: pending
                     .reasoning_body
@@ -729,6 +741,7 @@ impl WorkflowExecutionPipeline {
                 tool_activity: pending.tool_activity.clone(),
                 node_activity: pending.activity.clone(),
                 approval: Some(GraphApprovalRequestV1 {
+                    question,
                     filesystem: pending.agent_loop.as_ref().and_then(|agent| agent.pending.challenge.filesystem.clone()),
                     project_scope: pending
                         .agent_loop
@@ -1024,8 +1037,9 @@ impl WorkflowExecutionPipeline {
         let reasoning = model_observer
             .reasoning_snapshot()
             .map(|(body, category)| WorkflowReasoningActivityV1 { body, category });
+        let awaiting_answer = pass.status == GraphPassStatusV1::AwaitingAnswer;
         let result = match pass.status {
-            GraphPassStatusV1::AwaitingApproval => {
+            GraphPassStatusV1::AwaitingApproval | GraphPassStatusV1::AwaitingAnswer => {
                 let mut next = pass
                     .pending_state
                     .clone()
@@ -1043,7 +1057,11 @@ impl WorkflowExecutionPipeline {
                     worker_invocation_id: prepared.worker_proposal.invocation_id.clone(),
                     broker_invocation_id,
                     outcome_hash: String::new(),
-                    status: WorkflowExecutionStatusV1::AwaitingApproval,
+                    status: if awaiting_answer {
+                        WorkflowExecutionStatusV1::AwaitingAnswer
+                    } else {
+                        WorkflowExecutionStatusV1::AwaitingApproval
+                    },
                     assistant_text: None,
                     reasoning: reasoning.clone(),
                     error: None,
@@ -2438,7 +2456,7 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     error: pass.error,
                     ..base
                 },
-                GraphPassStatusV1::AwaitingApproval => {
+                GraphPassStatusV1::AwaitingApproval | GraphPassStatusV1::AwaitingAnswer => {
                     let mut pending = pass
                         .pending_state
                         .clone()
@@ -2448,7 +2466,11 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         reasoning.as_ref().map(|item| item.category.clone());
                     self.records.store_pending_approval(&pending)?;
                     ProviderOutcomeRecordV1 {
-                        status: WorkflowExecutionStatusV1::AwaitingApproval,
+                        status: if pass.status == GraphPassStatusV1::AwaitingAnswer {
+                            WorkflowExecutionStatusV1::AwaitingAnswer
+                        } else {
+                            WorkflowExecutionStatusV1::AwaitingApproval
+                        },
                         assistant_text: None,
                         error: None,
                         ..base
@@ -2456,7 +2478,11 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 }
             }
         };
-        if outcome.status == WorkflowExecutionStatusV1::AwaitingApproval {
+        if matches!(
+            outcome.status,
+            WorkflowExecutionStatusV1::AwaitingApproval
+                | WorkflowExecutionStatusV1::AwaitingAnswer
+        ) {
             // The pending approval record is the durable suspension point; the
             // invocation stays unsettled until a decision resumes the pass.
             return Ok(outcome);
@@ -3508,6 +3534,7 @@ fn graph_pass_live_status(status: GraphPassStatusV1) -> &'static str {
         GraphPassStatusV1::Succeeded => "completed",
         GraphPassStatusV1::Failed => "failed",
         GraphPassStatusV1::AwaitingApproval => "awaiting_approval",
+        GraphPassStatusV1::AwaitingAnswer => "awaiting_answer",
     }
 }
 
@@ -3689,6 +3716,7 @@ mod tests {
     mod subagent_background;
     mod subagent_continuation;
     mod subagent_tools;
+    mod question;
     use crate::runtime::documents::bundled_workflow_template;
     use crate::runtime::{
         PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1, PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1,
@@ -3701,10 +3729,11 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::runtime::tool_loop::{
-        FILE_EDIT_CAPABILITY_ID, FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID,
-        FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, GOAL_CAPABILITY_ID,
-        MAXIMUM_TOOL_RESULT_BYTES, SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID,
-        WEB_EXTRACT_CAPABILITY_ID, WEB_FETCH_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
+        ASK_USER_CAPABILITY_ID, BROWSE_CAPABILITY_ID, FILE_EDIT_CAPABILITY_ID,
+        FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID, FILE_READ_CAPABILITY_ID,
+        FILE_SEARCH_CAPABILITY_ID, GOAL_CAPABILITY_ID, MAXIMUM_TOOL_RESULT_BYTES,
+        SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_EXTRACT_CAPABILITY_ID,
+        WEB_FETCH_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
     };
     use aworkit_capability_host::{
         McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
@@ -3851,6 +3880,8 @@ mod tests {
         EditLoop,
         Todo,
         Goal,
+        Question,
+        Browse,
         Subagent,
         SubagentNest,
         SubagentLoop,
@@ -4045,6 +4076,29 @@ mod tests {
                             {"content":"Write tests","status":"in_progress"},
                             {"content":"Fix pipeline","status":"completed"},
                         ]}),
+                    ))?,
+                    ToolScriptV1::Question => emit(tool_call(
+                        "call.ask",
+                        ASK_USER_CAPABILITY_ID,
+                        "ask_user",
+                        json!({
+                            "prompt": "Which release channel should this build target?",
+                            "title": "Release channel",
+                            "options": [
+                                {"id":"stable","label":"Stable"},
+                                {"id":"beta","label":"Beta","description":"Early access"},
+                            ],
+                            "allowFreeText": true,
+                        }),
+                    ))?,
+                    ToolScriptV1::Browse => emit(tool_call(
+                        "call.browse",
+                        BROWSE_CAPABILITY_ID,
+                        "browse",
+                        json!({
+                            "prompt": "Which folder holds the exported reports?",
+                            "kind": "folder",
+                        }),
                     ))?,
                     ToolScriptV1::Goal => emit(tool_call(
                         "call.goal",
@@ -4379,6 +4433,8 @@ mod tests {
                         "maximumMatches":PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
                     }),
                     TODO_CAPABILITY_ID => json!({"authorityMode":"run_todo"}),
+                    ASK_USER_CAPABILITY_ID => json!({"authorityMode":"run_question"}),
+                    BROWSE_CAPABILITY_ID => json!({"authorityMode":"run_browse"}),
                     GOAL_CAPABILITY_ID => json!({"authorityMode":"run_goal"}),
                     WEB_SEARCH_CAPABILITY_ID => serde_json::to_value(
                         aworkit_capability_host::WebSearchConfigurationV1::default(),

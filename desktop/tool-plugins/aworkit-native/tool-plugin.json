@@ -626,6 +626,150 @@
       "providerName": "goal"
     },
     {
+      "id": "tool.ask_user",
+      "name": "Ask the user",
+      "description": "Ask the user a question and wait for their answer.",
+      "instructions": "Use this when only the user can decide: a preference, a missing requirement, an ambiguous instruction, or a choice between materially different approaches. Ask one focused question with short labelled options instead of guessing, and do not ask again after the answer. The Run pauses until the user answers; an unanswered question is never answered for them. Do not use it to confirm an action you were already authorized to take.",
+      "executor": "ask_user",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_question"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; a question grants no host authority and is answered by the user.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "description": "The question to show the user, including anything they need in order to answer it."
+          },
+          "options": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "Labelled choices. Prefer concrete options over an open question.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "description": "Stable identifier returned as the answer when this option is chosen."
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "What the user sees for this option."
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1024,
+                  "description": "Optional detail about the consequences of choosing it."
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "allowFreeText": {
+            "type": "boolean",
+            "description": "Allow the user to answer in their own words instead of, or in addition to, the options."
+          },
+          "defaultOptionId": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Option to preselect. The user still confirms it; it is never applied automatically."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Short heading for the question dialog."
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "providerName": "ask_user"
+    },
+    {
+      "id": "tool.browse",
+      "name": "Ask the user for a file or folder",
+      "description": "Ask the user to choose a file or a folder from their own machine.",
+      "instructions": "Use this when the task needs a specific file or folder that only the user can identify, for example a document to review, a project to inspect or an export destination. State what you need and why in the prompt. The user chooses the path through the operating system's own dialog; you never propose one. If they dismiss the dialog the result is cancelled: true and you should continue without that path rather than retrying the same request.",
+      "executor": "browse",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_browse"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; a question grants no host authority and is answered by the user.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "description": "What you need the path for, shown to the user."
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "folder"
+            ],
+            "description": "Whether the user should choose a file or a folder."
+          },
+          "extensions": {
+            "type": "array",
+            "maxItems": 16,
+            "description": "File extensions to show, without the dot, for example [\"csv\",\"tsv\"]. Ignored for a folder.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16
+            }
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Short heading for the dialog."
+          }
+        },
+        "required": [
+          "prompt",
+          "kind"
+        ]
+      },
+      "providerName": "browse"
+    },
+    {
       "id": "tool.web_search",
       "name": "Web search",
       "description": "Discover relevant web sources.",
@@ -914,7 +1058,10 @@
           },
           "feedContent": {
             "type": "string",
-            "enum": ["metadata", "full"],
+            "enum": [
+              "metadata",
+              "full"
+            ],
             "description": "RSS/Atom projection: metadata (default) lists entries without article bodies; full includes readable bodies. Non-feed pages are unchanged. Saved reads keep their original projection."
           },
           "offset": {
@@ -993,7 +1140,10 @@
           },
           "feedContent": {
             "type": "string",
-            "enum": ["metadata", "full"],
+            "enum": [
+              "metadata",
+              "full"
+            ],
             "description": "RSS/Atom projection: metadata (default) lists entries without article bodies; full includes readable bodies. Non-feed pages are unchanged. Saved reads keep their original projection."
           },
           "offset": {
@@ -1446,19 +1596,67 @@
       "execution": "native",
       "configuration": {
         "aworkitHome": "",
-        "projectRootMarkers": [".git"],
-        "instructionFileCandidates": ["AGENTS.md", "CLAUDE.md"],
-        "localInstructionFileCandidates": ["AGENTS.local.md", "CLAUDE.local.md"],
+        "projectRootMarkers": [
+          ".git"
+        ],
+        "instructionFileCandidates": [
+          "AGENTS.md",
+          "CLAUDE.md"
+        ],
+        "localInstructionFileCandidates": [
+          "AGENTS.local.md",
+          "CLAUDE.local.md"
+        ],
         "maxBytes": 65536,
         "maxSourceBytes": 1048576
       },
       "fields": [
-        {"key":"aworkitHome","label":"Aworkit home","help":"Global AGENTS.md directory. Blank uses your home/.aworkit. Resolved and frozen when a Chat starts.","kind":"string","readOnly":false},
-        {"key":"projectRootMarkers","label":"Project root markers","help":"Ordered directory or file names identifying the nearest project root within the approved workspace.","kind":"list","readOnly":false},
-        {"key":"instructionFileCandidates","label":"Instruction files","help":"Ordered same-directory Markdown filenames. All distinct existing files are loaded.","kind":"list","readOnly":false},
-        {"key":"localInstructionFileCandidates","label":"Local overlays","help":"Ordered local instruction filenames loaded after base files. Empty disables overlays.","kind":"list","readOnly":false},
-        {"key":"maxBytes","label":"Context byte budget","help":"Maximum UTF-8 bytes per instruction batch. Broader files are omitted first. Zero disables injection.","kind":"integer","readOnly":false,"minimum":0,"maximum":65536},
-        {"key":"maxSourceBytes","label":"Source file byte limit","help":"Maximum bytes read from one instruction file, enforced during streaming.","kind":"integer","readOnly":false,"minimum":1,"maximum":1048576}
+        {
+          "key": "aworkitHome",
+          "label": "Aworkit home",
+          "help": "Global AGENTS.md directory. Blank uses your home/.aworkit. Resolved and frozen when a Chat starts.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "projectRootMarkers",
+          "label": "Project root markers",
+          "help": "Ordered directory or file names identifying the nearest project root within the approved workspace.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "instructionFileCandidates",
+          "label": "Instruction files",
+          "help": "Ordered same-directory Markdown filenames. All distinct existing files are loaded.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "localInstructionFileCandidates",
+          "label": "Local overlays",
+          "help": "Ordered local instruction filenames loaded after base files. Empty disables overlays.",
+          "kind": "list",
+          "readOnly": false
+        },
+        {
+          "key": "maxBytes",
+          "label": "Context byte budget",
+          "help": "Maximum UTF-8 bytes per instruction batch. Broader files are omitted first. Zero disables injection.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 0,
+          "maximum": 65536
+        },
+        {
+          "key": "maxSourceBytes",
+          "label": "Source file byte limit",
+          "help": "Maximum bytes read from one instruction file, enforced during streaming.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 1,
+          "maximum": 1048576
+        }
       ]
     },
     {
@@ -1469,23 +1667,69 @@
       "executor": "context",
       "requiresProject": false,
       "execution": "native",
-      "configuration": {"authorityMode":"context_read","maximumBytes":16384},
+      "configuration": {
+        "authorityMode": "context_read",
+        "maximumBytes": 16384
+      },
       "fields": [
-        {"key":"authorityMode","label":"Authority boundary","help":"Read only immutable evidence belonging to the current context.","kind":"string","readOnly":true},
-        {"key":"maximumBytes","label":"Maximum retrieval bytes","help":"Maximum serialized page size; the Agent output limit also applies.","kind":"integer","readOnly":false,"minimum":256,"maximum":65536}
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Read only immutable evidence belonging to the current context.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "maximumBytes",
+          "label": "Maximum retrieval bytes",
+          "help": "Maximum serialized page size; the Agent output limit also applies.",
+          "kind": "integer",
+          "readOnly": false,
+          "minimum": 256,
+          "maximum": 65536
+        }
       ],
       "inputSchema": {
-        "type":"object","additionalProperties":false,
-        "properties":{
-          "operation":{"type":"string","enum":["read","search","stats"]},
-          "reference":{"type":"string","minLength":64,"maxLength":64},
-          "pointer":{"type":"string","maxLength":4096,"description":"Optional JSON pointer into the original result, such as /stdout or /content."},
-          "offset":{"type":"integer","minimum":0},
-          "limit":{"type":"integer","minimum":256,"maximum":65536},
-          "query":{"type":"string","maxLength":4096}
-        },"required":["operation"]
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "read",
+              "search",
+              "stats"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "pointer": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Optional JSON pointer into the original result, such as /stdout or /content."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 65536
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "operation"
+        ]
       },
-      "providerName":"context"
+      "providerName": "context"
     },
     {
       "id": "tool.image.read",
@@ -1798,7 +2042,9 @@
             "description": "Keep a stdin pipe for job_input; defaults to true. This is a pipe, not a terminal."
           }
         },
-        "required": ["script"]
+        "required": [
+          "script"
+        ]
       },
       "providerName": "python_start"
     }
