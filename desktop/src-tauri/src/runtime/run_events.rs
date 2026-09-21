@@ -64,6 +64,9 @@ pub(crate) struct RunEventStream {
     /// Latest delegating-Agent conversation prefix. A forked child projects a
     /// bounded prefix from this snapshot, so the same fork is reproducible.
     parent_conversation: Mutex<Option<ParentConversationV1>>,
+    /// Set only on a detached background-child stream, so its span root can be
+    /// attributed to the delegated scope rather than to the parent Agent.
+    subagent_child: Option<String>,
 }
 
 /// The conversation prefix the delegating Agent had committed when its tools
@@ -281,6 +284,18 @@ impl RunEventStream {
         committer: Arc<dyn SemanticEventCommitter>,
         cancellation: CancellationToken,
     ) -> Self {
+        Self::create(request_id, run_id, committer, cancellation, None)
+    }
+
+    /// Shared constructor. `subagent_child` marks a detached background-child
+    /// stream so its evidence root is attributed to the delegated scope.
+    fn create(
+        request_id: String,
+        run_id: String,
+        committer: Arc<dyn SemanticEventCommitter>,
+        cancellation: CancellationToken,
+        subagent_child: Option<String>,
+    ) -> Self {
         let state = match committer.committed_events_shared() {
             Ok(events) => rehydrate_state(&request_id, &run_id, &events),
             Err(error) => RunEventState {
@@ -297,6 +312,7 @@ impl RunEventStream {
             state: Mutex::new(state),
             pending_delta: Mutex::new(None),
             parent_conversation: Mutex::new(None),
+            subagent_child,
         };
         stream.ensure_root_span();
         stream
@@ -331,6 +347,21 @@ impl RunEventStream {
         self.request_id == request_id && self.run_id == run_id
     }
 
+    /// Creates an independent evidence stream for one background child. The
+    /// child keeps its own span root so its committed activity can outlive the
+    /// delegating pass: a parent span may never terminate while a committed
+    /// child span is still open. The child still commits to the same Run
+    /// history, and its frame records the lineage back to the delegating tool.
+    pub(crate) fn detached_child(&self, child_request_id: String, child_id: String) -> Arc<Self> {
+        Arc::new(Self::create(
+            child_request_id,
+            self.run_id.clone(),
+            self.committer.clone(),
+            self.cancellation.clone(),
+            Some(child_id),
+        ))
+    }
+
     fn run_span_id(&self) -> String {
         format!("span.run.{}.{}", self.run_id, self.request_id)
     }
@@ -343,7 +374,9 @@ impl RunEventStream {
             "run",
             "Run".to_owned(),
             None,
-            Value::Null,
+            self.subagent_child
+                .as_ref()
+                .map_or(Value::Null, |child| json!({"subagentChildId": child})),
         );
     }
 

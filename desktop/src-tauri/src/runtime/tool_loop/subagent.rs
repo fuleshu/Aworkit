@@ -1,20 +1,25 @@
 //! Frozen delegation scope, child-context lifecycle, and return to the parent.
 //!
 //! A child is a temporary isolated conversation created from a declared
-//! projection of the delegating Agent's frozen selection. The child's full
-//! transcript is never merged wholesale: it settles, its frame is committed to
-//! the Run's machine-local record store, and only a declared outcome returns to
-//! the parent loop. A settled child stays resumable inside the Run through the
-//! owner-isolated control tools.
+//! projection of the delegating Agent's frozen selection. A delegation is a
+//! job: by default it runs on its own thread as a background job the parent can
+//! observe with `job_output`/`job_list`, steer with `job_input` and cancel with
+//! `job_stop`, or run inline when the frozen contract or the call asks for it.
+//! The child's full transcript is never merged wholesale: it settles, its frame
+//! is committed to the Run's operational record store, and only a declared
+//! outcome returns to the parent loop.
+use super::jobs::ChildJobHandle;
 use super::*;
-use crate::runtime::{compaction, model_tool_loop};
+use crate::runtime::model_tool_loop;
 
 pub(crate) mod compatibility;
 mod control;
 mod fork;
 mod frames;
+mod worker;
 
 pub(crate) use frames::{ChildKindV1, ChildStatusV1, SubagentChildFrameV1};
+use worker::{ChildTurnRequestV1, ChildTurnV1, execute_child_turns};
 
 pub(super) const APPROVAL_HANDOFF: &str = "This action requires approval beyond the child's existing permissions. It was not executed. Return it to the parent agent to handle through its normal approval policy; do not retry or use a workaround.";
 const SCOPE_EVENT: &str = "context.delegation-scope";
@@ -62,20 +67,6 @@ impl ChildAdmissionV1 {
     }
 }
 
-/// One settled child turn-set as the lifecycle sees it. A failed loop keeps its
-/// exact committed prefix so recovery never re-runs an acknowledged effect.
-struct ChildTurnV1 {
-    status: ChildStatusV1,
-    exchanges: Vec<ModelToolExchangeV1>,
-    final_text: String,
-    blocked: Vec<ModelToolCallV1>,
-    model_turns: u32,
-    tool_calls: u32,
-    input_tokens: u64,
-    output_tokens: u64,
-    error: Option<String>,
-}
-
 /// Declared identity and inherited projection of a child about to be created.
 struct ChildSpawnV1 {
     kind: ChildKindV1,
@@ -88,6 +79,12 @@ struct ChildSpawnV1 {
     projection_hash: Option<String>,
     projection_items: usize,
     projection_dropped: usize,
+}
+
+/// One child scope fully prepared to run, owning everything a thread needs.
+struct PreparedChildV1 {
+    frame: SubagentChildFrameV1,
+    request: ChildTurnRequestV1,
 }
 
 /// Freezes `tool.subagent`: the inherited-tool delegation contract plus the
@@ -118,9 +115,19 @@ pub(super) fn freeze(
         256,
         SUBAGENT_DEFAULT_MAXIMUM_CHILDREN,
     )?;
+    let background = optional_boolean(
+        &requested.configuration,
+        "runInBackground",
+        false,
+    )?;
     let mut configuration = requested.configuration.clone();
     if let Some(object) = configuration.as_object_mut() {
-        for key in ["inheritParentTools", "maximumDepth", "maximumChildren"] {
+        for key in [
+            "inheritParentTools",
+            "maximumDepth",
+            "maximumChildren",
+            "runInBackground",
+        ] {
             object.remove(key);
         }
     }
@@ -153,6 +160,7 @@ pub(super) fn freeze(
             legacy_maximum_turns: None,
             maximum_depth,
             maximum_children,
+            background,
         },
     ))
 }
@@ -191,6 +199,7 @@ pub(super) fn freeze_fork(
         256,
         SUBAGENT_DEFAULT_MAXIMUM_CHILDREN,
     )?;
+    let background = optional_boolean(&requested.configuration, "runInBackground", false)?;
     let mut configuration = requested.configuration.clone();
     if let Some(object) = configuration.as_object_mut() {
         for key in [
@@ -198,6 +207,7 @@ pub(super) fn freeze_fork(
             "forkMaximumBytes",
             "maximumDepth",
             "maximumChildren",
+            "runInBackground",
         ] {
             object.remove(key);
         }
@@ -220,6 +230,7 @@ pub(super) fn freeze_fork(
             maximum_bytes: maximum_bytes as usize,
             maximum_depth,
             maximum_children,
+            background,
         },
     ))
 }
@@ -230,29 +241,36 @@ pub(super) fn freeze_control(
     capability_id: &str,
     requested: &WorkflowToolBindingV1,
 ) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
-    let (operation, provider, description, requires_approval) = match capability_id {
+    let (operation, provider, description, requires_approval, background) = match capability_id {
         SUBAGENT_LIST_CAPABILITY_ID => (
             "list",
             "list_subagents",
-            "List the continuable subagents this Agent created in this Chat, with their durable ids, status and outcome. Use it to recall which children exist, not to poll them.",
+            "List the subagents this Agent created in this Chat, with their durable ids, live status and outcome. Use it to recall which children exist and whether one is still running.",
+            false,
             false,
         ),
         SUBAGENT_MESSAGE_CAPABILITY_ID => (
             "message",
             "message_subagent",
-            "Send a follow-up message to a subagent this Agent created. The child resumes its own conversation for one more bounded turn-set and returns a new outcome. Use it to steer or extend delegated work instead of starting a new child.",
+            "Send a follow-up message to a subagent this Agent created. A running child is steered at its next step boundary; a settled child resumes its own conversation for one more bounded turn-set. The call returns a job id you observe with job_output.",
             true,
+            optional_boolean(&requested.configuration, "runInBackground", false)?,
         ),
         SUBAGENT_CANCEL_CAPABILITY_ID => (
             "cancel",
             "cancel_subagent",
             "Cancel a subagent this Agent created, close its scope and stop the background jobs it still owns. Cancelling cannot undo effects the child already performed. Repeating it for the same child is a no-op.",
             false,
+            false,
         ),
         _ => return Err(invalid_tool("unknown subagent control tool")),
     };
+    let mut configuration = requested.configuration.clone();
+    if let Some(object) = configuration.as_object_mut() {
+        object.remove("runInBackground");
+    }
     freeze_configuration(
-        &requested.configuration,
+        &configuration,
         &[
             ("authorityMode", json!("run_subagent")),
             ("requiresApproval", json!(requires_approval)),
@@ -265,6 +283,7 @@ pub(super) fn freeze_control(
         native_tool_schema(capability_id),
         StoredFileToolLimitV1::SubagentControl {
             operation: operation.into(),
+            background,
         },
     ))
 }
@@ -287,6 +306,20 @@ fn optional_unsigned(
     }
 }
 
+/// Optional frozen boolean configuration with a documented default.
+fn optional_boolean(
+    configuration: &Value,
+    name: &str,
+    default: bool,
+) -> Result<bool, WorkflowPipelineError> {
+    match configuration.get(name) {
+        None => Ok(default),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| invalid_tool("tool configuration boolean is invalid")),
+    }
+}
+
 /// Validates one control call's exact declared argument surface.
 pub(crate) fn validate_control(
     operation: &str,
@@ -297,7 +330,10 @@ pub(crate) fn validate_control(
         .ok_or_else(|| invalid_tool("subagent control arguments must be an object"))?;
     let (allowed, required): (&[&str], &[&str]) = match operation {
         "list" => (&[], &[]),
-        "message" => (&["childId", "message"], &["childId", "message"]),
+        "message" => (
+            &["childId", "message", "runInBackground"],
+            &["childId", "message"],
+        ),
         "cancel" => (&["childId"], &["childId"]),
         _ => return Err(invalid_tool("unknown subagent control operation")),
     };
@@ -305,6 +341,12 @@ pub(crate) fn validate_control(
         || required.iter().any(|key| !object.contains_key(*key))
     {
         return Err(invalid_tool("invalid subagent control argument keys"));
+    }
+    if object
+        .get("runInBackground")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(invalid_tool("runInBackground must be boolean"));
     }
     for (key, maximum, textual) in [("childId", 96, false), ("message", 262_144, true)] {
         if let Some(value) = object.get(key)
@@ -364,6 +406,20 @@ fn read_only(binding: &StoredFileToolBindingV1) -> bool {
                 .ok()
                 .flatten()
                 .is_some_and(|hints| hints.permits_approval_free_call()))
+}
+
+/// A frame whose run is no longer live is reported as interrupted, so a
+/// restart never leaves a child that claims to be running.
+pub(super) fn effective_status(
+    frame: &SubagentChildFrameV1,
+    jobs: &jobs::JobRegistry,
+    chat_id: &str,
+) -> ChildStatusV1 {
+    if frame.status == ChildStatusV1::Running && !jobs.child_running(chat_id, &frame.child_id) {
+        ChildStatusV1::Interrupted
+    } else {
+        frame.status
+    }
 }
 
 impl FileToolDispatcherV1 {
@@ -445,117 +501,6 @@ impl FileToolDispatcherV1 {
         Ok((context, agent))
     }
 
-    /// Runs one child turn-set over the same frozen gateway and selected tool
-    /// authority. The child cannot delegate further: every delegation and
-    /// control tool is excluded from its definitions and port.
-    fn run_child_turns(
-        &self,
-        envelope: &ApprovedInvocationEnvelopeV1,
-        context: FrozenFileToolAuthorityContextV1,
-        agent: model_tool_loop::AgentContextV1,
-        input: Value,
-        initial_exchanges: Vec<ModelToolExchangeV1>,
-        continuation: Option<String>,
-        cancellation: &CancellationToken,
-    ) -> Result<ChildTurnV1, String> {
-        let gateway = self
-            .context
-            .model_gateway
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires a frozen model gateway".to_owned())?;
-        let binding_id = self
-            .context
-            .model_binding_id
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires the frozen model binding".to_owned())?;
-        let version_hash = self
-            .context
-            .model_version_hash
-            .as_ref()
-            .ok_or_else(|| "subagent execution requires the frozen model version".to_owned())?;
-        let definitions = context
-            .bindings
-            .iter()
-            .filter(|binding| binding.is_callable())
-            .map(StoredFileToolBindingV1::definition)
-            .collect::<Vec<_>>();
-        let child_authority = SubagentToolPortV1 {
-            blocked: Mutex::new(Vec::new()),
-            inner: BoundFileToolAuthorityV1 {
-                runtime: self.runtime.clone(),
-                context,
-                run_events: self.run_events.clone(),
-                steering_node: None,
-            },
-        };
-        let initial_context = continuation
-            .map(|message| {
-                vec![ModelToolContextV1 {
-                    after_exchanges: initial_exchanges.len(),
-                    after_input_messages: None,
-                    instruction_event_id: None,
-                    content: message,
-                    role: None,
-                    images: Vec::new(),
-                }]
-            })
-            .unwrap_or_default();
-        match execute_model_tool_loop_v1(
-            gateway,
-            model_tool_loop::ModelToolLoopRequestV1 {
-                agent_context: Some(agent),
-                outer_invocation_id: &envelope.invocation_id,
-                input,
-                initial_context,
-                initial_exchanges,
-                parameters: BTreeMap::new(),
-                definitions,
-                binding_id: binding_id.clone(),
-                binding_version_hash: version_hash.clone(),
-                maximum_input_bytes: SUBAGENT_MAXIMUM_INPUT_BYTES,
-                maximum_output_bytes: SUBAGENT_MAXIMUM_OUTPUT_BYTES,
-                maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
-                maximum_timeout_recoveries: PROVIDER_TIMEOUT_RECOVERIES_V1,
-            },
-            &child_authority,
-            cancellation,
-        ) {
-            Ok(completed) => {
-                let blocked = child_authority
-                    .blocked
-                    .lock()
-                    .map_err(|_| "child handoff lock poisoned")?
-                    .clone();
-                Ok(ChildTurnV1 {
-                    status: if blocked.is_empty() {
-                        ChildStatusV1::Completed
-                    } else {
-                        ChildStatusV1::ParentApprovalRequired
-                    },
-                    exchanges: completed.exchanges,
-                    final_text: completed.assistant_text,
-                    blocked,
-                    model_turns: completed.attempted_model_turns,
-                    tool_calls: completed.settled_tool_calls,
-                    input_tokens: completed.input_tokens,
-                    output_tokens: completed.output_tokens,
-                    error: None,
-                })
-            }
-            Err(failure) => Ok(ChildTurnV1 {
-                status: ChildStatusV1::Failed,
-                exchanges: failure.exchanges,
-                final_text: failure.error.to_string(),
-                blocked: Vec::new(),
-                model_turns: failure.attempted_model_turns,
-                tool_calls: failure.settled_tool_calls,
-                input_tokens: failure.input_tokens,
-                output_tokens: failure.output_tokens,
-                error: Some(format!("subagent failed: {}", failure.error)),
-            }),
-        }
-    }
-
     /// Performs the deterministic admission every child must pass before its
     /// context exists: inherited depth and the parent scope's fan-out ledger.
     fn admit_child(
@@ -583,14 +528,29 @@ impl FileToolDispatcherV1 {
         Ok(())
     }
 
-    /// Runs a fresh or forked child and commits its first frame revision.
-    fn spawn_child(
+    /// Whether a delegation should run as a background job. The frozen
+    /// contract decides the default; one call may override it.
+    fn background(&self, limit: &StoredFileToolLimitV1) -> bool {
+        let frozen = match limit {
+            StoredFileToolLimitV1::Subagent { background, .. }
+            | StoredFileToolLimitV1::SubagentFork { background, .. }
+            | StoredFileToolLimitV1::SubagentControl { background, .. } => *background,
+            _ => false,
+        };
+        self.record
+            .call
+            .arguments
+            .get("runInBackground")
+            .and_then(Value::as_bool)
+            .unwrap_or(frozen)
+    }
+
+    /// Builds the child frame and the owned turn request without running it.
+    fn prepare_child(
         &self,
-        envelope: &ApprovedInvocationEnvelopeV1,
         spawn: ChildSpawnV1,
         admission: ChildAdmissionV1,
-        cancellation: &CancellationToken,
-    ) -> Result<SubagentChildFrameV1, String> {
+    ) -> Result<PreparedChildV1, String> {
         let run_id = self.record.proposal.run_id.clone();
         let children = self
             .runtime
@@ -605,6 +565,21 @@ impl FileToolDispatcherV1 {
             &spawn.inherited_tool_ids,
             spawn.read_only,
         )?;
+        let gateway = self
+            .context
+            .model_gateway
+            .clone()
+            .ok_or_else(|| "subagent execution requires a frozen model gateway".to_owned())?;
+        let binding_id = self
+            .context
+            .model_binding_id
+            .clone()
+            .ok_or_else(|| "subagent execution requires the frozen model binding".to_owned())?;
+        let binding_version_hash = self
+            .context
+            .model_version_hash
+            .clone()
+            .ok_or_else(|| "subagent execution requires the frozen model version".to_owned())?;
         let task = self.record.call.arguments["task"]
             .as_str()
             .unwrap_or_default()
@@ -617,17 +592,6 @@ impl FileToolDispatcherV1 {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let base_input = spawn.input.clone();
-        let turn = self.run_child_turns(
-            envelope,
-            context,
-            agent,
-            spawn.input,
-            Vec::new(),
-            None,
-            cancellation,
-        )?;
-        let error = turn.error.clone();
         let now = crate::runtime::history::now_label();
         let frame = SubagentChildFrameV1 {
             child_id: spawn.child_id,
@@ -644,10 +608,10 @@ impl FileToolDispatcherV1 {
             inherited_tool_ids: spawn.inherited_tool_ids,
             read_only: spawn.read_only,
             head_revision: 0,
-            status: turn.status,
+            status: ChildStatusV1::Running,
             task,
             context_text,
-            input: base_input,
+            input: spawn.input.clone(),
             exchanges: Vec::new(),
             final_text: String::new(),
             blocked_actions: Vec::new(),
@@ -658,12 +622,215 @@ impl FileToolDispatcherV1 {
             created_at: now.clone(),
             updated_at: now,
         };
-        let frame = apply_turn(frame, turn);
+        let request = ChildTurnRequestV1 {
+            runtime: self.runtime.clone(),
+            context,
+            agent,
+            run_events: self.run_events.clone(),
+            gateway,
+            binding_id,
+            binding_version_hash,
+            maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
+            input: spawn.input,
+            initial_exchanges: Vec::new(),
+            continuation: None,
+            job: None,
+        };
+        Ok(PreparedChildV1 { frame, request })
+    }
+
+    /// Runs a fresh or forked child inline and commits its settled frame.
+    fn run_child_now(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        spawn: ChildSpawnV1,
+        admission: ChildAdmissionV1,
+        cancellation: &CancellationToken,
+    ) -> Result<SubagentChildFrameV1, String> {
+        let prepared = self.prepare_child(spawn, admission)?;
+        let turn = execute_child_turns(prepared.request, &envelope.invocation_id, cancellation)?;
+        let error = turn.error.clone();
+        let frame = apply_turn(prepared.frame, turn);
         self.persist_child(&frame)?;
         if let Some(error) = error {
             return Err(error);
         }
         Ok(frame)
+    }
+
+    /// Starts a fresh or forked child as a background job and returns its
+    /// identity immediately. The child frame is committed before the job so a
+    /// restart can report it interrupted rather than claiming it is running.
+    fn start_child_job(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        spawn: ChildSpawnV1,
+        admission: ChildAdmissionV1,
+    ) -> Result<Value, String> {
+        let prepared = self.prepare_child(spawn, admission)?;
+        self.persist_child(&prepared.frame)?;
+        let child_id = prepared.frame.child_id.clone();
+        let job_child_id = child_id.clone();
+        let chat_id = prepared.frame.chat_id.clone();
+        let run_id = prepared.frame.run_id.clone();
+        let kind = prepared.frame.kind;
+        let frame_base = prepared.frame;
+        let mut request = prepared.request;
+        // The child owns its evidence root so its activity can outlive this pass.
+        request.run_events = self.run_events.detached_child(
+            format!("{}.child.{}", envelope.invocation_id.as_str(), child_id),
+            child_id.clone(),
+        );
+        let runtime = request.runtime.clone();
+        let outer = envelope.invocation_id.clone();
+        let job_id = self.runtime.jobs.clone().start_child_scoped(
+            &self.context.chat_id,
+            envelope.invocation_id.as_str(),
+            Some(self.record.outer_invocation_id.as_str()),
+            &child_id,
+            self.context.cancellation.clone(),
+            move |handle: Arc<ChildJobHandle>, child_token| {
+                request.job = Some(handle);
+                let turn = execute_child_turns(request, &outer, &child_token)?;
+                let error = turn.error.clone();
+                let frame = apply_turn(frame_base, turn);
+                runtime
+                    .records
+                    .record_subagent_child(&frame)
+                    .map_err(|problem| problem.to_string())?;
+                if let Some(error) = error {
+                    return Err(error);
+                }
+                let jobs = runtime
+                    .jobs
+                    .list_scoped(&chat_id, Some(&job_child_id))
+                    .map_err(|problem| problem.to_string())?;
+                let _ = &run_id;
+                Ok(frame.outcome(jobs["jobs"].clone()))
+            },
+        )?;
+        Ok(json!({
+            "childId": child_id,
+            "jobId": job_id,
+            "kind": kind,
+            "status": "running",
+            "running": true,
+        }))
+    }
+
+    /// Starts a settled child's continuation as a background job.
+    pub(super) fn start_continuation_job(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        frame: SubagentChildFrameV1,
+        message: String,
+    ) -> Result<Value, String> {
+        let child_id = frame.child_id.clone();
+        let job_child_id = child_id.clone();
+        let chat_id = frame.chat_id.clone();
+        let mut request = self.child_continuation_request(&frame, Some(message))?;
+        request.run_events = self.run_events.detached_child(
+            format!("{}.child.{}", envelope.invocation_id.as_str(), child_id),
+            child_id.clone(),
+        );
+        let runtime = request.runtime.clone();
+        let outer = envelope.invocation_id.clone();
+        let job_id = self.runtime.jobs.clone().start_child_scoped(
+            &self.context.chat_id,
+            envelope.invocation_id.as_str(),
+            Some(self.record.outer_invocation_id.as_str()),
+            &child_id,
+            self.context.cancellation.clone(),
+            move |handle: Arc<ChildJobHandle>, child_token| {
+                let mut request = request;
+                request.job = Some(handle);
+                let turn = execute_child_turns(request, &outer, &child_token)?;
+                let error = turn.error.clone();
+                let frame = apply_turn(frame, turn);
+                runtime
+                    .records
+                    .record_subagent_child(&frame)
+                    .map_err(|problem| problem.to_string())?;
+                if let Some(error) = error {
+                    return Err(error);
+                }
+                let jobs = runtime
+                    .jobs
+                    .list_scoped(&chat_id, Some(&job_child_id))
+                    .map_err(|problem| problem.to_string())?;
+                Ok(frame.outcome(jobs["jobs"].clone()))
+            },
+        )?;
+        Ok(json!({
+            "childId": child_id,
+            "jobId": job_id,
+            "kind": "fresh",
+            "status": "running",
+            "running": true,
+        }))
+    }
+
+    /// Resumes a settled child inline, returning its new outcome.
+    pub(super) fn run_continuation_now(
+        &self,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        frame: SubagentChildFrameV1,
+        message: String,
+        cancellation: &CancellationToken,
+    ) -> Result<(Value, String), String> {
+        let request = self.child_continuation_request(&frame, Some(message))?;
+        let turn = execute_child_turns(request, &envelope.invocation_id, cancellation)?;
+        let error = turn.error.clone();
+        let updated = apply_turn(frame, turn);
+        self.persist_child(&updated)?;
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok((self.child_result(&updated)?, self.child_summary(&updated)))
+    }
+
+    /// Owned request for one continuation turn-set of an existing child.
+    fn child_continuation_request(
+        &self,
+        frame: &SubagentChildFrameV1,
+        message: Option<String>,
+    ) -> Result<ChildTurnRequestV1, String> {
+        let child_id = stable(&frame.child_id).map_err(|e| e.to_string())?;
+        let (context, agent) = self.child_scope_for(
+            &child_id,
+            &frame.node_id,
+            &frame.inherited_tool_ids,
+            frame.read_only,
+        )?;
+        let gateway = self
+            .context
+            .model_gateway
+            .clone()
+            .ok_or_else(|| "subagent execution requires a frozen model gateway".to_owned())?;
+        let binding_id = self
+            .context
+            .model_binding_id
+            .clone()
+            .ok_or_else(|| "subagent execution requires the frozen model binding".to_owned())?;
+        let binding_version_hash = self
+            .context
+            .model_version_hash
+            .clone()
+            .ok_or_else(|| "subagent execution requires the frozen model version".to_owned())?;
+        Ok(ChildTurnRequestV1 {
+            runtime: self.runtime.clone(),
+            context,
+            agent,
+            run_events: self.run_events.clone(),
+            gateway,
+            binding_id,
+            binding_version_hash,
+            maximum_tool_output_bytes: self.context.maximum_tool_output_bytes,
+            input: frame.input.clone(),
+            initial_exchanges: frame.exchanges.clone(),
+            continuation: message,
+            job: None,
+        })
     }
 
     /// Commits one immutable frame revision.
@@ -697,14 +864,19 @@ impl FileToolDispatcherV1 {
             }
         );
         let admission = ChildAdmissionV1::for_limit(&self.record.binding.limit);
+        let background = self.background(&self.record.binding.limit);
         let (node_id, tool_ids) = self.parent_selection(inherit)?;
-        let child = self.spawn_child(
-            envelope,
-            self.child_spawn_spec(ChildKindV1::Fresh, node_id, tool_ids, None)?,
-            admission,
-            cancellation,
-        )?;
-        Ok((self.child_result(&child)?, self.child_summary(&child)))
+        let spawn = self.child_spawn_spec(ChildKindV1::Fresh, node_id, tool_ids, None)?;
+        let spawned_child = spawn.child_id.clone();
+        if background {
+            let value = self.start_child_job(envelope, spawn, admission)?;
+            return Ok((
+                value,
+                format!("Subagent {spawned_child} runs in the background; observe it with job_output or job_list."),
+            ));
+        }
+        let frame = self.run_child_now(envelope, spawn, admission, cancellation)?;
+        Ok((self.child_result(&frame)?, self.child_summary(&frame)))
     }
 
     /// Runs `tool.subagent_fork`: the child inherits a declared, bounded
@@ -728,14 +900,20 @@ impl FileToolDispatcherV1 {
             .ok_or("fork delegation requires the delegating Agent's conversation")?;
         let projection = fork::project(&conversation, maximum_items, maximum_bytes)?;
         let admission = ChildAdmissionV1::for_limit(&self.record.binding.limit);
+        let background = self.background(&self.record.binding.limit);
         let (node_id, tool_ids) = self.parent_selection(true)?;
-        let child = self.spawn_child(
-            envelope,
-            self.child_spawn_spec(ChildKindV1::Fork, node_id, tool_ids, Some(projection))?,
-            admission,
-            cancellation,
-        )?;
-        Ok((self.child_result(&child)?, self.child_summary(&child)))
+        let spawn =
+            self.child_spawn_spec(ChildKindV1::Fork, node_id, tool_ids, Some(projection))?;
+        let spawned_child = spawn.child_id.clone();
+        if background {
+            let value = self.start_child_job(envelope, spawn, admission)?;
+            return Ok((
+                value,
+                format!("Forked subagent {spawned_child} runs in the background; observe it with job_output or job_list."),
+            ));
+        }
+        let frame = self.run_child_now(envelope, spawn, admission, cancellation)?;
+        Ok((self.child_result(&frame)?, self.child_summary(&frame)))
     }
 
     /// Builds the declared spawn identity and immutable prompt prefix.
@@ -838,10 +1016,11 @@ impl FileToolDispatcherV1 {
     pub(super) fn run_subagent_control(
         &self,
         operation: &str,
+        background: bool,
         envelope: &ApprovedInvocationEnvelopeV1,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
-        control::execute(self, operation, envelope, cancellation)
+        control::execute(self, operation, background, envelope, cancellation)
     }
 }
 
@@ -910,154 +1089,4 @@ fn apply_turn(mut frame: SubagentChildFrameV1, turn: ChildTurnV1) -> SubagentChi
     frame.output_tokens = frame.output_tokens.saturating_add(turn.output_tokens);
     frame.updated_at = crate::runtime::history::now_label();
     frame
-}
-
-/// Uses the same broker and existing grants as the parent, but cannot open a
-/// new approval or delegate again. A blocked action returns immediately.
-struct SubagentToolPortV1 {
-    inner: BoundFileToolAuthorityV1,
-    blocked: Mutex<Vec<ModelToolCallV1>>,
-}
-
-impl ModelToolInvocationPortV1 for SubagentToolPortV1 {
-    fn project_context(&self) -> Option<Value> {
-        self.inner.project_context()
-    }
-    fn handoff_notice(&self) -> Option<String> {
-        self.blocked
-            .lock()
-            .ok()
-            .filter(|b| !b.is_empty())
-            .map(|_| APPROVAL_HANDOFF.to_owned())
-    }
-    fn outstanding_jobs(&self) -> Result<Option<String>, String> {
-        self.inner.runtime.jobs.completion_notice_scoped(
-            &self.inner.context.chat_id,
-            self.inner.context.delegation.as_ref().map(StableId::as_str),
-        )
-    }
-    fn stop_unkept_jobs(&self) {
-        self.inner.runtime.jobs.stop_unkept_scoped(
-            &self.inner.context.chat_id,
-            self.inner.context.delegation.as_ref().map(StableId::as_str),
-        );
-    }
-    fn legacy_context_identity(&self) -> bool {
-        self.inner.legacy_context_identity()
-    }
-    fn manage_model_context(
-        &self,
-        gateway: &aworkit_capability_host::FrozenModelGateway,
-        plan: &aworkit_capability_host::ModelResolutionPlanV1,
-        outer: &StableId,
-        through: usize,
-        agent: Option<&model_tool_loop::AgentContextV1>,
-        request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken,
-        trigger: compaction::Trigger,
-    ) -> Result<compaction::Preparation, String> {
-        self.inner.manage_context(
-            gateway,
-            plan,
-            outer,
-            through,
-            agent,
-            request,
-            cancellation,
-            trigger,
-        )
-    }
-    fn record_context_usage(
-        &self,
-        outer: &StableId,
-        agent: Option<&model_tool_loop::AgentContextV1>,
-        request: &aworkit_capability_host::ModelToolRequestV1,
-        input: u64,
-        output: u64,
-        assistant_tokens: u64,
-    ) -> Result<(), String> {
-        self.inner
-            .context_usage(outer, agent, request, input, output, assistant_tokens)
-    }
-    fn prepare_automatic_context(
-        &self,
-        outer: &StableId,
-        after_exchanges: usize,
-        agent: &model_tool_loop::AgentContextV1,
-        request: &mut aworkit_capability_host::ModelToolRequestV1,
-        cancellation: &CancellationToken,
-    ) -> Result<(), String> {
-        self.inner
-            .workspace_context(outer, after_exchanges, agent, request, cancellation)
-    }
-    fn prepare_context(
-        &self,
-        outer: &StableId,
-        after_exchanges: usize,
-        definitions: &[ModelToolDefinitionV1],
-        cancellation: &CancellationToken,
-    ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
-        self.inner
-            .skill_context(outer, after_exchanges, definitions, false, cancellation)
-    }
-
-    fn invoke(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        call: &ModelToolCallV1,
-        cancellation: &CancellationToken,
-    ) -> Result<SettledModelToolCallV1, String> {
-        self.guard(call)?;
-        let settled = self
-            .inner
-            .invoke_v1_scoped(outer_invocation_id, turn, call, cancellation)
-            .map_err(|error| error.to_string())?;
-        if settled.result.content["error"] == "parent_approval_required" {
-            self.blocked
-                .lock()
-                .map_err(|_| "child handoff lock poisoned")?
-                .push(call.clone());
-        }
-        Ok(settled)
-    }
-
-    fn invoke_extended(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        call: &ModelToolCallV1,
-        cancellation: &CancellationToken,
-    ) -> Result<ToolInvokeV1, String> {
-        self.invoke(outer_invocation_id, turn, call, cancellation)
-            .map(ToolInvokeV1::Settled)
-    }
-
-    fn commit_exchange(
-        &self,
-        outer_invocation_id: &StableId,
-        turn: u32,
-        exchange: &ModelToolExchangeV1,
-    ) -> Result<(), String> {
-        self.inner
-            .commit_exchange(outer_invocation_id, turn, exchange)
-    }
-}
-
-impl SubagentToolPortV1 {
-    fn guard(&self, call: &ModelToolCallV1) -> Result<(), String> {
-        if is_subagent_tool(&call.capability_id) {
-            return Err("tool is not available to subagent children".to_owned());
-        }
-        if !self
-            .inner
-            .context
-            .bindings
-            .iter()
-            .any(|b| b.is_callable() && b.capability_id == call.capability_id)
-        {
-            return Err("tool is not available to subagent children".to_owned());
-        }
-        Ok(())
-    }
 }

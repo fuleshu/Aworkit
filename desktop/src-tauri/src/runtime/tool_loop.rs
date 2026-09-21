@@ -524,6 +524,10 @@ pub(crate) enum StoredFileToolLimitV1 {
             skip_serializing_if = "subagent_children_is_default"
         )]
         maximum_children: u32,
+        /// Whether a delegation runs as a background job by default. Absent in
+        /// legacy bindings, which keep their original inline behavior.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        background: bool,
     },
     /// Forked delegation: the child context begins from a declared, bounded
     /// projection of the delegating Agent's committed conversation.
@@ -540,10 +544,15 @@ pub(crate) enum StoredFileToolLimitV1 {
             skip_serializing_if = "subagent_children_is_default"
         )]
         maximum_children: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        background: bool,
     },
     /// Owner-isolated listing, continuation or cancellation of a child scope.
     SubagentControl {
         operation: String,
+        /// Whether resuming a settled child runs as a background job.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        background: bool,
     },
     Mcp {
         server_id: String,
@@ -2845,7 +2854,9 @@ impl FileToolDispatcherV1 {
                     false,
                     cancellation,
                 ),
-                StoredFileToolLimitV1::Job { operation } => self.execute_job(operation, cancellation),
+                StoredFileToolLimitV1::Job { operation } => {
+                    self.execute_job(operation, envelope, cancellation)
+                }
                 StoredFileToolLimitV1::Python {
                     timeout_seconds: _,
                     maximum_output_bytes,
@@ -2953,8 +2964,13 @@ impl FileToolDispatcherV1 {
                 StoredFileToolLimitV1::SubagentFork { .. } => {
                     self.run_subagent_fork(envelope, cancellation)
                 }
-                StoredFileToolLimitV1::SubagentControl { operation } => {
-                    self.run_subagent_control(operation, envelope, cancellation)
+                StoredFileToolLimitV1::SubagentControl { operation, background } => {
+                    self.run_subagent_control(
+                        operation,
+                        *background,
+                        envelope,
+                        cancellation,
+                    )
                 }
             }
         })();
@@ -3555,12 +3571,12 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. } => {
             BTreeSet::from(["url", "documentId", "offset", "feedContent"])
         }
-        StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly"]),
+        StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
-        StoredFileToolLimitV1::SubagentFork { .. } => BTreeSet::from(["task", "context", "readOnly"]),
-        StoredFileToolLimitV1::SubagentControl { operation } => match operation.as_str() {
+        StoredFileToolLimitV1::SubagentFork { .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
+        StoredFileToolLimitV1::SubagentControl { operation, .. } => match operation.as_str() {
             "list" => BTreeSet::new(),
-            "message" => BTreeSet::from(["childId", "message"]),
+            "message" => BTreeSet::from(["childId", "message", "runInBackground"]),
             "cancel" => BTreeSet::from(["childId"]),
             _ => return Err(invalid_tool("unknown subagent control operation")),
         },
@@ -3570,7 +3586,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Mcp { .. } => return validate_mcp_arguments(arguments),
     };
     let observed_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    let valid_keys = match binding.limit {
+    let valid_keys = match &binding.limit {
         StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
             if binding.file_access_version.is_some() =>
         {
@@ -3583,9 +3599,24 @@ fn validate_call_arguments(
             if object.get("readOnly").is_some_and(|v| !v.is_boolean()) {
                 return Err(invalid_tool("readOnly must be boolean"));
             }
+            if object
+                .get("runInBackground")
+                .is_some_and(|v| !v.is_boolean())
+            {
+                return Err(invalid_tool("runInBackground must be boolean"));
+            }
             // The subagent context slice is optional; the task is required.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
         }
+        StoredFileToolLimitV1::SubagentControl { operation, .. } => match operation.as_str() {
+            // The background override is optional; the childId and message are not.
+            "message" => {
+                observed_keys.is_subset(&expected_keys)
+                    && observed_keys.contains("childId")
+                    && observed_keys.contains("message")
+            }
+            _ => observed_keys == expected_keys,
+        },
         StoredFileToolLimitV1::WebSearch { .. } => {
             // Hermes exposes `limit` as an optional call-level request. The
             // frozen Settings maximum remains the hard authority ceiling.
@@ -3836,7 +3867,7 @@ fn validate_call_arguments(
                     .ok_or_else(|| invalid_tool("subagent context is oversized or malformed"))?;
             }
         }
-        StoredFileToolLimitV1::SubagentControl { operation } => {
+        StoredFileToolLimitV1::SubagentControl { operation, .. } => {
             subagent::validate_control(operation.as_str(), arguments)?;
         }
         StoredFileToolLimitV1::Read { .. } => {}
@@ -4897,7 +4928,8 @@ mod tests {
                 inherit_parent_tools: false,
                 legacy_maximum_turns: None,
                 maximum_depth: SUBAGENT_DEFAULT_MAXIMUM_DEPTH,
-                maximum_children: SUBAGENT_DEFAULT_MAXIMUM_CHILDREN
+                maximum_children: SUBAGENT_DEFAULT_MAXIMUM_CHILDREN,
+                background: false
             }
         );
         assert!(binding.requires_approval);

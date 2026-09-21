@@ -129,3 +129,58 @@ Tests cover real continuation across turns with a stable child prefix, fork
 projection inheritance and reproducibility, the frozen projection bound, list /
 cancel idempotency and closed-scope messaging, unknown-child refusal, fan-out
 and depth exhaustion before child creation, and replay without re-execution.
+
+## Background child jobs
+
+Adashi task 119 (id 118), design `aworkit.workflow_worker.subagent`,
+`aworkit.workflow_worker.limits` and `aworkit.workflow_worker.suspension`,
+removes the blocking child. Delegation reuses the existing Chat job registry
+instead of introducing a second scheduler.
+
+The job registry now has a runner abstraction. An entry is either an OS process
+session (shell/Python) or an in-process delegated child run; the persisted
+record carries a `kind` that decodes to `process` for legacy rows. Both kinds
+share the same durable identity, Chat and child ownership scope, running and
+terminal snapshot, captured output cursor, `job_output`/`job_input`/`job_stop`/
+`job_keep`/`job_list` control surface, resolution gate and completion barrier.
+
+A new Chat freezes `runInBackground: true` on `tool.subagent`,
+`tool.subagent_fork` and `tool.subagent_message`. A delegation therefore computes
+its child scope and frame first, commits a `running` frame, registers a child job
+under the spawning invocation and returns `{childId, jobId, running: true}`
+immediately; the child loop runs on its own thread. One call may pass
+`runInBackground: false` to wait inline, which is what the inheritance and
+continuation suites do to keep their scripted dialogues deterministic.
+
+Observing and steering. `job_list` reports child jobs with `kind: subagent` and
+their `childId`; `job_output` returns the child's live progress (one line per
+model turn, with the child's own counters under `child`) and, once settled, the
+final outcome. `job_input` steers a running child at its next step boundary by
+queueing a context message the child's tool port drains; for a settled child it
+resumes the conversation as a new background turn-set. `job_stop` cancels the
+child's own cancellation token, waits for the terminal snapshot and closes the
+child scope, so a stopped child can never be resumed accidentally. `job_keep`
+lets the delegating Agent finish its turn while the child keeps working.
+
+Evidence. A background child owns its evidence stream: `RunEventStream` gains a
+detached child constructor whose span root carries the child identity, and the
+model loop accepts an evidence observer from the invocation port. This keeps the
+child's model and tool spans out of the delegating pass's span tree, so the
+cardinal rule that a committed parent span cannot terminate while a committed
+child span is open holds even though the child outlives the pass. The child still
+commits to the same Run history, its root span is attributed to the subagent
+actor, and its frame records the lineage back to the delegating tool.
+
+Limits and recovery. Child jobs count toward the registry's running capacity.
+The completion barrier treats an unresolved child like an unresolved process
+unless it was explicitly kept. On restart a running child job becomes
+`interrupted`, is never replayed, and its frame is reported as interrupted rather
+than running; a continuation then starts a fresh turn-set from the child's
+committed head, and settled child tool effects are re-delivered from the ledger
+rather than executed again.
+
+Tests cover a background delegation returning a job ticket with live per-turn
+progress, steering at the next step boundary, stopping and closing the scope,
+and keeping a running child while the parent finishes its turn. The registry's
+own tests cover child job identity, keep/stop, ownership isolation and restart
+interruption.

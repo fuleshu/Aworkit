@@ -3673,6 +3673,7 @@ mod tests {
     mod approval_modes;
     mod frozen_tools;
     mod descriptor_upgrade;
+    mod subagent_background;
     mod subagent_continuation;
     mod subagent_tools;
     use crate::runtime::documents::bundled_workflow_template;

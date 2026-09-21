@@ -391,6 +391,19 @@ impl FrozenModelGateway {
         self.execute_tool_with_observer(plan, request, cancellation, self.observer.as_deref())
     }
 
+    /// Runs one tool turn with an explicit observer instead of the gateway's
+    /// own. A delegated child uses this so its live evidence is attributed to
+    /// the child's own stream rather than to the delegating Agent's.
+    pub fn execute_tool_turn_with_observer(
+        &self,
+        plan: &ModelResolutionPlanV1,
+        request: &ModelToolRequestV1,
+        cancellation: &CancellationToken,
+        observer: Option<&dyn ModelEventObserverV1>,
+    ) -> Result<ModelToolDispatchEvidenceV1, ProviderError> {
+        self.execute_tool_with_observer(plan, request, cancellation, observer)
+    }
+
     /// Isolated one-shot checkpoint call. It cannot invoke tools or emit chat
     /// messages through the acting Agent's observer; the caller records evidence.
     pub fn execute_compaction_cancellable(

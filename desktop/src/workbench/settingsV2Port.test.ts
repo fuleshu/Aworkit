@@ -19,7 +19,7 @@ function preUpgradeProjection(): unknown {
   const subagent = tools.find((tool) => tool.id === "tool.subagent")!;
   // Every configuration field a newer build added to the frozen subagent
   // contract: the pre-upgrade document carries none of them.
-  for (const key of ["inheritParentTools", "maximumDepth", "maximumChildren"]) {
+  for (const key of ["inheritParentTools", "maximumDepth", "maximumChildren", "runInBackground"]) {
     delete subagent.configuration[key];
   }
   return {

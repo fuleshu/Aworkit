@@ -129,7 +129,7 @@ export const credentialMetadataConfigurationSchema = z
 const OPTIONAL_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> = {
   "tool.web_fetch": ["renderWhenNeeded"],
   "tool.web_extract": ["renderWhenNeeded"],
-  "tool.subagent": ["inheritParentTools", "maximumDepth", "maximumChildren"],
+  "tool.subagent": ["inheritParentTools", "maximumDepth", "maximumChildren", "runInBackground"],
 };
 
 const BUILT_IN_TOOL_CONFIGURATION_KEYS: Readonly<Record<string, readonly string[]>> =
@@ -234,7 +234,11 @@ function subagentConfigurationIsValid(tool: {
   readonly configuration: Readonly<Record<string, unknown>>;
 }): boolean {
   const inheritParentTools = tool.configuration.inheritParentTools;
-  return inheritParentTools === undefined || inheritParentTools === true;
+  const runInBackground = tool.configuration.runInBackground;
+  return (
+    (inheritParentTools === undefined || inheritParentTools === true) &&
+    (runInBackground === undefined || typeof runInBackground === "boolean")
+  );
 }
 
 function webSearchConfigurationIsValid(tool: {

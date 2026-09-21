@@ -8,10 +8,13 @@ pub(crate) fn legacy_descriptor(
     current: &CapabilityDescriptor,
 ) -> Result<CapabilityDescriptor, WorkflowPipelineError> {
     let mut schema = subagent_schema();
-    schema["properties"]
-        .as_object_mut()
-        .unwrap()
-        .remove("readOnly");
+    // Fields a later build added to the model-facing schema. The legacy
+    // descriptor is the exact pre-extension contract, so every added field
+    // must be removed before its historical hash is recomputed.
+    if let Some(properties) = schema["properties"].as_object_mut() {
+        properties.remove("readOnly");
+        properties.remove("runInBackground");
+    }
     let mut legacy = current.clone();
     legacy.input_schema_hash = Some(canonical_hash(&schema)?);
     legacy

@@ -165,6 +165,18 @@ pub(crate) trait ModelToolInvocationPortV1 {
     /// the same child prefix. Delegated children deliberately do not forward
     /// this: only their delegating parent records it.
     fn observe_parent_turn(&self, _input: &Value, _exchanges: &[ModelToolExchangeV1]) {}
+    /// Publishes one delegated child turn's progress to its background job, so
+    /// the delegating Agent can read live state through `job_output`. The
+    /// top-level Agent authority does not forward this.
+    fn note_child_turn(&self, _turn: u32, _assistant_text: &str, _calls: &[ModelToolCallV1]) {}
+    /// Evidence observer for this invocation. A background child returns its
+    /// own stream so its live model evidence is not committed under the
+    /// delegating pass's span tree.
+    fn model_observer(
+        &self,
+    ) -> Option<std::sync::Arc<dyn aworkit_capability_host::ModelEventObserverV1>> {
+        None
+    }
     /// Last Agent preparation step, after any visible-context replacement.
     fn prepare_automatic_context(
         &self,
@@ -640,7 +652,18 @@ fn execute_tool_turn_with_timeout_recovery(
             return Err(ProviderError::Cancelled.into());
         }
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
-        match gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation) {
+        // A background child supplies its own evidence observer; every other
+        // invocation keeps the gateway's frozen observer.
+        let turn = match authority.model_observer() {
+            Some(observer) => gateway.execute_tool_turn_with_observer(
+                plan,
+                &provider_request,
+                cancellation,
+                Some(observer.as_ref()),
+            ),
+            None => gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation),
+        };
+        match turn {
             Err(error) if is_context_overflow(&error)
                 && overflow_retries < preparation.max_overflow_retries =>
             {
@@ -706,6 +729,11 @@ fn execute_tool_turn_with_timeout_recovery(
                         .tokens(),
                     )
                     .map_err(ModelToolLoopErrorV1::Context)?;
+                authority.note_child_turn(
+                    through.saturating_add(1) as u32,
+                    &output.assistant_text,
+                    &output.calls,
+                );
                 return Ok(evidence);
             }
         }

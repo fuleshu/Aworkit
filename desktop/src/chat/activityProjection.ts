@@ -374,7 +374,8 @@ function spanActor(
     if (
       current.spanKind === "external_agent" ||
       (current.spanKind === "tool_call" &&
-        isSubagentCapability(current.metadata.capabilityId))
+        isSubagentCapability(current.metadata.capabilityId)) ||
+      current.metadata.subagentChildId !== undefined
     ) return "subagent";
     current =
       current.parentSpanId === undefined

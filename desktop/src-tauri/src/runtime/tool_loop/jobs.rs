@@ -7,12 +7,13 @@ mod tests;
 use super::*;
 use aworkit_capability_host::ProcessSpecV1;
 pub(super) use contract::*;
-pub(super) use registry::JobRegistry;
+pub(super) use registry::{ChildJobHandle, ChildJobInfo, JobRegistry};
 
 impl FileToolDispatcherV1 {
     pub(super) fn execute_job(
         &self,
         operation: &str,
+        envelope: &ApprovedInvocationEnvelopeV1,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
         let owner = &self.context.chat_id;
@@ -33,11 +34,110 @@ impl FileToolDispatcherV1 {
                 cancellation,
             );
         }
+        // A delegated child is a job too. Its settled state resumes the child
+        // conversation instead of being read as a finished process.
+        if let Some(job_id) = args["jobId"].as_str()
+            && let Some(info) = self.runtime.jobs.child_job(owner, job_id)?
+        {
+            return self.control_child_job(operation, job_id, &info, envelope, cancellation);
+        }
         let value = self
             .runtime
             .jobs
             .control_scoped(owner, self.context.delegation.as_ref().map(StableId::as_str), operation, args, cancellation)?;
         Ok((value, format!("{operation} completed.")))
+    }
+
+    /// Applies the shared job control surface to a delegated child job.
+    fn control_child_job(
+        &self,
+        operation: &str,
+        _job_id: &str,
+        info: &ChildJobInfo,
+        envelope: &ApprovedInvocationEnvelopeV1,
+        cancellation: &CancellationToken,
+    ) -> Result<(Value, String), String> {
+        let owner = &self.context.chat_id;
+        let args = &self.record.call.arguments;
+        match operation {
+            "job_output" | "job_keep" => {
+                let value =
+                    self.runtime
+                        .jobs
+                        .control_scoped(owner, None, operation, args, cancellation)?;
+                Ok((value, format!("{operation} completed.")))
+            }
+            "job_stop" => {
+                let value =
+                    self.runtime
+                        .jobs
+                        .control_scoped(owner, None, "job_stop", args, cancellation)?;
+                self.close_child_scope(&info.child_id)?;
+                Ok((
+                    value,
+                    format!("Stopped subagent {} and closed its scope.", info.child_id),
+                ))
+            }
+            "job_input" => {
+                let text = args["text"]
+                    .as_str()
+                    .ok_or("text missing")?
+                    .to_owned();
+                if info.running {
+                    let value =
+                        self.runtime
+                            .jobs
+                            .control_scoped(owner, None, "job_input", args, cancellation)?;
+                    return Ok((
+                        value,
+                        format!("Steered subagent {} at its next step boundary.", info.child_id),
+                    ));
+                }
+                let run_id = self.record.proposal.run_id.clone();
+                let frame = self
+                    .runtime
+                    .records
+                    .subagent_child(&run_id, &info.child_id)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("subagent {} is unavailable", info.child_id))?;
+                let value = self.start_continuation_job(envelope, frame, text)?;
+                Ok((
+                    value,
+                    format!(
+                        "Subagent {} continues in the background; observe it with job_output.",
+                        info.child_id
+                    ),
+                ))
+            }
+            _ => Err("unknown subagent job operation".into()),
+        }
+    }
+
+    /// Marks a child scope cancelled after its job stopped, so a stopped child
+    /// can never be resumed accidentally. Repeating it is a no-op.
+    fn close_child_scope(&self, child_id: &str) -> Result<(), String> {
+        let run_id = self.record.proposal.run_id.clone();
+        let Some(frame) = self
+            .runtime
+            .records
+            .subagent_child(&run_id, child_id)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(());
+        };
+        if frame.status == super::subagent::ChildStatusV1::Cancelled {
+            return Ok(());
+        }
+        let updated = super::subagent::SubagentChildFrameV1 {
+            head_revision: frame.head_revision.saturating_add(1),
+            status: super::subagent::ChildStatusV1::Cancelled,
+            updated_at: crate::runtime::history::now_label(),
+            ..frame
+        };
+        self.runtime
+            .records
+            .record_subagent_child(&updated)
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn start_shell_job(

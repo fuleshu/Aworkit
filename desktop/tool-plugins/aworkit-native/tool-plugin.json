@@ -1029,7 +1029,8 @@
         "inheritParentTools": true,
         "requiresApproval": true,
         "maximumDepth": 1,
-        "maximumChildren": 32
+        "maximumChildren": 32,
+        "runInBackground": true
       },
       "fields": [
         {
@@ -1070,6 +1071,13 @@
           "readOnly": false,
           "minimum": 1,
           "maximum": 256
+        },
+        {
+          "key": "runInBackground",
+          "label": "Run children in the background",
+          "help": "New delegations start as background jobs observed with job_output/job_list. Turn off to wait for each child inline.",
+          "kind": "boolean",
+          "readOnly": false
         }
       ],
       "inputSchema": {
@@ -1089,6 +1097,10 @@
             "type": "boolean",
             "default": false,
             "description": "Restrict this child to known read-only tools; otherwise inherit this Agent's selected tools."
+          },
+          "runInBackground": {
+            "type": "boolean",
+            "description": "Start the child as a background job and return its job id immediately. Overrides the Agent's frozen default."
           }
         },
         "required": [
@@ -1111,7 +1123,8 @@
         "maximumDepth": 1,
         "maximumChildren": 32,
         "forkMaximumItems": 40,
-        "forkMaximumBytes": 32768
+        "forkMaximumBytes": 32768,
+        "runInBackground": true
       },
       "fields": [
         {
@@ -1163,6 +1176,13 @@
           "readOnly": false,
           "minimum": 256,
           "maximum": 1048576
+        },
+        {
+          "key": "runInBackground",
+          "label": "Run forks in the background",
+          "help": "New forks start as background jobs observed with job_output/job_list. Turn off to wait for each fork inline.",
+          "kind": "boolean",
+          "readOnly": false
         }
       ],
       "inputSchema": {
@@ -1182,6 +1202,10 @@
             "type": "boolean",
             "default": false,
             "description": "Restrict this child to known read-only tools."
+          },
+          "runInBackground": {
+            "type": "boolean",
+            "description": "Start the fork as a background job and return its job id immediately. Overrides the Agent's frozen default."
           }
         },
         "required": [
@@ -1229,13 +1253,14 @@
       "id": "tool.subagent_message",
       "name": "Message subagent",
       "description": "Send a follow-up message to a subagent this Agent created.",
-      "instructions": "Resume one delegated child with new instructions. The child keeps its own conversation, its inherited permissions and its own committed history, and returns a new outcome. Use it to correct or extend delegated work instead of creating a new child.",
+      "instructions": "Steer or extend one delegated child. A child that is still running is steered at its next step boundary; a settled child resumes its own conversation, its inherited permissions and its own committed history. The call returns a job id you observe with job_output. Use it to correct delegated work instead of creating a new child.",
       "executor": "subagent_message",
       "requiresProject": false,
       "execution": "native",
       "configuration": {
         "authorityMode": "run_subagent",
-        "requiresApproval": true
+        "requiresApproval": true,
+        "runInBackground": true
       },
       "fields": [
         {
@@ -1251,6 +1276,13 @@
           "help": "Continuing a child runs its own tools under the existing approval policy.",
           "kind": "boolean",
           "readOnly": true
+        },
+        {
+          "key": "runInBackground",
+          "label": "Resume in the background",
+          "help": "A resumed child continues as a background job observed with job_output. Turn off to wait for the new outcome inline.",
+          "kind": "boolean",
+          "readOnly": false
         }
       ],
       "inputSchema": {
@@ -1268,6 +1300,10 @@
             "minLength": 1,
             "maxLength": 262144,
             "description": "The follow-up instruction for the child's own conversation."
+          },
+          "runInBackground": {
+            "type": "boolean",
+            "description": "Resume the child as a background job and return its job id immediately. Overrides the Agent's frozen default."
           }
         },
         "required": [

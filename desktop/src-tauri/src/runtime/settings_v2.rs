@@ -1246,6 +1246,9 @@ impl BuiltInToolConfigurationV2 {
                 if self.configuration.contains_key("maximumChildren") {
                     keys.push("maximumChildren");
                 }
+                if self.configuration.contains_key("runInBackground") {
+                    keys.push("runInBackground");
+                }
                 require_exact_config_keys(self, &keys)?;
                 require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "run_subagent")?;
@@ -1258,6 +1261,9 @@ impl BuiltInToolConfigurationV2 {
                 }
                 if self.configuration.contains_key("maximumChildren") {
                     require_config_u64(self, "maximumChildren", 1, 256)?;
+                }
+                if self.configuration.contains_key("runInBackground") {
+                    require_config_boolean(self, "runInBackground")?;
                 }
                 Ok(())
             }

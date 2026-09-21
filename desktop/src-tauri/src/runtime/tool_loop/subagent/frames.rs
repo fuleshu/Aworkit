@@ -24,27 +24,28 @@ pub(crate) enum ChildKindV1 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ChildStatusV1 {
+    /// The child is running as a background job right now.
+    Running,
     /// The child settled normally and can be messaged again.
     Completed,
     /// The child returned approval-dependent actions to its parent.
     ParentApprovalRequired,
     /// The child loop failed; the parent owns the frozen attempt policy.
     Failed,
+    /// Aworkit restarted while the child was running; it was not replayed.
+    Interrupted,
     /// The child scope was cancelled and cannot be continued.
     Cancelled,
 }
 
 impl ChildStatusV1 {
-    /// A cancelled child is closed; every other status can continue.
-    pub(crate) fn is_continuable(self) -> bool {
-        !matches!(self, Self::Cancelled)
-    }
-
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::Running => "running",
             Self::Completed => "completed",
             Self::ParentApprovalRequired => "parent_approval_required",
             Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
             Self::Cancelled => "cancelled",
         }
     }

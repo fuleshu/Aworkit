@@ -131,6 +131,11 @@ fn native(id: &str) -> WorkflowToolBindingV1 {
     let mut frozen = tool_registry::freeze_settings(&setting).unwrap();
     if id == SUBAGENT_CAPABILITY_ID {
         frozen.options.approval_mode = Some(ApprovalMode::FullAccess);
+        // This suite exercises inline delegation; background children are
+        // covered by the dedicated background suite.
+        frozen
+            .configuration
+            .insert("runInBackground".into(), json!(false));
     }
     WorkflowToolBindingV1 {
         capability_id: id.into(),

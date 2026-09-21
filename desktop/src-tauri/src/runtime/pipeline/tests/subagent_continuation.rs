@@ -268,6 +268,11 @@ fn native(id: &str, overrides: &[(&str, Value)]) -> WorkflowToolBindingV1 {
     }
     if is_subagent_tool(id) {
         frozen.options.approval_mode = Some(ApprovalMode::FullAccess);
+        // This suite exercises the inline continuation path; background
+        // children are covered by the dedicated background suite.
+        frozen
+            .configuration
+            .insert("runInBackground".into(), json!(false));
     }
     WorkflowToolBindingV1 {
         capability_id: id.into(),
