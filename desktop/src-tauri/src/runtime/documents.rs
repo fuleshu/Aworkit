@@ -22,8 +22,8 @@ use super::{
         AppearanceConfigurationV2, AppearanceModeV2, ChatDefaultsConfigurationV2,
         CredentialMetadataConfigurationV2, LayoutConfigurationV2, ModelConfigurationV2,
         ModelTargetV2, ModelTierResolutionV2, ProjectConfigurationV2, ProviderConfigurationV2,
-        SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, WorkspaceConfigurationV2,
-        WorkspaceKindV2,
+        SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2, SubagentViewPreferenceV1,
+        WorkspaceConfigurationV2, WorkspaceKindV2,
     },
 };
 
@@ -245,6 +245,25 @@ impl CanonicalDocuments {
             return Err("desktop layout is outside its persisted bounds".into());
         }
         self.save_settings(self.settings_version, settings)
+            .map(|_| ())
+    }
+
+    /// The stored delegated-subagent tab presentation preference.
+    pub(crate) fn subagent_view(&self) -> SubagentViewPreferenceV1 {
+        self.settings.subagents
+    }
+
+    /// Persists the delegated-subagent tab presentation preference under the
+    /// caller's expected document version, so a stale write is rejected rather
+    /// than silently overwriting a newer Settings edit.
+    pub(crate) fn update_subagent_view(
+        &mut self,
+        subagents: SubagentViewPreferenceV1,
+        expected_version: u64,
+    ) -> Result<(), String> {
+        let mut settings = self.settings.clone();
+        settings.subagents = subagents;
+        self.save_settings(expected_version, settings)
             .map(|_| ())
     }
 

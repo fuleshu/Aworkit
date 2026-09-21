@@ -25,6 +25,11 @@ import {
   createDesktopLayoutPort,
   type DesktopLayout,
 } from "./shell/desktopLayout";
+import {
+  createSubagentViewPreferencePort,
+  DEFAULT_SUBAGENT_VIEW,
+  type SubagentViewPreference,
+} from "./chat/subagentViewPreference";
 import { usePaneWidth } from "./shell/usePaneWidth";
 import { useSettingsNavigation } from "./shell/settingsNavigation";
 import { NotificationStore } from "./notifications/NotificationStore";
@@ -70,6 +75,29 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   );
   const layoutPort = useMemo(() => createDesktopLayoutPort(), []);
   const [desktopLayout, setDesktopLayout] = useState<DesktopLayout>({});
+  const subagentViewPort = useMemo(
+    () => createSubagentViewPreferencePort(),
+    [],
+  );
+  const [subagentView, setSubagentView] = useState<SubagentViewPreference>(
+    DEFAULT_SUBAGENT_VIEW,
+  );
+  // The preference is read once at startup; Settings commits later changes
+  // through the same dedicated command and reports them back here.
+  useEffect(() => {
+    let current = true;
+    void subagentViewPort
+      .snapshot()
+      .then((preference) => {
+        if (current) setSubagentView(preference);
+      })
+      .catch((error) =>
+        console.error("Could not load the subagent view preference", error),
+      );
+    return () => {
+      current = false;
+    };
+  }, [subagentViewPort]);
   const navigation = usePaneWidth(208, 184, 640, desktopLayout.historyPaneWidth);
   const { width: navigationWidth, setWidth: setNavigationWidth } = navigation;
   // The native host restores the frame. The renderer hydrates only separators;
@@ -302,6 +330,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 libraryRevision={libraryRevision}
                 onRecoveryPendingChange={setChatRecoveryPending}
                 onRuntimeSnapshotChange={updateChatRuntimeState}
+                subagentView={subagentView}
                 storedInspectorWidth={desktopLayout.inspectorPaneWidth}
                 onInspectorWidthChange={(width) => {
                   void layoutPort
@@ -332,7 +361,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
           )}
           {mountedRoutes.has("settings") && (
             <div className="route-surface" data-route="settings" hidden={route !== "settings"}>
-              <SettingsScreen presentation={adapters.nativePresentation} active={route === "settings"} visit={visit} onBack={back} returnLabel={returnLabel} registerLeaveGuard={registerLeaveGuard} />
+              <SettingsScreen presentation={adapters.nativePresentation} active={route === "settings"} visit={visit} onBack={back} returnLabel={returnLabel} registerLeaveGuard={registerLeaveGuard} subagentViewPort={subagentViewPort} onSubagentViewChange={setSubagentView} />
             </div>
           )}
           {mountedRoutes.has("management") && (

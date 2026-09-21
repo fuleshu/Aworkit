@@ -25,6 +25,7 @@ interface ChatComposerProps {
   readonly committedEvents?: readonly CoreEventEnvelope[];
   readonly contextUsage?: React.ReactNode;
   readonly goalControl?: React.ReactNode;
+  readonly subagentsControl?: React.ReactNode;
   readonly approvalControl?: React.ReactNode;
   readonly status?: React.ReactNode;
   readonly onStop?: () => void;
@@ -51,6 +52,7 @@ export function ChatComposer({
   committedEvents = [],
   contextUsage,
   goalControl,
+  subagentsControl,
   approvalControl,
   status,
   onStop,
@@ -305,6 +307,7 @@ export function ChatComposer({
           />
           {approvalControl}
           <div className="composer-submit-controls">
+            {subagentsControl}
             {goalControl}
             {contextUsage}
             <button

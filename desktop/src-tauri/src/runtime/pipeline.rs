@@ -554,6 +554,19 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority.record_goal_state_for(run_id, goal)
     }
 
+    /// Authoritative catalog of one Chat's delegated children for the desktop
+    /// presentation. It is a read of the durable child frames, never a model
+    /// tool, and a child whose job is no longer live reports interrupted.
+    pub(crate) fn subagent_catalog(
+        &self,
+        chat_id: &str,
+        run_id: &StableId,
+    ) -> Result<Vec<crate::runtime::dto::SubagentChildSummaryDto>, WorkflowPipelineError> {
+        self.file_tool_authority
+            .subagent_catalog(chat_id, run_id)
+            .map_err(WorkflowPipelineError::Authority)
+    }
+
     fn validated_prepared(
         &self,
         request: &WorkflowExecutionRequestV1,

@@ -87,6 +87,9 @@ pub struct SettingsConfigurationV2 {
     /// editor.
     #[serde(default)]
     pub layout: LayoutConfigurationV2,
+    /// Delegated-subagent tab presentation preference, edited in Settings.
+    #[serde(default)]
+    pub subagents: SubagentViewPreferenceV1,
 }
 
 impl Default for SettingsConfigurationV2 {
@@ -106,6 +109,7 @@ impl Default for SettingsConfigurationV2 {
             appearance: AppearanceConfigurationV2::default(),
             chat_defaults: ChatDefaultsConfigurationV2::default(),
             layout: LayoutConfigurationV2::default(),
+            subagents: SubagentViewPreferenceV1::default(),
         }
     }
 }
@@ -2021,6 +2025,36 @@ pub struct LayoutConfigurationV2 {
     /// produced the placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<f64>,
+}
+
+/// Global presentation preference for delegated-subagent conversation tabs.
+///
+/// This is a user preference, never part of a Chat's frozen tool contract: it
+/// decides only whether Aworkit may open a new child's tab in the background
+/// and whether it may close a settled child's inactive tab.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubagentViewPreferenceV1 {
+    /// Open a newly created child's tab in the background without focusing it.
+    #[serde(default = "default_subagent_auto_open")]
+    pub auto_open: bool,
+    /// Close a terminal child's tab when it is open and not the active tab.
+    #[serde(default)]
+    pub auto_close: bool,
+}
+
+/// A new child is worth surfacing; focus stays wherever the user left it.
+fn default_subagent_auto_open() -> bool {
+    true
+}
+
+impl Default for SubagentViewPreferenceV1 {
+    fn default() -> Self {
+        Self {
+            auto_open: true,
+            auto_close: false,
+        }
+    }
 }
 
 impl LayoutConfigurationV2 {

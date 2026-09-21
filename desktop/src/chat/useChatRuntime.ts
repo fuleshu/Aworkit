@@ -11,6 +11,8 @@ import {
 } from "./corePort";
 
 export interface ChatRuntimeState {
+  /** The exact port this projection was built from, for scoped reads. */
+  readonly port: ChatCorePort;
   readonly contextModel?: ChatCorePort["contextModel"];
   readonly snapshot: RuntimeSnapshot | null;
   readonly events: readonly RuntimeEvent[];
@@ -331,7 +333,7 @@ export function useChatRuntime(
         generationRef.current += 1; navigatingRef.current = true; setLoading(true); setStale(false); setError(null);
         const entry = current.history.find(entry => entry.chatId === intent.targetId);
         if (intent.type === "select_chat" && entry) {
-          setSnapshot({ ...current, contextModel: null, evidence: [], events: [], chat: {
+          setSnapshot({ ...current, contextModel: null, evidence: [], events: [], subagents: [], chat: {
             ...current.chat, chatId: entry.chatId, runId: entry.runId, title: entry.title,
             scope: entry.projectName ?? "No project", projectId: entry.projectId, workflowId: null, workflowName: null,
             branch: null, recoveryPending: false, phase: entry.phase, queuedInputs: [],
@@ -399,6 +401,7 @@ export function useChatRuntime(
   const older = useOlderChatEvents(port, snapshotRef, eventsRef, supportRef, generationRef, publishEvents);
 
   return {
+    port,
     contextModel,
     snapshot,
     events,

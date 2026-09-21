@@ -128,6 +128,40 @@ pub struct RuntimeSnapshot {
     pub projects: Vec<ProjectChoiceDto>,
     pub evidence: Vec<EvidenceRecordDto>,
     pub events: Vec<CoreEventEnvelope>,
+    /// Authoritative catalog of this Chat's delegated children, derived from
+    /// the durable child frames so a restart reports a child that was running
+    /// as interrupted instead of claiming it still runs.
+    #[serde(default)]
+    pub subagents: Vec<SubagentChildSummaryDto>,
+}
+
+/// One delegated child of the current Chat as the desktop renders it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentChildSummaryDto {
+    pub child_id: String,
+    pub kind: String,
+    pub status: String,
+    pub running: bool,
+    pub depth: u32,
+    /// Delegating Agent node that owns this child's scope.
+    pub node_id: String,
+    pub parent_invocation_id: String,
+    /// The delegating tool call that spawned this child, when known.
+    #[serde(default)]
+    pub parent_call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_child_id: Option<String>,
+    pub task: String,
+    pub context_text: String,
+    pub final_text: String,
+    pub model_turns: u32,
+    pub tool_calls: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub head_revision: u64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// A contiguous loaded range plus exact support for spans crossing its edge.

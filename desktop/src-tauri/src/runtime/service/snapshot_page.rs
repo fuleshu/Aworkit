@@ -16,6 +16,20 @@ impl ChatFeedReader {
     ) -> Result<crate::runtime::ChatEventPage, String> {
         self.history.feed_page(after, before, head)
     }
+
+    /// One delegated child's own evidence from the same canonical history. The
+    /// child is a presentation scope over one Run, never a second feed.
+    pub fn child_page(
+        &self,
+        child_id: &str,
+        before: Option<u64>,
+        head: u64,
+    ) -> Result<crate::runtime::ChatEventPage, String> {
+        if child_id.is_empty() || child_id.len() > 256 {
+            return Err("Subagent child identity is invalid".into());
+        }
+        self.history.subagent_feed_page(child_id, before, head)
+    }
 }
 
 impl DesktopRuntime {

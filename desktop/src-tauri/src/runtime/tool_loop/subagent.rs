@@ -605,6 +605,7 @@ impl FileToolDispatcherV1 {
             run_id: run_id.to_string(),
             node_id: spawn.node_id,
             parent_invocation_id: self.record.outer_invocation_id.to_string(),
+            parent_call_id: self.record.call.call_id.clone(),
             parent_child_id: None,
             depth: spawn.depth,
             kind: spawn.kind,
@@ -646,6 +647,10 @@ impl FileToolDispatcherV1 {
     }
 
     /// Runs a fresh or forked child inline and commits its settled frame.
+    ///
+    /// The child still owns its evidence root: an inline child commits into the
+    /// same Run history through its own detached stream, so its activity can be
+    /// attributed to its child identity exactly like a background child's.
     fn run_child_now(
         &self,
         envelope: &ApprovedInvocationEnvelopeV1,
@@ -653,7 +658,15 @@ impl FileToolDispatcherV1 {
         admission: ChildAdmissionV1,
         cancellation: &CancellationToken,
     ) -> Result<SubagentChildFrameV1, String> {
-        let prepared = self.prepare_child(spawn, admission)?;
+        let mut prepared = self.prepare_child(spawn, admission)?;
+        prepared.request.run_events = self.run_events.detached_child(
+            format!(
+                "{}.child.{}",
+                envelope.invocation_id.as_str(),
+                prepared.frame.child_id
+            ),
+            prepared.frame.child_id.clone(),
+        );
         let turn = execute_child_turns(prepared.request, &envelope.invocation_id, cancellation)?;
         let error = turn.error.clone();
         let frame = apply_turn(prepared.frame, turn);
@@ -791,7 +804,12 @@ impl FileToolDispatcherV1 {
         message: String,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
-        let request = self.child_continuation_request(&frame, Some(message))?;
+        let child_id = frame.child_id.clone();
+        let mut request = self.child_continuation_request(&frame, Some(message))?;
+        request.run_events = self.run_events.detached_child(
+            format!("{}.child.{}", envelope.invocation_id.as_str(), child_id),
+            child_id,
+        );
         let turn = execute_child_turns(request, &envelope.invocation_id, cancellation)?;
         let error = turn.error.clone();
         let updated = apply_turn(frame, turn);
@@ -1115,6 +1133,7 @@ fn child_fact(frame: &SubagentChildFrameV1, status: ChildStatusV1) -> Value {
         "runId": frame.run_id,
         "nodeId": frame.node_id,
         "parentInvocationId": frame.parent_invocation_id,
+        "parentCallId": frame.parent_call_id,
         "kind": frame.kind,
         "status": status.as_str(),
         "depth": frame.depth,
@@ -1140,4 +1159,62 @@ pub(crate) fn publish_child_fact(
     run_events
         .context_event(CHILD_FACT, child_fact(frame, status))
         .map(|_| ())
+}
+
+impl FileToolAuthorityRuntimeV1 {
+    /// Authoritative catalog of one Chat/Run's delegated children.
+    ///
+    /// Durable frames are the source of truth: they are committed before a
+    /// child starts, so a restart that loses the live job reports the child as
+    /// interrupted instead of leaving a phantom running child. Live children
+    /// sort first, then settled children oldest-first.
+    pub(crate) fn subagent_catalog(
+        &self,
+        chat_id: &str,
+        run_id: &StableId,
+    ) -> Result<Vec<crate::runtime::dto::SubagentChildSummaryDto>, String> {
+        let frames = self
+            .records
+            .subagent_children(run_id)
+            .map_err(|error| error.to_string())?;
+        let mut catalog = frames
+            .into_iter()
+            .filter(|frame| frame.chat_id == chat_id)
+            .map(|frame| {
+                let status = effective_status(&frame, &self.jobs, chat_id);
+                crate::runtime::dto::SubagentChildSummaryDto {
+                    child_id: frame.child_id,
+                    kind: match frame.kind {
+                        ChildKindV1::Fresh => "fresh".to_owned(),
+                        ChildKindV1::Fork => "fork".to_owned(),
+                    },
+                    status: status.as_str().to_owned(),
+                    running: status == ChildStatusV1::Running,
+                    depth: frame.depth,
+                    node_id: frame.node_id,
+                    parent_invocation_id: frame.parent_invocation_id,
+                    parent_call_id: frame.parent_call_id,
+                    parent_child_id: frame.parent_child_id,
+                    task: frame.task,
+                    context_text: frame.context_text,
+                    final_text: frame.final_text,
+                    model_turns: frame.model_turns,
+                    tool_calls: frame.tool_calls,
+                    input_tokens: frame.input_tokens,
+                    output_tokens: frame.output_tokens,
+                    head_revision: frame.head_revision,
+                    created_at: frame.created_at,
+                    updated_at: frame.updated_at,
+                }
+            })
+            .collect::<Vec<_>>();
+        catalog.sort_by(|left, right| {
+            right
+                .running
+                .cmp(&left.running)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.child_id.cmp(&right.child_id))
+        });
+        Ok(catalog)
+    }
 }

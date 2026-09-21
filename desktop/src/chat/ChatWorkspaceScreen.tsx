@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChatBusy } from "./ChatBusy";
 import { conversationFeed } from "./conversationFeed";
 import "./chatLoading.css";
+import "./subagents.css";
 import { PaneSplitter } from "../shell/PaneSplitter";
 import { usePaneWidth } from "../shell/usePaneWidth";
 import { useProjectedNotification } from "../notifications/NotificationContext";
@@ -18,6 +19,29 @@ import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
 import { GoalControl } from "./GoalControl";
+import { SubagentConversation } from "./SubagentConversation";
+import { SubagentDialog } from "./SubagentDialog";
+import { SubagentTabs } from "./SubagentTabs";
+import {
+  chatSubagentCatalog,
+  subagentEntry,
+  type SubagentCatalogEntry,
+} from "./subagentCatalog";
+import {
+  autoCloseSubagentTab,
+  activateSubagentTab,
+  closeSubagentTab,
+  openSubagentTab,
+  openSubagentTabInBackground,
+  SubagentTabMemory,
+  type SubagentTabState,
+} from "./subagentTabs";
+import { useSubagentFeed } from "./useSubagentFeed";
+import {
+  DEFAULT_SUBAGENT_VIEW,
+  type SubagentViewPreference,
+} from "./subagentViewPreference";
+import { withEventSupport } from "./eventWindow";
 import { useContextModel } from "./useContextModel";
 import type { ApprovalActionDetails } from "./approvals";
 import { controlsFor } from "./composer";
@@ -57,6 +81,8 @@ interface ChatWorkspaceScreenProps {
   /** Persisted Run-details separator position, applied once when it arrives. */
   readonly storedInspectorWidth?: number;
   readonly onInspectorWidthChange?: (width: number) => void;
+  /** Global delegated-subagent tab presentation preference. */
+  readonly subagentView?: SubagentViewPreference;
 }
 
 export interface ChatHistoryActionRequest {
@@ -82,6 +108,7 @@ export function ChatWorkspaceScreen({
   confirmRecoveryAbandon = browserRecoveryConfirmation,
   storedInspectorWidth,
   onInspectorWidthChange,
+  subagentView = DEFAULT_SUBAGENT_VIEW,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
   const runtime = useChatRuntime(corePort, pollIntervalMs);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
@@ -128,6 +155,7 @@ export function ChatWorkspaceScreen({
   const handledNewChatRequest = useRef(0);
   const handledHistoryActionRequest = useRef(0);
   const wasActive = useRef(active);
+  const chatPanelId = useId();
   const snapshot = runtime.snapshot;
   const projectedRecoveryPending = snapshot?.chat.recoveryPending;
   const projectedChatId = snapshot?.chat.chatId;
@@ -138,6 +166,124 @@ export function ChatWorkspaceScreen({
     [runtime.events],
   );
   const feedItems = useMemo(() => conversationFeed(timelineItems, runtime.firstSequence), [timelineItems, runtime.firstSequence]);
+  // Delegated children: the durable frame catalog merged with the live facts,
+  // and the per-Chat tab set that filters the same Run history for one child.
+  const subagentTabs = useMemo(() => new SubagentTabMemory(), []);
+  const [, setSubagentTabRevision] = useState(0);
+  const tabChatId = projectedChatId ?? "";
+  const tabState = subagentTabs.state(tabChatId);
+  const updateTabs = useCallback(
+    (update: (state: SubagentTabState) => SubagentTabState) => {
+      if (tabChatId === "") return;
+      subagentTabs.set(tabChatId, update(subagentTabs.state(tabChatId)));
+      setSubagentTabRevision((revision) => revision + 1);
+    },
+    [subagentTabs, tabChatId],
+  );
+  const subagentEntries = useMemo(
+    () => chatSubagentCatalog(snapshot?.subagents, runtime.events),
+    [snapshot?.subagents, runtime.events],
+  );
+  const activeChild =
+    tabState.active === null
+      ? null
+      : (subagentEntry(subagentEntries, tabState.active) ?? null);
+  const observedChildren = useRef<{ chatId: string; seen: Set<string> }>({
+    chatId: "",
+    seen: new Set(),
+  });
+  const childStatuses = useRef<{ chatId: string; statuses: Map<string, string> }>({
+    chatId: "",
+    statuses: new Map(),
+  });
+  useEffect(() => {
+    if (tabChatId === "") return;
+    if (observedChildren.current.chatId !== tabChatId) {
+      // Returning to a Chat rebuilds its remembered tab set; only children
+      // created while this workspace observes the Chat may auto-open.
+      observedChildren.current = {
+        chatId: tabChatId,
+        seen: new Set(subagentEntries.map((entry) => entry.childId)),
+      };
+      return;
+    }
+    const seen = observedChildren.current.seen;
+    const created = subagentEntries.filter((entry) => !seen.has(entry.childId));
+    for (const entry of created) seen.add(entry.childId);
+    if (!subagentView.autoOpen || created.length === 0) return;
+    updateTabs((state) =>
+      created.reduce(
+        (current, entry) => openSubagentTabInBackground(current, entry.childId),
+        state,
+      ),
+    );
+  }, [subagentEntries, subagentView.autoOpen, tabChatId, updateTabs]);
+  useEffect(() => {
+    if (tabChatId === "") return;
+    if (childStatuses.current.chatId !== tabChatId) {
+      childStatuses.current = {
+        chatId: tabChatId,
+        statuses: new Map(
+          subagentEntries.map((entry) => [entry.childId, entry.status]),
+        ),
+      };
+      return;
+    }
+    const statuses = childStatuses.current.statuses;
+    const terminal: string[] = [];
+    for (const entry of subagentEntries) {
+      const previous = statuses.get(entry.childId);
+      statuses.set(entry.childId, entry.status);
+      if (
+        subagentView.autoClose &&
+        previous === "running" &&
+        entry.status !== "running"
+      ) {
+        terminal.push(entry.childId);
+      }
+    }
+    if (terminal.length === 0) return;
+    updateTabs((state) =>
+      terminal.reduce(
+        (current, childId) => autoCloseSubagentTab(current, childId),
+        state,
+      ),
+    );
+  }, [subagentEntries, subagentView.autoClose, tabChatId, updateTabs]);
+  const childFeed = useSubagentFeed(
+    runtime.port,
+    tabChatId,
+    activeChild?.childId ?? "",
+    snapshot?.throughSequence ?? 0,
+    runtime.events,
+    active && activeChild !== null,
+  );
+  const childItems = useMemo(
+    () =>
+      activeChild === null
+        ? []
+        : conversationFeed(
+            projectSemanticTimeline(
+              withEventSupport(childFeed.events, childFeed.support),
+            ),
+            childFeed.firstSequence,
+          ),
+    [activeChild, childFeed.events, childFeed.firstSequence, childFeed.support],
+  );
+  const openChildTab = useCallback(
+    (childId: string) => updateTabs((state) => openSubagentTab(state, childId)),
+    [updateTabs],
+  );
+  const childForCall = useCallback(
+    (callId: string) =>
+      subagentEntries.find((entry) => entry.parentCallId === callId)?.childId,
+    [subagentEntries],
+  );
+  // A tab switch is a different conversation scope; the Run-details selection
+  // belongs to the tab it was made in.
+  useEffect(() => {
+    setSelectedTimelineId(null);
+  }, [tabState.active]);
   const liveTurnRunning = useMemo(
     () => snapshot !== null && hasOpenSemanticSpan(runtime.events)
       && (snapshot.chat.phase !== "awaiting_approval" || runtime.pendingCommandIds.size > 0),
@@ -504,24 +650,74 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
         ) : null}
-        {runtime.loading ? <ChatBusy /> : <ConversationTimeline
-          key={chat.chatId}
-          active={active}
-          items={feedItems}
-          selectedId={selectedTimelineId}
-          actionsDisabled={runtime.pendingCommandIds.size > 0}
-          onSelect={selectTimelineItem}
-          onAction={cardAction}
-          hasOlder={runtime.hasOlderEvents}
-          olderLoading={runtime.olderLoading}
-          olderError={runtime.olderError}
-          onLoadOlder={runtime.loadOlder}
-        />}
-        <ChatComposer
-          drafts={composerDrafts}
-          committedEvents={runtime.events}
-          key={chat.chatId + (defaultWorkflowId ?? "")}
-          approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
+        {(subagentEntries.length > 0 || activeChild !== null) && (
+          <SubagentTabs
+            entries={subagentEntries}
+            state={tabState}
+            panelId={chatPanelId}
+            onActivate={(childId) =>
+              updateTabs((state) => activateSubagentTab(state, childId))
+            }
+            onClose={(childId) =>
+              updateTabs((state) => closeSubagentTab(state, childId))
+            }
+          />
+        )}
+        <div
+          className="chat-tabpanel"
+          id={chatPanelId}
+          role="tabpanel"
+          tabIndex={-1}
+          aria-labelledby={
+            activeChild === null
+              ? `${chatPanelId}-tab-chat`
+              : `${chatPanelId}-tab-${activeChild.childId}`
+          }
+        >
+          {runtime.loading ? (
+            <ChatBusy />
+          ) : activeChild !== null ? (
+            <SubagentConversation
+              entry={activeChild}
+              items={childItems}
+              selectedId={null}
+              onSelect={noopSelect}
+              hasOlder={childFeed.hasOlder}
+              olderLoading={childFeed.olderLoading}
+              olderError={childFeed.olderError}
+              onLoadOlder={childFeed.loadOlder}
+              active={active}
+            />
+          ) : (
+            <ConversationTimeline
+              key={chat.chatId}
+              active={active}
+              items={feedItems}
+              selectedId={selectedTimelineId}
+              actionsDisabled={runtime.pendingCommandIds.size > 0}
+              onSelect={selectTimelineItem}
+              onAction={cardAction}
+              subagentForCall={childForCall}
+              onOpenSubagent={openChildTab}
+              hasOlder={runtime.hasOlderEvents}
+              olderLoading={runtime.olderLoading}
+              olderError={runtime.olderError}
+              onLoadOlder={runtime.loadOlder}
+            />
+          )}
+        </div>
+        {activeChild === null && (
+          <ChatComposer
+            drafts={composerDrafts}
+            committedEvents={runtime.events}
+            key={chat.chatId + (defaultWorkflowId ?? "")}
+            subagentsControl={
+              <SubagentDialog
+                entries={subagentEntries}
+                onOpenChild={openChildTab}
+              />
+            }
+            approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
             disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
             onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} />}
           status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{label(visibleChat.phase)}</span>}
@@ -563,6 +759,7 @@ export function ChatWorkspaceScreen({
           onWorkflowChange={setSelectedWorkflowId}
           onSubmit={runtime.dispatch}
         />
+        )}
       </main>
       {inspectorOpen && (
         <PaneSplitter
@@ -611,6 +808,9 @@ export function timelineActionIntent(
       }
     : { type: action, commandId, targetId };
 }
+
+/** A child tab is read-only: it never selects parent Run details. */
+function noopSelect(): void {}
 
 function label(phase: string): string {
   if (phase === "waiting_input" || phase === "draft") return "Waiting for input";

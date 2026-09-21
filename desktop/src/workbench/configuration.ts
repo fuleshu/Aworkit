@@ -525,6 +525,14 @@ export const layoutConfigurationSchema = z
   .strict()
   .default({});
 
+/** Delegated-subagent conversation tab presentation, edited in Settings. */
+export const subagentViewConfigurationSchema = z
+  .object({
+    autoOpen: z.boolean().default(true),
+    autoClose: z.boolean().default(false),
+  })
+  .strict();
+
 export const settingsConfigurationV2Schema = z
   .object({
     approvals: z.object({ defaultMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).default("ask_for_approval") }).strict().default({ defaultMode: "ask_for_approval" }),
@@ -541,6 +549,7 @@ export const settingsConfigurationV2Schema = z
     appearance: appearanceConfigurationSchema,
     chatDefaults: chatDefaultsConfigurationSchema,
     layout: layoutConfigurationSchema,
+    subagents: subagentViewConfigurationSchema.optional(),
   })
   .strict();
 
@@ -599,6 +608,9 @@ export type AppearanceConfiguration = z.infer<
 >;
 export type SettingsConfigurationV2 = z.infer<
   typeof settingsConfigurationV2Schema
+>;
+export type SubagentViewConfiguration = z.infer<
+  typeof subagentViewConfigurationSchema
 >;
 export type ProviderHealthSnapshotV2 = z.infer<
   typeof providerHealthSnapshotV2Schema

@@ -30,6 +30,7 @@ use tauri::{Emitter, Manager};
 
 mod desktop_layout;
 mod desktop_snapshot;
+mod desktop_subagent_view;
 mod desktop_bootstrap;
 
 type SharedRuntime = Arc<desktop_bootstrap::RuntimeHost>;
@@ -736,6 +737,8 @@ fn main() {
                 desktop_command,
                 desktop_layout::desktop_layout,
                 desktop_layout::desktop_layout_commit,
+                desktop_subagent_view::desktop_subagent_view,
+                desktop_subagent_view::desktop_subagent_view_commit,
                 approval_project_grants,
                 approval_filesystem_grants,
                 approval_revoke_filesystem_grant,

@@ -380,7 +380,15 @@ impl RunEventStream {
         );
     }
 
-    fn publish(&self, draft: SemanticEventDraft) -> Option<CoreEventEnvelope> {
+    fn publish(&self, mut draft: SemanticEventDraft) -> Option<CoreEventEnvelope> {
+        // Every fact a delegated child commits carries its durable child
+        // identity, so the desktop can render one child's exact evidence from
+        // the same canonical history without a second event source.
+        if let Some(child) = &self.subagent_child {
+            if draft.payload.get("subagentChildId").is_none() {
+                draft.payload["subagentChildId"] = json!(child);
+            }
+        }
         let _publish = self
             .publish_lock
             .lock()

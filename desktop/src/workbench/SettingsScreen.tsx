@@ -16,6 +16,8 @@ import type {
   SettingsV2Snapshot,
 } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
+import { SubagentViewSection } from "./settings-v2/SubagentViewSection";
+import type { SubagentViewPreferencePort, SubagentViewPreference } from "../chat/subagentViewPreference";
 import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
 import { ToolPluginLibrary } from "./settings-v2/ToolPluginLibrary";
 import {
@@ -85,6 +87,8 @@ export function SettingsScreen({
   onBack,
   returnLabel = "Back to Chat",
   registerLeaveGuard,
+  subagentViewPort,
+  onSubagentViewChange,
 }: {
   readonly settingsPort?: SettingsV2CorePort;
   readonly presentation?: SettingsPresentation;
@@ -93,6 +97,9 @@ export function SettingsScreen({
   readonly onBack?: () => void;
   readonly returnLabel?: string;
   readonly registerLeaveGuard?: (guard: SettingsLeaveGuard | null) => void;
+  /** Dedicated port for the delegated-subagent tab presentation preference. */
+  readonly subagentViewPort?: SubagentViewPreferencePort;
+  readonly onSubagentViewChange?: (preference: SubagentViewPreference) => void;
 }): React.JSX.Element {
   const port = useMemo(
     () => settingsPort ?? createSettingsV2CorePort(),
@@ -900,6 +907,10 @@ export function SettingsScreen({
                   }}
                   onAdd={server => updateRenderedDraft(current => ({ ...current, mcpServers: [...current.mcpServers.filter(entry => entry.id !== server.id), server] }))} />
                 {section === "tools" && <p className="settings-field-help">Tools inherit the Chat approval mode unless an individual tool overrides it. Manage defaults and saved project approvals under Approvals.</p>}
+                <SubagentViewSection
+                  port={subagentViewPort}
+                  onChange={onSubagentViewChange}
+                />
                 <ToolsSection
                   onPickCommand={draftScopedPickFile}
                   tools={draft.tools}

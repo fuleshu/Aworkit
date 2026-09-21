@@ -36,11 +36,15 @@ pub async fn desktop_chat_events(
     after_sequence: u64,
     before_sequence: Option<u64>,
     through_sequence: u64,
+    child_id: Option<String>,
 ) -> Result<aworkit_desktop::runtime::ChatEventPage, String> {
     let host = Arc::clone(runtime.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let reader = host.lock()?.chat_feed_reader(&chat_id)?;
-        reader.page(after_sequence, before_sequence, through_sequence)
+        match child_id {
+            Some(child_id) => reader.child_page(&child_id, before_sequence, through_sequence),
+            None => reader.page(after_sequence, before_sequence, through_sequence),
+        }
     })
     .await
     .map_err(|e| e.to_string())?

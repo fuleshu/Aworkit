@@ -33,6 +33,10 @@ interface ConversationTimelineProps {
     id: string,
     details?: ApprovalActionDetails,
   ) => void;
+  /** Resolves a delegating tool call to the child it spawned, if any. */
+  readonly subagentForCall?: (callId: string) => string | undefined;
+  /** Opens or activates one child's conversation tab. */
+  readonly onOpenSubagent?: (childId: string) => void;
 }
 
 /** Virtualized semantic transcript; the complete ordered item list stays outside widget state. */
@@ -44,6 +48,8 @@ export function ConversationTimeline({
   active = true,
   onSelect,
   onAction,
+  subagentForCall,
+  onOpenSubagent,
 }: ConversationTimelineProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToEnd = useRef(true);
@@ -199,6 +205,8 @@ export function ConversationTimeline({
                 actionsDisabled={actionsDisabled}
                 onSelect={onSelect}
                 onAction={onAction}
+                subagentChildId={subagentChildIdFor(item, subagentForCall)}
+                onOpenSubagent={onOpenSubagent}
               />
             </div>
           );
@@ -215,6 +223,8 @@ export function TimelineCard({
   actionsDisabled = false,
   onSelect,
   onAction,
+  subagentChildId,
+  onOpenSubagent,
 }: {
   readonly card: ReturnType<typeof toConversationCard>;
   readonly item: TimelineItem;
@@ -222,6 +232,8 @@ export function TimelineCard({
   readonly actionsDisabled?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onAction: ConversationTimelineProps["onAction"];
+  readonly subagentChildId?: string;
+  readonly onOpenSubagent?: (childId: string) => void;
 }): React.JSX.Element {
   if (metadataOf(item).feedStatus === true)
     return <FeedStatus item={item} selected={selected} onSelect={onSelect} />;
@@ -411,6 +423,16 @@ export function TimelineCard({
         variant={speech === undefined ? "thinking" : "speech"}
       >
         {speech === undefined && <ActivityData collapsed item={item} />}
+        {subagentChildId !== undefined && onOpenSubagent !== undefined && (
+          <button
+            className="subagent-open"
+            type="button"
+            title="Open this subagent's conversation tab"
+            onClick={() => onOpenSubagent(subagentChildId)}
+          >
+            Open subagent
+          </button>
+        )}
         {card.inspectable && (
           <details className="activity-raw">
             <summary>Inspect source record</summary>
@@ -668,6 +690,22 @@ function metadataOf(item: TimelineItem): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * The child a delegating tool block spawned, resolved from the exact tool call
+ * that created it. Unknown children (another Chat's, or unloaded frames) simply
+ * have no open action.
+ */
+export function subagentChildIdFor(
+  item: TimelineItem,
+  resolve?: (callId: string) => string | undefined,
+): string | undefined {
+  if (resolve === undefined || item.kind !== "subagent") return undefined;
+  const callId = metadataOf(item).callId;
+  return typeof callId === "string" && callId.length > 0
+    ? resolve(callId)
+    : undefined;
 }
 
 /** A plan card is the output of a model_call node committed as node.completed. */

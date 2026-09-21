@@ -384,3 +384,63 @@ fn a_kept_background_child_lets_the_parent_finish_its_turn() {
         .store(true, std::sync::atomic::Ordering::Release);
     std::thread::sleep(Duration::from_millis(300));
 }
+
+#[test]
+fn the_durable_catalog_reports_the_delegated_child_of_the_chat() {
+    let root = TempDir::new().unwrap();
+    let (pipeline, request, _scenario) = prepare(&root, Plan::Query);
+    let chat_id = request.chat_id.clone();
+    let run_id = request.run_id.clone();
+    let result = pipeline.execute(request).unwrap();
+    assert_eq!(
+        result.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        result.error
+    );
+    let catalog = pipeline.subagent_catalog(chat_id.as_str(), &run_id).unwrap();
+    assert_eq!(catalog.len(), 1, "{catalog:?}");
+    let child = &catalog[0];
+    assert_eq!(child.status, "completed");
+    assert!(!child.running);
+    assert_eq!(child.kind, "fresh");
+    assert_eq!(child.task, "Background research task");
+    // The durable frame remembers the delegating tool call, so the parent
+    // timeline block can open exactly this child's tab.
+    assert_eq!(child.parent_call_id, "delegate");
+    
+    assert!(child.head_revision >= 1, "{child:?}");
+    assert_eq!(child.created_at.is_empty(), false);
+}
+
+#[test]
+fn a_child_left_running_by_a_restart_is_reported_interrupted_in_the_catalog() {
+    let root = TempDir::new().unwrap();
+    let (pipeline, request, scenario) = prepare(&root, Plan::Keep);
+    let chat_id = request.chat_id.clone();
+    let run_id = request.run_id.clone();
+    let result = pipeline.execute(request).unwrap();
+    assert_eq!(
+        result.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        result.error
+    );
+    // The kept child is genuinely live for this process.
+    let live = pipeline.subagent_catalog(chat_id.as_str(), &run_id).unwrap();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert_eq!(live[0].status, "running");
+    assert!(live[0].running);
+    drop(pipeline);
+    // A restart opens the same durable records without any live job session:
+    // the frame still says running, so the authoritative catalog must report
+    // interrupted rather than a phantom running child.
+    let reopened = WorkflowExecutionPipeline::open(root.path()).unwrap();
+    let interrupted = reopened.subagent_catalog(chat_id.as_str(), &run_id).unwrap();
+    assert_eq!(interrupted.len(), 1, "{interrupted:?}");
+    assert_eq!(interrupted[0].status, "interrupted", "{interrupted:?}");
+    assert!(!interrupted[0].running);
+    scenario
+        .release
+        .store(true, std::sync::atomic::Ordering::Release);
+}

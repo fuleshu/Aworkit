@@ -184,3 +184,63 @@ progress, steering at the next step boundary, stopping and closing the scope,
 and keeping a running child while the parent finishes its turn. The registry's
 own tests cover child job identity, keep/stop, ownership isolation and restart
 interruption.
+
+## Subagent chat tabs
+
+Adashi task 120 (id 119), design `aworkit.desktop_ui.chat_workspace`,
+`aworkit.desktop_ui.conversation`, `aworkit.desktop_ui.composer`,
+`aworkit.desktop_ui.settings` and `aworkit.desktop_ui.projection_gateway`.
+
+Tabs are transient presentation state over one Chat, one Run and one canonical
+history. The parent Chat is the first, permanent, non-closable tab; every
+delegated child is one closable tab identified by its durable `childId`. Closing
+a tab only hides it and never cancels the child, and no tab creates a second Run,
+session or history. The open set is remembered per Chat for the process, so
+switching Chats switches tab sets and returning rebuilds the child from the same
+bounded, back-scrollable window that renders the main feed. The strip is bounded
+(evicting the oldest non-active child) and scrolls horizontally on overflow.
+
+Core surface. The desktop no longer derives children from model-facing tools.
+`RuntimeSnapshot` gains an authoritative `subagents` catalog read from the
+durable `pipeline.subagent-child` frames. Each entry carries child and parent
+identities (`childId`, `nodeId`, `parentInvocationId`, `parentCallId`), kind,
+status, running flag, task, assigned context, settled answer and counters. A
+frame whose job is no longer live is reported `interrupted`, so a restart never
+shows a phantom running child. A child's evidence is read from the same history
+by a child-scoped page: every fact a detached child stream commits is tagged
+with `subagentChildId`, so `desktop_chat_events` accepts an optional `childId`
+and returns only that child's facts while stepping the raw cursor back exactly
+like an older page. Inline children now use the same detached evidence stream as
+background children, which is what makes one child's activity attributable
+without keeping a parent span open across passes.
+
+Desktop behavior. The Chat Workspace owns the tab strip; the conversation center
+is a `tabpanel` whose active tab selects either the parent timeline or the
+read-only child view. The child view shows a lineage header (kind, child id,
+delegating node, counters), the assigned task and context, and the child's own
+activity through the existing timeline renderer; it has no composer, no steering
+and no approval controls. A `tool.subagent` activity block offers an "Open
+subagent" action that opens or activates that child's tab, and the composer shows
+a subagents button beside the goal control, enabled exactly when the Chat owns a
+child and listing them running-first.
+
+Settings. `SubagentViewConfigurationV2` is a global user preference committed
+through `desktop_subagent_view_commit`; it is never part of a Chat's frozen tool
+contract, a restart preserves it, and a generic full-document Settings save that
+carries the default keeps the stored value. `autoOpen` gives a newly created
+child a background tab without moving focus; `autoClose` closes a child's tab
+when it reaches a terminal state only while that tab is open and inactive. A tab
+closed by hand stays closed.
+
+Accessibility. The strip is a labelled `tablist` with roving `tab` selection,
+labelled close buttons, arrow/Home/End navigation, Escape dismissal and focus
+restoration for the picker dialog, a polite live region for the preference
+status, forced-colors borders and reduced-motion handling.
+
+Tests cover the tab-state machine (dedupe, activation, close, bounded overflow,
+per-Chat memory, auto-open without focus change, auto-close only when inactive),
+the strip and picker contracts, the authoritative catalog merge (including an
+authoritative interruption that a stale running fact cannot overwrite), the
+child-scoped feed filter and paging, the workspace flow from the delegating tool
+block to the read-only child view, the Settings preference and its restart and
+generic-save durability, and the Rust catalog and child-page reads.

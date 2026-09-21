@@ -1337,6 +1337,7 @@ impl ChatHistory {
             projects: Vec::new(),
             evidence,
             events,
+            subagents: Vec::new(),
         })
     }
 

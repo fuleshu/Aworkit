@@ -66,6 +66,10 @@ pub(crate) struct SubagentChildFrameV1 {
     pub node_id: String,
     /// Invocation that first spawned this child.
     pub parent_invocation_id: String,
+    /// The delegating tool call this child was spawned by, so the parent
+    /// timeline block can open exactly this child's tab.
+    #[serde(default)]
+    pub parent_call_id: String,
     /// Enclosing child when a delegation chain exists; always absent while
     /// nested delegation stays unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]

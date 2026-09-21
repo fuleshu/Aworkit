@@ -88,6 +88,42 @@ const eventWindowSchema = z.object({
 const eventPageSchema = z.object({ window: eventWindowSchema, events: z.array(runtimeEventSchema) });
 export type ChatEventWindow = z.infer<typeof eventWindowSchema>;
 export type ChatEventPage = z.infer<typeof eventPageSchema>;
+const subagentChildStatusSchema = z.enum([
+  "running",
+  "completed",
+  "parent_approval_required",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
+const subagentChildSummarySchema = z.object({
+  childId: z.string().min(1),
+  kind: z.enum(["fresh", "fork"]),
+  status: subagentChildStatusSchema,
+  running: z.boolean(),
+  depth: z.number().int().nonnegative(),
+  nodeId: z.string(),
+  parentInvocationId: z.string(),
+  parentCallId: z.string().default(""),
+  parentChildId: z.string().nullable().optional(),
+  task: z.string(),
+  contextText: z.string().default(""),
+  finalText: z.string().default(""),
+  modelTurns: z.number().int().nonnegative(),
+  toolCalls: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  headRevision: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SubagentChildStatus = z.infer<typeof subagentChildStatusSchema>;
+export type SubagentChildSummary = z.infer<typeof subagentChildSummarySchema>;
+/** A child status is terminal once it can no longer run without new work. */
+export function isTerminalSubagentStatus(status: SubagentChildStatus): boolean {
+  return status !== "running";
+}
+
 const runtimeSnapshotSchema = z.object({
   eventWindow: eventWindowSchema.optional(),
   activeChatIds: z.array(z.string()).default([]),
@@ -101,6 +137,7 @@ const runtimeSnapshotSchema = z.object({
   projects: z.array(chatProjectChoiceSchema),
   evidence: z.array(evidenceRecordSchema),
   events: z.array(runtimeEventSchema),
+  subagents: z.array(subagentChildSummarySchema).default([]),
 });
 const receiptSchema = z.object({
   commandId: z.string(),
@@ -121,6 +158,7 @@ export interface RuntimeSnapshot {
   readonly projects: readonly ChatProjectChoice[];
   readonly evidence: readonly EvidenceRecord[];
   readonly events: readonly RuntimeEvent[];
+  readonly subagents?: readonly SubagentChildSummary[];
 }
 export type RuntimeEvent = CoreEventEnvelope;
 export interface RuntimeReceipt {
@@ -131,6 +169,13 @@ export interface RuntimeReceipt {
 }
 export interface ChatCorePort {
   olderEvents?(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage>;
+  /** One delegated child's own evidence from the same canonical Run history. */
+  subagentEvents?(
+    chatId: string,
+    childId: string,
+    beforeSequence: number,
+    throughSequence: number,
+  ): Promise<ChatEventPage>;
   contextModel?(chatId: string, workflowId: string | null): Promise<import("./contextProjection").ContextModel | null>;
   snapshot(afterSequence: number, chatId?: string): Promise<RuntimeSnapshot>;
   command(intent: ChatIntent, expectedVersion: number): Promise<RuntimeReceipt>;
@@ -162,6 +207,7 @@ export function normalizeRuntimeSnapshot(input: unknown): RuntimeSnapshot {
       state: knownEvidenceState(item.state),
     })),
     events: parsed.events,
+    subagents: parsed.subagents,
   };
 }
 
@@ -219,6 +265,22 @@ export class TauriChatCorePort implements ChatCorePort {
   }
   public async olderEvents(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage> {
     return eventPageSchema.parse(await invoke("desktop_chat_events", { chatId, afterSequence: 0, beforeSequence, throughSequence }));
+  }
+  public async subagentEvents(
+    chatId: string,
+    childId: string,
+    beforeSequence: number,
+    throughSequence: number,
+  ): Promise<ChatEventPage> {
+    return eventPageSchema.parse(
+      await invoke("desktop_chat_events", {
+        chatId,
+        childId,
+        afterSequence: 0,
+        beforeSequence,
+        throughSequence,
+      }),
+    );
   }
   public async command(
     intent: ChatIntent,
@@ -304,6 +366,29 @@ export class PreviewChatCorePort implements ChatCorePort {
       projects: [],
       evidence: this.evidence,
       events: this.events.filter((event) => event.sequence > afterSequence),
+      subagents: [],
+    };
+  }
+  public async subagentEvents(
+    _chatId: string,
+    childId: string,
+    beforeSequence: number,
+    _throughSequence: number,
+  ): Promise<ChatEventPage> {
+    const events = this.events.filter(
+      (event) =>
+        event.sequence < beforeSequence
+        && (event.payload as { subagentChildId?: unknown } | null)?.subagentChildId === childId,
+    );
+    return {
+      window: {
+        firstSequence: events[0]?.sequence ?? beforeSequence,
+        lastSequence: events.at(-1)?.sequence ?? beforeSequence - 1,
+        headSequence: this.version,
+        hasMore: false,
+        supportingEvents: [],
+      },
+      events,
     };
   }
   public async command(

@@ -54,13 +54,13 @@ pub(super) fn execute_child_turns(
         .filter(|binding| binding.is_callable())
         .map(StoredFileToolBindingV1::definition)
         .collect::<Vec<_>>();
-    // A background child owns its evidence stream; an inline child shares the
-    // delegating pass's stream and must close before that pass ends.
-    let observer = request.job.as_ref().map(|_| {
-        Arc::new(crate::runtime::run_events::ModelRunEventObserver::new(
-            request.run_events.clone(),
-        )) as Arc<dyn aworkit_capability_host::ModelEventObserverV1>
-    });
+    // Every child owns its evidence stream, so every child owns the observer
+    // that writes its model spans into that stream. Handing a child the
+    // delegating pass's frozen observer would attribute its activity to the
+    // parent rather than to the child.
+    let observer = Some(Arc::new(
+        crate::runtime::run_events::ModelRunEventObserver::new(request.run_events.clone()),
+    ) as Arc<dyn aworkit_capability_host::ModelEventObserverV1>);
     let child_authority = SubagentToolPortV1 {
         blocked: Mutex::new(Vec::new()),
         inner: BoundFileToolAuthorityV1 {

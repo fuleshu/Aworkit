@@ -86,6 +86,7 @@ use super::{
         ExtensionConfigurationV2, IntegrationTransportV2, LayoutConfigurationV2,
         ModelConfigurationV2, ModelTargetV2, ModelTierConfigurationV2, ModelTierResolutionV2,
         ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2,
+        SubagentViewPreferenceV1,
         validate_extension_lifecycle_update, validate_http_url,
         validate_unavailable_executor_enablement_update,
     },
@@ -146,6 +147,16 @@ trait WorkflowPipelinePort: Send + Sync {
 
     fn run_goal_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
         Ok(None)
+    }
+
+    /// Authoritative delegated-child catalog for one Chat/Run. Pipelines that
+    /// own no child state return an empty catalog.
+    fn subagent_catalog(
+        &self,
+        _chat_id: &str,
+        _run_id: &StableId,
+    ) -> Result<Vec<super::dto::SubagentChildSummaryDto>, String> {
+        Ok(Vec::new())
     }
 
     fn set_goal_state(&self, _run_id: &StableId, _goal: &Value) -> Result<(), String> {
@@ -214,6 +225,15 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
     fn set_goal_state(&self, run_id: &StableId, goal: &Value) -> Result<(), String> {
         WorkflowExecutionPipeline::set_goal_state(self, run_id, goal)
+            .map_err(|error| error.to_string())
+    }
+
+    fn subagent_catalog(
+        &self,
+        chat_id: &str,
+        run_id: &StableId,
+    ) -> Result<Vec<super::dto::SubagentChildSummaryDto>, String> {
+        WorkflowExecutionPipeline::subagent_catalog(self, chat_id, run_id)
             .map_err(|error| error.to_string())
     }
 
@@ -671,6 +691,10 @@ impl DesktopRuntime {
         let mut snapshot = history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
         self.populate_context_model(&mut snapshot)?;
+        // The durable child frames are the authoritative child catalog: the
+        // desktop still folds live lifecycle facts, but this read makes a
+        // restart report a child that was running as interrupted.
+        snapshot.subagents = self.subagent_child_catalog(&snapshot.chat.chat_id, &snapshot.chat.run_id);
         let fallback_mode = history
             .current_frozen_context()?
             .and_then(|record| record.context.approval_mode)
@@ -723,6 +747,22 @@ impl DesktopRuntime {
             snapshot.chat.disabled_reason = self.workflow_start_disabled_reason();
         }
         Ok(snapshot)
+    }
+
+    /// Reads the authoritative delegated-child catalog for one Chat/Run. A
+    /// catalog read never fails the snapshot: the desktop also folds the
+    /// committed child lifecycle facts.
+    fn subagent_child_catalog(
+        &self,
+        chat_id: &str,
+        run_id: &str,
+    ) -> Vec<super::dto::SubagentChildSummaryDto> {
+        let Ok(run_id) = StableId::parse(run_id.to_owned()) else {
+            return Vec::new();
+        };
+        self.pipeline
+            .subagent_catalog(chat_id, &run_id)
+            .unwrap_or_default()
     }
 
     fn workflow_start_disabled_reason(&self) -> Option<String> {
@@ -2463,6 +2503,33 @@ impl DesktopRuntime {
         self.documents.update_layout(layout)
     }
 
+    /// The stored delegated-subagent tab presentation preference.
+    #[must_use]
+    pub fn subagent_view(&self) -> SubagentViewPreferenceV1 {
+        self.documents.subagent_view()
+    }
+
+    /// Records the delegated-subagent tab presentation preference.
+    ///
+    /// It is a global user preference, never part of a Chat's frozen tool
+    /// contract, so it is committed through its own dedicated, version-checked
+    /// command. It carries the version the caller last projected, so a stale
+    /// update is rejected instead of overwriting a newer one.
+    pub fn settings_commit_subagent_view(
+        &mut self,
+        subagents: SubagentViewPreferenceV1,
+        expected_version: u64,
+    ) -> Result<(), String> {
+        self.documents
+            .update_subagent_view(subagents, expected_version)
+    }
+
+    /// The Settings document version this preference projection was read at.
+    #[must_use]
+    pub fn subagent_view_version(&self) -> u64 {
+        self.settings_v2_snapshot().version
+    }
+
     /// Returns the complete secret-free Settings v2 projection.
     #[must_use]
     pub fn settings_v2_snapshot(&self) -> SettingsV2Snapshot {
@@ -2840,6 +2907,12 @@ impl DesktopRuntime {
         }
         if settings.layout == LayoutConfigurationV2::default() {
             settings.layout = previous.layout.clone();
+        }
+        // The subagent tab preference is likewise edited through its own
+        // dedicated command, so a generic full-document save that carries the
+        // default keeps whatever the user chose.
+        if settings.subagents == SubagentViewPreferenceV1::default() {
+            settings.subagents = previous.subagents;
         }
         validate_credential_metadata_update(&previous, &settings)?;
         validate_extension_lifecycle_update(&previous, &settings)?;
@@ -5830,6 +5903,71 @@ mod tests {
         unusable.width = Some(0);
         assert!(reopened.settings_commit_layout(unusable).is_err());
         assert_eq!(reopened.layout(), layout);
+    }
+
+    #[test]
+    fn the_subagent_view_preference_survives_a_restart_and_a_generic_save() {
+        // The delegated-subagent tab preference is a global user preference
+        // committed through its own command: it survives a restart and a
+        // generic Settings save that does not know about it.
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut desktop = runtime(&root, provider.clone());
+        let preference = SubagentViewPreferenceV1 {
+            auto_open: false,
+            auto_close: true,
+        };
+        let version = desktop.subagent_view_version();
+        desktop
+            .settings_commit_subagent_view(preference, version)
+            .unwrap();
+        assert_eq!(desktop.subagent_view(), preference);
+        drop(desktop);
+
+        let mut reopened = runtime(&root, provider);
+        assert_eq!(
+            reopened.subagent_view(),
+            preference,
+            "the preference survived the reopen"
+        );
+        let mut settings = reopened.settings_v2_snapshot().settings;
+        settings.appearance.font_scale = 1.25;
+        reopened
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.after-subagent-view".into(),
+                expected_version: reopened.settings_v2_snapshot().version,
+                settings,
+            })
+            .unwrap();
+        assert_eq!(
+            reopened.subagent_view(),
+            preference,
+            "an unrelated edit preserved the preference"
+        );
+
+        // A generic full-document save that carries the default keeps the
+        // stored preference instead of erasing it.
+        let mut stripped = reopened.settings_v2_snapshot().settings;
+        stripped.subagents = SubagentViewPreferenceV1::default();
+        reopened
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.stripped-subagent-view".into(),
+                expected_version: reopened.settings_v2_snapshot().version,
+                settings: stripped,
+            })
+            .unwrap();
+        assert_eq!(
+            reopened.subagent_view(),
+            preference,
+            "a generic save cannot erase a dedicated preference"
+        );
+        assert_eq!(
+            SubagentViewPreferenceV1::default(),
+            SubagentViewPreferenceV1 {
+                auto_open: true,
+                auto_close: false,
+            }
+        );
     }
 
     #[test]
