@@ -19,3 +19,6 @@ Run the built app:
 For development mode:
 cd desktop
 pnpm desktop:dev
+
+Linux (Ubuntu/Debian), including required system libraries, PATH setup, the pinned
+pnpm version and the produced deb/rpm/AppImage packages: see docs/linux-build.md.
