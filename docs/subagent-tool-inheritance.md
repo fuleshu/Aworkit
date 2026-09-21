@@ -214,6 +214,18 @@ like an older page. Inline children now use the same detached evidence stream as
 background children, which is what makes one child's activity attributable
 without keeping a parent span open across passes.
 
+Reading a child scope. The Chat feed is a bounded *recent* window, so a child's
+earlier facts — including the `span.started` records its cards need — are often
+outside it, especially after the window is reloaded on navigation or a fresh
+open. A child tab therefore pulls its own newest page as soon as it becomes
+active instead of waiting for a scroll that an empty list can never produce, and
+keeps stepping the raw cursor back on demand until an earlier child activity
+appears or history is exhausted. Until that read settles the tab reports that it
+is loading; a failed read settles with its error and an explicit retry rather
+than becoming an unbounded retry loop; and a settled child that genuinely
+committed no rendered activity still shows its answer through the normal markdown
+renderer instead of as bare text.
+
 Desktop behavior. The Chat Workspace owns the tab strip; the conversation center
 is a `tabpanel` whose active tab selects either the parent timeline or the
 read-only child view. The child view shows a lineage header (kind, child id,

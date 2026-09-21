@@ -685,6 +685,7 @@ export function ChatWorkspaceScreen({
               hasOlder={childFeed.hasOlder}
               olderLoading={childFeed.olderLoading}
               olderError={childFeed.olderError}
+              loading={childFeed.loading}
               onLoadOlder={childFeed.loadOlder}
               active={active}
             />

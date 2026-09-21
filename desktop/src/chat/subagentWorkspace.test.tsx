@@ -27,6 +27,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 import type {
   ChatCorePort,
+  ChatEventPage,
   RuntimeEvent,
   RuntimeSnapshot,
   SubagentChildSummary,
@@ -214,9 +215,83 @@ function port(snapshotFor: () => RuntimeSnapshot): ChatCorePort {
   };
 }
 
+/** One child-scoped page as the core returns it (cursor already stepped back). */
+function childPage(events: readonly RuntimeEvent[]): ChatEventPage {
+  const first = events[0]?.sequence ?? 1;
+  const last = events.at(-1)?.sequence ?? first;
+  return {
+    window: {
+      firstSequence: first,
+      lastSequence: last,
+      headSequence: 13,
+      hasMore: first > 1,
+      supportingEvents: [],
+    },
+    events: [...events],
+  };
+}
+
 const researchOnly = stream([...delegation, ...childDrafts("child.research")]);
 
 describe("subagent tabs in the Chat workspace", () => {
+  it("hydrates a child tab whose facts are outside the Chat's recent window", async () => {
+    const user = userEvent.setup();
+    // The Chat feed only holds the recent parent window; the child's own
+    // evidence — including the span records its cards need — is older.
+    const recentWindow = stream(delegation);
+    const childEvidence = stream(childDrafts("child.research"));
+    const subagentEvents = vi.fn(
+      async (): Promise<ChatEventPage> => childPage(childEvidence),
+    );
+    const corePort: ChatCorePort = {
+      ...port(() => snapshot([summary()], recentWindow)),
+      subagentEvents,
+    };
+    render(<ChatWorkspaceScreen corePort={corePort} pollIntervalMs={50} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Open subagent" }),
+    );
+    // The child scope pulls its own page instead of rendering the final answer
+    // as a bare wall of text.
+    await waitFor(() => expect(subagentEvents).toHaveBeenCalled());
+    expect(
+      await screen.findByText("answer from child.research"),
+    ).toBeVisible();
+    expect(document.querySelector(".subagent-empty")).toBeNull();
+    expect(
+      document.querySelector(".model-call-block, .subagent-conversation .actor-turn"),
+    ).not.toBeNull();
+  });
+
+  it("re-renders a remembered child tab after leaving and returning to the Chat", async () => {
+    const user = userEvent.setup();
+    const corePort = port(() => snapshot([summary()], researchOnly));
+    const { rerender } = render(
+      <ChatWorkspaceScreen corePort={corePort} pollIntervalMs={50} active />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Open subagent" }),
+    );
+    expect(await screen.findByText("answer from child.research")).toBeVisible();
+    expect(document.querySelector(".subagent-empty")).toBeNull();
+
+    // Leaving the route keeps the workspace mounted but inactive; returning
+    // resynchronizes the projection and rebuilds the remembered tab set.
+    rerender(
+      <ChatWorkspaceScreen corePort={corePort} pollIntervalMs={50} active={false} />,
+    );
+    rerender(
+      <ChatWorkspaceScreen corePort={corePort} pollIntervalMs={50} active />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: /Research VR headsets/ }),
+      ).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(await screen.findByText("answer from child.research")).toBeVisible();
+    expect(document.querySelector(".subagent-empty")).toBeNull();
+  });
+
   it("opens a child tab from the delegating tool block and renders it read-only", async () => {
     const user = userEvent.setup();
     render(

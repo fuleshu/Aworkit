@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { subagentChildEvents, useSubagentFeed } from "./useSubagentFeed";
 import type { ChatCorePort, ChatEventPage, RuntimeEvent } from "./corePort";
@@ -43,6 +43,25 @@ function page(
   };
 }
 
+function port(
+  subagentEvents: NonNullable<ChatCorePort["subagentEvents"]>,
+): ChatCorePort {
+  return {
+    async snapshot() {
+      throw new Error("unused");
+    },
+    async command(intent) {
+      return {
+        commandId: intent.commandId,
+        accepted: false,
+        currentVersion: 1,
+        reason: "unused",
+      };
+    },
+    subagentEvents,
+  };
+}
+
 describe("child-scoped evidence feed", () => {
   it("filters raw events to exactly one child scope", () => {
     const live = [
@@ -55,9 +74,10 @@ describe("child-scoped evidence feed", () => {
       1, 4,
     ]);
     expect(subagentChildEvents(live, "child.missing")).toEqual([]);
+    expect(subagentChildEvents(live, "")).toEqual([]);
   });
 
-  it("pages back until an earlier child activity appears or history ends", async () => {
+  it("hydrates its own page on activation and pages back until history ends", async () => {
     const live = [childFact(8, "child.a"), childFact(9, "child.a")];
     const calls: number[] = [];
     const subagentEvents = vi.fn(
@@ -68,7 +88,8 @@ describe("child-scoped evidence feed", () => {
       ): Promise<ChatEventPage> => {
         calls.push(beforeSequence);
         if (calls.length === 1) {
-          // A page that only scanned other scopes advances without yielding.
+          // The newest raw page scanned only other scopes; the cursor advances
+          // without yielding an activity.
           return page([], 6);
         }
         if (calls.length === 2) {
@@ -77,42 +98,34 @@ describe("child-scoped evidence feed", () => {
         return page([], 1);
       },
     );
-    const port: ChatCorePort = {
-      async snapshot() {
-        throw new Error("unused");
-      },
-      async command(intent) {
-        return {
-          commandId: intent.commandId,
-          accepted: false,
-          currentVersion: 1,
-          reason: "unused",
-        };
-      },
-      subagentEvents,
-    };
     const { result, rerender } = renderHook(
       ({ liveEvents }: { readonly liveEvents: readonly RuntimeEvent[] }) =>
-        useSubagentFeed(port, "chat.subagents", "child.a", 10, liveEvents, true),
+        useSubagentFeed(
+          port(subagentEvents),
+          "chat.subagents",
+          "child.a",
+          10,
+          liveEvents,
+          true,
+        ),
       { initialProps: { liveEvents: live } },
     );
-    expect(result.current.events.map((item) => item.sequence)).toEqual([8, 9]);
-    expect(result.current.hasOlder).toBe(true);
-    await act(async () => {
-      await result.current.loadOlder();
-    });
-    expect(subagentEvents).toHaveBeenCalledTimes(2);
+    // The scope asks for the page ending at the head, not only on scroll-back.
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(calls).toEqual([11, 6]);
     expect(result.current.events.map((item) => item.sequence)).toEqual([
       3, 5, 8, 9,
     ]);
     expect(result.current.firstSequence).toBe(3);
-    // History is only exhausted once a page actually reaches sequence 1.
     expect(result.current.hasOlder).toBe(true);
+    expect(result.current.olderError).toBeNull();
+
     await act(async () => {
       await result.current.loadOlder();
     });
-    expect(subagentEvents).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual([11, 6, 3]);
     expect(result.current.hasOlder).toBe(false);
+
     // Live delivery extends the same scope without refetching.
     rerender({ liveEvents: [...live, childFact(10, "child.a")] });
     expect(result.current.events.map((item) => item.sequence)).toEqual([
@@ -121,26 +134,39 @@ describe("child-scoped evidence feed", () => {
     expect(subagentEvents).toHaveBeenCalledTimes(3);
   });
 
-  it("never pages while the child tab is inactive", async () => {
-    const subagentEvents = vi.fn();
-    const port: ChatCorePort = {
-      async snapshot() {
-        throw new Error("unused");
-      },
-      async command(intent) {
-        return {
-          commandId: intent.commandId,
-          accepted: false,
-          currentVersion: 1,
-          reason: "unused",
-        };
-      },
-      subagentEvents,
-    };
+  it("settles a failed read instead of retrying it forever", async () => {
+    const subagentEvents = vi.fn().mockRejectedValue(new Error("read failed"));
     const { result } = renderHook(() =>
-      useSubagentFeed(port, "chat.subagents", "child.a", 10, [], false),
+      useSubagentFeed(
+        port(subagentEvents),
+        "chat.subagents",
+        "child.a",
+        10,
+        [childFact(9, "child.a")],
+        true,
+      ),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.olderError).toBe("read failed");
+    expect(subagentEvents).toHaveBeenCalledTimes(1);
+    // The live scope stays usable while the older read is reported.
+    expect(result.current.events.map((item) => item.sequence)).toEqual([9]);
+  });
+
+  it("never reads while the child tab is inactive", async () => {
+    const subagentEvents = vi.fn();
+    const { result } = renderHook(() =>
+      useSubagentFeed(
+        port(subagentEvents),
+        "chat.subagents",
+        "child.a",
+        10,
+        [],
+        false,
+      ),
     );
     expect(result.current.hasOlder).toBe(false);
+    expect(result.current.loading).toBe(false);
     await act(async () => {
       await result.current.loadOlder();
     });

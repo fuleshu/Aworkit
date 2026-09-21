@@ -1,4 +1,5 @@
 import { ConversationTimeline } from "./ConversationTimeline";
+import { MarkdownContent } from "./MarkdownContent";
 import type { SubagentCatalogEntry } from "./subagentCatalog";
 import { subagentStatusLabel } from "./SubagentTabs";
 import type { TimelineItem } from "./types";
@@ -11,6 +12,8 @@ interface SubagentConversationProps {
   readonly hasOlder: boolean;
   readonly olderLoading: boolean;
   readonly olderError: string | null;
+  /** The child scope has not finished reading its own evidence yet. */
+  readonly loading: boolean;
   readonly onLoadOlder: () => Promise<void>;
   readonly active: boolean;
 }
@@ -29,6 +32,7 @@ export function SubagentConversation({
   hasOlder,
   olderLoading,
   olderError,
+  loading,
   onLoadOlder,
   active,
 }: SubagentConversationProps): React.JSX.Element {
@@ -70,11 +74,32 @@ export function SubagentConversation({
       </p>
       {items.length === 0 ? (
         <div className="subagent-empty" role="status">
-          {entry.status === "running"
-            ? "This subagent has not committed any activity yet."
-            : entry.finalText.trim().length > 0
-              ? entry.finalText
-              : "This subagent committed no model or tool activity."}
+          {loading ? (
+            "Loading this subagent's activity…"
+          ) : olderError !== null ? (
+            <>
+              <p role="alert">
+                This subagent's activity could not be read: {olderError}
+              </p>
+              <button
+                type="button"
+                title="Read this subagent's activity again"
+                onClick={() => void onLoadOlder()}
+              >
+                Retry
+              </button>
+            </>
+          ) : entry.finalText.trim().length > 0 ? (
+            // The child settled with an answer but committed no rendered
+            // activity of its own, so its answer still gets normal formatting.
+            <MarkdownContent className="bubble-markdown">
+              {entry.finalText}
+            </MarkdownContent>
+          ) : entry.status === "running" ? (
+            "This subagent has not committed any activity yet."
+          ) : (
+            "This subagent committed no model or tool activity."
+          )}
         </div>
       ) : (
         <ConversationTimeline
