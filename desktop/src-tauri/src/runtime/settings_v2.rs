@@ -1039,6 +1039,11 @@ impl BuiltInToolConfigurationV2 {
                 require_tool_project_scope(self, false)?;
                 require_config_string(self, "authorityMode", "run_todo")
             }
+            "tool.goal" => {
+                require_exact_config_keys(self, &["authorityMode"])?;
+                require_tool_project_scope(self, false)?;
+                require_config_string(self, "authorityMode", "run_goal")
+            }
             "tool.web_search" => {
                 require_exact_config_keys(
                     self,
@@ -2810,6 +2815,7 @@ mod tests {
                 "tool.shell.host",
                 "tool.python.host",
                 "tool.todo",
+                "tool.goal",
                 "tool.web_search",
                 "tool.web_fetch",
                 "tool.web_extract",

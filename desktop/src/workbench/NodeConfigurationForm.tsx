@@ -520,13 +520,20 @@ function PredicateField({
   readonly onChange: (patch: JsonObject) => void;
 }): React.JSX.Element {
   const predicate = objectValue(configuration[field.key]);
-  const op = typeof predicate.op === "string" ? predicate.op : "always";
+  // The frozen runtime evaluates `kind`; `op` is only read as a legacy alias so
+  // an older document stays editable and is corrected on the next save.
+  const kind =
+    typeof predicate.kind === "string"
+      ? predicate.kind
+      : typeof predicate.op === "string"
+        ? predicate.op
+        : "always";
   const path = typeof predicate.path === "string" ? predicate.path : "";
   const value = predicate.value === undefined ? "" : String(predicate.value);
-  const needsPath = op === "exists" || op === "eq" || op === "neq";
-  const needsValue = op === "eq" || op === "neq";
+  const needsPath = kind === "exists" || kind === "eq" || kind === "neq";
+  const needsValue = kind === "eq" || kind === "neq";
   const update = (patch: Record<string, JsonValue>) =>
-    onChange({ [field.key]: { op, ...patch } });
+    onChange({ [field.key]: { kind, ...patch } });
   return (
     <fieldset className="predicate-field">
       <legend>{field.label}</legend>
@@ -535,10 +542,10 @@ function PredicateField({
         <select
           disabled={!editable}
           title="Choose the predicate operator over the incoming value"
-          value={op}
-          onChange={(event) => onChange({ [field.key]: { op: event.target.value } })}
+          value={kind}
+          onChange={(event) => onChange({ [field.key]: { kind: event.target.value } })}
         >
-          {["always", "exists", "eq", "neq", "and", "or", "not"].map((name) => (
+          {["always", "exists", "eq", "neq"].map((name) => (
             <option key={name} value={name}>
               {name}
             </option>

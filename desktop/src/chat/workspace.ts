@@ -19,6 +19,8 @@ export class ChatWorkspaceController {
       return { type, commandId, decisionId: targetId ?? "", approved: false };
     if (type === "approval_mode")
       return { type, commandId, targetId: targetId ?? "", mode: "ask_for_approval" };
+    if (type === "set_goal")
+      return { type, commandId, targetId: targetId ?? "", goal: null };
     if (type === "select_chat" || type === "delete_chat" || type === "fork")
       return { type, commandId, targetId: targetId ?? "" };
     if (type === "set_chat_pinned")

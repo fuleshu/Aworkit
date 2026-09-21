@@ -170,6 +170,7 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
   if (intent.type === "compact_context") return { nodeId: intent.nodeId, baseSequence: intent.baseSequence };
   if (intent.type === "edit_context") return { nodeId: intent.nodeId, baseSequence: intent.baseSequence, document: intent.document };
   if (intent.type === "approval_mode") return { mode: intent.mode };
+  if (intent.type === "set_goal") return { goal: intent.goal ?? "", clear: intent.goal === null };
   if (intent.type === "start")
     return {
       workflowId: intent.workflowId,

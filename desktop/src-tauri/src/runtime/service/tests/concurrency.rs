@@ -27,6 +27,7 @@ impl WorkflowPipelinePort for HeldPipeline {
         drop(released);
         FixtureWorkflowPipeline {
             provider: self.provider.clone(),
+            goal: Mutex::new(None),
         }
         .execute(request)
     }

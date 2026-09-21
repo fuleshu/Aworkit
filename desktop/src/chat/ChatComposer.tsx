@@ -24,6 +24,7 @@ interface ChatComposerProps {
   readonly drafts?: ComposerDrafts;
   readonly committedEvents?: readonly CoreEventEnvelope[];
   readonly contextUsage?: React.ReactNode;
+  readonly goalControl?: React.ReactNode;
   readonly approvalControl?: React.ReactNode;
   readonly status?: React.ReactNode;
   readonly onStop?: () => void;
@@ -49,6 +50,7 @@ export function ChatComposer({
   drafts,
   committedEvents = [],
   contextUsage,
+  goalControl,
   approvalControl,
   status,
   onStop,
@@ -303,6 +305,7 @@ export function ChatComposer({
           />
           {approvalControl}
           <div className="composer-submit-controls">
+            {goalControl}
             {contextUsage}
             <button
               className="primary-action composer-submit"

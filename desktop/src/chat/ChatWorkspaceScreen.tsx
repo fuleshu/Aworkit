@@ -17,6 +17,7 @@ import {
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
+import { GoalControl } from "./GoalControl";
 import { useContextModel } from "./useContextModel";
 import type { ApprovalActionDetails } from "./approvals";
 import { controlsFor } from "./composer";
@@ -528,6 +529,13 @@ export function ChatWorkspaceScreen({
           stopDisabled={chat.recoveryPending}
           stopRequested={stopPending}
             chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}
+          goalControl={<GoalControl events={runtime.events}
+            disabledReason={runtime.stale ? "Resynchronize before changing the goal."
+              : chat.recoveryPending ? "Resume or abandon the interrupted turn before changing the goal."
+              : null}
+            onSubmit={goal => runtime.dispatch({
+              type: "set_goal", commandId: commandIds.createIntent("set_goal").commandId, targetId: chat.chatId, goal,
+            })} />}
           contextUsage={<ContextUsage events={runtime.events} model={resolvedContextModel}
             onCompact={selection => runtime.dispatch({type:"compact_context", commandId:commandIds.createIntent("enqueue").commandId,targetId:chat.chatId,nodeId:selection.nodeId,baseSequence:selection.sequence})}
             editDisabledReason={runtime.stale ? "Resynchronize before editing context."

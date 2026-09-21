@@ -75,6 +75,7 @@ export type TimelineKind =
   | "approval"
   | "route"
   | "todo"
+  | "goal"
   | "error"
   | "verification"
   | "repair"
@@ -145,6 +146,7 @@ export type ChatIntent = { readonly targetId?: string } & (
   | { readonly type: "edit_context"; readonly commandId: string; readonly targetId: string;
       readonly nodeId: string; readonly baseSequence: number; readonly document: import("./contextProjection").ContextDocument }
   | { readonly type: "approval_mode"; readonly commandId: string; readonly targetId: string; readonly mode: import("./approvals").ApprovalMode }
+  | { readonly type: "set_goal"; readonly commandId: string; readonly targetId: string; readonly goal: string | null }
   | {
       readonly type: "start";
       readonly commandId: string;

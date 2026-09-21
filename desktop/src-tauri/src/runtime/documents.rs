@@ -2564,6 +2564,32 @@ mod tests {
                 .contains("configuration.route")
         );
 
+        // Control nodes carry the incoming value, so an approval gate and a
+        // routed condition may both feed a model node in the same pass.
+        let value_carrying_control = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"plan.1","type":"model_call","configuration":{"modelTierId":"tier:balanced","outputContract":"plan"}},
+                {"id":"approve.1","type":"approval","configuration":{"title":"Approve plan"}},
+                {"id":"check.1","type":"condition","configuration":{"predicate":{"kind":"always"}}},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
+                {"id":"output.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"plan.1"},
+                {"id":"e2","source":"plan.1","target":"approve.1"},
+                {"id":"e3","source":"approve.1","target":"check.1"},
+                {"id":"e4","source":"check.1","target":"agent.1","configuration":{"route":"true"}},
+                {"id":"e5","source":"check.1","target":"output.1","configuration":{"route":"false"}},
+                {"id":"e6","source":"agent.1","target":"output.1"},
+                {"id":"e7","source":"output.1","target":"wait.1"}
+            ]
+        });
+        validate_v1_executable_catalog(&value_carrying_control)
+            .expect("an approval gate and a routed condition may feed model nodes");
+
         let bad_agent = json!({
             "schemaVersion": 1,
             "nodes": [

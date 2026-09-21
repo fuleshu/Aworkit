@@ -79,6 +79,7 @@ impl BoundFileToolAuthorityV1 {
                     | "tool.skill"
                     | "tool.workspace_instructions"
                     | "tool.todo"
+                    | "tool.goal"
                     | "tool.files.edit"
                     | "tool.files.write"
             )

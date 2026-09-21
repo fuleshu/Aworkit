@@ -140,7 +140,10 @@ cd desktop
 pnpm install --frozen-lockfile
 pnpm desktop:build
 ```
-
+without installers:
+```
+pnpm exec tauri build --no-bundle
+```
 `pnpm desktop:build` is `tauri build`. It first runs `beforeBuildCommand`
 (`pnpm build` = `tsc --noEmit && vite build`, ~23s) and then compiles
 `desktop/src-tauri` (~4m57s) and bundles every target configured by
@@ -156,6 +159,12 @@ pnpm desktop:build
 Frontend only (no Rust): `cd desktop && pnpm build`.
 
 Development mode: `cd desktop && pnpm desktop:dev` (`tauri dev`).
+
+### Incremental Rebuild
+
+```
+cargo build --workspace --release --locked && (cd desktop && pnpm exec tauri build --no-bundle)
+```
 
 ## 3. Run
 

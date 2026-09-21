@@ -8,6 +8,7 @@ import {
   resolveOutputPortKind,
 } from "./nodeCatalog";
 import { nodesInCycles, validateWorkflow, type WorkflowDocument } from "./workflow";
+import { assessNativeWorkflow } from "./workflowExecution";
 
 describe("typed V1 node catalog", () => {
   it("describes exactly the ten executable node types in palette order", () => {
@@ -41,13 +42,53 @@ describe("typed V1 node catalog", () => {
     expect(resolveOutputPortKind("future_node", "out")).toBeUndefined();
   });
 
-  it("allows text-to-text and any-to-flow, rejects text to a route input", () => {
+  it("lets value-carrying control outputs feed value inputs", () => {
     expect(portKindsConnect("text", "text")).toBe(true);
     expect(portKindsConnect("flow", "flow")).toBe(true);
     expect(portKindsConnect("text", "flow")).toBe(true);
-    expect(portKindsConnect("flow", "text")).toBe(false);
+    expect(portKindsConnect("flow", "text")).toBe(true);
     expect(portKindsConnect("route", "flow")).toBe(true);
-    expect(portKindsConnect("route", "text")).toBe(false);
+    expect(portKindsConnect("route", "text")).toBe(true);
+    expect(portKindsConnect("text", "route")).toBe(false);
+  });
+
+  it("accepts an approval-gated and condition-routed model pipeline", () => {
+    const document: WorkflowDocument = {
+      schemaVersion: 1,
+      nodes: [
+        { id: "i.1", type: "input" },
+        { id: "m.1", type: "model_call", configuration: { modelTierId: "tier:balanced" } },
+        { id: "ap.1", type: "approval", configuration: { title: "Approve plan" } },
+        { id: "c.1", type: "condition", configuration: { predicate: { kind: "always" } } },
+        { id: "a.1", type: "agent", configuration: { modelTierId: "tier:balanced", toolIds: [] } },
+        { id: "o.1", type: "output" },
+        { id: "w.1", type: "wait" },
+      ],
+      edges: [
+        { id: "e.1", source: "i.1", target: "m.1" },
+        { id: "e.2", source: "m.1", target: "ap.1" },
+        { id: "e.3", source: "ap.1", target: "c.1" },
+        {
+          id: "e.4",
+          source: "c.1",
+          target: "a.1",
+          sourcePort: "true",
+          configuration: { route: "true" },
+        },
+        {
+          id: "e.5",
+          source: "c.1",
+          target: "o.1",
+          sourcePort: "false",
+          configuration: { route: "false" },
+        },
+        { id: "e.6", source: "a.1", target: "o.1" },
+        { id: "e.7", source: "o.1", target: "w.1" },
+      ],
+    };
+    expect(validateWorkflow(document)).toEqual([]);
+    // The editor contract and the native executable catalog must agree.
+    expect(assessNativeWorkflow(document)).toMatchObject({ executable: true, issues: [] });
   });
 
   it("does not expose or create an aggregate Agent run timeout", () => {

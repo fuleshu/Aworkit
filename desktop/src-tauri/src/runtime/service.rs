@@ -109,6 +109,7 @@ const WORKFLOW_MAX_USER_INPUT_BYTES: usize = super::pipeline::MAXIMUM_PROVIDER_R
 const DEFAULT_MODEL_CALL_TIMEOUT_SECONDS: u64 = 120;
 
 pub(crate) mod approval_control;
+mod goal_control;
 use approval_control::parse_approval_resolution;
 
 trait WorkflowPipelinePort: Send + Sync {
@@ -141,6 +142,14 @@ trait WorkflowPipelinePort: Send + Sync {
 
     fn run_todo_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
         Ok(None)
+    }
+
+    fn run_goal_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+
+    fn set_goal_state(&self, _run_id: &StableId, _goal: &Value) -> Result<(), String> {
+        Err("goal state is not writable from this pipeline".into())
     }
 
     #[allow(dead_code)] // used by pipeline tests through the concrete type
@@ -197,6 +206,15 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
 
     fn run_todo_state(&self, run_id: &StableId) -> Result<Option<Value>, String> {
         WorkflowExecutionPipeline::run_todo_state(self, run_id).map_err(|error| error.to_string())
+    }
+
+    fn run_goal_state(&self, run_id: &StableId) -> Result<Option<Value>, String> {
+        WorkflowExecutionPipeline::run_goal_state(self, run_id).map_err(|error| error.to_string())
+    }
+
+    fn set_goal_state(&self, run_id: &StableId, goal: &Value) -> Result<(), String> {
+        WorkflowExecutionPipeline::set_goal_state(self, run_id, goal)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(dead_code)] // exercised by pipeline tests through the concrete type
@@ -839,6 +857,7 @@ impl DesktopRuntime {
                 | "cancel"
                 | "approval"
                 | "approval_mode"
+                | "set_goal"
                 | "edit_context"
                 | "compact_context"
         ) {
@@ -888,6 +907,7 @@ impl DesktopRuntime {
                 .map(|(receipt, _status)| receipt),
             "approval" => self.complete_approval(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
+            "set_goal" => self.change_goal(input, fingerprint),
             "edit_context" => self.edit_context(input, fingerprint),
             "resume" => {
                 self.recover_pending_effect(&input.command_id, &fingerprint, input.expected_version)
@@ -1486,7 +1506,7 @@ impl DesktopRuntime {
         let mut facts = Vec::new();
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -1564,7 +1584,7 @@ impl DesktopRuntime {
                 }
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -1595,7 +1615,7 @@ impl DesktopRuntime {
                 ));
             }
             status => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -1766,7 +1786,7 @@ impl DesktopRuntime {
         let mut facts = Vec::new();
         match result.status {
             WorkflowExecutionStatusV1::Succeeded => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -1839,7 +1859,7 @@ impl DesktopRuntime {
                 facts.push(("message.assistant", fact));
             }
             WorkflowExecutionStatusV1::AwaitingApproval => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -1870,7 +1890,7 @@ impl DesktopRuntime {
                 ));
             }
             status => {
-                facts.extend(todo_state_fact(
+                facts.extend(run_state_facts(
                     self.pipeline.as_ref(),
                     &result,
                     &context.identity.run_id,
@@ -4511,32 +4531,52 @@ fn optional_project_id(payload: &Value) -> Result<Option<String>, String> {
     }
 }
 
-/// Run-local task-list fact: when the pass settled a completed todo call,
-/// the newest durable snapshot becomes a canonical semantic event for the UI reducer.
-fn todo_state_fact(
+/// Run-local state facts: when the pass settled a completed todo or goal call,
+/// the newest durable snapshot becomes a canonical semantic event for the UI
+/// reducer. A cleared goal is reported as an explicit clear so the projection
+/// can drop a goal the user abandoned.
+fn run_state_facts(
     pipeline: &dyn WorkflowPipelinePort,
     result: &WorkflowExecutionResultV1,
     run_id: &StableId,
     created_at: &str,
 ) -> Result<Vec<(&'static str, Value)>, String> {
-    if !result
-        .tool_activity
-        .iter()
-        .any(|activity| activity.capability_id == "tool.todo" && activity.status == "completed")
-    {
-        return Ok(Vec::new());
-    }
-    let Some(todos) = pipeline.run_todo_state(run_id)? else {
-        return Ok(Vec::new());
+    let settled = |capability_id: &str| {
+        result
+            .tool_activity
+            .iter()
+            .any(|activity| activity.capability_id == capability_id && activity.status == "completed")
     };
-    Ok(vec![(
-        "tool.todo",
-        json!({
-            "todos": todos,
-            "runId": run_id,
-            "createdAt": created_at,
-        }),
-    )])
+    let mut facts = Vec::new();
+    if settled("tool.todo") {
+        if let Some(todos) = pipeline.run_todo_state(run_id)? {
+            facts.push((
+                "tool.todo",
+                json!({
+                    "todos": todos,
+                    "runId": run_id,
+                    "createdAt": created_at,
+                }),
+            ));
+        }
+    }
+    if settled("tool.goal") {
+        if let Some(goal) = pipeline.run_goal_state(run_id)? {
+            if crate::runtime::tool_loop::goal_is_live(&goal)
+                || goal.get("status").and_then(Value::as_str) == Some("cleared")
+            {
+                facts.push((
+                    "tool.goal",
+                    json!({
+                        "goal": goal,
+                        "runId": run_id,
+                        "createdAt": created_at,
+                    }),
+                ));
+            }
+        }
+    }
+    Ok(facts)
 }
 
 fn validate_command_id(value: &str) -> Result<(), String> {
@@ -4644,6 +4684,7 @@ mod tests {
     mod concurrency;
     mod context_model;
     mod credentialed_web_search;
+    mod goal_control;
     mod image_chat;
     mod projectless;
 
@@ -4732,9 +4773,21 @@ mod tests {
 
     struct FixtureWorkflowPipeline {
         provider: Arc<FixtureProvider>,
+        /// Records the durable goal the user command path writes, so command
+        /// tests can read back exactly what a later pass would inject.
+        goal: Mutex<Option<Value>>,
     }
 
     impl WorkflowPipelinePort for FixtureWorkflowPipeline {
+        fn run_goal_state(&self, _run_id: &StableId) -> Result<Option<Value>, String> {
+            Ok(self.goal.lock().unwrap().clone())
+        }
+
+        fn set_goal_state(&self, _run_id: &StableId, goal: &Value) -> Result<(), String> {
+            *self.goal.lock().unwrap() = Some(goal.clone());
+            Ok(())
+        }
+
         fn execute(
             &self,
             request: WorkflowExecutionRequestV1,
@@ -4988,7 +5041,10 @@ mod tests {
     ) -> DesktopRuntime {
         let mut runtime = DesktopRuntime::open_with_credential_store(root.path(), store).unwrap();
         runtime.provider = provider.clone();
-        runtime.pipeline = Arc::new(FixtureWorkflowPipeline { provider });
+        runtime.pipeline = Arc::new(FixtureWorkflowPipeline {
+            provider,
+            goal: Mutex::new(None),
+        });
         runtime
     }
 
@@ -6346,6 +6402,7 @@ mod tests {
             .expect("idempotent stop acknowledgement");
         runtime.pipeline = Arc::new(FixtureWorkflowPipeline {
             provider: provider.clone(),
+            goal: Mutex::new(None),
         });
         let version = runtime.snapshot(0).unwrap().version;
         runtime

@@ -40,6 +40,7 @@ pub enum CapabilityKindV1 {
     WebSearch,
     WebFetch,
     Todo,
+    Goal,
     Subagent,
     Mcp,
     Plugin,

@@ -408,6 +408,32 @@ fn topological_order(
     Ok(order)
 }
 
+/// Selects the value carried into `node_id` by the first active transition
+/// whose source has already executed.
+///
+/// A control node stores its own incoming value as its result, so an approval
+/// or a routed condition hands the value on unchanged. A skipped branch never
+/// activates its transition, so a successor it alone feeds stays `Null` and
+/// contributes no value. The same rule makes an approval that the user rejects
+/// produce no successor value at all: the pass fails before any value is read.
+fn carried_value(
+    edges: &[CompiledGraphEdgeV1],
+    active_edges: &BTreeSet<usize>,
+    executed: &BTreeSet<String>,
+    values: &BTreeMap<String, Value>,
+    node_id: &str,
+) -> Value {
+    for (index, edge) in edges.iter().enumerate() {
+        if edge.target == node_id
+            && active_edges.contains(&index)
+            && executed.contains(&edge.source)
+        {
+            return values.get(&edge.source).cloned().unwrap_or(Value::Null);
+        }
+    }
+    Value::Null
+}
+
 struct PassMachine<'a> {
     compiled: &'a CompiledGraphPassV1,
     gateway: &'a FrozenModelGateway,
@@ -734,19 +760,13 @@ impl<'a> PassMachine<'a> {
     }
 
     fn incoming_value(&self, node_id: &str) -> Value {
-        for (index, edge) in self.compiled.edges.iter().enumerate() {
-            if edge.target == node_id
-                && self.active_edges.contains(&index)
-                && self.executed.contains(&edge.source)
-            {
-                return self
-                    .values
-                    .get(&edge.source)
-                    .cloned()
-                    .unwrap_or(Value::Null);
-            }
-        }
-        Value::Null
+        carried_value(
+            &self.compiled.edges,
+            &self.active_edges,
+            &self.executed,
+            &self.values,
+            node_id,
+        )
     }
 
     /// Direct input-node text is already present in the frozen conversation.
@@ -848,6 +868,7 @@ impl<'a> PassMachine<'a> {
                 outer_invocation_id: &outer,
                 input: context,
                 initial_context,
+                initial_exchanges: Vec::new(),
                 parameters,
                 definitions,
                 binding_id: self.model_binding_id.to_owned(),
@@ -1105,6 +1126,7 @@ impl<'a> PassMachine<'a> {
             initial_context: context::agent_turn_context(value_text(
                 &self.incoming_agent_context(&node.id),
             )),
+            initial_exchanges: Vec::new(),
             parameters: node_model_parameters(&node.configuration),
             definitions,
             binding_id: self.model_binding_id.to_owned(),
@@ -1224,20 +1246,42 @@ impl<'a> PassMachine<'a> {
             &node.id,
             u64::try_from(self.completed.len()).unwrap_or(u64::MAX),
         );
+        let plan_review = plan_review_source(
+            &self.compiled.edges,
+            &self.active_edges,
+            &self.executed,
+            &self.compiled.nodes,
+            &node.id,
+        );
         let title = node
             .configuration
             .get("title")
             .and_then(Value::as_str)
             .filter(|title| !title.trim().is_empty())
-            .unwrap_or("Workflow approval required")
-            .to_owned();
-        let message = node
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                if plan_review.is_some() {
+                    "Approve plan".to_owned()
+                } else {
+                    "Workflow approval required".to_owned()
+                }
+            });
+        let mut message = node
             .configuration
             .get("message")
             .and_then(Value::as_str)
             .filter(|message| !message.trim().is_empty())
             .unwrap_or("The workflow reached an approval gate. Approve to continue the run.")
             .to_owned();
+        // A plan review must show the plan: the reviewer decides on the content
+        // the next node will receive, so the carried plan is part of the gate.
+        if plan_review.is_some() {
+            let summary = approval_value_summary(&self.incoming_value(&node.id));
+            if !summary.trim().is_empty() {
+                message.push_str("\n\n");
+                message.push_str(&truncate_utf8(summary, MAXIMUM_APPROVAL_CARRIED_BYTES));
+            }
+        }
         let approval = GraphApprovalRequestV1 {
             filesystem: None,
             project_scope: None,
@@ -1434,6 +1478,76 @@ fn value_text(value: &Value) -> String {
     }
 }
 
+/// How much of a reviewed plan an approval challenge shows. The frozen plan
+/// contract already bounds each field, so this only protects the challenge.
+const MAXIMUM_APPROVAL_CARRIED_BYTES: usize = 16 * 1024;
+
+/// Whether the active transition into a node comes from a plan model call.
+fn plan_review_source<'a>(
+    edges: &[CompiledGraphEdgeV1],
+    active_edges: &BTreeSet<usize>,
+    executed: &BTreeSet<String>,
+    nodes: &'a [CompiledGraphNodeV1],
+    node_id: &str,
+) -> Option<&'a CompiledGraphNodeV1> {
+    for (index, edge) in edges.iter().enumerate() {
+        if edge.target == node_id
+            && active_edges.contains(&index)
+            && executed.contains(&edge.source)
+        {
+            let source = nodes.iter().find(|node| node.id == edge.source)?;
+            let is_plan = source.node_type == "model_call"
+                && source
+                    .configuration
+                    .get("outputContract")
+                    .and_then(Value::as_str)
+                    == Some("plan");
+            return is_plan.then_some(source);
+        }
+    }
+    None
+}
+
+/// Formats the value a gate asks the user to approve. A structured plan is
+/// rendered as readable lines so the reviewer sees the objective, open
+/// questions, evidence and planned actions; any other value falls back to its
+/// ordinary text form.
+fn approval_value_summary(value: &Value) -> String {
+    let Some(object) = value.as_object() else {
+        return value_text(value);
+    };
+    let is_plan = ["goal", "openQuestions", "evidenceNeeded", "toolOrder"]
+        .iter()
+        .any(|key| object.contains_key(*key));
+    if !is_plan {
+        return value_text(value);
+    }
+    let mut lines = Vec::new();
+    if let Some(goal) = object.get("goal").and_then(Value::as_str) {
+        lines.push(format!("Goal: {goal}"));
+    }
+    for (label, key) in [
+        ("Open questions", "openQuestions"),
+        ("Evidence needed", "evidenceNeeded"),
+        ("Planned actions", "toolOrder"),
+    ] {
+        let items = object
+            .get(key)
+            .and_then(Value::as_array)
+            .filter(|items| !items.is_empty());
+        let Some(items) = items else { continue };
+        lines.push(format!("{label}:"));
+        for item in items.iter().filter_map(Value::as_str) {
+            lines.push(format!("  - {item}"));
+        }
+    }
+    if lines.is_empty() {
+        value_text(value)
+    } else {
+        lines.join("\n")
+    }
+}
+
 fn truncate_utf8(mut value: String, maximum_bytes: usize) -> String {
     while value.len() > maximum_bytes {
         let mut boundary = maximum_bytes;
@@ -1559,10 +1673,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        evaluate_predicate, node_completion_summary, node_model_parameters, topological_order,
-        value_text,
+        approval_value_summary, carried_value, evaluate_predicate, node_completion_summary,
+        node_model_parameters, plan_review_source, topological_order, value_text,
     };
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn node(id: &str, node_type: &str) -> CompiledGraphNodeV1 {
         CompiledGraphNodeV1 {
@@ -1660,6 +1775,101 @@ mod tests {
         assert_eq!(value_text(&json!("hello")), "hello");
         assert_eq!(value_text(&json!({"a":1})), r#"{"a":1}"#);
         assert_eq!(value_text(&json!(null)), "");
+    }
+
+    #[test]
+    fn a_plan_review_source_is_recognized_and_the_plan_is_rendered_readably() {
+        let mut plan_node = node("plan.1", "model_call");
+        plan_node.configuration = json!({"modelTierId": "tier:balanced", "outputContract": "plan"});
+        let nodes = vec![plan_node, node("approval.1", "approval")];
+        let edges = vec![edge("plan.1", "approval.1", None)];
+        let executed = BTreeSet::from(["plan.1".to_string()]);
+        assert_eq!(
+            plan_review_source(
+                &edges,
+                &BTreeSet::from([0]),
+                &executed,
+                &nodes,
+                "approval.1"
+            )
+            .map(|node| node.id.as_str()),
+            Some("plan.1")
+        );
+        // A model call without the plan contract is not a plan review.
+        let mut plain = node("plan.1", "model_call");
+        plain.configuration = json!({"modelTierId": "tier:balanced"});
+        let nodes = vec![plain, node("approval.1", "approval")];
+        assert!(
+            plan_review_source(
+                &edges,
+                &BTreeSet::from([0]),
+                &executed,
+                &nodes,
+                "approval.1"
+            )
+            .is_none()
+        );
+        // A skipped transition is not a plan review either.
+        assert!(
+            plan_review_source(&edges, &BTreeSet::new(), &executed, &nodes, "approval.1").is_none()
+        );
+
+        let summary = approval_value_summary(&json!({
+            "goal": "Ship task 110",
+            "openQuestions": ["Which gate?"],
+            "evidenceNeeded": ["The workflow contract"],
+            "toolOrder": ["Update the catalog", "Add tests"],
+        }));
+        assert!(summary.contains("Goal: Ship task 110"));
+        assert!(summary.contains("- Update the catalog"));
+        assert_eq!(approval_value_summary(&json!("plain value")), "plain value");
+        assert_eq!(approval_value_summary(&json!(null)), "");
+    }
+
+    #[test]
+    fn control_values_cross_active_edges_and_skipped_branches_contribute_nothing() {
+        let edges = vec![
+            edge("approval.1", "agent.1", None),
+            edge("condition.1", "agent.1", Some("true")),
+        ];
+        let values = BTreeMap::from([
+            ("approval.1".to_string(), json!("the plan")),
+            ("condition.1".to_string(), json!("routed plan")),
+        ]);
+        let approval_executed = BTreeSet::from(["approval.1".to_string()]);
+        // The active approval transition carries its value into the Agent.
+        assert_eq!(
+            carried_value(
+                &edges,
+                &BTreeSet::from([0]),
+                &approval_executed,
+                &values,
+                "agent.1"
+            ),
+            json!("the plan")
+        );
+        // A skipped branch activates no transition, so no value is invented.
+        assert_eq!(
+            carried_value(
+                &edges,
+                &BTreeSet::new(),
+                &approval_executed,
+                &values,
+                "agent.1"
+            ),
+            json!(null)
+        );
+        // An active transition from a node that never executed carries nothing.
+        assert_eq!(
+            carried_value(
+                &edges,
+                &BTreeSet::from([1]),
+                &approval_executed,
+                &values,
+                "agent.1"
+            ),
+            json!(null)
+        );
     }
 
     #[test]

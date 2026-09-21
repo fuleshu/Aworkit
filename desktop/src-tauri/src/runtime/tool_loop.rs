@@ -11,6 +11,7 @@ mod context_compaction;
 mod file_access;
 pub(crate) mod filesystem_permissions;
 mod file_operations;
+mod goal;
 mod image_tools;
 #[path = "compression/runtime.rs"]
 mod result_compression;
@@ -39,7 +40,8 @@ use aworkit_capability_host::{
     FileAuthority, FileGrepRequestV1, FileListRequestV1,
     FileReadRequestV1, FileSearchRequestV1,
     FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, InjectionTargetV1, McpCallKindV1,
-    McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelToolCallV1, ModelToolDefinitionV1,
+    McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelAssistantContentV1, ModelToolCallV1,
+    ModelToolContextV1, ModelToolDefinitionV1,
     ModelToolExchangeV1, ModelToolResultV1, NativeProcessPort, OutcomeDispositionV1,
     ProjectFiles,
     PythonInvocationV1, RedeemLeaseRequestV1 as HostRedeemLeaseRequestV1,
@@ -96,6 +98,7 @@ pub(crate) const FILE_WRITE_CAPABILITY_ID: &str = "tool.files.write";
 pub(crate) const SHELL_CAPABILITY_ID: &str = "tool.shell.host";
 pub(crate) const PYTHON_CAPABILITY_ID: &str = "tool.python.host";
 pub(crate) const TODO_CAPABILITY_ID: &str = "tool.todo";
+pub(crate) const GOAL_CAPABILITY_ID: &str = "tool.goal";
 pub(crate) const SKILL_CAPABILITY_ID: &str = "tool.skill";
 pub(crate) const WEB_SEARCH_CAPABILITY_ID: &str = "tool.web_search";
 pub(crate) const WEB_FETCH_CAPABILITY_ID: &str = "tool.web_fetch";
@@ -109,6 +112,7 @@ const FILE_WRITE_PROVIDER_NAME: &str = "write_file";
 const SHELL_PROVIDER_NAME: &str = "shell";
 const PYTHON_PROVIDER_NAME: &str = "python";
 const TODO_PROVIDER_NAME: &str = "todo";
+const GOAL_PROVIDER_NAME: &str = "goal";
 const WEB_SEARCH_PROVIDER_NAME: &str = "web_search";
 const WEB_FETCH_PROVIDER_NAME: &str = "web_fetch";
 const WEB_EXTRACT_PROVIDER_NAME: &str = "web_extract";
@@ -121,6 +125,7 @@ const FILE_WRITE_ADAPTER_ID: &str = "adapter.project-files.write";
 const SHELL_ADAPTER_ID: &str = "adapter.host-tools.shell";
 const PYTHON_ADAPTER_ID: &str = "adapter.host-tools.python";
 const TODO_ADAPTER_ID: &str = "adapter.run-tools.todo";
+const GOAL_ADAPTER_ID: &str = "adapter.run-tools.goal";
 const WEB_SEARCH_ADAPTER_ID: &str = "adapter.web-tools.search";
 const WEB_FETCH_ADAPTER_ID: &str = "adapter.web-tools.fetch";
 const WEB_EXTRACT_ADAPTER_ID: &str = "adapter.web-tools.extract";
@@ -133,6 +138,7 @@ const FILE_WRITE_SCOPE: &str = "project.write";
 const SHELL_SCOPE: &str = "host.shell";
 const PYTHON_SCOPE: &str = "host.python";
 const TODO_SCOPE: &str = "run.todo";
+const GOAL_SCOPE: &str = "run.goal";
 const WEB_SEARCH_SCOPE: &str = "web.search";
 const WEB_FETCH_SCOPE: &str = "web.fetch";
 const WEB_EXTRACT_SCOPE: &str = "web.extract";
@@ -203,6 +209,7 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         FILE_LIST_CAPABILITY_ID,
         FILE_GREP_CAPABILITY_ID,
         TODO_CAPABILITY_ID,
+        GOAL_CAPABILITY_ID,
         WEB_SEARCH_CAPABILITY_ID,
         WEB_FETCH_CAPABILITY_ID,
         WEB_EXTRACT_CAPABILITY_ID,
@@ -461,6 +468,10 @@ pub(crate) enum StoredFileToolLimitV1 {
         maximum_output_bytes: usize,
     },
     Todo,
+    /// The Run's single durable completion objective. Unlike the task list it
+    /// is a state machine (active/completed/cleared), so the frozen limit is
+    /// the configuration-free variant exactly like `Todo`.
+    Goal,
     WebSearch {
         configuration: WebSearchConfigurationV1,
     },
@@ -689,6 +700,14 @@ pub(crate) fn file_tool_descriptors()
             CapabilityKind::Todo,
             TODO_SCOPE,
             todo_schema(),
+            SideEffectClass::Pure,
+            false,
+        ),
+        (
+            GOAL_CAPABILITY_ID,
+            CapabilityKind::Goal,
+            GOAL_SCOPE,
+            goal_schema(),
             SideEffectClass::Pure,
             false,
         ),
@@ -1025,6 +1044,19 @@ pub(crate) fn freeze_file_tool_bindings(
                     StoredFileToolLimitV1::Todo,
                 )
             }
+            "goal" => {
+                freeze_configuration(
+                    &requested.configuration,
+                    &[("authorityMode", Value::String("run_goal".into()))],
+                    &[],
+                )?;
+                (
+                    GOAL_PROVIDER_NAME.to_owned(),
+                    "Read or change the Run's single durable goal: the one outcome the Chat is working toward. Set it when the user states a durable objective, read it after a pause or compaction, update it when the objective changes, complete it only when the outcome is verified, and clear it when the user abandons it.".to_owned(),
+                    goal_schema(),
+                    StoredFileToolLimitV1::Goal,
+                )
+            }
             "web_search" => (
                 WEB_SEARCH_PROVIDER_NAME.to_owned(),
                 "Search the web with frozen provider routing, retry, cache, and keyless-rescue settings; return a requested number of bounded title/snippet/url results.".to_owned(),
@@ -1235,6 +1267,7 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             id if jobs::is_job(id) => "adapter.host-tools.jobs",
             PYTHON_CAPABILITY_ID => PYTHON_ADAPTER_ID,
             TODO_CAPABILITY_ID => TODO_ADAPTER_ID,
+            GOAL_CAPABILITY_ID => GOAL_ADAPTER_ID,
             WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_ADAPTER_ID,
             WEB_FETCH_CAPABILITY_ID => WEB_FETCH_ADAPTER_ID,
             WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_ADAPTER_ID,
@@ -1375,6 +1408,26 @@ impl FileToolAuthorityRuntimeV1 {
         run_id: &StableId,
     ) -> Result<Option<Value>, WorkflowPipelineError> {
         self.records.todo_state(run_id)
+    }
+
+    /// Latest durable Chat goal for one explicit Run. A cleared snapshot is
+    /// returned as-is; callers use `goal::is_live` to filter it.
+    pub(crate) fn goal_state_for(
+        &self,
+        run_id: &StableId,
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
+        self.records.goal_state(run_id)
+    }
+
+    /// Records a user-issued goal snapshot for one Run. The desktop command path
+    /// writes the same immutable snapshots the goal tool writes, so the next
+    /// Agent pass injects the updated objective without any model turn.
+    pub(crate) fn record_goal_state_for(
+        &self,
+        run_id: &StableId,
+        goal: &Value,
+    ) -> Result<(), WorkflowPipelineError> {
+        self.records.record_goal_state(run_id, goal)
     }
 }
 
@@ -1645,6 +1698,13 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
     ) {
         self.run_events.record_text_context(input, context);
     }
+    fn observe_parent_turn(
+        &self,
+        input: &Value,
+        exchanges: &[aworkit_capability_host::ModelToolExchangeV1],
+    ) {
+        self.run_events.record_parent_turn(input, exchanges);
+    }
     fn prepare_automatic_context(
         &self,
         outer: &StableId,
@@ -1677,7 +1737,21 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
         definitions: &[ModelToolDefinitionV1],
         cancellation: &CancellationToken,
     ) -> Result<Vec<aworkit_capability_host::ModelToolContextV1>, String> {
-        self.skill_context(outer, after_exchanges, definitions, true, cancellation)
+        let mut messages =
+            self.skill_context(outer, after_exchanges, definitions, true, cancellation)?;
+        // The goal is constant within one pass, so it is injected once at the
+        // head of the pass rather than repeated on every tool turn.
+        if after_exchanges == 0
+            && definitions
+                .iter()
+                .any(|definition| definition.capability_id == GOAL_CAPABILITY_ID)
+        {
+            let goal = self.goal_state().map_err(|error| error.to_string())?;
+            if let Some(goal) = goal.filter(goal::is_live) {
+                messages.push(goal::context_message(&goal));
+            }
+        }
+        Ok(messages)
     }
 
     fn invoke(
@@ -1733,6 +1807,13 @@ impl ModelToolInvocationPortV1 for BoundFileToolAuthorityV1 {
 }
 
 impl BoundFileToolAuthorityV1 {
+    /// Latest durable Chat goal recorded by the goal tool for this binding's
+    /// Run. A cleared snapshot is returned as-is; callers filter with
+    /// `goal::is_live`.
+    pub(crate) fn goal_state(&self) -> Result<Option<Value>, WorkflowPipelineError> {
+        self.runtime.goal_state_for(&self.context.run_id)
+    }
+
     fn invoke_v1(
         &self,
         outer_invocation_id: &StableId,
@@ -2674,6 +2755,24 @@ impl FileToolDispatcherV1 {
                     let value = json!({"todos": todos});
                     Ok((value, "Updated the Run task list.".to_owned()))
                 }
+                StoredFileToolLimitV1::Goal => {
+                    let run_id = &self.record.proposal.run_id;
+                    let current = self
+                        .records
+                        .goal_state(run_id)
+                        .map_err(|error| error.to_string())?;
+                    let next = goal::apply(current.as_ref(), &self.record.call.arguments)?;
+                    let summary = match next["status"].as_str() {
+                        Some("completed") => "Completed the Chat goal.",
+                        Some("cleared") => "Cleared the Chat goal.",
+                        Some("active") => "Updated the Chat goal.",
+                        _ => "Read the Chat goal.",
+                    };
+                    self.records
+                        .record_goal_state(run_id, &next)
+                        .map_err(|error| error.to_string())?;
+                    Ok((next, summary.to_owned()))
+                }
                 StoredFileToolLimitV1::WebSearch { configuration } => {
                     let query = self.record.call.arguments["query"]
                         .as_str()
@@ -3138,6 +3237,40 @@ impl ToolRecordStore {
             .and_then(|value| value.get("todos").cloned()))
     }
 
+    /// Appends one immutable goal snapshot for the Run. Later snapshots
+    /// supersede earlier ones; the newest event for a Run is the live goal,
+    /// which is how the goal survives a Wait resume and crash recovery without
+    /// replaying the tool call.
+    fn record_goal_state(
+        &self,
+        run_id: &StableId,
+        goal: &Value,
+    ) -> Result<(), WorkflowPipelineError> {
+        let key = digest_id(
+            "record.goal-state",
+            &format!("{}:{}", run_id.as_str(), canonical_hash(goal)?),
+        )?;
+        self.append(
+            "pipeline.goal-state",
+            &key,
+            json!({"schemaVersion": 1, "runId": run_id, "goal": goal}),
+        )
+    }
+
+    /// Latest recorded goal snapshot for the Run, including a cleared state.
+    /// Callers use `goal::is_live` to decide whether an objective is in effect.
+    pub(crate) fn goal_state(
+        &self,
+        run_id: &StableId,
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
+        Ok(self
+            .events("pipeline.goal-state")?
+            .into_iter()
+            .filter(|value| value.get("runId").and_then(Value::as_str) == Some(run_id.as_str()))
+            .last()
+            .and_then(|value| value.get("goal").cloned()))
+    }
+
     fn invocation(
         &self,
         proposal_id: &StableId,
@@ -3296,6 +3429,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::Job { .. } => unreachable!("validated above"),
         StoredFileToolLimitV1::Python { .. } => BTreeSet::from(["script"]),
         StoredFileToolLimitV1::Todo => BTreeSet::from(["todos"]),
+        StoredFileToolLimitV1::Goal => BTreeSet::from(["operation", "goal", "note"]),
         StoredFileToolLimitV1::WebSearch { .. } => BTreeSet::from(["query", "limit", "freshness"]),
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID =>
@@ -3333,6 +3467,11 @@ fn validate_call_arguments(
             // Hermes exposes `limit` as an optional call-level request. The
             // frozen Settings maximum remains the hard authority ceiling.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("query")
+        }
+        StoredFileToolLimitV1::Goal => {
+            // The operation is required; the objective and note are optional
+            // because complete and clear need neither.
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("operation")
         }
         StoredFileToolLimitV1::WebFetch { .. }
             if binding.capability_id == WEB_EXTRACT_CAPABILITY_ID =>
@@ -3501,6 +3640,7 @@ fn validate_call_arguments(
                 let _ = content;
             }
         }
+        StoredFileToolLimitV1::Goal => goal::validate(object)?,
         StoredFileToolLimitV1::WebSearch { .. } => {
             object
                 .get("query")
@@ -3811,6 +3951,22 @@ fn todo_schema() -> Value {
         .clone()
 }
 
+fn goal_schema() -> Value {
+    goal::schema()
+}
+
+/// Whether a recorded goal snapshot still carries an objective. Exposed to the
+/// semantic fact projection so context and UI agree on what "live" means.
+pub(crate) fn goal_is_live(state: &Value) -> bool {
+    goal::is_live(state)
+}
+
+/// Applies a desktop-user goal change. The core command path owns when this is
+/// called; the transition itself lives with the tool that shares the state.
+pub(crate) fn apply_user_goal_change(text: &str, clear: bool) -> Result<Value, String> {
+    goal::apply_user_change(text, clear)
+}
+
 fn web_search_schema() -> Value {
     super::tool_registry::native_tool("tool.web_search")
         .expect("installed native tool")
@@ -3886,6 +4042,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         id if jobs::is_job(id) => "host.jobs",
         PYTHON_CAPABILITY_ID => PYTHON_SCOPE,
         TODO_CAPABILITY_ID => TODO_SCOPE,
+        GOAL_CAPABILITY_ID => GOAL_SCOPE,
         SKILL_CAPABILITY_ID => "skills.read",
         "tool.context" => "context.read",
         WEB_SEARCH_CAPABILITY_ID => WEB_SEARCH_SCOPE,

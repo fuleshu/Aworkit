@@ -105,6 +105,7 @@ pub(crate) fn probe_tool_with_api_key(
             "tool.shell.host" => probe_host_shell(&request.tool),
             "tool.python.host" => probe_host_python(&request.tool),
             "tool.todo" => probe_todo_tool(&request.tool),
+            "tool.goal" => probe_goal_tool(&request.tool),
             "tool.image.read" => request.tool.validate_implemented_contract().map(|()|("adapter.image.read".into(), "Local image reader is available. Absolute paths need no project; relative paths use the Chat workspace. This test reads no image.".into())),
             "tool.screenshot" => request.tool.validate_implemented_contract().and_then(|()| {
                 if cfg!(target_os = "windows") {
@@ -225,6 +226,18 @@ fn probe_todo_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String)
         "run-local-todo".into(),
         format!(
             "{} uses the built-in run-local task list; no external adapter is required.",
+            tool.name
+        ),
+    ))
+}
+
+/// The Chat goal is Chat-owned durable state in the Run record. It needs no
+/// external adapter and grants no host authority.
+fn probe_goal_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+    Ok((
+        "run-local-goal".into(),
+        format!(
+            "{} stores the durable Chat goal inside the Run record; no external adapter is required.",
             tool.name
         ),
     ))

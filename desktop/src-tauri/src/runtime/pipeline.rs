@@ -535,6 +535,25 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority.todo_state(run_id)
     }
 
+    /// Latest durable Chat goal recorded by the goal tool, if any. A cleared
+    /// snapshot is returned as-is; the semantic fact filters it.
+    pub(crate) fn run_goal_state(
+        &self,
+        run_id: &StableId,
+    ) -> Result<Option<Value>, WorkflowPipelineError> {
+        self.file_tool_authority.goal_state_for(run_id)
+    }
+
+    /// Records a user-issued goal snapshot for one Run so the next Agent pass
+    /// reads the updated objective from the same durable store the tool writes.
+    pub(crate) fn set_goal_state(
+        &self,
+        run_id: &StableId,
+        goal: &Value,
+    ) -> Result<(), WorkflowPipelineError> {
+        self.file_tool_authority.record_goal_state_for(run_id, goal)
+    }
+
     fn validated_prepared(
         &self,
         request: &WorkflowExecutionRequestV1,
@@ -3668,9 +3687,9 @@ mod tests {
 
     use crate::runtime::tool_loop::{
         FILE_EDIT_CAPABILITY_ID, FILE_GREP_CAPABILITY_ID, FILE_LIST_CAPABILITY_ID,
-        FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, MAXIMUM_TOOL_RESULT_BYTES,
-        SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID, WEB_EXTRACT_CAPABILITY_ID,
-        WEB_FETCH_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
+        FILE_READ_CAPABILITY_ID, FILE_SEARCH_CAPABILITY_ID, GOAL_CAPABILITY_ID,
+        MAXIMUM_TOOL_RESULT_BYTES, SUBAGENT_CAPABILITY_ID, TODO_CAPABILITY_ID,
+        WEB_EXTRACT_CAPABILITY_ID, WEB_FETCH_CAPABILITY_ID, WEB_SEARCH_CAPABILITY_ID,
     };
     use aworkit_capability_host::{
         McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpFeatureSetV1,
@@ -3816,6 +3835,7 @@ mod tests {
         ReviewUnavailable,
         EditLoop,
         Todo,
+        Goal,
         Subagent,
         SubagentNest,
         SubagentLoop,
@@ -4010,6 +4030,12 @@ mod tests {
                             {"content":"Write tests","status":"in_progress"},
                             {"content":"Fix pipeline","status":"completed"},
                         ]}),
+                    ))?,
+                    ToolScriptV1::Goal => emit(tool_call(
+                        "call.goal",
+                        "tool.goal",
+                        "goal",
+                        json!({"operation":"set","goal":"Complete task 108 end to end"}),
                     ))?,
                     ToolScriptV1::Subagent => {
                         // The child conversation is recognized by the context
@@ -4338,6 +4364,7 @@ mod tests {
                         "maximumMatches":PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1,
                     }),
                     TODO_CAPABILITY_ID => json!({"authorityMode":"run_todo"}),
+                    GOAL_CAPABILITY_ID => json!({"authorityMode":"run_goal"}),
                     WEB_SEARCH_CAPABILITY_ID => serde_json::to_value(
                         aworkit_capability_host::WebSearchConfigurationV1::default(),
                     )
@@ -5874,6 +5901,48 @@ mod tests {
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed.len(), 1);
         assert_eq!(observed[0]["todos"], stored);
+    }
+
+    #[test]
+    fn provider_goal_call_records_run_local_goal_state() {
+        let root = TempDir::new().expect("root");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        fs::create_dir(project.join(".git")).expect("git metadata");
+        fs::write(project.join(".git/HEAD"), b"ref: refs/heads/main\n").expect("Git HEAD");
+        let (pipeline, _store, metadata, calls, observed_results) =
+            setup_tool_pipeline(&root, ToolScriptV1::Goal);
+        let mut execution_request =
+            tool_bound_request(&pipeline, metadata.clone(), &project, &[GOAL_CAPABILITY_ID]);
+        execution_request.project_branch = Some("main".into());
+
+        let first = pipeline
+            .execute(execution_request.clone())
+            .expect("goal execution");
+        assert_eq!(
+            first.status,
+            WorkflowExecutionStatusV1::Succeeded,
+            "{:?}",
+            first.error
+        );
+        assert_eq!(first.assistant_text.as_deref(), Some("tool loop complete"));
+        assert_eq!(first.tool_calls, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let goal = first
+            .tool_activity
+            .iter()
+            .find(|activity| activity.capability_id == GOAL_CAPABILITY_ID)
+            .expect("goal tool activity");
+        assert_eq!(goal.status, "completed", "{goal:?}");
+        let stored = pipeline
+            .run_goal_state(&execution_request.run_id)
+            .expect("goal state")
+            .expect("stored goal");
+        assert_eq!(stored["status"], "active");
+        assert_eq!(stored["goal"], "Complete task 108 end to end");
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0], stored);
     }
 
     #[test]

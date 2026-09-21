@@ -374,6 +374,27 @@ export function TimelineCard({
         </ul>
       </article>
     );
+  if (item.kind === "goal")
+    return (
+      <article
+        className={`activity-card goal-card ${selected ? "selected" : ""}`}
+        aria-label={`Chat goal: ${item.title}`}
+      >
+        <button
+          className="activity-heading activity-select-heading"
+          title={`Show Run details for ${item.title}`}
+          type="button"
+          onClick={() => onSelect(item.id)}
+        >
+          <span className="activity-icon">◎</span>
+          <strong>{item.title}</strong>
+          <span className={`status ${item.status ?? ""}`}>{item.status ?? "active"}</span>
+        </button>
+        {item.body !== undefined && item.body.length > 0 && (
+          <p className="goal-objective">{item.body}</p>
+        )}
+      </article>
+    );
   if (item.kind === "subagent") {
     const speech = subagentFinalText(item);
     return (
@@ -510,7 +531,7 @@ export function TimelineCard({
 }
 
 function estimate(item: TimelineItem | undefined): number {
-  if (item?.kind === "plan" || item?.kind === "todo") return 168;
+  if (item?.kind === "plan" || item?.kind === "todo" || item?.kind === "goal") return 168;
   if (item !== undefined && isModelCallSpan(item)) return 220;
   if (item?.kind === "message") return 92;
   if (item?.kind === "subagent") return 96;

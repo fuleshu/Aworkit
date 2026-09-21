@@ -463,6 +463,7 @@ function projectFact(
     });
   }
   if (event.kind === "tool.todo") return todoCard(event, fact);
+  if (event.kind === "tool.goal") return goalCard(event, fact);
   return projectLegacyActivity(event, fact);
 }
 
@@ -577,6 +578,28 @@ function todoCard(event: RuntimeEvent, fact: FactPayload): TimelineItem {
         return status.length === 0 ? content : `[${status}] ${content}`;
       })
       .join("\n"),
+  };
+}
+
+function goalCard(event: RuntimeEvent, fact: FactPayload): TimelineItem {
+  const goal = record(fact.goal);
+  const status = string(goal.status) ?? "active";
+  const objective = string(goal.goal) ?? "";
+  const note = string(goal.note);
+  const title =
+    status === "completed"
+      ? "Goal completed"
+      : status === "cleared"
+        ? "Goal cleared"
+        : "Chat goal";
+  return {
+    ...baseItem(event, fact, { kind: "goal", title, status }),
+    body:
+      objective.length === 0
+        ? undefined
+        : note !== undefined && note.length > 0
+          ? `${objective}\nNote: ${note}`
+          : objective,
   };
 }
 

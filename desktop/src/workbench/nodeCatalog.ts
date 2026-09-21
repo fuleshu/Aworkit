@@ -171,19 +171,19 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     type: "condition",
     label: "Condition",
     icon: "◇",
-    description: "Routes true/false over the incoming value.",
+    description: "Routes true/false over the incoming value and carries it downstream.",
     inputPorts: [textPort("in", "Value")],
     outputPorts: [routePort("true", "True"), routePort("false", "False")],
     fields: [{ kind: "predicate", key: "predicate", label: "Predicate" }],
-    defaultConfiguration: { predicate: { op: "always" } },
+    defaultConfiguration: { predicate: { kind: "always" } },
   },
   {
     type: "parallel",
     label: "Parallel",
     icon: "⋈",
-    description: "Fork marker; every successor runs.",
-    inputPorts: [flowPort("in", "Trigger")],
-    outputPorts: [flowPort("out", "Branch")],
+    description: "Fork marker; every successor runs with the incoming value.",
+    inputPorts: [flowPort("in", "Value")],
+    outputPorts: [flowPort("out", "Carried value")],
     fields: [],
     defaultConfiguration: {},
   },
@@ -191,9 +191,10 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     type: "approval",
     label: "Approval",
     icon: "✓",
-    description: "Suspends the Run for an explicit user decision.",
-    inputPorts: [flowPort("in", "Trigger")],
-    outputPorts: [flowPort("out", "Approved")],
+    description:
+      "Suspends the Run for an explicit user decision; the incoming value continues after approval.",
+    inputPorts: [flowPort("in", "Value")],
+    outputPorts: [flowPort("out", "Carried value")],
     fields: [
       { kind: "text", key: "title", label: "Title" },
       { kind: "textarea", key: "message", label: "Message" },
@@ -258,13 +259,17 @@ export function catalogOutputPorts(type: string): readonly CatalogPort[] {
 /**
  * Connection validation: a source output port may drive a target input port
  * only when their kinds are compatible. `flow` is a control trigger accepted by
- * gates and emittable by any node; `route` is a condition branch that only
- * feeds control (flow) targets; `text` carries text between text nodes.
+ * gates and emittable by any node; `route` is a condition branch. Both carry the
+ * incoming value through the control node, so either may also feed a
+ * value-consuming (`text`) input; a `text` output never feeds a `flow`/`route`
+ * input except through a value-carrying control node.
  */
 export function portKindsConnect(source: PortKind, target: PortKind): boolean {
   if (source === target) return true;
   if (target === "flow") return true;
-  return false;
+  // Control nodes return their incoming value, so their control output keeps
+  // driving the downstream value pipeline.
+  return source === "flow" || source === "route";
 }
 
 /**

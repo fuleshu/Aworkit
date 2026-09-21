@@ -344,6 +344,32 @@ describe("canonical semantic timeline projection", () => {
       ])[0],
     ).toMatchObject({ status: "cancelled", action: undefined });
   });
+
+  it("projects the durable Chat goal as a typed goal card", () => {
+    const active = projectSemanticTimeline([
+      event(1, "tool.goal", {
+        goal: { status: "active", goal: "Ship task 108", note: "tests green" },
+        runId: "run.1",
+        createdAt: "1",
+      }),
+    ]).find((item) => item.kind === "goal");
+    expect(active).toMatchObject({
+      kind: "goal",
+      title: "Chat goal",
+      status: "active",
+      body: "Ship task 108\nNote: tests green",
+    });
+
+    const completed = projectSemanticTimeline([
+      event(1, "tool.goal", { goal: { status: "completed", goal: "Ship task 108" } }),
+    ]).find((item) => item.kind === "goal");
+    expect(completed).toMatchObject({ title: "Goal completed", body: "Ship task 108" });
+
+    const cleared = projectSemanticTimeline([
+      event(1, "tool.goal", { goal: { status: "cleared" } }),
+    ]).find((item) => item.kind === "goal");
+    expect(cleared).toMatchObject({ title: "Goal cleared", body: undefined });
+  });
 });
 
 function event(

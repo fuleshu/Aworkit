@@ -577,6 +577,55 @@
       "providerName": "todo"
     },
     {
+      "id": "tool.goal",
+      "name": "Chat goal",
+      "description": "Set, read, update, complete, or clear the Chat's durable goal.",
+      "instructions": "Use the goal to record the one outcome this Chat is working toward. Set it when the user states a durable objective, read it after a pause or compaction instead of relying on memory, update it when the objective changes, complete it only when the outcome is actually achieved and verified, and clear it when the user abandons it.",
+      "executor": "goal",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_goal"
+      },
+      "fields": [
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; the goal is Chat-owned state and grants no host authority.",
+          "kind": "string",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "enum": [
+              "set",
+              "get",
+              "update",
+              "complete",
+              "clear"
+            ]
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "providerName": "goal"
+    },
+    {
       "id": "tool.web_search",
       "name": "Web search",
       "description": "Discover relevant web sources.",

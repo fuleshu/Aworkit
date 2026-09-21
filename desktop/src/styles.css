@@ -2748,13 +2748,15 @@ pre {
   padding: 3px 8px;
 }
 
-/* Timeline activity cards (plan, web results, todo, subagent) */
+/* Timeline activity cards (plan, web results, todo, goal, subagent) */
 .plan-call-card,
-.todo-card {
+.todo-card,
+.goal-card {
   padding: 10px;
 }
 .plan-call-body,
-.subagent-body {
+.subagent-body,
+.goal-objective {
   color: var(--aw-secondary);
   font-size: var(--aw-font-ui);
   line-height: 1.5;
