@@ -52,6 +52,15 @@ describe("subagent tab strip", () => {
     expect(tabs[0]).toHaveAttribute("aria-selected", "false");
     expect(tabs[1]).toHaveAttribute("aria-selected", "true");
     expect(tabs[0]).toHaveAttribute("aria-controls", "panel");
+    // The active surface is the group, so one highlight paints behind the label
+    // and its close button together.
+    const activeGroup = tabs[1].closest(".subagent-tab-group");
+    expect(activeGroup).toHaveClass("active");
+    expect(activeGroup?.querySelector(".subagent-tab-close")).not.toBeNull();
+    expect(tabs[2].closest(".subagent-tab-group")).not.toHaveClass("active");
+    // The label truncates in its own element and can never run under the close
+    // button.
+    expect(tabs[1].querySelector(".subagent-tab-label")).not.toBeNull();
     // The parent tab is permanent: it has no close control.
     expect(screen.getAllByRole("button", { name: /^Close subagent tab/ })).toHaveLength(2);
 

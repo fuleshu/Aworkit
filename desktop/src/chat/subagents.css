@@ -13,33 +13,46 @@
   scrollbar-width: thin;
 }
 .subagent-tabs::-webkit-scrollbar { height: 6px; }
+/* The group is the tab surface, so the highlight covers the label and its
+   close button as one control. */
 .subagent-tab-group {
   align-items: center;
+  border-bottom: 2px solid transparent;
+  border-radius: 7px 7px 0 0;
   display: inline-flex;
-  flex: 0 0 auto;
-  max-width: 220px;
+  flex: 0 1 auto;
+  max-width: 232px;
+  min-width: 0;
   position: relative;
 }
+.subagent-tab-group:hover { background: color-mix(in srgb, var(--aw-text) 6%, transparent); }
+.subagent-tab-group.active { background: var(--aw-raised); border-bottom-color: var(--aw-accent); }
 .subagent-tab {
   align-items: center;
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 7px 7px 0 0;
+  border-radius: 0;
   color: var(--aw-secondary);
   cursor: pointer;
   display: inline-flex;
+  flex: 0 1 auto;
   font: inherit;
   gap: 8px;
-  max-width: 220px;
-  overflow: hidden;
-  padding: 7px 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  padding: 7px 6px 7px 10px;
 }
-.subagent-tab-parent { max-width: 160px; }
-.subagent-tab:hover { color: var(--aw-text); background: color-mix(in srgb, var(--aw-text) 6%, transparent); }
-.subagent-tab.active { background: var(--aw-raised); border-bottom-color: var(--aw-accent); color: var(--aw-text); }
+/* The parent tab has no close button, so it is its own surface. */
+.subagent-tab-parent {
+  border-bottom: 2px solid transparent;
+  border-radius: 7px 7px 0 0;
+  max-width: 160px;
+  padding-right: 10px;
+}
+.subagent-tab-parent:hover { background: color-mix(in srgb, var(--aw-text) 6%, transparent); }
+.subagent-tab-parent.active { background: var(--aw-raised); border-bottom-color: var(--aw-accent); }
+.subagent-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-tab:hover { color: var(--aw-text); }
+.subagent-tab.active { color: var(--aw-text); }
 .subagent-tab:focus-visible,
 .subagent-tab-close:focus-visible,
 .subagent-button:focus-visible,
@@ -56,10 +69,11 @@
   color: var(--aw-muted);
   cursor: pointer;
   display: inline-flex;
+  flex: 0 0 auto;
   height: 22px;
   justify-content: center;
-  margin-left: -6px;
-  padding: 0;
+  margin: 0 5px 0 0;
+  padding: 5px;
   width: 22px;
 }
 .subagent-tab-close:hover { background: color-mix(in srgb, var(--aw-danger) 18%, transparent); color: var(--aw-text); }
@@ -114,6 +128,8 @@
 .subagent-context pre { background: var(--aw-window); border: 1px solid var(--aw-divider); border-radius: 8px; margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 10px; white-space: pre-wrap; }
 .subagent-readonly { color: var(--aw-muted); font-size: var(--aw-font-caption); margin: 8px 16px 0; }
 .subagent-empty { color: var(--aw-secondary); margin: 24px 16px; }
+.subagent-empty > p { margin: 0 0 10px; }
+.subagent-empty > button { border-radius: 6px; padding: 6px 12px; }
 .subagent-open { align-self: start; border-radius: 6px; font-size: var(--aw-font-caption); margin: 8px 0 0; padding: 5px 10px; }
 
 /* Composer picker. */

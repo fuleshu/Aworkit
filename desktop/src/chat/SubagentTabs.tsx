@@ -126,7 +126,7 @@ export function SubagentTabs({
           <span
             key={entry.childId}
             role="presentation"
-            className="subagent-tab-group"
+            className={`subagent-tab-group ${selected ? "active" : ""}`}
             data-subagent-tab-group={entry.childId}
           >
             <button
@@ -145,7 +145,9 @@ export function SubagentTabs({
                 className={`subagent-status-dot ${entry.status}`}
                 aria-hidden="true"
               />
-              {subagentTabLabel(entry)}
+              <span className="subagent-tab-label">
+                {subagentTabLabel(entry)}
+              </span>
             </button>
             <button
               type="button"
