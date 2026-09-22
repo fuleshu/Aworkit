@@ -65,7 +65,7 @@ impl SubagentBackendCapabilitiesV1 {
 
     /// The first requested option this capability set does not cover.
     fn first_unsupported(&self, options: &SubagentStartOptionsV1) -> Option<&'static str> {
-        if options.model.is_some() && !self.agent_options {
+        if (options.model.is_some() || options.reasoning_effort.is_some()) && !self.agent_options {
             return Some("agent options");
         }
         if options.output_schema.is_some() && !self.output_schema {
@@ -89,6 +89,9 @@ impl SubagentBackendCapabilitiesV1 {
 pub struct SubagentStartOptionsV1 {
     /// Fixed model route for this delegation.
     pub model: Option<String>,
+    /// Fixed reasoning effort for this delegation. Each backend decides which
+    /// values it accepts, and refuses the rest before anything starts.
+    pub reasoning_effort: Option<String>,
     /// JSON schema the final answer must satisfy.
     pub output_schema: Option<Value>,
     /// Lowest nested delegation depth admitted for the child.
@@ -168,6 +171,16 @@ impl OneShotDelegationV1 {
             .model
             .as_deref()
             .is_some_and(|model| model.trim().is_empty() || model.len() > 512)
+        {
+            return Err(SubagentBackendErrorV1::InvalidStartOptions);
+        }
+        if self
+            .options
+            .reasoning_effort
+            .as_deref()
+            .is_some_and(|effort| {
+                effort.trim().is_empty() || effort.len() > 64 || effort.contains('\0')
+            })
         {
             return Err(SubagentBackendErrorV1::InvalidStartOptions);
         }
@@ -259,6 +272,11 @@ pub trait ExternalAgentBackendV1: Send + Sync {
     fn inherits_parent_context(&self) -> bool {
         false
     }
+    /// Reasoning-effort values this backend accepts, or `None` when the value is
+    /// left to the product. A backend that lists values refuses every other one.
+    fn reasoning_efforts(&self) -> Option<&'static [&'static str]> {
+        None
+    }
     /// Runs one unattended one-shot delegation to completion.
     ///
     /// On cancellation the backend terminates the child's complete process
@@ -331,6 +349,17 @@ impl ExternalAgentBackendRegistryV1 {
                 capability,
             });
         }
+        if let (Some(effort), Some(accepted)) = (
+            request.options.reasoning_effort.as_deref(),
+            backend.reasoning_efforts(),
+        ) {
+            if !accepted.contains(&effort) {
+                return Err(SubagentBackendErrorV1::UnsupportedReasoningEffort {
+                    backend: name.to_owned(),
+                    effort: effort.to_owned(),
+                });
+            }
+        }
         Ok(backend)
     }
 }
@@ -378,6 +407,14 @@ pub enum SubagentBackendErrorV1 {
         backend: String,
         /// Option the backend does not support.
         capability: &'static str,
+    },
+    /// The backend does not accept the requested reasoning effort.
+    #[error("subagent backend '{backend}' does not accept the reasoning effort '{effort}'")]
+    UnsupportedReasoningEffort {
+        /// Backend that refused the effort.
+        backend: String,
+        /// Effort value the backend does not accept.
+        effort: String,
     },
     /// A completed run carried no usable final answer.
     #[error("the delegated final answer is empty or exceeds the accepted size")]
@@ -548,6 +585,78 @@ mod tests {
             )
             .expect("resolves");
         assert_eq!(resolved.name(), "codex");
+    }
+
+    struct EffortBackend;
+
+    impl ExternalAgentBackendV1 for EffortBackend {
+        fn name(&self) -> &str {
+            "claude-code"
+        }
+
+        fn capabilities(&self) -> SubagentBackendCapabilitiesV1 {
+            SubagentBackendCapabilitiesV1 {
+                agent_options: true,
+                ..SubagentBackendCapabilitiesV1::external_agent()
+            }
+        }
+
+        fn reasoning_efforts(&self) -> Option<&'static [&'static str]> {
+            Some(&["low", "medium", "high"])
+        }
+
+        fn run(
+            &self,
+            _request: &OneShotDelegationV1,
+            _cancellation: &CancellationToken,
+        ) -> SubagentOutcomeV1 {
+            SubagentOutcomeV1::completed("done".to_owned()).expect("valid answer")
+        }
+    }
+
+    #[test]
+    fn a_declared_effort_list_refuses_every_other_value() {
+        let mut registry = ExternalAgentBackendRegistryV1::new();
+        registry
+            .register(Arc::new(EffortBackend))
+            .expect("registers");
+        let accepted = |effort: &str| SubagentStartOptionsV1 {
+            reasoning_effort: Some(effort.to_owned()),
+            ..SubagentStartOptionsV1::default()
+        };
+        assert!(
+            registry
+                .resolve("claude-code", &request(accepted("high")))
+                .is_ok()
+        );
+        assert_eq!(
+            registry
+                .resolve("claude-code", &request(accepted("minimal")))
+                .err(),
+            Some(SubagentBackendErrorV1::UnsupportedReasoningEffort {
+                backend: "claude-code".to_owned(),
+                effort: "minimal".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn an_effort_without_agent_options_is_refused_as_an_agent_option() {
+        assert_eq!(
+            registry()
+                .resolve(
+                    "codex",
+                    &request(SubagentStartOptionsV1 {
+                        reasoning_effort: Some("high".to_owned()),
+                        ..SubagentStartOptionsV1::default()
+                    }),
+                )
+                .err(),
+            Some(SubagentBackendErrorV1::UnsupportedCapability {
+                backend: "codex".to_owned(),
+                capability: "agent options",
+            })
+        );
     }
 
     #[test]

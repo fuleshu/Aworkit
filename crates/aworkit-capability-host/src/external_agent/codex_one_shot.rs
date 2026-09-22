@@ -486,16 +486,14 @@ fn drive(
     state.thread_id = thread_id.to_owned();
 
     // turn/start
-    send_request(
-        wire,
-        3,
-        "turn/start",
-        &json!({
-            "threadId": state.thread_id,
-            "input": [{"type": "text", "text": request.task, "text_elements": []}],
-        }),
-        "turn-start",
-    )?;
+    let mut turn_params = json!({
+        "threadId": state.thread_id,
+        "input": [{"type": "text", "text": request.task, "text_elements": []}],
+    });
+    if let Some(effort) = request.options.reasoning_effort.as_deref() {
+        turn_params["effort"] = json!(effort);
+    }
+    send_request(wire, 3, "turn/start", &turn_params, "turn-start")?;
     let turn = await_response(
         wire,
         &mut state,
@@ -1011,7 +1009,10 @@ impl ExternalAgentBackendV1 for CodexOneShotBackendV1 {
     }
 
     fn capabilities(&self) -> SubagentBackendCapabilitiesV1 {
-        SubagentBackendCapabilitiesV1::external_agent()
+        SubagentBackendCapabilitiesV1 {
+            agent_options: true,
+            ..SubagentBackendCapabilitiesV1::external_agent()
+        }
     }
 
     fn run(
@@ -1263,6 +1264,32 @@ mod tests {
         scripted.push(turn_completed("turn.1", "completed"));
         let (outcome, _) = run(scripted, CodexPermissionModeV1::Never);
         assert_eq!(outcome.answer.as_deref(), Some("Newer unphased"));
+    }
+
+    #[test]
+    fn a_model_override_and_effort_reach_the_protocol() {
+        let mut scripted = handshake("thread.1", "turn.1", true);
+        scripted.push(agent_message("turn.1", "Done", json!("final_answer")));
+        scripted.push(turn_completed("turn.1", "completed"));
+        let mut request = request();
+        request.options.model = Some("gpt-5.6-sol".to_owned());
+        request.options.reasoning_effort = Some("high".to_owned());
+        let mut wire = ScriptedWireV1::new(scripted);
+        let outcome = run_codex_one_shot(
+            &mut wire,
+            &config(CodexPermissionModeV1::Never),
+            &request,
+            &CancellationToken::default(),
+        );
+        assert_eq!(outcome.stop_reason, SubagentStopReasonV1::Completed);
+        assert_eq!(
+            wire.sent_method("thread/start").expect("thread/start")["params"]["model"],
+            "gpt-5.6-sol"
+        );
+        assert_eq!(
+            wire.sent_method("turn/start").expect("turn/start")["params"]["effort"],
+            "high"
+        );
     }
 
     #[test]
@@ -1632,7 +1659,10 @@ mod tests {
         assert_eq!(backend.name(), "codex");
         assert_eq!(
             backend.capabilities(),
-            SubagentBackendCapabilitiesV1::external_agent()
+            SubagentBackendCapabilitiesV1 {
+                agent_options: true,
+                ..SubagentBackendCapabilitiesV1::external_agent()
+            }
         );
         assert!(!backend.inherits_parent_context());
     }
