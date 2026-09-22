@@ -3713,6 +3713,7 @@ mod tests {
     mod approval_modes;
     mod frozen_tools;
     mod descriptor_upgrade;
+    mod external_agent_tools;
     mod subagent_background;
     mod subagent_continuation;
     mod subagent_tools;

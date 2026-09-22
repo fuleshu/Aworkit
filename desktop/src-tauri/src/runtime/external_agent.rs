@@ -7,20 +7,28 @@ use std::{
     time::Instant,
 };
 
+use std::sync::Arc;
+
 use aworkit_capability_host::{
-    CodexAppServerEnvironmentV1, CodexAppServerProbeConfigV1, probe_codex_app_server_v1,
+    ClaudeOneShotBackendV1, ClaudeOneShotConfigV1, ClaudeOneShotLimitsV1, ClaudePermissionModeV1,
+    CodexAppServerEnvironmentV1, CodexAppServerProbeConfigV1, CodexOneShotBackendV1,
+    CodexOneShotConfigV1, CodexOneShotLimitsV1, CodexPermissionModeV1, ExternalAgentBackendV1,
+    probe_codex_app_server_v1,
 };
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
+
+use serde_json::Value;
 
 use super::{
     credentials::CredentialVault,
     settings_v2::{
         CredentialMetadataConfigurationV2, ExternalAgentCapabilitiesV2,
         ExternalAgentConfigurationV2, IntegrationTransportV2, NamedCredentialBindingV2,
-        validate_secret_free_stdio_argument,
+        SettingsConfigurationV2, validate_secret_free_stdio_argument,
     },
+    tool_loop::ResolvedExternalAgentTargetV1,
 };
 
 const MAXIMUM_BINDINGS: usize = 256;
@@ -47,6 +55,190 @@ pub struct ExternalAgentProbeResultV2 {
     pub latency_millis: u64,
     pub draft_fingerprint: String,
     pub message: String,
+}
+
+/// Adapter a delegation tool targets, or `None` for a tool that delegates
+/// in-process. The two external delegation tools are bound to one product each.
+pub(crate) fn delegation_tool_adapter(tool_id: &str) -> Option<&'static str> {
+    match tool_id {
+        "tool.subagent_codex" => Some("codex_app_server"),
+        "tool.subagent_claude_code" => Some("claude_code"),
+        _ => None,
+    }
+}
+
+/// Builds the one-shot backend for one frozen delegation target.
+///
+/// Only products with an installed adapter are accepted, and the frozen
+/// permission mode must be one the product can express; anything else fails
+/// loudly instead of being translated into a weaker policy.
+pub(crate) fn build_delegation_backend(
+    backend: &str,
+    executable: &str,
+    arguments: &[String],
+    permission_mode: &str,
+) -> Result<Arc<dyn ExternalAgentBackendV1>, String> {
+    let executable = PathBuf::from(executable);
+    match backend {
+        "codex" => {
+            let permission_mode = match permission_mode {
+                "never" => CodexPermissionModeV1::Never,
+                "approveForMe" => CodexPermissionModeV1::ApproveForMe,
+                "dangerouslyBypassApprovalsAndSandbox" => {
+                    CodexPermissionModeV1::DangerouslyBypassApprovalsAndSandbox
+                }
+                other => {
+                    return Err(format!(
+                        "Codex App Server does not accept permission mode '{other}'"
+                    ));
+                }
+            };
+            let config = CodexOneShotConfigV1 {
+                name: "codex".to_owned(),
+                executable,
+                arguments: arguments.to_vec(),
+                working_directory: None,
+                // Native Codex configuration and login stay authoritative.
+                inherit_environment: true,
+                environment: Vec::new(),
+                permission_mode,
+                limits: CodexOneShotLimitsV1::default(),
+            };
+            Ok(Arc::new(
+                CodexOneShotBackendV1::new(config).map_err(|error| error.to_string())?,
+            ))
+        }
+        "claude-code" => {
+            let permission_mode = match permission_mode {
+                "dontAsk" => ClaudePermissionModeV1::DontAsk,
+                "acceptEdits" => ClaudePermissionModeV1::AcceptEdits,
+                "auto" => ClaudePermissionModeV1::Auto,
+                "plan" => ClaudePermissionModeV1::Plan,
+                "bypassPermissions" => ClaudePermissionModeV1::BypassPermissions,
+                other => {
+                    return Err(format!(
+                        "Claude Code does not accept permission mode '{other}'"
+                    ));
+                }
+            };
+            let config = ClaudeOneShotConfigV1 {
+                name: "claude-code".to_owned(),
+                executable,
+                arguments: arguments.to_vec(),
+                working_directory: None,
+                // Native Claude settings and login stay authoritative.
+                inherit_environment: true,
+                environment: Vec::new(),
+                permission_mode,
+                limits: ClaudeOneShotLimitsV1::default(),
+            };
+            Ok(Arc::new(
+                ClaudeOneShotBackendV1::new(config).map_err(|error| error.to_string())?,
+            ))
+        }
+        other => Err(format!(
+            "external delegation backend '{other}' has no installed adapter"
+        )),
+    }
+}
+
+/// Resolves the configured external-agent target one delegation tool runs, so
+/// the Chat freezes exact values instead of re-reading Settings mid-Run.
+///
+/// Fails closed for every reason a delegation could not honestly run: no
+/// enabled target, an unknown or disabled target, a transport the adapter does
+/// not support, credential-backed environment values this build cannot
+/// materialize for a child process, or an executable that cannot be found.
+pub(crate) fn resolve_delegation_target(
+    tool_id: &str,
+    configuration: &BTreeMap<String, Value>,
+    settings: &SettingsConfigurationV2,
+) -> Result<ResolvedExternalAgentTargetV1, String> {
+    let adapter = delegation_tool_adapter(tool_id)
+        .ok_or_else(|| format!("tool '{tool_id}' does not delegate to an external agent"))?;
+    let requested_id = configuration
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let candidates = settings
+        .external_agents
+        .iter()
+        .filter(|agent| agent.adapter == adapter)
+        .collect::<Vec<_>>();
+    let target = if requested_id.is_empty() {
+        candidates
+            .iter()
+            .copied()
+            .find(|agent| agent.enabled)
+            .ok_or_else(|| {
+                format!("no enabled {adapter} external agent is configured; add one in Settings")
+            })?
+    } else {
+        let target = candidates
+            .iter()
+            .copied()
+            .find(|agent| agent.id == requested_id)
+            .ok_or_else(|| {
+                format!(
+                    "external delegation target '{requested_id}' is not a configured {adapter} target"
+                )
+            })?;
+        if !target.enabled {
+            return Err(format!(
+                "external delegation target '{requested_id}' is disabled in saved Settings"
+            ));
+        }
+        target
+    };
+    let IntegrationTransportV2::Stdio {
+        command,
+        args,
+        cwd,
+        env,
+    } = &target.connection
+    else {
+        return Err(format!(
+            "external delegation target '{}' requires the local STDIO transport",
+            target.id
+        ));
+    };
+    if !env.is_empty() || !target.credential_bindings.is_empty() {
+        return Err(format!(
+            "external delegation target '{}' injects credential-backed environment values, which this build cannot materialize for a delegation; sign in with the product's own login or remove the bindings",
+            target.id
+        ));
+    }
+    if adapter == "codex_app_server" && args.first().map(String::as_str) != Some("app-server") {
+        return Err(
+            "Codex App Server arguments must begin with the explicit 'app-server' subcommand"
+                .into(),
+        );
+    }
+    let executable = resolve_executable(command)?;
+    let working_directory = cwd
+        .as_deref()
+        .map(resolve_directory)
+        .transpose()?
+        .map(|path| path.display().to_string());
+    Ok(ResolvedExternalAgentTargetV1 {
+        backend: match adapter {
+            "codex_app_server" => "codex",
+            _ => "claude-code",
+        }
+        .to_owned(),
+        executable: executable.display().to_string(),
+        arguments: args.clone(),
+        working_directory,
+        permission_mode: target.permission_mode.map_or_else(
+            || match adapter {
+                "codex_app_server" => "never".to_owned(),
+                _ => "dontAsk".to_owned(),
+            },
+            |mode| mode.as_str().to_owned(),
+        ),
+        model: target.model.clone(),
+        reasoning_effort: target.reasoning_effort.clone(),
+    })
 }
 
 pub(crate) fn probe_external_agent(
@@ -344,6 +536,138 @@ fn uses_non_stdio_listener(arguments: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One configured target whose executable is this test binary, which is a
+    /// real absolute file the resolver can attest.
+    fn target(adapter: &str, enabled: bool) -> ExternalAgentConfigurationV2 {
+        ExternalAgentConfigurationV2 {
+            id: "agent.fixture".into(),
+            name: "Fixture".into(),
+            adapter: adapter.into(),
+            enabled,
+            connection: IntegrationTransportV2::Stdio {
+                command: std::env::current_exe()
+                    .expect("test executable")
+                    .display()
+                    .to_string(),
+                args: if adapter == "codex_app_server" {
+                    vec!["app-server".into()]
+                } else {
+                    Vec::new()
+                },
+                cwd: None,
+                env: Vec::new(),
+            },
+            credential_bindings: Vec::new(),
+            mcp_server_ids: Vec::new(),
+            capabilities: ExternalAgentCapabilitiesV2::default(),
+            configuration: BTreeMap::new(),
+            permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+        }
+    }
+
+    fn configuration(target_id: &str) -> BTreeMap<String, Value> {
+        BTreeMap::from([("targetId".to_owned(), Value::String(target_id.to_owned()))])
+    }
+
+    #[test]
+    fn a_delegation_resolves_one_enabled_target_of_its_own_product() {
+        let mut settings = SettingsConfigurationV2::default();
+        settings
+            .external_agents
+            .push(target("codex_app_server", true));
+        let resolved = resolve_delegation_target(
+            "tool.subagent_codex",
+            &configuration("agent.fixture"),
+            &settings,
+        )
+        .expect("an enabled Codex target resolves");
+        assert_eq!(resolved.backend, "codex");
+        assert_eq!(resolved.permission_mode, "never");
+        assert_eq!(resolved.arguments, ["app-server"]);
+        assert!(resolved.model.is_none() && resolved.reasoning_effort.is_none());
+
+        // An empty id selects the first enabled target of that product.
+        let resolved =
+            resolve_delegation_target("tool.subagent_codex", &BTreeMap::new(), &settings)
+                .expect("the first enabled target resolves");
+        assert_eq!(resolved.backend, "codex");
+
+        // The other product's tool never accepts this target.
+        let error =
+            resolve_delegation_target("tool.subagent_claude_code", &BTreeMap::new(), &settings)
+                .expect_err("no Claude target is configured");
+        assert!(error.contains("no enabled claude_code"), "{error}");
+        // A tool that does not delegate is not resolvable at all.
+        assert!(resolve_delegation_target("tool.subagent", &BTreeMap::new(), &settings).is_err());
+    }
+
+    #[test]
+    fn delegation_targets_fail_closed_without_a_usable_product_target() {
+        let mut settings = SettingsConfigurationV2::default();
+        settings
+            .external_agents
+            .push(target("codex_app_server", false));
+        let disabled = resolve_delegation_target(
+            "tool.subagent_codex",
+            &configuration("agent.fixture"),
+            &settings,
+        )
+        .expect_err("a disabled target is refused");
+        assert!(
+            disabled.contains("disabled in saved Settings"),
+            "{disabled}"
+        );
+        let none = resolve_delegation_target("tool.subagent_codex", &BTreeMap::new(), &settings)
+            .expect_err("a disabled target is not a default");
+        assert!(none.contains("no enabled codex_app_server"), "{none}");
+
+        settings.external_agents[0].enabled = true;
+        let unknown = resolve_delegation_target(
+            "tool.subagent_codex",
+            &configuration("agent.other"),
+            &settings,
+        )
+        .expect_err("an unknown target id is refused");
+        assert!(
+            unknown.contains("not a configured codex_app_server target"),
+            "{unknown}"
+        );
+
+        // Credential-backed environment values cannot be materialized for a
+        // delegation yet, so the target is refused instead of run unauthenticated.
+        settings.external_agents[0].credential_bindings = vec![NamedCredentialBindingV2 {
+            name: "OPENAI_API_KEY".into(),
+            credential_ref: "credential.fixture".to_owned(),
+            field: "token".into(),
+        }];
+        let credentialed = resolve_delegation_target(
+            "tool.subagent_codex",
+            &configuration("agent.fixture"),
+            &settings,
+        )
+        .expect_err("credential injection is refused");
+        assert!(
+            credentialed.contains("cannot materialize"),
+            "{credentialed}"
+        );
+
+        // A transport the product does not implement is refused.
+        settings.external_agents[0].credential_bindings.clear();
+        settings.external_agents[0].connection = IntegrationTransportV2::Http {
+            url: "https://agent.example/rpc".into(),
+            headers: Vec::new(),
+        };
+        let http = resolve_delegation_target(
+            "tool.subagent_codex",
+            &configuration("agent.fixture"),
+            &settings,
+        )
+        .expect_err("HTTP is refused");
+        assert!(http.contains("local STDIO transport"), "{http}");
+    }
 
     #[test]
     fn executable_resolution_accepts_absolute_and_bare_path_entries() {

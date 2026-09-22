@@ -37,10 +37,26 @@ fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
             assert!(!entry.requires_project);
         }
         let settings = defaults.iter().find(|tool| tool.id == entry.id).unwrap();
+        let mut configuration = serde_json::to_value(&settings.configuration).unwrap();
+        // First-input freeze resolves a delegation tool's configured product
+        // target and stores it with the snapshot; this round-trip stands in for
+        // that resolution so every manifest tool is frozen exactly once.
+        if super::super::external_agent::delegation_tool_adapter(&entry.id).is_some() {
+            configuration["resolvedTarget"] = json!({
+                "backend": if entry.id == "tool.subagent_codex" { "codex" } else { "claude-code" },
+                "executable": std::env::current_exe().unwrap().display().to_string(),
+                "arguments": if entry.id == "tool.subagent_codex" {
+                    json!(["app-server"])
+                } else {
+                    json!([])
+                },
+                "permissionMode": if entry.id == "tool.subagent_codex" { "never" } else { "dontAsk" },
+            });
+        }
         let frozen = super::super::tool_loop::freeze_file_tool_bindings(&[
             super::super::tool_loop::WorkflowToolBindingV1 {
                 capability_id: entry.id.clone(),
-                configuration: serde_json::to_value(&settings.configuration).unwrap(),
+                configuration,
                 credential_bindings: vec![],
                 definition: None,
                 options: ToolOptions::default(),
@@ -54,7 +70,12 @@ fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
     malformed["tools"][1] = malformed["tools"][0].clone();
     assert!(NativeToolPlugin::parse(&malformed.to_string()).is_err());
     malformed = serde_json::from_str(BUNDLED).unwrap();
-    malformed["tools"].as_array_mut().unwrap().iter_mut().find(|tool| tool["id"] == "tool.files.read").unwrap()["fields"] = json!([]);
+    malformed["tools"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|tool| tool["id"] == "tool.files.read")
+        .unwrap()["fields"] = json!([]);
     assert!(NativeToolPlugin::parse(&malformed.to_string()).is_err());
 }
 
@@ -106,11 +127,17 @@ fn prompt_migration_preserves_custom_workflows_and_is_idempotent() {
 
 #[test]
 fn tool_options_reject_invalid_execution_and_preserve_the_resolved_path() {
-    let auto = ToolOptions { auto_approve: true, ..Default::default() };
+    let auto = ToolOptions {
+        auto_approve: true,
+        ..Default::default()
+    };
     assert!(auto.validate("mcp").is_ok());
     assert!(auto.validate("native").is_err());
     assert!(auto.validate("shell").is_err());
-    assert_eq!(serde_json::to_value(ToolOptions::default()).unwrap(), json!({}));
+    assert_eq!(
+        serde_json::to_value(ToolOptions::default()).unwrap(),
+        json!({})
+    );
     assert!(
         ToolOptions {
             executable: Some("relative.exe".into()),
@@ -128,8 +155,16 @@ fn tool_options_reject_invalid_execution_and_preserve_the_resolved_path() {
         ..Default::default()
     };
     assert!(options.validate("mcp").is_err());
-    for id in ["tool.shell.host", "tool.shell.start", "tool.python.host", "tool.python.start"] {
-        let mut tool = native_defaults().into_iter().find(|tool| tool.id == id).unwrap();
+    for id in [
+        "tool.shell.host",
+        "tool.shell.start",
+        "tool.python.host",
+        "tool.python.start",
+    ] {
+        let mut tool = native_defaults()
+            .into_iter()
+            .find(|tool| tool.id == id)
+            .unwrap();
         tool.options = options.clone();
         let frozen = freeze_settings(&tool).unwrap();
         assert!(std::path::Path::new(frozen.options.executable.as_ref().unwrap()).is_absolute());

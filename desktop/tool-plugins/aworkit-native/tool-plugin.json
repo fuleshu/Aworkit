@@ -1260,6 +1260,112 @@
       "providerName": "spawn_subagent"
     },
     {
+      "id": "tool.subagent_codex",
+      "name": "Codex agent delegation",
+      "description": "Delegate one self-contained task to the configured Codex App Server target and return its final answer.",
+      "instructions": "Use this when an independent task should run as a real Codex session in this workspace. Write a complete brief: the child cannot see this conversation. The delegation runs unattended under the permission mode fixed in Settings for that target and never asks you or the user for approval, so do not delegate work that needs a decision. Only the final answer returns; Codex commentary, reasoning and diffs never enter this Chat.",
+      "executor": "subagent_codex",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "targetId": "",
+        "requiresApproval": true
+      },
+      "fields": [
+        {
+          "key": "targetId",
+          "label": "External agent target",
+          "help": "Id of the configured Codex target in Settings. Empty uses the first enabled Codex target.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "description": "The complete, self-contained task for the external agent."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "providerName": "spawn_codex_subagent"
+    },
+    {
+      "id": "tool.subagent_claude_code",
+      "name": "Claude Code agent delegation",
+      "description": "Delegate one self-contained task to the configured Claude Code target and return its final answer.",
+      "instructions": "Use this when an independent task should run as a real Claude Code session in this workspace. Write a complete brief: the child cannot see this conversation. The delegation runs unattended under the permission mode fixed in Settings for that target and never asks you or the user for approval, so do not delegate work that needs a decision. Only the final answer returns; Claude Code reasoning, tool traffic and diffs never enter this Chat.",
+      "executor": "subagent_claude_code",
+      "requiresProject": false,
+      "execution": "native",
+      "configuration": {
+        "authorityMode": "run_subagent",
+        "targetId": "",
+        "requiresApproval": true
+      },
+      "fields": [
+        {
+          "key": "targetId",
+          "label": "External agent target",
+          "help": "Id of the configured Claude Code target in Settings. Empty uses the first enabled Claude Code target.",
+          "kind": "string",
+          "readOnly": false
+        },
+        {
+          "key": "authorityMode",
+          "label": "Authority boundary",
+          "help": "Execution boundary enforced by this adapter; host processes are not sandboxed.",
+          "kind": "string",
+          "readOnly": true
+        },
+        {
+          "key": "requiresApproval",
+          "label": "Approval policy applies",
+          "help": "This tool is mediated by the approval policy selected above.",
+          "kind": "boolean",
+          "readOnly": true
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "description": "The complete, self-contained task for the external agent."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "providerName": "spawn_claude_code_subagent"
+    },
+    {
       "id": "tool.subagent_fork",
       "name": "Forked subagent delegation",
       "description": "Delegate a task to a child that inherits a bounded projection of this conversation.",

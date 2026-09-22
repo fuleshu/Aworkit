@@ -734,10 +734,13 @@ impl RunEventStream {
 
     pub(crate) fn publish_tool_started(&self, call: &aworkit_capability_host::ModelToolCallV1) {
         let span_id = format!("span.tool.{}", call.call_id);
-        let span_kind = if call.capability_id == "tool.subagent" {
-            "external_agent"
-        } else {
-            "tool_call"
+        // An in-process delegated child and an external product session are
+        // different things: the timeline, lineage and context inspection all
+        // need to tell them apart, so each carries its own marker.
+        let span_kind = match call.capability_id.as_str() {
+            "tool.subagent" | "tool.subagent_fork" => "subagent",
+            "tool.subagent_codex" | "tool.subagent_claude_code" => "external_agent",
+            _ => "tool_call",
         };
         let causation = self
             .state
@@ -1187,7 +1190,7 @@ fn rehydrate_state(
                 }
                 match event.payload.get("spanKind").and_then(Value::as_str) {
                     Some("agent_loop") => agent_loops.push(span_id.clone()),
-                    Some("external_agent") => subagents.push(span_id.clone()),
+                    Some("subagent" | "external_agent") => subagents.push(span_id.clone()),
                     Some("graph_node")
                         if event.payload.get("semanticRole").and_then(Value::as_str) == Some("tool") =>
                     {

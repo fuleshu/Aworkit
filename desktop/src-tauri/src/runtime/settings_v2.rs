@@ -1297,7 +1297,7 @@ impl BuiltInToolConfigurationV2 {
                 }
                 Ok(())
             }
-            "tool.ask_user" | "tool.browse" | "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" | "tool.subagent_fork" | "tool.subagent_list" | "tool.subagent_message" | "tool.subagent_cancel" => {
+            "tool.ask_user" | "tool.browse" | "tool.image.read" | "tool.screenshot" | "tool.shell.start" | "tool.python.start" | "tool.job.output" | "tool.job.input" | "tool.job.stop" | "tool.job.list" | "tool.job.keep" | "tool.subagent_fork" | "tool.subagent_list" | "tool.subagent_message" | "tool.subagent_cancel" | "tool.subagent_codex" | "tool.subagent_claude_code" => {
                 let manifest = super::tool_registry::native_tool(&self.id)
                     .ok_or_else(|| format!("missing native tool '{}'", self.id))?;
                 require_tool_project_scope(self, manifest.requires_project)?;
@@ -3022,6 +3022,8 @@ mod tests {
                 "tool.web_fetch",
                 "tool.web_extract",
                 "tool.subagent",
+                "tool.subagent_codex",
+                "tool.subagent_claude_code",
                 "tool.subagent_fork",
                 "tool.subagent_list",
                 "tool.subagent_message",
@@ -3868,7 +3870,8 @@ mod tests {
         );
     }
 
-        fn installed_external_agent_contract_unifies_environment_and_rejects_forged_capabilities() {
+    #[test]
+    fn installed_external_agent_contract_unifies_environment_and_rejects_forged_capabilities() {
         let mut settings = configured();
         add_integration_credential(&mut settings);
         settings.external_agents.push(ExternalAgentConfigurationV2 {

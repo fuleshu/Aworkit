@@ -18,6 +18,9 @@ pub(crate) enum ChildKindV1 {
     Fresh,
     /// A declared bounded projection of the parent conversation was inherited.
     Fork,
+    /// One unattended one-shot delegation to a configured external agent. It has
+    /// identity, lineage and a terminal answer, but no continuation or steering.
+    External,
 }
 
 /// Terminal and resumable states of one child conversation scope.

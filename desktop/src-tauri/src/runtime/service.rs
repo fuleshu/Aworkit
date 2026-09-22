@@ -3995,7 +3995,21 @@ fn freeze_builtin_tool(
             "workflow tool '{tool_id}' is disabled in saved Settings"
         ));
     }
-    let snapshot = super::tool_registry::freeze_settings(configured)?;
+    let mut snapshot = super::tool_registry::freeze_settings(configured)?;
+    // An external delegation tool freezes the exact product target it resolved
+    // to, so a later Settings change cannot alter a running Chat's delegation.
+    if super::external_agent::delegation_tool_adapter(tool_id).is_some() {
+        let resolved = super::external_agent::resolve_delegation_target(
+            tool_id,
+            &snapshot.configuration,
+            settings,
+        )?;
+        snapshot.configuration.insert(
+            "resolvedTarget".to_owned(),
+            serde_json::to_value(resolved)
+                .map_err(|_| "external delegation target could not be frozen".to_owned())?,
+        );
+    }
     Ok(FrozenToolBindingV1 {
         tool_id: tool_id.to_owned(),
         tool_hash: canonical_hash(&snapshot)?,

@@ -381,6 +381,7 @@ function spanActor(
   while (current !== undefined && !visited.has(current.spanId)) {
     visited.add(current.spanId);
     if (
+      current.spanKind === "subagent" ||
       current.spanKind === "external_agent" ||
       (current.spanKind === "tool_call" &&
         isSubagentCapability(current.metadata.capabilityId)) ||
@@ -398,7 +399,8 @@ function spanTimelineKind(span: SpanProjection): TimelineKind {
   if (span.spanKind === "model_call")
     return span.reasoning.length > 0 ? "thinking" : "model";
   if (span.spanKind === "agent_loop") return "step";
-  if (span.spanKind === "external_agent") return "subagent";
+  if (span.spanKind === "subagent" || span.spanKind === "external_agent")
+    return "subagent";
   if (span.spanKind === "tool_call") {
     const capability = string(span.metadata.capabilityId) ?? "";
     if (isSubagentCapability(capability)) return "subagent";

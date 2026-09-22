@@ -14,6 +14,7 @@ use crate::runtime::model_tool_loop;
 
 pub(crate) mod compatibility;
 mod control;
+mod external;
 mod fork;
 mod frames;
 mod worker;
@@ -1187,6 +1188,7 @@ impl FileToolAuthorityRuntimeV1 {
                     kind: match frame.kind {
                         ChildKindV1::Fresh => "fresh".to_owned(),
                         ChildKindV1::Fork => "fork".to_owned(),
+                        ChildKindV1::External => "external".to_owned(),
                     },
                     status: status.as_str().to_owned(),
                     running: status == ChildStatusV1::Running,

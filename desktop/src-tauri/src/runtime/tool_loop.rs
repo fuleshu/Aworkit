@@ -178,22 +178,39 @@ pub(crate) const SUBAGENT_FORK_CAPABILITY_ID: &str = "tool.subagent_fork";
 pub(crate) const SUBAGENT_LIST_CAPABILITY_ID: &str = "tool.subagent_list";
 pub(crate) const SUBAGENT_MESSAGE_CAPABILITY_ID: &str = "tool.subagent_message";
 pub(crate) const SUBAGENT_CANCEL_CAPABILITY_ID: &str = "tool.subagent_cancel";
+/// One-shot delegation to a configured external agent product.
+pub(crate) const SUBAGENT_CODEX_CAPABILITY_ID: &str = "tool.subagent_codex";
+pub(crate) const SUBAGENT_CLAUDE_CODE_CAPABILITY_ID: &str = "tool.subagent_claude_code";
 /// Every delegation and control tool. A child never inherits one: it cannot
 /// delegate again and cannot list, message or cancel its own or sibling scopes.
-pub(crate) const SUBAGENT_PARENT_TOOL_IDS: [&str; 5] = [
+pub(crate) const SUBAGENT_PARENT_TOOL_IDS: [&str; 7] = [
     SUBAGENT_CAPABILITY_ID,
     SUBAGENT_FORK_CAPABILITY_ID,
     SUBAGENT_LIST_CAPABILITY_ID,
     SUBAGENT_MESSAGE_CAPABILITY_ID,
     SUBAGENT_CANCEL_CAPABILITY_ID,
+    SUBAGENT_CODEX_CAPABILITY_ID,
+    SUBAGENT_CLAUDE_CODE_CAPABILITY_ID,
 ];
 pub(crate) fn is_subagent_tool(capability_id: &str) -> bool {
     SUBAGENT_PARENT_TOOL_IDS.contains(&capability_id)
 }
+/// Whether this capability delegates to a configured external agent product.
+pub(crate) fn is_external_agent_tool(capability_id: &str) -> bool {
+    matches!(
+        capability_id,
+        SUBAGENT_CODEX_CAPABILITY_ID | SUBAGENT_CLAUDE_CODE_CAPABILITY_ID
+    )
+}
 const SUBAGENT_PROVIDER_NAME: &str = "spawn_subagent";
 const SUBAGENT_FORK_PROVIDER_NAME: &str = "fork_subagent";
+const SUBAGENT_CODEX_PROVIDER_NAME: &str = "spawn_codex_subagent";
+const SUBAGENT_CLAUDE_CODE_PROVIDER_NAME: &str = "spawn_claude_code_subagent";
 const SUBAGENT_ADAPTER_ID: &str = "adapter.subagent.v1";
 const SUBAGENT_SCOPE: &str = "run.subagent";
+/// External delegation leaves this machine's workspace for a product process,
+/// so it carries its own scope rather than the in-process child scope.
+const SUBAGENT_EXTERNAL_SCOPE: &str = "run.subagent.external";
 /// Structural delegation bounds frozen into a new Chat. Depth 1 keeps nested
 /// delegation unavailable, matching the approved inheritance contract.
 pub(crate) const SUBAGENT_DEFAULT_MAXIMUM_DEPTH: u32 = 1;
@@ -515,6 +532,29 @@ pub(crate) enum StoredFileToolLimitV1 {
     AskUser,
     /// Asks the user to choose a file or a folder through the OS dialog.
     Browse,
+    /// One unattended one-shot delegation to a configured external agent. Every
+    /// value was resolved from Settings at first input, so a later Settings
+    /// change cannot alter a running Chat's delegation.
+    ExternalAgent {
+        /// Registry backend that runs the delegation, for example `codex`.
+        backend: String,
+        /// Absolute executable of the installed product.
+        executable: String,
+        /// Fixed adapter arguments, secret-free by Settings validation.
+        arguments: Vec<String>,
+        /// Working directory fixed by the target, when it sets one. Absent
+        /// falls back to the Chat's frozen workspace.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_directory: Option<String>,
+        /// Non-interactive policy fixed for every delegation from this target.
+        permission_mode: String,
+        /// Optional model fixed for every delegation from this target.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Optional reasoning effort fixed for every delegation from this target.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<String>,
+    },
     WebSearch {
         configuration: WebSearchConfigurationV1,
     },
@@ -860,6 +900,22 @@ pub(crate) fn file_tool_descriptors()
             false,
         ),
         (
+            SUBAGENT_CODEX_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_EXTERNAL_SCOPE,
+            native_tool_schema(SUBAGENT_CODEX_CAPABILITY_ID),
+            SideEffectClass::NonIdempotent,
+            false,
+        ),
+        (
+            SUBAGENT_CLAUDE_CODE_CAPABILITY_ID,
+            CapabilityKind::Subagent,
+            SUBAGENT_EXTERNAL_SCOPE,
+            native_tool_schema(SUBAGENT_CLAUDE_CODE_CAPABILITY_ID),
+            SideEffectClass::NonIdempotent,
+            false,
+        ),
+        (
             SUBAGENT_FORK_CAPABILITY_ID,
             CapabilityKind::Subagent,
             SUBAGENT_SCOPE,
@@ -966,6 +1022,87 @@ pub(crate) fn mcp_tool_descriptor(
         .rehash()
         .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     Ok(descriptor)
+}
+
+/// One resolved external-agent delegation target, frozen with the Chat.
+///
+/// Values are secret-free by construction: Settings refuses secret-like STDIO
+/// arguments, and credential-backed environment values are rejected at freeze
+/// rather than silently omitted.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ResolvedExternalAgentTargetV1 {
+    /// Registry backend that runs the delegation, for example `codex`.
+    pub backend: String,
+    /// Absolute executable of the installed product.
+    pub executable: String,
+    /// Fixed adapter arguments.
+    pub arguments: Vec<String>,
+    /// Working directory fixed by the target, when it sets one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    /// Non-interactive policy fixed for every delegation from this target.
+    pub permission_mode: String,
+    /// Optional model fixed for every delegation from this target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Optional reasoning effort fixed for every delegation from this target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+/// Freezes one external-agent delegation tool from the target resolved at first
+/// input. An unresolved or mismatched target fails closed: the delegation never
+/// reaches a product process with guessed configuration.
+fn freeze_external_agent(
+    requested: &WorkflowToolBindingV1,
+) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
+    let object = requested
+        .configuration
+        .as_object()
+        .ok_or_else(|| invalid_tool("external delegation configuration must be an object"))?;
+    if object.len() != 4
+        || object.get("authorityMode") != Some(&json!("run_subagent"))
+        || object.get("requiresApproval") != Some(&json!(true))
+        || !object.get("targetId").is_some_and(Value::is_string)
+    {
+        return Err(invalid_tool(
+            "external delegation configuration does not match the installed adapter contract",
+        ));
+    }
+    let resolved: ResolvedExternalAgentTargetV1 = serde_json::from_value(
+        object
+            .get("resolvedTarget")
+            .cloned()
+            .ok_or_else(|| invalid_tool("external delegation target was not resolved at freeze"))?,
+    )
+    .map_err(|_| invalid_tool("external delegation target is malformed"))?;
+    let (provider_name, backend) = match requested.capability_id.as_str() {
+        SUBAGENT_CODEX_CAPABILITY_ID => (SUBAGENT_CODEX_PROVIDER_NAME, "codex"),
+        SUBAGENT_CLAUDE_CODE_CAPABILITY_ID => (SUBAGENT_CLAUDE_CODE_PROVIDER_NAME, "claude-code"),
+        _ => return Err(invalid_tool("external delegation tool is not installed")),
+    };
+    if resolved.backend != backend {
+        return Err(invalid_tool(
+            "external delegation target does not match the selected tool's product",
+        ));
+    }
+    Ok((
+        provider_name.to_owned(),
+        format!(
+            "Delegate one self-contained task to the configured {backend} external agent and return its final answer. The child cannot see this Chat, runs unattended under the permission mode fixed in Settings, and only its final answer returns."
+        ),
+        native_tool_schema(&requested.capability_id),
+        StoredFileToolLimitV1::ExternalAgent {
+            backend: resolved.backend,
+            executable: resolved.executable,
+            arguments: resolved.arguments,
+            working_directory: resolved.working_directory,
+            permission_mode: resolved.permission_mode,
+            model: resolved.model,
+            reasoning_effort: resolved.reasoning_effort,
+        },
+    ))
 }
 
 /// Validates and freezes the exact authority-relevant subset of tool Settings
@@ -1251,6 +1388,7 @@ pub(crate) fn freeze_file_tool_bindings(
                 web_extract_schema(),
                 web::freeze_web_configuration(&requested.configuration)?,
             ),
+            "subagent_codex" | "subagent_claude_code" => freeze_external_agent(requested)?,
             "subagent" => subagent::freeze(requested)?,
             "subagent_fork" => subagent::freeze_fork(requested)?,
             "subagent_list" | "subagent_message" | "subagent_cancel" => {
@@ -3147,6 +3285,9 @@ impl FileToolDispatcherV1 {
                     tool_name,
                     schema_hash,
                 } => self.run_mcp_tool(envelope, server_id, tool_name, schema_hash, cancellation),
+                StoredFileToolLimitV1::ExternalAgent { .. } => {
+                    self.run_external_agent(envelope, cancellation)
+                }
                 StoredFileToolLimitV1::Subagent { .. } => {
                     self.run_subagent(envelope, cancellation)
                 }
@@ -3797,6 +3938,7 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. } => {
             BTreeSet::from(["url", "documentId", "offset", "feedContent"])
         }
+        StoredFileToolLimitV1::ExternalAgent { .. } => BTreeSet::from(["task"]),
         StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         StoredFileToolLimitV1::SubagentFork { .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
@@ -4083,6 +4225,19 @@ fn validate_call_arguments(
                     .filter(|url| !url.is_empty() && url.len() <= 4096)
                     .ok_or_else(|| invalid_tool("web fetch url is empty or oversized"))?;
             }
+        }
+        StoredFileToolLimitV1::ExternalAgent { .. } => {
+            object
+                .get("task")
+                .and_then(Value::as_str)
+                .filter(|task| {
+                    !task.is_empty()
+                        && task.len() <= SUBAGENT_MAXIMUM_TASK_BYTES
+                        && !task.contains('\0')
+                })
+                .ok_or_else(|| {
+                    invalid_tool("external delegation task is empty, oversized, or malformed")
+                })?;
         }
         StoredFileToolLimitV1::Subagent { .. } | StoredFileToolLimitV1::SubagentFork { .. } => {
             object
@@ -4469,6 +4624,7 @@ fn scope_for(capability_id: &str) -> &'static str {
         WEB_FETCH_CAPABILITY_ID => WEB_FETCH_SCOPE,
         WEB_EXTRACT_CAPABILITY_ID => WEB_EXTRACT_SCOPE,
         SUBAGENT_CAPABILITY_ID => SUBAGENT_SCOPE,
+        id if is_external_agent_tool(id) => SUBAGENT_EXTERNAL_SCOPE,
         id if is_subagent_tool(id) => SUBAGENT_SCOPE,
         id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_SCOPE,
         _ => "invalid",
