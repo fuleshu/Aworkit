@@ -204,7 +204,7 @@ pub(crate) fn resolve_delegation_target(
     };
     if !env.is_empty() || !target.credential_bindings.is_empty() {
         return Err(format!(
-            "external delegation target '{}' injects credential-backed environment values, which this build cannot materialize for a delegation; sign in with the product's own login or remove the bindings",
+            "external delegation target '{}' injects credential-backed environment values, which this build cannot materialize for a delegation; sign in with the product's own login, export the value in the environment that launches Aworkit, or remove the bindings",
             target.id
         ));
     }

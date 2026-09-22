@@ -193,13 +193,16 @@ export function ExternalAgentsSection({
     <div className="settings-section-stack">
       <div className="section-heading-row">
         <p className="section-intro">
-          Handshake reports capabilities for the exact current transport draft.
-          The result is ephemeral diagnostic evidence, not saved configuration.
-          This build cannot start an external-agent workflow node or continue
-          its session lifecycle.
+          Configured targets run as unattended one-shot delegations from the
+          delegation tools and from an External Agent workflow node; Aworkit
+          neither continues nor steers a product session. Authentication stays
+          with the product: sign in once with its own CLI, or export an API key
+          in the environment that launches Aworkit. Handshake reports
+          capabilities for the exact current transport draft, and the result is
+          ephemeral diagnostic evidence, not saved configuration.
         </p>
         <button
-          title="Add an external-agent transport draft for diagnostic handshake only"
+          title="Add an external-agent target: a Codex App Server or Claude Code command that delegations run"
           type="button"
           onClick={addAgent}
         >

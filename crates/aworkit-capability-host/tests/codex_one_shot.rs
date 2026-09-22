@@ -1,5 +1,13 @@
 //! One-shot Codex delegation against a real supervised child process.
 //!
+//! One gate is opt-in because it asserts environment inheritance and therefore
+//! needs the variable in the launcher, not in the delegation config:
+//!
+//! ```text
+//! AWORKIT_FIXTURE_AMBIENT_KEY=ambient-present \
+//!   cargo test -p aworkit-capability-host --test codex_one_shot -- --ignored ambient
+//! ```
+//!
 //! The fixture is launched exactly like the installed binary, so these tests
 //! cover process spawning, JSON-lines framing on a real pipe, the reader
 //! thread, and process-tree teardown. They are skipped when no POSIX Python is
@@ -202,4 +210,27 @@ fn a_registered_codex_backend_exposes_no_optional_start_capabilities() {
     assert_eq!(registry.names(), vec!["codex"]);
     let request = request(&directory);
     assert!(registry.resolve("codex", &request).is_ok());
+}
+
+/// A delegated child inherits the environment that launched Aworkit, so an
+/// operator can supply a product API key without storing it anywhere in Aworkit.
+/// The scripted peer fails the run unless the variable arrived from the
+/// launcher, so a completed run is the proof.
+#[test]
+#[ignore = "requires AWORKIT_FIXTURE_AMBIENT_KEY in the launcher environment"]
+fn an_ambient_environment_variable_reaches_the_delegated_child() {
+    let Some(backend) = backend("ambient", None) else {
+        return;
+    };
+    let directory = TempDir::new().expect("temporary directory");
+
+    let outcome = backend.run(&request(&directory), &CancellationToken::default());
+
+    assert_eq!(
+        outcome.stop_reason,
+        SubagentStopReasonV1::Completed,
+        "the child did not inherit the launcher environment: {:?}",
+        outcome.diagnostic
+    );
+    assert_eq!(outcome.answer.as_deref(), Some("fixture final answer"));
 }

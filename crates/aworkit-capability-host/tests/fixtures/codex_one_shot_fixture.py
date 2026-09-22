@@ -52,6 +52,12 @@ def spawn_descendant():
 
 assert sys.argv[1] == "app-server", "the adapter must pass the explicit subcommand"
 
+if MODE == "ambient":
+    # The delegated child must see the environment it was launched with, which is
+    # how an operator supplies a product API key without storing it in Aworkit.
+    if os.environ.get("AWORKIT_FIXTURE_AMBIENT_KEY") != "ambient-present":
+        fail("expected AWORKIT_FIXTURE_AMBIENT_KEY from the launching environment")
+
 initialize = read_request()
 if initialize["method"] != "initialize":
     fail("expected initialize")
