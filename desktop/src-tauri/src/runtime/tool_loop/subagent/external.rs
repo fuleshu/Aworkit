@@ -11,6 +11,7 @@
 //! Chat's delegation.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aworkit_capability_host::{
@@ -32,9 +33,7 @@ impl FileToolDispatcherV1 {
     /// an acknowledged external effect.
     pub(in crate::runtime::tool_loop) fn run_external_agent(
         &self,
-        // A one-shot delegation registers no job and suspends for no approval,
-        // so the envelope carries nothing this path needs.
-        _envelope: &ApprovedInvocationEnvelopeV1,
+        envelope: &ApprovedInvocationEnvelopeV1,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
         let StoredFileToolLimitV1::ExternalAgent {
@@ -108,9 +107,98 @@ impl FileToolDispatcherV1 {
         let backend_handle = registry
             .resolve(backend, &request)
             .map_err(|error| error.to_string())?;
-        let outcome = backend_handle.run(&request, cancellation);
+        // A caller may ask for the delegation to run as a parent-owned job. The
+        // running revision is committed before the job starts, so a restart
+        // reports the child interrupted rather than claiming it is running.
+        if call_arguments.get("runInBackground") == Some(&Value::Bool(true)) {
+            let mut running = self.external_child_frame(
+                &child_id,
+                &task,
+                backend,
+                permission_mode,
+                ChildStatusV1::Running,
+                String::new(),
+            );
+            // The running revision precedes the terminal one; the record store
+            // keys each revision by child and revision number.
+            running.head_revision = 0;
+            self.persist_child(&running)?;
+            publish_child_fact(&self.run_events, &running, ChildStatusV1::Running)?;
+            let runtime = self.runtime.clone();
+            let fact_stream = self.run_events.clone();
+            let job_child_id = child_id.clone();
+            let result_child_id = child_id.clone();
+            let closure_child_id = child_id.clone();
+            let backend_name = backend.clone();
+            let job_id = self.runtime.jobs.clone().start_child_scoped(
+                &self.context.chat_id,
+                envelope.invocation_id.as_str(),
+                Some(self.record.outer_invocation_id.as_str()),
+                &job_child_id,
+                cancellation.clone(),
+                move |_handle: Arc<crate::runtime::tool_loop::jobs::ChildJobHandle>,
+                      child_token: CancellationToken| {
+                    let outcome = backend_handle.run(&request, &child_token);
+                    let frame = build_external_child_frame(
+                        &running,
+                        outcome.stop_reason == SubagentStopReasonV1::Completed,
+                        outcome.answer.clone().unwrap_or_default(),
+                    );
+                    runtime
+                        .records
+                        .record_subagent_child(&frame)
+                        .map_err(|problem| problem.to_string())?;
+                    let _ = publish_child_fact(&fact_stream, &frame, frame.status);
+                    match outcome.stop_reason {
+                        SubagentStopReasonV1::Completed => {
+                            let Some(answer) = outcome.answer else {
+                                return Err(format!(
+                                    "external {backend_name} delegation completed without a final answer (child {closure_child_id})"
+                                ));
+                            };
+                            let mut result = json!({"childId": child_id, "answer": answer});
+                            if let Some(notice) = outcome.diagnostic {
+                                result["notice"] = Value::String(notice);
+                            }
+                            Ok(result)
+                        }
+                        stop_reason => Err(format!(
+                            "external {backend_name} delegation ended as {} (child {closure_child_id}): {}",
+                            stop_reason_name(stop_reason),
+                            outcome.diagnostic.unwrap_or_else(|| {
+                                "no further product detail was reported".to_owned()
+                            })
+                        )),
+                    }
+                },
+            )?;
+            return Ok((
+                json!({
+                    "childId": result_child_id,
+                    "jobId": job_id,
+                    "status": "running",
+                    "running": true,
+                }),
+                format!(
+                    "External {backend} delegation {result_child_id} runs in the background; observe it with job_output or job_list."
+                ),
+            ));
+        }
 
-        let frame = self.external_child_frame(&child_id, &task, backend, permission_mode, &outcome);
+        let outcome = backend_handle.run(&request, cancellation);
+        let status = match outcome.stop_reason {
+            SubagentStopReasonV1::Completed => ChildStatusV1::Completed,
+            SubagentStopReasonV1::Aborted => ChildStatusV1::Cancelled,
+            _ => ChildStatusV1::Failed,
+        };
+        let frame = self.external_child_frame(
+            &child_id,
+            &task,
+            backend,
+            permission_mode,
+            status,
+            outcome.answer.clone().unwrap_or_default(),
+        );
         self.persist_child(&frame)?;
         publish_child_fact(&self.run_events, &frame, frame.status)?;
 
@@ -158,20 +246,16 @@ impl FileToolDispatcherV1 {
         Ok(Duration::from_millis(remaining).min(MAXIMUM_DEADLINE))
     }
 
-    /// Builds the terminal one-shot child frame for one external delegation.
+    /// Builds one child frame revision for an external delegation.
     fn external_child_frame(
         &self,
         child_id: &str,
         task: &str,
         backend: &str,
         permission_mode: &str,
-        outcome: &aworkit_capability_host::SubagentOutcomeV1,
+        status: ChildStatusV1,
+        answer: String,
     ) -> SubagentChildFrameV1 {
-        let status = match outcome.stop_reason {
-            SubagentStopReasonV1::Completed => ChildStatusV1::Completed,
-            SubagentStopReasonV1::Aborted => ChildStatusV1::Cancelled,
-            _ => ChildStatusV1::Failed,
-        };
         let now = crate::runtime::history::now_label();
         SubagentChildFrameV1 {
             child_id: child_id.to_owned(),
@@ -199,7 +283,7 @@ impl FileToolDispatcherV1 {
             ),
             input: json!([{"role": "user", "content": task}]),
             exchanges: Vec::new(),
-            final_text: outcome.answer.clone().unwrap_or_default(),
+            final_text: answer,
             blocked_actions: Vec::new(),
             model_turns: 1,
             tool_calls: 0,
@@ -208,6 +292,25 @@ impl FileToolDispatcherV1 {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+}
+
+/// Terminal revision of a background delegation's frame.
+fn build_external_child_frame(
+    running: &SubagentChildFrameV1,
+    completed: bool,
+    answer: String,
+) -> SubagentChildFrameV1 {
+    SubagentChildFrameV1 {
+        status: if completed {
+            ChildStatusV1::Completed
+        } else {
+            ChildStatusV1::Failed
+        },
+        head_revision: running.head_revision.saturating_add(1),
+        final_text: answer,
+        updated_at: crate::runtime::history::now_label(),
+        ..running.clone()
     }
 }
 

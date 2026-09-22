@@ -13,6 +13,8 @@ use crate::runtime::{
 struct DelegationProvider {
     capability_id: String,
     provider_name: String,
+    /// Ask for a parent-owned background job and collect it through job_output.
+    background: bool,
     requests: Arc<Mutex<Vec<ModelToolRequestV1>>>,
 }
 
@@ -26,6 +28,7 @@ impl ProviderFactoryV1 for DelegationProvider {
         Ok(Box::new(ScriptedDelegation {
             capability_id: self.capability_id.clone(),
             provider_name: self.provider_name.clone(),
+            background: self.background,
             requests: Arc::clone(&self.requests),
             binding: descriptor.capability_id.clone(),
             version: descriptor.version_hash.clone(),
@@ -36,6 +39,7 @@ impl ProviderFactoryV1 for DelegationProvider {
 struct ScriptedDelegation {
     capability_id: String,
     provider_name: String,
+    background: bool,
     requests: Arc<Mutex<Vec<ModelToolRequestV1>>>,
     binding: String,
     version: String,
@@ -70,7 +74,20 @@ impl ProviderEnginePortV1 for ScriptedDelegation {
                 "delegate",
                 &self.capability_id,
                 &self.provider_name,
-                json!({"task":"Summarize the delegation fixture."}),
+                json!({
+                    "task":"Summarize the delegation fixture.",
+                    "runInBackground": self.background,
+                }),
+            ))?;
+        } else if let Some(job_id) = pending_job(&request) {
+            emit(tool_call(
+                &format!("collect-{}", request.exchanges.len()),
+                "tool.job.output",
+                tool_registry::native_tool("tool.job.output")
+                    .expect("installed job output tool")
+                    .provider_name
+                    .as_str(),
+                json!({"jobId": job_id, "waitMs": 3_000}),
             ))?;
         } else {
             emit(ModelToolEventV1::AssistantOutput {
@@ -84,6 +101,16 @@ impl ProviderEnginePortV1 for ScriptedDelegation {
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }
+}
+
+/// The still-running job id of the parent's latest result, when it has one.
+fn pending_job(request: &ModelToolRequestV1) -> Option<String> {
+    let last = request.exchanges.last()?.results.last()?.content.clone();
+    let running = last["running"] == true || last["moreOutput"] == true;
+    last["jobId"]
+        .as_str()
+        .filter(|_| running)
+        .map(str::to_owned)
 }
 
 /// The scripted product process, skipped where a POSIX fixture cannot run.
@@ -200,6 +227,7 @@ fn an_external_agent_node_runs_one_delegation_and_feeds_the_answer_downstream() 
     pipeline.provider_factory = Arc::new(DelegationProvider {
         capability_id: SUBAGENT_CODEX_CAPABILITY_ID.into(),
         provider_name: "spawn_codex_subagent".into(),
+        background: false,
         requests: Arc::clone(&requests),
     });
     let mut request = subagent_request(&pipeline, metadata, &project, &[]);
@@ -237,6 +265,7 @@ fn an_external_agent_node_refuses_a_node_route_its_product_cannot_run() {
     pipeline.provider_factory = Arc::new(DelegationProvider {
         capability_id: SUBAGENT_CODEX_CAPABILITY_ID.into(),
         provider_name: "spawn_codex_subagent".into(),
+        background: false,
         requests: Arc::clone(&requests),
     });
     let mut request = subagent_request(&pipeline, metadata, &project, &[]);
@@ -258,6 +287,22 @@ fn an_external_agent_node_refuses_a_node_route_its_product_cannot_run() {
     );
 }
 
+/// One installed native tool exactly as a first-input freeze would bind it.
+fn native_binding(capability_id: &str) -> WorkflowToolBindingV1 {
+    let setting = tool_registry::native_defaults()
+        .into_iter()
+        .find(|tool| tool.id == capability_id)
+        .expect("installed native tool");
+    let frozen = tool_registry::freeze_settings(&setting).expect("freezes");
+    WorkflowToolBindingV1 {
+        options: frozen.options,
+        capability_id: capability_id.into(),
+        configuration: serde_json::to_value(frozen.configuration).expect("configuration"),
+        credential_bindings: Vec::new(),
+        definition: None,
+    }
+}
+
 #[test]
 fn an_external_delegation_returns_only_the_products_final_answer() {
     let Some(target) = fixture_target() else {
@@ -270,6 +315,7 @@ fn an_external_delegation_returns_only_the_products_final_answer() {
     pipeline.provider_factory = Arc::new(DelegationProvider {
         capability_id: SUBAGENT_CODEX_CAPABILITY_ID.into(),
         provider_name: "spawn_codex_subagent".into(),
+        background: false,
         requests: Arc::clone(&requests),
     });
     let mut request = subagent_request(&pipeline, metadata, &project, &[]);
@@ -317,6 +363,7 @@ fn an_unresolved_target_fails_the_delegation_before_any_process_starts() {
     pipeline.provider_factory = Arc::new(DelegationProvider {
         capability_id: SUBAGENT_CODEX_CAPABILITY_ID.into(),
         provider_name: "spawn_codex_subagent".into(),
+        background: false,
         requests: Arc::clone(&requests),
     });
     let mut request = subagent_request(&pipeline, metadata, &project, &[]);
@@ -337,5 +384,74 @@ fn an_unresolved_target_fails_the_delegation_before_any_process_starts() {
         error.contains("external delegation target was not resolved at freeze")
             || error.contains("malformed"),
         "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn a_background_external_delegation_returns_its_answer_through_job_output() {
+    let Some(target) = fixture_target() else {
+        return;
+    };
+    let root = TempDir::new().unwrap();
+    let project = subagent_project(&root);
+    let (mut pipeline, _, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    pipeline.provider_factory = Arc::new(DelegationProvider {
+        capability_id: SUBAGENT_CODEX_CAPABILITY_ID.into(),
+        provider_name: "spawn_codex_subagent".into(),
+        background: true,
+        requests: Arc::clone(&requests),
+    });
+    let mut request = subagent_request(&pipeline, metadata, &project, &[]);
+    request.approvals.mode = ApprovalMode::FullAccess;
+    request.tools = vec![
+        external_binding(SUBAGENT_CODEX_CAPABILITY_ID, &target),
+        native_binding("tool.job.output"),
+    ];
+    request.workflow_snapshot["nodes"][1]["configuration"]["toolIds"] =
+        json!(vec![SUBAGENT_CODEX_CAPABILITY_ID, "tool.job.output"]);
+
+    let result = pipeline.execute(request).expect("the delegation executes");
+    assert_eq!(
+        result.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        result.error
+    );
+
+    let observed = requests.lock().unwrap();
+    // The delegation returned identity immediately instead of its answer.
+    let delegated = &observed[1].exchanges[0].results[0].content;
+    assert_eq!(delegated["running"], true, "{delegated:?}");
+    assert!(
+        delegated["jobId"].as_str().is_some(),
+        "a background delegation returns its job id: {delegated:?}"
+    );
+    assert!(
+        delegated.get("answer").is_none(),
+        "the answer must arrive through the job, not the call result: {delegated:?}"
+    );
+    // A later turn collected the job and received the product's answer.
+    let collected = serde_json::to_string(
+        &observed
+            .last()
+            .expect("a final turn")
+            .exchanges
+            .last()
+            .expect("the latest exchange")
+            .results
+            .last()
+            .expect("the job output")
+            .content,
+    )
+    .unwrap();
+    assert!(
+        collected.contains("fixture final answer"),
+        "the job output carries the product answer: {collected}"
+    );
+    drop(observed);
+    assert_eq!(
+        result.tool_calls, 2,
+        "the delegation and one job collection"
     );
 }

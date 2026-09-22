@@ -3939,7 +3939,7 @@ fn validate_call_arguments(
             BTreeSet::from(["url", "documentId", "offset", "feedContent"])
         }
         StoredFileToolLimitV1::ExternalAgent { .. } => {
-            BTreeSet::from(["task", "model", "reasoningEffort"])
+            BTreeSet::from(["task", "model", "reasoningEffort", "runInBackground"])
         }
         StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
@@ -4261,6 +4261,12 @@ fn validate_call_arguments(
                 return Err(invalid_tool(
                     "external delegation reasoning effort is not a known effort",
                 ));
+            }
+            if object
+                .get("runInBackground")
+                .is_some_and(|value| !value.is_boolean())
+            {
+                return Err(invalid_tool("external delegation runInBackground must be boolean"));
             }
         }
         StoredFileToolLimitV1::Subagent { .. } | StoredFileToolLimitV1::SubagentFork { .. } => {

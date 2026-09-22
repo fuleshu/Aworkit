@@ -1322,6 +1322,10 @@
               "max"
             ],
             "description": "Optional reasoning effort for this delegation only; an unsupported effort is refused."
+          },
+          "runInBackground": {
+            "type": "boolean",
+            "description": "Run this delegation as a parent-owned background job and return its job id immediately."
           }
         },
         "required": [
@@ -1393,6 +1397,10 @@
               "max"
             ],
             "description": "Optional reasoning effort for this delegation only; an unsupported effort is refused."
+          },
+          "runInBackground": {
+            "type": "boolean",
+            "description": "Run this delegation as a parent-owned background job and return its job id immediately."
           }
         },
         "required": [
