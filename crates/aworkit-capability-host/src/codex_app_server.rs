@@ -39,6 +39,16 @@ impl CodexAppServerEnvironmentV1 {
     pub fn new(name: String, value: Zeroizing<String>) -> Self {
         Self { name, value }
     }
+
+    /// The exact environment target name.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The exact environment value, never logged or serialized.
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
 }
 
 /// Runtime bounds for one transient Settings handshake.
@@ -333,14 +343,14 @@ fn write_message(
         .map_err(|_| CodexAppServerProbeError::Transport)
 }
 
-enum ReaderMessage {
+pub(crate) enum ReaderMessage {
     Line(Vec<u8>),
     TooLarge,
     Transport,
     Eof,
 }
 
-fn read_json_lines(
+pub(crate) fn read_json_lines(
     source: impl std::io::Read,
     maximum_message_bytes: usize,
     sender: &mpsc::SyncSender<ReaderMessage>,
@@ -387,7 +397,7 @@ fn read_json_lines(
     }
 }
 
-fn drain_discarded(mut source: impl std::io::Read) {
+pub(crate) fn drain_discarded(mut source: impl std::io::Read) {
     // Keep draining after the peer exceeds one protocol-message bound. Stopping
     // here could fill the child's stderr pipe and deadlock an otherwise valid
     // handshake; no stderr bytes are retained or returned to the caller.
@@ -524,32 +534,32 @@ fn optional_bounded_string(
     }
 }
 
-struct ManagedGroupChild {
+pub(crate) struct ManagedGroupChild {
     child: Option<GroupChild>,
 }
 
 impl ManagedGroupChild {
-    fn spawn(command: &mut Command) -> Result<Self, CodexAppServerProbeError> {
+    pub(crate) fn spawn(command: &mut Command) -> Result<Self, CodexAppServerProbeError> {
         aworkit_process::command::spawn_background_group(command)
             .map(|child| Self { child: Some(child) })
             .map_err(|_| CodexAppServerProbeError::Launch)
     }
 
-    fn stdin(&mut self) -> Result<std::process::ChildStdin, CodexAppServerProbeError> {
+    pub(crate) fn stdin(&mut self) -> Result<std::process::ChildStdin, CodexAppServerProbeError> {
         self.child
             .as_mut()
             .and_then(|child| child.inner().stdin.take())
             .ok_or(CodexAppServerProbeError::Launch)
     }
 
-    fn stdout(&mut self) -> Result<std::process::ChildStdout, CodexAppServerProbeError> {
+    pub(crate) fn stdout(&mut self) -> Result<std::process::ChildStdout, CodexAppServerProbeError> {
         self.child
             .as_mut()
             .and_then(|child| child.inner().stdout.take())
             .ok_or(CodexAppServerProbeError::Launch)
     }
 
-    fn stderr(&mut self) -> Result<std::process::ChildStderr, CodexAppServerProbeError> {
+    pub(crate) fn stderr(&mut self) -> Result<std::process::ChildStderr, CodexAppServerProbeError> {
         self.child
             .as_mut()
             .and_then(|child| child.inner().stderr.take())
