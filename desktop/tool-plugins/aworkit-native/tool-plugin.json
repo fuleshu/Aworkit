@@ -1276,8 +1276,8 @@
         {
           "key": "targetId",
           "label": "External agent target",
-          "help": "Id of the configured Codex target in Settings. Empty uses the first enabled Codex target.",
-          "kind": "string",
+          "help": "Configured Codex target in Settings. Leave it on the first enabled target to follow the product's default selection.",
+          "kind": "external_agent_target",
           "readOnly": false
         },
         {
@@ -1351,8 +1351,8 @@
         {
           "key": "targetId",
           "label": "External agent target",
-          "help": "Id of the configured Claude Code target in Settings. Empty uses the first enabled Claude Code target.",
-          "kind": "string",
+          "help": "Configured Claude Code target in Settings. Leave it on the first enabled target to follow the product's default selection.",
+          "kind": "external_agent_target",
           "readOnly": false
         },
         {

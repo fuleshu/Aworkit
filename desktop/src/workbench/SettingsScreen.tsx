@@ -914,6 +914,7 @@ export function SettingsScreen({
                 <ToolsSection
                   onPickCommand={draftScopedPickFile}
                   tools={draft.tools}
+                  externalAgents={draft.externalAgents}
                   credentials={draft.credentials}
                   projects={draft.projects}
                   onChange={(tools) =>

@@ -198,7 +198,9 @@ impl NativeToolPlugin {
                     || field.help.is_empty()
                     || !matches!(
                         field.kind.as_str(),
-                        "boolean" | "integer" | "string" | "list"
+                        // `external_agent_target` renders a selector over the
+                        // configured targets of this tool's own product.
+                        "boolean" | "integer" | "string" | "list" | "external_agent_target"
                     )
                     || field.minimum.zip(field.maximum).is_some_and(|(a, b)| a > b)
                 {

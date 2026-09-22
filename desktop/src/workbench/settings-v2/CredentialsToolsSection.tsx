@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  ExternalAgentConfiguration,
   BuiltInToolConfiguration,
   CredentialMetadataConfiguration,
   ProjectConfiguration,
@@ -334,6 +335,7 @@ export function CredentialsSection({
 export function ToolsSection({
   onPickCommand,
   tools,
+  externalAgents = [],
   credentials,
   projects,
   onChange,
@@ -341,6 +343,7 @@ export function ToolsSection({
 }: {
   readonly onPickCommand?: () => Promise<string | null>;
   readonly tools: readonly BuiltInToolConfiguration[];
+  readonly externalAgents?: readonly ExternalAgentConfiguration[];
   readonly credentials: readonly CredentialMetadataConfiguration[];
   readonly projects: readonly ProjectConfiguration[];
   readonly onChange: (tools: readonly BuiltInToolConfiguration[]) => void;
@@ -544,7 +547,7 @@ export function ToolsSection({
                   </button>
                 </div>
               )}
-              <ToolConfigurationEditor tool={tool} onPickCommand={onPickCommand} onChange={updateTool}
+              <ToolConfigurationEditor tool={tool} onPickCommand={onPickCommand} externalAgents={externalAgents} onChange={updateTool}
                 configuration={!["tool.web_search", "tool.web_fetch", "tool.web_extract"].includes(tool.id)} />
               {tool.id === "tool.web_search" && <WebSearchSettingsEditor tool={tool} credentials={credentials} onChange={updateTool} />}
               {(tool.id === "tool.web_fetch" || tool.id === "tool.web_extract") && <WebExtractionSettingsEditor tool={tool} onChange={updateTool} />}
