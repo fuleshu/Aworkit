@@ -164,10 +164,7 @@ pub(crate) fn perform_in_workspace(
         PathActionV1::Inspect => unreachable!("inspect returns above"),
         PathActionV1::OpenDefault => open_argv(&path),
         PathActionV1::Reveal => reveal_argv(&path),
-        PathActionV1::OpenEditor => match editor.map(str::trim).filter(|e| !e.is_empty()) {
-            Some(editor) => editor_argv(editor, &path),
-            None => open_argv(&path),
-        },
+        PathActionV1::OpenEditor => open_in_editor_argv(editor, &path),
     };
     launch(&program, &arguments).map_err(|error| format!("could not open the path: {error}"))?;
     Ok(PathActionOutcomeV1 {
@@ -225,6 +222,16 @@ fn reveal_argv(path: &Path) -> (String, Vec<String>) {
 /// Exact argv one configured editor command uses for a file.
 fn editor_argv(editor: &str, path: &Path) -> (String, Vec<String>) {
     (editor.to_owned(), vec![path.display().to_string()])
+}
+
+/// The command open-in-editor really starts: the configured editor, or the
+/// operating system's own default application for the format when no editor is
+/// configured or the stored value is only whitespace.
+fn open_in_editor_argv(editor: Option<&str>, path: &Path) -> (String, Vec<String>) {
+    match editor.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(configured) => editor_argv(configured, path),
+        None => open_argv(path),
+    }
 }
 
 #[cfg(test)]
@@ -368,5 +375,18 @@ mod tests {
             (editor.as_str(), editor_arguments),
             ("code", vec!["/tmp/project/summary.md".to_owned()])
         );
+    }
+
+    #[test]
+    fn open_in_editor_uses_the_configured_command_or_the_os_default() {
+        let path = Path::new("/tmp/project/summary.md");
+        assert_eq!(
+            open_in_editor_argv(Some(" zed "), path),
+            ("zed".to_owned(), vec!["/tmp/project/summary.md".to_owned()])
+        );
+        // No editor, or only whitespace, means the operating system chooses.
+        for absent in [None, Some(""), Some("   ")] {
+            assert_eq!(open_in_editor_argv(absent, path), open_argv(path));
+        }
     }
 }
