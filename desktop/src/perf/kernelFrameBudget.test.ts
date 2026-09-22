@@ -2,6 +2,9 @@
  * The editor kernel's 16 ms interaction gate for a representative
  * 1,000-node workflow. A wall-clock budget, so it is opt-in (`pnpm
  * test:perf`) instead of a default-suite test that fails under load.
+ *
+ * The gate is only meaningful because the perf config runs its files serially:
+ * measured 11 ms alone, 83 ms while a sibling suite rendered the whole App.
  */
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";

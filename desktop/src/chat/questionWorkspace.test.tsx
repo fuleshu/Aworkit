@@ -31,6 +31,12 @@ import type {
   RuntimeSnapshot,
 } from "./corePort";
 import type { ChatIntent } from "./types";
+import {
+  chatProjection,
+  chatSnapshot,
+  runtimeEvent,
+  testPort,
+} from "../test/fixtures/chat";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal() {
@@ -40,37 +46,21 @@ beforeAll(() => {
 
 afterEach(cleanup);
 
-const chat = {
-  approvalMode: "ask_for_approval" as const,
+const chat = chatProjection({
   chatId: "chat.question",
   runId: "run.question",
   title: "Asking chat",
-  scope: "No project",
   workflowId: "workflow.standard",
   workflowName: "Standard Agent",
-  branch: null,
-  projectId: null,
-  phase: "awaiting_answer" as const,
+  phase: "awaiting_answer",
   lockedWorkflow: true,
-  recoveryPending: false,
-  queuedInputs: [],
-  expectedVersion: 4,
-};
+});
 
 const event = (
   sequence: number,
   kind: string,
   payload: Record<string, unknown>,
-): RuntimeEvent => ({
-  schemaVersion: 1,
-  streamId: chat.chatId,
-  branchId: "main",
-  sequence,
-  eventId: `event.${sequence}`,
-  kind,
-  spanId: typeof payload.spanId === "string" ? payload.spanId : undefined,
-  payload,
-});
+): RuntimeEvent => runtimeEvent(sequence, kind, payload, { streamId: chat.chatId });
 
 const asked = [
   event(1, "message.user", { body: "Ship the release", createdAt: "1" }),
@@ -94,23 +84,11 @@ const asked = [
 ];
 
 function snapshot(events: readonly RuntimeEvent[]): RuntimeSnapshot {
-  const through = events.at(-1)?.sequence ?? 1;
-  return {
-    version: through,
-    throughSequence: through,
-    reducerVersion: "chat.semantic.reducer.v1",
-    stateHash: `sha256:${"0".repeat(64)}`,
-    chat: { ...chat, expectedVersion: through },
-    history: [],
-    projects: [],
-    evidence: [],
-    events: [...events],
-    subagents: [],
-  };
+  return chatSnapshot({ chat, events });
 }
 
 function port(events: readonly RuntimeEvent[], dispatched: ChatIntent[]): ChatCorePort {
-  return {
+  return testPort({
     async snapshot(): Promise<RuntimeSnapshot> {
       return snapshot(events);
     },
@@ -123,7 +101,7 @@ function port(events: readonly RuntimeEvent[], dispatched: ChatIntent[]): ChatCo
         reason: null,
       };
     },
-  };
+  });
 }
 
 describe("a model question in the Chat workspace", () => {
@@ -188,90 +166,55 @@ describe("a model question in the Chat workspace", () => {
     ).toHaveAttribute("open");
   });
 
-  it("shows a path question with the operating system chooser", async () => {
+  it("asks for a path through the operating system chooser", async () => {
     const user = userEvent.setup();
-    const dispatched: ChatIntent[] = [];
-    const pickPath = vi.fn().mockResolvedValue("/home/user/reports");
-    render(
-      <ChatWorkspaceScreen
-        corePort={port(
-          [
-            asked[0],
-            event(2, "question.asked", {
-              createdAt: "2",
-              questionId: "question.folder",
-              nodeId: "agent.1",
-              title: "Report folder",
-              prompt: "Which folder holds the exported reports?",
-              kind: "folder",
-              options: [],
-              allowFreeText: false,
-              frozenContextHash: "sha256:context",
-              invocationId: "invoke.folder",
-            }),
-          ],
-          dispatched,
-        )}
-        pollIntervalMs={50}
-        pickPath={pickPath}
-      />,
-    );
-    await screen.findByRole("dialog", { name: "Report folder" });
-    await user.click(screen.getByRole("button", { name: "Choose folder…" }));
-    expect(pickPath).toHaveBeenCalledWith("folder", []);
-    await waitFor(() =>
-      expect(screen.getByText("/home/user/reports")).toBeVisible(),
-    );
-    await user.click(screen.getByRole("button", { name: "Submit answer" }));
-    await waitFor(() => expect(dispatched).toHaveLength(1));
-    expect(dispatched[0]).toMatchObject({
-      type: "question",
-      questionId: "question.folder",
-      path: "/home/user/reports",
-    });
-  });
-
-  it("narrows a file question to the requested extensions", async () => {
-    const user = userEvent.setup();
-    const dispatched: ChatIntent[] = [];
-    const pickPath = vi.fn().mockResolvedValue("/home/user/export.csv");
-    render(
-      <ChatWorkspaceScreen
-        corePort={port(
-          [
-            asked[0],
-            event(2, "question.asked", {
-              createdAt: "2",
-              questionId: "question.spreadsheet",
-              nodeId: "agent.1",
-              title: "Export file",
-              prompt: "Which export should I read?",
-              kind: "file",
-              options: [],
-              allowFreeText: false,
-              extensions: ["csv", "tsv"],
-              invocationId: "invoke.spreadsheet",
-            }),
-          ],
-          dispatched,
-        )}
-        pollIntervalMs={50}
-        pickPath={pickPath}
-      />,
-    );
-    await screen.findByRole("dialog", { name: "Export file" });
-    await user.click(screen.getByRole("button", { name: "Choose file…" }));
-    expect(pickPath).toHaveBeenCalledWith("file", ["csv", "tsv"]);
-    await waitFor(() =>
-      expect(screen.getByText("/home/user/export.csv")).toBeVisible(),
-    );
-    await user.click(screen.getByRole("button", { name: "Submit answer" }));
-    await waitFor(() => expect(dispatched).toHaveLength(1));
-    expect(dispatched[0]).toMatchObject({
-      type: "question",
-      questionId: "question.spreadsheet",
-      path: "/home/user/export.csv",
-    });
+    for (const [kind, extensions, chosen] of [
+      ["folder", [], "/home/user/reports"],
+      ["file", ["csv", "tsv"], "/home/user/export.csv"],
+    ] as const) {
+      const dispatched: ChatIntent[] = [];
+      const pickPath = vi.fn().mockResolvedValue(chosen);
+      const { unmount } = render(
+        <ChatWorkspaceScreen
+          corePort={port(
+            [
+              asked[0],
+              event(2, "question.asked", {
+                createdAt: "2",
+                questionId: `question.${kind}`,
+                nodeId: "agent.1",
+                title: `${kind} question`,
+                prompt: `Which ${kind} should I use?`,
+                kind,
+                options: [],
+                allowFreeText: false,
+                ...(extensions.length === 0 ? {} : { extensions }),
+                invocationId: `invoke.${kind}`,
+              }),
+            ],
+            dispatched,
+          )}
+          pollIntervalMs={50}
+          pickPath={pickPath}
+        />,
+      );
+      await screen.findByRole("dialog", { name: `${kind} question` });
+      await user.click(
+        screen.getByRole("button", {
+          name: kind === "folder" ? "Choose folder…" : "Choose file…",
+        }),
+      );
+      expect(pickPath).toHaveBeenCalledWith(kind, extensions);
+      await waitFor(() => expect(screen.getByText(chosen)).toBeVisible());
+      await user.click(screen.getByRole("button", { name: "Submit answer" }));
+      await waitFor(() => expect(dispatched).toHaveLength(1));
+      expect(dispatched[0]).toMatchObject({
+        type: "question",
+        questionId: `question.${kind}`,
+        path: chosen,
+      });
+      unmount();
+    }
   });
 
   it("closes the dialog once the answer is committed", async () => {

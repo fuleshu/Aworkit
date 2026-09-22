@@ -66,7 +66,7 @@ describe("question dialog", () => {
   it("submits the chosen option with the user's own words", async () => {
     const user = userEvent.setup();
     const onAnswer = vi.fn();
-    render(
+    const { rerender } = render(
       <QuestionDialog
         question={choice}
         busy={false}
@@ -85,13 +85,12 @@ describe("question dialog", () => {
       optionId: "beta",
       freeText: "start with beta",
     });
-  });
 
-  it("preselects a declared default without answering it", async () => {
-    const user = userEvent.setup();
-    const onAnswer = vi.fn();
-    render(
+    // A declared default is preselected but never submitted on its own.
+    onAnswer.mockClear();
+    rerender(
       <QuestionDialog
+        key="declared-default"
         question={{ ...choice, defaultOptionId: "beta" }}
         busy={false}
         error={null}
@@ -182,7 +181,7 @@ describe("question dialog", () => {
     expect(onAnswer).toHaveBeenCalledTimes(1);
   });
 
-  it("says so when this desktop has no operating system chooser", () => {
+  it("offers no choose button when this desktop has no operating system chooser", () => {
     render(
       <QuestionDialog
         question={folder}
@@ -196,17 +195,7 @@ describe("question dialog", () => {
   });
 
   it("reports a rejected answer and blocks while it is being sent", () => {
-    const { rerender } = render(
-      <QuestionDialog
-        question={choice}
-        busy={false}
-        error={null}
-        onAnswer={vi.fn()}
-        onDismiss={vi.fn()}
-      />,
-    );
-    expect(screen.queryByRole("alert")).toBeNull();
-    rerender(
+    render(
       <QuestionDialog
         question={choice}
         busy

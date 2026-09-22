@@ -3,6 +3,10 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useChatRuntime } from "./useChatRuntime";
 import type { ChatCorePort, RuntimeEvent, RuntimeSnapshot } from "./corePort";
+import {
+  runtimeEvent,
+  chatSnapshot,
+} from "../test/fixtures/chat";
 
 afterEach(cleanup);
 function deferred<T>() {
@@ -11,14 +15,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 function event(id: string, sequence: number): RuntimeEvent {
-  return { schemaVersion: 1, streamId: id, branchId: "main", sequence, eventId: `${id}.${sequence}`, kind: "message.user", payload: { body: id } };
+  return runtimeEvent(sequence, "message.user", { body: id }, { streamId: id, eventId: `${id}.${sequence}` });
 }
 function snapshot(id: string, head = 1): RuntimeSnapshot {
-  return {
-    version: head, throughSequence: head, reducerVersion: "test", stateHash: "sha256:test",
-    chat: { chatId: id, runId: id, title: id, scope: "No project", workflowId: "workflow.test", workflowName: "Test", branch: null, projectId: null, phase: "waiting_input", lockedWorkflow: true, recoveryPending: false, queuedInputs: [], expectedVersion: head },
-    history: [], projects: [], evidence: [], events: Array.from({ length: head }, (_, n) => event(id, n + 1)),
-  };
+  return chatSnapshot({
+    chat: { chatId: id, runId: id, title: id, workflowId: "workflow.test", workflowName: "Test", lockedWorkflow: true },
+    events: Array.from({ length: head }, (_, n) => event(id, n + 1)),
+  });
 }
 
 describe("independent Chat projections", () => {

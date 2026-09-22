@@ -3,6 +3,9 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { useChatRuntime } from "./useChatRuntime";
 import type { ChatCorePort, ChatEventPage, RuntimeEvent, RuntimeSnapshot } from "./corePort";
+import {
+  chatSnapshot,
+} from "../test/fixtures/chat";
 afterEach(cleanup);
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -13,12 +16,12 @@ function events(id: string, first: number, last: number): RuntimeEvent[] {
   return Array.from({ length: last - first + 1 }, (_, n) => ({ schemaVersion: 1, streamId: id, branchId: "main", sequence: first+n, eventId: `${id}.${first+n}`, kind: "message.user", payload: { body: String(first+n) } }));
 }
 function snapshot(id: string, first = 101, last = 110): RuntimeSnapshot {
-  return { version:last, throughSequence:last, reducerVersion:"test", stateHash:"sha256:test",
-    chat: { chatId:id, runId:id, title:id, scope:"No project", workflowId:null, workflowName:null, branch:null, projectId:null, phase:"waiting_input", lockedWorkflow:false, recoveryPending:false, queuedInputs:[], expectedVersion:last },
-    history:["a", "b", "c"].map(chatId => ({ chatId, runId:chatId, parentChatId:null, title:chatId, projectId:null, projectName:null, phase:"waiting_input" as const, pinned:false, createdAt:"1", updatedAt:"1" })),
-    projects:[], evidence:[], events:events(id,first,last),
-    eventWindow:{ firstSequence:first, lastSequence:last, headSequence:last, hasMore:first>1, supportingEvents:[] },
-  };
+  return chatSnapshot({
+    chat: { chatId: id, runId: id, title: id },
+    history: ["a", "b", "c"].map(chatId => ({ chatId, runId:chatId, parentChatId:null, title:chatId, projectId:null, projectName:null, phase:"waiting_input" as const, pinned:false, createdAt:"1", updatedAt:"1" })),
+    events: events(id, first, last),
+    eventWindow: { firstSequence: first, lastSequence: last, headSequence: last, hasMore: first > 1, supportingEvents: [] },
+  });
 }
 it("prepends contiguous older pages once and keeps the live tail", async () => {
   const older = deferred<ChatEventPage>();

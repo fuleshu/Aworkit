@@ -3,6 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { subagentChildEvents, useSubagentFeed } from "./useSubagentFeed";
 import type { ChatCorePort, ChatEventPage, RuntimeEvent } from "./corePort";
+import { eventPage, runtimeEvent, testPort } from "../test/fixtures/chat";
 
 afterEach(cleanup);
 
@@ -10,15 +11,8 @@ const event = (
   sequence: number,
   kind: string,
   payload: Record<string, unknown>,
-): RuntimeEvent => ({
-  schemaVersion: 1,
-  streamId: "chat.subagents",
-  branchId: "main",
-  sequence,
-  eventId: `event.${sequence}`,
-  kind,
-  payload,
-});
+): RuntimeEvent =>
+  runtimeEvent(sequence, kind, payload, { streamId: "chat.subagents" });
 
 const childFact = (sequence: number, childId: string): RuntimeEvent =>
   event(sequence, "span.content_delta", {
@@ -30,36 +24,14 @@ const childFact = (sequence: number, childId: string): RuntimeEvent =>
 function page(
   events: readonly RuntimeEvent[],
   firstSequence: number,
-): ChatEventPage {
-  return {
-    window: {
-      firstSequence,
-      lastSequence: events.at(-1)?.sequence ?? firstSequence,
-      headSequence: 10,
-      hasMore: firstSequence > 1,
-      supportingEvents: [],
-    },
-    events: [...events],
-  };
+) {
+  return eventPage(events, firstSequence, 10);
 }
 
 function port(
   subagentEvents: NonNullable<ChatCorePort["subagentEvents"]>,
 ): ChatCorePort {
-  return {
-    async snapshot() {
-      throw new Error("unused");
-    },
-    async command(intent) {
-      return {
-        commandId: intent.commandId,
-        accepted: false,
-        currentVersion: 1,
-        reason: "unused",
-      };
-    },
-    subagentEvents,
-  };
+  return testPort({ subagentEvents });
 }
 
 describe("child-scoped evidence feed", () => {

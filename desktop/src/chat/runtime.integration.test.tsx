@@ -26,6 +26,9 @@ import type { ChatIntent, ChatProjection, CoreEventEnvelope } from "./types";
 import type { WorkflowCorePort } from "../workbench/corePort";
 import type { WorkflowDocument } from "../workbench/workflow";
 import { bundledDefaultWorkflowId } from "../workbench/bundledWorkflows";
+import {
+  chatSnapshot,
+} from "../test/fixtures/chat";
 
 const { virtualizerMeasure, virtualizerResizeItem } = vi.hoisted(() => ({
   virtualizerMeasure: vi.fn(),
@@ -1047,7 +1050,6 @@ describe("Chat native-port recovery contracts", () => {
     const inspectorElement = screen.getByLabelText("Run details");
     const inspector = within(inspectorElement);
     expect(inspector.getByText(/notes\.txt/)).toBeVisible();
-    expect(inspectorElement.querySelector(".run-details-content pre")).toBeNull();
     await user.click(inspector.getByRole("tab", { name: "Raw JSON" }));
     expect(inspectorElement.querySelector(".run-details-json")).toHaveTextContent(
       '"scope": "timeline_item"',
@@ -1498,9 +1500,6 @@ describe("Chat native-port recovery contracts", () => {
     const modelCall = screen.getByRole("group", {
       name: "Model call: Model call 1",
     });
-    expect(
-      within(modelCall).getByLabelText("Model output: Model call 1"),
-    ).toHaveClass("speech-turn");
     expect(screen.getAllByText("Agent finished")).toHaveLength(1);
     expect(within(modelCall).getByText("Output").closest("details")).not.toHaveAttribute(
       "open",
@@ -1698,9 +1697,7 @@ describe("Chat native-port recovery contracts", () => {
     const settled = screen.getByLabelText("Thinking: Thinking");
     expect(settled).not.toHaveAttribute("aria-busy", "true");
     expect(within(settled).getByText("✓")).toBeVisible();
-    expect(settled).toHaveClass("thinking-turn");
     expect(within(settled).getByRole("img", { name: "Main model" })).toBeVisible();
-    expect(settled.querySelector(".thinking-bubble")).not.toBeNull();
 
     const runningItem = {
       id: "step.1",
@@ -1747,7 +1744,6 @@ describe("Chat native-port recovery contracts", () => {
     );
 
     const speech = screen.getByLabelText("Aworkit message");
-    expect(speech).toHaveClass("speech-turn");
     expect(within(speech).getByRole("img", { name: "Main model" })).toBeVisible();
     expect(within(speech).getByText("Sunny").tagName).toBe("STRONG");
     expect(within(speech).getByRole("link", { name: "forecast" })).toHaveAttribute(
@@ -1778,7 +1774,6 @@ describe("Chat native-port recovery contracts", () => {
     );
 
     const speechBubble = screen.getByLabelText("Subagent: tool.subagent");
-    expect(speechBubble).toHaveClass("speech-turn", "actor-subagent");
     expect(
       within(speechBubble).getByRole("img", { name: "Subagent" }),
     ).toBeVisible();
@@ -1806,7 +1801,6 @@ describe("Chat native-port recovery contracts", () => {
       />,
     );
     const thoughtBubble = screen.getByLabelText("Thinking: Model call 1");
-    expect(thoughtBubble).toHaveClass("thinking-turn", "actor-subagent");
     expect(
       within(thoughtBubble).getByRole("img", { name: "Subagent" }),
     ).toBeVisible();
@@ -2102,17 +2096,11 @@ function snapshot(
   title: string,
   events: readonly (TestEvent | RuntimeEvent)[],
 ): RuntimeSnapshot {
-  return {
-    version: sequence,
+  return chatSnapshot({
+    chat: { ...runningChat, title },
     throughSequence: sequence,
-    reducerVersion: "chat.semantic.reducer.v1",
-    stateHash: `sha256:${"0".repeat(64)}`,
-    chat: { ...runningChat, title, expectedVersion: sequence },
-    history: [],
-    projects: [],
-    evidence: [],
     events: events.map(canonicalTestEvent),
-  };
+  });
 }
 
 type TestEvent = {

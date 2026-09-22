@@ -6,11 +6,12 @@ import { CompressionUsage } from "./CompressionUsage";
 import { contextModel, contextUsage, estimateContext, projectContexts } from "./contextProjection";
 import { projectSemanticTimeline } from "./activityProjection";
 import type { RuntimeEvent } from "./corePort";
+import { runtimeEvent } from "../test/fixtures/chat";
 
 beforeAll(() => { HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); }; });
 afterEach(cleanup);
 const event = (sequence: number, kind: string, payload: Record<string, unknown>): RuntimeEvent =>
-  ({ schemaVersion: 1, sequence, eventId: `e.${sequence}`, streamId: "chat.context", branchId: "main", kind, payload, ...(typeof payload.spanId === "string" ? { spanId: payload.spanId } : {}) });
+  runtimeEvent(sequence, kind, payload, { streamId: "chat.context", eventId: `e.${sequence}` });
 const events = [
   event(1, "span.started", { spanId: "node", spanKind: "graph_node", nodeId: "agent.1", label: "Agent" }),
   event(2, "span.started", { spanId: "loop", spanKind: "agent_loop", parentSpanId: "node" }),

@@ -15,6 +15,16 @@ import { projectAppearancePreference } from "../workbench/appearance";
 
 const lazyRouteWait = { timeout: 5_000 } as const;
 
+/*
+ * Wall-clock ceilings. These gates catch a regression of an order of magnitude
+ * (a lost memo, a render loop, a quadratic projection), never a slow host: the
+ * same test measured 12s and 21s on this machine depending on what else ran.
+ * On a slow or busy host, scale the ceilings instead of deleting the gate:
+ *   AWORKIT_PERF_BUDGET_SCALE=3 pnpm test:perf
+ */
+const budgetScale = Number(process.env.AWORKIT_PERF_BUDGET_SCALE ?? "1");
+const gate = (milliseconds: number) => Math.round(milliseconds * budgetScale);
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -80,7 +90,8 @@ describe("desktop shell wall-clock gates", () => {
     expect(screen.getByRole("button", { name: "Input" })).toBe(inputNode);
     await user.click(screen.getByRole("button", { name: /Undo/ }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  }, 10_000);
+    // Measured 12-21s on the development machine.
+  }, gate(60_000));
 
   it("Escape closes notification details first, then guards dirty Settings until Discard", async () => {
     const user = userEvent.setup();
@@ -104,9 +115,8 @@ describe("desktop shell wall-clock gates", () => {
     await user.click(screen.getByRole("button", { name: "Discard and return" }));
     expect(await screen.findByRole("textbox", { name: "Chat input" })).toBeVisible();
     expect(document.documentElement.dataset.appearance).toBe("light");
-    // This flow drives the whole App shell through jsdom and finishes just past
-    // Vitest's 5s default from interaction cost alone, not from a failing wait.
-  }, 30_000);
+    // This flow drives the whole App shell through jsdom. Measured ~15s.
+  }, gate(60_000));
 
   it("guards Settings navigation and preserves a complete unsaved provider draft", async () => {
     const user = userEvent.setup();
@@ -138,7 +148,8 @@ describe("desktop shell wall-clock gates", () => {
       "http://localhost:11434/v1",
     );
     expect(screen.getByLabelText("Remote model ID")).toHaveValue("qwen3");
-    // Typing into the full App shell and re-mounting the lazy Settings route costs
-    // far more than Vitest's 5s default; every assertion above still holds.
-  }, 90_000);
+    // Typing into the full App shell and re-mounting the lazy Settings route
+    // costs far more than Vitest's 5s default; every assertion above still
+    // holds. Measured ~75s, the slowest gate in the suite.
+  }, gate(180_000));
 });

@@ -13,6 +13,9 @@ import { toConversationCard } from "./conversation";
 import { projectSemanticTimeline } from "./activityProjection";
 import { importChatImage, type ImageAttachment } from "./images";
 import type { ChatProjection } from "./types";
+import {
+  chatProjection,
+} from "../test/fixtures/chat";
 
 vi.mock("./images", async (original) => ({
   ...(await original<typeof import("./images")>()),
@@ -24,21 +27,7 @@ vi.mock("./images", async (original) => ({
   })),
   chatImagePreview: vi.fn(async () => "data:image/png;base64,aGVsbG8="),
 }));
-const chat: ChatProjection = {
-  chatId: "chat.test",
-  runId: "run.test",
-  title: "New Chat",
-  scope: "No project",
-  workflowId: null,
-  workflowName: null,
-  branch: null,
-  projectId: null,
-  phase: "draft",
-  lockedWorkflow: false,
-  recoveryPending: false,
-  queuedInputs: [],
-  expectedVersion: 0,
-};
+const chat: ChatProjection = chatProjection({ title: "New Chat", phase: "draft" });
 const png = (name: string) => new File(["image"], name, { type: "image/png" });
 afterEach(() => {
   cleanup();

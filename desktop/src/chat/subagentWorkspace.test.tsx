@@ -33,25 +33,25 @@ import type {
   SubagentChildSummary,
 } from "./corePort";
 import type { ChatProjection } from "./types";
+import {
+  chatProjection,
+  chatSnapshot,
+  eventPage,
+  runtimeEvent,
+  testPort,
+} from "../test/fixtures/chat";
 
 afterEach(cleanup);
 
-const chat: ChatProjection = {
+const chat: ChatProjection = chatProjection({
   chatId: "chat.subagents",
   runId: "run.subagents",
   title: "Delegating chat",
-  scope: "No project",
   workflowId: "workflow.standard",
   workflowName: "Standard Agent",
-  branch: null,
-  projectId: null,
   phase: "running",
   lockedWorkflow: true,
-  recoveryPending: false,
-  queuedInputs: [],
-  expectedVersion: 7,
-  approvalMode: "ask_for_approval",
-};
+});
 
 type Draft = readonly [kind: string, payload: Record<string, unknown>];
 
@@ -184,51 +184,20 @@ function snapshot(
   subagents: readonly SubagentChildSummary[],
   events: readonly RuntimeEvent[],
 ): RuntimeSnapshot {
-  const through = events.at(-1)?.sequence ?? 1;
-  return {
-    version: through,
-    throughSequence: through,
-    reducerVersion: "chat.semantic.reducer.v1",
-    stateHash: `sha256:${"0".repeat(64)}`,
-    chat: { ...chat, expectedVersion: through },
-    history: [],
-    projects: [],
-    evidence: [],
-    events: [...events],
-    subagents: [...subagents],
-  };
+  return chatSnapshot({ chat, events, subagents });
 }
 
 function port(snapshotFor: () => RuntimeSnapshot): ChatCorePort {
-  return {
+  return testPort({
     async snapshot(): Promise<RuntimeSnapshot> {
       return snapshotFor();
     },
-    async command(intent) {
-      return {
-        commandId: intent.commandId,
-        accepted: false,
-        currentVersion: 1,
-        reason: "unused",
-      };
-    },
-  };
+  });
 }
 
 /** One child-scoped page as the core returns it (cursor already stepped back). */
 function childPage(events: readonly RuntimeEvent[]): ChatEventPage {
-  const first = events[0]?.sequence ?? 1;
-  const last = events.at(-1)?.sequence ?? first;
-  return {
-    window: {
-      firstSequence: first,
-      lastSequence: last,
-      headSequence: 13,
-      hasMore: first > 1,
-      supportingEvents: [],
-    },
-    events: [...events],
-  };
+  return eventPage(events, events[0]?.sequence ?? 1, 13);
 }
 
 const researchOnly = stream([...delegation, ...childDrafts("child.research")]);

@@ -3,18 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import { GoalControl } from "./GoalControl";
 import type { RuntimeEvent } from "./corePort";
+import { runtimeEvent } from "../test/fixtures/chat";
 
 afterEach(cleanup);
 
-const event = (sequence: number, goal: Record<string, unknown>): RuntimeEvent => ({
-  schemaVersion: 1,
-  sequence,
-  eventId: `e.${sequence}`,
-  streamId: "chat.goal",
-  branchId: "main",
-  kind: "tool.goal",
-  payload: { goal },
-});
+const event = (sequence: number, goal: Record<string, unknown>): RuntimeEvent =>
+  runtimeEvent(sequence, "tool.goal", { goal }, { streamId: "chat.goal", eventId: `e.${sequence}` });
 
 it("opens the durable goal editable and submits the revised text", async () => {
   const submit = vi.fn().mockResolvedValue(true);
