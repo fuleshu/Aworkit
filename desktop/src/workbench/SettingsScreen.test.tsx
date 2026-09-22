@@ -155,7 +155,7 @@ describe("Settings v2 workbench", () => {
     expect(screen.queryByText(/No context window recorded/)).toBeNull();
   });
 
-  it("edits and atomically saves the complete configuration across ten real sections", async () => {
+  it("edits and atomically saves the complete configuration across every real section", async () => {
     const port = new RecordingSettingsV2Port();
     const user = userEvent.setup();
     const { container } = render(
@@ -169,7 +169,7 @@ describe("Settings v2 workbench", () => {
     const navigation = screen.getByRole("navigation", {
       name: "Settings sections",
     });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(11);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(12);
     await user.click(within(navigation).getByRole("button", { name: /Approvals/ }));
     await user.selectOptions(screen.getByLabelText("Default approval mode"), "approve_for_me");
     expect(screen.queryByText(/unsupported in this build/i)).toBeNull();
@@ -704,6 +704,47 @@ describe("Settings v2 workbench", () => {
     },
     10_000,
   );
+
+  it("stores the desktop editor and refuses a relative command", async () => {
+    const initial = configuration();
+    initial.desktop = { editor: "code" };
+    const port = new RecordingSettingsV2Port(initial);
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    await screen.findByLabelText("Base URL");
+    await user.click(screen.getByRole("button", { name: /Desktop/ }));
+    const editor = screen.getByLabelText("Editor command");
+    expect(editor).toHaveValue("code");
+    expect(
+      screen.getByText('Open in editor starts "code" with the selected file.'),
+    ).toBeVisible();
+
+    // Clearing the field means "no editor configured", which saves as an
+    // absent key so the host falls back to the operating system's default.
+    await user.clear(editor);
+    expect(
+      screen.getByText(
+        /No editor configured. Open in editor uses your operating system's default application./,
+      ),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]?.settings.desktop).toEqual({});
+
+    // A relative location would resolve against the desktop process's own
+    // working directory, so Save stays blocked and names the reason. A
+    // successful save rebases the draft, so the field is queried again.
+    await user.type(screen.getByLabelText("Editor command"), "./open.sh");
+    expect(
+      screen.getByRole("button", {
+        name: /must be an absolute path or one bare command name from PATH/,
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeDisabled();
+  });
 
   it("discards appearance previews only after native confirmation", async () => {
     const port = new RecordingSettingsV2Port();
@@ -2703,5 +2744,6 @@ function configuration(): SettingsConfigurationV2 {
     appearance: { mode: "system", fontScale: 1 },
     chatDefaults: {},
     layout: {},
+    desktop: {},
   };
 }

@@ -617,6 +617,7 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
       // A fresh profile remembers nothing and has no persisted window placement.
       chatDefaults: {},
       layout: {},
+      desktop: {},
     },
     providerHealth: [],
   };

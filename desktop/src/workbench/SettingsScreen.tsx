@@ -16,6 +16,7 @@ import type {
   SettingsV2Snapshot,
 } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
+import { DesktopSection } from "./settings-v2/DesktopSection";
 import { SubagentViewSection } from "./settings-v2/SubagentViewSection";
 import type { SubagentViewPreferencePort, SubagentViewPreference } from "../chat/subagentViewPreference";
 import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
@@ -1112,6 +1113,14 @@ export function SettingsScreen({
                     projectAppearancePreference(appearance.mode, appearance.fontScale);
                     updateRenderedDraft((current) => ({ ...current, appearance }));
                   }}
+                />
+                </SettingsPanel>
+              <SettingsPanel id="desktop" selected={section}>
+                <DesktopSection
+                  value={draft.desktop}
+                  onChange={(desktop) =>
+                    updateRenderedDraft((current) => ({ ...current, desktop }))
+                  }
                 />
                 </SettingsPanel>
               </SettingsFieldValidationBoundary>

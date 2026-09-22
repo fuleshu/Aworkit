@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DesktopAdapters } from "./adapters/contracts";
+import type { DesktopAdapters, RunPathAction } from "./adapters/contracts";
 import {
   nativePresentationEvent,
   type NativePresentationRequest,
@@ -16,6 +16,7 @@ import {
   ChatWorkspaceScreen,
   type ChatHistoryActionRequest,
 } from "./chat/ChatWorkspaceScreen";
+import { PathActionProvider } from "./chat/pathActions";
 import type { RuntimeSnapshot } from "./chat/corePort";
 import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
@@ -127,6 +128,21 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   const [chatRecoveryPending, setChatRecoveryPending] = useState<
     boolean | null
   >(null);
+  // Path actions are scoped to the Chat that owns the rendered conversation, so
+  // the screen never has to guess which workspace a path belongs to.
+  const selectedChatId = chatRuntimeState?.snapshot.chat.chatId;
+  const runPathAction = useMemo<RunPathAction | undefined>(
+    () =>
+      selectedChatId === undefined
+        ? undefined
+        : (path, action) =>
+            adapters.nativePresentation.pathAction({
+              chatId: selectedChatId,
+              path,
+              action,
+            }),
+    [adapters, selectedChatId],
+  );
   const setNotification = useCallback((request: Extract<NativePresentationRequest, { kind: "notification" }>) => {
     store.publish(`native:${request.title}`, "application", store.nextOccurrence(), {
       summary: request.title, detail: request.body, source: "Aworkit", severity: "info", lifetime: { kind: "transient" },
@@ -318,31 +334,33 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         >
           {mountedRoutes.has("chat") && (
             <div className="route-surface" data-route="chat" hidden={route !== "chat"}>
-              <ChatWorkspaceScreen
-                active={route === "chat"}
-                onReveal={after => navigate("chat", after)}
-                confirmRecoveryAbandon={(title, body) =>
-                  adapters.nativePresentation.confirm(title, body)
-                }
-                newChatRequest={newChatRequest}
-                historyActionRequest={historyActionRequest}
-                libraryPort={workflowLibraryPort}
-                libraryRevision={libraryRevision}
-                onRecoveryPendingChange={setChatRecoveryPending}
-                onRuntimeSnapshotChange={updateChatRuntimeState}
-                subagentView={subagentView}
-                pickPath={async (kind, extensions) =>
-                  kind === "folder"
-                    ? adapters.nativePresentation.pickFolder()
-                    : adapters.nativePresentation.pickFile(extensions)
-                }
-                storedInspectorWidth={desktopLayout.inspectorPaneWidth}
-                onInspectorWidthChange={(width) => {
-                  void layoutPort
-                    .commit({ inspectorPaneWidth: width })
-                    .catch((error) => setNotification({ kind: "notification", title: "Could not save desktop layout", body: String(error) }));
-                }}
-              />
+              <PathActionProvider run={runPathAction}>
+                <ChatWorkspaceScreen
+                  active={route === "chat"}
+                  onReveal={after => navigate("chat", after)}
+                  confirmRecoveryAbandon={(title, body) =>
+                    adapters.nativePresentation.confirm(title, body)
+                  }
+                  newChatRequest={newChatRequest}
+                  historyActionRequest={historyActionRequest}
+                  libraryPort={workflowLibraryPort}
+                  libraryRevision={libraryRevision}
+                  onRecoveryPendingChange={setChatRecoveryPending}
+                  onRuntimeSnapshotChange={updateChatRuntimeState}
+                  subagentView={subagentView}
+                  pickPath={async (kind, extensions) =>
+                    kind === "folder"
+                      ? adapters.nativePresentation.pickFolder()
+                      : adapters.nativePresentation.pickFile(extensions)
+                  }
+                  storedInspectorWidth={desktopLayout.inspectorPaneWidth}
+                  onInspectorWidthChange={(width) => {
+                    void layoutPort
+                      .commit({ inspectorPaneWidth: width })
+                      .catch((error) => setNotification({ kind: "notification", title: "Could not save desktop layout", body: String(error) }));
+                  }}
+                />
+              </PathActionProvider>
             </div>
           )}
           {mountedRoutes.has("workflows") && (

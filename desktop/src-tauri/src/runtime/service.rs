@@ -3426,6 +3426,44 @@ impl DesktopRuntime {
         )
     }
 
+    /// Resolves and acts on one file path shown in a conversation.
+    ///
+    /// The path is resolved inside the Chat's frozen workspace before anything
+    /// reaches the operating system, so a model-authored string cannot open a
+    /// file outside it, and every action follows an explicit user choice in the
+    /// presentation layer.
+    pub fn path_action(
+        &mut self,
+        request: super::path_actions::PathActionRequestV1,
+    ) -> Result<super::path_actions::PathActionOutcomeV1, String> {
+        let chat_id = StableId::parse(request.chat_id.clone())
+            .map_err(|_| "the path action requires a valid Chat id".to_owned())?;
+        let record = self
+            .history
+            .frozen_context(&chat_id)?
+            .ok_or_else(|| "the Chat has no frozen workspace yet".to_owned())?;
+        let root = record
+            .context
+            .chat_workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| {
+                record
+                    .context
+                    .project
+                    .as_ref()
+                    .map(|scope| scope.workspace_binding.root.clone())
+            })
+            .ok_or_else(|| "this Chat has no workspace folder".to_owned())?;
+        let editor = self.documents.settings().desktop.editor.clone();
+        super::path_actions::perform_in_workspace(
+            &root,
+            &request.path,
+            request.action,
+            editor.as_deref(),
+        )
+    }
+
     /// Initializes and interrogates one exact unsaved external-agent draft,
     /// then closes its complete process group without starting an agent task.
     pub fn settings_v2_probe_external_agent(

@@ -17,7 +17,8 @@ use aworkit_desktop::presentation::{
 use aworkit_desktop::runtime::{
     CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
     DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
-    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2,
+    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, PathActionOutcomeV1,
+    PathActionRequestV1,
     McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
     ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
     ProviderTestInput, ProviderTestResult, SettingsCommitInput, SettingsSnapshot,
@@ -408,6 +409,23 @@ async fn settings_v2_probe_mcp(
     .map_err(|error| format!("MCP-probe worker failed: {error}"))?
 }
 
+/// Acts on one file path a conversation showed, after an explicit user choice.
+#[tauri::command]
+async fn chat_path_action(
+    runtime: tauri::State<'_, SharedRuntime>,
+    request: PathActionRequestV1,
+) -> Result<PathActionOutcomeV1, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .path_action(request)
+    })
+    .await
+    .map_err(|error| format!("path-action worker failed: {error}"))?
+}
+
 #[tauri::command]
 async fn settings_v2_probe_external_agent(
     runtime: tauri::State<'_, SharedRuntime>,
@@ -761,6 +779,7 @@ fn main() {
                 settings_v2_discover_models,
                 settings_v2_probe_mcp,
                 settings_v2_probe_external_agent,
+                chat_path_action,
                 settings_v2_probe_project,
                 settings_v2_probe_tool,
                 settings_v2_inspect_extension,

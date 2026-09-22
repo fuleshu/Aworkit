@@ -90,6 +90,12 @@ pub struct SettingsConfigurationV2 {
     /// Delegated-subagent tab presentation preference, edited in Settings.
     #[serde(default)]
     pub subagents: SubagentViewPreferenceV1,
+    /// Desktop integration preferences such as the editor used to open a file
+    /// from the conversation. Documents written before this section existed
+    /// load with no editor configured, which means the operating system's
+    /// default application.
+    #[serde(default)]
+    pub desktop: DesktopConfigurationV2,
     /// Whether this document has already had the bundled tools enabled by
     /// default. Documents written while bundled tools started disabled are
     /// missing this marker (serde defaults it to `false`), so the first load
@@ -117,6 +123,7 @@ impl Default for SettingsConfigurationV2 {
             chat_defaults: ChatDefaultsConfigurationV2::default(),
             layout: LayoutConfigurationV2::default(),
             subagents: SubagentViewPreferenceV1::default(),
+            desktop: DesktopConfigurationV2::default(),
             // A document this build creates already made the choice.
             tools_defaulted_enabled: true,
         }
@@ -126,6 +133,27 @@ impl Default for SettingsConfigurationV2 {
 impl SettingsConfigurationV2 {
     /// Validates the full document, including all cross-section references.
     pub fn validate(&mut self) -> Result<(), String> {
+        if let Some(editor) = self.desktop.editor.as_deref() {
+            let trimmed = editor.trim();
+            if trimmed.is_empty()
+                || trimmed.len() > 4_096
+                || trimmed.contains('\0')
+                || trimmed.chars().any(char::is_control)
+            {
+                return Err(
+                    "the desktop editor command must be a non-empty command of at most 4096 characters"
+                        .into(),
+                );
+            }
+            let path = std::path::Path::new(trimmed);
+            let bare_command = path.components().count() == 1;
+            if !path.is_absolute() && !bare_command {
+                return Err(
+                    "the desktop editor command must be an absolute path or one bare command name from PATH"
+                        .into(),
+                );
+            }
+        }
         if self.schema_version != SETTINGS_SCHEMA_VERSION_V2 {
             return Err(format!(
                 "settings schemaVersion must be {SETTINGS_SCHEMA_VERSION_V2}, got {}",
@@ -1978,6 +2006,17 @@ impl ExternalAgentConfigurationV2 {
     }
 }
 
+/// Desktop integration preferences the shell needs when acting on a file.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopConfigurationV2 {
+    /// Command that opens a file in the user's editor, for example `code` or an
+    /// absolute executable path. Absent means the operating system's default
+    /// application for the file's format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor: Option<String>,
+}
+
 /// Local and Git-portable history behavior.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -3749,6 +3788,34 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn the_desktop_editor_command_is_validated_as_launchable_or_absent() {
+        let mut settings = configured();
+        settings.validate().expect("no editor is valid");
+        for accepted in ["code", "/usr/bin/code", "  code  "] {
+            settings.desktop.editor = Some(accepted.to_owned());
+            settings
+                .validate()
+                .unwrap_or_else(|error| panic!("{accepted} must be accepted: {error}"));
+        }
+        for refused in ["", "   ", "bin/code", "../code", "/usr/bin/co\u{0}de", "co\nde"] {
+            settings.desktop.editor = Some(refused.to_owned());
+            assert!(
+                settings.validate().is_err(),
+                "{refused:?} must be refused"
+            );
+        }
+        // The section is additive: an older document simply has no editor.
+        settings.desktop.editor = None;
+        let encoded = serde_json::to_value(&settings).expect("serializes");
+        assert!(encoded["desktop"].get("editor").is_none());
+        let mut legacy = encoded.clone();
+        legacy.as_object_mut().expect("object").remove("desktop");
+        let decoded: SettingsConfigurationV2 =
+            serde_json::from_value(legacy).expect("an older document still decodes");
+        assert_eq!(decoded.desktop.editor, None);
+    }
+
     fn external_agent_delegation_defaults_are_optional() {
         let agent = ExternalAgentConfigurationV2 {
             id: "agent.fixture".into(),

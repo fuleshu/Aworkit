@@ -73,6 +73,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
     label: "Appearance",
     description: "Color mode and application text size",
   },
+  {
+    id: "desktop",
+    label: "Desktop",
+    description: "Editor used when opening a file from the conversation",
+  },
 ];
 
 const sectionFields = {
@@ -87,6 +92,7 @@ const sectionFields = {
   data: "data",
   projects: "projects",
   appearance: "appearance",
+  desktop: "desktop",
 } as const satisfies Record<SettingsSectionId, keyof SettingsConfigurationV2>;
 
 /** Returns the domains that differ from the last canonical projection. */
@@ -308,7 +314,9 @@ export function settingsDraftIssues(
   const parsed = settingsConfigurationV2Schema.safeParse(draft);
   const issues: SettingsUiIssue[] = parsed.success
     ? [
-        ...validateSettingsConfiguration(parsed.data).map(decorateValidationIssue),
+        ...validateSettingsConfiguration(parsed.data).map((issue) =>
+          decorateValidationIssue(parsed.data, issue),
+        ),
         ...freeformSecretIssues(parsed.data),
       ]
     : parsed.error.issues.map((issue) => ({
@@ -329,6 +337,7 @@ export function settingsDraftIssues(
 }
 
 function decorateValidationIssue(
+  draft: SettingsConfigurationV2,
   issue: SettingsValidationIssue,
 ): SettingsUiIssue {
   const prefix = "externalAgents.";
@@ -337,7 +346,12 @@ function decorateValidationIssue(
     const agentId = issue.path.slice(prefix.length, -suffix.length);
     return { ...issue, focusId: `${agentId}-clear-capabilities` };
   }
-  return issue;
+  // A cross-reference issue names a stored location, so the same field mapping
+  // the schema issues use points at the editor the user has to change.
+  return {
+    ...issue,
+    focusId: focusIdForSchemaPath(draft, issue.path.split(".")),
+  };
 }
 
 function freeformSecretIssues(
@@ -477,6 +491,7 @@ function sectionFromSchemaPath(
     case "data":
     case "projects":
     case "appearance":
+    case "desktop":
     case "providers":
       return String(path[0]) as SettingsSectionId;
     default:
@@ -498,6 +513,8 @@ function focusIdForSchemaPath(
       return `${project.id}-location`;
     return undefined;
   }
+  if (path[0] === "desktop")
+    return path[1] === "editor" ? "desktop-editor" : undefined;
   if (path[0] !== "providers") return undefined;
   const provider = draft.providers[Number(path[1])];
   if (provider === undefined) return undefined;

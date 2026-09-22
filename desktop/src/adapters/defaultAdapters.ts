@@ -2,6 +2,7 @@ import {
   nativePresentationEvent,
   type DesktopAdapters,
   type NativePresentationRequest,
+  type PathActionOutcome,
 } from "./contracts";
 
 /** Browser-safe presentation fallback; a later platform milestone may replace
@@ -38,6 +39,15 @@ export const defaultDesktopAdapters: DesktopAdapters = {
     async pickFolder(): Promise<string | null> {
       const native = await invokeNativeResult<string | null>("native_pick_folder");
       return native.available ? native.value : null;
+    },
+    async pathAction(request): Promise<PathActionOutcome> {
+      // Unlike the choosers, a refused or failed path action is what the menu
+      // reports, so its failure must reach the caller instead of becoming an
+      // indistinguishable "unavailable".
+      if (!("__TAURI_INTERNALS__" in window))
+        throw new Error("This preview cannot open files on your computer.");
+      const { invoke } = await import("@tauri-apps/api/core");
+      return await invoke<PathActionOutcome>("chat_path_action", { request });
     },
   },
 };

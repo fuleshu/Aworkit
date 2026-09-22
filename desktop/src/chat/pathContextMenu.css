@@ -1,0 +1,50 @@
+/* The menu one conversation path offers, positioned at the pointer. */
+.path-context-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+  min-width: 230px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 5px;
+  border: 1px solid var(--aw-divider);
+  border-radius: 9px;
+  background: var(--aw-raised);
+  color: var(--aw-text);
+  box-shadow: 0 12px 38px #0002;
+  font-size: var(--aw-font-ui);
+}
+.path-context-menu:focus {
+  outline: none;
+}
+.path-context-menu-target {
+  margin: 0;
+  padding: 4px 8px 6px;
+  color: var(--aw-muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: var(--aw-font-caption);
+  overflow-wrap: anywhere;
+}
+.path-context-menu button {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.path-context-menu button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--aw-accent) 14%, var(--aw-raised));
+}
+.path-context-menu button:disabled {
+  color: var(--aw-muted);
+  cursor: not-allowed;
+}
+.path-context-menu-reason {
+  margin: 4px 0 2px;
+  padding: 0 8px;
+  color: var(--aw-muted);
+  font-size: var(--aw-font-caption);
+  overflow-wrap: anywhere;
+}

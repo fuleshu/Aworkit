@@ -592,6 +592,14 @@ export const subagentViewConfigurationSchema = z
   })
   .strict();
 
+/** Desktop integration preferences the shell needs when acting on a file. */
+export const desktopConfigurationSchema = z
+  .object({
+    editor: z.string().trim().min(1).max(4_096).optional(),
+  })
+  .strict()
+  .default({});
+
 export const settingsConfigurationV2Schema = z
   .object({
     approvals: z.object({ defaultMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).default("ask_for_approval") }).strict().default({ defaultMode: "ask_for_approval" }),
@@ -609,6 +617,7 @@ export const settingsConfigurationV2Schema = z
     chatDefaults: chatDefaultsConfigurationSchema,
     layout: layoutConfigurationSchema,
     subagents: subagentViewConfigurationSchema.optional(),
+    desktop: desktopConfigurationSchema,
     /*
      * Marker for the one-time "bundled tools are available by default" step.
      * The core owns it; the editor only round-trips it.
@@ -676,6 +685,9 @@ export type SettingsConfigurationV2 = z.infer<
 export type SubagentViewConfiguration = z.infer<
   typeof subagentViewConfigurationSchema
 >;
+export type DesktopConfiguration = z.infer<
+  typeof desktopConfigurationSchema
+>;
 export type ProviderHealthSnapshotV2 = z.infer<
   typeof providerHealthSnapshotV2Schema
 >;
@@ -700,7 +712,8 @@ export type SettingsValidationIssue = {
     | "external_agents"
     | "data"
     | "projects"
-    | "appearance";
+    | "appearance"
+    | "desktop";
   readonly path: string;
   readonly message: string;
 };
@@ -880,6 +893,23 @@ export function validateSettingsConfiguration(
         });
       }
     }
+  }
+  const editor = settings.desktop?.editor;
+  if (editor !== undefined) {
+    const trimmed = editor.trim();
+    const bareCommand = !/[/\\]/.test(trimmed);
+    if (
+      trimmed.length === 0 ||
+      trimmed.length > 4_096 ||
+      /[\u0000-\u001f\u007f]/.test(trimmed) ||
+      (!bareCommand && !trimmed.startsWith("/") && !/^[A-Za-z]:[/\\]/.test(trimmed))
+    )
+      issues.push({
+        section: "desktop",
+        path: "desktop.editor",
+        message:
+          "The editor command must be an absolute path or one bare command name from PATH.",
+      });
   }
   validateConnectionCredentials(settings.mcpServers, credentialFields, issues);
   for (const agent of settings.externalAgents) {

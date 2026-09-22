@@ -12,6 +12,7 @@ import { prettyJson } from "./jsonPresentation";
 import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
 import { MarkdownContent } from "./MarkdownContent";
+import { PathMenuTarget } from "./PathMenuTarget";
 import { questionFromMetadata } from "./question";
 import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
@@ -516,7 +517,7 @@ export function TimelineCard({
             {card.reasoningLabel !== undefined && (
               <small className="reasoning-label">{card.reasoningLabel}</small>
             )}
-            <code>{card.content}</code>
+            <ToolPathCode content={card.content} item={item} />
             <ActivityData item={item} />
           </span>
           <span className={`status ${item.status ?? ""}`}>
@@ -555,7 +556,7 @@ export function TimelineCard({
           {card.reasoningLabel !== undefined && (
             <small className="reasoning-label">{card.reasoningLabel}</small>
           )}
-          <code>{card.content}</code>
+          <ToolPathCode content={card.content} item={item} />
         </span>
         <span className={`status ${item.status ?? ""}`}>
           {item.status ?? card.label}
@@ -782,6 +783,58 @@ function metadataOf(item: TimelineItem): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * The workspace path one file tool acted on, exactly as the model passed it.
+ * Only the tools whose only location argument is a path qualify, so the card
+ * never offers an action for a pattern, a command or a web address.
+ */
+function fileToolPath(item: TimelineItem): string | undefined {
+  if (item.kind !== "tool") return undefined;
+  const capability = metadataOf(item).capabilityId;
+  if (
+    typeof capability !== "string" ||
+    ![
+      "tool.files.read",
+      "tool.files.write",
+      "tool.files.edit",
+      "tool.files.list",
+      "tool.files.search",
+      "tool.files.grep",
+    ].includes(capability)
+  )
+    return undefined;
+  const input = item.input;
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return undefined;
+  const path = (input as Record<string, unknown>).path;
+  return typeof path === "string" && path.length > 0 && path.length <= 4_096
+    ? path
+    : undefined;
+}
+
+/**
+ * The location a file tool card shows. A path tool names the file it touched
+ * instead of repeating its own identifier, and that name is the element a user
+ * can right-click to open, edit or reveal it.
+ */
+function ToolPathCode({
+  content,
+  item,
+}: {
+  readonly content: string;
+  readonly item: TimelineItem;
+}): React.JSX.Element {
+  const path = fileToolPath(item);
+  if (path === undefined) return <code>{content}</code>;
+  return (
+    <PathMenuTarget path={path}>
+      <code title={`Workspace path: ${path}. Right-click to open, edit or reveal it.`}>
+        {path}
+      </code>
+    </PathMenuTarget>
+  );
 }
 
 /**

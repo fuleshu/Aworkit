@@ -16,6 +16,7 @@ mod dto;
 mod extension_inspection;
 mod extension_registration;
 mod external_agent;
+mod path_actions;
 mod graph_pass;
 mod history;
 mod history_index;
@@ -59,6 +60,7 @@ pub use approvals::FilesystemGrant;
 pub use cancellation::WorkflowCancellationController;
 pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};
+pub use path_actions::{PathActionOutcomeV1, PathActionRequestV1};
 pub use graph_pass::{GraphApprovalRequestV1, GraphNodeActivityV1};
 pub use images::ChatImageStore;
 pub use pipeline::{

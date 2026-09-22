@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatHistoryEntry, ChatProjectChoice } from "../chat/types";
+import { fitMenuToViewport, type MenuPosition } from "./menuPosition";
 
 export type Route = "chat" | "management" | "workflows" | "settings";
 interface NavigationPaneProps {
@@ -23,11 +24,6 @@ interface ProjectHistoryGroup {
   readonly id: string;
   readonly name: string;
   readonly entries: readonly ChatHistoryEntry[];
-}
-
-interface MenuPosition {
-  readonly left: number;
-  readonly top: number;
 }
 
 /** Persistent desktop navigation in the formal-design order. */
@@ -392,21 +388,6 @@ function ChatHistoryRow({
       </div>
     </div>
   );
-}
-
-/** Keeps a viewport-fixed menu visible regardless of sidebar scroll offset. */
-function fitMenuToViewport(
-  position: MenuPosition,
-  width: number,
-  height: number,
-): MenuPosition {
-  const padding = 8;
-  const maximumLeft = Math.max(padding, window.innerWidth - width - padding);
-  const maximumTop = Math.max(padding, window.innerHeight - height - padding);
-  return {
-    left: Math.min(Math.max(position.left, padding), maximumLeft),
-    top: Math.min(Math.max(position.top, padding), maximumTop),
-  };
 }
 
 function organizeHistory(

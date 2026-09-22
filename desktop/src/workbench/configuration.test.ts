@@ -72,6 +72,7 @@ function configuration(): SettingsConfigurationV2 {
     appearance: { mode: "system", fontScale: 1 },
     chatDefaults: {},
     layout: {},
+    desktop: {},
   };
 }
 
@@ -161,6 +162,37 @@ describe("Settings configuration v2", () => {
       expect.objectContaining({
         section: "model_tiers",
         path: "modelTiers.tier:quality",
+      }),
+    );
+  });
+
+  it("validates the desktop editor as one launchable command", () => {
+    const value = configuration();
+    // An absent editor means the operating system's own default application,
+    // and no configured editor leaves the command unconstrained.
+    expect(validateSettingsConfiguration(value)).toEqual([]);
+    expect(validateSettingsConfiguration({ ...value, desktop: {} })).toEqual([]);
+    for (const editor of ["code", "/usr/bin/code", "C:\\Tools\\code.exe"])
+      expect(
+        validateSettingsConfiguration({ ...value, desktop: { editor } }),
+      ).toEqual([]);
+    // A relative location is refused; the host would resolve it against
+    // whatever directory the desktop process happens to have.
+    for (const editor of ["./scripts/open.sh", "scripts/open.sh", "   "])
+      expect(
+        validateSettingsConfiguration({ ...value, desktop: { editor } }),
+      ).toContainEqual(
+        expect.objectContaining({ section: "desktop", path: "desktop.editor" }),
+      );
+  });
+
+  it("focuses an invalid desktop editor in its own Settings section", () => {
+    const value = { ...configuration(), desktop: { editor: "../code" } };
+    expect(settingsDraftIssues(value, {})).toContainEqual(
+      expect.objectContaining({
+        section: "desktop",
+        path: "desktop.editor",
+        focusId: "desktop-editor",
       }),
     );
   });
