@@ -2,14 +2,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { configDefaults } from "vitest/config";
 
-/** Vite hosts the unprivileged presentation client only. */
+/** The opt-in wall-clock gate suite: `pnpm test:perf`, never the default run. */
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
   test: {
     setupFiles: ["./src/test/setup.ts"],
-    // Wall-clock gates live in src/perf and run through `pnpm test:perf`.
-    exclude: [...configDefaults.exclude, "src/perf/**"],
+    include: ["src/perf/**/*.test.{ts,tsx}"],
+    exclude: configDefaults.exclude,
   },
 });

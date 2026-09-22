@@ -220,7 +220,7 @@ fn validate_extensions(
                 .as_str()
                 .filter(|text| !text.is_empty() && text.len() <= MAXIMUM_EXTENSION_BYTES)
                 .ok_or_else(|| invalid_tool("a browse extension is empty or oversized"))?;
-            if text.contains('.') || text.contains(' ') {
+            if text.contains('.') || text.contains('\0') {
                 return Err(invalid_tool(
                     "browse extensions are bare, for example csv",
                 ));

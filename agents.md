@@ -60,6 +60,33 @@ Agents reach for the codebase by grepping it. Adashi is addressable the same way
 
 Do not treat a grep result as the artifact. Drill into the locator before acting on it; the line is a window around the match, not the stored text.
 
+## Verification budget
+
+Test runs are the most expensive thing in this repository, so they are chosen, not habitually repeated. Follow this without asking, and say in the final message exactly what you ran.
+
+Run only what can observe your change:
+
+- TypeScript: `pnpm test:changed` (git-diff based) for the files you touched, or the slice that owns them — `pnpm test:chat`, `pnpm test:workbench`. `pnpm check` is `tsc` only and costs seconds.
+- Rust: `cargo test --lib <module::filter>` while iterating.
+- Documentation, CSS, styling or copy changes: run no tests at all. State what you inspected instead.
+
+Escalate only when it is earned:
+
+- One full suite (`pnpm test`, `cargo test --lib`) per *feature completion* or before a push that finishes one — never per edit, never per fix, and never "to check for fallout" from a local change.
+- A change to shared core behaviour (events, projections, job registry, tool freezing, persistence) earns the full Rust suite. A widget, style or copy change does not.
+- Batch every known failure into one edit and run once. Do not fix-and-rerun one test at a time.
+- Start a long run as a background job and keep working; never block on it when the next edit does not need its result.
+
+Wall-clock gates are opt-in:
+
+- `src/perf` holds the tests that assert timings (whole-App shell interactions, the 1,000-node kernel frame budget). They are excluded from the default run and are run deliberately with `pnpm test:perf`, or in CI.
+- Never add a timing assertion to the default suite. If a test needs a multi-second budget to pass, it belongs in `src/perf` unless the assertion itself is about behaviour rather than time.
+
+When a full run is red, attribute before reacting:
+
+- A failure in a file you did not touch, on a test with an explicit time budget or a wall-clock assertion, is an environment failure until proven otherwise. Say so instead of silently re-running it or "fixing" unrelated code.
+- Never weaken or delete an assertion to make a run green. Report it instead.
+
 
 <!-- adashi:architecture:begin -->
 <!-- adashi:generated revision=683 -->

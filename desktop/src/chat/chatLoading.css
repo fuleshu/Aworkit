@@ -3,7 +3,7 @@
 .chat-busy-spinner { width:16px; height:16px; border:2px solid var(--aw-divider); border-top-color:var(--aw-accent); border-radius:50%; animation:chat-loading-spin .7s linear infinite; }
 .chat-history-loader { display:flex; align-items:center; justify-content:center; min-height:64px; }
 .chat-history-loader button { font:inherit; color:var(--aw-secondary); background:transparent; border:0; padding:8px 12px; cursor:pointer; }
-.inspector-window-note { margin:12px; color:var(--aw-secondary); font-size:12px; }
+.inspector-window-note { margin:12px; color:var(--aw-secondary); font-size:var(--aw-font-caption); }
 .feed-status { border:1px solid var(--aw-divider); border-radius:8px; background:var(--aw-panel); }
 .feed-status.selected { border-color:var(--aw-accent); }
 .feed-status button { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; border:0; padding:12px; background:transparent; text-align:left; color:inherit; font:inherit; cursor:pointer; }

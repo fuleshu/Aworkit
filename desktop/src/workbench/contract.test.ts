@@ -100,28 +100,6 @@ describe("desktop design and workflow contracts", () => {
     expect(validateWorkflow(editor.document)).toEqual([]);
   });
 
-  it("keeps representative 1,000-node kernel interactions inside the frame-budget gate", () => {
-    const document = {
-      schemaVersion: 1,
-      nodes: Array.from({ length: 1_000 }, (_, index) => ({
-        id: `node.${index}`,
-        type: "model",
-        position: { x: index % 50, y: Math.floor(index / 50) },
-      })),
-      edges: [],
-    };
-    const initial = createEditor(document);
-    const start = performance.now();
-    const editor = moveWorkflowNode(initial, "node.999", {
-      x: 100,
-      y: 200,
-    });
-    const surface = projectWorkflowSurface(editor);
-    const elapsed = performance.now() - start;
-    expect(editor.document.nodes).toHaveLength(1_000);
-    expect(surface.nodes).toHaveLength(1_000);
-    expect(elapsed).toBeLessThan(16);
-  });
 
   it("projects typed ports, groups, cycles, self-loops, and multi-edges losslessly", () => {
     const editor = createEditor(
