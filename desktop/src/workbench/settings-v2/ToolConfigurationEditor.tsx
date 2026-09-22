@@ -18,12 +18,18 @@ export function ToolConfigurationEditor({ tool, configuration = true, onChange, 
     {configuration && <div className="settings-grid two-columns">{manifest.fields.map(field => {
       const value = tool.configuration[field.key] ?? manifest.configuration[field.key];
       const update = (next: unknown) => onChange({ ...tool, configuration: { ...tool.configuration, [field.key]: next } });
-      return <label className="settings-field" htmlFor={`${tool.id}-${field.key}`} key={field.key}>{field.label}
-        {field.kind === "boolean" ? <input id={`${tool.id}-${field.key}`} type="checkbox" title={field.help} disabled={field.readOnly} checked={value === true} onChange={e => update(e.target.checked)} />
-          : <input id={`${tool.id}-${field.key}`} type={field.kind === "integer" ? "number" : "text"} title={field.help} readOnly={field.readOnly}
-            min={field.minimum} max={field.maximum} step={field.kind === "integer" ? 1 : undefined}
-            value={Array.isArray(value) ? value.join(", ") : String(value ?? "")} onChange={e => update(field.kind === "integer" ? Number(e.target.value) : field.kind === "list" ? e.target.value.split(",").map(v => v.trim()).filter(Boolean) : e.target.value)} />}
-      </label>;
+      // A boolean field reads as one row: control, then label and help. Every
+      // other kind keeps its label above a full-width control.
+      return field.kind === "boolean"
+        ? <label className="settings-field settings-checkbox-field" htmlFor={`${tool.id}-${field.key}`} key={field.key}>
+            <input id={`${tool.id}-${field.key}`} type="checkbox" title={field.help} disabled={field.readOnly} checked={value === true} onChange={e => update(e.target.checked)} />
+            <span><strong>{field.label}</strong>{field.help.length > 0 && <small>{field.help}</small>}</span>
+          </label>
+        : <label className="settings-field" htmlFor={`${tool.id}-${field.key}`} key={field.key}>{field.label}
+            <input id={`${tool.id}-${field.key}`} type={field.kind === "integer" ? "number" : "text"} title={field.help} readOnly={field.readOnly}
+              min={field.minimum} max={field.maximum} step={field.kind === "integer" ? 1 : undefined}
+              value={Array.isArray(value) ? value.join(", ") : String(value ?? "")} onChange={e => update(field.kind === "integer" ? Number(e.target.value) : field.kind === "list" ? e.target.value.split(",").map(v => v.trim()).filter(Boolean) : e.target.value)} />
+          </label>;
     })}</div>}
   </div>;
 }

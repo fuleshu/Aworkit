@@ -2024,12 +2024,31 @@ pre {
   gap: 5px;
   min-width: 0;
 }
-.settings-field > input,
+/* Text controls fill their field; a checkbox or radio is its own control and
+   must keep its intrinsic size instead of stretching across the row. */
+.settings-field > input:not([type="checkbox"]):not([type="radio"]),
 .settings-field > select,
 .settings-field > textarea {
   color: var(--aw-text);
   min-width: 0;
   width: 100%;
+}
+/* A boolean field is one row: the control, then its label and help text. */
+.settings-field.settings-checkbox-field {
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.settings-field.settings-checkbox-field > input[type="checkbox"] {
+  margin: 2px 0 0;
+}
+.settings-field.settings-checkbox-field > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-field.settings-checkbox-field > span > small {
+  color: var(--aw-muted);
+  font-size: var(--aw-font-caption);
 }
 .settings-command-picker {
   align-items: center;
