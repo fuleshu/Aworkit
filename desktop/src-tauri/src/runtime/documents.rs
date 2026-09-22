@@ -41,6 +41,7 @@ pub(crate) const KNOWN_NODE_TYPES: &[&str] = &[
     "agent",
     "model_call",
     "tool",
+    "external_agent",
     "condition",
     "parallel",
     "approval",
@@ -1344,6 +1345,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
             "agent" => validate_agent_configuration(node_id, config)?,
             "model_call" => validate_model_call_configuration(node_id, config)?,
             "tool" => validate_tool_configuration(node_id, config)?,
+            "external_agent" => validate_external_agent_node_configuration(node_id, config)?,
             "condition" => validate_condition_configuration(node_id, config)?,
             "approval" => validate_approval_configuration(node_id, config)?,
             _ => unreachable!("catalog node type"),
@@ -1637,6 +1639,67 @@ fn validate_model_reasoning_overrides(
         return Err(format!(
             "workflow node '{node_id}' enableThinking must be a boolean or null to inherit"
         ));
+    }
+    Ok(())
+}
+
+/// One external-agent node runs exactly one unattended delegation.
+///
+/// The node names the installed delegation tool it runs, and may narrow that
+/// target's model and reasoning effort for this node only. The target itself
+/// stays a Settings concern, resolved when the Chat freezes.
+fn validate_external_agent_node_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let required = BTreeSet::from(["toolId"]);
+    let allowed = BTreeSet::from(["toolId", "instructions", "model", "reasoningEffort"]);
+    if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
+        return Err(format!(
+            "workflow node '{node_id}' external agent configuration accepts exactly toolId plus optional instructions, model, and reasoningEffort"
+        ));
+    }
+    let tool_id = config
+        .get("toolId")
+        .and_then(Value::as_str)
+        .filter(|value| super::tool_loop::is_external_agent_tool(value))
+        .ok_or_else(|| {
+            format!(
+                "workflow node '{node_id}' external agent toolId must reference an installed external delegation tool"
+            )
+        })?;
+    if !builtin_tool_binding_ids().contains(tool_id) {
+        return Err(format!(
+            "workflow node '{node_id}' external agent tool '{tool_id}' is not installed"
+        ));
+    }
+    if config.contains_key("instructions") {
+        validate_optional_instructions(node_id, config.get("instructions"))?;
+    }
+    if let Some(model) = config.get("model").filter(|value| !value.is_null()) {
+        let model = model.as_str().ok_or_else(|| {
+            format!("workflow node '{node_id}' external agent model must be text")
+        })?;
+        if model.trim().is_empty() || model.len() > 256 {
+            return Err(format!(
+                "workflow node '{node_id}' external agent model must be a non-empty name of at most 256 characters"
+            ));
+        }
+    }
+    if let Some(effort) = config
+        .get("reasoningEffort")
+        .filter(|value| !value.is_null())
+    {
+        let effort = effort.as_str().ok_or_else(|| {
+            format!("workflow node '{node_id}' external agent reasoning effort must be text")
+        })?;
+        if !super::settings_v2::EXTERNAL_AGENT_REASONING_EFFORTS.contains(&effort) {
+            return Err(format!(
+                "workflow node '{node_id}' external agent reasoning effort must be one of {}",
+                super::settings_v2::EXTERNAL_AGENT_REASONING_EFFORTS.join(", ")
+            ));
+        }
     }
     Ok(())
 }

@@ -34,6 +34,7 @@ const CATALOG_NODE_TYPES = new Set([
   "agent",
   "model_call",
   "tool",
+  "external_agent",
   "condition",
   "parallel",
   "approval",
@@ -44,6 +45,14 @@ const CATALOG_NODE_TYPES = new Set([
 
 /** Use the bundled registry; native validation remains the execution authority. */
 const BUILTIN_TOOL_BINDING_IDS = new Set(nativeTools.map(({ id }) => id));
+/** The installed tools that delegate to a configured external agent product. */
+const EXTERNAL_AGENT_TOOL_IDS = new Set(
+  nativeTools
+    .filter(({ executor }) =>
+      executor === "subagent_codex" || executor === "subagent_claude_code",
+    )
+    .map(({ id }) => id),
+);
 
 const MAXIMUM_MODEL_CALL_TOKENS = 8192;
 const MAXIMUM_INSTRUCTIONS_BYTES = 64 * 1024;
@@ -282,6 +291,73 @@ export function assessNativeWorkflow(
           issues.push({
             code: "native_tool_node",
             message: `Workflow node '${id}' tool parameters must be a JSON object.`,
+          });
+      }
+    }
+    if (node.type === "external_agent") {
+      const configuration = objectConfiguration(node);
+      if (configuration === null)
+        issues.push({
+          code: "native_node_configuration",
+          message: `Workflow node '${id}' external agent configuration accepts exactly toolId plus optional instructions, model, and reasoningEffort.`,
+        });
+      else {
+        const keys = new Set(Object.keys(configuration));
+        const allowed = new Set([
+          "instructions",
+          "model",
+          "reasoningEffort",
+          "toolId",
+        ]);
+        if (!keys.has("toolId") || [...keys].some((key) => !allowed.has(key)))
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent configuration accepts exactly toolId plus optional instructions, model, and reasoningEffort.`,
+          });
+        const toolId = configuration.toolId;
+        if (typeof toolId !== "string" || !EXTERNAL_AGENT_TOOL_IDS.has(toolId))
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent toolId must reference an installed external delegation tool.`,
+          });
+        else if (!BUILTIN_TOOL_BINDING_IDS.has(toolId))
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent tool '${toolId}' is not installed.`,
+          });
+        const instructions = configuration.instructions;
+        if (
+          instructions !== undefined &&
+          instructions !== null &&
+          (typeof instructions !== "string" ||
+            instructions.trim().length === 0 ||
+            instructions.length > MAXIMUM_INSTRUCTIONS_BYTES)
+        )
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent instructions must be a non-empty string of at most ${MAXIMUM_INSTRUCTIONS_BYTES / 1024} KiB.`,
+          });
+        const model = configuration.model;
+        if (
+          model !== undefined &&
+          model !== null &&
+          (typeof model !== "string" ||
+            model.trim().length === 0 ||
+            model.length > 256)
+        )
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent model must be a non-empty name of at most 256 characters.`,
+          });
+        const effort = configuration.reasoningEffort;
+        if (
+          effort !== undefined &&
+          effort !== null &&
+          (typeof effort !== "string" || !REASONING_EFFORTS.has(effort))
+        )
+          issues.push({
+            code: "native_node_configuration",
+            message: `Workflow node '${id}' external agent reasoningEffort must be one of ${[...REASONING_EFFORTS].join(", ")}, or null to inherit.`,
           });
       }
     }

@@ -1297,8 +1297,16 @@ impl WorkflowExecutionPipeline {
                 .get(descriptor_key)
                 .or_else(|| dynamic_descriptors.get(descriptor_key))
                 .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
+            // A tool capability may be invoked by an Agent loop, a Tool node, or
+            // one external-agent node that delegates through it.
             let binding = file_tool_capability_binding_with_nodes(
-                tool, descriptor, vec!["agent".to_owned(), "tool".to_owned()],
+                tool,
+                descriptor,
+                vec![
+                    "agent".to_owned(),
+                    "tool".to_owned(),
+                    "external_agent".to_owned(),
+                ],
             )?;
             capability_bindings.push(binding);
         }
@@ -3274,6 +3282,31 @@ fn compile_graph_snapshot(
                             &binding.capability_id
                         },
                     )?),
+                    vec![binding],
+                )
+            }
+            "external_agent" => {
+                let tool_id = configuration
+                    .get("toolId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_workflow("external agent node has no toolId"))?;
+                if !super::tool_loop::is_external_agent_tool(tool_id) {
+                    return Err(invalid_workflow(
+                        "external agent node selects a tool that is not an installed external delegation tool",
+                    ));
+                }
+                let binding = tool_bindings
+                    .iter()
+                    .find(|binding| binding.capability_id == tool_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        invalid_workflow(
+                            "external agent node binds a tool with no frozen native binding",
+                        )
+                    })?;
+                (
+                    WorkerExecutorKindV1::Brokered,
+                    Some(stable(&binding.capability_id)?),
                     vec![binding],
                 )
             }

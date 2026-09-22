@@ -318,6 +318,27 @@ pub(crate) fn compile_graph_pass(
                     })?;
                 tool_bindings_for_node.push(binding);
             }
+            "external_agent" => {
+                let tool_id = configuration
+                    .get("toolId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("external agent node '{id}' has no toolId"))?;
+                if !super::tool_loop::is_external_agent_tool(tool_id) {
+                    return Err(format!(
+                        "external agent node '{id}' selects '{tool_id}', which is not an installed external delegation tool"
+                    ));
+                }
+                let binding = tool_bindings
+                    .iter()
+                    .find(|binding| binding.capability_id == tool_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "external agent node '{id}' binds tool '{tool_id}' with no frozen native binding"
+                        )
+                    })?;
+                tool_bindings_for_node.push(binding);
+            }
             _ => {}
         }
         nodes.push(CompiledGraphNodeV1 {
@@ -530,7 +551,10 @@ impl<'a> PassMachine<'a> {
             // Stop racing with completion must not leave a continuation that
             // only replays stale output and silently ignores the next input.
             if cancellation.is_cancelled()
-                && matches!(node.node_type.as_str(), "agent" | "model_call" | "tool" | "approval")
+                && matches!(
+                    node.node_type.as_str(),
+                    "agent" | "model_call" | "tool" | "approval" | "external_agent"
+                )
             {
                 return self.stopped_outcome(node, "graph pass was cancelled".to_owned(), false);
             }
@@ -704,6 +728,7 @@ impl<'a> PassMachine<'a> {
             "model_call" => self.run_model_call(node, cancellation),
             "agent" => self.run_agent(node, cancellation),
             "tool" => self.run_tool_node(node, cancellation),
+            "external_agent" => self.run_external_agent_node(node, cancellation),
             "approval" => Err(format!(
                 "approval node '{}' requires an explicit decision",
                 node.id
@@ -1213,6 +1238,61 @@ impl<'a> PassMachine<'a> {
                     node.id, failure.error
                 ))
             }
+        }
+    }
+
+    /// Runs one workflow node as a single unattended external delegation.
+    ///
+    /// The node reuses the same frozen capability, authority and child-frame
+    /// contract the delegation tool uses; its own settings only narrow the
+    /// route for this one run.
+    fn run_external_agent_node(
+        &mut self,
+        node: &CompiledGraphNodeV1,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, String> {
+        let binding = node
+            .tool_bindings
+            .first()
+            .ok_or_else(|| format!("external agent node '{}' has no binding", node.id))?;
+        let upstream = value_text(&self.incoming_value(&node.id));
+        let instructions = node
+            .configuration
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let task = if instructions.trim().is_empty() {
+            upstream
+        } else if upstream.trim().is_empty() {
+            instructions.to_owned()
+        } else {
+            format!("{instructions}\n\n{upstream}")
+        };
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("task".to_owned(), Value::String(task));
+        for key in ["model", "reasoningEffort"] {
+            if let Some(value) = node.configuration.get(key).filter(|value| !value.is_null()) {
+                arguments.insert(key.to_owned(), value.clone());
+            }
+        }
+        let call = ModelToolCallV1 {
+            call_id: format!("{}.external", node.id),
+            provider_call_id: None,
+            capability_id: binding.capability_id.clone(),
+            name: binding.provider_name.clone(),
+            arguments: Value::Object(arguments),
+            provider_context: None,
+        };
+        match self
+            .tool_authority
+            .invoke(self.outer_invocation_id, 0, &call, cancellation)
+        {
+            Ok(settled) => {
+                self.settled_tool_calls = self.settled_tool_calls.saturating_add(1);
+                self.tool_activity.push(settled.activity);
+                Ok(settled.result.content)
+            }
+            Err(error) => Err(format!("external agent node '{}' failed: {error}", node.id)),
         }
     }
 

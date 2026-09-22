@@ -1,6 +1,6 @@
 /**
  * Typed V1 executable node catalog. The workflow document stays a lossless
- * JSON object; this module is the editor's read-only interpretation of the ten
+ * JSON object; this module is the editor's read-only interpretation of the
  * supported node types, their typed ports, and the property forms that edit
  * their `configuration` objects. Unknown node types fall back to the preserved
  * raw-JSON editor and are never rejected or rewritten by this catalog.
@@ -35,6 +35,24 @@ export type ConfigurationField =
     }
   | {
       readonly kind: "toolSingle";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
+      /**
+       * One installed external delegation tool, resolved against the live
+       * Settings snapshot at render time.
+       */
+      readonly kind: "externalAgentTool";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
+      /**
+       * Reasoning effort for an external delegation. The offered values follow
+       * the selected product, because the CLI accepts fewer levels than Codex.
+       */
+      readonly kind: "externalAgentEffort";
       readonly key: string;
       readonly label: string;
     }
@@ -106,7 +124,7 @@ const routePort = (id: string, label: string): CatalogPort => ({
   label,
 });
 
-/** The ten V1 node types in palette order. */
+/** The supported V1 node types in palette order. */
 export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
   {
     type: "input",
@@ -166,6 +184,26 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
       { kind: "json", key: "parameters", label: "Parameters (JSON)" },
     ],
     defaultConfiguration: { toolId: "", parameters: {} },
+  },
+  {
+    type: "external_agent",
+    label: "External Agent",
+    icon: "⇥",
+    description:
+      "One unattended delegation to a configured Codex or Claude Code target; the final answer feeds downstream.",
+    inputPorts: [textPort("in", "Task")],
+    outputPorts: [textPort("out", "Answer")],
+    fields: [
+      { kind: "externalAgentTool", key: "toolId", label: "Provider" },
+      { kind: "text", key: "model", label: "Model" },
+      {
+        kind: "externalAgentEffort",
+        key: "reasoningEffort",
+        label: "Reasoning effort",
+      },
+      { kind: "textarea", key: "instructions", label: "Instructions" },
+    ],
+    defaultConfiguration: { toolId: "tool.subagent_codex" },
   },
   {
     type: "condition",

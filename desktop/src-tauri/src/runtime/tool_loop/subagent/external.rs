@@ -49,10 +49,24 @@ impl FileToolDispatcherV1 {
         else {
             return Err("external delegation requires the frozen external-agent contract".into());
         };
-        let task = self.record.call.arguments["task"]
+        let call_arguments = &self.record.call.arguments;
+        let task = call_arguments["task"]
             .as_str()
             .ok_or_else(|| "external delegation task is invalid".to_owned())?
             .to_owned();
+        // A caller may narrow the frozen route for this one delegation. An
+        // unsupported effort is refused by the backend registry below rather
+        // than silently dropped.
+        let model = call_arguments
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| model.clone());
+        let reasoning_effort = call_arguments
+            .get("reasoningEffort")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| reasoning_effort.clone());
         let child_id = digest_id(
             "child.external",
             &format!(
@@ -79,8 +93,8 @@ impl FileToolDispatcherV1 {
             working_directory,
             deadline,
             options: SubagentStartOptionsV1 {
-                model: model.clone(),
-                reasoning_effort: reasoning_effort.clone(),
+                model,
+                reasoning_effort,
                 ..SubagentStartOptionsV1::default()
             },
         };

@@ -7,16 +7,22 @@ import {
   resolveInputPortKind,
   resolveOutputPortKind,
 } from "./nodeCatalog";
-import { nodesInCycles, validateWorkflow, type WorkflowDocument } from "./workflow";
+import {
+  nodesInCycles,
+  validateWorkflow,
+  type JsonObject,
+  type WorkflowDocument,
+} from "./workflow";
 import { assessNativeWorkflow } from "./workflowExecution";
 
 describe("typed V1 node catalog", () => {
-  it("describes exactly the ten executable node types in palette order", () => {
+  it("describes exactly the executable node types in palette order", () => {
     expect(CATALOG_NODE_TYPES).toEqual([
       "input",
       "model_call",
       "agent",
       "tool",
+      "external_agent",
       "condition",
       "parallel",
       "approval",
@@ -50,6 +56,74 @@ describe("typed V1 node catalog", () => {
     expect(portKindsConnect("route", "flow")).toBe(true);
     expect(portKindsConnect("route", "text")).toBe(true);
     expect(portKindsConnect("text", "route")).toBe(false);
+  });
+
+  it("types the external agent node and admits only installed delegation tools", () => {
+    const entry = catalogEntryForType("external_agent");
+    expect(entry?.label).toBe("External Agent");
+    expect(entry?.inputPorts.map(({ kind }) => kind)).toEqual(["text"]);
+    expect(entry?.outputPorts.map(({ kind }) => kind)).toEqual(["text"]);
+    expect(entry?.fields.map(({ key }) => key)).toEqual([
+      "toolId",
+      "model",
+      "reasoningEffort",
+      "instructions",
+    ]);
+    expect(resolveInputPortKind("external_agent", "in")).toBe("text");
+    expect(resolveOutputPortKind("external_agent", "out")).toBe("text");
+
+    const document: WorkflowDocument = {
+      schemaVersion: 1,
+      nodes: [
+        { id: "i.1", type: "input" },
+        {
+          id: "x.1",
+          type: "external_agent",
+          configuration: {
+            toolId: "tool.subagent_claude_code",
+            model: "sonnet",
+            reasoningEffort: "high",
+          },
+        },
+        { id: "o.1", type: "output" },
+        { id: "t.1", type: "wait" },
+      ],
+      edges: [
+        { id: "e.1", source: "i.1", target: "x.1" },
+        { id: "e.2", source: "x.1", target: "o.1" },
+        { id: "e.3", source: "o.1", target: "t.1" },
+      ],
+    };
+    expect(validateWorkflow(document)).toEqual([]);
+    expect(assessNativeWorkflow(document).issues).toEqual([]);
+    expect(assessNativeWorkflow(document).executable).toBe(true);
+
+    // An undeclared key, a missing tool, a non-delegation tool and an invented
+    // effort are each refused with the node's own diagnostic.
+    const refused: readonly JsonObject[] = [
+      { toolId: "tool.subagent_codex", maximumChildren: 3 },
+      { toolId: "tool.files.read" },
+      {},
+      { toolId: "tool.subagent_codex", reasoningEffort: "invented" },
+      { toolId: "tool.subagent_codex", model: "   " },
+    ];
+    for (const configuration of refused) {
+      const broken: WorkflowDocument = {
+        schemaVersion: 1,
+        nodes: [
+          { id: "i.1", type: "input" },
+          { id: "x.1", type: "external_agent", configuration },
+          { id: "o.1", type: "output" },
+          { id: "t.1", type: "wait" },
+        ],
+        edges: [
+          { id: "e.1", source: "i.1", target: "x.1" },
+          { id: "e.2", source: "x.1", target: "o.1" },
+          { id: "e.3", source: "o.1", target: "t.1" },
+        ],
+      };
+      expect(assessNativeWorkflow(broken).issues).not.toEqual([]);
+    }
   });
 
   it("accepts an approval-gated and condition-routed model pipeline", () => {

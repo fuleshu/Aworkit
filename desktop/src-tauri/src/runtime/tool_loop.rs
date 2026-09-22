@@ -3938,7 +3938,9 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::WebFetch { .. } => {
             BTreeSet::from(["url", "documentId", "offset", "feedContent"])
         }
-        StoredFileToolLimitV1::ExternalAgent { .. } => BTreeSet::from(["task"]),
+        StoredFileToolLimitV1::ExternalAgent { .. } => {
+            BTreeSet::from(["task", "model", "reasoningEffort"])
+        }
         StoredFileToolLimitV1::Subagent { inherit_parent_tools: true, .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
         StoredFileToolLimitV1::Subagent { .. } => BTreeSet::from(["task", "context"]),
         StoredFileToolLimitV1::SubagentFork { .. } => BTreeSet::from(["task", "context", "readOnly", "runInBackground"]),
@@ -4010,6 +4012,10 @@ fn validate_call_arguments(
         }
         StoredFileToolLimitV1::WebFetch { .. } => {
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("url")
+        }
+        StoredFileToolLimitV1::ExternalAgent { .. } => {
+            // The task is required; the model route overrides are optional.
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
         }
         _ => observed_keys == expected_keys,
     };
@@ -4238,6 +4244,24 @@ fn validate_call_arguments(
                 .ok_or_else(|| {
                     invalid_tool("external delegation task is empty, oversized, or malformed")
                 })?;
+            // A caller may narrow the frozen route, never widen it: the values
+            // are still gated against the backend that will run them.
+            if object.get("model").is_some_and(|model| {
+                model
+                    .as_str()
+                    .is_none_or(|model| model.trim().is_empty() || model.len() > 256)
+            }) {
+                return Err(invalid_tool("external delegation model is malformed"));
+            }
+            if object.get("reasoningEffort").is_some_and(|effort| {
+                effort.as_str().is_none_or(|effort| {
+                    !super::settings_v2::EXTERNAL_AGENT_REASONING_EFFORTS.contains(&effort)
+                })
+            }) {
+                return Err(invalid_tool(
+                    "external delegation reasoning effort is not a known effort",
+                ));
+            }
         }
         StoredFileToolLimitV1::Subagent { .. } | StoredFileToolLimitV1::SubagentFork { .. } => {
             object

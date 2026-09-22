@@ -99,8 +99,78 @@ function settingsWithCapabilities(
           },
         },
       ],
-      tools: [],
+      tools: [
+        {
+          id: "tool.subagent_codex",
+          name: "Codex agent delegation",
+          enabled: true,
+          requiresProject: false,
+          credentialBindings: [],
+          configuration: {},
+        },
+        {
+          id: "tool.subagent_claude_code",
+          name: "Claude Code agent delegation",
+          enabled: true,
+          requiresProject: false,
+          credentialBindings: [],
+          configuration: {},
+        },
+        {
+          id: "tool.files.read",
+          name: "Read file",
+          enabled: true,
+          requiresProject: true,
+          credentialBindings: [],
+          configuration: {},
+        },
+      ],
       mcpServers: [],
     },
   } as unknown as SettingsV2Snapshot;
 }
+
+describe("external agent node controls", () => {
+  it("offers only delegation tools and follows the selected product's effort levels", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const form = (toolId: string) => (
+      <NodeConfigurationForm
+        configuration={{ toolId }}
+        editable
+        nodeType="external_agent"
+        settings={settingsWithCapabilities([])}
+        onChange={onChange}
+      />
+    );
+    const { rerender } = render(form("tool.subagent_codex"));
+
+    const provider = screen.getByLabelText("Provider");
+    expect(
+      within(provider).getByRole("option", { name: "Codex agent delegation" }),
+    ).toBeVisible();
+    expect(
+      within(provider).getByRole("option", {
+        name: "Claude Code agent delegation",
+      }),
+    ).toBeVisible();
+    expect(within(provider).queryByRole("option", { name: "Read file" })).toBeNull();
+    await user.selectOptions(provider, "tool.subagent_claude_code");
+    expect(onChange).toHaveBeenCalledWith({
+      toolId: "tool.subagent_claude_code",
+    });
+
+    // Codex takes the full effort set; the Claude Code CLI does not.
+    expect(
+      within(screen.getByLabelText("Reasoning effort")).getByRole("option", {
+        name: "minimal",
+      }),
+    ).toBeVisible();
+    rerender(form("tool.subagent_claude_code"));
+    const effort = screen.getByLabelText("Reasoning effort");
+    expect(within(effort).queryByRole("option", { name: "minimal" })).toBeNull();
+    expect(within(effort).queryByRole("option", { name: "xhigh" })).toBeVisible();
+    await user.selectOptions(effort, "high");
+    expect(onChange).toHaveBeenCalledWith({ reasoningEffort: "high" });
+  });
+});

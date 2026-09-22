@@ -1304,6 +1304,24 @@
             "minLength": 1,
             "maxLength": 65536,
             "description": "The complete, self-contained task for the external agent."
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Optional model for this delegation only; it must be one the target's product accepts."
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "Optional reasoning effort for this delegation only; an unsupported effort is refused."
           }
         },
         "required": [
@@ -1357,6 +1375,24 @@
             "minLength": 1,
             "maxLength": 65536,
             "description": "The complete, self-contained task for the external agent."
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Optional model for this delegation only; it must be one the target's product accepts."
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "Optional reasoning effort for this delegation only; an unsupported effort is refused."
           }
         },
         "required": [

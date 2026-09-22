@@ -1,4 +1,4 @@
-import { selectableTools } from "./toolRegistry";
+import { findNativeTool, selectableTools } from "./toolRegistry";
 import { McpServerSelection } from "./McpServerSelection";
 import { useEffect, useMemo, useState } from "react";
 import type { McpServerConfiguration, SettingsV2Snapshot } from "./configuration";
@@ -64,9 +64,27 @@ export function NodeConfigurationForm({
 interface FieldOptions {
   readonly tiers: readonly { readonly value: string; readonly label: string }[];
   readonly tools: readonly { readonly value: string; readonly label: string }[];
+  readonly externalAgentTools: readonly { readonly value: string; readonly label: string }[];
   readonly mcpServers: readonly { readonly value: string; readonly label: string }[];
   readonly mcpConfigurations: readonly McpServerConfiguration[];
   readonly modelCapabilitiesByTier: Readonly<Record<string, readonly string[]>>;
+}
+
+/** Executors that delegate to a configured external agent product. */
+const EXTERNAL_AGENT_EXECUTORS = new Set([
+  "subagent_codex",
+  "subagent_claude_code",
+]);
+
+/** Reasoning efforts the Claude Code CLI accepts; Codex takes the full set. */
+const CLAUDE_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/** Whether one selected delegation tool runs the Claude Code product. */
+function runsClaudeCode(toolId: unknown): boolean {
+  return (
+    typeof toolId === "string" &&
+    findNativeTool(toolId)?.executor === "subagent_claude_code"
+  );
 }
 
 function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
@@ -74,6 +92,7 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
     return {
       tiers: FALLBACK_TIERS,
       tools: [],
+      externalAgentTools: [],
       mcpServers: [],
       mcpConfigurations: [],
       modelCapabilitiesByTier: {},
@@ -83,6 +102,12 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
       ? settings.settings.modelTiers.map(({ id, name }) => ({ value: id, label: name }))
       : FALLBACK_TIERS;
   const tools = selectableTools(settings.settings);
+  // Only the installed delegation tools belong in this selector: they are the
+  // ones that reach a Codex or Claude Code target.
+  const externalAgentTools = tools.filter(({ value }) => {
+    const entry = findNativeTool(value);
+    return entry !== undefined && EXTERNAL_AGENT_EXECUTORS.has(entry.executor);
+  });
   const mcpServers = settings.settings.mcpServers
     .filter((server) => server.enabled)
     .map(({ id, name }) => ({ value: id, label: name }));
@@ -99,7 +124,7 @@ function resolveFieldOptions(settings?: SettingsV2Snapshot): FieldOptions {
       return model === undefined ? [] : [[tier.id, model.capabilities]];
     }),
   );
-  return { tiers, tools, mcpServers, mcpConfigurations: settings.settings.mcpServers, modelCapabilitiesByTier };
+  return { tiers, tools, externalAgentTools, mcpServers, mcpConfigurations: settings.settings.mcpServers, modelCapabilitiesByTier };
 }
 
 function ConfigurationFieldInput({
@@ -204,6 +229,25 @@ function ConfigurationFieldInput({
           editable={editable}
           field={field}
           options={options}
+          onChange={onChange}
+        />
+      );
+    case "externalAgentTool":
+      return (
+        <ExternalAgentToolField
+          configuration={configuration}
+          editable={editable}
+          field={field}
+          options={options}
+          onChange={onChange}
+        />
+      );
+    case "externalAgentEffort":
+      return (
+        <ExternalAgentEffortField
+          configuration={configuration}
+          editable={editable}
+          field={field}
           onChange={onChange}
         />
       );
@@ -370,6 +414,111 @@ function ToolSingleField({
         </small>
       )}
     </div>
+  );
+}
+
+/**
+ * Selects one installed external delegation tool. The configured product target
+ * comes from Settings, so this field names the delegation, not the executable.
+ */
+function ExternalAgentToolField({
+  field,
+  configuration,
+  editable,
+  options,
+  onChange,
+}: {
+  readonly field: Extract<ConfigurationField, { kind: "externalAgentTool" }>;
+  readonly configuration: JsonObject;
+  readonly editable: boolean;
+  readonly options: FieldOptions;
+  readonly onChange: (patch: JsonObject) => void;
+}): React.JSX.Element {
+  const current = stringValue(configuration[field.key]);
+  const isListed = options.externalAgentTools.some(
+    ({ value }) => value === current,
+  );
+  return (
+    <div className="config-field-stack">
+      <label>
+        {field.label}
+        <select
+          disabled={!editable}
+          title="Installed delegation tool. Its Codex or Claude Code target, permission mode and default model come from Settings."
+          value={isListed ? current : ""}
+          onChange={(event) => {
+            if (event.target.value !== "")
+              onChange({ [field.key]: event.target.value });
+          }}
+        >
+          <option value="">
+            {isListed ? "Unset" : "Select an enabled delegation tool"}
+          </option>
+          {options.externalAgentTools.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!isListed && current !== null && (
+        <small className="config-help">
+          {current} is not an enabled delegation tool in Settings.
+        </small>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Reasoning effort for one delegation. The Claude Code CLI accepts fewer levels
+ * than Codex, so the offered values follow the selected product; an unset value
+ * inherits the target's own setting.
+ */
+function ExternalAgentEffortField({
+  field,
+  configuration,
+  editable,
+  onChange,
+}: {
+  readonly field: Extract<ConfigurationField, { kind: "externalAgentEffort" }>;
+  readonly configuration: JsonObject;
+  readonly editable: boolean;
+  readonly onChange: (patch: JsonObject) => void;
+}): React.JSX.Element {
+  // An absent or empty value inherits the target's own effort.
+  const stored = stringValue(configuration[field.key]);
+  const current = stored === null || stored === "" ? null : stored;
+  const efforts = runsClaudeCode(configuration.toolId)
+    ? CLAUDE_REASONING_EFFORTS
+    : [...DEFAULT_REASONING_EFFORTS];
+  const offered =
+    current !== null && !efforts.includes(current) ? [] : efforts;
+  return (
+    <label>
+      {field.label}
+      <select
+        disabled={!editable}
+        title="Reasoning effort for this delegation only. Unset inherits the target's configured effort."
+        value={current ?? ""}
+        onChange={(event) =>
+          onChange({
+            [field.key]:
+              event.target.value === "" ? null : event.target.value,
+          })
+        }
+      >
+        <option value="">Inherit from target</option>
+        {offered.map((effort) => (
+          <option key={effort} value={effort}>
+            {effort}
+          </option>
+        ))}
+        {current !== null && !efforts.includes(current) && (
+          <option value={current}>{current}</option>
+        )}
+      </select>
+    </label>
   );
 }
 
