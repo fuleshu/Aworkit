@@ -90,6 +90,13 @@ pub struct SettingsConfigurationV2 {
     /// Delegated-subagent tab presentation preference, edited in Settings.
     #[serde(default)]
     pub subagents: SubagentViewPreferenceV1,
+    /// Whether this document has already had the bundled tools enabled by
+    /// default. Documents written while bundled tools started disabled are
+    /// missing this marker (serde defaults it to `false`), so the first load
+    /// after this build enables them once and remembers the decision; a tool
+    /// the user disables afterwards stays disabled.
+    #[serde(default)]
+    pub tools_defaulted_enabled: bool,
 }
 
 impl Default for SettingsConfigurationV2 {
@@ -110,6 +117,8 @@ impl Default for SettingsConfigurationV2 {
             chat_defaults: ChatDefaultsConfigurationV2::default(),
             layout: LayoutConfigurationV2::default(),
             subagents: SubagentViewPreferenceV1::default(),
+            // A document this build creates already made the choice.
+            tools_defaulted_enabled: true,
         }
     }
 }
@@ -369,6 +378,23 @@ impl SettingsConfigurationV2 {
             }
         }
         Ok(())
+    }
+
+    /// Enables every bundled tool once, for a document written while bundled
+    /// tools started disabled. The marker makes this a one-time migration: a
+    /// tool the user turns off afterwards is never silently turned back on.
+    pub(crate) fn enable_bundled_tools_once(&mut self) -> bool {
+        if self.tools_defaulted_enabled {
+            return false;
+        }
+        let bundled = builtin_tool_ids();
+        for tool in &mut self.tools {
+            if bundled.iter().any(|id| *id == tool.id) {
+                tool.enabled = true;
+            }
+        }
+        self.tools_defaulted_enabled = true;
+        true
     }
 
     /// Appends built-in tool entries that newer builds introduced after the
@@ -2890,7 +2916,10 @@ mod tests {
                 "tool.python.start",
             ]
         );
-        assert!(settings.tools.iter().all(|tool| !tool.enabled));
+        // Every bundled tool is available by default; the document records that
+        // the choice was made so the one-time migration never re-runs.
+        assert!(settings.tools.iter().all(|tool| tool.enabled));
+        assert!(settings.tools_defaulted_enabled);
         assert!(
             settings
                 .tools

@@ -5,10 +5,16 @@ import { afterEach, expect, it, vi } from "vitest";
 import { McpServersSection } from "./settings-v2/IntegrationSections";
 import { ToolConfigurationEditor } from "./settings-v2/ToolConfigurationEditor";
 import { ToolPluginLibrary } from "./settings-v2/ToolPluginLibrary";
-import { nativeToolDefaults, findNativeTool, selectableTools } from "./toolRegistry";
+import { nativeToolDefaults, nativeTools, findNativeTool, selectableTools } from "./toolRegistry";
 import { type BuiltInToolConfiguration, type McpServerConfiguration, type SettingsV2Snapshot } from "./configuration";
 
 afterEach(cleanup);
+
+it("offers every bundled tool by default, mirroring the native default", () => {
+  const defaults = nativeToolDefaults();
+  expect(defaults).toHaveLength(nativeTools.length);
+  expect(defaults.every(tool => tool.enabled)).toBe(true);
+});
 
 it("edits instructions, executable and limits through typed controls", () => {
   let latest: BuiltInToolConfiguration;

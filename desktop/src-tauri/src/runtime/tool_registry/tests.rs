@@ -3,6 +3,20 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn every_bundled_tool_is_available_by_default() {
+    let defaults = native_defaults();
+    assert_eq!(
+        defaults.len(),
+        native_plugin().tools.len(),
+        "every bundled tool has a default entry"
+    );
+    assert!(
+        defaults.iter().all(|tool| tool.enabled),
+        "a new profile offers every bundled tool; the user disables what it should not offer"
+    );
+}
+
+#[test]
 fn bundled_manifest_drives_valid_settings_and_unique_model_definitions() {
     let defaults = native_defaults();
     // The frontend validates bindings from this manifest; keep native admission aligned.

@@ -613,6 +613,7 @@ fn load_or_migrate_settings(
                 | settings.normalize_legacy_web_search_configuration()
                 | settings.normalize_legacy_image_tool()
                 | settings.normalize_legacy_file_tools()
+                | settings.enable_bundled_tools_once()
                 | settings.reconcile_builtin_tools();
             settings.validate()?;
             if repaired {
@@ -1982,7 +1983,8 @@ mod tests {
             migrated.settings.tools.len(),
             super::super::tool_registry::native_plugin().tools.len()
         );
-        assert!(migrated.settings.tools.iter().all(|tool| !tool.enabled));
+        assert!(migrated.settings.tools.iter().all(|tool| tool.enabled));
+        assert!(migrated.settings.tools_defaulted_enabled);
         let canonical = repository
             .export_lossless(DocumentKind::Configuration, SETTINGS_ID)
             .unwrap()
@@ -2057,7 +2059,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_v2_settings_gain_new_builtin_tools_disabled_on_open() {
+    fn persisted_v2_settings_gain_new_builtin_tools_available_on_open() {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
         let mut settings = SettingsConfigurationV2::default();
@@ -2068,7 +2070,10 @@ mod tests {
             settings.tools.len(),
             super::super::tool_registry::native_plugin().tools.len() - 1
         );
-        settings.tools[3].enabled = true;
+        // The default was already applied to this document, so the repair must
+        // not re-enable anything the user turned off.
+        settings.tools_defaulted_enabled = true;
+        settings.tools[3].enabled = false;
         repository
             .save(
                 DocumentKind::Configuration,
@@ -2089,9 +2094,13 @@ mod tests {
                 .settings
                 .tools
                 .iter()
-                .any(|tool| tool.id == "tool.skill" && !tool.enabled)
+                .any(|tool| tool.id == "tool.skill" && tool.enabled),
+            "a newly bundled tool is available, like every other default"
         );
-        assert!(repaired.settings.tools.iter().any(|tool| tool.enabled));
+        assert!(
+            repaired.settings.tools.iter().any(|tool| !tool.enabled),
+            "a tool the user turned off is never turned back on"
+        );
         drop(repaired);
 
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
@@ -2099,6 +2108,52 @@ mod tests {
             reopened.settings.tools.len(),
             super::super::tool_registry::native_plugin().tools.len()
         );
+    }
+
+    #[test]
+    fn bundled_tools_are_enabled_by_default_exactly_once() {
+        let root = TempDir::new().unwrap();
+        let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        // A document written while bundled tools started disabled has no marker
+        // and every tool off.
+        let mut settings = SettingsConfigurationV2::default();
+        settings.tools_defaulted_enabled = false;
+        for tool in &mut settings.tools {
+            tool.enabled = false;
+        }
+        repository
+            .save(
+                DocumentKind::Configuration,
+                SETTINGS_ID,
+                None,
+                &json_document(&settings).unwrap(),
+            )
+            .unwrap();
+
+        let repaired = CanonicalDocuments::open(root.path()).unwrap();
+        assert!(repaired.settings.tools_defaulted_enabled);
+        assert!(
+            repaired.settings.tools.iter().all(|tool| tool.enabled),
+            "the first load after the upgrade makes every bundled tool available"
+        );
+        let version = repaired.settings_version;
+        drop(repaired);
+
+        // A tool the user turns off afterwards is never turned back on.
+        let mut edited = CanonicalDocuments::open(root.path()).unwrap();
+        edited.settings.tools[3].enabled = false;
+        repository
+            .save(
+                DocumentKind::Configuration,
+                SETTINGS_ID,
+                Some(version),
+                &json_document(&edited.settings).unwrap(),
+            )
+            .unwrap();
+        drop(edited);
+        let reopened = CanonicalDocuments::open(root.path()).unwrap();
+        assert!(!reopened.settings.tools[3].enabled);
+        assert!(reopened.settings.tools_defaulted_enabled);
     }
 
     #[test]

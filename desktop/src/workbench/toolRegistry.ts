@@ -38,6 +38,8 @@ export function selectableTools(settings: { readonly tools: readonly BuiltInTool
 }
 
 export function nativeToolDefaults(): BuiltInToolConfiguration[] {
-  return nativeTools.map(tool => ({ id: tool.id, name: tool.name, enabled: false, requiresProject: tool.requiresProject,
+  // Mirrors the native default: every bundled tool is available to workflows
+  // until the user disables it in Settings.
+  return nativeTools.map(tool => ({ id: tool.id, name: tool.name, enabled: true, requiresProject: tool.requiresProject,
     credentialBindings: [], configuration: structuredClone(tool.configuration) }));
 }

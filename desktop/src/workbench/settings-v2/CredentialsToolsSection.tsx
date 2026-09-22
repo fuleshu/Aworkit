@@ -362,8 +362,9 @@ export function ToolsSection({
   return (
     <div className="settings-section-stack">
       <p className="section-intro">
-        Enable the tools you want available, then select them in a workflow.
-        Each selected tool contributes its instructions to the agent.
+        Every installed tool is available by default; turn off the ones this
+        desktop should not offer. Each tool selected in a workflow contributes
+        its instructions to the agent.
       </p>
       {tools.length === 0 ? (
         <p className="settings-empty">

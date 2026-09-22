@@ -154,6 +154,9 @@ fn image_settings_migrate_once_without_enabling_tools_or_mutating_frozen_copies(
         .unwrap();
     image.configuration = BTreeMap::from([("authorityMode".into(), json!("project_files"))]);
     image.requires_project = true;
+    // The user had this tool turned off; repairing its legacy contract must not
+    // turn it back on.
+    image.enabled = false;
     let frozen = image.clone();
     assert!(settings.normalize_legacy_image_tool());
     assert!(!settings.normalize_legacy_image_tool());

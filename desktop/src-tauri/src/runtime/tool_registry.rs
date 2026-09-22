@@ -240,7 +240,9 @@ pub fn native_defaults() -> Vec<BuiltInToolConfigurationV2> {
         .map(|tool| BuiltInToolConfigurationV2 {
             id: tool.id.clone(),
             name: tool.name.clone(),
-            enabled: false,
+            // Every bundled tool is available to workflows by default; the user
+            // can still disable any of them in Settings.
+            enabled: true,
             requires_project: tool.requires_project,
             credential_bindings: Vec::new(),
             configuration: tool.configuration.clone(),

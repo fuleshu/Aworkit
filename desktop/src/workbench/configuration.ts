@@ -550,6 +550,11 @@ export const settingsConfigurationV2Schema = z
     chatDefaults: chatDefaultsConfigurationSchema,
     layout: layoutConfigurationSchema,
     subagents: subagentViewConfigurationSchema.optional(),
+    /*
+     * Marker for the one-time "bundled tools are available by default" step.
+     * The core owns it; the editor only round-trips it.
+     */
+    toolsDefaultedEnabled: z.boolean().optional(),
   })
   .strict();
 
