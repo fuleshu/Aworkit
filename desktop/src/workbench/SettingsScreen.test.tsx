@@ -595,6 +595,30 @@ describe("Settings v2 workbench", () => {
         .getByRole("heading", { name: "External agent" })
         .closest("section");
       expect(agentCard).not.toBeNull();
+      // Delegation defaults: the policy, model and effort a target fixes for
+      // every delegation it runs, absent until the user chooses one.
+      const permissionMode = within(agentCard!).getByLabelText("Permission mode");
+      expect(permissionMode).toHaveValue("");
+      expect(within(agentCard!).getByLabelText("Model")).toHaveValue("");
+      expect(within(agentCard!).getByLabelText("Reasoning effort")).toHaveValue("");
+      await user.selectOptions(permissionMode, "approveForMe");
+      expect(permissionMode).toHaveValue("approveForMe");
+      // A mode the newly selected adapter cannot express is cleared rather than
+      // kept as an unusable saved value.
+      await user.selectOptions(
+        within(agentCard!).getByLabelText("Adapter"),
+        "claude_code",
+      );
+      expect(within(agentCard!).getByLabelText("Permission mode")).toHaveValue("");
+      expect(
+        within(agentCard!).queryByRole("option", {
+          name: "Approve for me (automatic review)",
+        }),
+      ).toBeNull();
+      await user.selectOptions(
+        within(agentCard!).getByLabelText("Adapter"),
+        "codex_app_server",
+      );
       expect(
         within(agentCard!).queryByRole("option", { name: "Streamable HTTP" }),
       ).toBeNull();

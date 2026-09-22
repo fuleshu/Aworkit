@@ -1812,6 +1812,76 @@ pub struct ExternalAgentCapabilitiesV2 {
     pub approvals: bool,
 }
 
+/// Non-interactive permission policy fixed for every delegation from one
+/// external-agent target.
+///
+/// The variants are the products' own vocabulary: an absent value means the
+/// adapter's safe default rather than a value Aworkit invented.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalAgentPermissionModeV2 {
+    /// Codex: never ask for approval; the native sandbox still applies.
+    Never,
+    /// Codex: route permission requests through Codex automatic review.
+    ApproveForMe,
+    /// Codex: skip approval and sandbox enforcement. Explicitly selected only.
+    DangerouslyBypassApprovalsAndSandbox,
+    /// Claude Code: deny anything not already authorized instead of prompting.
+    DontAsk,
+    /// Claude Code: accept file edits; remaining prompts are denied.
+    AcceptEdits,
+    /// Claude Code: let the product's classifier decide each request.
+    Auto,
+    /// Claude Code: plan only; execution approval is denied.
+    Plan,
+    /// Claude Code: bypass permission checks. Explicitly selected only.
+    BypassPermissions,
+}
+
+impl ExternalAgentPermissionModeV2 {
+    /// The exact stable wire value, matching the adapter's own vocabulary.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::ApproveForMe => "approveForMe",
+            Self::DangerouslyBypassApprovalsAndSandbox => "dangerouslyBypassApprovalsAndSandbox",
+            Self::DontAsk => "dontAsk",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Auto => "auto",
+            Self::Plan => "plan",
+            Self::BypassPermissions => "bypassPermissions",
+        }
+    }
+
+    /// Whether the installed adapter can express this mode.
+    #[must_use]
+    pub fn supported_by(self, adapter: &str) -> bool {
+        match adapter {
+            "codex_app_server" => matches!(
+                self,
+                Self::Never | Self::ApproveForMe | Self::DangerouslyBypassApprovalsAndSandbox
+            ),
+            "claude_code" => matches!(
+                self,
+                Self::DontAsk
+                    | Self::AcceptEdits
+                    | Self::Auto
+                    | Self::Plan
+                    | Self::BypassPermissions
+            ),
+            _ => false,
+        }
+    }
+}
+
+/// Reasoning efforts an external-agent target may fix for its delegations.
+pub const EXTERNAL_AGENT_REASONING_EFFORTS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Reasoning efforts the Claude Code CLI accepts.
+const CLAUDE_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
 /// One configured external-agent target such as Codex App Server or ACP.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1825,6 +1895,19 @@ pub struct ExternalAgentConfigurationV2 {
     pub mcp_server_ids: Vec<String>,
     pub capabilities: ExternalAgentCapabilitiesV2,
     pub configuration: BTreeMap<String, Value>,
+    /// Fixed non-interactive permission policy. Absent means the adapter's own
+    /// safe default, which is how a document saved before this field existed
+    /// keeps working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<ExternalAgentPermissionModeV2>,
+    /// Model fixed for every delegation from this target. Absent leaves native
+    /// product model selection in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Reasoning effort fixed for every delegation from this target. Absent
+    /// leaves native product selection in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 impl ExternalAgentConfigurationV2 {
@@ -1858,7 +1941,40 @@ impl ExternalAgentConfigurationV2 {
         validate_freeform(
             "external-agent configuration",
             &Value::Object(to_json_map(&self.configuration)),
-        )
+        )?;
+        if let Some(mode) = self.permission_mode {
+            if !mode.supported_by(&self.adapter) {
+                return Err(format!(
+                    "external agent '{}' selects permission mode '{}', which adapter '{}' cannot express",
+                    self.id,
+                    mode.as_str(),
+                    self.adapter
+                ));
+            }
+        }
+        if let Some(model) = self.model.as_deref() {
+            if model.trim().is_empty() || model.len() > 256 || model.contains('\0') {
+                return Err(format!(
+                    "external agent '{}' model must be a non-empty name of at most 256 characters",
+                    self.id
+                ));
+            }
+        }
+        if let Some(effort) = self.reasoning_effort.as_deref() {
+            if !EXTERNAL_AGENT_REASONING_EFFORTS.contains(&effort) {
+                return Err(format!(
+                    "external agent '{}' reasoning effort '{}' is not a known effort",
+                    self.id, effort
+                ));
+            }
+            if self.adapter == "claude_code" && !CLAUDE_REASONING_EFFORTS.contains(&effort) {
+                return Err(format!(
+                    "external agent '{}' reasoning effort '{}' is not accepted by the installed Claude Code adapter",
+                    self.id, effort
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2865,7 +2981,10 @@ mod tests {
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-        }
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+}
     }
 
     #[test]
@@ -3117,7 +3236,10 @@ mod tests {
                 approvals: true,
             },
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
         settings.extensions.push(ExtensionConfigurationV2 {
             id: "extension.fixture".into(),
             name: "Fixture extension".into(),
@@ -3246,7 +3368,10 @@ mod tests {
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
         let error = settings.validate().unwrap_err();
         assert!(error.contains("credential-backed environment binding"));
     }
@@ -3422,7 +3547,10 @@ mod tests {
                 mcp_server_ids: vec!["mcp.future".into()],
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
-            });
+                            permission_mode: None,
+                model: None,
+                reasoning_effort: None,
+});
         ignored_external.mcp_servers.push(McpServerConfigurationV2 {
             plugin: None,
             tools: Vec::new(),
@@ -3619,7 +3747,128 @@ mod tests {
     }
 
     #[test]
-    fn installed_external_agent_contract_unifies_environment_and_rejects_forged_capabilities() {
+    fn external_agent_delegation_defaults_are_optional() {
+        let agent = ExternalAgentConfigurationV2 {
+            id: "agent.fixture".into(),
+            name: "Fixture".into(),
+            adapter: "codex_app_server".into(),
+            enabled: true,
+            connection: IntegrationTransportV2::Stdio {
+                command: "codex".into(),
+                args: vec!["app-server".into()],
+                cwd: None,
+                env: Vec::new(),
+            },
+            credential_bindings: Vec::new(),
+            mcp_server_ids: Vec::new(),
+            capabilities: ExternalAgentCapabilitiesV2::default(),
+            configuration: BTreeMap::new(),
+            permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+        };
+        // A document saved before these fields existed carries none of them.
+        let encoded = serde_json::to_value(&agent).expect("serializes");
+        assert!(encoded.get("permissionMode").is_none());
+        assert!(encoded.get("model").is_none());
+        assert!(encoded.get("reasoningEffort").is_none());
+        let decoded: ExternalAgentConfigurationV2 =
+            serde_json::from_value(encoded).expect("an older document still decodes");
+        assert_eq!(decoded, agent);
+
+        // And a selected mode, model and effort round-trip by their stable names.
+        let mut selected = agent.clone();
+        selected.permission_mode = Some(ExternalAgentPermissionModeV2::ApproveForMe);
+        selected.model = Some("gpt-5".into());
+        selected.reasoning_effort = Some("high".into());
+        let encoded = serde_json::to_value(&selected).expect("serializes");
+        assert_eq!(encoded["permissionMode"], "approveForMe");
+        assert_eq!(encoded["model"], "gpt-5");
+        assert_eq!(encoded["reasoningEffort"], "high");
+        let decoded: ExternalAgentConfigurationV2 =
+            serde_json::from_value(encoded).expect("decodes");
+        assert_eq!(decoded, selected);
+    }
+
+    #[test]
+    fn external_agent_delegation_settings_follow_the_selected_adapter() {
+        let base = |adapter: &str| ExternalAgentConfigurationV2 {
+            id: "agent.fixture".into(),
+            name: "Fixture".into(),
+            adapter: adapter.into(),
+            enabled: true,
+            connection: IntegrationTransportV2::Stdio {
+                command: "agent".into(),
+                args: Vec::new(),
+                cwd: None,
+                env: Vec::new(),
+            },
+            credential_bindings: Vec::new(),
+            mcp_server_ids: Vec::new(),
+            capabilities: ExternalAgentCapabilitiesV2::default(),
+            configuration: BTreeMap::new(),
+            permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+        };
+        let credentials = BTreeMap::new();
+        let mcp_servers = BTreeSet::new();
+
+        // Each adapter refuses the other product's vocabulary.
+        let mut codex = base("codex_app_server");
+        codex.permission_mode = Some(ExternalAgentPermissionModeV2::DontAsk);
+        assert!(
+            codex
+                .validate(&credentials, &mcp_servers)
+                .unwrap_err()
+                .contains("cannot express")
+        );
+        let mut claude = base("claude_code");
+        claude.permission_mode = Some(ExternalAgentPermissionModeV2::Never);
+        assert!(
+            claude
+                .validate(&credentials, &mcp_servers)
+                .unwrap_err()
+                .contains("cannot express")
+        );
+        claude.permission_mode = Some(ExternalAgentPermissionModeV2::DontAsk);
+        claude
+            .validate(&credentials, &mcp_servers)
+            .expect("a Claude mode is accepted by the Claude adapter");
+
+        // Efforts follow the product: the CLI accepts no none or minimal level.
+        claude.reasoning_effort = Some("minimal".into());
+        assert!(
+            claude
+                .validate(&credentials, &mcp_servers)
+                .unwrap_err()
+                .contains("not accepted by the installed Claude Code adapter")
+        );
+        claude.reasoning_effort = Some("high".into());
+        claude
+            .validate(&credentials, &mcp_servers)
+            .expect("a supported effort is accepted");
+
+        // An invented effort and an empty model are refused everywhere.
+        let mut codex = base("codex_app_server");
+        codex.reasoning_effort = Some("turbo".into());
+        assert!(
+            codex
+                .validate(&credentials, &mcp_servers)
+                .unwrap_err()
+                .contains("is not a known effort")
+        );
+        codex.reasoning_effort = None;
+        codex.model = Some("   ".into());
+        assert!(
+            codex
+                .validate(&credentials, &mcp_servers)
+                .unwrap_err()
+                .contains("model must be a non-empty name")
+        );
+    }
+
+        fn installed_external_agent_contract_unifies_environment_and_rejects_forged_capabilities() {
         let mut settings = configured();
         add_integration_credential(&mut settings);
         settings.external_agents.push(ExternalAgentConfigurationV2 {
@@ -3637,7 +3886,10 @@ mod tests {
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
         settings
             .validate()
             .expect("cross-list case variants remain losslessly readable");
@@ -3694,7 +3946,10 @@ mod tests {
             mcp_server_ids: Vec::new(),
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
 
         settings
             .validate()

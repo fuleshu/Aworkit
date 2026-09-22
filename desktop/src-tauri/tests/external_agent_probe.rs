@@ -59,7 +59,10 @@ fn desktop_probe_runs_documented_codex_app_server_handshake_without_starting_a_t
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: Default::default(),
-            },
+                            permission_mode: None,
+                model: None,
+                reasoning_effort: None,
+},
             draft_fingerprint: "draft.external-agent.codex-fixture".into(),
         })
         .expect("real Codex App Server protocol probe");

@@ -7311,7 +7311,10 @@ mod tests {
             // canonical settings document persists no unattested booleans.
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
         settings.projects.push(ProjectConfigurationV2 {
             id: "project.atlas".into(),
             name: "Atlas".into(),
@@ -7438,7 +7441,10 @@ mod tests {
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
-            });
+                            permission_mode: None,
+                model: None,
+                reasoning_effort: None,
+});
         let agent_version = runtime.settings_v2_snapshot().version;
         let error = runtime
             .settings_v2_commit(SettingsV2CommitInput {
@@ -7503,7 +7509,10 @@ mod tests {
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
-            });
+                            permission_mode: None,
+                model: None,
+                reasoning_effort: None,
+});
         for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
             legacy_enabled
                 .tools
@@ -7868,7 +7877,10 @@ mod tests {
                 approvals: true,
             },
             configuration: BTreeMap::new(),
-        });
+                    permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+});
 
         replace_credential_references(&mut settings, "credential.old", "credential.new");
 

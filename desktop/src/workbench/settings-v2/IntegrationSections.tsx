@@ -3,8 +3,14 @@ import { useRef, useState } from "react";
 import type {
   CredentialMetadataConfiguration,
   ExternalAgentConfiguration,
+  ExternalAgentPermissionMode,
   ExtensionConfiguration,
   McpServerConfiguration,
+} from "../configuration";
+import {
+  EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS,
+  EXTERNAL_AGENT_PERMISSION_MODES,
+  EXTERNAL_AGENT_REASONING_EFFORTS,
 } from "../configuration";
 import {
   ConnectionEditor,
@@ -13,6 +19,18 @@ import {
 import {
   settingsRecordFingerprint,
 } from "./settingsDraft";
+
+/** Human labels for the adapters' own permission-mode vocabulary. */
+const PERMISSION_MODE_LABELS: Readonly<Record<string, string>> = {
+  never: "Never ask",
+  approveForMe: "Approve for me (automatic review)",
+  dangerouslyBypassApprovalsAndSandbox: "Bypass approvals and sandbox",
+  dontAsk: "Do not ask (deny unknown)",
+  acceptEdits: "Accept edits",
+  auto: "Auto",
+  plan: "Plan only",
+  bypassPermissions: "Bypass permission checks",
+};
 
 export interface IntegrationProbeResult {
   readonly ok: boolean;
@@ -166,6 +184,9 @@ export function ExternalAgentsSection({
           approvals: false,
         },
         configuration: {},
+        permissionMode: undefined,
+        model: undefined,
+        reasoningEffort: undefined,
       },
     ]);
   return (
@@ -227,16 +248,115 @@ export function ExternalAgentsSection({
                     id={`${agent.id}-adapter`}
                     title="Lifecycle protocol adapter; Codex App Server is the first rich target and ACP is the generic local path"
                     value={agent.adapter}
-                    onChange={(event) =>
-                      updateAgent({ ...agent, adapter: event.target.value })
-                    }
+                    onChange={(event) => {
+                      const adapter = event.target.value;
+                      // A policy the new adapter cannot express is cleared to
+                      // the adapter's own default instead of being kept as an
+                      // unusable saved value.
+                      const modes = EXTERNAL_AGENT_PERMISSION_MODES[adapter] ?? [];
+                      const efforts =
+                        adapter === "claude_code"
+                          ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
+                          : EXTERNAL_AGENT_REASONING_EFFORTS;
+                      updateAgent({
+                        ...agent,
+                        adapter,
+                        permissionMode:
+                          agent.permissionMode !== undefined &&
+                          modes.includes(agent.permissionMode)
+                            ? agent.permissionMode
+                            : undefined,
+                        reasoningEffort:
+                          agent.reasoningEffort !== undefined &&
+                          efforts.includes(agent.reasoningEffort)
+                            ? agent.reasoningEffort
+                            : undefined,
+                      });
+                    }}
                   >
                     <option value="codex_app_server">Codex App Server</option>
-                    {agent.adapter !== "codex_app_server" && (
-                      <option value={agent.adapter}>
-                        {agent.adapter} (adapter not installed)
-                      </option>
+                    <option value="claude_code">Claude Code (local CLI)</option>
+                    {agent.adapter !== "codex_app_server" &&
+                      agent.adapter !== "claude_code" && (
+                        <option value={agent.adapter}>
+                          {agent.adapter} (adapter not installed)
+                        </option>
+                      )}
+                  </select>
+                </label>
+              </div>
+              <div className="settings-grid two-columns">
+                <label
+                  className="settings-field"
+                  htmlFor={`${agent.id}-permission-mode`}
+                >
+                  Permission mode
+                  <select
+                    id={`${agent.id}-permission-mode`}
+                    title="Non-interactive policy fixed for every delegation from this target. Native default uses the adapter's own safe default, and delegations never ask a human."
+                    value={agent.permissionMode ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      updateAgent({
+                        ...agent,
+                        ...(value === ""
+                          ? { permissionMode: undefined }
+                          : {
+                              permissionMode: value as ExternalAgentPermissionMode,
+                            }),
+                      });
+                    }}
+                  >
+                    <option value="">Native default</option>
+                    {(EXTERNAL_AGENT_PERMISSION_MODES[agent.adapter] ?? []).map(
+                      (mode) => (
+                        <option key={mode} value={mode}>
+                          {PERMISSION_MODE_LABELS[mode]}
+                        </option>
+                      ),
                     )}
+                  </select>
+                </label>
+                <TextField
+                  id={`${agent.id}-model`}
+                  label="Model"
+                  title="Optional model fixed for every delegation from this target. Empty leaves the product's own native model selection in force."
+                  value={agent.model ?? ""}
+                  onChange={(model) =>
+                    updateAgent({
+                      ...agent,
+                      ...(model.trim() === "" ? { model: undefined } : { model }),
+                    })
+                  }
+                />
+                <label className="settings-field" htmlFor={`${agent.id}-effort`}>
+                  Reasoning effort
+                  <select
+                    id={`${agent.id}-effort`}
+                    title="Optional reasoning effort fixed for every delegation from this target. Native default leaves the product's own selection in force."
+                    value={agent.reasoningEffort ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      updateAgent({
+                        ...agent,
+                        ...(value === ""
+                          ? { reasoningEffort: undefined }
+                          : {
+                              reasoningEffort:
+                                value as (typeof EXTERNAL_AGENT_REASONING_EFFORTS)[number],
+                            }),
+                      });
+                    }}
+                  >
+                    <option value="">Native default</option>
+                    {(agent.adapter === "claude_code"
+                      ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
+                      : EXTERNAL_AGENT_REASONING_EFFORTS
+                    ).map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>

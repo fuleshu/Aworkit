@@ -440,6 +440,59 @@ export const mcpServerConfigurationSchema = z
   })
   .strict();
 
+export const externalAgentPermissionModeSchema = z.enum([
+  "never",
+  "approveForMe",
+  "dangerouslyBypassApprovalsAndSandbox",
+  "dontAsk",
+  "acceptEdits",
+  "auto",
+  "plan",
+  "bypassPermissions",
+]);
+
+export type ExternalAgentPermissionMode = z.infer<
+  typeof externalAgentPermissionModeSchema
+>;
+
+/** Modes each installed adapter can express; mirrors the native validator. */
+export const EXTERNAL_AGENT_PERMISSION_MODES: Readonly<
+  Record<string, readonly ExternalAgentPermissionMode[]>
+> = {
+  codex_app_server: [
+    "never",
+    "approveForMe",
+    "dangerouslyBypassApprovalsAndSandbox",
+  ],
+  claude_code: [
+    "dontAsk",
+    "acceptEdits",
+    "auto",
+    "plan",
+    "bypassPermissions",
+  ],
+};
+
+/** Reasoning efforts a target may fix, and the subset the CLI accepts. */
+export const EXTERNAL_AGENT_REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+/** Reasoning efforts the installed Claude Code CLI accepts. */
+export const EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS: readonly string[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 export const externalAgentConfigurationSchema = z
   .object({
     id: stableIdSchema,
@@ -458,6 +511,12 @@ export const externalAgentConfigurationSchema = z
       })
       .strict(),
     configuration: z.record(z.string(), z.unknown()),
+    // Optional so a document saved before these fields existed still decodes.
+    permissionMode: externalAgentPermissionModeSchema.optional(),
+    model: z.string().trim().min(1).max(256).optional(),
+    reasoningEffort: z
+      .enum(EXTERNAL_AGENT_REASONING_EFFORTS)
+      .optional(),
   })
   .strict();
 
@@ -905,6 +964,26 @@ export function validateSettingsConfiguration(
           message: `External agent references unknown MCP server ${serverId}.`,
         });
       }
+    }
+    // A delegation target may only fix a policy its own adapter can express.
+    const modes = EXTERNAL_AGENT_PERMISSION_MODES[agent.adapter] ?? [];
+    if (agent.permissionMode !== undefined && !modes.includes(agent.permissionMode)) {
+      issues.push({
+        section: "external_agents",
+        path: `externalAgents.${agent.id}.permissionMode`,
+        message: `Adapter ${agent.adapter} cannot express permission mode ${agent.permissionMode}.`,
+      });
+    }
+    if (
+      agent.reasoningEffort !== undefined &&
+      agent.adapter === "claude_code" &&
+      !EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS.includes(agent.reasoningEffort)
+    ) {
+      issues.push({
+        section: "external_agents",
+        path: `externalAgents.${agent.id}.reasoningEffort`,
+        message: `The installed Claude Code adapter does not accept reasoning effort ${agent.reasoningEffort}.`,
+      });
     }
   }
   for (const tool of settings.tools) {

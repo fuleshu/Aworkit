@@ -586,6 +586,71 @@ describe("Settings configuration v2", () => {
     );
   });
 
+  it("rejects a delegation policy the selected external-agent adapter cannot express", () => {
+    const value = configuration();
+    const agent = (adapter: string) => ({
+      id: "agent.policy",
+      name: "Policy",
+      adapter,
+      enabled: false,
+      connection: {
+        transport: "stdio" as const,
+        command: "agent",
+        args: [],
+        cwd: null,
+        env: [],
+      },
+      credentialBindings: [],
+      mcpServerIds: [],
+      capabilities: {
+        progress: false,
+        continuation: false,
+        cancellation: false,
+        approvals: false,
+      },
+      configuration: {},
+    });
+
+    // Each adapter refuses the other product's vocabulary.
+    value.externalAgents.push({
+      ...agent("codex_app_server"),
+      permissionMode: "dontAsk" as const,
+    });
+    expect(validateSettingsConfiguration(value)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          section: "external_agents",
+          message: expect.stringContaining("cannot express permission mode dontAsk"),
+        }),
+      ]),
+    );
+
+    value.externalAgents[0] = {
+      ...agent("claude_code"),
+      permissionMode: "dontAsk" as const,
+      reasoningEffort: "minimal",
+    };
+    expect(validateSettingsConfiguration(value)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          section: "external_agents",
+          message: expect.stringContaining(
+            "does not accept reasoning effort minimal",
+          ),
+        }),
+      ]),
+    );
+
+    // A mode and effort the adapter does accept save cleanly.
+    value.externalAgents[0] = {
+      ...agent("claude_code"),
+      permissionMode: "auto" as const,
+      reasoningEffort: "high",
+      model: "sonnet",
+    };
+    expect(validateSettingsConfiguration(value)).toEqual([]);
+  });
+
   it("blocks Settings values that installed adapters would ignore or reject", () => {
     const value = configuration();
     value.credentials.push({
