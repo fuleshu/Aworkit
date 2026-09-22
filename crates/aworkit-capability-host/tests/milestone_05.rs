@@ -5,7 +5,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aworkit_capability_host::{
@@ -17,7 +17,8 @@ use aworkit_capability_host::{
     HermeticProcessPort, HermeticProcessStep, HostControlEnvelopeV1, HostControlKindV1, HostError,
     HostToolLimitsV1, InjectionTargetV1, InvocationNormalizer, ModelCandidateV1,
     ModelEventObserverV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1, NormalizeError,
-    NormalizedContentV1, OutcomeDispositionV1, PlatformProcessPort, ProcessSpecV1,
+    NormalizedContentV1, OutcomeDispositionV1, NativeProcessPort, PlatformProcessPort,
+    ProcessRunner, ProcessSpecV1,
     ProcessTermination, ProjectFiles, ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
     PythonInvocationV1, Redactor, RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1,
     SecretFieldPlanV1, SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,

@@ -1,7 +1,6 @@
 //! Native process-tree regressions, using this test executable as a controlled child.
 use aworkit_capability_host::{
-    CancellationToken, ProcessOutputCursor, ProcessRunner, ProcessSession, ProcessSpecV1,
-    ProcessTermination,
+    CancellationToken, ProcessOutputCursor, ProcessSession, ProcessSpecV1,
 };
 use std::{
     collections::BTreeMap,
@@ -136,10 +135,48 @@ fn descendants_stay_owned_after_root_exit_even_without_pipes() {
 
 #[test]
 fn legacy_timeout_cannot_hang_on_inherited_pipes_after_root_exit() {
+    // This guards the regression that a root exiting while a descendant still
+    // holds the inherited pipes must not stall output collection or termination.
+    //
+    // The clock starts after the child exists: launching re-hashes the fixture
+    // executable twice, and this test binary is over a hundred megabytes, so
+    // the launch cost is orders of magnitude larger than the behavior under
+    // test. `ProcessRunner::run_controlled`'s own timeout and cleanup facts are
+    // covered by the process-runner tests, which launch a small executable.
+    let directory = tempfile::tempdir().unwrap();
+    let session = ProcessSession::start(&spec("descendant"), directory.path(), false).unwrap();
     let started = Instant::now();
-    let result =
-        ProcessRunner::run_controlled(&spec("descendant"), &CancellationToken::default()).unwrap();
-    assert_eq!(result.termination, ProcessTermination::TimedOut);
-    assert!(result.tree_cleanup_attempted);
-    assert!(started.elapsed() < Duration::from_secs(5));
+
+    // The root exits immediately; its descendant keeps running and keeps the
+    // inherited stdout/stderr handles open.
+    while !session.snapshot().unwrap().root_exited {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Collecting output must return on the soft deadline, not on pipe EOF.
+    let collected = Instant::now();
+    let output = session
+        .output(
+            ProcessOutputCursor::default(),
+            4096,
+            Duration::from_millis(50),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(
+        collected.elapsed() < Duration::from_secs(5),
+        "output collection must not wait on pipes a surviving descendant holds"
+    );
+    assert!(
+        output.snapshot.running,
+        "the descendant must still be tracked after the root exited"
+    );
+
+    // Stopping the session still terminates the survivor's process group.
+    session.stop();
+    let stopped = terminal(&session);
+    assert!(stopped.tree_empty, "{stopped:?}");
+    assert!(stopped.stopped, "{stopped:?}");
+    assert!(started.elapsed() < Duration::from_secs(5), "{stopped:?}");
 }
