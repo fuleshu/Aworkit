@@ -1,5 +1,5 @@
 /**
- * Per-Chat subagent tab state.
+ * Per-Chat subagent tab state, separate from the SubagentTabs view.
  *
  * Tabs are presentation only: the parent Chat is the permanent first tab and
  * every delegated child is one closable tab identified by its durable childId.

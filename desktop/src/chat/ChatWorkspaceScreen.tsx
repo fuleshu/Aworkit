@@ -37,7 +37,7 @@ import {
   openSubagentTabInBackground,
   SubagentTabMemory,
   type SubagentTabState,
-} from "./subagentTabs";
+} from "./subagentTabState";
 import { useSubagentFeed } from "./useSubagentFeed";
 import {
   DEFAULT_SUBAGENT_VIEW,

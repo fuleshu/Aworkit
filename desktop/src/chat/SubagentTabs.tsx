@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { SubagentCatalogEntry, SubagentStatus } from "./subagentCatalog";
-import type { SubagentTabState } from "./subagentTabs";
+import type { SubagentTabState } from "./subagentTabState";
 
 interface SubagentTabsProps {
   readonly entries: readonly SubagentCatalogEntry[];

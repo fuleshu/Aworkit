@@ -9,7 +9,7 @@ import {
   openSubagentTabInBackground,
   SUBAGENT_TAB_LIMIT,
   SubagentTabMemory,
-} from "./subagentTabs";
+} from "./subagentTabState";
 
 describe("per-Chat subagent tab state", () => {
   it("opens one tab per child and only activates an already open child", () => {
