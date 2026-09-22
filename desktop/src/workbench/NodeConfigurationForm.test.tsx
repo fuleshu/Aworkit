@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SettingsV2Snapshot } from "./configuration";
@@ -172,5 +172,40 @@ describe("external agent node controls", () => {
     expect(within(effort).queryByRole("option", { name: "xhigh" })).toBeVisible();
     await user.selectOptions(effort, "high");
     expect(onChange).toHaveBeenCalledWith({ reasoningEffort: "high" });
+  });
+});
+
+describe("agent compaction overlay", () => {
+  it("inherits unless set and writes only the keys the node declares", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <NodeConfigurationForm
+        configuration={{ modelTierId: "tier:balanced", toolIds: [] }}
+        editable
+        nodeType="agent"
+        settings={settingsWithCapabilities([])}
+        onChange={onChange}
+      />,
+    );
+
+    const automatic = screen.getByLabelText("Automatic compaction");
+    expect(automatic).toHaveValue("");
+    expect(screen.getByLabelText("Tool result character threshold")).toHaveValue(null);
+
+    await user.selectOptions(automatic, "off");
+    expect(onChange).toHaveBeenCalledWith({ compaction: { auto: false } });
+
+    onChange.mockClear();
+    fireEvent.change(screen.getByLabelText("Keep beginning characters"), {
+      target: { value: "512" },
+    });
+    expect(onChange).toHaveBeenCalledWith({ compaction: { headChars: 512 } });
+
+    // Returning a control to inherit removes its key, and an overlay with
+    // nothing left is written as null so the node inherits the Chat policy.
+    onChange.mockClear();
+    await user.selectOptions(automatic, "");
+    expect(onChange).toHaveBeenCalledWith({ compaction: null });
   });
 });

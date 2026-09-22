@@ -65,6 +65,59 @@ pub(crate) struct Preparation {
     pub max_overflow_retries: u32,
 }
 
+/// A node's overlay on the frozen Chat compaction policy.
+///
+/// Only the knobs a single Agent node can answer for are overridable. The
+/// summarization route, retention budget and retry counts stay Chat-wide, so one
+/// Chat never carries two policies for one mechanism. An absent key inherits the
+/// frozen policy, and a node with no overlay at all keeps the Chat behaviour.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Overlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prune_tool_results: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_chars: Option<usize>,
+}
+
+impl Overlay {
+    /// Parses one node's overlay, ignoring an absent or malformed value.
+    ///
+    /// The executable catalog already rejected a malformed shape when the Chat
+    /// froze, so a value that cannot be parsed here cannot be trusted to change
+    /// context behaviour and is treated as "inherit".
+    #[must_use]
+    pub(crate) fn from_node_configuration(configuration: &Value) -> Option<Self> {
+        let value = configuration.get("compaction")?.clone();
+        serde_json::from_value(value).ok()
+    }
+
+    /// Applies this overlay to the frozen policy for one node's context.
+    pub(crate) fn apply(&self, policy: &mut Policy) {
+        if let Some(auto) = self.auto {
+            policy.auto = auto;
+        }
+        if let Some(prune) = self.prune_tool_results {
+            policy.prune_tool_results = prune;
+        }
+        if let Some(threshold) = self.threshold_chars {
+            policy.threshold_chars = threshold;
+        }
+        if let Some(head) = self.head_chars {
+            policy.head_chars = head;
+        }
+        if let Some(tail) = self.tail_chars {
+            policy.tail_chars = tail;
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Policy {
@@ -125,7 +178,9 @@ impl Default for Policy {
 }
 impl Policy {
     pub(crate) fn validate(&self, capacity: Option<u64>) -> Result<(), String> {
-        if let Some(policy) = &self.compression { policy.validate()?; }
+        if let Some(policy) = &self.compression {
+            policy.validate()?;
+        }
         if self.summarization_provider.is_some() != self.summarization_model.is_some()
             || self
                 .summarization_provider
@@ -244,3 +299,59 @@ pub(crate) fn pressure(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn an_overlay_replaces_only_the_keys_a_node_declares() {
+        let frozen = Policy {
+            auto: true,
+            prune_tool_results: true,
+            threshold_chars: 8192,
+            head_chars: 4096,
+            tail_chars: 1024,
+            ..Policy::default()
+        };
+        let mut disabled = frozen.clone();
+        Overlay {
+            auto: Some(false),
+            ..Overlay::default()
+        }
+        .apply(&mut disabled);
+        assert!(!disabled.auto);
+        // Every other knob keeps the Chat value.
+        assert_eq!(disabled.threshold_chars, 8192);
+        assert_eq!(disabled.prune_tool_results, true);
+
+        let mut tightened = frozen.clone();
+        Overlay {
+            threshold_chars: Some(2048),
+            head_chars: Some(1024),
+            tail_chars: Some(256),
+            ..Overlay::default()
+        }
+        .apply(&mut tightened);
+        assert_eq!(tightened.threshold_chars, 2048);
+        assert_eq!(tightened.head_chars, 1024);
+        assert_eq!(tightened.tail_chars, 256);
+        assert!(tightened.auto);
+    }
+
+    #[test]
+    fn an_absent_or_malformed_node_overlay_inherits_the_chat_policy() {
+        assert!(Overlay::from_node_configuration(&json!({})).is_none());
+        assert!(Overlay::from_node_configuration(&json!({"compaction": null})).is_none());
+        // An unknown key or wrong type cannot be trusted to change context
+        // behaviour, so it is treated as inherit rather than applied.
+        assert!(
+            Overlay::from_node_configuration(&json!({"compaction": {"thresholdRatio": 0.5}}))
+                .is_none()
+        );
+        assert!(Overlay::from_node_configuration(&json!({"compaction": {"auto": "no"}})).is_none());
+        let parsed = Overlay::from_node_configuration(&json!({"compaction": {"auto": false}}))
+            .expect("a well-formed overlay parses");
+        assert_eq!(parsed.auto, Some(false));
+    }
+}

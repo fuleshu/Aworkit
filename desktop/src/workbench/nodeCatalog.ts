@@ -49,6 +49,15 @@ export type ConfigurationField =
     }
   | {
       /**
+       * The Agent node's compaction overlay on the Chat's model compaction
+       * settings. Every control may stay unset and inherit.
+       */
+      readonly kind: "compactionOverlay";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
+      /**
        * Reasoning effort for an external delegation. The offered values follow
        * the selected product, because the CLI accepts fewer levels than Codex.
        */
@@ -166,6 +175,7 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
       { kind: "thinkingToggle", key: "enableThinking", label: "Thinking" },
       { kind: "toolMulti", key: "toolIds", label: "Tools" },
       { kind: "textarea", key: "instructions", label: "Instructions" },
+      { kind: "compactionOverlay", key: "compaction", label: "Context compaction" },
     ],
     defaultConfiguration: {
       modelTierId: "tier:balanced",

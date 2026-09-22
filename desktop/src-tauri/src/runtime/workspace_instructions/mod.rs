@@ -96,6 +96,9 @@ impl BoundFileToolAuthorityV1 {
                 .find(|s| s.outer == parent.outer_invocation_id)
         });
         Ok(AgentContextV1 {
+            // Automatic instructions only need the scope identity; the Chat
+            // compaction policy applies unchanged to this bookkeeping context.
+            compaction: None,
             node_id: selected.map_or_else(
                 || self.context.node_id.to_string(),
                 |s| s.owner.node.clone(),

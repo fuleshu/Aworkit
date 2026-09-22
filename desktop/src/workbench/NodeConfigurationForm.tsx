@@ -232,6 +232,15 @@ function ConfigurationFieldInput({
           onChange={onChange}
         />
       );
+    case "compactionOverlay":
+      return (
+        <CompactionOverlayField
+          field={field}
+          configuration={configuration}
+          editable={editable}
+          onChange={onChange}
+        />
+      );
     case "externalAgentTool":
       return (
         <ExternalAgentToolField
@@ -412,6 +421,121 @@ function ToolSingleField({
           Enabled MCP servers:{" "}
           {options.mcpServers.map(({ value, label }) => `${label} (${value})`).join(", ")}
         </small>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Agent node's compaction overlay. Each control can stay on "Inherit", so
+ * the node only answers for the knobs it cares about and the frozen Chat policy
+ * supplies the rest. An overlay with nothing set is written as null.
+ */
+function CompactionOverlayField({
+  field,
+  configuration,
+  editable,
+  onChange,
+}: {
+  readonly field: Extract<ConfigurationField, { kind: "compactionOverlay" }>;
+  readonly configuration: JsonObject;
+  readonly editable: boolean;
+  readonly onChange: (patch: JsonObject) => void;
+}): React.JSX.Element {
+  const overlay = objectValue(configuration[field.key]);
+  const set = (key: string, value: JsonValue | undefined) => {
+    const next: Record<string, JsonValue> = { ...overlay };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    onChange({
+      [field.key]: Object.keys(next).length === 0 ? null : next,
+    });
+  };
+  const toggle = (key: string, label: string, title: string) => (
+    <label key={key}>
+      {label}
+      <select
+        disabled={!editable}
+        title={title}
+        value={
+          overlay[key] === true ? "on" : overlay[key] === false ? "off" : ""
+        }
+        onChange={(event) =>
+          set(
+            key,
+            event.target.value === ""
+              ? undefined
+              : event.target.value === "on",
+          )
+        }
+      >
+        <option value="">Inherit from the model settings</option>
+        <option value="on">On for this Agent</option>
+        <option value="off">Off for this Agent</option>
+      </select>
+    </label>
+  );
+  const amount = (
+    key: string,
+    label: string,
+    title: string,
+    minimum: number,
+    maximum: number,
+  ) => (
+    <label key={key}>
+      {label}
+      <input
+        disabled={!editable}
+        type="number"
+        min={minimum}
+        max={maximum}
+        step={1}
+        title={title}
+        value={typeof overlay[key] === "number" ? String(overlay[key]) : ""}
+        onChange={(event) =>
+          set(
+            key,
+            event.target.value === "" ? undefined : Number(event.target.value),
+          )
+        }
+      />
+    </label>
+  );
+  return (
+    <div className="config-field-stack">
+      <small className="config-help">
+        Leave any control on inherit to use the model's compaction settings.
+      </small>
+      {toggle(
+        "auto",
+        "Automatic compaction",
+        "Reduce this Agent node's context automatically as it approaches the model limit",
+      )}
+      {toggle(
+        "pruneToolResults",
+        "Prune large tool results first",
+        "Reduce large tool outputs to their beginning and end before summarizing",
+      )}
+      {amount(
+        "thresholdChars",
+        "Tool result character threshold",
+        "Prune a tool result longer than this many Unicode characters",
+        1,
+        4_194_304,
+      )}
+      {amount(
+        "headChars",
+        "Keep beginning characters",
+        "Characters preserved from the beginning of a pruned tool result",
+        0,
+        1_048_576,
+      )}
+      {amount(
+        "tailChars",
+        "Keep ending characters",
+        "Characters preserved from the end of a pruned tool result",
+        0,
+        1_048_576,
       )}
     </div>
   );

@@ -62,6 +62,7 @@ fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
             .map(|b| b.capability_id.clone())
             .collect(),
         child: None,
+        compaction: super::compaction::Overlay::from_node_configuration(&node.configuration),
     }
 }
 
@@ -851,7 +852,10 @@ impl<'a> PassMachine<'a> {
             self.outer_invocation_id,
             node,
             self.tool_authority.legacy_context_identity()
-                && node.tool_bindings.iter().any(|binding| binding.is_callable()),
+                && node
+                    .tool_bindings
+                    .iter()
+                    .any(|binding| binding.is_callable()),
         );
         let messages = context::agent_messages(
             node,
@@ -1014,9 +1018,10 @@ impl<'a> PassMachine<'a> {
         // An auxiliary compaction request the provider rejected is reported to
         // the model on this turn; it does not prove the acting request fails, so
         // it never ends the Agent node.
-        let compaction_notice = preparation.provider_error.as_ref().map(|error| {
-            provider_recovery_notice(error).unwrap_or_else(|| error.to_string())
-        });
+        let compaction_notice = preparation
+            .provider_error
+            .as_ref()
+            .map(|error| provider_recovery_notice(error).unwrap_or_else(|| error.to_string()));
         if let Some(error) = preparation.error {
             return Err(ProviderError::Failed(error));
         }
@@ -1097,8 +1102,8 @@ impl<'a> PassMachine<'a> {
                         if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
                             return Err(error);
                         }
-                        let recovery_notice = provider_recovery_notice(&error)
-                            .unwrap_or_else(|| error.to_string());
+                        let recovery_notice =
+                            provider_recovery_notice(&error).unwrap_or_else(|| error.to_string());
                         recorded_context.retry_notice = Some(match retry_notice {
                             Some(notice) => format!("{notice}\n\n{recovery_notice}"),
                             None => recovery_notice,

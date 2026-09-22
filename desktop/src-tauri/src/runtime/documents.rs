@@ -264,8 +264,7 @@ impl CanonicalDocuments {
     ) -> Result<(), String> {
         let mut settings = self.settings.clone();
         settings.subagents = subagents;
-        self.save_settings(expected_version, settings)
-            .map(|_| ())
+        self.save_settings(expected_version, settings).map(|_| ())
     }
 
     pub(crate) fn workflow_snapshot(&self) -> WorkflowSnapshot {
@@ -1455,7 +1454,11 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
 /// The tool binding ids this build can execute. MCP tools match the mcp:
 /// prefix and are resolved to an enabled, core-attested server at freeze.
 pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
-    super::tool_registry::native_plugin().tools.iter().map(|tool|tool.id.clone()).collect()
+    super::tool_registry::native_plugin()
+        .tools
+        .iter()
+        .map(|tool| tool.id.clone())
+        .collect()
 }
 
 fn is_tool_binding_id(value: &str) -> bool {
@@ -1501,6 +1504,7 @@ fn validate_agent_configuration(
     let keys = configuration_keys(config);
     let required = BTreeSet::from(["modelTierId", "toolIds"]);
     let allowed = BTreeSet::from([
+        "compaction",
         "enableThinking",
         "instructions",
         "modelTierId",
@@ -1510,8 +1514,11 @@ fn validate_agent_configuration(
     ]);
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
-            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, and the ignored legacy timeoutSeconds field"
+            "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, optional compaction, and the ignored legacy timeoutSeconds field"
         ));
+    }
+    if let Some(compaction) = config.get("compaction").filter(|value| !value.is_null()) {
+        validate_agent_compaction(node_id, compaction)?;
     }
     if config
         .get("modelTierId")
@@ -1614,6 +1621,58 @@ fn validate_model_call_configuration(
     validate_optional_instructions(node_id, config.get("instructions"))?;
     Ok(())
 }
+
+/// One Agent node's compaction overlay on the frozen Chat policy.
+///
+/// Only the knobs a single node can answer for are accepted, with the same
+/// bounds the model-level Settings panel uses. The summarization route,
+/// retention budget and retry counts stay Chat-wide by design.
+fn validate_agent_compaction(node_id: &str, compaction: &Value) -> Result<(), String> {
+    let object = compaction
+        .as_object()
+        .ok_or_else(|| format!("workflow node '{node_id}' agent compaction must be an object"))?;
+    let allowed = BTreeSet::from([
+        "auto",
+        "headChars",
+        "pruneToolResults",
+        "tailChars",
+        "thresholdChars",
+    ]);
+    if object.keys().any(|key| !allowed.contains(key.as_str())) {
+        return Err(format!(
+            "workflow node '{node_id}' agent compaction accepts exactly auto, pruneToolResults, thresholdChars, headChars, and tailChars"
+        ));
+    }
+    for key in ["auto", "pruneToolResults"] {
+        if object.get(key).is_some_and(|value| !value.is_boolean()) {
+            return Err(format!(
+                "workflow node '{node_id}' agent compaction {key} must be a boolean"
+            ));
+        }
+    }
+    for (key, minimum, maximum) in [
+        ("thresholdChars", 1, MAXIMUM_COMPACTION_PRUNE_CHARS),
+        ("headChars", 0, MAXIMUM_COMPACTION_KEEP_CHARS),
+        ("tailChars", 0, MAXIMUM_COMPACTION_KEEP_CHARS),
+    ] {
+        if let Some(value) = object.get(key) {
+            let accepted = value
+                .as_u64()
+                .is_some_and(|value| (minimum..=maximum).contains(&value));
+            if !accepted {
+                return Err(format!(
+                    "workflow node '{node_id}' agent compaction {key} must be {minimum}..={maximum}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Largest accepted tool-result prune threshold, matching the Settings panel.
+const MAXIMUM_COMPACTION_PRUNE_CHARS: u64 = 4 * 1_024 * 1_024;
+/// Largest accepted preserved head or tail length, matching the Settings panel.
+const MAXIMUM_COMPACTION_KEEP_CHARS: u64 = 1_024 * 1_024;
 
 fn validate_model_reasoning_overrides(
     node_id: &str,
@@ -2224,20 +2283,43 @@ mod tests {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
         let mut settings = SettingsConfigurationV2::default();
-        let image = settings.tools.iter_mut().find(|t| t.id == "tool.image.read").unwrap();
+        let image = settings
+            .tools
+            .iter_mut()
+            .find(|t| t.id == "tool.image.read")
+            .unwrap();
         image.enabled = true;
         image.requires_project = true;
-        image.configuration.insert("authorityMode".into(), Value::from("project_files"));
-        repository.save(DocumentKind::Configuration, SETTINGS_ID, None, &json_document(&settings).unwrap()).unwrap();
+        image
+            .configuration
+            .insert("authorityMode".into(), Value::from("project_files"));
+        repository
+            .save(
+                DocumentKind::Configuration,
+                SETTINGS_ID,
+                None,
+                &json_document(&settings).unwrap(),
+            )
+            .unwrap();
 
         let repaired = CanonicalDocuments::open(root.path()).unwrap();
         assert_eq!(repaired.settings_version, 2);
-        let image = repaired.settings.tools.iter().find(|t| t.id == "tool.image.read").unwrap();
+        let image = repaired
+            .settings
+            .tools
+            .iter()
+            .find(|t| t.id == "tool.image.read")
+            .unwrap();
         assert!(image.enabled);
         assert!(!image.requires_project);
         assert_eq!(image.configuration["authorityMode"], "local_images");
         drop(repaired);
-        assert_eq!(CanonicalDocuments::open(root.path()).unwrap().settings_version, 2);
+        assert_eq!(
+            CanonicalDocuments::open(root.path())
+                .unwrap()
+                .settings_version,
+            2
+        );
     }
 
     #[test]
@@ -2766,6 +2848,65 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn agent_compaction_overlay_is_admitted_only_in_its_declared_shape() {
+        let document = |compaction: Value| {
+            json!({
+                "schemaVersion": 1,
+                "nodes": [
+                    {"id":"input.1","type":"input"},
+                    {
+                        "id":"agent.1",
+                        "type":"agent",
+                        "configuration": {
+                            "modelTierId":"tier:balanced",
+                            "toolIds":["tool.todo"],
+                            "compaction": compaction,
+                        },
+                    },
+                    {"id":"output.1","type":"output"},
+                    {"id":"wait.1","type":"wait"},
+                ],
+                "edges": [
+                    {"id":"e.1","source":"input.1","target":"agent.1"},
+                    {"id":"e.2","source":"agent.1","target":"output.1"},
+                    {"id":"e.3","source":"output.1","target":"wait.1"},
+                ],
+            })
+        };
+        validate_v1_executable_catalog(&document(json!({
+            "auto": false,
+            "pruneToolResults": true,
+            "thresholdChars": 2048,
+            "headChars": 1024,
+            "tailChars": 256,
+        })))
+        .expect("a declared overlay is admitted");
+        // A node may also declare a subset, inheriting the rest.
+        validate_v1_executable_catalog(&document(json!({"auto": false})))
+            .expect("a partial overlay is admitted");
+
+        for (compaction, expected) in [
+            (json!({"thresholdRatio": 0.5}), "accepts exactly"),
+            (json!({"auto": "no"}), "auto must be a boolean"),
+            (
+                json!({"pruneToolResults": 1}),
+                "pruneToolResults must be a boolean",
+            ),
+            (json!({"thresholdChars": 0}), "thresholdChars must be 1..="),
+            (json!({"headChars": 2_000_000}), "headChars must be 0..="),
+            (json!({"summarizationModel": "x"}), "accepts exactly"),
+            (json!([]), "must be an object"),
+        ] {
+            let error = validate_v1_executable_catalog(&document(compaction.clone()))
+                .expect_err(&format!("{compaction} must be rejected"));
+            assert!(
+                error.contains(expected),
+                "{compaction}: expected '{expected}' in {error}"
+            );
+        }
+    }
+
     fn catalog_accepts_the_standard_agent_graph_with_conditions_and_parallelism() {
         validate_v1_executable_catalog(&bundled_workflow_template("standard-agent").unwrap())
             .unwrap();

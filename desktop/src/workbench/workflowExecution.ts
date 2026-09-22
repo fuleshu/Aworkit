@@ -133,6 +133,7 @@ export function assessNativeWorkflow(
         const keys = new Set(Object.keys(configuration));
         const required = new Set(["modelTierId", "toolIds"]);
         const allowed = new Set([
+          "compaction",
           "enableThinking",
           "instructions",
           "modelTierId",
@@ -146,8 +147,57 @@ export function assessNativeWorkflow(
         )
           issues.push({
             code: "native_node_configuration",
-            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, and the ignored legacy timeoutSeconds field.`,
+            message: `Workflow node '${id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, optional compaction, and the ignored legacy timeoutSeconds field.`,
           });
+        const compaction = configuration.compaction;
+        if (compaction !== undefined && compaction !== null) {
+          if (typeof compaction !== "object" || Array.isArray(compaction))
+            issues.push({
+              code: "native_node_configuration",
+              message: `Workflow node '${id}' agent compaction must be an object.`,
+            });
+          else {
+            const overlay = compaction as Record<string, unknown>;
+            const overlayKeys = new Set(Object.keys(overlay));
+            const overlayAllowed = new Set([
+              "auto",
+              "headChars",
+              "pruneToolResults",
+              "tailChars",
+              "thresholdChars",
+            ]);
+            if ([...overlayKeys].some((key) => !overlayAllowed.has(key)))
+              issues.push({
+                code: "native_node_configuration",
+                message: `Workflow node '${id}' agent compaction accepts exactly auto, pruneToolResults, thresholdChars, headChars, and tailChars.`,
+              });
+            for (const key of ["auto", "pruneToolResults"] as const) {
+              if (overlay[key] !== undefined && typeof overlay[key] !== "boolean")
+                issues.push({
+                  code: "native_node_configuration",
+                  message: `Workflow node '${id}' agent compaction ${key} must be a boolean.`,
+                });
+            }
+            for (const [key, minimum, maximum] of [
+              ["thresholdChars", 1, 4_194_304],
+              ["headChars", 0, 1_048_576],
+              ["tailChars", 0, 1_048_576],
+            ] as const) {
+              const value = overlay[key];
+              if (
+                value !== undefined &&
+                (typeof value !== "number" ||
+                  !Number.isInteger(value) ||
+                  value < minimum ||
+                  value > maximum)
+              )
+                issues.push({
+                  code: "native_node_configuration",
+                  message: `Workflow node '${id}' agent compaction ${key} must be ${minimum}..=${maximum}.`,
+                });
+            }
+          }
+        }
         if (!validTierReference(configuration.modelTierId))
           issues.push({
             code: "native_model_tier",

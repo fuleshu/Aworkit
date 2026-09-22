@@ -309,6 +309,9 @@ pub(crate) struct AgentContextV1 {
     pub node_id: String,
     pub tool_ids: Vec<String>,
     pub child: Option<String>,
+    /// The Agent node's compaction overlay. Absent on a Chat-level context and
+    /// on delegated child scopes, which keep the frozen Chat policy.
+    pub compaction: Option<crate::runtime::compaction::Overlay>,
 }
 
 pub(crate) struct ModelToolLoopRequestV1<'a> {

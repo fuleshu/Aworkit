@@ -11,6 +11,7 @@ import {
   nodesInCycles,
   validateWorkflow,
   type JsonObject,
+  type JsonValue,
   type WorkflowDocument,
 } from "./workflow";
 import { assessNativeWorkflow } from "./workflowExecution";
@@ -56,6 +57,57 @@ describe("typed V1 node catalog", () => {
     expect(portKindsConnect("route", "flow")).toBe(true);
     expect(portKindsConnect("route", "text")).toBe(true);
     expect(portKindsConnect("text", "route")).toBe(false);
+  });
+
+  it("admits an Agent compaction overlay only in its declared shape", () => {
+    const document = (compaction: JsonValue | undefined): WorkflowDocument => {
+      const configuration: JsonObject = {
+        modelTierId: "tier:balanced",
+        toolIds: [],
+      };
+      if (compaction !== undefined) configuration.compaction = compaction;
+      return {
+        schemaVersion: 1,
+        nodes: [
+          { id: "i.1", type: "input" },
+          { id: "a.1", type: "agent", configuration },
+          { id: "o.1", type: "output" },
+          { id: "t.1", type: "wait" },
+        ],
+        edges: [
+          { id: "e.1", source: "i.1", target: "a.1" },
+          { id: "e.2", source: "a.1", target: "o.1" },
+          { id: "e.3", source: "o.1", target: "t.1" },
+        ],
+      };
+    };
+    const admitted = (compaction: JsonValue | undefined) =>
+      assessNativeWorkflow(document(compaction)).issues;
+
+    expect(admitted(undefined)).toEqual([]);
+    // Null means inherit, like the sibling optional node fields.
+    expect(admitted(null)).toEqual([]);
+    expect(
+      admitted({
+        auto: false,
+        pruneToolResults: true,
+        thresholdChars: 2048,
+        headChars: 1024,
+        tailChars: 256,
+      }),
+    ).toEqual([]);
+    expect(admitted({ auto: false })).toEqual([]);
+
+    const refused: readonly JsonValue[] = [
+      { thresholdRatio: 0.5 },
+      { summarizationModel: "x" },
+      { auto: "no" },
+      { pruneToolResults: 1 },
+      { thresholdChars: 0 },
+      { headChars: 2_000_000 },
+      [],
+    ];
+    for (const overlay of refused) expect(admitted(overlay)).not.toEqual([]);
   });
 
   it("types the external agent node and admits only installed delegation tools", () => {

@@ -502,6 +502,8 @@ impl FileToolDispatcherV1 {
                 .map(|b| b.capability_id.clone())
                 .collect(),
             child: Some(child_id.to_string()),
+            // A delegated child keeps the frozen Chat compaction policy.
+            compaction: None,
         };
         context.node_id = stable(&agent.node_id).map_err(|e| e.to_string())?;
         context.delegation = Some(child_id.clone());

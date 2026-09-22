@@ -140,6 +140,7 @@ impl Fixture {
                 node_id: "agent.1".into(),
                 tool_ids: ids.iter().map(|id|(*id).into()).collect(),
                 child: None,
+                compaction: None,
             },
             committer,
         }

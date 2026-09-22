@@ -43,6 +43,7 @@ impl BoundFileToolAuthorityV1 {
                 .iter()
                 .map(|b| b.capability_id.clone())
                 .collect(),
+            compaction: c::Overlay::from_node_configuration(&node.configuration),
         };
         let result = (|| {
             let restore = node.node_type == "agent" && self.context_snapshot(&owner)?.is_some();
@@ -118,6 +119,8 @@ impl BoundFileToolAuthorityV1 {
                 .unwrap_or_else(|| self.context.node_id.to_string()),
             child: None,
             tool_ids: Vec::new(),
+            // A Chat-level owner has no node configuration to overlay.
+            compaction: None,
         })
     }
 
@@ -206,9 +209,10 @@ impl BoundFileToolAuthorityV1 {
             .runtime
             .records
             .events_matching("pipeline.model-tool-exchange", |e| {
-                e["outerInvocationId"] == outer && e["turn"].as_u64().is_some_and(|t| {
-                    t as usize > after && through.is_none_or(|end| t as usize <= end)
-                })
+                e["outerInvocationId"] == outer
+                    && e["turn"].as_u64().is_some_and(|t| {
+                        t as usize > after && through.is_none_or(|end| t as usize <= end)
+                    })
             })
             .map_err(|e| e.to_string())?
             .into_iter()
@@ -270,14 +274,19 @@ impl BoundFileToolAuthorityV1 {
             // keeps its own fresh context and the next checkpoint replaces the
             // unrepresentable one.
             let mut edit = edit.take().expect("checked edit");
-            if let crate::runtime::context_inspection::ContextAdmissionV1::Unavailable(capabilities) =
-                crate::runtime::context_inspection::admit_edit(&mut edit, &request.tools)
+            if let crate::runtime::context_inspection::ContextAdmissionV1::Unavailable(
+                capabilities,
+            ) = crate::runtime::context_inspection::admit_edit(&mut edit, &request.tools)
             {
                 self.record_declined_selection(owner, "edit", &capabilities)?;
                 return Ok(None);
             }
-            if let Some((_, snapshot)) = previous.as_ref().filter(|(_, s)| s.outer == outer.as_str()) {
-                request.context_messages.retain(|m| m.after_exchanges > snapshot.through);
+            if let Some((_, snapshot)) =
+                previous.as_ref().filter(|(_, s)| s.outer == outer.as_str())
+            {
+                request
+                    .context_messages
+                    .retain(|m| m.after_exchanges > snapshot.through);
             }
             crate::runtime::context_inspection::apply_edit(&events, &edit, request)?;
             return Ok(None);
@@ -333,7 +342,9 @@ impl BoundFileToolAuthorityV1 {
             same.then_some(through),
         )?;
         if !same {
-            if !conversation_context && self.steering_node.as_deref() != Some(owner.node_id.as_str()) {
+            if !conversation_context
+                && self.steering_node.as_deref() != Some(owner.node_id.as_str())
+            {
                 for message in request.input["messages"]
                     .as_array()
                     .into_iter()
@@ -544,8 +555,12 @@ impl BoundFileToolAuthorityV1 {
         restore: bool,
     ) -> Result<c::Preparation, String> {
         let owner = self.context_owner(agent);
-        let metadata: c::Metadata = serde_json::from_value(self.context.model_context.clone())
+        let mut metadata: c::Metadata = serde_json::from_value(self.context.model_context.clone())
             .map_err(|e| e.to_string())?;
+        // A node's overlay narrows the frozen Chat policy for this context only.
+        if let Some(overlay) = agent.and_then(|agent| agent.compaction.as_ref()) {
+            overlay.apply(&mut metadata.policy);
+        }
         let lock = {
             let mut locks = self
                 .runtime
@@ -574,7 +589,9 @@ impl BoundFileToolAuthorityV1 {
         // the cost can be attributed instead of inferred.
         let prepare_started = std::time::Instant::now();
         let mut timings: Vec<(&'static str, u128)> = Vec::new();
-        let mark = |name: &'static str, since: &mut std::time::Instant, timings: &mut Vec<(&'static str, u128)>| {
+        let mark = |name: &'static str,
+                    since: &mut std::time::Instant,
+                    timings: &mut Vec<(&'static str, u128)>| {
             timings.push((name, since.elapsed().as_millis()));
             *since = std::time::Instant::now();
         };
