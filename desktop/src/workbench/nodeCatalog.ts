@@ -226,6 +226,34 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     defaultConfiguration: { predicate: { kind: "always" } },
   },
   {
+    type: "loop",
+    label: "Bounded loop",
+    icon: "↻",
+    description:
+      "Repeats its enclosed region under a frozen exit condition until the condition holds or the declared iteration bound is reached.",
+    inputPorts: [flowPort("in", "Value")],
+    outputPorts: [
+      routePort("body", "Body"),
+      routePort("exit", "Exit"),
+      routePort("fallback", "Fallback"),
+    ],
+    fields: [
+      { kind: "predicate", key: "exitCondition", label: "Exit condition" },
+      {
+        kind: "number",
+        key: "maximumIterations",
+        label: "Maximum iterations",
+        min: 1,
+        max: 64,
+        step: 1,
+      },
+    ],
+    defaultConfiguration: {
+      exitCondition: { kind: "always" },
+      maximumIterations: 8,
+    },
+  },
+  {
     type: "parallel",
     label: "Parallel",
     icon: "⋈",

@@ -16,6 +16,7 @@ export interface WorkflowExecutionIssue {
     | "native_tool_node"
     | "native_condition"
     | "native_condition_routes"
+    | "native_loop_routes"
     | "native_approval"
     | "native_structure";
   readonly message: string;
@@ -36,6 +37,7 @@ const CATALOG_NODE_TYPES = new Set([
   "tool",
   "external_agent",
   "condition",
+  "loop",
   "parallel",
   "approval",
   "output",
@@ -488,6 +490,7 @@ export function assessNativeWorkflow(
   const successors = new Map<string, string[]>();
   for (const node of nodes) successors.set(nodeId(node), []);
   for (const edge of document.edges) {
+    if (feedbackEdge(edge, nodes)) continue;
     const existing = successors.get(edgeSource(edge)) ?? [];
     existing.push(edgeTarget(edge));
     successors.set(edgeSource(edge), existing);
@@ -516,6 +519,48 @@ export function assessNativeWorkflow(
         code: "native_structure",
         message:
           "An executable v1 workflow requires every node to be reachable from the input node.",
+      });
+  }
+  for (const node of nodes) {
+    if (node.type !== "loop") continue;
+    const configuration =
+      typeof node.configuration === "object" &&
+      node.configuration !== null &&
+      !Array.isArray(node.configuration)
+        ? (node.configuration as JsonObject)
+        : {};
+    const exitCondition = configuration.exitCondition;
+    const maximumIterations = configuration.maximumIterations;
+    if (
+      typeof exitCondition !== "object" ||
+      exitCondition === null ||
+      Array.isArray(exitCondition) ||
+      typeof maximumIterations !== "number" ||
+      !Number.isInteger(maximumIterations) ||
+      maximumIterations < 1 ||
+      maximumIterations > 64
+    )
+      issues.push({
+        code: "native_node_configuration",
+        message: `Loop node '${String(node.id)}' requires an exitCondition predicate and a maximumIterations integer between 1 and 64.`,
+      });
+    const routes = new Set<string>();
+    let feedback = 0;
+    for (const edge of document.edges) {
+      const route = declaredEdgeRoute(edge);
+      if (edgeSource(edge) === nodeId(node) && route !== null) routes.add(route);
+      if (edgeTarget(edge) === nodeId(node) && feedbackEdge(edge, nodes)) feedback += 1;
+    }
+    for (const route of ["body", "exit", "fallback"])
+      if (!routes.has(route))
+        issues.push({
+          code: "native_loop_routes",
+          message: `Loop node '${String(node.id)}' requires one ${route} transition.`,
+        });
+    if (feedback !== 1)
+      issues.push({
+        code: "native_loop_routes",
+        message: `Loop node '${String(node.id)}' requires exactly one declared feedback transition closing its region.`,
       });
   }
   for (const node of nodes) {
@@ -728,6 +773,28 @@ function validateDeclaredPorts(
         });
     }
   }
+}
+
+/** The route label one transition declares, from its configuration or port. */
+function declaredEdgeRoute(edge: JsonObject): string | null {
+  const configuration = edge.configuration;
+  if (
+    typeof configuration === "object" &&
+    configuration !== null &&
+    !Array.isArray(configuration) &&
+    typeof (configuration as JsonObject).route === "string"
+  )
+    return (configuration as JsonObject).route as string;
+  if (typeof edge.route === "string") return edge.route;
+  if (typeof edge.sourcePort === "string") return edge.sourcePort;
+  return null;
+}
+
+/** Whether a transition is a loop's declared back edge into its own header. */
+function feedbackEdge(edge: JsonObject, nodes: readonly JsonObject[]): boolean {
+  if (declaredEdgeRoute(edge) !== "feedback") return false;
+  const target = edgeTarget(edge);
+  return nodes.some((node) => nodeId(node) === target && nodeType(node) === "loop");
 }
 
 function hasCycle(successors: Map<string, string[]>): boolean {

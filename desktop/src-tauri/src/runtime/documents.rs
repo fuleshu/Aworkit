@@ -1417,10 +1417,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
                     .and_then(Value::as_str)
                     .expect("validated edge target")
                     .to_owned(),
-                edge.get("configuration")
-                    .and_then(|configuration| configuration.get("route"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
+                declared_edge_route(edge).map(str::to_owned),
             )
         })
         .collect();
@@ -1480,15 +1477,11 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
         let mut routes = BTreeSet::new();
         for edge in edges {
             if edge.get("source").and_then(Value::as_str) == Some(id) {
-                let route = edge
-                    .get("configuration")
-                    .and_then(|configuration| configuration.get("route"))
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        format!(
-                            "transition leaving condition node '{id}' requires configuration.route of true, false, or fallback"
-                        )
-                    })?;
+                let route = declared_edge_route(edge).ok_or_else(|| {
+                    format!(
+                        "transition leaving condition node '{id}' requires a route of true, false, or fallback"
+                    )
+                })?;
                 if !matches!(route, "true" | "false" | "fallback") {
                     return Err(format!(
                         "transition leaving condition node '{id}' has unsupported route '{route}'"
@@ -2039,6 +2032,24 @@ fn validate_loop_configuration(
             )
         })?;
     Ok(())
+}
+
+/// The route one transition declares.
+///
+/// The editor writes the route as a typed source handle, imported documents and
+/// saved JSON carry it as `configuration.route`, and both must mean the same
+/// thing to the executable catalog.
+pub(crate) fn declared_edge_route(edge: &Value) -> Option<&str> {
+    fn route(value: &Value) -> Option<&str> {
+        value
+            .as_str()
+            .filter(|route| matches!(*route, "true" | "false" | "body" | "exit" | "fallback" | "feedback"))
+    }
+    edge.get("configuration")
+        .and_then(|configuration| configuration.get("route"))
+        .and_then(route)
+        .or_else(|| edge.get("route").and_then(route))
+        .or_else(|| edge.get("sourcePort").and_then(route))
 }
 
 /// Analyzes every declared loop region.
@@ -3188,6 +3199,26 @@ mod tests {
     }
 
     #[test]
+    fn a_loop_declared_through_typed_source_handles_is_accepted() {
+        // The editor writes the route as a typed source handle; imported and
+        // saved documents carry configuration.route. Both declare the same loop.
+        let mut document = loop_graph();
+        for edge in document["edges"].as_array_mut().expect("edges") {
+            if let Some(route) = edge["configuration"]["route"].as_str() {
+                let route = route.to_owned();
+                edge["sourcePort"] = json!(route);
+                edge["configuration"] = json!({});
+            }
+        }
+        assert_eq!(
+            validate_v1_executable_catalog(&document),
+            Ok(()),
+            "{:?}",
+            validate_v1_executable_catalog(&document)
+        );
+    }
+
+    #[test]
     fn catalog_bounds_loop_nesting() {
         // Each level is a loop whose region holds the next loop plus the node
         // that closes it; only the outermost routes may leave for the terminal.
@@ -3291,7 +3322,7 @@ mod tests {
         assert!(
             validate_v1_executable_catalog(&unrouted_condition)
                 .unwrap_err()
-                .contains("configuration.route")
+                .contains("requires a route")
         );
 
         // Control nodes carry the incoming value, so an approval gate and a

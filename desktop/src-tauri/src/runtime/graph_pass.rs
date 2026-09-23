@@ -452,11 +452,7 @@ pub(crate) fn compile_graph_pass(
                 "workflow transition '{id}' id is not a valid stable identifier"
             ));
         }
-        let route = object
-            .get("configuration")
-            .and_then(|configuration| configuration.get("route"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let route = super::documents::declared_edge_route(document_edge).map(str::to_owned);
         edges.push(CompiledGraphEdgeV1 {
             source,
             target,

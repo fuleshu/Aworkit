@@ -41,6 +41,8 @@ export interface WorkflowValidationIssue {
     | "unknown_port"
     | "connection_type_mismatch"
     | "condition_route_missing"
+    | "loop_route_missing"
+    | "loop_feedback_missing"
     | "cycle_detected";
   readonly itemId: string;
   readonly message: string;
@@ -592,7 +594,35 @@ export function validateWorkflow(
         message: `Transition connects an incompatible ${sourceKind} output to a ${targetKind} input.`,
       });
   });
-  const cycleNodes = nodesInCycles(document);
+  for (const node of document.nodes) {
+    if (rawNodeType(node) !== "loop") continue;
+    const id = typeof node.id === "string" ? node.id : "";
+    const routes = new Set<string>();
+    for (const edge of document.edges) {
+      if (edgeIdSource(edge) !== id) continue;
+      const route = declaredRoute(edge);
+      if (route !== null) routes.add(route);
+    }
+    for (const route of ["body", "exit", "fallback"])
+      if (!routes.has(route))
+        issues.push({
+          code: "loop_route_missing",
+          itemId: id,
+          message: `Loop node ${id} requires one ${route} route; a bounded loop declares a body, an exit and a fallback transition.`,
+        });
+    if (
+      !document.edges.some(
+        (edge) => edgeIdTarget(edge) === id && declaredRoute(edge) === "feedback",
+      )
+    )
+      issues.push({
+        code: "loop_feedback_missing",
+        itemId: id,
+        message: `Loop node ${id} requires one declared feedback transition closing its region.`,
+      });
+  }
+  const declaredFeedback = declaredFeedbackEdges(document);
+  const cycleNodes = nodesInCycles(document, declaredFeedback);
   for (const nodeIdValue of cycleNodes) {
     issues.push({
       code: "cycle_detected",
@@ -603,15 +633,55 @@ export function validateWorkflow(
   return issues;
 }
 
+/** The route one transition declares, from either its port or its label. */
+function declaredRoute(edge: JsonObject): string | null {
+  if (typeof edge.route === "string") return edge.route;
+  const configuration = edge.configuration;
+  if (
+    typeof configuration === "object" &&
+    configuration !== null &&
+    !Array.isArray(configuration) &&
+    typeof (configuration as JsonObject).route === "string"
+  )
+    return (configuration as JsonObject).route as string;
+  if (typeof edge.sourcePort === "string") return edge.sourcePort;
+  return null;
+}
+
+/**
+ * Indexes of transitions a loop declares as the single feedback edge closing
+ * its region. Only these may close a cycle; every other back edge is refused.
+ */
+export function declaredFeedbackEdges(
+  document: WorkflowDocument,
+): ReadonlySet<number> {
+  const loops = new Set(
+    document.nodes
+      .filter((node) => rawNodeType(node) === "loop")
+      .map((node, index) => (typeof node.id === "string" ? node.id : String(index))),
+  );
+  const feedback = new Set<number>();
+  document.edges.forEach((edge, index) => {
+    const target = edgeIdTarget(edge);
+    if (target !== null && loops.has(target) && declaredRoute(edge) === "feedback")
+      feedback.add(index);
+  });
+  return feedback;
+}
+
 /** Returns node IDs that participate in at least one directed edge cycle. */
-export function nodesInCycles(document: WorkflowDocument): readonly string[] {
+export function nodesInCycles(
+  document: WorkflowDocument,
+  ignored: ReadonlySet<number> = new Set(),
+): readonly string[] {
   const ids = document.nodes.map((node, index) => nodeId(node, index));
   const idSet = new Set(ids);
   const adjacency = new Map<string, string[]>(
     ids.map((id) => [id, [] as string[]]),
   );
   const indegree = new Map<string, number>(ids.map((id) => [id, 0]));
-  document.edges.forEach((edge) => {
+  document.edges.forEach((edge, index) => {
+    if (ignored.has(index)) return;
     const source = edgeIdSource(edge);
     const target = edgeIdTarget(edge);
     if (source !== null && target !== null && idSet.has(source) && idSet.has(target)) {
@@ -683,6 +753,10 @@ export function workflowEdgeId(edge: JsonObject, fallback: number): string {
 
 function nodeId(node: JsonObject, fallback: number): string {
   return typeof node.id === "string" ? node.id : `node-${fallback}`;
+}
+/** Node type of a raw document node, or an empty string when it declares none. */
+function rawNodeType(node: JsonObject): string {
+  return typeof node.type === "string" ? node.type : "";
 }
 function edgeId(edge: JsonObject, fallback: number): string {
   return typeof edge.id === "string" ? edge.id : `edge-${fallback}`;

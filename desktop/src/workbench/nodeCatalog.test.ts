@@ -8,6 +8,7 @@ import {
   resolveOutputPortKind,
 } from "./nodeCatalog";
 import {
+  declaredFeedbackEdges,
   nodesInCycles,
   validateWorkflow,
   type JsonObject,
@@ -25,6 +26,7 @@ describe("typed V1 node catalog", () => {
       "tool",
       "external_agent",
       "condition",
+      "loop",
       "parallel",
       "approval",
       "output",
@@ -253,6 +255,58 @@ describe("workflow connection and cycle validation", () => {
     };
     const codes = validateWorkflow(document).map((issue) => issue.code);
     expect(codes).toContain("unknown_port");
+  });
+
+  it("accepts a declared bounded loop and still refuses an undeclared cycle", () => {
+    const looped: WorkflowDocument = {
+      schemaVersion: 1,
+      nodes: [
+        { id: "i.1", type: "input" },
+        {
+          id: "l.1",
+          type: "loop",
+          configuration: {
+            exitCondition: { kind: "exists", path: "done" },
+            maximumIterations: 4,
+          },
+        },
+        { id: "p.1", type: "parallel" },
+        { id: "w.1", type: "wait" },
+      ],
+      edges: [
+        { id: "e.1", source: "i.1", target: "l.1" },
+        { id: "e.2", source: "l.1", target: "p.1", route: "body" },
+        { id: "e.3", source: "l.1", target: "w.1", route: "exit" },
+        { id: "e.4", source: "l.1", target: "w.1", route: "fallback" },
+        { id: "e.5", source: "p.1", target: "l.1", route: "feedback" },
+      ],
+    };
+    const codes = validateWorkflow(looped).map((issue) => issue.code);
+    expect(codes).not.toContain("cycle_detected");
+    expect(codes).not.toContain("loop_route_missing");
+    expect(codes).not.toContain("loop_feedback_missing");
+    expect(declaredFeedbackEdges(looped).size).toBe(1);
+
+    // A region without its declared feedback edge is incomplete rather than
+    // cyclic, and it is reported as such.
+    const unclosed: WorkflowDocument = {
+      ...looped,
+      edges: looped.edges.filter((edge) => edge.id !== "e.5"),
+    };
+    const unclosedCodes = validateWorkflow(unclosed).map((issue) => issue.code);
+    expect(unclosedCodes).toContain("loop_feedback_missing");
+    expect(unclosedCodes).not.toContain("cycle_detected");
+
+    // A back edge that is not the declared feedback route stays a cycle.
+    const undeclared: WorkflowDocument = {
+      ...looped,
+      edges: looped.edges.map((edge) =>
+        edge.id === "e.5" ? { ...edge, route: "body" } : edge,
+      ),
+    };
+    expect(
+      validateWorkflow(undeclared).map((issue) => issue.code),
+    ).toContain("cycle_detected");
   });
 
   it("detects nodes participating in a directed cycle", () => {

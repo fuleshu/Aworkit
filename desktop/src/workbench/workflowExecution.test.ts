@@ -29,6 +29,100 @@ function workflow(toolId: string, type: "agent" | "tool"): WorkflowDocument {
   };
 }
 
+describe("bounded loop admission", () => {
+  const looped = (): WorkflowDocument => ({
+    schemaVersion: 1,
+    id: "workflow.loop",
+    name: "Bounded loop",
+    nodes: [
+      { id: "input.1", type: "input" },
+      {
+        id: "loop.1",
+        type: "loop",
+        configuration: {
+          exitCondition: { kind: "exists", path: "done" },
+          maximumIterations: 4,
+        },
+      },
+      { id: "parallel.1", type: "parallel" },
+      { id: "wait.1", type: "wait" },
+    ],
+    edges: [
+      { id: "input-loop", source: "input.1", target: "loop.1" },
+      {
+        id: "loop-body",
+        source: "loop.1",
+        target: "parallel.1",
+        configuration: { route: "body" },
+      },
+      {
+        id: "loop-exit",
+        source: "loop.1",
+        target: "wait.1",
+        configuration: { route: "exit" },
+      },
+      {
+        id: "loop-fallback",
+        source: "loop.1",
+        target: "wait.1",
+        configuration: { route: "fallback" },
+      },
+      {
+        id: "loop-feedback",
+        source: "parallel.1",
+        target: "loop.1",
+        configuration: { route: "feedback" },
+      },
+    ],
+  });
+
+  it("admits a declared bounded loop", () => {
+    expect(assessNativeWorkflow(looped())).toEqual({ executable: true, issues: [] });
+  });
+
+  it("requires the three frozen routes, one feedback edge and a bounded contract", () => {
+    const missingRoute: WorkflowDocument = {
+      ...looped(),
+      edges: looped().edges.filter((edge) => edge.id !== "loop-exit"),
+    };
+    expect(
+      assessNativeWorkflow(missingRoute).issues.some(
+        (issue) => issue.code === "native_loop_routes",
+      ),
+    ).toBe(true);
+
+    const noFeedback: WorkflowDocument = {
+      ...looped(),
+      edges: looped().edges.filter((edge) => edge.id !== "loop-feedback"),
+    };
+    expect(
+      assessNativeWorkflow(noFeedback).issues.some(
+        (issue) => issue.code === "native_loop_routes",
+      ),
+    ).toBe(true);
+
+    const unbounded = looped();
+    const nodes = unbounded.nodes.map((node) =>
+      node.id === "loop.1"
+        ? {
+            ...node,
+            configuration: {
+              exitCondition: { kind: "always" },
+              maximumIterations: 65,
+            },
+          }
+        : node,
+    );
+    expect(
+      assessNativeWorkflow({ ...unbounded, nodes }).issues.some(
+        (issue) =>
+          issue.code === "native_node_configuration" &&
+          issue.message.includes("maximumIterations"),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe.each(["agent", "tool"] as const)("%s tool validation", (type) => {
   it.each(nativeTools.filter(entry => type === "agent" || entry.activation !== "automatic_context").map(({ id }) => id))("accepts bundled executor %s", (id) => {
     expect(assessNativeWorkflow(workflow(id, type))).toEqual({ executable: true, issues: [] });
