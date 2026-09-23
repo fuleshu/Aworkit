@@ -3788,7 +3788,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn the_desktop_editor_command_is_validated_as_launchable_or_absent() {
         let mut settings = configured();
         settings.validate().expect("no editor is valid");

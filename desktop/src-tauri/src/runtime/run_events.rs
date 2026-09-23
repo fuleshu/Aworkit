@@ -657,15 +657,32 @@ impl RunEventStream {
     }
 
     pub(crate) fn publish_graph_activity(&self, activity: &GraphNodeActivityV1) {
-        let span_id = format!(
-            "span.node.{}.{}.{}",
-            self.run_id, self.request_id, activity.node_id
-        );
-        let details = json!({
+        // A repeated iteration is a distinct activation of the same node, and an
+        // exit-condition evaluation is its own observation of the header.
+        let observation = match activity.status.as_str() {
+            "evaluated" | "limit-exceeded" => format!(":{}", activity.status),
+            _ => String::new(),
+        };
+        let span_id = match &activity.loop_frame {
+            Some(frame) => format!(
+                "span.node.{}.{}.{}#{}{observation}",
+                self.run_id, self.request_id, activity.node_id, frame.iteration
+            ),
+            None => format!(
+                "span.node.{}.{}.{}{observation}",
+                self.run_id, self.request_id, activity.node_id
+            ),
+        };
+        let mut details = json!({
             "nodeId": activity.node_id,
             "nodeType": activity.node_type,
             "label": activity.label,
         });
+        if let Some(frame) = &activity.loop_frame {
+            details["loopHeaderId"] = json!(frame.header_id);
+            details["iteration"] = json!(frame.iteration);
+            details["maximumIterations"] = json!(frame.maximum_iterations);
+        }
         if activity.status == "started" {
             self.start_span(
                 span_id.clone(),
@@ -1518,6 +1535,7 @@ mod tests {
             summary: "Approval started".into(),
             input: Some(json!({"proposal":"review"})),
             output: None,
+            loop_frame: None,
         });
         first.publish_graph_activity(&GraphNodeActivityV1 {
             node_id: "gate.1".into(),
@@ -1527,6 +1545,7 @@ mod tests {
             summary: "Waiting".into(),
             input: Some(json!({"proposal":"review"})),
             output: None,
+            loop_frame: None,
         });
 
         let resumed = RunEventStream::new(
@@ -1543,6 +1562,7 @@ mod tests {
             summary: "Approved".into(),
             input: None,
             output: Some(json!({"approved":true})),
+            loop_frame: None,
         });
         resumed.ensure_healthy().unwrap();
 
@@ -1586,6 +1606,7 @@ mod tests {
             summary: "Agent started".into(),
             input: None,
             output: None,
+            loop_frame: None,
         });
         let observer = ModelRunEventObserver::new(first);
         observer.model_turn_started(&json!({"messages": []}));
@@ -1643,6 +1664,7 @@ mod tests {
             summary: "Agent started".into(),
             input: None,
             output: None,
+            loop_frame: None,
         });
         let call = aworkit_capability_host::ModelToolCallV1 {
             call_id: "call.approved-edit".into(),

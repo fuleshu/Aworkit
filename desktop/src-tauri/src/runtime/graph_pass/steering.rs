@@ -9,6 +9,9 @@ pub(crate) struct StoppedGraphPassV1 {
     pub values: BTreeMap<String, Value>,
     pub completed: Vec<String>,
     pub active_edges: BTreeSet<usize>,
+    /// Active loop iterations, outermost first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_frames: Vec<LoopFrameStateV1>,
 }
 
 impl PassMachine<'_> {
@@ -37,6 +40,16 @@ impl PassMachine<'_> {
         self.completed = stopped.completed.clone();
         self.executed = stopped.completed.iter().cloned().collect();
         self.active_edges = stopped.active_edges.clone();
+        self.loop_frames = stopped
+            .loop_frames
+            .iter()
+            .map(|frame| (frame.header_id.clone(), frame.clone()))
+            .collect();
+        self.loop_stack = stopped
+            .loop_frames
+            .iter()
+            .map(|frame| frame.header_id.clone())
+            .collect();
         self.steered_node = Some(stopped.node_id.clone());
         Ok(())
     }
@@ -61,6 +74,7 @@ impl PassMachine<'_> {
             values: self.values.clone(),
             completed: self.completed.clone(),
             active_edges: self.active_edges.clone(),
+            loop_frames: self.persisted_loop_frames(),
         });
         outcome
     }

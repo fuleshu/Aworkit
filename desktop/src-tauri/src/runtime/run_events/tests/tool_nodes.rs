@@ -19,6 +19,7 @@ fn explicit_tool_node_can_finish_the_run_directly_and_after_resume() {
             summary: "Writing".into(),
             input: None,
             output: None,
+            loop_frame: None,
         };
         let call = aworkit_capability_host::ModelToolCallV1 {
             call_id: "files.1.tool".into(),

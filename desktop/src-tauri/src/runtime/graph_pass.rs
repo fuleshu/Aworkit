@@ -87,6 +87,46 @@ pub(crate) struct GraphPassBudgetV1 {
     pub maximum_tool_output_bytes: usize,
 }
 
+/// The bounded-loop frame one activity ran in: which loop, which iteration, and
+/// the bound the limits controller charges.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphLoopFrameV1 {
+    pub header_id: String,
+    pub iteration: u32,
+    pub maximum_iterations: u32,
+}
+
+/// What running one node produced for the pass.
+enum NodeStep {
+    /// The node settled and its value is available to successors.
+    Value(Value),
+    /// There was nothing to do: the node already ran this pass, or its branch
+    /// was not taken.
+    Skipped,
+    /// The pass ends with this outcome.
+    Done(GraphPassOutcomeV1),
+}
+
+/// The three frozen routes a loop header declares.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoopRouteV1 {
+    Body,
+    Exit,
+    Fallback,
+}
+
+/// Durable progress of one active loop iteration. A suspension inside a region
+/// resumes exactly this iteration instead of replaying settled work.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LoopFrameStateV1 {
+    pub header_id: String,
+    pub iteration: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completed_this_iteration: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphNodeActivityV1 {
@@ -101,6 +141,10 @@ pub struct GraphNodeActivityV1 {
     /// Exact bounded value produced by the node, or its terminal error data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Value>,
+    /// Declared-loop frame this activation belongs to, when the node ran inside
+    /// one. Repeated iterations of the same node stay distinguishable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_frame: Option<GraphLoopFrameV1>,
 }
 
 /// The one durable suspension a graph pass reports.
@@ -166,6 +210,9 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub settled_tool_calls: u32,
     #[serde(default)]
     pub timeout_recoveries: u32,
+    /// Active loop frames, outermost first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_frames: Vec<LoopFrameStateV1>,
 }
 
 /// Durable agent-loop suspension captured when a PerInvocation tool call asks
@@ -445,6 +492,18 @@ pub(crate) fn compile_graph_pass(
         .collect::<BTreeMap<_, _>>();
     let feedback: BTreeSet<usize> = loops.values().map(|region| region.feedback_edge).collect();
     let topological_order = topological_order(&nodes, &edges, &feedback)?;
+    // Region members run in the same deterministic order as the graph.
+    let position: BTreeMap<&str, usize> = topological_order
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect();
+    let mut loops = loops;
+    for region in loops.values_mut() {
+        region
+            .region
+            .sort_by_key(|id| position.get(id.as_str()).copied().unwrap_or(usize::MAX));
+    }
     Ok(CompiledGraphPassV1 {
         nodes,
         edges,
@@ -561,6 +620,11 @@ struct PassMachine<'a> {
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
     steered_node: Option<String>,
     activity_observer: Option<&'a dyn Fn(&GraphNodeActivityV1)>,
+    /// Active loop iterations by header, outermost first in `loop_stack`.
+    loop_frames: BTreeMap<String, LoopFrameStateV1>,
+    loop_stack: Vec<String>,
+    /// The one decision this pass was resumed with, if any.
+    approval_decision: Option<bool>,
 }
 
 impl<'a> PassMachine<'a> {
@@ -597,97 +661,318 @@ impl<'a> PassMachine<'a> {
                 return self.failed_outcome(error);
             }
         }
-        for node_id in &self.compiled.topological_order {
-            if self.executed.contains(node_id) {
-                continue;
-            }
-            let Some(node) = self.compiled.nodes.iter().find(|node| &node.id == node_id) else {
-                return self.failed_outcome(format!("compiled graph is missing node '{node_id}'"));
-            };
-            if !self.ready(node_id) {
-                self.push_activity(node, "skipped", "branch not taken");
-                continue;
-            }
-            // Finish pure graph bookkeeping after the last model response. A
-            // Stop racing with completion must not leave a continuation that
-            // only replays stale output and silently ignores the next input.
-            if cancellation.is_cancelled()
-                && matches!(
-                    node.node_type.as_str(),
-                    "agent" | "model_call" | "tool" | "approval" | "external_agent"
-                )
-            {
-                return self.stopped_outcome(node, "graph pass was cancelled".to_owned(), false);
-            }
-            self.push_activity(node, "started", "running");
-            let value = if node.node_type == "approval" {
-                match approval_decision {
-                    Some(true) => self.incoming_value(&node.id),
-                    Some(false) => {
-                        self.push_activity(node, "failed", "rejected by the user");
-                        return self.failed_outcome(format!(
-                            "approval '{}' was rejected by the user",
-                            node.label
-                        ));
-                    }
-                    None => {
-                        self.push_activity(node, "waiting", "awaiting user decision");
-                        return self.pending_approval(node);
-                    }
-                }
-            } else if self
-                .resume_agent_suspension
-                .as_ref()
-                .is_some_and(|(suspension, _)| suspension.node_id == node.id)
-            {
-                let (suspension, decision) = self
-                    .resume_agent_suspension
-                    .take()
-                    .expect("resume suspension present");
-                match self.resume_agent_after_approval(
-                    node,
-                    &suspension.pending,
-                    decision.unwrap_or(false),
-                    cancellation,
-                ) {
-                    AgentResumeOutcomeV1::Value(value) => value,
-                    AgentResumeOutcomeV1::Suspended(approval, next_suspension) => {
-                        self.push_activity(node, "waiting", "awaiting user decision");
-                        return self.pending_for_tool_approval(approval, next_suspension);
-                    }
-                    AgentResumeOutcomeV1::Failed(error) => {
-                        self.push_activity(node, "failed", &error);
-                        if cancellation.is_cancelled() {
-                            return self.stopped_outcome(node, error, true);
-                        }
-                        return self.failed_outcome(error);
-                    }
-                }
-            } else {
-                match self.execute_node(node, cancellation) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        self.push_activity(node, "failed", &error);
-                        if cancellation.is_cancelled() {
-                            return self.stopped_outcome(node, error, true);
-                        }
-                        return self.failed_outcome(error);
-                    }
-                }
-            };
-            if let Some((approval, suspension)) = self.pending_tool_approval.take() {
-                self.push_activity(node, "waiting", "awaiting user decision");
-                return self.pending_for_tool_approval(approval, suspension);
-            }
-            self.values.insert(node_id.clone(), value);
-            self.executed.insert(node_id.clone());
-            self.completed.push(node_id.clone());
-            self.push_activity(node, "completed", node_completion_summary(node));
-            if matches!(node.node_type.as_str(), "wait" | "completion") {
-                return self.succeeded_outcome();
+        // A declared loop repeats its region inside the header, so the pass
+        // walks a queue instead of one fixed sweep: a node already settled by a
+        // later iteration is simply left alone.
+        let mut queue: std::collections::VecDeque<String> =
+            self.compiled.topological_order.iter().cloned().collect();
+        while let Some(node_id) = queue.pop_front() {
+            match self.run_node(&node_id, cancellation) {
+                NodeStep::Done(outcome) => return outcome,
+                NodeStep::Value(_) | NodeStep::Skipped => {}
             }
         }
         self.succeeded_outcome()
+    }
+
+    /// Runs one node exactly once per pass, honouring branch readiness.
+    fn run_node(&mut self, node_id: &str, cancellation: &CancellationToken) -> NodeStep {
+        if self.executed.contains(node_id) {
+            return NodeStep::Skipped;
+        }
+        let Some(node) = self.compiled.nodes.iter().find(|node| node.id == node_id) else {
+            return NodeStep::Done(
+                self.failed_outcome(format!("compiled graph is missing node '{node_id}'")),
+            );
+        };
+        if !self.ready(node_id) {
+            self.push_activity(node, "skipped", "branch not taken");
+            return NodeStep::Skipped;
+        }
+        // Finish pure graph bookkeeping after the last model response. A Stop
+        // racing with completion must not leave a continuation that only
+        // replays stale output and silently ignores the next input.
+        if cancellation.is_cancelled()
+            && matches!(
+                node.node_type.as_str(),
+                "agent" | "model_call" | "tool" | "approval" | "external_agent"
+            )
+        {
+            return NodeStep::Done(self.stopped_outcome(
+                node,
+                "graph pass was cancelled".to_owned(),
+                false,
+            ));
+        }
+        if node.node_type == "loop" {
+            return self.run_loop_header(node, cancellation);
+        }
+        self.push_activity(node, "started", "running");
+        let value = if node.node_type == "approval" {
+            match self.approval_decision {
+                Some(true) => self.incoming_value(&node.id),
+                Some(false) => {
+                    self.push_activity(node, "failed", "rejected by the user");
+                    return NodeStep::Done(self.failed_outcome(format!(
+                        "approval '{}' was rejected by the user",
+                        node.label
+                    )));
+                }
+                None => {
+                    self.push_activity(node, "waiting", "awaiting user decision");
+                    return NodeStep::Done(self.pending_approval(node));
+                }
+            }
+        } else if self
+            .resume_agent_suspension
+            .as_ref()
+            .is_some_and(|(suspension, _)| suspension.node_id == node.id)
+        {
+            let (suspension, decision) = self
+                .resume_agent_suspension
+                .take()
+                .expect("resume suspension present");
+            match self.resume_agent_after_approval(
+                node,
+                &suspension.pending,
+                decision.unwrap_or(false),
+                cancellation,
+            ) {
+                AgentResumeOutcomeV1::Value(value) => value,
+                AgentResumeOutcomeV1::Suspended(approval, next_suspension) => {
+                    self.push_activity(node, "waiting", "awaiting user decision");
+                    return NodeStep::Done(
+                        self.pending_for_tool_approval(approval, next_suspension),
+                    );
+                }
+                AgentResumeOutcomeV1::Failed(error) => {
+                    self.push_activity(node, "failed", &error);
+                    if cancellation.is_cancelled() {
+                        return NodeStep::Done(self.stopped_outcome(node, error, true));
+                    }
+                    return NodeStep::Done(self.failed_outcome(error));
+                }
+            }
+        } else {
+            match self.execute_node(node, cancellation) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.push_activity(node, "failed", &error);
+                    if cancellation.is_cancelled() {
+                        return NodeStep::Done(self.stopped_outcome(node, error, true));
+                    }
+                    return NodeStep::Done(self.failed_outcome(error));
+                }
+            }
+        };
+        if let Some((approval, suspension)) = self.pending_tool_approval.take() {
+            self.push_activity(node, "waiting", "awaiting user decision");
+            return NodeStep::Done(self.pending_for_tool_approval(approval, suspension));
+        }
+        self.settle_node(node, value, &node_completion_summary(node));
+        if matches!(node.node_type.as_str(), "wait" | "completion") {
+            return NodeStep::Done(self.succeeded_outcome());
+        }
+        NodeStep::Value(self.values.get(&node.id).cloned().unwrap_or(Value::Null))
+    }
+
+    /// Runs a bounded loop: the frozen exit condition is evaluated before each
+    /// iteration, the region repeats under it, and exhausting the declared
+    /// iteration bound takes the explicit fallback transition instead of
+    /// stopping silently.
+    fn run_loop_header(
+        &mut self,
+        node: &CompiledGraphNodeV1,
+        cancellation: &CancellationToken,
+    ) -> NodeStep {
+        let Some(region) = self.compiled.loops.get(&node.id).cloned() else {
+            return NodeStep::Done(
+                self.failed_outcome(format!("loop node '{}' has no compiled region", node.id)),
+            );
+        };
+        let condition = node
+            .configuration
+            .get("exitCondition")
+            .cloned()
+            .unwrap_or_else(|| json!({"kind": "always"}));
+        let restored = self.loop_frames.get(&node.id).cloned();
+        // A restored frame continues its iteration; everything it had not yet
+        // settled runs again, and nothing it did settles twice.
+        let mut runs = restored.as_ref().map_or(0, |frame| frame.iteration);
+        let mut body_entered = restored.is_some();
+        if let Some(frame) = &restored {
+            for region_id in &region.region {
+                if !frame.completed_this_iteration.contains(region_id) {
+                    self.executed.remove(region_id);
+                }
+            }
+        }
+        self.loop_stack.push(node.id.clone());
+        let mut input = self.incoming_value(&node.id);
+        self.values.insert(node.id.clone(), input.clone());
+        self.executed.insert(node.id.clone());
+        self.push_activity(node, "started", "running");
+        loop {
+            if !body_entered {
+                let exit = match evaluate_predicate(&condition, &input) {
+                    Ok(exit) => exit,
+                    Err(error) => {
+                        let message =
+                            format!("loop node '{}' exit condition failed: {error}", node.id);
+                        self.push_activity(node, "failed", &message);
+                        self.loop_stack.pop();
+                        return NodeStep::Done(self.failed_outcome(message));
+                    }
+                };
+                self.push_activity(
+                    node,
+                    "evaluated",
+                    &format!(
+                        "iteration {} of {} · exit condition {}",
+                        runs.max(1),
+                        region.maximum_iterations,
+                        if exit { "true" } else { "false" }
+                    ),
+                );
+                if exit {
+                    self.activate_loop_route(&region, LoopRouteV1::Exit);
+                    let summary = format!("{runs} iteration(s) · exit condition true");
+                    return self.finish_loop(node, input, &summary);
+                }
+                if runs >= region.maximum_iterations {
+                    self.activate_loop_route(&region, LoopRouteV1::Fallback);
+                    self.push_activity(
+                        node,
+                        "limit-exceeded",
+                        &format!(
+                            "iteration bound {} reached; routing to the fallback transition",
+                            region.maximum_iterations
+                        ),
+                    );
+                    let summary = format!(
+                        "iteration bound {} reached · routed to the fallback transition",
+                        region.maximum_iterations
+                    );
+                    return self.finish_loop(node, input, &summary);
+                }
+                runs += 1;
+                self.activate_loop_route(&region, LoopRouteV1::Body);
+                for region_id in &region.region {
+                    self.executed.remove(region_id);
+                }
+                self.loop_frames.insert(
+                    node.id.clone(),
+                    LoopFrameStateV1 {
+                        header_id: node.id.clone(),
+                        iteration: runs,
+                        completed_this_iteration: Vec::new(),
+                    },
+                );
+            }
+            body_entered = false;
+            for region_id in region.region.clone() {
+                match self.run_node(&region_id, cancellation) {
+                    NodeStep::Done(outcome) => {
+                        // A suspension inside the region keeps its frame so the
+                        // resumed pass continues this iteration.
+                        return NodeStep::Done(outcome);
+                    }
+                    NodeStep::Value(_) | NodeStep::Skipped => {}
+                }
+            }
+            // The next iteration receives what the region produced.
+            if let Some(next) = self
+                .values
+                .get(&self.compiled.edges[region.feedback_edge].source)
+                .cloned()
+            {
+                input = next;
+            }
+        }
+    }
+
+    /// Settles the header on its exit or exhaustion route. The pass continues
+    /// down that route; a loop is not a terminal node.
+    fn finish_loop(&mut self, node: &CompiledGraphNodeV1, value: Value, summary: &str) -> NodeStep {
+        self.loop_stack.pop();
+        self.loop_frames.remove(&node.id);
+        self.settle_node(node, value, summary);
+        NodeStep::Value(self.values.get(&node.id).cloned().unwrap_or(Value::Null))
+    }
+
+    /// Records a node's value and completion exactly once.
+    fn settle_node(&mut self, node: &CompiledGraphNodeV1, value: Value, summary: &str) {
+        self.values.insert(node.id.clone(), value);
+        self.executed.insert(node.id.clone());
+        if !self.completed.contains(&node.id) {
+            self.completed.push(node.id.clone());
+        }
+        self.push_activity(node, "completed", summary);
+        let Some(header) = self.loop_stack.last().cloned() else {
+            return;
+        };
+        if self
+            .compiled
+            .loops
+            .get(&header)
+            .is_some_and(|region| region.region.contains(&node.id))
+            && let Some(frame) = self.loop_frames.get_mut(&header)
+        {
+            frame.completed_this_iteration.push(node.id.clone());
+        }
+    }
+
+    fn activate_loop_route(&mut self, region: &CompiledLoopV1, route: LoopRouteV1) {
+        let chosen = match route {
+            LoopRouteV1::Body => region.body_edge,
+            LoopRouteV1::Exit => region.exit_edge,
+            LoopRouteV1::Fallback => region.fallback_edge,
+        };
+        for candidate in [region.body_edge, region.exit_edge, region.fallback_edge] {
+            if candidate == chosen {
+                self.active_edges.insert(candidate);
+            } else {
+                self.active_edges.remove(&candidate);
+            }
+        }
+    }
+
+    /// The frame one node's activity belongs to. The loop header itself reports
+    /// the iteration it is currently judging; a node shared by no loop has none.
+    fn active_loop_frame(&self, node: &CompiledGraphNodeV1) -> Option<GraphLoopFrameV1> {
+        let header = if node.node_type == "loop" {
+            self.loop_stack
+                .iter()
+                .rev()
+                .find(|header| *header == &node.id)
+                .cloned()?
+        } else {
+            self.loop_stack.last().cloned()?
+        };
+        // A header reports the iteration it is judging, which is the first one
+        // before any body run has opened a frame.
+        let iteration = self
+            .loop_frames
+            .get(&header)
+            .map_or(1, |frame| frame.iteration);
+        let maximum_iterations = self
+            .compiled
+            .loops
+            .get(&header)
+            .map_or(0, |region| region.maximum_iterations);
+        Some(GraphLoopFrameV1 {
+            header_id: header,
+            iteration,
+            maximum_iterations,
+        })
+    }
+
+    /// The active iterations in outermost-first order, for durable resume.
+    fn persisted_loop_frames(&self) -> Vec<LoopFrameStateV1> {
+        self.loop_stack
+            .iter()
+            .filter_map(|header| self.loop_frames.get(header).cloned())
+            .collect()
     }
 
     fn pending_for_tool_approval(
@@ -721,6 +1006,7 @@ impl<'a> PassMachine<'a> {
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
             timeout_recoveries: self.timeout_recoveries,
+            loop_frames: self.persisted_loop_frames(),
         };
         // A question is the same suspension with a different reason, so the
         // pass reports exactly one pending decision either way.
@@ -845,6 +1131,7 @@ impl<'a> PassMachine<'a> {
             summary: summary.to_owned(),
             input,
             output,
+            loop_frame: self.active_loop_frame(node),
         };
         if let Some(observer) = self.activity_observer {
             observer(&activity);
@@ -1482,6 +1769,7 @@ impl<'a> PassMachine<'a> {
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
             timeout_recoveries: self.timeout_recoveries,
+            loop_frames: self.persisted_loop_frames(),
         };
         GraphPassOutcomeV1 {
             status: GraphPassStatusV1::AwaitingApproval,
@@ -1578,7 +1866,17 @@ pub(crate) fn execute_graph_pass_observed(
         values: BTreeMap::new(),
         completed: Vec::new(),
         executed: BTreeSet::new(),
-        active_edges: (0..compiled.edges.len()).collect(),
+        // A feedback edge is a declarative region boundary, never a runnable
+        // transition: the header drives its own iterations, and excluding it
+        // keeps the header ready before its region has run.
+        active_edges: (0..compiled.edges.len())
+            .filter(|index| {
+                !compiled
+                    .loops
+                    .values()
+                    .any(|region| region.feedback_edge == *index)
+            })
+            .collect(),
         activity: Vec::new(),
         tool_activity: Vec::new(),
         exchanges: Vec::new(),
@@ -1593,6 +1891,26 @@ pub(crate) fn execute_graph_pass_observed(
         resume_agent_suspension: None,
         steered_node: None,
         activity_observer,
+        // A suspended pass resumes the iterations it was inside.
+        loop_frames: pending
+            .map(|pending| {
+                pending
+                    .loop_frames
+                    .iter()
+                    .map(|frame| (frame.header_id.clone(), frame.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        loop_stack: pending
+            .map(|pending| {
+                pending
+                    .loop_frames
+                    .iter()
+                    .map(|frame| frame.header_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        approval_decision,
     };
     machine.run(pending, approval_decision, stopped, cancellation)
 }
@@ -1840,11 +2158,19 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        approval_value_summary, carried_value, compile_graph_pass, evaluate_predicate,
+        AgentContextV1, GraphLoopFrameV1, GraphPassBudgetV1, GraphPassOutcomeV1, GraphPassStatusV1,
+        LoopFrameStateV1, ModelResolutionPlanV1, ModelToolCallV1, ModelToolInvocationPortV1,
+        PendingGraphPassStateV1, WorkflowMessageV1, approval_value_summary, carried_value,
+        compile_graph_pass, evaluate_predicate, execute_graph_pass_observed,
         node_completion_summary, node_model_parameters, plan_review_source, topological_order,
         value_text,
     };
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
+    use crate::runtime::model_tool_loop::SettledModelToolCallV1;
+    use aworkit_capability_host::{CancellationToken, FrozenModelGateway};
+    use aworkit_capability_host::{ModelToolExchangeV1, ModelToolRequestV1};
+    use aworkit_protocol::StableId;
+    use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn node(id: &str, node_type: &str) -> CompiledGraphNodeV1 {
@@ -1998,6 +2324,217 @@ mod tests {
                 edge.target
             );
         }
+    }
+
+    /// A region that needs no provider: one pure node, optionally behind an
+    /// approval gate, closed by the declared feedback edge.
+    fn loop_document(predicate: Value, maximum: u32, gated: bool) -> Value {
+        let mut nodes = vec![
+            json!({"id":"input.1","type":"input"}),
+            json!({"id":"loop.1","type":"loop","configuration":{
+                "exitCondition": predicate,
+                "maximumIterations": maximum
+            }}),
+            json!({"id":"parallel.1","type":"parallel"}),
+            json!({"id":"wait.1","type":"wait"}),
+            json!({"id":"wait.2","type":"wait"}),
+        ];
+        let mut edges = vec![
+            json!({"id":"e1","source":"input.1","target":"loop.1"}),
+            json!({"id":"e2","source":"loop.1","target":"parallel.1","configuration":{"route":"body"}}),
+            json!({"id":"e3","source":"loop.1","target":"wait.1","configuration":{"route":"exit"}}),
+            json!({"id":"e4","source":"loop.1","target":"wait.2","configuration":{"route":"fallback"}}),
+        ];
+        if gated {
+            nodes.push(json!({"id":"gate.1","type":"approval","configuration":{}}));
+            edges.push(json!({"id":"e5","source":"parallel.1","target":"gate.1"}));
+            edges.push(json!({"id":"e6","source":"gate.1","target":"loop.1","configuration":{"route":"feedback"}}));
+        } else {
+            edges.push(json!({"id":"e5","source":"parallel.1","target":"loop.1","configuration":{"route":"feedback"}}));
+        }
+        json!({"schemaVersion":1,"nodes":nodes,"edges":edges})
+    }
+
+    struct NoTools;
+
+    impl ModelToolInvocationPortV1 for NoTools {
+        fn manage_model_context(
+            &self,
+            _: &FrozenModelGateway,
+            _: &ModelResolutionPlanV1,
+            _: &StableId,
+            _: usize,
+            _: Option<&AgentContextV1>,
+            _: &mut ModelToolRequestV1,
+            _: &CancellationToken,
+            _: crate::runtime::compaction::Trigger,
+        ) -> Result<crate::runtime::compaction::Preparation, String> {
+            Ok(crate::runtime::compaction::Preparation {
+                max_overflow_retries: 1,
+                ..Default::default()
+            })
+        }
+        fn invoke(
+            &self,
+            _: &StableId,
+            _: u32,
+            _: &ModelToolCallV1,
+            _: &CancellationToken,
+        ) -> Result<SettledModelToolCallV1, String> {
+            Err("this graph binds no tools".to_owned())
+        }
+        fn commit_exchange(
+            &self,
+            _: &StableId,
+            _: u32,
+            _: &ModelToolExchangeV1,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn run_loop_pass(
+        document: &Value,
+        decision: Option<bool>,
+        pending: Option<&PendingGraphPassStateV1>,
+    ) -> GraphPassOutcomeV1 {
+        let compiled = compile_graph_pass(document, &[]).expect("compiled loop graph");
+        let gateway = FrozenModelGateway::new(Vec::new());
+        execute_graph_pass_observed(
+            &compiled,
+            &[WorkflowMessageV1 {
+                role: "user".to_owned(),
+                content: "go".to_owned(),
+                images: Vec::new(),
+            }],
+            GraphPassBudgetV1 {
+                maximum_timeout_recoveries: 1,
+                maximum_tool_output_bytes: 65_536,
+            },
+            &gateway,
+            &NoTools,
+            &StableId::parse("invocation.loop.test").expect("invocation id"),
+            "request.loop",
+            "chat.loop",
+            "run.loop",
+            "binding.loop",
+            "hash.loop",
+            1_788_854_400_000,
+            u64::MAX,
+            pending,
+            decision,
+            None,
+            &CancellationToken::default(),
+            None,
+        )
+    }
+
+    fn activity_count(outcome: &GraphPassOutcomeV1, node_id: &str, status: &str) -> usize {
+        outcome
+            .activity
+            .iter()
+            .filter(|activity| activity.node_id == node_id && activity.status == status)
+            .count()
+    }
+
+    fn completed_nodes(outcome: &GraphPassOutcomeV1) -> Vec<String> {
+        outcome
+            .activity
+            .iter()
+            .filter(|activity| activity.status == "completed")
+            .map(|activity| activity.node_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_loop_whose_exit_condition_holds_runs_no_iteration() {
+        let outcome = run_loop_pass(
+            &loop_document(json!({"kind": "always"}), 3, false),
+            None,
+            None,
+        );
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        assert_eq!(activity_count(&outcome, "parallel.1", "started"), 0);
+        assert_eq!(
+            completed_nodes(&outcome),
+            vec!["input.1", "loop.1", "wait.1"]
+        );
+        let evaluation = outcome
+            .activity
+            .iter()
+            .find(|activity| activity.status == "evaluated")
+            .expect("exit condition evaluation");
+        assert_eq!(
+            evaluation.loop_frame,
+            Some(GraphLoopFrameV1 {
+                header_id: "loop.1".to_owned(),
+                iteration: 1,
+                maximum_iterations: 3,
+            })
+        );
+        assert!(evaluation.summary.contains("exit condition true"));
+    }
+
+    #[test]
+    fn exhausting_the_iteration_bound_takes_the_fallback_transition() {
+        let outcome = run_loop_pass(
+            &loop_document(json!({"kind": "exists", "path": "done"}), 2, false),
+            None,
+            None,
+        );
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        // Two admitted iterations, three evaluations, and an explicit limit
+        // outcome instead of a silent stop.
+        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 2);
+        assert_eq!(activity_count(&outcome, "loop.1", "evaluated"), 3);
+        assert_eq!(activity_count(&outcome, "loop.1", "limit-exceeded"), 1);
+        let frames = outcome
+            .activity
+            .iter()
+            .filter(|activity| activity.node_id == "parallel.1" && activity.status == "completed")
+            .map(|activity| activity.loop_frame.as_ref().map(|frame| frame.iteration))
+            .collect::<Vec<_>>();
+        assert_eq!(frames, vec![Some(1), Some(2)]);
+        // The fallback route runs and the normal exit route is left behind.
+        assert!(completed_nodes(&outcome).contains(&"wait.2".to_owned()));
+        assert_eq!(activity_count(&outcome, "wait.1", "completed"), 0);
+    }
+
+    #[test]
+    fn bounded_loop_execution_is_deterministic() {
+        let document = loop_document(json!({"kind": "exists", "path": "done"}), 2, false);
+        let first = run_loop_pass(&document, None, None);
+        let second = run_loop_pass(&document, None, None);
+        assert_eq!(
+            serde_json::to_value(&first.activity).expect("first activity"),
+            serde_json::to_value(&second.activity).expect("second activity")
+        );
+    }
+
+    #[test]
+    fn a_suspension_inside_a_region_resumes_its_own_iteration() {
+        let document = loop_document(json!({"kind": "exists", "path": "done"}), 2, true);
+        let suspended = run_loop_pass(&document, None, None);
+        assert_eq!(suspended.status, GraphPassStatusV1::AwaitingApproval);
+        let pending = suspended.pending_state.expect("pending state");
+        assert_eq!(
+            pending.loop_frames,
+            vec![LoopFrameStateV1 {
+                header_id: "loop.1".to_owned(),
+                iteration: 1,
+                completed_this_iteration: vec!["parallel.1".to_owned()],
+            }]
+        );
+
+        let resumed = run_loop_pass(&document, Some(true), Some(&pending));
+        assert_eq!(resumed.status, GraphPassStatusV1::Succeeded);
+        // Iteration 1 settled the parallel node before the gate; the resume
+        // continues that iteration without replaying it, and iteration 2 runs
+        // the region once more.
+        assert_eq!(activity_count(&resumed, "parallel.1", "completed"), 2);
+        assert_eq!(activity_count(&resumed, "gate.1", "completed"), 2);
+        assert_eq!(activity_count(&resumed, "loop.1", "limit-exceeded"), 1);
+        assert!(completed_nodes(&resumed).contains(&"wait.2".to_owned()));
     }
 
     #[test]

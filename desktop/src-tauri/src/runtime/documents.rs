@@ -3359,7 +3359,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn agent_compaction_overlay_is_admitted_only_in_its_declared_shape() {
         let document = |compaction: Value| {
             json!({
