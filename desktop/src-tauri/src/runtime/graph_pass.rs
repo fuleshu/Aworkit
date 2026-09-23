@@ -820,7 +820,15 @@ impl<'a> PassMachine<'a> {
             }
         }
         self.loop_stack.push(node.id.clone());
-        let mut input = self.incoming_value(&node.id);
+        let feedback_source = self.compiled.edges[region.feedback_edge].source.clone();
+        // A resumed iteration keeps the input it was admitted with: what its own
+        // region produced last, unless this iteration already produced it.
+        let resumed_input = restored.as_ref().and_then(|frame| {
+            (!frame.completed_this_iteration.contains(&feedback_source))
+                .then(|| self.values.get(&feedback_source).cloned())
+                .flatten()
+        });
+        let mut input = resumed_input.unwrap_or_else(|| self.incoming_value(&node.id));
         self.values.insert(node.id.clone(), input.clone());
         self.executed.insert(node.id.clone());
         let opening = match region.maximum_iterations {
@@ -907,13 +915,11 @@ impl<'a> PassMachine<'a> {
                     NodeStep::Value(_) | NodeStep::Skipped => {}
                 }
             }
-            // The next iteration receives what the region produced.
-            if let Some(next) = self
-                .values
-                .get(&self.compiled.edges[region.feedback_edge].source)
-                .cloned()
-            {
+            // The next iteration receives what the region produced: the value
+            // its entry node reads and the value the exit condition judges.
+            if let Some(next) = self.values.get(&feedback_source).cloned() {
                 input = next;
+                self.values.insert(node.id.clone(), input.clone());
             }
         }
     }
@@ -2544,6 +2550,35 @@ mod tests {
         // The fallback route runs and the normal exit route is left behind.
         assert!(completed_nodes(&outcome).contains(&"wait.2".to_owned()));
         assert_eq!(activity_count(&outcome, "wait.1", "completed"), 0);
+    }
+
+    #[test]
+    fn a_resumed_iteration_receives_what_the_previous_iteration_produced() {
+        let document = loop_document(json!({"kind": "exists", "path": "done"}), Some(3), true);
+        let suspended = run_loop_pass(&document, None, None);
+        let mut pending = suspended.pending_state.expect("pending state");
+        // Continue as iteration 2, whose input is what iteration 1's region
+        // produced. Only the region's output is restored, so a loop that failed
+        // to carry it forward would give the entry node nothing at all.
+        pending.loop_frames = vec![LoopFrameStateV1 {
+            header_id: "loop.1".to_owned(),
+            iteration: 2,
+            completed_this_iteration: Vec::new(),
+        }];
+        pending.values.clear();
+        pending
+            .values
+            .insert("gate.1".to_owned(), json!("second-round"));
+        pending.completed.clear();
+        pending.activity.clear();
+
+        let resumed = run_loop_pass(&document, Some(true), Some(&pending));
+        let entry = resumed
+            .activity
+            .iter()
+            .find(|activity| activity.node_id == "parallel.1" && activity.status == "started")
+            .expect("the region entry node starts");
+        assert_eq!(entry.input, Some(json!("second-round")));
     }
 
     #[test]
