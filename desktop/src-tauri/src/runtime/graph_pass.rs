@@ -2561,6 +2561,74 @@ mod tests {
     }
 
     #[test]
+    fn nested_loops_run_their_own_frames_and_charge_their_own_bounds() {
+        // outer(body -> inner) with the inner loop's routes joining the outer
+        // region, so only one feedback edge closes each region.
+        let document = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"loop.outer","type":"loop","configuration":{
+                    "exitCondition":{"kind":"exists","path":"done"},"maximumIterations":2
+                }},
+                {"id":"loop.inner","type":"loop","configuration":{
+                    "exitCondition":{"kind":"exists","path":"done"},"maximumIterations":2
+                }},
+                {"id":"parallel.1","type":"parallel"},
+                {"id":"join.1","type":"parallel"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"loop.outer"},
+                {"id":"e2","source":"loop.outer","target":"loop.inner","configuration":{"route":"body"}},
+                {"id":"e3","source":"loop.outer","target":"wait.1","configuration":{"route":"exit"}},
+                {"id":"e4","source":"loop.outer","target":"wait.1","configuration":{"route":"fallback"}},
+                {"id":"e5","source":"join.1","target":"loop.outer","configuration":{"route":"feedback"}},
+                {"id":"e6","source":"loop.inner","target":"parallel.1","configuration":{"route":"body"}},
+                {"id":"e7","source":"loop.inner","target":"join.1","configuration":{"route":"exit"}},
+                {"id":"e8","source":"loop.inner","target":"join.1","configuration":{"route":"fallback"}},
+                {"id":"e9","source":"parallel.1","target":"loop.inner","configuration":{"route":"feedback"}}
+            ]
+        });
+        let outcome = run_loop_pass(&document, None, None);
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        // The inner loop runs its bound inside each outer iteration.
+        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 4);
+        let inner_frames = outcome
+            .activity
+            .iter()
+            .filter(|activity| activity.node_id == "parallel.1" && activity.status == "completed")
+            .filter_map(|activity| activity.loop_frame.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            inner_frames
+                .iter()
+                .map(|frame| (frame.header_id.as_str(), frame.iteration))
+                .collect::<Vec<_>>(),
+            vec![("loop.inner", 1), ("loop.inner", 2), ("loop.inner", 1), ("loop.inner", 2)]
+        );
+        // The join node belongs to the outer loop's iterations.
+        let outer_frames = outcome
+            .activity
+            .iter()
+            .filter(|activity| activity.node_id == "join.1" && activity.status == "completed")
+            .filter_map(|activity| activity.loop_frame.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outer_frames
+                .iter()
+                .map(|frame| (frame.header_id.as_str(), frame.iteration))
+                .collect::<Vec<_>>(),
+            vec![("loop.outer", 1), ("loop.outer", 2)]
+        );
+        // Each loop charges its own bound and routes its own fallback: the
+        // inner bound is charged once per outer iteration, the outer bound once.
+        assert_eq!(activity_count(&outcome, "loop.inner", "limit-exceeded"), 2);
+        assert_eq!(activity_count(&outcome, "loop.outer", "limit-exceeded"), 1);
+        assert!(completed_nodes(&outcome).contains(&"wait.1".to_owned()));
+    }
+
+    #[test]
     fn bounded_loop_execution_is_deterministic() {
         let document = loop_document(json!({"kind": "exists", "path": "done"}), 2, false);
         let first = run_loop_pass(&document, None, None);
