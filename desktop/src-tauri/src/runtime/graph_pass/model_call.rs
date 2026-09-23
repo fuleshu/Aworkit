@@ -72,7 +72,7 @@ impl PassMachine<'_> {
         loop {
             let evidence = self
                 .execute_text_turn(
-                    &instruction_agent_outer(self.outer_invocation_id, node, false),
+                    &instruction_agent_outer(self.outer_invocation_id, node, false, self.active_iteration()),
                     &plan,
                     ModelRequestV1 {
                         input: json!({"messages": messages}),

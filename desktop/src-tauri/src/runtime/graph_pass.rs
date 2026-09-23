@@ -68,13 +68,25 @@ fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
 
 /// New automatic-context Agents isolate their durable tool exchanges by node.
 /// Keep the historical invocation identity for pre-existing frozen workflows.
-fn instruction_agent_outer(outer: &StableId, node: &CompiledGraphNodeV1, legacy: bool) -> StableId {
-    if legacy && node.tool_bindings.iter().all(|b| b.is_callable()) {
+fn instruction_agent_outer(
+    outer: &StableId,
+    node: &CompiledGraphNodeV1,
+    legacy: bool,
+    iteration: Option<u32>,
+) -> StableId {
+    if legacy && iteration.is_none() && node.tool_bindings.iter().all(|b| b.is_callable()) {
         return outer.clone();
     }
+    let identity = match iteration {
+        // Each iteration is its own invocation: its context lineage, tool
+        // exchanges and checkpoint are new immutable revisions rather than
+        // shared mutable state.
+        Some(iteration) => format!("{outer}:{}#{}", node.id, iteration),
+        None => format!("{outer}:{}", node.id),
+    };
     StableId::parse(format!(
         "invocation.agent.{:x}",
-        Sha256::digest(format!("{outer}:{}", node.id).as_bytes())
+        Sha256::digest(identity.as_bytes())
     ))
     .expect("digest is a valid invocation identity")
 }
@@ -625,6 +637,8 @@ struct PassMachine<'a> {
     loop_stack: Vec<String>,
     /// The one decision this pass was resumed with, if any.
     approval_decision: Option<bool>,
+    /// Frozen wall-clock allowance for this pass; a loop stops at it.
+    deadline_epoch_millis: u64,
 }
 
 impl<'a> PassMachine<'a> {
@@ -839,6 +853,19 @@ impl<'a> PassMachine<'a> {
                     let summary = format!("{runs} iteration(s) · exit condition true");
                     return self.finish_loop(node, input, &summary);
                 }
+                let deadline_reached = self.deadline_epoch_millis != u64::MAX
+                    && self.now_epoch_millis >= self.deadline_epoch_millis;
+                if deadline_reached {
+                    self.activate_loop_route(&region, LoopRouteV1::Fallback);
+                    self.push_activity(
+                        node,
+                        "limit-exceeded",
+                        "the frozen run deadline was reached; routing to the fallback transition",
+                    );
+                    let summary =
+                        "run deadline reached · routed to the fallback transition".to_owned();
+                    return self.finish_loop(node, input, &summary);
+                }
                 if runs >= region.maximum_iterations {
                     self.activate_loop_route(&region, LoopRouteV1::Fallback);
                     self.push_activity(
@@ -965,6 +992,12 @@ impl<'a> PassMachine<'a> {
             iteration,
             maximum_iterations,
         })
+    }
+
+    /// The iteration the running node belongs to, when it runs inside a loop.
+    fn active_iteration(&self) -> Option<u32> {
+        let header = self.loop_stack.last()?;
+        self.loop_frames.get(header).map(|frame| frame.iteration)
     }
 
     /// The active iterations in outermost-first order, for durable resume.
@@ -1203,6 +1236,7 @@ impl<'a> PassMachine<'a> {
                     .tool_bindings
                     .iter()
                     .any(|binding| binding.is_callable()),
+            self.active_iteration(),
         );
         let messages = context::agent_messages(
             node,
@@ -1503,6 +1537,7 @@ impl<'a> PassMachine<'a> {
             self.outer_invocation_id,
             node,
             self.tool_authority.legacy_context_identity(),
+            self.active_iteration(),
         );
         let messages = context::agent_messages(
             node,
@@ -1843,7 +1878,7 @@ pub(crate) fn execute_graph_pass_observed(
     model_binding_id: &str,
     model_version_hash: &str,
     now_epoch_millis: u64,
-    _deadline_epoch_millis: u64,
+    deadline_epoch_millis: u64,
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
     stopped: Option<&StoppedGraphPassV1>,
@@ -1911,6 +1946,7 @@ pub(crate) fn execute_graph_pass_observed(
             })
             .unwrap_or_default(),
         approval_decision,
+        deadline_epoch_millis,
     };
     machine.run(pending, approval_decision, stopped, cancellation)
 }
@@ -2398,6 +2434,15 @@ mod tests {
         decision: Option<bool>,
         pending: Option<&PendingGraphPassStateV1>,
     ) -> GraphPassOutcomeV1 {
+        run_loop_pass_until(document, decision, pending, u64::MAX)
+    }
+
+    fn run_loop_pass_until(
+        document: &Value,
+        decision: Option<bool>,
+        pending: Option<&PendingGraphPassStateV1>,
+        deadline_epoch_millis: u64,
+    ) -> GraphPassOutcomeV1 {
         let compiled = compile_graph_pass(document, &[]).expect("compiled loop graph");
         let gateway = FrozenModelGateway::new(Vec::new());
         execute_graph_pass_observed(
@@ -2420,7 +2465,7 @@ mod tests {
             "binding.loop",
             "hash.loop",
             1_788_854_400_000,
-            u64::MAX,
+            deadline_epoch_millis,
             pending,
             decision,
             None,
@@ -2496,6 +2541,25 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(frames, vec![Some(1), Some(2)]);
         // The fallback route runs and the normal exit route is left behind.
+        assert!(completed_nodes(&outcome).contains(&"wait.2".to_owned()));
+        assert_eq!(activity_count(&outcome, "wait.1", "completed"), 0);
+    }
+
+    #[test]
+    fn a_frozen_run_deadline_reached_routes_the_fallback_transition() {
+        let outcome = run_loop_pass_until(
+            &loop_document(json!({"kind": "exists", "path": "done"}), 5, false),
+            None,
+            None,
+            1_788_854_400_000,
+        );
+        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 0);
+        let limit = outcome
+            .activity
+            .iter()
+            .find(|activity| activity.status == "limit-exceeded")
+            .expect("deadline outcome");
+        assert!(limit.summary.contains("deadline"), "{}", limit.summary);
         assert!(completed_nodes(&outcome).contains(&"wait.2".to_owned()));
         assert_eq!(activity_count(&outcome, "wait.1", "completed"), 0);
     }
