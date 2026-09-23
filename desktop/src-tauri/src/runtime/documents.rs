@@ -38,6 +38,7 @@ const MAXIMUM_MODEL_CALL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 const MAXIMUM_MODEL_CALL_TOKENS: u64 = 8192;
 pub(crate) const KNOWN_NODE_TYPES: &[&str] = &[
     "input",
+    "loop",
     "agent",
     "model_call",
     "tool",
@@ -1313,6 +1314,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
         .as_array()
         .expect("validated workflow edges");
     let mut node_ids = BTreeSet::new();
+    let mut loop_iterations: BTreeMap<String, u32> = BTreeMap::new();
     for node in nodes {
         let object = node.as_object().expect("validated workflow node object");
         let node_id = object
@@ -1346,8 +1348,17 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
             "tool" => validate_tool_configuration(node_id, config)?,
             "external_agent" => validate_external_agent_node_configuration(node_id, config)?,
             "condition" => validate_condition_configuration(node_id, config)?,
+            "loop" => validate_loop_configuration(node_id, config)?,
             "approval" => validate_approval_configuration(node_id, config)?,
             _ => unreachable!("catalog node type"),
+        }
+        if node_type == "loop" {
+            loop_iterations.insert(
+                node_id.to_owned(),
+                config["maximumIterations"]
+                    .as_u64()
+                    .expect("validated loop iteration bound") as u32,
+            );
         }
         validate_declared_ports(node_id, object)?;
     }
@@ -1376,27 +1387,71 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
     if terminal_ids.is_empty() {
         return Err("an executable v1 workflow requires a wait or completion node".into());
     }
-    let successors: BTreeMap<&str, Vec<&str>> = {
-        let mut map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for node in nodes {
-            let id = node.get("id").and_then(Value::as_str).expect("node id");
-            map.entry(id).or_default();
+    // A declared loop may close exactly one cycle through its feedback edge.
+    // Every other back edge remains a hard error, so the region stays a
+    // single-entry, single-exit block the scheduler can repeat.
+    let node_types: BTreeMap<String, String> = nodes
+        .iter()
+        .map(|node| {
+            (
+                node.get("id")
+                    .and_then(Value::as_str)
+                    .expect("node id")
+                    .to_owned(),
+                node.get("type")
+                    .and_then(Value::as_str)
+                    .expect("node type")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    let edge_records: Vec<(String, String, Option<String>)> = edges
+        .iter()
+        .map(|edge| {
+            (
+                edge.get("source")
+                    .and_then(Value::as_str)
+                    .expect("validated edge source")
+                    .to_owned(),
+                edge.get("target")
+                    .and_then(Value::as_str)
+                    .expect("validated edge target")
+                    .to_owned(),
+                edge.get("configuration")
+                    .and_then(|configuration| configuration.get("route"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            )
+        })
+        .collect();
+    let loops = analyze_loop_regions(&node_types, &loop_iterations, &edge_records)?;
+    let feedback: BTreeSet<usize> = loops.values().map(|region| region.feedback_edge).collect();
+    let mut successors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut unlooped: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for node in nodes {
+        let id = node.get("id").and_then(Value::as_str).expect("node id");
+        successors.entry(id).or_default();
+        unlooped.entry(id).or_default();
+    }
+    for (index, edge) in edges.iter().enumerate() {
+        let source = edge
+            .get("source")
+            .and_then(Value::as_str)
+            .expect("validated edge source");
+        let target = edge
+            .get("target")
+            .and_then(Value::as_str)
+            .expect("validated edge target");
+        successors.entry(source).or_default().push(target);
+        if !feedback.contains(&index) {
+            unlooped.entry(source).or_default().push(target);
         }
-        for edge in edges {
-            let source = edge
-                .get("source")
-                .and_then(Value::as_str)
-                .expect("validated edge source");
-            let target = edge
-                .get("target")
-                .and_then(Value::as_str)
-                .expect("validated edge target");
-            map.entry(source).or_default().push(target);
-        }
-        map
-    };
-    if has_cycle(&successors) {
-        return Err("an executable v1 workflow graph must be acyclic".into());
+    }
+    if has_cycle(&unlooped) {
+        return Err(
+            "an executable v1 workflow graph must be acyclic; only a declared feedback edge may close a cycle"
+                .into(),
+        );
     }
     let entry = input_ids[0];
     let mut reachable = BTreeSet::from([entry]);
@@ -1931,6 +1986,210 @@ fn validate_optional_instructions(
         })?;
     debug_assert!(!instructions.is_empty());
     Ok(())
+}
+
+/// Largest nesting depth of declared loops in one executable graph.
+const MAXIMUM_LOOP_NESTING: usize = 4;
+
+/// Largest iteration bound one loop node may declare.
+const MAXIMUM_LOOP_ITERATIONS: u64 = 64;
+
+/// One declared bounded loop: its header, the three frozen routes, the single
+/// feedback edge that closes its region, and the enclosed nodes.
+#[derive(Clone, Debug)]
+pub(crate) struct LoopRegionV1 {
+    pub header_id: String,
+    pub body_edge: usize,
+    pub exit_edge: usize,
+    pub fallback_edge: usize,
+    pub feedback_edge: usize,
+    /// Enclosed node ids, sorted for deterministic execution.
+    pub region: Vec<String>,
+    pub maximum_iterations: u32,
+}
+
+/// A bounded loop's own configuration: the frozen exit condition and the
+/// iteration bound the limits controller charges.
+fn validate_loop_configuration(
+    node_id: &str,
+    config: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let keys = configuration_keys(config);
+    let allowed = BTreeSet::from(["exitCondition", "maximumIterations"]);
+    if !keys.is_subset(&allowed)
+        || !config.contains_key("exitCondition")
+        || !config.contains_key("maximumIterations")
+    {
+        return Err(format!(
+            "workflow node '{node_id}' loop configuration accepts exactly an exitCondition predicate and a maximumIterations integer"
+        ));
+    }
+    validate_predicate(
+        node_id,
+        config.get("exitCondition").expect("exit condition present"),
+        0,
+    )?;
+    config
+        .get("maximumIterations")
+        .and_then(Value::as_u64)
+        .filter(|value| (1..=MAXIMUM_LOOP_ITERATIONS).contains(value))
+        .ok_or_else(|| {
+            format!(
+                "workflow node '{node_id}' maximumIterations must be an integer between 1 and {MAXIMUM_LOOP_ITERATIONS}"
+            )
+        })?;
+    Ok(())
+}
+
+/// Analyzes every declared loop region.
+///
+/// A loop is a single-entry, single-exit region: entering it is only possible
+/// through the header's `body` route, leaving it only through the single
+/// declared `feedback` edge, and the `exit` and `fallback` routes lead out of
+/// the region entirely. Only a declared feedback edge may close a cycle, so the
+/// graph stays finite and compiler-verifiable while the region repeats under a
+/// frozen exit condition.
+pub(crate) fn analyze_loop_regions(
+    node_types: &BTreeMap<String, String>,
+    loop_iterations: &BTreeMap<String, u32>,
+    edges: &[(String, String, Option<String>)],
+) -> Result<BTreeMap<String, LoopRegionV1>, String> {
+    let headers: BTreeSet<&str> = node_types
+        .iter()
+        .filter(|(_, node_type)| node_type.as_str() == "loop")
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let mut routes: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    let mut feedback: BTreeMap<&str, usize> = BTreeMap::new();
+    for (index, (source, target, route)) in edges.iter().enumerate() {
+        if headers.contains(source.as_str()) {
+            let route = route.as_deref().ok_or_else(|| {
+                format!(
+                    "transition leaving loop node '{source}' requires configuration.route of body, exit, or fallback"
+                )
+            })?;
+            if !matches!(route, "body" | "exit" | "fallback") {
+                return Err(format!(
+                    "transition leaving loop node '{source}' has unsupported route '{route}'"
+                ));
+            }
+            if routes
+                .entry(source.as_str())
+                .or_default()
+                .insert(route, index)
+                .is_some()
+            {
+                return Err(format!(
+                    "loop node '{source}' declares more than one {route} route"
+                ));
+            }
+        }
+        if route.as_deref() == Some("feedback") {
+            if !headers.contains(target.as_str()) {
+                return Err(format!(
+                    "transition from '{source}' has route feedback but does not target a loop node"
+                ));
+            }
+            if source == target {
+                return Err(format!(
+                    "loop node '{target}' cannot feed itself: a feedback edge must leave its region"
+                ));
+            }
+            if feedback.insert(target.as_str(), index).is_some() {
+                return Err(format!(
+                    "loop node '{target}' declares more than one feedback edge"
+                ));
+            }
+        }
+    }
+    let mut regions: BTreeMap<String, LoopRegionV1> = BTreeMap::new();
+    for header in &headers {
+        let declared = routes.get(header).cloned().unwrap_or_default();
+        for route in ["body", "exit", "fallback"] {
+            if !declared.contains_key(route) {
+                return Err(format!(
+                    "loop node '{header}' requires exactly one body, exit and fallback route"
+                ));
+            }
+        }
+        let body_edge = declared["body"];
+        let feedback_edge = *feedback.get(header).ok_or_else(|| {
+            format!("loop node '{header}' requires exactly one declared feedback edge targeting it")
+        })?;
+        // The enclosed region: everything reachable from the body route without
+        // crossing the header again.
+        let mut region: BTreeSet<String> = BTreeSet::new();
+        let mut frontier = vec![edges[body_edge].1.clone()];
+        region.insert(edges[body_edge].1.clone());
+        while let Some(id) = frontier.pop() {
+            for (source, target, route) in edges {
+                if source != &id || source == header || target == header {
+                    continue;
+                }
+                if route.as_deref() == Some("feedback") {
+                    continue;
+                }
+                if region.insert(target.clone()) {
+                    frontier.push(target.clone());
+                }
+            }
+        }
+        if region.contains(*header) {
+            return Err(format!(
+                "loop node '{header}' body route must enter its region, not the header itself"
+            ));
+        }
+        for (id, node_type) in node_types {
+            if region.contains(id) && matches!(node_type.as_str(), "wait" | "completion") {
+                return Err(format!(
+                    "loop node '{header}' region cannot contain node '{id}' of type {node_type}: a loop never crosses a Wait boundary or a Chat terminal state"
+                ));
+            }
+        }
+        for (index, (source, target, _)) in edges.iter().enumerate() {
+            if region.contains(target) && !region.contains(source) && source != header {
+                return Err(format!(
+                    "loop node '{header}' region must have a single entry: transition from '{source}' enters it without the body route"
+                ));
+            }
+            if region.contains(source) && !region.contains(target) && index != feedback_edge {
+                return Err(format!(
+                    "loop node '{header}' region must have a single exit: transition from '{source}' leaves it without the feedback route"
+                ));
+            }
+        }
+        if !region.contains(&edges[feedback_edge].0) {
+            return Err(format!(
+                "loop node '{header}' feedback edge must leave its own region"
+            ));
+        }
+        let maximum_iterations = loop_iterations.get(*header).copied().unwrap_or(0);
+        debug_assert!(maximum_iterations >= 1);
+        regions.insert(
+            header.to_string(),
+            LoopRegionV1 {
+                header_id: header.to_string(),
+                body_edge,
+                exit_edge: declared["exit"],
+                fallback_edge: declared["fallback"],
+                feedback_edge,
+                region: region.into_iter().collect(),
+                maximum_iterations,
+            },
+        );
+    }
+    for header in &headers {
+        let depth = regions
+            .values()
+            .filter(|region| region.region.iter().any(|id| id == header))
+            .count();
+        if depth > MAXIMUM_LOOP_NESTING {
+            return Err(format!(
+                "loop node '{header}' nests {depth} loops deep, exceeding the v1 bound of {MAXIMUM_LOOP_NESTING}"
+            ));
+        }
+    }
+    Ok(regions)
 }
 
 fn has_cycle(successors: &BTreeMap<&str, Vec<&str>>) -> bool {
@@ -2721,6 +2980,258 @@ mod tests {
             documents
                 .duplicate_workflow("workflow.missing", "x")
                 .is_err()
+        );
+    }
+
+    /// One bounded loop: input -> loop header -> agent region -> back edge, with
+    /// the exit and exhaustion routes leaving the region for the terminal node.
+    fn loop_graph() -> Value {
+        json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"loop.1","type":"loop","configuration":{
+                    "exitCondition":{"kind":"exists","path":"done"},
+                    "maximumIterations":4
+                }},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"loop.1"},
+                {"id":"e2","source":"loop.1","target":"agent.1","configuration":{"route":"body"}},
+                {"id":"e3","source":"loop.1","target":"wait.1","configuration":{"route":"exit"}},
+                {"id":"e4","source":"loop.1","target":"wait.1","configuration":{"route":"fallback"}},
+                {"id":"e5","source":"agent.1","target":"loop.1","configuration":{"route":"feedback"}}
+            ]
+        })
+    }
+
+    #[test]
+    fn catalog_accepts_a_declared_bounded_loop_and_its_region() {
+        let document = loop_graph();
+        assert_eq!(validate_v1_executable_catalog(&document), Ok(()));
+        let types = BTreeMap::from([
+            ("input.1".to_owned(), "input".to_owned()),
+            ("loop.1".to_owned(), "loop".to_owned()),
+            ("agent.1".to_owned(), "agent".to_owned()),
+            ("wait.1".to_owned(), "wait".to_owned()),
+        ]);
+        let iterations = BTreeMap::from([("loop.1".to_owned(), 4_u32)]);
+        let edges = vec![
+            ("input.1".to_owned(), "loop.1".to_owned(), None),
+            (
+                "loop.1".to_owned(),
+                "agent.1".to_owned(),
+                Some("body".to_owned()),
+            ),
+            (
+                "loop.1".to_owned(),
+                "wait.1".to_owned(),
+                Some("exit".to_owned()),
+            ),
+            (
+                "loop.1".to_owned(),
+                "wait.1".to_owned(),
+                Some("fallback".to_owned()),
+            ),
+            (
+                "agent.1".to_owned(),
+                "loop.1".to_owned(),
+                Some("feedback".to_owned()),
+            ),
+        ];
+        let regions = analyze_loop_regions(&types, &iterations, &edges).expect("region analysis");
+        let region = regions.get("loop.1").expect("declared region");
+        assert_eq!(region.region, vec!["agent.1".to_owned()]);
+        assert_eq!(region.body_edge, 1);
+        assert_eq!(region.exit_edge, 2);
+        assert_eq!(region.fallback_edge, 3);
+        assert_eq!(region.feedback_edge, 4);
+        assert_eq!(region.maximum_iterations, 4);
+    }
+
+    #[test]
+    fn catalog_rejects_undeclared_cycles_and_malformed_loops() {
+        // The declared feedback edge is the only legal back edge: any other
+        // cycle is still refused.
+        let mut undeclared = loop_graph();
+        undeclared["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .push(json!({"id":"e6","source":"wait.1","target":"input.1"}));
+        assert!(
+            validate_v1_executable_catalog(&undeclared)
+                .unwrap_err()
+                .contains("acyclic")
+        );
+
+        // A loop without its declared feedback edge is not a loop at all.
+        let mut unclosed = loop_graph();
+        unclosed["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .retain(|edge| edge["configuration"]["route"] != json!("feedback"));
+        assert!(
+            validate_v1_executable_catalog(&unclosed)
+                .unwrap_err()
+                .contains("requires exactly one declared feedback edge")
+        );
+
+        // A feedback edge must close a loop, not just point at anything.
+        let mut misplaced = loop_graph();
+        misplaced["edges"][4]["target"] = json!("wait.1");
+        assert!(
+            validate_v1_executable_catalog(&misplaced)
+                .unwrap_err()
+                .contains("does not target a loop node")
+        );
+
+        // Every loop declares exactly one body, exit and fallback route.
+        for route in ["body", "exit", "fallback"] {
+            let mut missing = loop_graph();
+            missing["edges"]
+                .as_array_mut()
+                .expect("edges")
+                .retain(|edge| edge["configuration"]["route"] != json!(route));
+            assert!(
+                validate_v1_executable_catalog(&missing)
+                    .unwrap_err()
+                    .contains("requires exactly one body, exit and fallback route"),
+                "missing {route} route must fail"
+            );
+        }
+
+        // One feedback edge per loop.
+        let mut doubled = loop_graph();
+        doubled["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .push(json!({"id":"e6","source":"agent.1","target":"loop.1","configuration":{"route":"feedback"}}));
+        assert!(
+            validate_v1_executable_catalog(&doubled)
+                .unwrap_err()
+                .contains("more than one feedback edge")
+        );
+
+        // The region is single-entry: no second transition may enter it.
+        let mut second_entry = loop_graph();
+        second_entry["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .push(json!({"id":"e6","source":"input.1","target":"agent.1"}));
+        assert!(
+            validate_v1_executable_catalog(&second_entry)
+                .unwrap_err()
+                .contains("single entry")
+        );
+
+        // The region is single-exit: only the declared feedback edge may leave
+        // it, so a second undirected back edge to the header is refused.
+        let mut second_exit = loop_graph();
+        second_exit["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .push(json!({"id":"e6","source":"agent.1","target":"loop.1"}));
+        assert!(
+            validate_v1_executable_catalog(&second_exit)
+                .unwrap_err()
+                .contains("single exit"),
+            "{:?}",
+            validate_v1_executable_catalog(&second_exit)
+        );
+
+        // A loop never crosses a Wait boundary or a Chat terminal state.
+        let mut encloses_terminal = loop_graph();
+        encloses_terminal["nodes"]
+            .as_array_mut()
+            .expect("nodes")
+            .push(json!({"id":"wait.2","type":"wait"}));
+        encloses_terminal["edges"]
+            .as_array_mut()
+            .expect("edges")
+            .push(json!({"id":"e6","source":"agent.1","target":"wait.2"}));
+        encloses_terminal["edges"][4]["source"] = json!("wait.2");
+        assert!(
+            validate_v1_executable_catalog(&encloses_terminal)
+                .unwrap_err()
+                .contains("never crosses a Wait boundary")
+        );
+
+        // The frozen exit condition and iteration bound are part of the contract.
+        let mut no_bound = loop_graph();
+        no_bound["nodes"][1]["configuration"] = json!({"exitCondition":{"kind":"always"}});
+        assert!(
+            validate_v1_executable_catalog(&no_bound)
+                .unwrap_err()
+                .contains("ExitCondition")
+                || validate_v1_executable_catalog(&no_bound)
+                    .unwrap_err()
+                    .contains("exitCondition")
+        );
+        for bound in [0, 65] {
+            let mut bad_bound = loop_graph();
+            bad_bound["nodes"][1]["configuration"]["maximumIterations"] = json!(bound);
+            assert!(
+                validate_v1_executable_catalog(&bad_bound)
+                    .unwrap_err()
+                    .contains("maximumIterations must be an integer between 1 and 64")
+            );
+        }
+        let mut bad_predicate = loop_graph();
+        bad_predicate["nodes"][1]["configuration"]["exitCondition"] = json!({"kind":"unsupported"});
+        assert!(
+            validate_v1_executable_catalog(&bad_predicate)
+                .unwrap_err()
+                .contains("predicate kind 'unsupported' is unsupported")
+        );
+    }
+
+    #[test]
+    fn catalog_bounds_loop_nesting() {
+        // Each level is a loop whose region holds the next loop plus the node
+        // that closes it; only the outermost routes may leave for the terminal.
+        let nested = |depth: usize| {
+            let mut nodes = vec![
+                json!({"id":"input.1","type":"input"}),
+                json!({"id":"wait.1","type":"wait"}),
+            ];
+            let mut edges = vec![json!({"id":"entry","source":"input.1","target":"loop.0"})];
+            for level in 0..depth {
+                let header = format!("loop.{level}");
+                nodes.push(json!({"id":header,"type":"loop","configuration":{
+                    "exitCondition":{"kind":"always"},"maximumIterations":2
+                }}));
+                let leaves = if level == 0 {
+                    "wait.1".to_owned()
+                } else {
+                    format!("join.{}", level - 1)
+                };
+                edges.push(json!({"id":format!("x{level}"),"source":header,"target":leaves,"configuration":{"route":"exit"}}));
+                edges.push(json!({"id":format!("f{level}"),"source":header,"target":leaves,"configuration":{"route":"fallback"}}));
+                if level + 1 == depth {
+                    nodes.push(json!({"id":format!("step.{level}"),"type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}}));
+                    edges.push(json!({"id":format!("b{level}"),"source":header,"target":format!("step.{level}"),"configuration":{"route":"body"}}));
+                    edges.push(json!({"id":format!("back{level}"),"source":format!("step.{level}"),"target":header,"configuration":{"route":"feedback"}}));
+                } else {
+                    edges.push(json!({"id":format!("b{level}"),"source":header,"target":format!("loop.{}", level + 1),"configuration":{"route":"body"}}));
+                    nodes.push(json!({"id":format!("join.{level}"),"type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}}));
+                    edges.push(json!({"id":format!("back{level}"),"source":format!("join.{level}"),"target":header,"configuration":{"route":"feedback"}}));
+                }
+            }
+            json!({"schemaVersion":1,"nodes":nodes,"edges":edges})
+        };
+        // Five nested loops put the innermost header inside four regions.
+        assert_eq!(
+            validate_v1_executable_catalog(&nested(5)),
+            Ok(()),
+            "{:?}",
+            validate_v1_executable_catalog(&nested(5))
+        );
+        assert!(
+            validate_v1_executable_catalog(&nested(6))
+                .unwrap_err()
+                .contains("exceeding the v1 bound of 4")
         );
     }
 

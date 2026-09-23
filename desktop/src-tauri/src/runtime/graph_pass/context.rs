@@ -100,7 +100,9 @@ pub(super) fn agent_messages(
     {
         if binding.capability_id == "tool.shell.host" {
             if let Some(executable) = binding.options.executable.as_deref() {
-                sections.push(aworkit_capability_host::shell::context(std::path::Path::new(executable)));
+                sections.push(aworkit_capability_host::shell::context(
+                    std::path::Path::new(executable),
+                ));
             }
         }
         if let Some(instructions) = binding
@@ -149,7 +151,9 @@ pub(super) fn agent_messages(
 /// Graph output changes each user turn. Admit it at this invocation's tail,
 /// using the existing exchange cursor so checkpoints retain it exactly once.
 /// It is generated context, not a new system instruction or user request.
-pub(super) fn agent_turn_context(upstream: String) -> Vec<aworkit_capability_host::ModelToolContextV1> {
+pub(super) fn agent_turn_context(
+    upstream: String,
+) -> Vec<aworkit_capability_host::ModelToolContextV1> {
     if upstream.trim().is_empty() {
         return Vec::new();
     }
@@ -268,6 +272,7 @@ mod tests {
             ],
             entry_node_id: "plan".into(),
             topological_order: Vec::new(),
+            loops: BTreeMap::new(),
         };
         assert_eq!(
             next_agents(&graph, "plan")

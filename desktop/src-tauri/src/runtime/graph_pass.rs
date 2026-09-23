@@ -29,7 +29,7 @@ mod steering;
 pub(crate) use steering::StoppedGraphPassV1;
 
 use super::{
-    documents::validate_v1_executable_catalog,
+    documents::{analyze_loop_regions, validate_v1_executable_catalog},
     model_tool_loop::{
         AgentContextV1, ModelToolInvocationPortV1, ModelToolLoopPendingV1, ModelToolLoopRequestV1,
         ModelToolLoopRunV1, execute_model_tool_loop_approval_v1, is_context_overflow,
@@ -218,12 +218,27 @@ pub(crate) struct CompiledGraphEdgeV1 {
     pub route: Option<String>,
 }
 
+/// One compiled bounded loop: the frozen routes, the single feedback edge that
+/// closes the region, and the enclosed nodes in deterministic order.
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledLoopV1 {
+    pub header_id: String,
+    pub body_edge: usize,
+    pub exit_edge: usize,
+    pub fallback_edge: usize,
+    pub feedback_edge: usize,
+    pub region: Vec<String>,
+    pub maximum_iterations: u32,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledGraphPassV1 {
     pub nodes: Vec<CompiledGraphNodeV1>,
     pub edges: Vec<CompiledGraphEdgeV1>,
     pub entry_node_id: String,
     pub topological_order: Vec<String>,
+    /// Declared loops by header node id.
+    pub loops: BTreeMap<String, CompiledLoopV1>,
 }
 
 /// Compiles a validated v1 workflow document into the executable pass shape.
@@ -389,18 +404,60 @@ pub(crate) fn compile_graph_pass(
             route,
         });
     }
-    let topological_order = topological_order(&nodes, &edges)?;
+    // Only a declared feedback edge may close a cycle; the order is computed
+    // over the region-expanded graph so it stays total and deterministic.
+    let node_types: BTreeMap<String, String> = nodes
+        .iter()
+        .map(|node| (node.id.clone(), node.node_type.clone()))
+        .collect();
+    let loop_iterations: BTreeMap<String, u32> = nodes
+        .iter()
+        .filter(|node| node.node_type == "loop")
+        .map(|node| {
+            let maximum = node
+                .configuration
+                .get("maximumIterations")
+                .and_then(Value::as_u64)
+                .unwrap_or(1);
+            (node.id.clone(), maximum as u32)
+        })
+        .collect();
+    let edge_records: Vec<(String, String, Option<String>)> = edges
+        .iter()
+        .map(|edge| (edge.source.clone(), edge.target.clone(), edge.route.clone()))
+        .collect();
+    let loops = analyze_loop_regions(&node_types, &loop_iterations, &edge_records)?
+        .into_iter()
+        .map(|(header_id, region)| {
+            (
+                header_id,
+                CompiledLoopV1 {
+                    header_id: region.header_id,
+                    body_edge: region.body_edge,
+                    exit_edge: region.exit_edge,
+                    fallback_edge: region.fallback_edge,
+                    feedback_edge: region.feedback_edge,
+                    region: region.region,
+                    maximum_iterations: region.maximum_iterations,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let feedback: BTreeSet<usize> = loops.values().map(|region| region.feedback_edge).collect();
+    let topological_order = topological_order(&nodes, &edges, &feedback)?;
     Ok(CompiledGraphPassV1 {
         nodes,
         edges,
         entry_node_id,
         topological_order,
+        loops,
     })
 }
 
 fn topological_order(
     nodes: &[CompiledGraphNodeV1],
     edges: &[CompiledGraphEdgeV1],
+    feedback: &BTreeSet<usize>,
 ) -> Result<Vec<String>, String> {
     let document_order: BTreeMap<&str, usize> = nodes
         .iter()
@@ -410,7 +467,10 @@ fn topological_order(
     let mut indegree: BTreeMap<&str, usize> =
         nodes.iter().map(|node| (node.id.as_str(), 0)).collect();
     let mut successors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for edge in edges {
+    for (index, edge) in edges.iter().enumerate() {
+        if feedback.contains(&index) {
+            continue;
+        }
         successors
             .entry(edge.source.as_str())
             .or_default()
@@ -1780,8 +1840,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        approval_value_summary, carried_value, evaluate_predicate, node_completion_summary,
-        node_model_parameters, plan_review_source, topological_order, value_text,
+        approval_value_summary, carried_value, compile_graph_pass, evaluate_predicate,
+        node_completion_summary, node_model_parameters, plan_review_source, topological_order,
+        value_text,
     };
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
     use std::collections::{BTreeMap, BTreeSet};
@@ -1864,17 +1925,79 @@ mod tests {
             edge("plan.1", "agent.1", None),
             edge("agent.1", "wait.1", None),
         ];
+        let none = BTreeSet::new();
         assert_eq!(
-            topological_order(&nodes, &edges).unwrap(),
+            topological_order(&nodes, &edges, &none).unwrap(),
             vec!["input.1", "plan.1", "agent.1", "wait.1"]
         );
         let mut cyclic = edges.clone();
         cyclic.push(edge("wait.1", "input.1", None));
         assert!(
-            topological_order(&nodes, &cyclic)
+            topological_order(&nodes, &cyclic, &none)
                 .unwrap_err()
                 .contains("cycle")
         );
+        // A declared feedback edge is excluded from the order, which is how a
+        // bounded loop keeps a total, deterministic execution order.
+        let looped = vec![
+            edge("input.1", "plan.1", None),
+            edge("plan.1", "agent.1", None),
+            edge("agent.1", "wait.1", None),
+            edge("agent.1", "plan.1", Some("feedback")),
+        ];
+        assert_eq!(
+            topological_order(&nodes, &looped, &BTreeSet::from([3_usize])).unwrap(),
+            vec!["input.1", "plan.1", "agent.1", "wait.1"]
+        );
+    }
+
+    #[test]
+    fn compiled_bounded_loop_carries_its_region_and_edge_roles() {
+        let document = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"loop.1","type":"loop","configuration":{
+                    "exitCondition":{"kind":"exists","path":"done"},
+                    "maximumIterations":3
+                }},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"loop.1"},
+                {"id":"e2","source":"loop.1","target":"agent.1","configuration":{"route":"body"}},
+                {"id":"e3","source":"loop.1","target":"wait.1","configuration":{"route":"exit"}},
+                {"id":"e4","source":"loop.1","target":"wait.1","configuration":{"route":"fallback"}},
+                {"id":"e5","source":"agent.1","target":"loop.1","configuration":{"route":"feedback"}}
+            ]
+        });
+        let compiled = compile_graph_pass(&document, &[]).expect("compiled loop");
+        let region = compiled.loops.get("loop.1").expect("declared loop");
+        assert_eq!(region.region, vec!["agent.1".to_owned()]);
+        assert_eq!(region.maximum_iterations, 3);
+        assert_eq!(region.feedback_edge, 4);
+        // The order stays total and deterministic: every node appears once and
+        // the only transition that may point backwards is the feedback edge.
+        assert_eq!(compiled.topological_order.len(), 4);
+        let position = |id: &str| {
+            compiled
+                .topological_order
+                .iter()
+                .position(|candidate| candidate == id)
+                .expect("node ordered")
+        };
+        for (index, edge) in compiled.edges.iter().enumerate() {
+            if index == region.feedback_edge {
+                continue;
+            }
+            assert!(
+                position(&edge.source) < position(&edge.target),
+                "transition {} -> {} must follow the order",
+                edge.source,
+                edge.target
+            );
+        }
     }
 
     #[test]
