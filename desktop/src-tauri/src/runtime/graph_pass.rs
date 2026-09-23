@@ -106,7 +106,10 @@ pub(crate) struct GraphPassBudgetV1 {
 pub struct GraphLoopFrameV1 {
     pub header_id: String,
     pub iteration: u32,
-    pub maximum_iterations: u32,
+    /// The author's declared cap, absent for a loop that repeats until its
+    /// frozen exit condition holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_iterations: Option<u32>,
 }
 
 /// What running one node produced for the pass.
@@ -287,7 +290,7 @@ pub(crate) struct CompiledLoopV1 {
     pub fallback_edge: usize,
     pub feedback_edge: usize,
     pub region: Vec<String>,
-    pub maximum_iterations: u32,
+    pub maximum_iterations: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -465,16 +468,17 @@ pub(crate) fn compile_graph_pass(
         .iter()
         .map(|node| (node.id.clone(), node.node_type.clone()))
         .collect();
-    let loop_iterations: BTreeMap<String, u32> = nodes
+    let loop_iterations: BTreeMap<String, Option<u32>> = nodes
         .iter()
         .filter(|node| node.node_type == "loop")
         .map(|node| {
             let maximum = node
                 .configuration
                 .get("maximumIterations")
+                .filter(|value| !value.is_null())
                 .and_then(Value::as_u64)
-                .unwrap_or(1);
-            (node.id.clone(), maximum as u32)
+                .map(|value| value as u32);
+            (node.id.clone(), maximum)
         })
         .collect();
     let edge_records: Vec<(String, String, Option<String>)> = edges
@@ -633,8 +637,6 @@ struct PassMachine<'a> {
     loop_stack: Vec<String>,
     /// The one decision this pass was resumed with, if any.
     approval_decision: Option<bool>,
-    /// Frozen wall-clock allowance for this pass; a loop stops at it.
-    deadline_epoch_millis: u64,
 }
 
 impl<'a> PassMachine<'a> {
@@ -821,8 +823,19 @@ impl<'a> PassMachine<'a> {
         let mut input = self.incoming_value(&node.id);
         self.values.insert(node.id.clone(), input.clone());
         self.executed.insert(node.id.clone());
-        self.push_activity(node, "started", "running");
+        let opening = match region.maximum_iterations {
+            Some(maximum) => format!("bounded loop, at most {maximum} iteration(s)"),
+            None => "unbounded loop, repeats until its exit condition holds".to_owned(),
+        };
+        self.push_activity(node, "started", &opening);
         loop {
+            if cancellation.is_cancelled() {
+                return NodeStep::Done(self.stopped_outcome(
+                    node,
+                    "graph pass was cancelled".to_owned(),
+                    false,
+                ));
+            }
             if !body_entered {
                 let exit = match evaluate_predicate(&condition, &input) {
                     Ok(exit) => exit,
@@ -834,13 +847,15 @@ impl<'a> PassMachine<'a> {
                         return NodeStep::Done(self.failed_outcome(message));
                     }
                 };
+                let progress = match region.maximum_iterations {
+                    Some(maximum) => format!("iteration {} of {maximum}", runs.max(1)),
+                    None => format!("iteration {}", runs.max(1)),
+                };
                 self.push_activity(
                     node,
                     "evaluated",
                     &format!(
-                        "iteration {} of {} · exit condition {}",
-                        runs.max(1),
-                        region.maximum_iterations,
+                        "{progress} · exit condition {}",
                         if exit { "true" } else { "false" }
                     ),
                 );
@@ -849,32 +864,21 @@ impl<'a> PassMachine<'a> {
                     let summary = format!("{runs} iteration(s) · exit condition true");
                     return self.finish_loop(node, input, &summary);
                 }
-                let deadline_reached = self.deadline_epoch_millis != u64::MAX
-                    && self.now_epoch_millis >= self.deadline_epoch_millis;
-                if deadline_reached {
+                if region
+                    .maximum_iterations
+                    .is_some_and(|maximum| runs >= maximum)
+                {
                     self.activate_loop_route(&region, LoopRouteV1::Fallback);
-                    self.push_activity(
-                        node,
-                        "limit-exceeded",
-                        "the frozen run deadline was reached; routing to the fallback transition",
-                    );
-                    let summary =
-                        "run deadline reached · routed to the fallback transition".to_owned();
-                    return self.finish_loop(node, input, &summary);
-                }
-                if runs >= region.maximum_iterations {
-                    self.activate_loop_route(&region, LoopRouteV1::Fallback);
+                    let maximum = region.maximum_iterations.unwrap_or_default();
                     self.push_activity(
                         node,
                         "limit-exceeded",
                         &format!(
-                            "iteration bound {} reached; routing to the fallback transition",
-                            region.maximum_iterations
+                            "declared iteration bound {maximum} reached; routing to the fallback transition"
                         ),
                     );
                     let summary = format!(
-                        "iteration bound {} reached · routed to the fallback transition",
-                        region.maximum_iterations
+                        "declared iteration bound {maximum} reached · routed to the fallback transition"
                     );
                     return self.finish_loop(node, input, &summary);
                 }
@@ -982,7 +986,7 @@ impl<'a> PassMachine<'a> {
             .compiled
             .loops
             .get(&header)
-            .map_or(0, |region| region.maximum_iterations);
+            .and_then(|region| region.maximum_iterations);
         Some(GraphLoopFrameV1 {
             header_id: header,
             iteration,
@@ -1874,7 +1878,7 @@ pub(crate) fn execute_graph_pass_observed(
     model_binding_id: &str,
     model_version_hash: &str,
     now_epoch_millis: u64,
-    deadline_epoch_millis: u64,
+    _deadline_epoch_millis: u64,
     pending: Option<&PendingGraphPassStateV1>,
     approval_decision: Option<bool>,
     stopped: Option<&StoppedGraphPassV1>,
@@ -1942,7 +1946,6 @@ pub(crate) fn execute_graph_pass_observed(
             })
             .unwrap_or_default(),
         approval_decision,
-        deadline_epoch_millis,
     };
     machine.run(pending, approval_decision, stopped, cancellation)
 }
@@ -2333,7 +2336,7 @@ mod tests {
         let compiled = compile_graph_pass(&document, &[]).expect("compiled loop");
         let region = compiled.loops.get("loop.1").expect("declared loop");
         assert_eq!(region.region, vec!["agent.1".to_owned()]);
-        assert_eq!(region.maximum_iterations, 3);
+        assert_eq!(region.maximum_iterations, Some(3));
         assert_eq!(region.feedback_edge, 4);
         // The order stays total and deterministic: every node appears once and
         // the only transition that may point backwards is the feedback edge.
@@ -2360,13 +2363,15 @@ mod tests {
 
     /// A region that needs no provider: one pure node, optionally behind an
     /// approval gate, closed by the declared feedback edge.
-    fn loop_document(predicate: Value, maximum: u32, gated: bool) -> Value {
+    fn loop_document(predicate: Value, maximum: Option<u32>, gated: bool) -> Value {
+        let mut loop_configuration = serde_json::Map::new();
+        loop_configuration.insert("exitCondition".to_owned(), predicate);
+        if let Some(maximum) = maximum {
+            loop_configuration.insert("maximumIterations".to_owned(), json!(maximum));
+        }
         let mut nodes = vec![
             json!({"id":"input.1","type":"input"}),
-            json!({"id":"loop.1","type":"loop","configuration":{
-                "exitCondition": predicate,
-                "maximumIterations": maximum
-            }}),
+            json!({"id":"loop.1","type":"loop","configuration": Value::Object(loop_configuration)}),
             json!({"id":"parallel.1","type":"parallel"}),
             json!({"id":"wait.1","type":"wait"}),
             json!({"id":"wait.2","type":"wait"}),
@@ -2430,14 +2435,14 @@ mod tests {
         decision: Option<bool>,
         pending: Option<&PendingGraphPassStateV1>,
     ) -> GraphPassOutcomeV1 {
-        run_loop_pass_until(document, decision, pending, u64::MAX)
+        run_loop_pass_with(document, decision, pending, &CancellationToken::default())
     }
 
-    fn run_loop_pass_until(
+    fn run_loop_pass_with(
         document: &Value,
         decision: Option<bool>,
         pending: Option<&PendingGraphPassStateV1>,
-        deadline_epoch_millis: u64,
+        cancellation: &CancellationToken,
     ) -> GraphPassOutcomeV1 {
         let compiled = compile_graph_pass(document, &[]).expect("compiled loop graph");
         let gateway = FrozenModelGateway::new(Vec::new());
@@ -2461,11 +2466,11 @@ mod tests {
             "binding.loop",
             "hash.loop",
             1_788_854_400_000,
-            deadline_epoch_millis,
+            u64::MAX,
             pending,
             decision,
             None,
-            &CancellationToken::default(),
+            cancellation,
             None,
         )
     }
@@ -2490,7 +2495,7 @@ mod tests {
     #[test]
     fn a_loop_whose_exit_condition_holds_runs_no_iteration() {
         let outcome = run_loop_pass(
-            &loop_document(json!({"kind": "always"}), 3, false),
+            &loop_document(json!({"kind": "always"}), Some(3), false),
             None,
             None,
         );
@@ -2510,7 +2515,7 @@ mod tests {
             Some(GraphLoopFrameV1 {
                 header_id: "loop.1".to_owned(),
                 iteration: 1,
-                maximum_iterations: 3,
+                maximum_iterations: Some(3),
             })
         );
         assert!(evaluation.summary.contains("exit condition true"));
@@ -2519,7 +2524,7 @@ mod tests {
     #[test]
     fn exhausting_the_iteration_bound_takes_the_fallback_transition() {
         let outcome = run_loop_pass(
-            &loop_document(json!({"kind": "exists", "path": "done"}), 2, false),
+            &loop_document(json!({"kind": "exists", "path": "done"}), Some(2), false),
             None,
             None,
         );
@@ -2542,95 +2547,58 @@ mod tests {
     }
 
     #[test]
-    fn a_frozen_run_deadline_reached_routes_the_fallback_transition() {
-        let outcome = run_loop_pass_until(
-            &loop_document(json!({"kind": "exists", "path": "done"}), 5, false),
+    fn an_unbounded_loop_reports_itself_and_exits_on_its_condition() {
+        let outcome = run_loop_pass(
+            &loop_document(json!({"kind": "always"}), None, false),
             None,
             None,
-            1_788_854_400_000,
         );
-        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 0);
-        let limit = outcome
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        // A loop without a declared bound repeats until its frozen exit
+        // condition holds, and says so in its own evidence.
+        assert_eq!(activity_count(&outcome, "parallel.1", "started"), 0);
+        assert_eq!(activity_count(&outcome, "loop.1", "limit-exceeded"), 0);
+        let opening = outcome
             .activity
             .iter()
-            .find(|activity| activity.status == "limit-exceeded")
-            .expect("deadline outcome");
-        assert!(limit.summary.contains("deadline"), "{}", limit.summary);
-        assert!(completed_nodes(&outcome).contains(&"wait.2".to_owned()));
-        assert_eq!(activity_count(&outcome, "wait.1", "completed"), 0);
+            .find(|activity| activity.node_id == "loop.1" && activity.status == "started")
+            .expect("loop started");
+        assert!(
+            opening.summary.contains("unbounded loop"),
+            "{}",
+            opening.summary
+        );
+        assert_eq!(
+            opening
+                .loop_frame
+                .as_ref()
+                .and_then(|frame| frame.maximum_iterations),
+            None
+        );
     }
 
     #[test]
-    fn nested_loops_run_their_own_frames_and_charge_their_own_bounds() {
-        // outer(body -> inner) with the inner loop's routes joining the outer
-        // region, so only one feedback edge closes each region.
-        let document = json!({
-            "schemaVersion": 1,
-            "nodes": [
-                {"id":"input.1","type":"input"},
-                {"id":"loop.outer","type":"loop","configuration":{
-                    "exitCondition":{"kind":"exists","path":"done"},"maximumIterations":2
-                }},
-                {"id":"loop.inner","type":"loop","configuration":{
-                    "exitCondition":{"kind":"exists","path":"done"},"maximumIterations":2
-                }},
-                {"id":"parallel.1","type":"parallel"},
-                {"id":"join.1","type":"parallel"},
-                {"id":"wait.1","type":"wait"}
-            ],
-            "edges": [
-                {"id":"e1","source":"input.1","target":"loop.outer"},
-                {"id":"e2","source":"loop.outer","target":"loop.inner","configuration":{"route":"body"}},
-                {"id":"e3","source":"loop.outer","target":"wait.1","configuration":{"route":"exit"}},
-                {"id":"e4","source":"loop.outer","target":"wait.1","configuration":{"route":"fallback"}},
-                {"id":"e5","source":"join.1","target":"loop.outer","configuration":{"route":"feedback"}},
-                {"id":"e6","source":"loop.inner","target":"parallel.1","configuration":{"route":"body"}},
-                {"id":"e7","source":"loop.inner","target":"join.1","configuration":{"route":"exit"}},
-                {"id":"e8","source":"loop.inner","target":"join.1","configuration":{"route":"fallback"}},
-                {"id":"e9","source":"parallel.1","target":"loop.inner","configuration":{"route":"feedback"}}
-            ]
-        });
-        let outcome = run_loop_pass(&document, None, None);
-        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
-        // The inner loop runs its bound inside each outer iteration.
-        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 4);
-        let inner_frames = outcome
-            .activity
-            .iter()
-            .filter(|activity| activity.node_id == "parallel.1" && activity.status == "completed")
-            .filter_map(|activity| activity.loop_frame.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            inner_frames
-                .iter()
-                .map(|frame| (frame.header_id.as_str(), frame.iteration))
-                .collect::<Vec<_>>(),
-            vec![("loop.inner", 1), ("loop.inner", 2), ("loop.inner", 1), ("loop.inner", 2)]
+    fn an_unbounded_loop_still_yields_to_a_stop() {
+        // Without a declared bound the exit condition is the only natural stop,
+        // so cancellation must still be observed between iterations.
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        let outcome = run_loop_pass_with(
+            &loop_document(json!({"kind": "exists", "path": "done"}), None, false),
+            None,
+            None,
+            &cancellation,
         );
-        // The join node belongs to the outer loop's iterations.
-        let outer_frames = outcome
-            .activity
-            .iter()
-            .filter(|activity| activity.node_id == "join.1" && activity.status == "completed")
-            .filter_map(|activity| activity.loop_frame.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            outer_frames
-                .iter()
-                .map(|frame| (frame.header_id.as_str(), frame.iteration))
-                .collect::<Vec<_>>(),
-            vec![("loop.outer", 1), ("loop.outer", 2)]
+        assert!(
+            outcome.stopped_state.is_some(),
+            "an unbounded loop must stop when the pass is cancelled"
         );
-        // Each loop charges its own bound and routes its own fallback: the
-        // inner bound is charged once per outer iteration, the outer bound once.
-        assert_eq!(activity_count(&outcome, "loop.inner", "limit-exceeded"), 2);
-        assert_eq!(activity_count(&outcome, "loop.outer", "limit-exceeded"), 1);
-        assert!(completed_nodes(&outcome).contains(&"wait.1".to_owned()));
+        assert_eq!(activity_count(&outcome, "parallel.1", "completed"), 0);
     }
 
     #[test]
     fn bounded_loop_execution_is_deterministic() {
-        let document = loop_document(json!({"kind": "exists", "path": "done"}), 2, false);
+        let document = loop_document(json!({"kind": "exists", "path": "done"}), Some(2), false);
         let first = run_loop_pass(&document, None, None);
         let second = run_loop_pass(&document, None, None);
         assert_eq!(
@@ -2641,7 +2609,7 @@ mod tests {
 
     #[test]
     fn a_suspension_inside_a_region_resumes_its_own_iteration() {
-        let document = loop_document(json!({"kind": "exists", "path": "done"}), 2, true);
+        let document = loop_document(json!({"kind": "exists", "path": "done"}), Some(2), true);
         let suspended = run_loop_pass(&document, None, None);
         assert_eq!(suspended.status, GraphPassStatusV1::AwaitingApproval);
         let pending = suspended.pending_state.expect("pending state");

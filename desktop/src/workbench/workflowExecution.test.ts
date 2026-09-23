@@ -101,23 +101,57 @@ describe("bounded loop admission", () => {
       ),
     ).toBe(true);
 
-    const unbounded = looped();
-    const nodes = unbounded.nodes.map((node) =>
+    const invalidBound = looped();
+    const nodes = invalidBound.nodes.map((node) =>
       node.id === "loop.1"
         ? {
             ...node,
             configuration: {
               exitCondition: { kind: "always" },
-              maximumIterations: 65,
+              maximumIterations: 0,
             },
           }
         : node,
     );
     expect(
-      assessNativeWorkflow({ ...unbounded, nodes }).issues.some(
+      assessNativeWorkflow({ ...invalidBound, nodes }).issues.some(
         (issue) =>
           issue.code === "native_node_configuration" &&
-          issue.message.includes("maximumIterations"),
+          issue.message.includes("maximum iterations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("admits a loop that declares no bound, naming the choice as a warning", () => {
+    const unbounded = looped();
+    const nodes = unbounded.nodes.map((node) =>
+      node.id === "loop.1"
+        ? { ...node, configuration: { exitCondition: { kind: "exists", path: "done" } } }
+        : node,
+    );
+    const result = assessNativeWorkflow({ ...unbounded, nodes });
+    // Repeating until the exit condition holds is the author's decision, so it
+    // is reported rather than blocked.
+    expect(result.executable).toBe(true);
+    expect(
+      result.issues.some((issue) => issue.code === "native_loop_unbounded"),
+    ).toBe(true);
+  });
+
+  it("still refuses a loop without an exit condition", () => {
+    const noCondition = looped();
+    const nodes = noCondition.nodes.map((node) =>
+      node.id === "loop.1"
+        ? { ...node, configuration: { maximumIterations: 4 } }
+        : node,
+    );
+    const result = assessNativeWorkflow({ ...noCondition, nodes });
+    expect(result.executable).toBe(false);
+    expect(
+      result.issues.some(
+        (issue) =>
+          issue.code === "native_node_configuration" &&
+          issue.message.includes("exitCondition"),
       ),
     ).toBe(true);
   });

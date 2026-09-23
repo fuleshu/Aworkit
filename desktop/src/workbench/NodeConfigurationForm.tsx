@@ -280,11 +280,18 @@ function ConfigurationFieldInput({
             min={field.min}
             placeholder={field.defaultValue?.toString()}
             step={field.step ?? 1}
-            title={`${field.label} between ${field.min} and ${field.max}`}
+            title={
+              field.max === undefined
+                ? `${field.label}${field.min === undefined ? "" : ` of at least ${field.min}`}; leave empty for no limit`
+                : `${field.label} between ${field.min} and ${field.max}`
+            }
             type="number"
             value={numberValue(configuration[field.key])}
             onChange={(event) => {
-              const parsed = Number(event.target.value);
+              // An emptied field means "not set", not zero: optional numeric
+              // contracts read absence, and a limit of zero is never intended.
+              const raw = event.target.value.trim();
+              const parsed = raw === "" ? Number.NaN : Number(raw);
               onChange({
                 [field.key]: Number.isFinite(parsed) ? parsed : null,
               });

@@ -1314,7 +1314,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
         .as_array()
         .expect("validated workflow edges");
     let mut node_ids = BTreeSet::new();
-    let mut loop_iterations: BTreeMap<String, u32> = BTreeMap::new();
+    let mut loop_iterations: BTreeMap<String, Option<u32>> = BTreeMap::new();
     for node in nodes {
         let object = node.as_object().expect("validated workflow node object");
         let node_id = object
@@ -1355,9 +1355,11 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
         if node_type == "loop" {
             loop_iterations.insert(
                 node_id.to_owned(),
-                config["maximumIterations"]
-                    .as_u64()
-                    .expect("validated loop iteration bound") as u32,
+                config
+                    .get("maximumIterations")
+                    .filter(|value| !value.is_null())
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32),
             );
         }
         validate_declared_ports(node_id, object)?;
@@ -1984,8 +1986,10 @@ fn validate_optional_instructions(
 /// Largest nesting depth of declared loops in one executable graph.
 const MAXIMUM_LOOP_NESTING: usize = 4;
 
-/// Largest iteration bound one loop node may declare.
-const MAXIMUM_LOOP_ITERATIONS: u64 = 64;
+/// Largest iteration bound one loop node may declare. A loop without a bound
+/// repeats until its exit condition holds; when an author does declare one, it
+/// is the author's number rather than a platform ceiling.
+const MAXIMUM_DECLARED_LOOP_ITERATIONS: u64 = u32::MAX as u64;
 
 /// One declared bounded loop: its header, the three frozen routes, the single
 /// feedback edge that closes its region, and the enclosed nodes.
@@ -1998,7 +2002,9 @@ pub(crate) struct LoopRegionV1 {
     pub feedback_edge: usize,
     /// Enclosed node ids, sorted for deterministic execution.
     pub region: Vec<String>,
-    pub maximum_iterations: u32,
+    /// The author's declared iteration cap, or `None` for a loop that repeats
+    /// until its frozen exit condition holds.
+    pub maximum_iterations: Option<u32>,
 }
 
 /// A bounded loop's own configuration: the frozen exit condition and the
@@ -2009,12 +2015,9 @@ fn validate_loop_configuration(
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
     let allowed = BTreeSet::from(["exitCondition", "maximumIterations"]);
-    if !keys.is_subset(&allowed)
-        || !config.contains_key("exitCondition")
-        || !config.contains_key("maximumIterations")
-    {
+    if !keys.is_subset(&allowed) || !config.contains_key("exitCondition") {
         return Err(format!(
-            "workflow node '{node_id}' loop configuration accepts exactly an exitCondition predicate and a maximumIterations integer"
+            "workflow node '{node_id}' loop configuration accepts exactly an exitCondition predicate and an optional maximumIterations integer"
         ));
     }
     validate_predicate(
@@ -2022,15 +2025,22 @@ fn validate_loop_configuration(
         config.get("exitCondition").expect("exit condition present"),
         0,
     )?;
-    config
+    // An absent bound is a loop that repeats until its exit condition holds.
+    // A declared bound is the author's own number, validated as a positive
+    // integer rather than silently clamped to a platform ceiling.
+    if let Some(declared) = config
         .get("maximumIterations")
-        .and_then(Value::as_u64)
-        .filter(|value| (1..=MAXIMUM_LOOP_ITERATIONS).contains(value))
-        .ok_or_else(|| {
-            format!(
-                "workflow node '{node_id}' maximumIterations must be an integer between 1 and {MAXIMUM_LOOP_ITERATIONS}"
-            )
-        })?;
+        .filter(|value| !value.is_null())
+    {
+        declared
+            .as_u64()
+            .filter(|value| (1..=MAXIMUM_DECLARED_LOOP_ITERATIONS).contains(value))
+            .ok_or_else(|| {
+                format!(
+                    "workflow node '{node_id}' maximumIterations must be a positive integer when declared; omit it for a loop that runs until its exit condition holds"
+                )
+            })?;
+    }
     Ok(())
 }
 
@@ -2041,9 +2051,12 @@ fn validate_loop_configuration(
 /// thing to the executable catalog.
 pub(crate) fn declared_edge_route(edge: &Value) -> Option<&str> {
     fn route(value: &Value) -> Option<&str> {
-        value
-            .as_str()
-            .filter(|route| matches!(*route, "true" | "false" | "body" | "exit" | "fallback" | "feedback"))
+        value.as_str().filter(|route| {
+            matches!(
+                *route,
+                "true" | "false" | "body" | "exit" | "fallback" | "feedback"
+            )
+        })
     }
     edge.get("configuration")
         .and_then(|configuration| configuration.get("route"))
@@ -2062,7 +2075,7 @@ pub(crate) fn declared_edge_route(edge: &Value) -> Option<&str> {
 /// frozen exit condition.
 pub(crate) fn analyze_loop_regions(
     node_types: &BTreeMap<String, String>,
-    loop_iterations: &BTreeMap<String, u32>,
+    loop_iterations: &BTreeMap<String, Option<u32>>,
     edges: &[(String, String, Option<String>)],
 ) -> Result<BTreeMap<String, LoopRegionV1>, String> {
     let headers: BTreeSet<&str> = node_types
@@ -2174,8 +2187,7 @@ pub(crate) fn analyze_loop_regions(
                 "loop node '{header}' feedback edge must leave its own region"
             ));
         }
-        let maximum_iterations = loop_iterations.get(*header).copied().unwrap_or(0);
-        debug_assert!(maximum_iterations >= 1);
+        let maximum_iterations = loop_iterations.get(*header).copied().flatten();
         regions.insert(
             header.to_string(),
             LoopRegionV1 {
@@ -3028,7 +3040,7 @@ mod tests {
             ("agent.1".to_owned(), "agent".to_owned()),
             ("wait.1".to_owned(), "wait".to_owned()),
         ]);
-        let iterations = BTreeMap::from([("loop.1".to_owned(), 4_u32)]);
+        let iterations = BTreeMap::from([("loop.1".to_owned(), Some(4_u32))]);
         let edges = vec![
             ("input.1".to_owned(), "loop.1".to_owned(), None),
             (
@@ -3059,7 +3071,7 @@ mod tests {
         assert_eq!(region.exit_edge, 2);
         assert_eq!(region.fallback_edge, 3);
         assert_eq!(region.feedback_edge, 4);
-        assert_eq!(region.maximum_iterations, 4);
+        assert_eq!(region.maximum_iterations, Some(4));
     }
 
     #[test]
@@ -3169,26 +3181,37 @@ mod tests {
                 .contains("never crosses a Wait boundary")
         );
 
-        // The frozen exit condition and iteration bound are part of the contract.
-        let mut no_bound = loop_graph();
-        no_bound["nodes"][1]["configuration"] = json!({"exitCondition":{"kind":"always"}});
-        assert!(
-            validate_v1_executable_catalog(&no_bound)
-                .unwrap_err()
-                .contains("ExitCondition")
-                || validate_v1_executable_catalog(&no_bound)
-                    .unwrap_err()
-                    .contains("exitCondition")
+        // An omitted bound is a loop that repeats until its exit condition
+        // holds; the exit condition itself is the one required contract.
+        let mut unbounded = loop_graph();
+        unbounded["nodes"][1]["configuration"] = json!({"exitCondition":{"kind":"always"}});
+        assert_eq!(
+            validate_v1_executable_catalog(&unbounded),
+            Ok(()),
+            "a loop without a declared bound repeats until its condition holds"
         );
-        for bound in [0, 65] {
+        let mut no_condition = loop_graph();
+        no_condition["nodes"][1]["configuration"] = json!({"maximumIterations":4});
+        assert!(
+            validate_v1_executable_catalog(&no_condition)
+                .unwrap_err()
+                .contains("exitCondition predicate")
+        );
+        // A declared bound is the author's positive integer, not a platform
+        // ceiling: 65 is fine, zero and non-integers are not.
+        for bound in [json!(0), json!(1.5), json!(-3), json!(4_294_967_296_u64)] {
             let mut bad_bound = loop_graph();
-            bad_bound["nodes"][1]["configuration"]["maximumIterations"] = json!(bound);
+            bad_bound["nodes"][1]["configuration"]["maximumIterations"] = bound.clone();
             assert!(
                 validate_v1_executable_catalog(&bad_bound)
                     .unwrap_err()
-                    .contains("maximumIterations must be an integer between 1 and 64")
+                    .contains("must be a positive integer when declared"),
+                "bound {bound} must be refused"
             );
         }
+        let mut large_bound = loop_graph();
+        large_bound["nodes"][1]["configuration"]["maximumIterations"] = json!(65);
+        assert_eq!(validate_v1_executable_catalog(&large_bound), Ok(()));
         let mut bad_predicate = loop_graph();
         bad_predicate["nodes"][1]["configuration"]["exitCondition"] = json!({"kind":"unsupported"});
         assert!(

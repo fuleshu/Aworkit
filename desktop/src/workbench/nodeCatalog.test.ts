@@ -297,6 +297,27 @@ describe("workflow connection and cycle validation", () => {
     expect(unclosedCodes).toContain("loop_feedback_missing");
     expect(unclosedCodes).not.toContain("cycle_detected");
 
+    // Dropping the declared bound is allowed and named, not blocked.
+    const unbounded: WorkflowDocument = {
+      ...looped,
+      nodes: looped.nodes.map((node) =>
+        node.id === "l.1"
+          ? {
+              ...node,
+              configuration: { exitCondition: { kind: "exists", path: "done" } },
+            }
+          : node,
+      ),
+    };
+    const unboundedCodes = validateWorkflow(unbounded).map((issue) => issue.code);
+    expect(unboundedCodes).toContain("loop_unbounded");
+    expect(unboundedCodes).not.toContain("cycle_detected");
+    expect(
+      validateWorkflow(unbounded).some((issue) =>
+        issue.message.includes("until its exit condition holds"),
+      ),
+    ).toBe(true);
+
     // A back edge that is not the declared feedback route stays a cycle.
     const undeclared: WorkflowDocument = {
       ...looped,

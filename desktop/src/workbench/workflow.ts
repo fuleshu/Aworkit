@@ -43,6 +43,7 @@ export interface WorkflowValidationIssue {
     | "condition_route_missing"
     | "loop_route_missing"
     | "loop_feedback_missing"
+    | "loop_unbounded"
     | "cycle_detected";
   readonly itemId: string;
   readonly message: string;
@@ -619,6 +620,29 @@ export function validateWorkflow(
         code: "loop_feedback_missing",
         itemId: id,
         message: `Loop node ${id} requires one declared feedback transition closing its region.`,
+      });
+    const configuration: JsonObject =
+      typeof node.configuration === "object" &&
+      node.configuration !== null &&
+      !Array.isArray(node.configuration)
+        ? (node.configuration as JsonObject)
+        : {};
+    const declared = configuration.maximumIterations;
+    if (declared === undefined || declared === null)
+      issues.push({
+        code: "loop_unbounded",
+        itemId: id,
+        message: `Loop node ${id} declares no iteration bound: it repeats until its exit condition holds. Declare a maximum iteration count to cap it.`,
+      });
+    else if (
+      typeof declared !== "number" ||
+      !Number.isInteger(declared) ||
+      declared < 1
+    )
+      issues.push({
+        code: "loop_route_missing",
+        itemId: id,
+        message: `Loop node ${id} maximum iterations must be a positive whole number when declared; leave it empty for no cap.`,
       });
   }
   const declaredFeedback = declaredFeedbackEdges(document);

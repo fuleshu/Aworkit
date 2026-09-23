@@ -80,7 +80,8 @@ export type ConfigurationField =
       readonly key: string;
       readonly label: string;
       readonly min: number;
-      readonly max: number;
+      /** Absent means the field has no upper limit and may be left unset. */
+      readonly max?: number;
       readonly step?: number;
       readonly defaultValue?: number;
     }
@@ -230,7 +231,7 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
     label: "Bounded loop",
     icon: "↻",
     description:
-      "Repeats its enclosed region under a frozen exit condition until the condition holds or the declared iteration bound is reached.",
+      "Repeats its enclosed region under a frozen exit condition. It runs until that condition holds; declare a maximum iteration count to cap it, or leave the field empty for no cap.",
     inputPorts: [flowPort("in", "Value")],
     outputPorts: [
       routePort("body", "Body"),
@@ -242,9 +243,8 @@ export const NODE_CATALOG: readonly NodeCatalogEntry[] = [
       {
         kind: "number",
         key: "maximumIterations",
-        label: "Maximum iterations",
+        label: "Maximum iterations (optional)",
         min: 1,
-        max: 64,
         step: 1,
       },
     ],

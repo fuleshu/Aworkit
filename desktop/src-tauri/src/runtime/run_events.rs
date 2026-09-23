@@ -95,7 +95,9 @@ impl RunEventStream {
     /// Shared view of the committed stream for the read-only scans a model turn
     /// performs several times; a durable committer serves all of them from one
     /// decoded snapshot instead of a fresh history read per caller.
-    pub(crate) fn context_events_shared(&self) -> Result<super::semantic_events::SharedEvents, String> {
+    pub(crate) fn context_events_shared(
+        &self,
+    ) -> Result<super::semantic_events::SharedEvents, String> {
         self.committer.committed_events_shared()
     }
     pub(crate) fn context_event(
@@ -271,12 +273,18 @@ impl RunEventStream {
         ));
     }
 
-    pub(crate) fn publish_filesystem_permission(&self, call: &aworkit_capability_host::ModelToolCallV1,
-        grant: &super::approvals::FilesystemGrant) {
-        self.publish(SemanticEventDraft::new("approval.permission_used", json!({
-            "requestId":self.request_id,"runId":self.run_id,"createdAt":now_label(),
-            "callId":call.call_id,"capabilityId":call.capability_id,"permission":grant,
-        })));
+    pub(crate) fn publish_filesystem_permission(
+        &self,
+        call: &aworkit_capability_host::ModelToolCallV1,
+        grant: &super::approvals::FilesystemGrant,
+    ) {
+        self.publish(SemanticEventDraft::new(
+            "approval.permission_used",
+            json!({
+                "requestId":self.request_id,"runId":self.run_id,"createdAt":now_label(),
+                "callId":call.call_id,"capabilityId":call.capability_id,"permission":grant,
+            }),
+        ));
     }
     pub(crate) fn new(
         request_id: String,
@@ -681,7 +689,12 @@ impl RunEventStream {
         if let Some(frame) = &activity.loop_frame {
             details["loopHeaderId"] = json!(frame.header_id);
             details["iteration"] = json!(frame.iteration);
-            details["maximumIterations"] = json!(frame.maximum_iterations);
+            match frame.maximum_iterations {
+                Some(maximum) => details["maximumIterations"] = json!(maximum),
+                // The loop declares no cap: it repeats until its exit condition
+                // holds, which the evidence states rather than implies.
+                None => details["unbounded"] = json!(true),
+            }
         }
         if activity.status == "started" {
             self.start_span(
@@ -769,8 +782,14 @@ impl RunEventStream {
         // Explicit Tool nodes own their calls directly. Creating an Agent loop
         // here leaves an orphan span because no Agent node can settle that loop.
         let graph_parent = {
-            let state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
-            state.active_subagent_span.clone().or_else(|| state.active_tool_node.clone())
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state
+                .active_subagent_span
+                .clone()
+                .or_else(|| state.active_tool_node.clone())
         };
         self.start_span(
             span_id.clone(),
@@ -948,7 +967,12 @@ impl ModelRunEventObserver {
         ));
     }
 
-    fn usage(&self, input_tokens: u64, output_tokens: u64, cache: aworkit_capability_host::ModelCacheUsageV1) {
+    fn usage(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache: aworkit_capability_host::ModelCacheUsageV1,
+    ) {
         let Some(span_id) = self.current_model_span() else {
             return;
         };
@@ -1209,7 +1233,8 @@ fn rehydrate_state(
                     Some("agent_loop") => agent_loops.push(span_id.clone()),
                     Some("subagent" | "external_agent") => subagents.push(span_id.clone()),
                     Some("graph_node")
-                        if event.payload.get("semanticRole").and_then(Value::as_str) == Some("tool") =>
+                        if event.payload.get("semanticRole").and_then(Value::as_str)
+                            == Some("tool") =>
                     {
                         tool_nodes.push(span_id);
                     }
@@ -1390,7 +1415,10 @@ mod tests {
         observer.model_tool_event(&ModelToolEventV1::Usage {
             input_tokens: 11,
             output_tokens: 7,
-            cache: aworkit_capability_host::ModelCacheUsageV1 { cached_input_tokens: Some(8), cache_miss_input_tokens: Some(3) },
+            cache: aworkit_capability_host::ModelCacheUsageV1 {
+                cached_input_tokens: Some(8),
+                cache_miss_input_tokens: Some(3),
+            },
         });
         observer.model_turn_completed(&json!({"toolCall":"call.1"}), "completed");
         stream.publish_tool_started(&call);

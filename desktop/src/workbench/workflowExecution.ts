@@ -17,6 +17,7 @@ export interface WorkflowExecutionIssue {
     | "native_condition"
     | "native_condition_routes"
     | "native_loop_routes"
+    | "native_loop_unbounded"
     | "native_approval"
     | "native_structure";
   readonly message: string;
@@ -534,15 +535,27 @@ export function assessNativeWorkflow(
     if (
       typeof exitCondition !== "object" ||
       exitCondition === null ||
-      Array.isArray(exitCondition) ||
-      typeof maximumIterations !== "number" ||
-      !Number.isInteger(maximumIterations) ||
-      maximumIterations < 1 ||
-      maximumIterations > 64
+      Array.isArray(exitCondition)
     )
       issues.push({
         code: "native_node_configuration",
-        message: `Loop node '${String(node.id)}' requires an exitCondition predicate and a maximumIterations integer between 1 and 64.`,
+        message: `Loop node '${String(node.id)}' requires an exitCondition predicate.`,
+      });
+    if (maximumIterations === undefined || maximumIterations === null)
+      // Not a blocker: a loop without a declared bound repeats until its exit
+      // condition holds, which the run's own evidence states.
+      issues.push({
+        code: "native_loop_unbounded",
+        message: `Loop node '${String(node.id)}' declares no iteration bound and repeats until its exit condition holds.`,
+      });
+    else if (
+      typeof maximumIterations !== "number" ||
+      !Number.isInteger(maximumIterations) ||
+      maximumIterations < 1
+    )
+      issues.push({
+        code: "native_node_configuration",
+        message: `Loop node '${String(node.id)}' maximum iterations must be a positive whole number when declared; leave it empty for no cap.`,
       });
     const routes = new Set<string>();
     let feedback = 0;
@@ -594,7 +607,11 @@ export function assessNativeWorkflow(
       });
   }
 
-  return { executable: issues.length === 0, issues };
+  return {
+    // A declared-free loop is a visible warning, never a run blocker.
+    executable: issues.every((issue) => issue.code === "native_loop_unbounded"),
+    issues,
+  };
 }
 
 function objectConfiguration(node: JsonObject): JsonObject | null {
