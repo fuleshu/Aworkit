@@ -19,6 +19,19 @@ impl aworkit_capability_host::ModelEventObserverV1 for SummaryCapture {
     }
 }
 
+/// What restoring a recorded projection left in the pass's own request.
+///
+/// A pass may only offer the tools it selects now, so recorded history that
+/// calls a capability this pass cannot offer has no representable projection.
+enum RestoredProjection {
+    /// The recorded context is carried, with any anchor pressure may report
+    /// against.
+    Carried(Option<c::Anchor>),
+    /// The recorded context cannot be projected under this pass's selection, so
+    /// the pass keeps the context it already had.
+    Declined,
+}
+
 impl BoundFileToolAuthorityV1 {
     /// A steered text-only model consumes the new canonical user message,
     /// without appending its original graph input a second time.
@@ -241,7 +254,7 @@ impl BoundFileToolAuthorityV1 {
         through: usize,
         request: &mut ModelToolRequestV1,
         conversation_context: bool,
-    ) -> Result<Option<c::Anchor>, String> {
+    ) -> Result<RestoredProjection, String> {
         let stream = self.run_events.context_events_shared()?;
         let events: Vec<_> = stream
             .iter()
@@ -279,7 +292,7 @@ impl BoundFileToolAuthorityV1 {
             ) = crate::runtime::context_inspection::admit_edit(&mut edit, &request.tools)
             {
                 self.record_declined_selection(owner, "edit", &capabilities)?;
-                return Ok(None);
+                return Ok(RestoredProjection::Declined);
             }
             if let Some((_, snapshot)) =
                 previous.as_ref().filter(|(_, s)| s.outer == outer.as_str())
@@ -289,7 +302,7 @@ impl BoundFileToolAuthorityV1 {
                     .retain(|m| m.after_exchanges > snapshot.through);
             }
             crate::runtime::context_inspection::apply_edit(&events, &edit, request)?;
-            return Ok(None);
+            return Ok(RestoredProjection::Carried(None));
         }
         let Some((sequence, snapshot)) = previous else {
             let conversation: Vec<_> = events.iter().filter_map(|e| {
@@ -303,7 +316,7 @@ impl BoundFileToolAuthorityV1 {
                 messages.retain(|m| m["role"] == "system");
                 messages.extend(conversation);
             }
-            return Ok(None);
+            return Ok(RestoredProjection::Carried(None));
         };
         // A checkpoint records the selection of the pass that wrote it. The
         // acting node's frozen selection is this pass's interface, so it is
@@ -434,7 +447,7 @@ impl BoundFileToolAuthorityV1 {
             )
         {
             self.record_declined_selection(owner, "checkpoint", &capabilities)?;
-            return Ok(None);
+            return Ok(RestoredProjection::Declined);
         }
         let anchor = events
             .iter()
@@ -449,7 +462,7 @@ impl BoundFileToolAuthorityV1 {
             .transpose()?
             .or(snapshot.anchor);
         *request = restored;
-        Ok(anchor)
+        Ok(RestoredProjection::Carried(anchor))
     }
 
     fn save_context(
@@ -625,12 +638,24 @@ impl BoundFileToolAuthorityV1 {
             max_overflow_retries: metadata.policy.max_overflow_retries,
             ..Default::default()
         };
+        // A declined projection carries none of the recorded exchanges, so every
+        // later step that positions context against them (instructions, the
+        // checkpoint this turn saves, compaction bookkeeping) uses the cursor the
+        // pass really has — the next checkpoint then replaces the projection that
+        // could not be represented.
+        let mut through = through;
         let anchor = if !restore {
             None
         } else if trigger == c::Trigger::ContextOverflow {
             self.context_snapshot(&owner)?.and_then(|(_, s)| s.anchor)
         } else {
-            self.restore_context(&owner, outer, through, request, agent.is_some())?
+            match self.restore_context(&owner, outer, through, request, agent.is_some())? {
+                RestoredProjection::Carried(anchor) => anchor,
+                RestoredProjection::Declined => {
+                    through = request.exchanges.len();
+                    None
+                }
+            }
         };
         mark("restore", &mut since, &mut timings);
         if let Some(agent) = agent {
