@@ -25,3 +25,13 @@ All three resolved. Let me record them in the contract.
 Also noting from earlier that adashi_qa list_jobs still returns full run logs (~772 KB) — unrelated to these changes, but still the biggest context risk if the new coding_workflow calls it.
 
 changed mcp server location, but did not release old mcp server file
+
+optional budget gate for a Chat (idea, 2026-09-23):
+Today nothing cumulative caps a run, by design: the worker LimitLedger exists (crates/aworkit-workflow-worker/src/limits.rs) but the desktop freezes tokens, cost and deadline to sentinels (NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS), agent-internal provider calls are not turn-capped (legacy_maximum_turns: None), and a graph loop's iteration bound is optional — no bound means it repeats until its frozen exit condition holds, and only Stop ends it.
+The idea is an opt-in gate the user chooses deliberately, not a platform cap:
+- an input in the chat surface, e.g. a budget field beside the composer, set before the first input is committed and then frozen into the Chat with the rest of the execution context;
+- the frozen value stays visible (composer, Run details, and the loop/agent evidence that charges it);
+- exhaustion takes an explicit declared outcome — the same fallback/limit route loops already use, or a turn that stops with a stated reason — and must never surface as a provider failure;
+- an absent field means exactly today's behaviour, so nothing changes unless the user asks for a gate;
+- it has to cover agent-internal model-tool loops, not only graph loops, since those are uncapped today.
+Open questions: granularity (per Chat, per turn, per node), what counts against it (provider calls, tokens, cost, wall clock), whether the composer is the right home or a Run-details control is, and how a resumed or steered Chat continues a partly consumed budget.
