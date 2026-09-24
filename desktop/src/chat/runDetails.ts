@@ -1,6 +1,6 @@
 import type { RuntimeEvent } from "./corePort";
 import { prettyJson } from "./jsonPresentation";
-import { cacheUsageFields } from "./cacheUsage";
+import { cacheUsageFields, reportedCacheFields, reportedCacheUnits } from "./cacheUsage";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
 
 export interface RunDetailField {
@@ -159,7 +159,7 @@ function projectEntireRun(input: RunDetailsInput): RunDetailsView {
         usage.input + usage.output > 0
           ? field("Total tokens", (usage.input + usage.output).toLocaleString())
           : undefined,
-        ...cacheUsageFields(input.events),
+        ...runCacheFields(input.events, input.partial === true),
       ]),
     });
   }
@@ -436,6 +436,16 @@ function selectedUsage(
     }),
     { input: 0, output: 0 },
   );
+}
+
+/// Whole-Run cache fields: the Run's own aggregate when it reported one, and
+/// otherwise the loaded window labelled as such rather than passed off as a Run
+/// total. The client pages history, so a partial window is the common case.
+function runCacheFields(events: readonly RuntimeEvent[], partial: boolean): RunDetailField[] {
+  const units = reportedCacheUnits(events);
+  return units === undefined
+    ? cacheUsageFields(events, false, partial)
+    : reportedCacheFields(units);
 }
 
 function runUsage(
