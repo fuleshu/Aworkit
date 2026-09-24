@@ -11,31 +11,82 @@ impl FileToolDispatcherV1 {
     ) -> Result<(Value, String), String> {
         match &self.record.binding.limit {
             StoredFileToolLimitV1::Read { maximum_bytes } => {
-                let read = files
-                    .read_v1(
-                        &FileReadRequestV1 {
-                            path: file_path.to_owned(),
-                            maximum_bytes: *maximum_bytes,
-                        },
-                        cancellation,
-                    )
-                    .map_err(|error| error.to_string())?;
-                let content = String::from_utf8(read.bytes)
-                    .map_err(|_| "file is not UTF-8 text".to_owned())?;
-                let value = json!({
-                    "path": path,
-                    "content": content,
-                    "contentHash": read.content_hash,
-                    "bytes": read.effect.bytes_observed_or_written,
-                });
-                Ok((
-                    value,
-                    format!(
-                        "Read {} bytes from {}.",
-                        read.effect.bytes_observed_or_written,
-                        read.effect.relative_path.display()
-                    ),
-                ))
+                let offset = self.record.call.arguments.get("offset").and_then(Value::as_u64);
+                let limit = self.record.call.arguments.get("limit").and_then(Value::as_u64);
+                if offset.is_none() && limit.is_none() {
+                    // A whole-file read keeps returning the file verbatim.
+                    let read = files
+                        .read_v1(
+                            &FileReadRequestV1 {
+                                path: file_path.to_owned(),
+                                maximum_bytes: *maximum_bytes,
+                            },
+                            cancellation,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let content = String::from_utf8(read.bytes)
+                        .map_err(|_| "file is not UTF-8 text".to_owned())?;
+                    let value = json!({
+                        "path": path,
+                        "content": content,
+                        "contentHash": read.content_hash,
+                        "bytes": read.effect.bytes_observed_or_written,
+                    });
+                    Ok((
+                        value,
+                        format!(
+                            "Read {} bytes from {}.",
+                            read.effect.bytes_observed_or_written,
+                            read.effect.relative_path.display()
+                        ),
+                    ))
+                } else {
+                    // A paged read streams the selected line range and reports
+                    // how to continue, so a large file is read in bounded steps.
+                    let page = files
+                        .read_lines_v1(
+                            &FileLinesRequestV1 {
+                                path: file_path.to_owned(),
+                                offset_line: offset.unwrap_or(1),
+                                maximum_lines: limit,
+                                maximum_bytes: *maximum_bytes,
+                            },
+                            cancellation,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let content = String::from_utf8(page.bytes)
+                        .map_err(|_| "file is not UTF-8 text".to_owned())?;
+                    let next_offset = page.first_line + page.lines;
+                    let value = json!({
+                        "path": path,
+                        "content": content,
+                        "contentHash": page.content_hash,
+                        "bytes": page.effect.bytes_observed_or_written,
+                        "firstLine": page.first_line,
+                        "lines": page.lines,
+                        "more": page.more,
+                        "truncated": page.truncated,
+                        "nextOffset": if page.more { json!(next_offset) } else { Value::Null },
+                    });
+                    let name = page.effect.relative_path.display();
+                    let summary = if page.truncated {
+                        format!(
+                            "Read {} line(s) from {name} starting at line {}; the last line was cut at the content bound.",
+                            page.lines, page.first_line
+                        )
+                    } else if page.more {
+                        format!(
+                            "Read {} line(s) from {name} starting at line {}; more lines follow, continue with offset {next_offset}.",
+                            page.lines, page.first_line
+                        )
+                    } else {
+                        format!(
+                            "Read {} line(s) from {name} starting at line {}.",
+                            page.lines, page.first_line
+                        )
+                    };
+                    Ok((value, summary))
+                }
             }
             StoredFileToolLimitV1::Search { maximum_results } => {
                 let needle = self.record.call.arguments["query"]

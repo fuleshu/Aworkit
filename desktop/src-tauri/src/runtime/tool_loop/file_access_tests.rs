@@ -484,3 +484,69 @@ fn saved_file_catalog_migrates_once_without_enabling_tools_or_changing_options()
         "existing frozen copies retain the prior contract"
     );
 }
+
+/// Offset and limit page one file: the selected range is returned with metadata
+/// that lets the model continue, while a read without them stays whole-file.
+#[test]
+fn read_pages_a_file_with_offset_and_limit() {
+    let f = Fixture::new();
+    let body: String = (1..=200).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(
+        f.authority.context.workspace.root.join("src/long.txt"),
+        &body,
+    )
+    .unwrap();
+
+    let whole = f
+        .authority
+        .invoke_v1(
+            &stable("outer.read-whole").unwrap(),
+            1,
+            &call(&f, FILE_READ_CAPABILITY_ID, json!({"path":"src/long.txt"})),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(!whole.result.is_error, "{:?}", whole.result);
+    assert_eq!(whole.result.content["content"].as_str(), Some(body.as_str()));
+
+    let page = f
+        .authority
+        .invoke_v1(
+            &stable("outer.read-page").unwrap(),
+            1,
+            &call(
+                &f,
+                FILE_READ_CAPABILITY_ID,
+                json!({"path":"src/long.txt","offset":150,"limit":2}),
+            ),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(!page.result.is_error, "{:?}", page.result);
+    assert_eq!(
+        page.result.content["content"].as_str(),
+        Some("line 150\nline 151\n")
+    );
+    assert_eq!(page.result.content["firstLine"].as_u64(), Some(150));
+    assert_eq!(page.result.content["lines"].as_u64(), Some(2));
+    assert_eq!(page.result.content["more"].as_bool(), Some(true));
+    assert_eq!(page.result.content["nextOffset"].as_u64(), Some(152));
+    assert_eq!(page.result.content["truncated"].as_bool(), Some(false));
+
+    // Invalid paging parameters fail before any content is read.
+    let invalid = f.authority.invoke_v1(
+        &stable("outer.read-invalid").unwrap(),
+        1,
+        &call(
+            &f,
+            FILE_READ_CAPABILITY_ID,
+            json!({"path":"src/long.txt","offset":0}),
+        ),
+        &CancellationToken::default(),
+    );
+    let message = match invalid {
+        Ok(settled) => settled.result.content.to_string(),
+        Err(error) => error.to_string(),
+    };
+    assert!(message.contains("offset"), "{message}");
+}

@@ -38,7 +38,7 @@ pub(crate) mod subagent;
 use aworkit_capability_host::{
     AdmissionReceipt, AdmittedInvocationDispatcherV1, ApprovedInvocationEnvelopeV1,
     BuiltInProcessTools, CancellationToken, CapabilityDescriptor, CapabilityHost, CapabilityKind,
-    FileAuthority, FileGrepRequestV1, FileListRequestV1,
+    FileAuthority, FileGrepRequestV1, FileLinesRequestV1, FileListRequestV1,
     FileReadRequestV1, FileSearchRequestV1,
     FileWriteRequestV1, FrozenModelGateway, HostToolLimitsV1, InjectionTargetV1, McpCallKindV1,
     McpCallOutcomeV1, McpCallV1, McpServerManifestV1, ModelAssistantContentV1, ModelToolCallV1,
@@ -3901,9 +3901,10 @@ fn validate_call_arguments(
             ));
         }
         StoredFileToolLimitV1::Skill { .. } => BTreeSet::from(["name"]),
-        StoredFileToolLimitV1::ImageRead
-        | StoredFileToolLimitV1::LocalImageRead
-        | StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["path"]),
+        StoredFileToolLimitV1::ImageRead | StoredFileToolLimitV1::LocalImageRead => {
+            BTreeSet::from(["path"])
+        }
+        StoredFileToolLimitV1::Read { .. } => BTreeSet::from(["limit", "offset", "path"]),
         StoredFileToolLimitV1::Screenshot => BTreeSet::from(["operation", "target"]),
         StoredFileToolLimitV1::Search { .. } => BTreeSet::from(["path", "query"]),
         StoredFileToolLimitV1::List { .. } | StoredFileToolLimitV1::Grep { .. }
@@ -3991,6 +3992,11 @@ fn validate_call_arguments(
             // Hermes exposes `limit` as an optional call-level request. The
             // frozen Settings maximum remains the hard authority ceiling.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("query")
+        }
+        StoredFileToolLimitV1::Read { .. } => {
+            // `offset` and `limit` page a large file; the path is required and
+            // both paging parameters are optional.
+            observed_keys.is_subset(&expected_keys) && observed_keys.contains("path")
         }
         StoredFileToolLimitV1::Goal => {
             // The operation is required; the objective and note are optional
@@ -4291,7 +4297,20 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::SubagentControl { operation, .. } => {
             subagent::validate_control(operation.as_str(), arguments)?;
         }
-        StoredFileToolLimitV1::Read { .. } => {}
+        StoredFileToolLimitV1::Read { .. } => {
+            if object
+                .get("offset")
+                .is_some_and(|value| value.as_u64().is_none_or(|offset| offset < 1))
+            {
+                return Err(invalid_tool("read offset must be an integer of at least 1"));
+            }
+            if object
+                .get("limit")
+                .is_some_and(|value| value.as_u64().is_none_or(|limit| limit < 1))
+            {
+                return Err(invalid_tool("read limit must be an integer of at least 1"));
+            }
+        }
         // MCP argument payloads were bounded in the shape check above; the
         // server schema is enforced by the session layer at call time.
         StoredFileToolLimitV1::Mcp { .. } => {}

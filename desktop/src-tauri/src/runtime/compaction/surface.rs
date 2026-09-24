@@ -240,7 +240,7 @@ fn prune_value(value: &mut Value, policy: &Policy) -> (usize, usize) {
             return (before, before);
         }
         let mut consumed = 0;
-        let mut marker = false;
+        let mut marker: Option<String> = None;
         for block in blocks.iter_mut().filter(|b| b["type"] == "text") {
             let Some(text) = block["text"].as_str() else {
                 continue;
@@ -254,9 +254,14 @@ fn prune_value(value: &mut Value, policy: &Policy) -> (usize, usize) {
             let intersects = consumed < before - policy.tail_chars
                 && consumed + points.len() > policy.head_chars;
             let mut kept: String = points[..head].iter().collect();
-            if intersects && !marker {
-                kept.push_str(PRUNE_MARKER);
-                marker = true;
+            if intersects && marker.is_none() {
+                let notice = prune_marker(
+                    before
+                        .saturating_sub(policy.head_chars)
+                        .saturating_sub(policy.tail_chars),
+                );
+                kept.push_str(&notice);
+                marker = Some(notice);
             }
             kept.extend(points[tail..].iter());
             consumed += points.len();
@@ -264,7 +269,9 @@ fn prune_value(value: &mut Value, policy: &Policy) -> (usize, usize) {
         }
         return (
             before,
-            policy.head_chars + policy.tail_chars + PRUNE_MARKER.chars().count(),
+            policy.head_chars
+                + policy.tail_chars
+                + marker.map_or(0, |notice| notice.chars().count()),
         );
     }
     let text = value
@@ -276,10 +283,13 @@ fn prune_value(value: &mut Value, policy: &Policy) -> (usize, usize) {
         return (count, count);
     }
     let points: Vec<_> = text.chars().collect();
+    let removed = count
+        .saturating_sub(policy.head_chars)
+        .saturating_sub(policy.tail_chars);
     let reduced = format!(
         "{}{}{}",
         points[..policy.head_chars].iter().collect::<String>(),
-        PRUNE_MARKER,
+        prune_marker(removed),
         points[count - policy.tail_chars..]
             .iter()
             .collect::<String>()

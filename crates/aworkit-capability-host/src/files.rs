@@ -5,7 +5,7 @@
 use std::{
     collections::BTreeSet,
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -45,6 +45,40 @@ pub struct FileReadRequestV1 {
 pub struct FileReadResultV1 {
     pub bytes: Vec<u8>,
     pub content_hash: String,
+    pub effect: FileEffectDescriptorV1,
+}
+
+/// A bounded line range over one text file.
+///
+/// Paging streams the file rather than loading it, so a caller can read lines
+/// from a file larger than a single call's byte budget. `maximum_bytes` bounds
+/// the bytes *returned*, never the file size.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileLinesRequestV1 {
+    pub path: PathBuf,
+    /// 1-based first line to return.
+    pub offset_line: u64,
+    /// Maximum lines to return; `None` returns every remaining line within the
+    /// byte bound.
+    pub maximum_lines: Option<u64>,
+    /// Maximum bytes of selected line content to return.
+    pub maximum_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileLinesResultV1 {
+    /// Exact bytes of the selected lines, including their line terminators.
+    pub bytes: Vec<u8>,
+    /// Hash of the returned range, not of the whole file.
+    pub content_hash: String,
+    /// 1-based line number of the first returned line.
+    pub first_line: u64,
+    /// Number of lines returned.
+    pub lines: u64,
+    /// Whether at least one more line exists beyond the returned range.
+    pub more: bool,
+    /// Whether the final returned line was cut at the byte bound.
+    pub truncated: bool,
     pub effect: FileEffectDescriptorV1,
 }
 
@@ -226,6 +260,86 @@ impl ProjectFiles {
             return Err(FileToolError::TooLarge);
         }
         self.read_bounded(request, cancellation)
+    }
+
+    /// Reads one bounded range of lines by streaming the file.
+    ///
+    /// The walk stops as soon as the requested range or the byte bound is
+    /// reached, and reads exactly one line past the range only to report that
+    /// more content follows. A single selected line longer than the byte bound
+    /// is cut at a UTF-8 boundary and reported as truncated, so a minified or
+    /// binary-looking file cannot fail the call outright.
+    pub fn read_lines_v1(
+        &self,
+        request: &FileLinesRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<FileLinesResultV1, FileToolError> {
+        if request.maximum_bytes == 0 || request.maximum_bytes > MAX_FILE_BYTES {
+            return Err(FileToolError::TooLarge);
+        }
+        if request.offset_line == 0 || request.maximum_lines == Some(0) {
+            return Err(FileToolError::InvalidLines);
+        }
+        check_cancelled(cancellation)?;
+        self.revalidate_root()?;
+        let path = validate_relative(&request.path)?;
+        self.reject_symlinks(path, true)?;
+        let mut reader = BufReader::new(self.directory.open(path)?);
+        let mut line_number: u64 = 0;
+        let mut collected: Vec<u8> = Vec::new();
+        let mut lines: u64 = 0;
+        let mut more = false;
+        let mut truncated = false;
+        let mut line = Vec::new();
+        loop {
+            check_cancelled(cancellation)?;
+            line.clear();
+            if reader.read_until(b'\n', &mut line)? == 0 {
+                break;
+            }
+            line_number += 1;
+            if line_number < request.offset_line {
+                continue;
+            }
+            if let Some(maximum) = request.maximum_lines
+                && lines == maximum
+            {
+                more = true;
+                break;
+            }
+            if collected.len() + line.len() > request.maximum_bytes {
+                if lines == 0 {
+                    let mut end = request.maximum_bytes.min(line.len());
+                    while end > 0 && std::str::from_utf8(&line[..end]).is_err() {
+                        end -= 1;
+                    }
+                    collected.extend_from_slice(&line[..end]);
+                    lines = 1;
+                    truncated = true;
+                }
+                more = true;
+                break;
+            }
+            collected.extend_from_slice(&line);
+            lines += 1;
+        }
+        let hash = content_hash(&collected);
+        Ok(FileLinesResultV1 {
+            effect: FileEffectDescriptorV1 {
+                kind: FileEffectKindV1::Read,
+                relative_path: path.to_path_buf(),
+                before_content_hash: hash.clone(),
+                after_content_hash: hash.clone(),
+                bytes_observed_or_written: collected.len(),
+                write_committed: false,
+            },
+            content_hash: hash,
+            bytes: collected,
+            first_line: request.offset_line,
+            lines,
+            more,
+            truncated,
+        })
     }
 
     /// Read image bytes with the same anchored file authority and cancellation
@@ -965,6 +1079,8 @@ pub enum FileToolError {
     NotText,
     #[error("search query is invalid")]
     InvalidSearch,
+    #[error("line range is invalid")]
+    InvalidLines,
     #[error("glob pattern is invalid")]
     InvalidList,
     #[error("glob traversal exceeded its bounded scan limit")]
@@ -985,4 +1101,110 @@ pub enum FileToolError {
     Clock,
     #[error("file operation was cancelled before its atomic effect")]
     Cancelled,
+}
+
+#[cfg(test)]
+mod line_read_tests {
+    use super::*;
+
+    fn files(body: &str) -> (tempfile::TempDir, ProjectFiles) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("notes.txt"), body).expect("fixture file");
+        let files = ProjectFiles::new(FileAuthority {
+            root: dir.path().to_path_buf(),
+            allow_write: false,
+        })
+        .expect("project files");
+        (dir, files)
+    }
+
+    fn page(
+        files: &ProjectFiles,
+        offset_line: u64,
+        maximum_lines: Option<u64>,
+        maximum_bytes: usize,
+    ) -> FileLinesResultV1 {
+        files
+            .read_lines_v1(
+                &FileLinesRequestV1 {
+                    path: PathBuf::from("notes.txt"),
+                    offset_line,
+                    maximum_lines,
+                    maximum_bytes,
+                },
+                &CancellationToken::default(),
+            )
+            .expect("line range read")
+    }
+
+    #[test]
+    fn line_range_returns_only_the_selected_lines_and_reports_more() {
+        let (_dir, files) = files("one\ntwo\nthree\nfour\nfive\n");
+        let first = page(&files, 2, Some(2), 1024);
+        assert_eq!(String::from_utf8(first.bytes.clone()).unwrap(), "two\nthree\n");
+        assert_eq!(first.first_line, 2);
+        assert_eq!(first.lines, 2);
+        assert!(first.more);
+        assert!(!first.truncated);
+
+        let last = page(&files, 4, Some(10), 1024);
+        assert_eq!(String::from_utf8(last.bytes.clone()).unwrap(), "four\nfive\n");
+        assert_eq!(last.lines, 2);
+        assert!(!last.more);
+
+        // A range past the end is empty rather than an error.
+        let past = page(&files, 9, Some(2), 1024);
+        assert!(past.bytes.is_empty());
+        assert_eq!(past.lines, 0);
+        assert!(!past.more);
+    }
+
+    #[test]
+    fn a_single_line_longer_than_the_bound_is_cut_at_a_utf8_boundary() {
+        let (_dir, files) = files("abcdefghijé\n");
+        let cut = page(&files, 1, None, 8);
+        assert!(cut.truncated);
+        assert!(cut.more);
+        assert_eq!(cut.lines, 1);
+        assert!(cut.bytes.len() <= 8);
+        assert!(std::str::from_utf8(&cut.bytes).is_ok());
+    }
+
+    #[test]
+    fn invalid_line_ranges_and_bounds_are_rejected() {
+        let (_dir, files) = files("one\n");
+        let request = |offset_line, maximum_lines, maximum_bytes| FileLinesRequestV1 {
+            path: PathBuf::from("notes.txt"),
+            offset_line,
+            maximum_lines,
+            maximum_bytes,
+        };
+        let cancellation = CancellationToken::default();
+        for (request, expected) in [
+            (request(0, None, 1024), "line range is invalid"),
+            (request(1, Some(0), 1024), "line range is invalid"),
+            (request(1, None, 0), "file exceeds its bound"),
+        ] {
+            let error = files
+                .read_lines_v1(&request, &cancellation)
+                .expect_err("invalid request");
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn paging_streams_a_file_larger_than_the_returned_byte_bound() {
+        // 200 lines is far larger than the 64-byte returned bound; the read
+        // streams the selected range instead of loading the whole file.
+        let body: String = (0..200).map(|index| format!("line {index:04}\n")).collect();
+        let (_dir, files) = files(&body);
+        let page = page(&files, 150, Some(2), 64);
+        assert_eq!(page.first_line, 150);
+        assert_eq!(page.lines, 2);
+        assert!(page.more);
+        assert_eq!(
+            String::from_utf8(page.bytes.clone()).unwrap(),
+            "line 0149\nline 0150\n"
+        );
+    }
 }

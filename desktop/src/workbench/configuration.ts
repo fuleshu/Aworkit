@@ -197,7 +197,7 @@ export const builtInToolConfigurationSchema = z
           typeof value.maximumBytes === "number" &&
           Number.isInteger(value.maximumBytes) &&
           value.maximumBytes >= 1 &&
-          value.maximumBytes <= 65_536
+          value.maximumBytes <= 262_144
         : tool.id === "tool.files.search"
           ? tool.requiresProject === manifest?.requiresProject &&
             value.authorityMode === "project_files" &&

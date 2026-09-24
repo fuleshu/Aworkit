@@ -47,7 +47,7 @@ fn policy_defaults_exclusive_retention_and_capacity_validation() {
         json!({"thresholdRatio":0}),
         json!({"retainRatio":0.9}),
         json!({"retainTokens":0,"retainRatio":0.1}),
-        json!({"headChars":8192}),
+        json!({"headChars":81920}),
         json!({"maxTokens":0}),
     ] {
         assert!(
@@ -111,17 +111,25 @@ fn selection_keeps_the_last_unit_even_for_zero_and_never_splits_tool_pairs() {
 }
 #[test]
 fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
+    let policy = Policy::default();
     let mut r = request();
-    r.exchanges.push(exchange(&"😀".repeat(10000)));
+    r.exchanges.push(exchange(&"😀".repeat(100_000)));
     r.exchanges[0].results[0].is_error = true;
-    let changes = prune(&mut r, &Policy::default());
-    assert_eq!(changes[0].chars_before, 10000);
-    assert_eq!(changes[0].chars_after, 5120 + PRUNE_MARKER.chars().count());
+    let changes = prune(&mut r, &policy);
+    let removed = 100_000 - policy.head_chars - policy.tail_chars;
+    assert_eq!(changes[0].chars_before, 100_000);
+    assert_eq!(
+        changes[0].chars_after,
+        policy.head_chars + policy.tail_chars + prune_marker(removed).chars().count()
+    );
     assert_eq!(r.exchanges[0].results[0].call_id, "c1");
     assert!(r.exchanges[0].results[0].is_error);
-    assert!(prune(&mut r, &Policy::default()).is_empty());
-    r.exchanges[0].results[0].content = json!({"content":[{"type":"text","text":"a".repeat(6000)},{"type":"image","data":"opaque"},{"type":"text","text":"b".repeat(6000)}]});
-    prune(&mut r, &Policy::default());
+    let pruned_text = r.exchanges[0].results[0].content.as_str().unwrap();
+    assert!(pruned_text.contains(&format!("{removed} characters removed")));
+    assert!(pruned_text.contains("incomplete"));
+    assert!(prune(&mut r, &policy).is_empty());
+    r.exchanges[0].results[0].content = json!({"content":[{"type":"text","text":"a".repeat(40_000)},{"type":"image","data":"opaque"},{"type":"text","text":"b".repeat(40_000)}]});
+    prune(&mut r, &policy);
     assert_eq!(
         r.exchanges[0].results[0].content["content"][1],
         json!({"type":"image","data":"opaque"})
@@ -130,21 +138,21 @@ fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
         r.exchanges[0].results[0].content["content"][2]["text"]
             .as_str()
             .unwrap()
-            .ends_with(&"b".repeat(1024))
+            .ends_with(&"b".repeat(policy.tail_chars))
     );
     r.exchanges[0].results[0].content =
-        json!([{ "type":"text","text":"x".repeat(9000) },{"type":"image","data":"opaque"}]);
-    prune(&mut r, &Policy::default());
+        json!([{ "type":"text","text":"x".repeat(80_000) },{"type":"image","data":"opaque"}]);
+    prune(&mut r, &policy);
     assert_eq!(
         r.exchanges[0].results[0].content[1],
         json!({"type":"image","data":"opaque"})
     );
-    assert!(prune(&mut r, &Policy::default()).is_empty());
+    assert!(prune(&mut r, &policy).is_empty());
 }
 #[test]
 fn usage_anchor_tracks_reductions_and_is_invalidated_by_a_header_change() {
     let mut r = request();
-    r.exchanges.push(exchange(&"x".repeat(20000)));
+    r.exchanges.push(exchange(&"x".repeat(200_000)));
     let estimated = estimate(&r).unwrap();
     let anchor = Anchor {
         header_hash: header_hash(&r),

@@ -80,9 +80,10 @@ pub use codex_app_server::{
 pub use external_agent::*;
 pub use files::{
     FileAuthority, FileEditRequestV1, FileEditResultV1, FileEffectDescriptorV1, FileEffectKindV1,
-    FileGrepMatchV1, FileGrepRequestV1, FileGrepResultV1, FileListEntryV1, FileListRequestV1,
-    FileListResultV1, FileReadRequestV1, FileReadResultV1, FileSearchRequestV1, FileSearchResultV1,
-    FileToolError, FileWriteRequestV1, FileWriteResultV1, MAX_GREP_WALL_CLOCK, ProjectFiles,
+    FileGrepMatchV1, FileGrepRequestV1, FileGrepResultV1, FileLinesRequestV1, FileLinesResultV1,
+    FileListEntryV1, FileListRequestV1, FileListResultV1, FileReadRequestV1, FileReadResultV1,
+    FileSearchRequestV1, FileSearchResultV1, FileToolError, FileWriteRequestV1, FileWriteResultV1,
+    MAX_GREP_WALL_CLOCK, ProjectFiles,
 };
 pub use gateway::{
     AdmissionDispositionV1, AdmissionReceipt, AdmittedInvocationDispatcherV1,

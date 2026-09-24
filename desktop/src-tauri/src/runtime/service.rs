@@ -5884,9 +5884,18 @@ mod tests {
             requests[0].deadline_epoch_millis,
             crate::runtime::pipeline::NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
         );
+        // The follow-up keeps the configuration frozen at Chat start — the
+        // bundled read default — rather than the 64-byte value committed after
+        // the Chat started.
+        let default_read_maximum = crate::runtime::tool_registry::native_defaults()
+            .into_iter()
+            .find(|tool| tool.id == "tool.files.read")
+            .expect("bundled read tool")
+            .configuration["maximumBytes"]
+            .clone();
         assert_eq!(
             requests[1].tools[0].configuration["maximumBytes"],
-            Value::from(crate::runtime::PROJECT_FILE_READ_MAXIMUM_BYTES_V1)
+            default_read_maximum
         );
         assert_eq!(
             requests[1].workspace.as_ref().unwrap().root,

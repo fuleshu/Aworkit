@@ -3312,9 +3312,16 @@ mod tests {
     #[test]
     fn built_in_tool_configuration_rejects_unknown_adapter_fields_at_save_time() {
         let mut settings = SettingsConfigurationV2::default();
+        // The bundled read default is one 64 KiB page — the largest result the
+        // tool-result pruner keeps whole — while the Settings ceiling is higher
+        // so a large file can still be paged deliberately.
         assert_eq!(
             settings.tools[0].configuration["maximumBytes"],
-            Value::from(PROJECT_FILE_READ_MAXIMUM_BYTES_V1)
+            crate::runtime::tool_registry::native_defaults()
+                .into_iter()
+                .find(|tool| tool.id == "tool.files.read")
+                .expect("bundled read tool")
+                .configuration["maximumBytes"]
         );
         assert_eq!(
             settings.tools[1].configuration["maximumResults"],

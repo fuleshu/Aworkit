@@ -4881,7 +4881,7 @@ mod tests {
         assert!(
             serde_json::to_string(&outcome.tool_exchanges)
                 .unwrap()
-                .contains("tool result middle pruned")
+                .contains("middle of this tool result pruned")
         );
     }
 

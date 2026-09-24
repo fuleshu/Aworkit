@@ -26,9 +26,9 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
     </div>
     <label className="switch-label"><input type="checkbox" checked={policy.pruneToolResults !== false} onChange={event=>set("pruneToolResults",event.target.checked)} title="Before summarizing, reduce large tool outputs by preserving their beginning and end" />Prune large tool results first</label>
     <div className="settings-grid two-columns">
-      {number("thresholdChars","Tool result character threshold",8192,"Prune text exceeding this many Unicode characters",1,1,4*1024*1024)}
-      {number("headChars","Keep beginning characters",4096,"Characters preserved from the beginning of a large tool result")}
-      {number("tailChars","Keep ending characters",1024,"Characters preserved from the end of a large tool result")}
+      {number("thresholdChars","Tool result character threshold",81920,"Prune text exceeding this many Unicode characters",1,1,4*1024*1024)}
+      {number("headChars","Keep beginning characters",73728,"Characters preserved from the beginning of a large tool result")}
+      {number("tailChars","Keep ending characters",4096,"Characters preserved from the end of a large tool result")}
     </div>
   </details></>;
 }

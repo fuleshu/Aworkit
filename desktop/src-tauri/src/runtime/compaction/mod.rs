@@ -162,14 +162,18 @@ fn summary_tokens() -> u64 {
 fn one() -> u32 {
     1
 }
+// One bounded file read returns at most 64 KiB. A tool result is pruned on its
+// rendered JSON, where escaping can inflate control characters, quotes and
+// backslashes, so the default budget is 25% larger than a read page: a whole
+// page survives verbatim for any realistic source file.
 fn prune_threshold() -> usize {
-    8192
+    81920
 }
 fn prune_head() -> usize {
-    4096
+    73728
 }
 fn prune_tail() -> usize {
-    1024
+    4096
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -212,7 +216,7 @@ impl Policy {
             || self
                 .head_chars
                 .saturating_add(self.tail_chars)
-                .saturating_add(PRUNE_MARKER.chars().count())
+                .saturating_add(prune_marker_bound_chars())
                 > self.threshold_chars
         {
             return Err("Invalid compaction policy: require a positive threshold at most 1, smaller exclusive tail ratio/token budget, positive summary cap and valid pruning budgets.".into());
@@ -245,7 +249,18 @@ pub(crate) enum Trigger {
     BytePressure,
 }
 
-pub(crate) const PRUNE_MARKER: &str = "\n\n[... tool result middle pruned ...]\n\n";
+/// The elision notice is deliberately explicit: a model that only sees a terse
+/// marker tends to keep reasoning from the truncated result instead of
+/// recovering the omitted content.
+pub(crate) const PRUNE_MARKER_PREFIX: &str = "\n\n[... middle of this tool result pruned: ";
+pub(crate) const PRUNE_MARKER_SUFFIX: &str = " characters removed, so this result is incomplete. Re-read or re-run the request (with read_file offset and limit for a file) before relying on anything omitted here ...]\n\n";
+pub(crate) fn prune_marker(removed: usize) -> String {
+    format!("{PRUNE_MARKER_PREFIX}{removed}{PRUNE_MARKER_SUFFIX}")
+}
+/// Longest marker any removal count can produce.
+pub(crate) fn prune_marker_bound_chars() -> usize {
+    prune_marker(usize::MAX).chars().count()
+}
 pub(crate) const INSTRUCTION: &str = include_str!("instruction.txt");
 pub(crate) fn frame_summary(text: &str) -> String {
     format!(
@@ -308,10 +323,6 @@ mod overlay_tests {
     fn an_overlay_replaces_only_the_keys_a_node_declares() {
         let frozen = Policy {
             auto: true,
-            prune_tool_results: true,
-            threshold_chars: 8192,
-            head_chars: 4096,
-            tail_chars: 1024,
             ..Policy::default()
         };
         let mut disabled = frozen.clone();
@@ -322,7 +333,7 @@ mod overlay_tests {
         .apply(&mut disabled);
         assert!(!disabled.auto);
         // Every other knob keeps the Chat value.
-        assert_eq!(disabled.threshold_chars, 8192);
+        assert_eq!(disabled.threshold_chars, Policy::default().threshold_chars);
         assert_eq!(disabled.prune_tool_results, true);
 
         let mut tightened = frozen.clone();
