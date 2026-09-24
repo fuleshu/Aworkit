@@ -21,6 +21,12 @@ pub struct ModelCacheUsageV1 {
     /// fault rather than a large payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sent_bytes: Option<u64>,
+    /// Leading bytes this request shares with the previous one on the same
+    /// binding: the largest prefix a provider-side prefix cache could have
+    /// reused. A cache hit far below it means the provider dropped a prefix we
+    /// kept identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub common_prefix_bytes: Option<u64>,
 }
 
 impl ModelCacheUsageV1 {
@@ -47,6 +53,7 @@ impl ModelCacheUsageV1 {
                 .and_then(Value::as_u64),
             total_tokens: usage.get("total_tokens").and_then(Value::as_u64),
             sent_bytes: None,
+            common_prefix_bytes: None,
         }
     }
 }

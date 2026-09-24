@@ -156,7 +156,13 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
     });
     let provider = provider(&origin, 1024 * 1024);
 
-    let first = recorded_size(execute(&provider, &request(Vec::new())).expect("first tool turn"));
+    let first_raw = execute(&provider, &request(Vec::new())).expect("first tool turn");
+    assert_eq!(
+        sent_prefixes(&first_raw),
+        vec![0],
+        "the first call on a binding shares no prefix"
+    );
+    let first = recorded_size(first_raw);
     assert_eq!(
         first,
         vec![
@@ -194,8 +200,13 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             }
         ]
     );
-    let second =
-        recorded_size(execute(&provider, &request(vec![exchange(&first)])).expect("result turn"));
+    let second_raw = execute(&provider, &request(vec![exchange(&first)])).expect("result turn");
+    let prefixes = sent_prefixes(&second_raw);
+    assert!(
+        prefixes.first().is_some_and(|bytes| *bytes > 100),
+        "a turn that only appends reuses a large prefix: {prefixes:?}"
+    );
+    let second = recorded_size(second_raw);
     assert_eq!(
         second,
         vec![
@@ -328,6 +339,17 @@ fn openai_reasoning_is_observed_before_the_stream_finishes() {
     server.join().expect("stream fixture");
 }
 
+/// The shared prefix each usage event reported, in call order.
+fn sent_prefixes(events: &[ModelToolEventV1]) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ModelToolEventV1::Usage { cache, .. } => cache.common_prefix_bytes,
+            _ => None,
+        })
+        .collect()
+}
+
 /// Clears the measured request size so the exact expected events read plainly.
 /// Every usage event must have recorded one: it is the only independent measure
 /// of what the provider was billed for.
@@ -345,6 +367,7 @@ fn recorded_size(events: Vec<ModelToolEventV1>) -> Vec<ModelToolEventV1> {
                     "usage event did not record the sent request size"
                 );
                 cache.sent_bytes = None;
+                cache.common_prefix_bytes = None;
                 ModelToolEventV1::Usage {
                     input_tokens,
                     output_tokens,

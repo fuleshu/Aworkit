@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{BufReader, Read};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use reqwest::Url;
@@ -191,11 +192,23 @@ pub struct OpenAiDiscoveredModelV1 {
 }
 
 /// Production adapter for streaming OpenAI-compatible chat completions.
+/// What one provider call sent, recorded beside the counters it returned.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SentRequestV1 {
+    bytes: usize,
+    /// Leading bytes shared with the previous request on the same provider.
+    common_prefix_bytes: usize,
+}
+
 pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleProviderConfig,
     client: Client,
     models_url: Url,
     completions_url: Url,
+    /// Previous request body, so the next call can report the prefix a cache
+    /// could still reuse. Concurrent calls on one binding serialize here and the
+    /// measurement then reflects whichever call finished last.
+    previous_body: Mutex<Option<Vec<u8>>>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -221,7 +234,25 @@ impl OpenAiCompatibleProvider {
             client,
             models_url,
             completions_url,
+            previous_body: Mutex::new(None),
         })
+    }
+
+    /// Records the body just sent and reports the prefix it shares with the
+    /// previous one. That is the upper bound of what a prefix cache could reuse.
+    fn record_sent_body(&self, body: &[u8]) -> SentRequestV1 {
+        let mut previous = self
+            .previous_body
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let common_prefix_bytes = previous
+            .as_deref()
+            .map_or(0, |earlier| common_prefix_bytes(earlier, body));
+        *previous = Some(body.to_vec());
+        SentRequestV1 {
+            bytes: body.len(),
+            common_prefix_bytes,
+        }
     }
 
     #[must_use]
@@ -260,7 +291,7 @@ impl OpenAiCompatibleProvider {
     fn streaming_completion_response(
         &self,
         request: &ModelRequestV1,
-    ) -> Result<(Response, usize), OpenAiCompatibleProviderError> {
+    ) -> Result<(Response, SentRequestV1), OpenAiCompatibleProviderError> {
         let messages = normalize_messages(&request.input)?;
         let mut body = serde_json::to_value(ChatCompletionRequest {
             model: &self.config.model,
@@ -276,21 +307,22 @@ impl OpenAiCompatibleProvider {
             .with_overrides(&request.parameters)
             .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?
             .apply(&mut body);
-        let sent_bytes = serde_json::to_vec(&body)
-            .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?
-            .len();
+        let sent = self.record_sent_body(
+            &serde_json::to_vec(&body)
+                .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?,
+        );
         let response = self.successful_stream(self.send(
             self.client.post(self.completions_url.clone()).json(&body),
             "text/event-stream",
         )?)?;
-        Ok((response, sent_bytes))
+        Ok((response, sent))
     }
 
     /// Sends one streaming tool request and reports the exact body size sent.
     fn streaming_tool_response(
         &self,
         request: &ModelToolRequestV1,
-    ) -> Result<(Response, usize), ProviderError> {
+    ) -> Result<(Response, SentRequestV1), ProviderError> {
         validate_tool_request(request)?;
         let parameters = self
             .config
@@ -298,9 +330,10 @@ impl OpenAiCompatibleProvider {
             .with_overrides(&request.parameters)
             .map_err(|()| ProviderError::Failed("OpenAI request parameters are invalid".into()))?;
         let body = openai_tool_request(&self.config.model, request, &parameters)?;
-        let sent_bytes = serde_json::to_vec(&body)
-            .map_err(|_| ProviderError::Failed("OpenAI request body is invalid".into()))?
-            .len();
+        let sent = self.record_sent_body(
+            &serde_json::to_vec(&body)
+                .map_err(|_| ProviderError::Failed("OpenAI request body is invalid".into()))?,
+        );
         let response = self
             .send(
                 self.client.post(self.completions_url.clone()).json(&body),
@@ -310,7 +343,7 @@ impl OpenAiCompatibleProvider {
         let response = self
             .successful_stream(response)
             .map_err(ProviderError::from)?;
-        Ok((response, sent_bytes))
+        Ok((response, sent))
     }
 
     fn send(
@@ -389,6 +422,15 @@ impl OpenAiCompatibleProvider {
     }
 }
 
+/// Length of the longest leading run of equal bytes in two bodies.
+fn common_prefix_bytes(earlier: &[u8], current: &[u8]) -> usize {
+    earlier
+        .iter()
+        .zip(current.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
 impl fmt::Debug for OpenAiCompatibleProvider {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -426,7 +468,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let (response, sent_bytes) = self
+        let (response, sent) = self
             .streaming_completion_response(request)
             .map_err(ProviderError::from)?;
         let limit = self.config.limits.maximum_response_bytes;
@@ -442,7 +484,8 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
                 output_tokens,
                 mut cache,
             } => {
-                cache.sent_bytes = Some(sent_bytes as u64);
+                cache.sent_bytes = Some(sent.bytes as u64);
+                cache.common_prefix_bytes = Some(sent.common_prefix_bytes as u64);
                 emit(ModelEventV1::Usage {
                     input_tokens,
                     output_tokens,
@@ -473,11 +516,12 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let (response, sent_bytes) = self.streaming_tool_response(request)?;
+        let (response, sent) = self.streaming_tool_response(request)?;
         let limit = self.config.limits.maximum_response_bytes;
         let mut bridge = |mut event: ModelToolEventV1| {
             if let ModelToolEventV1::Usage { cache, .. } = &mut event {
-                cache.sent_bytes = Some(sent_bytes as u64);
+                cache.sent_bytes = Some(sent.bytes as u64);
+                cache.common_prefix_bytes = Some(sent.common_prefix_bytes as u64);
             }
             emit(event)
         };
@@ -1099,6 +1143,8 @@ mod tests {
         assert_eq!(cache.cache_miss_input_tokens, Some(2));
         assert_eq!(cache.total_tokens, Some(10));
         assert!(cache.sent_bytes.is_some_and(|bytes| bytes > 0));
+        // Nothing was sent before on this provider, so no prefix could be reused.
+        assert_eq!(cache.common_prefix_bytes, Some(0));
         server.join().expect("fixture server");
     }
 
@@ -1173,5 +1219,21 @@ mod tests {
         );
         assert!(events.is_empty());
         server.join().expect("fixture server");
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::common_prefix_bytes;
+
+    #[test]
+    fn the_shared_prefix_is_the_longest_equal_leading_run() {
+        assert_eq!(common_prefix_bytes(b"", b"abc"), 0);
+        assert_eq!(common_prefix_bytes(b"abc", b""), 0);
+        assert_eq!(common_prefix_bytes(b"abc", b"abc"), 3);
+        assert_eq!(common_prefix_bytes(b"abcdef", b"abcxyz"), 3);
+        assert_eq!(common_prefix_bytes(b"abc", b"abcdef"), 3);
+        // A change at the very start leaves nothing to reuse.
+        assert_eq!(common_prefix_bytes(b"xyz", b"abc"), 0);
     }
 }
