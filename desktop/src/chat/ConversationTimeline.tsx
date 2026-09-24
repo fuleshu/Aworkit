@@ -9,6 +9,7 @@ import {
   modelCallAssistantOutput,
 } from "./ModelCallBlock";
 import { prettyJson } from "./jsonPresentation";
+import { todosFromFact } from "./todoProjection";
 import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
 import { MarkdownContent } from "./MarkdownContent";
@@ -875,27 +876,17 @@ function webTitle(item: TimelineItem): string {
   return capabilityId === "tool.web_fetch" ? "Web fetch" : "Web search";
 }
 
+/** The card's view of the shared task-list projection. */
 function todosOf(item: TimelineItem): readonly {
   readonly content: string;
   readonly done: boolean;
   readonly active: boolean;
 }[] {
-  const todos = metadataOf(item).todos;
-  if (!Array.isArray(todos)) return [];
-  return todos.map((todo) => {
-    const record =
-      typeof todo === "object" && todo !== null && !Array.isArray(todo)
-        ? (todo as Record<string, unknown>)
-        : {};
-    const content =
-      typeof record.content === "string" ? record.content : String(record.content ?? "");
-    const status = typeof record.status === "string" ? record.status : "";
-    return {
-      content,
-      done: status === "completed" || status === "done",
-      active: status === "in_progress",
-    };
-  });
+  return todosFromFact(metadataOf(item)).map((todo) => ({
+    content: todo.content,
+    done: todo.status === "completed",
+    active: todo.status === "in_progress",
+  }));
 }
 
 function todoCount(item: TimelineItem): string {

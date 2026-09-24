@@ -19,6 +19,7 @@ import { ConversationTimeline } from "./ConversationTimeline";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
 import { GoalControl } from "./GoalControl";
+import { TodoControl } from "./TodoControl";
 import { QuestionDialog } from "./QuestionDialog";
 import { SubagentConversation } from "./SubagentConversation";
 import { questionFromMetadata, type QuestionAnswerInput } from "./question";
@@ -800,6 +801,7 @@ export function ChatWorkspaceScreen({
           stopDisabled={chat.recoveryPending}
           stopRequested={stopPending}
             chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}
+          todoControl={<TodoControl events={runtime.events} />}
           goalControl={<GoalControl events={runtime.events}
             disabledReason={runtime.stale ? "Resynchronize before changing the goal."
               : chat.recoveryPending ? "Resume or abandon the interrupted turn before changing the goal."

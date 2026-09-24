@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from "./corePort";
+import { todosFromFact } from "./todoProjection";
 import { imageAttachmentsSchema } from "./images";
 import type { TimelineItem, TimelineKind } from "./types";
 
@@ -630,21 +631,14 @@ function baseItem(
 }
 
 function todoCard(event: RuntimeEvent, fact: FactPayload): TimelineItem {
-  const todos = Array.isArray(fact.todos) ? fact.todos : [];
+  const todos = todosFromFact(fact);
   return {
     ...baseItem(event, fact, {
       kind: "todo",
       title: "Task list",
       status: "completed",
     }),
-    body: todos
-      .map((todo) => {
-        const item = record(todo);
-        const content = string(item.content) ?? String(item.content ?? "");
-        const status = string(item.status) ?? "";
-        return status.length === 0 ? content : `[${status}] ${content}`;
-      })
-      .join("\n"),
+    body: todos.map((todo) => `[${todo.status}] ${todo.content}`).join("\n"),
   };
 }
 
