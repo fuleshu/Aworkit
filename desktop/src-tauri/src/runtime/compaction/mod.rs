@@ -3,6 +3,7 @@
 use super::context_inspection::ContextDocument;
 use aworkit_capability_host::{
     ModelAssistantContentV1, ModelToolContextV1, ModelToolExchangeV1, ModelToolRequestV1,
+    model_images::ImageDispatchV1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,6 +24,21 @@ pub(crate) struct Metadata {
     pub summary_target: Option<FrozenSummaryTarget>,
     #[serde(default)]
     pub policy: Policy,
+}
+
+/// How this Run's dispatches represent images, from the frozen model capability.
+///
+/// A model without image input still receives an explicit reference for every
+/// image, so the run keeps its evidence without uploading bytes the provider
+/// would discard.
+pub(crate) fn image_dispatch(model_context: &Value) -> Result<ImageDispatchV1, String> {
+    let metadata: Metadata = serde_json::from_value(model_context.clone())
+        .map_err(|error| format!("invalid frozen model context: {error}"))?;
+    Ok(if metadata.image_input {
+        ImageDispatchV1::Attach
+    } else {
+        ImageDispatchV1::Reference
+    })
 }
 
 /// Resolved once at Chat freeze. Only opaque credential metadata is persisted.

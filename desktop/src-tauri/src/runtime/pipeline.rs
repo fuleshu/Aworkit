@@ -965,6 +965,10 @@ impl WorkflowExecutionPipeline {
                 .map_err(WorkflowPipelineError::InvalidInput)?,
             )
             .with_image_resolver(Arc::new(super::images::ChatImageStore::new(&self.root)))
+            .with_image_dispatch(
+                super::compaction::image_dispatch(&prepared.provider.model_context)
+                    .map_err(WorkflowPipelineError::InvalidInput)?,
+            )
             .with_observer(model_observer.clone()),
         );
         let workflow = prepared
@@ -2314,6 +2318,10 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 .map_err(WorkflowPipelineError::InvalidInput)?,
             )
             .with_image_resolver(Arc::new(self.images.clone()))
+            .with_image_dispatch(
+                super::compaction::image_dispatch(&self.provider.model_context)
+                    .map_err(WorkflowPipelineError::InvalidInput)?,
+            )
             .with_observer(model_observer.clone()),
         );
         let workflow = envelope

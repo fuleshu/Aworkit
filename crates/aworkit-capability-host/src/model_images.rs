@@ -1,12 +1,19 @@
-//! Unbounded image references and provider-only materialization. Durable requests
+//! Durable image references and provider-only materialization. Durable requests
 //! contain hashes, never image bytes or ambient filesystem paths.
 //!
-//! There is deliberately no aggregate image budget: no image count and no total
-//! image byte allowance. Every image a Chat holds is sent to the provider, and
-//! the model's own context window plus the provider are the only limits. The
-//! rules that remain are per-image validity checks on one attachment (format,
-//! identity, stored size, content hash), which reject a single bad attachment at
-//! the moment it is added and can never stop a Run.
+//! A request attaches image bytes only when its model can consume them. A model
+//! with no image input still receives an explicit reference for every image, so
+//! the evidence trail and the turn's meaning survive, but the request never
+//! carries megabytes the provider would discard — a recorded run replayed up to
+//! ten screenshots as base64 on every turn, inflating the body 4.9x over the
+//! stored request while the billed prompt stayed text-sized.
+//!
+//! Attached requests are bounded too: at most [`MAX_REQUEST_IMAGES`] images and
+//! [`MAX_REQUEST_IMAGE_BYTES`] encoded bytes, newest first. Older images keep
+//! their reference and lose only their bytes. Every remaining rule is a
+//! per-image validity check on one attachment (format, identity, stored size,
+//! content hash), which rejects a single bad attachment at the moment it is
+//! added and can never stop a Run.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
@@ -21,6 +28,22 @@ use crate::ProviderError;
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 /// Bounded local source input; the desktop prepares a model-sized copy.
 pub const MAX_IMAGE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
+/// Most images one attached request carries; older images keep a reference only.
+pub const MAX_REQUEST_IMAGES: usize = 16;
+/// Most encoded image bytes one attached request carries; older images keep a
+/// reference only.
+pub const MAX_REQUEST_IMAGE_BYTES: usize = 24 * 1024 * 1024;
+
+/// How one provider request represents the images it carries.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ImageDispatchV1 {
+    /// Attach image bytes in the protocol's native inline form.
+    #[default]
+    Attach,
+    /// Attach no bytes at all: every image is described as text. The model still
+    /// learns which images exist, what they are and why it cannot see them.
+    Reference,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -130,12 +153,21 @@ pub(crate) fn project_tool_images(
 }
 
 /// Resolve every reference immediately before provider dispatch, after observers
-/// and durable authority checks have seen the original compact request. Every
-/// image is materialized; none is dropped, deferred or withheld.
+/// and durable authority checks have seen the original compact request.
+///
+/// With [`ImageDispatchV1::Reference`] nothing is read from the image store at
+/// all: every reference reaches the wire as a text description. Otherwise the
+/// newest references are attached until the request bounds are reached, and the
+/// older ones keep their reference without their bytes. No image is ever
+/// dropped, and no bound can stop a Run.
 pub(crate) fn materialize_images(
     input: &Value,
     resolver: Option<&dyn ModelImageResolver>,
+    dispatch: ImageDispatchV1,
 ) -> Result<Value, ProviderError> {
+    if dispatch == ImageDispatchV1::Reference {
+        return Ok(input.clone());
+    }
     let mut result = input.clone();
     let entries: &mut [Value] = match &mut result {
         Value::Array(entries) => entries,
@@ -146,17 +178,52 @@ pub(crate) fn materialize_images(
         Value::Object(_) => std::slice::from_mut(&mut result),
         _ => return Ok(result),
     };
-    for entry in entries {
-        let Some(images) = entry.get_mut("images") else {
+    let mut references: Vec<Option<Vec<ImageAttachmentV1>>> = Vec::with_capacity(entries.len());
+    for entry in entries.iter() {
+        match entry.get("images") {
+            None => references.push(None),
+            Some(images) => {
+                let attached: Vec<ImageAttachmentV1> =
+                    serde_json::from_value(images.clone()).map_err(|_| ProviderError::InvalidPlan)?;
+                for reference in &attached {
+                    reference.validate()?;
+                }
+                references.push(Some(attached));
+            }
+        }
+    }
+    // The newest images hold the attached budget; older ones fall back to a
+    // reference, so a long run keeps its evidence without growing forever.
+    let mut keep_images = MAX_REQUEST_IMAGES;
+    let mut keep_bytes = MAX_REQUEST_IMAGE_BYTES;
+    let mut attached: Vec<Vec<bool>> = references
+        .iter()
+        .map(|entry| entry.as_ref().map_or_else(Vec::new, |list| vec![false; list.len()]))
+        .collect();
+    for (index, list) in references.iter().enumerate().rev() {
+        let Some(list) = list else { continue };
+        for (position, reference) in list.iter().enumerate().rev() {
+            if keep_images == 0 || reference.byte_length > keep_bytes {
+                continue;
+            }
+            attached[index][position] = true;
+            keep_images -= 1;
+            keep_bytes -= reference.byte_length;
+        }
+    }
+    for (index, entry) in entries.iter_mut().enumerate() {
+        let Some(list) = references[index].take() else {
             continue;
         };
-        let references: Vec<ImageAttachmentV1> =
-            serde_json::from_value(images.clone()).map_err(|_| ProviderError::InvalidPlan)?;
-        for reference in &references {
-            reference.validate()?;
-        }
-        let mut resolved = Vec::new();
-        for attachment in references {
+        let mut resolved = Vec::with_capacity(list.len());
+        for (position, attachment) in list.into_iter().enumerate() {
+            if !attached[index][position] {
+                resolved.push(ModelImageV1 {
+                    attachment,
+                    data: None,
+                });
+                continue;
+            }
             let bytes = resolver
                 .ok_or_else(|| {
                     ProviderError::Failed(
@@ -170,9 +237,20 @@ pub(crate) fn materialize_images(
                 data: Some(STANDARD.encode(bytes)),
             });
         }
+        let images = entry
+            .get_mut("images")
+            .ok_or(ProviderError::InvalidPlan)?;
         *images = serde_json::to_value(resolved).map_err(|_| ProviderError::InvalidPlan)?;
     }
     Ok(result)
+}
+
+/// What a model that cannot see an image is told about it.
+fn image_reference_text(attachment: &ImageAttachmentV1) -> String {
+    format!(
+        "[image not attached: {} ({}, {} bytes, id {}). The selected model has no image input, so this image is referenced but not sent.]",
+        attachment.name, attachment.mime_type, attachment.byte_length, attachment.id
+    )
 }
 
 /// Protocol mapping is shared by plain completion and tool-aware requests.
@@ -186,11 +264,17 @@ pub(crate) fn image_content(
     }
     let mut parts = Vec::new();
     for image in images {
-        let data = image
-            .data
-            .as_deref()
-            .ok_or_else(|| ProviderError::Failed("Image reference was not materialized".into()))?;
         let mime = &image.attachment.mime_type;
+        let Some(data) = image.data.as_deref() else {
+            // No bytes were attached for this image. Describe it instead, so the
+            // model still knows the evidence exists and why it cannot see it.
+            parts.push(if protocol == "gemini" {
+                json!({"text": image_reference_text(&image.attachment)})
+            } else {
+                json!({"type":"text","text": image_reference_text(&image.attachment)})
+            });
+            continue;
+        };
         if data.len() > MAX_IMAGE_BYTES.div_ceil(3) * 4 {
             return Err(ProviderError::Failed(
                 "Materialized image exceeds its size bound".into(),

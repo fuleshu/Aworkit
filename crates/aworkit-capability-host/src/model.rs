@@ -226,6 +226,9 @@ pub struct FrozenModelGateway {
     providers: Vec<Box<dyn ProviderEnginePortV1>>,
     observer: Option<Arc<dyn ModelEventObserverV1>>,
     image_resolver: Option<Arc<dyn crate::model_images::ModelImageResolver>>,
+    /// Frozen model capability: a model without image input receives every
+    /// image as an explicit reference instead of bytes it would discard.
+    image_dispatch: crate::model_images::ImageDispatchV1,
 }
 
 impl FrozenModelGateway {
@@ -235,7 +238,18 @@ impl FrozenModelGateway {
             providers,
             observer: None,
             image_resolver: None,
+            image_dispatch: crate::model_images::ImageDispatchV1::Attach,
         }
+    }
+
+    /// Chooses how this Run's dispatches represent the images they carry.
+    #[must_use]
+    pub fn with_image_dispatch(
+        mut self,
+        image_dispatch: crate::model_images::ImageDispatchV1,
+    ) -> Self {
+        self.image_dispatch = image_dispatch;
+        self
     }
 
     /// Supplies the profile-local image store for already approved references.
@@ -342,6 +356,7 @@ impl FrozenModelGateway {
             materialized.input = crate::model_images::materialize_images(
                 &request.input,
                 self.image_resolver.as_deref(),
+                self.image_dispatch,
             )?;
             let acceptance =
                 provider.execute_cancellable(&materialized, cancellation, &mut emit)?;
@@ -461,6 +476,7 @@ impl FrozenModelGateway {
             materialized.input = crate::model_images::materialize_images(
                 &request.input,
                 self.image_resolver.as_deref(),
+                self.image_dispatch,
             )?;
             crate::model_images::project_tool_images(&mut materialized)?;
             // The validator bounds base and positioned images together; resolve
@@ -475,6 +491,7 @@ impl FrozenModelGateway {
             let positioned = crate::model_images::materialize_images(
                 &positioned,
                 self.image_resolver.as_deref(),
+                self.image_dispatch,
             )?;
             for (context, message) in materialized
                 .context_messages

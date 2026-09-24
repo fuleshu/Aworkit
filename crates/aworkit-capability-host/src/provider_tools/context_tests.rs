@@ -34,7 +34,7 @@ fn completion_reminder_preserves_text_without_inventing_tool_results() {
 }
 
 #[test]
-fn materialized_image_context_has_no_aggregate_budget_and_still_bounds_metadata() {
+fn request_validation_bounds_image_metadata_without_an_image_budget() {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use sha2::{Digest, Sha256};
     let mut bytes = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC").unwrap();
@@ -59,10 +59,10 @@ fn materialized_image_context_has_no_aggregate_budget_and_still_bounds_metadata(
     assert!(request.validate().is_err());
     request.context_messages[0].content = "Image evidence".into();
     request.context_messages[0].images = vec![request.context_messages[0].images[0].clone(); 40];
-    // Forty 4 MiB images — 160 MiB of image context — are a valid request. There
-    // is no image count or aggregate image-byte allowance in Aworkit: the model's
-    // own context window and the provider are the only limits, and every image is
-    // sent.
+    // Forty 4 MiB images — 160 MiB of image context — are a valid request. A
+    // request is never rejected for image count or total image bytes; the
+    // bound lives where images are attached to a provider dispatch, which keeps
+    // the newest images and refers to the rest.
     request
         .validate()
         .expect("image count and total image bytes are never an Aworkit limit");

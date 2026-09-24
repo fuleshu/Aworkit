@@ -258,32 +258,43 @@ fn image_reference_validation_rejects_paths_and_oversized_metadata() {
     assert!(model_images::validate_image_attachments(&[image.clone(), image]).is_err());
 }
 
-/// There is no image count and no aggregate image-byte allowance. A Chat that
-/// holds far more images than the old 20-image/12 MiB allowance sends all of
-/// them in one request, with no omission notice of any kind.
+/// Attached requests are bounded: the newest images carry the bytes and every
+/// older image still arrives as an explicit reference. Nothing is dropped
+/// silently, and a long run cannot keep uploading an unbounded image history.
 #[test]
-fn every_image_of_a_large_chat_reaches_the_provider() {
-    /// Well past the removed allowance, and past any count a provider bills as
-    /// ordinary: the request must still carry them all.
-    const IMAGES: usize = 64;
+fn a_large_chat_attaches_the_newest_images_and_references_the_rest() {
+    const IMAGES: usize = model_images::MAX_REQUEST_IMAGES + 8;
     let (origin, server) = start_fixture(1, move |_index, request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
         let parts = messages[0]["content"].as_array().unwrap();
-        let images = parts
+        let attached = parts
             .iter()
             .filter(|part| part["type"] == "image_url")
             .count();
+        let referenced = parts
+            .iter()
+            .filter(|part| {
+                part["type"] == "text"
+                    && part["text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("image not attached"))
+            })
+            .count();
         assert_eq!(
-            images, IMAGES,
-            "every referenced image is materialized and sent"
+            attached,
+            model_images::MAX_REQUEST_IMAGES,
+            "the newest images hold the attached budget"
         );
-        assert!(
-            messages
-                .iter()
-                .filter_map(|message| message["content"].as_str())
-                .all(|content| !content.contains("Aworkit dispatch notice")),
-            "nothing is withheld, so nothing is reported as omitted"
+        assert_eq!(
+            referenced,
+            IMAGES - model_images::MAX_REQUEST_IMAGES,
+            "every older image keeps an explicit reference"
+        );
+        assert_eq!(
+            attached + referenced,
+            IMAGES,
+            "every image is represented exactly once"
         );
         FixtureResponse::sse(vec![
             json!({"choices":[{"index":0,"delta":{"content":"Understood"},"finish_reason":null}]}),
@@ -326,6 +337,82 @@ fn every_image_of_a_large_chat_reaches_the_provider() {
     assert_eq!(
         request, canonical,
         "materializing a large image set never rewrites durable history"
+    );
+    server.join().unwrap();
+}
+
+/// A model with no image input receives a reference for every image and no
+/// image bytes at all, so the request stays text-sized instead of carrying
+/// megabytes the provider would discard.
+#[test]
+fn a_model_without_image_input_receives_references_and_never_bytes() {
+    let (origin, server) = start_fixture(1, move |_index, request| {
+        let wire = String::from_utf8_lossy(&request.body).to_string();
+        assert!(
+            !wire.contains("data:image/png;base64"),
+            "a model with no image input is never sent image bytes"
+        );
+        assert!(
+            !wire.contains(PNG),
+            "the stored image never reaches the wire"
+        );
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let parts = body["messages"][0]["content"].as_array().unwrap();
+        assert!(
+            parts.iter().all(|part| part["type"] == "text"),
+            "every part is text when no bytes are attached"
+        );
+        assert_eq!(
+            parts
+                .iter()
+                .filter(|part| part["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("red.png")))
+                .count(),
+            1,
+            "the model still learns which image exists"
+        );
+        FixtureResponse::sse(vec![
+            json!({"choices":[{"index":0,"delta":{"content":"Noted"},"finish_reason":null}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":4}}),
+        ])
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        OpenAiCompatibleProviderConfig::new(
+            "text-only",
+            "v1",
+            format!("{origin}/v1"),
+            "text-only",
+            None,
+            OpenAiCompatibleLimitsV1::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let gateway = FrozenModelGateway::new(vec![Box::new(provider)])
+        .with_image_resolver(Arc::new(Images))
+        .with_image_dispatch(model_images::ImageDispatchV1::Reference);
+    let plan = ModelResolutionPlanV1 {
+        candidates: vec![ModelCandidateV1 {
+            binding_id: "text-only".into(),
+            version_hash: "v1".into(),
+        }],
+        maximum_input_bytes: 16 * 1024,
+        maximum_output_bytes: 4096,
+    };
+    let request = ModelToolRequestV1 {
+        input: json!({"messages":[{"role":"user","content":"What was on screen?","images":[attachment()]}]}),
+        parameters: Default::default(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        context_messages: Vec::new(),
+        retry_notice: None,
+    };
+    let canonical = request.clone();
+    gateway.execute_tool_turn(&plan, &request).unwrap();
+    assert_eq!(
+        request, canonical,
+        "a reference dispatch never rewrites durable history"
     );
     server.join().unwrap();
 }

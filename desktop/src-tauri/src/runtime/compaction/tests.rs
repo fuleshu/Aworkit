@@ -169,3 +169,24 @@ fn usage_anchor_tracks_reductions_and_is_invalidated_by_a_header_change() {
     assert_eq!(pressure(&r, Some(&anchor)).unwrap(), estimate(&r).unwrap());
     assert_eq!(text_tokens("😀😀😀"), 2);
 }
+
+#[test]
+fn image_dispatch_follows_the_frozen_model_capability() {
+    assert_eq!(
+        image_dispatch(&json!({"imageInput": true})).unwrap(),
+        ImageDispatchV1::Attach,
+        "a model with image input receives the bytes"
+    );
+    assert_eq!(
+        image_dispatch(&json!({"imageInput": false})).unwrap(),
+        ImageDispatchV1::Reference,
+        "a model without image input receives references"
+    );
+    // A context frozen before the capability existed cannot promise image
+    // input, so it degrades to references instead of uploading bytes.
+    assert_eq!(
+        image_dispatch(&json!({})).unwrap(),
+        ImageDispatchV1::Reference
+    );
+    assert!(image_dispatch(&json!({"imageInput": "yes"})).is_err());
+}
