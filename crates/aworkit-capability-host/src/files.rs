@@ -775,7 +775,21 @@ impl ProjectFiles {
             .map_err(|_| FileToolError::Poisoned)?;
         self.revalidate_root()?;
         let path = validate_relative(&request.path)?;
-        self.reject_symlinks(path, false)?;
+        self.reject_symlinks_for_creation(path)?;
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        // A write into a folder that does not exist yet creates it, so scaffolding
+        // a tree does not first need a shell round-trip to make the directories.
+        if !parent.as_os_str().is_empty() {
+            self.directory.create_dir_all(parent).map_err(|error| {
+                FileToolError::Io(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "the parent directory '{}' could not be created ({error})",
+                        parent.display()
+                    ),
+                ))
+            })?;
+        }
         let existing = self.directory.open(path).ok().map(|mut file| {
             let mut body = Vec::new();
             let _ = file.read_to_end(&mut body);
@@ -786,7 +800,6 @@ impl ProjectFiles {
         {
             return Err(FileToolError::Conflict);
         }
-        let parent = path.parent().unwrap_or_else(|| Path::new(""));
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -851,6 +864,37 @@ impl ProjectFiles {
         } else {
             Err(FileToolError::RootChanged)
         }
+    }
+
+    /// Validates every component of a path that is about to be created.
+    ///
+    /// A component that does not exist yet cannot be a symlink: it is skipped
+    /// here and created inside the authority by the caller. An existing symlink
+    /// anywhere on the path is still refused, so creation cannot be redirected
+    /// out of the root through an alias that already exists.
+    fn reject_symlinks_for_creation(&self, path: &Path) -> Result<(), FileToolError> {
+        let mut current = PathBuf::new();
+        for component in path.components() {
+            let Component::Normal(component) = component else {
+                return Err(FileToolError::OutsideRoot);
+            };
+            current.push(component);
+            match self.directory.symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(FileToolError::SymlinkDenied);
+                }
+                Ok(_) => {}
+                // A component that cannot exist yet cannot be a symlink either.
+                // Creation below reports the real reason if the path is unusable.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
     }
 
     fn reject_symlinks(&self, path: &Path, require_final: bool) -> Result<(), FileToolError> {
@@ -1206,5 +1250,67 @@ mod line_read_tests {
             String::from_utf8(page.bytes.clone()).unwrap(),
             "line 0149\nline 0150\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod write_creation_tests {
+    use super::*;
+
+    fn project(root: &Path) -> ProjectFiles {
+        ProjectFiles::new(FileAuthority {
+            root: root.to_path_buf(),
+            allow_write: true,
+        })
+        .expect("project files")
+    }
+
+    fn write(
+        files: &ProjectFiles,
+        path: &str,
+        body: &str,
+    ) -> Result<FileWriteResultV1, FileToolError> {
+        files.write_v1(
+            &FileWriteRequestV1 {
+                path: PathBuf::from(path),
+                content: body.as_bytes().to_vec(),
+                expected_content_hash: None,
+            },
+            &CancellationToken::default(),
+        )
+    }
+
+    #[test]
+    fn a_write_creates_the_parent_directories_it_needs() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let files = project(dir.path());
+        write(&files, "src/nested/engine.js", "module.exports = 1;\n").expect("nested write");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/nested/engine.js")).expect("written file"),
+            "module.exports = 1;\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creation_still_refuses_a_symlinked_parent() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("real")).expect("target directory");
+        std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("alias"))
+            .expect("symlink");
+        let files = project(dir.path());
+        let error = write(&files, "alias/escaped.txt", "x").expect_err("symlink denied");
+        assert!(matches!(error, FileToolError::SymlinkDenied), "{error}");
+        assert!(!dir.path().join("real/escaped.txt").exists());
+    }
+
+    #[test]
+    fn an_uncreatable_parent_names_the_directory() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("blocked"), "not a directory").expect("fixture file");
+        let files = project(dir.path());
+        let error = write(&files, "blocked/child.txt", "x").expect_err("parent is a file");
+        let text = error.to_string();
+        assert!(text.contains("the parent directory 'blocked'"), "{text}");
     }
 }

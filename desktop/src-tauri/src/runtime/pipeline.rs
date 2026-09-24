@@ -6006,6 +6006,27 @@ mod tests {
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed.len(), 1);
         assert_eq!(observed[0]["todos"], stored);
+        // The list reaches the Chat stream when the call settles, not only when
+        // the whole command settles, so the UI can show it during the run.
+        let facts: Vec<_> = pipeline
+            .event_committer
+            .committed_events()
+            .expect("committed events")
+            .into_iter()
+            .filter(|event| event.kind == "tool.todo")
+            .collect();
+        assert_eq!(facts.len(), 1, "one fact per settled task-list call");
+        assert_eq!(
+            facts[0].payload["todos"],
+            json!([
+                {"content":"Write tests","status":"in_progress"},
+                {"content":"Fix pipeline","status":"completed"},
+            ])
+        );
+        assert_eq!(
+            facts[0].payload["runId"],
+            json!(execution_request.run_id.to_string())
+        );
     }
 
     #[test]
@@ -6048,6 +6069,21 @@ mod tests {
         let observed = observed_results.lock().expect("tool results");
         assert_eq!(observed.len(), 1);
         assert_eq!(observed[0], stored);
+        // The goal change is published as its own fact at settle time, which is
+        // what makes it inspectable while the run is still going.
+        let facts: Vec<_> = pipeline
+            .event_committer
+            .committed_events()
+            .expect("committed events")
+            .into_iter()
+            .filter(|event| event.kind == "tool.goal")
+            .collect();
+        assert_eq!(facts.len(), 1, "one fact per settled goal call");
+        assert_eq!(facts[0].payload["goal"]["status"], json!("active"));
+        assert_eq!(
+            facts[0].payload["goal"]["goal"],
+            json!("Complete task 108 end to end")
+        );
     }
 
     #[test]

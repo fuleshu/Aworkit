@@ -311,3 +311,42 @@ fn restart_recovers_output_written_after_the_last_lifecycle_snapshot() {
     jobs.acknowledge("chat.a", &out).unwrap();
     assert!(jobs.completion_notice("chat.a").unwrap().is_some());
 }
+
+/// A rejected job call must name the argument it rejected, because the caller
+/// cannot inspect the contract and otherwise only guesses and retries.
+#[test]
+fn job_argument_rejections_name_the_offending_key() {
+    let cases = [
+        (
+            json!({"jobId":"job.a","maxBytes":4096}),
+            "does not accept the argument 'maxBytes'",
+            "jobId, cursor, waitMs, maximumBytes",
+        ),
+        (json!({"cursor":{}}), "requires the argument 'jobId'", ""),
+        (
+            json!({"jobId":"job.a","waitMs":90000}),
+            "argument 'waitMs' must be an integer between 0 and 60000",
+            "",
+        ),
+        (
+            json!({"jobId":"job.a","cursor":{"stdout":0}}),
+            "cursor must be an object with exactly the byte offsets",
+            "",
+        ),
+    ];
+    for (args, expected, accepted) in cases {
+        let error = validate("job_output", &args).expect_err(&format!("{args}"));
+        let text = error.to_string();
+        assert!(text.contains(expected), "{args}: {text}");
+        if !accepted.is_empty() {
+            assert!(text.contains(accepted), "{args}: {text}");
+        }
+    }
+    let unknown = validate("job_teleport", &json!({})).expect_err("unknown operation");
+    assert!(
+        unknown
+            .to_string()
+            .contains("supported operations are shell_start"),
+        "{unknown}"
+    );
+}

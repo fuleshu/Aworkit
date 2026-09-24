@@ -52,12 +52,28 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
         "job_stop" => (&["jobId"], &["jobId"]),
         "job_keep" => (&["jobId", "reason"], &["jobId", "reason"]),
         "job_list" => (&[], &[]),
-        _ => return Err(invalid_tool("unknown job operation")),
+        _ => {
+            return Err(invalid_tool(&format!(
+                "unknown job operation '{operation}'; supported operations are shell_start, python_start, job_output, job_input, job_stop, job_keep and job_list"
+            )));
+        }
     };
-    if object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || required.iter().any(|key| !object.contains_key(*key))
-    {
-        return Err(invalid_tool("invalid job argument keys"));
+    // A caller that cannot see which argument is wrong can only guess and send
+    // the same call again, so every rejection below names the key it rejected.
+    if let Some(unknown) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(invalid_tool(&format!(
+            "{operation} does not accept the argument '{unknown}'; accepted keys are {}",
+            if allowed.is_empty() {
+                "none".to_owned()
+            } else {
+                allowed.join(", ")
+            }
+        )));
+    }
+    if let Some(missing) = required.iter().find(|key| !object.contains_key(**key)) {
+        return Err(invalid_tool(&format!(
+            "{operation} requires the argument '{missing}'"
+        )));
     }
     for (key, max, empty) in [
         ("jobId", 80, false),
@@ -71,12 +87,17 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
                 s.len() <= max && (empty || !s.trim().is_empty()) && !s.contains('\0')
             })
         {
-            return Err(invalid_tool("invalid job text argument"));
+            return Err(invalid_tool(&format!(
+                "{operation} argument '{key}' must be a string of at most {max} bytes{} and must not contain NUL characters",
+                if empty { "" } else { ", not blank," }
+            )));
         }
     }
     for key in ["interactive", "closeStdin"] {
         if object.get(key).is_some_and(|v| !v.is_boolean()) {
-            return Err(invalid_tool("invalid job boolean"));
+            return Err(invalid_tool(&format!(
+                "{operation} argument '{key}' must be true or false"
+            )));
         }
     }
     for (key, min, max) in [("waitMs", 0, 60000), ("maximumBytes", 1, 262144)] {
@@ -84,7 +105,9 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
             .get(key)
             .is_some_and(|v| !v.as_u64().is_some_and(|n| n >= min && n <= max))
         {
-            return Err(invalid_tool("invalid job numeric bound"));
+            return Err(invalid_tool(&format!(
+                "{operation} argument '{key}' must be an integer between {min} and {max}"
+            )));
         }
     }
     if let Some(cursor) = object.get("cursor")
@@ -94,7 +117,9 @@ pub fn validate(operation: &str, args: &Value) -> Result<(), WorkflowPipelineErr
                 && o.get("stderr").is_some_and(Value::is_u64)
         })
     {
-        return Err(invalid_tool("invalid output cursor"));
+        return Err(invalid_tool(
+            "cursor must be an object with exactly the byte offsets 'stdout' and 'stderr', both non-negative integers",
+        ));
     }
     Ok(())
 }

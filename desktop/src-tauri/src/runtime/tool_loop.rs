@@ -3198,6 +3198,12 @@ impl FileToolDispatcherV1 {
                     self.records
                         .record_todo_state(&self.record.proposal.run_id, &todos)
                         .map_err(|error| error.to_string())?;
+                    // Publish the list as a canonical fact as soon as the call
+                    // settles. Waiting for the command to settle left the UI
+                    // with nothing to show for the whole run.
+                    self.run_events
+                        .context_event("tool.todo", json!({"todos": todos}))
+                        .map_err(|error| error.to_string())?;
                     let value = json!({"todos": todos});
                     Ok((value, "Updated the Run task list.".to_owned()))
                 }
@@ -3217,6 +3223,13 @@ impl FileToolDispatcherV1 {
                     self.records
                         .record_goal_state(run_id, &next)
                         .map_err(|error| error.to_string())?;
+                    // A read that found no goal is not a change, so it publishes
+                    // nothing; every other transition is visible immediately.
+                    if goal::is_live(&next) || next["status"].as_str() == Some("cleared") {
+                        self.run_events
+                            .context_event("tool.goal", json!({"goal": next}))
+                            .map_err(|error| error.to_string())?;
+                    }
                     Ok((next, summary.to_owned()))
                 }
                 StoredFileToolLimitV1::WebSearch { configuration } => {

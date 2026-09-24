@@ -244,6 +244,51 @@ describe("Run details projection", () => {
       ]),
     );
   });
+
+  it("bounds the whole run by its own events, not by facts written before the prompt", () => {
+    // Changing the approval mode minutes before sending the prompt writes a
+    // chat-level fact with no run identity. It must not start the Run clock.
+    const preRun = event(1, "approval.mode_changed", {
+      mode: "full_access",
+      createdAt: "1770000000000",
+    });
+    const started = event(2, "command.started", {
+      runId: "run.test",
+      createdAt: "1780000000000",
+    });
+    const done = event(3, "span.completed", {
+      runId: "run.test",
+      createdAt: "1780000180000",
+    });
+    const view = projectRunDetails({
+      chat,
+      items: [],
+      events: [preRun, started, done],
+      records: [],
+      selectedId: null,
+    });
+    const fields = view.summary;
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Duration", value: "3 min 0 s" }),
+      ]),
+    );
+    expect(JSON.stringify(fields)).not.toContain("1666 min");
+  });
+
+  it("keeps every event when the chat has no run identity", () => {
+    const view = projectRunDetails({
+      chat: { ...chat, runId: "" },
+      items: [],
+      events: [
+        event(1, "approval.mode_changed", { createdAt: "1770000000000" }),
+        event(2, "message.assistant", { createdAt: "1770000060000" }),
+      ],
+      records: [],
+      selectedId: null,
+    });
+    expect(JSON.stringify(view.summary)).toContain("Duration");
+  });
 });
 
 function item(

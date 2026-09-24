@@ -122,7 +122,7 @@ export function formatRunDetailPrimitive(value: unknown): string {
 }
 
 function projectEntireRun(input: RunDetailsInput): RunDetailsView {
-  const bounds = timeBounds(input.events);
+  const bounds = runTimeBounds(input.events, input.chat.runId);
   const usage = runUsage(input.events, input.records);
   const models = availableValues(input.events, input.records, "model");
   const activityFields = [
@@ -618,6 +618,29 @@ function stringAt(value: unknown, key: string): string | undefined {
   return typeof candidate === "string" && candidate.length > 0
     ? candidate
     : undefined;
+}
+
+/**
+ * Timing for the whole Run, bounded by the Run's own events.
+ *
+ * The chat stream also carries control facts written before the prompt — an
+ * approval-mode change, a settings or model selection — and those have no run
+ * identity. Folding them into the bounds reported a Run as starting minutes
+ * before it did and inflated its duration by that lead time, so the bounds come
+ * from the events that name the Run. A Chat with no run identity keeps the
+ * whole-stream behaviour.
+ */
+function runTimeBounds(
+  events: readonly RuntimeEvent[],
+  runId: string,
+): {
+  readonly start?: number;
+  readonly duration?: number;
+} {
+  const owned = events.filter(
+    ({ payload }) => asRecord(payload).runId === runId && runId.length > 0,
+  );
+  return timeBounds(owned.length > 0 ? owned : events);
 }
 
 function timeBounds(events: readonly RuntimeEvent[]): {
