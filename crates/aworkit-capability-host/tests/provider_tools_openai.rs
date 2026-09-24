@@ -156,7 +156,7 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
     });
     let provider = provider(&origin, 1024 * 1024);
 
-    let first = execute(&provider, &request(Vec::new())).expect("first tool turn");
+    let first = recorded_size(execute(&provider, &request(Vec::new())).expect("first tool turn"));
     assert_eq!(
         first,
         vec![
@@ -175,7 +175,10 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             ModelToolEventV1::Usage {
                 input_tokens: 12,
                 output_tokens: 7,
-                cache: Default::default(),
+                cache: aworkit_capability_host::ModelCacheUsageV1 {
+                    total_tokens: Some(19),
+                    ..Default::default()
+                },
             },
             ModelToolEventV1::ToolCall {
                 call: match &first[5] {
@@ -191,7 +194,8 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             }
         ]
     );
-    let second = execute(&provider, &request(vec![exchange(&first)])).expect("result turn");
+    let second =
+        recorded_size(execute(&provider, &request(vec![exchange(&first)])).expect("result turn"));
     assert_eq!(
         second,
         vec![
@@ -204,7 +208,14 @@ fn openai_tool_call_and_result_round_trip_exact_wire_and_usage() {
             ModelToolEventV1::Usage {
                 input_tokens: 24,
                 output_tokens: 6,
-                cache: aworkit_capability_host::ModelCacheUsageV1 { cached_input_tokens: Some(20), cache_miss_input_tokens: Some(4) },
+                cache: aworkit_capability_host::ModelCacheUsageV1 {
+                    cached_input_tokens: Some(20),
+                    cache_miss_input_tokens: Some(4),
+                    // The fixture reports a total that matches its own prompt and
+                    // completion, and the request size is asserted by the helper.
+                    total_tokens: Some(30),
+                    ..Default::default()
+                },
             }
         ]
     );
@@ -230,7 +241,7 @@ fn openai_rejects_malformed_calls_and_oversized_tool_responses() {
         .expect_err("malformed tool call");
     assert!(error.to_string().contains("unsupported tool call"));
     assert_eq!(
-        events,
+        recorded_size(events),
         vec![
             ModelToolEventV1::Progress {
                 text: "Model is preparing a tool call…".to_owned()
@@ -315,4 +326,32 @@ fn openai_reasoning_is_observed_before_the_stream_finishes() {
     );
     worker.join().expect("provider worker");
     server.join().expect("stream fixture");
+}
+
+/// Clears the measured request size so the exact expected events read plainly.
+/// Every usage event must have recorded one: it is the only independent measure
+/// of what the provider was billed for.
+fn recorded_size(events: Vec<ModelToolEventV1>) -> Vec<ModelToolEventV1> {
+    events
+        .into_iter()
+        .map(|event| match event {
+            ModelToolEventV1::Usage {
+                input_tokens,
+                output_tokens,
+                mut cache,
+            } => {
+                assert!(
+                    cache.sent_bytes.is_some_and(|bytes| bytes > 0),
+                    "usage event did not record the sent request size"
+                );
+                cache.sent_bytes = None;
+                ModelToolEventV1::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache,
+                }
+            }
+            other => other,
+        })
+        .collect()
 }

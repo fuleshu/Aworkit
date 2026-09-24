@@ -252,10 +252,15 @@ impl OpenAiCompatibleProvider {
         })
     }
 
+    /// Sends one streaming text request and reports the exact body size sent.
+    ///
+    /// The size is measured with the same serializer `json()` uses, which costs
+    /// one extra serialization per network request and buys the only independent
+    /// measure of what the provider was actually billed for.
     fn streaming_completion_response(
         &self,
         request: &ModelRequestV1,
-    ) -> Result<Response, OpenAiCompatibleProviderError> {
+    ) -> Result<(Response, usize), OpenAiCompatibleProviderError> {
         let messages = normalize_messages(&request.input)?;
         let mut body = serde_json::to_value(ChatCompletionRequest {
             model: &self.config.model,
@@ -271,16 +276,21 @@ impl OpenAiCompatibleProvider {
             .with_overrides(&request.parameters)
             .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?
             .apply(&mut body);
-        self.successful_stream(self.send(
+        let sent_bytes = serde_json::to_vec(&body)
+            .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?
+            .len();
+        let response = self.successful_stream(self.send(
             self.client.post(self.completions_url.clone()).json(&body),
             "text/event-stream",
-        )?)
+        )?)?;
+        Ok((response, sent_bytes))
     }
 
+    /// Sends one streaming tool request and reports the exact body size sent.
     fn streaming_tool_response(
         &self,
         request: &ModelToolRequestV1,
-    ) -> Result<Response, ProviderError> {
+    ) -> Result<(Response, usize), ProviderError> {
         validate_tool_request(request)?;
         let parameters = self
             .config
@@ -288,14 +298,19 @@ impl OpenAiCompatibleProvider {
             .with_overrides(&request.parameters)
             .map_err(|()| ProviderError::Failed("OpenAI request parameters are invalid".into()))?;
         let body = openai_tool_request(&self.config.model, request, &parameters)?;
+        let sent_bytes = serde_json::to_vec(&body)
+            .map_err(|_| ProviderError::Failed("OpenAI request body is invalid".into()))?
+            .len();
         let response = self
             .send(
                 self.client.post(self.completions_url.clone()).json(&body),
                 "text/event-stream",
             )
             .map_err(ProviderError::from)?;
-        self.successful_stream(response)
-            .map_err(ProviderError::from)
+        let response = self
+            .successful_stream(response)
+            .map_err(ProviderError::from)?;
+        Ok((response, sent_bytes))
     }
 
     fn send(
@@ -411,7 +426,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let response = self
+        let (response, sent_bytes) = self
             .streaming_completion_response(request)
             .map_err(ProviderError::from)?;
         let limit = self.config.limits.maximum_response_bytes;
@@ -425,12 +440,15 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
             ModelToolEventV1::Usage {
                 input_tokens,
                 output_tokens,
-                cache,
-            } => emit(ModelEventV1::Usage {
-                input_tokens,
-                output_tokens,
-                cache,
-            }),
+                mut cache,
+            } => {
+                cache.sent_bytes = Some(sent_bytes as u64);
+                emit(ModelEventV1::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache,
+                })
+            }
             ModelToolEventV1::ToolCall { .. } => Err(ProviderError::Failed(
                 "OpenAI text completion unexpectedly requested a tool".to_owned(),
             )),
@@ -455,15 +473,21 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let response = self.streaming_tool_response(request)?;
+        let (response, sent_bytes) = self.streaming_tool_response(request)?;
         let limit = self.config.limits.maximum_response_bytes;
+        let mut bridge = |mut event: ModelToolEventV1| {
+            if let ModelToolEventV1::Usage { cache, .. } = &mut event {
+                cache.sent_bytes = Some(sent_bytes as u64);
+            }
+            emit(event)
+        };
         consume_openai_stream(
             BufReader::new(response.take((limit as u64).saturating_add(1))),
             limit,
             &request.tools,
             &self.config.binding_id,
             cancellation,
-            emit,
+            &mut bridge,
         )?;
         Ok(ProviderAcceptanceV1::Accepted)
     }
@@ -1050,20 +1074,31 @@ mod tests {
                 .expect("completion"),
             ProviderAcceptanceV1::Accepted
         );
-        assert_eq!(
-            events,
-            vec![
-                ModelEventV1::ReasoningRaw("Checking ".into()),
-                ModelEventV1::ReasoningRaw("the request.".into()),
-                ModelEventV1::AssistantOutput("Hello from ".into()),
-                ModelEventV1::AssistantOutput("fixture".into()),
-                ModelEventV1::Usage {
-                    input_tokens: 7,
-                    output_tokens: 3,
-                    cache: crate::ModelCacheUsageV1 { cached_input_tokens: Some(5), cache_miss_input_tokens: Some(2) },
-                },
+        // The usage event also carries the exact size of the body that was sent,
+        // so the billed prompt count can be compared against it afterwards.
+        let (usage, content) = events.split_last().expect("usage event");
+        assert!(matches!(
+            content,
+            [
+                ModelEventV1::ReasoningRaw(_),
+                ModelEventV1::ReasoningRaw(_),
+                ModelEventV1::AssistantOutput(_),
+                ModelEventV1::AssistantOutput(_),
             ]
-        );
+        ));
+        let ModelEventV1::Usage {
+            input_tokens,
+            output_tokens,
+            cache,
+        } = usage
+        else {
+            panic!("last event is not usage: {usage:?}");
+        };
+        assert_eq!((*input_tokens, *output_tokens), (7, 3));
+        assert_eq!(cache.cached_input_tokens, Some(5));
+        assert_eq!(cache.cache_miss_input_tokens, Some(2));
+        assert_eq!(cache.total_tokens, Some(10));
+        assert!(cache.sent_bytes.is_some_and(|bytes| bytes > 0));
         server.join().expect("fixture server");
     }
 

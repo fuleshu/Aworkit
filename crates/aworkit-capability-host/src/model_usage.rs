@@ -1,5 +1,7 @@
-//! Optional provider-reported cache counters. These partition input usage;
-//! they are never added to the total input tokens or reconstructed for old calls.
+//! Optional provider-reported accounting counters. The token counters partition
+//! input usage; they are never added to the total input tokens or reconstructed
+//! for old calls. The harness also records the size of the request it sent, so a
+//! billed prompt count can always be compared against the bytes that produced it.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -10,6 +12,15 @@ pub struct ModelCacheUsageV1 {
     pub cached_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_miss_input_tokens: Option<u64>,
+    /// Provider-reported total, kept so its own prompt and completion split can
+    /// be cross-checked against what it billed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    /// Size in bytes of the request body this call actually sent. A token covers
+    /// at least one byte, so a prompt count above this number is an accounting
+    /// fault rather than a large payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_bytes: Option<u64>,
 }
 
 impl ModelCacheUsageV1 {
@@ -34,6 +45,8 @@ impl ModelCacheUsageV1 {
             cache_miss_input_tokens: usage
                 .get("prompt_cache_miss_tokens")
                 .and_then(Value::as_u64),
+            total_tokens: usage.get("total_tokens").and_then(Value::as_u64),
+            sent_bytes: None,
         }
     }
 }

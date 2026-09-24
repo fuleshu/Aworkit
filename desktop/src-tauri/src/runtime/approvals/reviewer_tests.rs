@@ -23,6 +23,7 @@ impl ProviderEnginePortV1 for Provider {
             cache: ModelCacheUsageV1 {
                 cached_input_tokens: Some(80),
                 cache_miss_input_tokens: Some(20),
+                ..Default::default()
             },
         })?;
         if self.0 {

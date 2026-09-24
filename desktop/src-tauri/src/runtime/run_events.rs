@@ -1418,6 +1418,7 @@ mod tests {
             cache: aworkit_capability_host::ModelCacheUsageV1 {
                 cached_input_tokens: Some(8),
                 cache_miss_input_tokens: Some(3),
+                ..Default::default()
             },
         });
         observer.model_turn_completed(&json!({"toolCall":"call.1"}), "completed");
