@@ -16,6 +16,9 @@
 // Invariants per turn, both hard:
 //   tokens never exceed bytes       inputTokens <= sentBytes
 //   a token covers at least a byte  cacheMissInputTokens <= sentBytes
+// The stronger reading compares the hit rate with prefixShare, the share of the
+// request that repeats the previous one: a gap means a prefix loss on the
+// provider side, which is what the recorded benchmark shows on eight turns.
 // A violation means the provider's counters, not the request, need explaining.
 // Falling inside the bounds does not prove the split: a cache boundary can sit
 // anywhere in the request, so the table is read together with sentBytes.
@@ -57,6 +60,13 @@ function newestMeasuredChat(database) {
 }
 
 /** Every model turn of one chat, oldest first. */
+/** Share of the request that repeats the previous one, as a percentage. */
+function prefixShare(sent, consumed) {
+  return sent === null || consumed === null || sent === 0
+    ? null
+    : (consumed / sent) * 100;
+}
+
 function turns(database, chatId) {
   const rows = database
     .prepare(
@@ -84,6 +94,7 @@ function turns(database, chatId) {
       miss: cache.cacheMissInputTokens ?? null,
       total: cache.totalTokens ?? null,
       sentBytes: cache.sentBytes ?? null,
+      prefixBytes: cache.commonPrefixBytes ?? null,
       request: requests.get(payload.spanId) ?? null,
     });
   }
@@ -103,7 +114,7 @@ function pad(value, width) {
 function reportAworkit(chatId, rows) {
   console.log(`chat ${chatId}: ${rows.length} model turns`);
   console.log(
-    "  seq  inputTokens  cached    miss  cacheHit  sentBytes  typedChars  flags",
+    "  seq  inputTokens  cached    miss  cacheHit  prefixShare  sentBytes  typedChars  flags",
   );
   let miss = 0;
   let cached = 0;
@@ -115,6 +126,11 @@ function reportAworkit(chatId, rows) {
     cached += turn.cached ?? 0;
     input += turn.inputTokens;
     const chars = requestChars(turn.request);
+    const share = prefixShare(turn.sentBytes, turn.prefixBytes);
+    const hitRate =
+      turn.cached === null || turn.inputTokens === 0
+        ? null
+        : (turn.cached / turn.inputTokens) * 100;
     const flags = [];
     if (turn.sentBytes !== null && turn.inputTokens > turn.sentBytes) {
       flags.push("tokens>bytes");
@@ -122,16 +138,19 @@ function reportAworkit(chatId, rows) {
     if (turn.sentBytes !== null && (turn.miss ?? 0) > turn.sentBytes) {
       flags.push("miss>bytes");
     }
+    // A hit far below the repeated prefix means the provider dropped a prefix we
+    // kept identical. The ten-point margin is a reading aid, not a bound.
+    if (share !== null && hitRate !== null && share - hitRate > 10) {
+      flags.push("hit<prefix");
+    }
     if (turn.sentBytes === null) unmeasured += 1;
     if (flags.length > 0) flagged += 1;
-    const hit =
-      turn.cached === null || turn.inputTokens === 0
-        ? "-"
-        : `${((turn.cached / turn.inputTokens) * 100).toFixed(1)}%`;
     console.log(
       `  ${pad(turn.sequence ?? "", 5)} ${pad(turn.inputTokens, 11)} ` +
-        `${pad(turn.cached ?? "-", 7)} ${pad(turn.miss ?? "-", 7)} ${pad(hit, 8)} ` +
-        `${pad(turn.sentBytes ?? "-", 10)} ${pad(chars ?? "-", 11)}  ${flags.join(",")}`,
+        `${pad(turn.cached ?? "-", 7)} ${pad(turn.miss ?? "-", 7)} ` +
+        `${pad(hitRate === null ? "-" : `${hitRate.toFixed(1)}%`, 8)} ` +
+        `${pad(share === null ? "-" : `${share.toFixed(1)}%`, 11)} ` +
+        `${pad(turn.sentBytes ?? "-", 9)} ${pad(chars ?? "-", 10)}  ${flags.join(",")}`,
     );
   }
   const share = input === 0 ? 0 : (miss / input) * 100;
