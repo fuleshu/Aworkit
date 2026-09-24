@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useCopyFeedback } from "./clipboard";
 import { prettyJson } from "./jsonPresentation";
 import { rawJsonPages } from "./rawJsonPages";
 
@@ -9,6 +10,7 @@ export function RawJsonView({ value }: { readonly value: unknown }): React.JSX.E
   const [requestedPage, setPage] = useState(0);
   const page = Math.min(requestedPage, pages.length - 1);
   const container = useRef<HTMLDivElement>(null);
+  const { copied, copy } = useCopyFeedback(raw);
   const selectPage = (next: number) => {
     setPage(Math.max(0, Math.min(pages.length - 1, Math.trunc(next))));
     const scroll = container.current?.closest(".run-details-content");
@@ -20,9 +22,12 @@ export function RawJsonView({ value }: { readonly value: unknown }): React.JSX.E
         Exact redacted records for the currently selected scope.
       </p>
       <div className="run-details-json-toolbar">
-        <button title="Copy the complete redacted JSON for this Run details scope" type="button"
-          onClick={() => void navigator.clipboard?.writeText(raw)}>
-          Copy JSON
+        <button
+          type="button"
+          title="Copy the complete redacted JSON for this Run details scope"
+          onClick={copy}
+        >
+          {copied ? "Copied" : "Copy JSON"}
         </button>
         {pages.length > 1 && (
           <nav className="run-details-json-pages" aria-label="Raw JSON parts">

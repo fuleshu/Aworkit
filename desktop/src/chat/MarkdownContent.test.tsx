@@ -96,3 +96,67 @@ describe("MarkdownContent", () => {
     store.dispose();
   });
 });
+describe("MarkdownContent code blocks", () => {
+  const FENCED = "Intro\n\n```js\nconst answer = 42;\n```\n";
+
+  it("offers a copy control for a fenced block and copies its exact source", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<MarkdownContent>{FENCED}</MarkdownContent>);
+    const copy = screen.getByRole("button", { name: "Copy this code block" });
+    expect(screen.getByText("js")).toBeVisible();
+    fireEvent.click(copy);
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("const answer = 42;\n"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copied to the clipboard" }),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("labels a block without a language and never copies on its own", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<MarkdownContent>{"```\nplain text\n```\n"}</MarkdownContent>);
+    expect(
+      screen.getByRole("button", { name: "Copy this code block" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("js")).toBeNull();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("falls back to execCommand when the host has no clipboard API", async () => {
+    const exec = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("navigator", {});
+    Object.defineProperty(document, "execCommand", {
+      value: exec,
+      configurable: true,
+    });
+    render(<MarkdownContent>{"```\nfallback\n```\n"}</MarkdownContent>);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy this code block" }),
+    );
+    await waitFor(() => expect(exec).toHaveBeenCalledWith("copy"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copied to the clipboard" }),
+      ).toBeTruthy(),
+    );
+    Reflect.deleteProperty(document, "execCommand");
+  });
+
+  it("reports a refused clipboard instead of claiming success", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<MarkdownContent>{"```\ndenied\n```\n"}</MarkdownContent>);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy this code block" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(
+      screen.getByRole("button", { name: "Copy this code block" }),
+    ).toBeTruthy();
+  });
+});

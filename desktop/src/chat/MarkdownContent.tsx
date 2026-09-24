@@ -1,5 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownLink } from "./MarkdownLink";
 
 const renderedElements = [
@@ -46,7 +47,7 @@ export function MarkdownContent({
     <div className={className}>
       <ReactMarkdown
         allowedElements={[...renderedElements]}
-        components={{ a: MarkdownLink }}
+        components={{ a: MarkdownLink, pre: MarkdownCodeBlock }}
         remarkPlugins={[remarkGfm]}
         unwrapDisallowed
         urlTransform={defaultUrlTransform}

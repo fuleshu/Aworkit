@@ -1,0 +1,44 @@
+.markdown-code {
+  margin: 0 0 8px;
+  border-radius: 5px;
+  background: var(--aw-inset);
+  overflow: hidden;
+}
+/* More specific than the bubble's own `pre` rule so the header stays attached. */
+div.markdown-code > pre {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px 10px 8px;
+}
+.markdown-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 5px 6px 0 10px;
+  min-height: 22px;
+}
+.markdown-code-language {
+  margin-right: auto;
+  color: var(--aw-muted);
+  font-size: var(--aw-font-caption);
+}
+.markdown-code-copy {
+  border: 1px solid var(--aw-divider);
+  border-radius: 5px;
+  padding: 1px 8px;
+  background: transparent;
+  color: var(--aw-muted);
+  font-size: var(--aw-font-caption);
+}
+.markdown-code-copy:hover {
+  color: var(--aw-text);
+  border-color: var(--aw-muted);
+}
+.markdown-code-copy:focus-visible {
+  outline: 2px solid var(--aw-accent);
+  outline-offset: 1px;
+}
