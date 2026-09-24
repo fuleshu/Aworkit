@@ -4,6 +4,8 @@ mod anthropic;
 #[cfg(test)]
 mod context_tests;
 #[cfg(test)]
+mod recorded_prefix_tests;
+#[cfg(test)]
 mod wire_size_tests;
 mod gemini;
 mod openai;
