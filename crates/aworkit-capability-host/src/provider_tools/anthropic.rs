@@ -47,25 +47,32 @@ pub(crate) fn anthropic_tool_request(
             .assistant_content
             .iter()
             .map(|content| match content {
-                ModelAssistantContentV1::Text { text } => Ok(json!({
+                ModelAssistantContentV1::Text { text } => Ok(Some(json!({
                     "type": "text",
                     "text": text,
-                })),
+                }))),
                 ModelAssistantContentV1::ToolCall { call } => {
                     if call.provider_call_id.as_deref() != Some(call.call_id.as_str())
                         || call.provider_context.is_some()
                     {
                         return Err(invalid_request());
                     }
-                    Ok(json!({
+                    Ok(Some(json!({
                         "type": "tool_use",
                         "id": call.call_id,
                         "name": call.name,
                         "input": call.arguments,
-                    }))
+                    })))
                 }
+                // Retained chain of thought is DeepSeek-specific text. This
+                // protocol carries thinking only as a provider-signed block,
+                // which a replay cannot forge, so the part is not sent.
+                ModelAssistantContentV1::Reasoning { .. } => Ok(None),
             })
-            .collect::<Result<Vec<_>, ProviderError>>()?;
+            .collect::<Result<Vec<_>, ProviderError>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         messages.push(json!({"role":"assistant","content":assistant}));
 
         let results = exchange

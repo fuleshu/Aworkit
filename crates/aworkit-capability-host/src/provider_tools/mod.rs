@@ -4,6 +4,8 @@ mod anthropic;
 #[cfg(test)]
 mod context_tests;
 #[cfg(test)]
+mod reasoning_passback_tests;
+#[cfg(test)]
 mod recorded_prefix_tests;
 #[cfg(test)]
 mod wire_size_tests;

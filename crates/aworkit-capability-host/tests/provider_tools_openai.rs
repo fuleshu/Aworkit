@@ -90,6 +90,7 @@ fn exchange(events: &[ModelToolEventV1]) -> ModelToolExchangeV1 {
         .find_map(|content| match content {
             ModelAssistantContentV1::ToolCall { call } => Some(call.call_id.clone()),
             ModelAssistantContentV1::Text { .. } => None,
+            ModelAssistantContentV1::Reasoning { .. } => None,
         })
         .expect("tool call");
     ModelToolExchangeV1 {

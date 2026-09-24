@@ -125,6 +125,7 @@ struct ProjectionBuilder {
     cache: crate::ModelCacheUsageV1,
     compacted_events: Vec<ModelResultEventV1>,
     assistant_index: Option<usize>,
+    reasoning_content_index: Option<usize>,
     reasoning_raw_index: Option<usize>,
     reasoning_summary_index: Option<usize>,
     progress_index: Option<usize>,
@@ -142,6 +143,27 @@ impl ProjectionBuilder {
                 _ => self.assistant_content.push(ModelAssistantContentV1::Text {
                     text: text.to_owned(),
                 }),
+            }
+        }
+        // Only the provider's raw chain of thought is retained for passback; a
+        // display summary is a local rendering and replaying it as provider
+        // reasoning would send the provider text it never produced.
+        if matches!(kind, TextKind::ReasoningRaw) {
+            match self.reasoning_content_index {
+                Some(index) => {
+                    if let Some(ModelAssistantContentV1::Reasoning { text: accumulated }) =
+                        self.assistant_content.get_mut(index)
+                    {
+                        accumulated.push_str(text);
+                    }
+                }
+                None => {
+                    self.assistant_content
+                        .push(ModelAssistantContentV1::Reasoning {
+                            text: text.to_owned(),
+                        });
+                    self.reasoning_content_index = Some(self.assistant_content.len() - 1);
+                }
             }
         }
 
@@ -318,5 +340,39 @@ mod tests {
             1
         );
         assert_eq!(events.len(), 5);
+    }
+
+    #[test]
+    fn raw_reasoning_is_retained_for_passback_and_a_summary_is_not() {
+        let events = vec![
+            ModelToolEventV1::ReasoningRaw {
+                text: "Weigh the ".to_owned(),
+            },
+            ModelToolEventV1::ReasoningRaw {
+                text: "reader.".to_owned(),
+            },
+            // A display summary is a local rendering, not text the provider
+            // produced, so replaying it would invent a turn's chain of thought.
+            ModelToolEventV1::ReasoningSummary {
+                text: "Considered the reader.".to_owned(),
+            },
+            ModelToolEventV1::AssistantOutput {
+                text: "Reading.".to_owned(),
+            },
+        ];
+
+        let projection = project_model_tool_events(&events);
+
+        assert_eq!(
+            projection.assistant_content,
+            vec![
+                ModelAssistantContentV1::Reasoning {
+                    text: "Weigh the reader.".to_owned(),
+                },
+                ModelAssistantContentV1::Text {
+                    text: "Reading.".to_owned(),
+                },
+            ]
+        );
     }
 }

@@ -42,7 +42,7 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
             .assistant_content
             .iter()
             .map(|content| match content {
-                ModelAssistantContentV1::Text { text } => Ok(json!({"text":text})),
+                ModelAssistantContentV1::Text { text } => Ok(Some(json!({"text":text}))),
                 ModelAssistantContentV1::ToolCall { call } => {
                     if call
                         .provider_call_id
@@ -65,10 +65,17 @@ pub(crate) fn gemini_tool_request(request: &ModelToolRequestV1) -> Result<Value,
                             Value::String(context.as_str().to_owned()),
                         );
                     }
-                    Ok(Value::Object(part))
+                    Ok(Some(Value::Object(part)))
                 }
+                // Retained chain of thought is DeepSeek-specific text. This
+                // protocol carries thoughts only as signature-bearing parts,
+                // which a replay cannot forge, so the part is not sent.
+                ModelAssistantContentV1::Reasoning { .. } => Ok(None),
             })
-            .collect::<Result<Vec<_>, ProviderError>>()?;
+            .collect::<Result<Vec<_>, ProviderError>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         contents.push(json!({"role":"model","parts":model_parts}));
 
         let result_parts = exchange

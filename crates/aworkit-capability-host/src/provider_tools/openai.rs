@@ -36,10 +36,12 @@ pub(crate) fn openai_tool_request(
         {
             messages.push(super::context_message(context, "openai")?);
         }
+        let mut reasoning = String::new();
         let mut text = String::new();
         let mut calls = Vec::new();
         for content in &exchange.assistant_content {
             match content {
+                ModelAssistantContentV1::Reasoning { text: part } => reasoning.push_str(part),
                 ModelAssistantContentV1::Text { text: part } => text.push_str(part),
                 ModelAssistantContentV1::ToolCall { call } => {
                     if call.provider_call_id.as_deref() != Some(call.call_id.as_str())
@@ -63,6 +65,13 @@ pub(crate) fn openai_tool_request(
             "role": "assistant",
             "content": if text.is_empty() { Value::Null } else { Value::String(text) },
         });
+        // DeepSeek's thinking mode requires the turn's chain of thought on
+        // tool-call turns and counts it in every later prompt either way. Sending
+        // the exact retained text keeps this prompt an extension of the one the
+        // provider cached, instead of leaving it to re-insert those tokens.
+        if !reasoning.is_empty() {
+            assistant["reasoning_content"] = Value::String(reasoning);
+        }
         if !calls.is_empty() { assistant["tool_calls"] = json!(calls); }
         messages.push(assistant);
         for result in &exchange.results {

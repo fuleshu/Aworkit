@@ -22,6 +22,10 @@ impl Unit {
                     .iter()
                     .map(|p| match p {
                         ModelAssistantContentV1::Text { text } => text_tokens(text) + 4,
+                        // Replayed chain of thought occupies the provider's
+                        // prompt like any other assistant text, so pressure
+                        // accounting has to count it too.
+                        ModelAssistantContentV1::Reasoning { text } => text_tokens(text) + 4,
                         ModelAssistantContentV1::ToolCall { call } => {
                             text_tokens(&call.name) + json_tokens(&call.arguments) + 4
                         }

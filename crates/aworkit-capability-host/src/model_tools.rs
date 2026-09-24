@@ -97,6 +97,15 @@ pub struct ModelToolResultV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelAssistantContentV1 {
+    /// Provider chain of thought, replayed verbatim on the following turn.
+    ///
+    /// DeepSeek's thinking mode counts a turn's reasoning inside every later
+    /// prompt whether or not the client sends it back. A client that omits it
+    /// leaves the provider to re-insert those tokens, so the prompt the
+    /// provider caches and the prompt the client believes it sent drift apart,
+    /// and one cache block can be re-billed in full. Retaining the exact text
+    /// keeps every prompt a deterministic extension of the previous one.
+    Reasoning { text: String },
     Text { text: String },
     ToolCall { call: ModelToolCallV1 },
 }
@@ -323,9 +332,10 @@ fn normalize_messages(
             .transpose()
             .map_err(|_| invalid_tool_request())?
             .unwrap_or_default();
-        // Every image is validated on its own. There is no image count or
-        // aggregate image-byte allowance in Aworkit: a request carries exactly
-        // the images its Chat holds, so accumulating images never fails a node.
+        // Every image is validated on its own. A request carries exactly the
+        // images its Chat holds: there is no image count or aggregate image-byte
+        // allowance here, so accumulating images never fails a node. How many
+        // images a dispatch attaches is decided later, at materialization.
         for image in &images {
             image.attachment.validate()?;
         }
@@ -465,7 +475,7 @@ fn validate_exchange(
         .iter()
         .filter_map(|content| match content {
             ModelAssistantContentV1::ToolCall { call } => Some(call),
-            ModelAssistantContentV1::Text { .. } => None,
+            ModelAssistantContentV1::Text { .. } | ModelAssistantContentV1::Reasoning { .. } => None,
         })
         .collect::<Vec<_>>();
     // A runtime completion barrier may retain a text-only attempted response
@@ -484,6 +494,12 @@ fn validate_exchange(
                 return Err(invalid_tool_request());
             }
             ModelAssistantContentV1::Text { .. } => {}
+            // Replayed chain of thought is provider-authored text. It is
+            // replayed verbatim, including a provider's own empty fragment.
+            ModelAssistantContentV1::Reasoning { text } if text.contains('\0') => {
+                return Err(invalid_tool_request());
+            }
+            ModelAssistantContentV1::Reasoning { .. } => {}
             ModelAssistantContentV1::ToolCall { call } => {
                 validate_call(call, definitions)?;
                 if !call_ids.insert(call.call_id.as_str()) {
