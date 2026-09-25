@@ -152,6 +152,7 @@ fn pending_failure(
         error,
         pending.input_tokens,
         pending.output_tokens,
+        pending.cache_totals(),
         pending.attempted_model_turns,
         pending.settled_tool_calls,
         &pending.exchanges,

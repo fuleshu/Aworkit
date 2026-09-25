@@ -14,9 +14,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use aworkit_capability_host::{
-    CancellationToken, FrozenModelGateway, ModelCandidateV1, ModelDispatchEvidenceV1,
-    ModelRequestV1, ModelResolutionPlanV1, ModelToolCallV1, ModelToolExchangeV1, ProviderError,
-    project_model_events,
+    CancellationToken, FrozenModelGateway, ModelCacheTotalsV1, ModelCandidateV1,
+    ModelDispatchEvidenceV1, ModelRequestV1, ModelResolutionPlanV1, ModelToolCallV1,
+    ModelToolExchangeV1, ProviderError, project_model_events,
 };
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
@@ -221,6 +221,12 @@ pub(crate) struct PendingGraphPassStateV1 {
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
+    /// Provider-reported cache counters accumulated before the suspension.
+    /// Checkpoints written before the aggregate existed restore them as unknown.
+    #[serde(default)]
+    pub cached_input_units: Option<u64>,
+    #[serde(default)]
+    pub uncached_input_units: Option<u64>,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     #[serde(default)]
@@ -260,6 +266,9 @@ pub(crate) struct GraphPassOutcomeV1 {
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub input_units: u64,
     pub output_units: u64,
+    /// Whole-pass provider cache counters; absent when no turn reported them.
+    pub cached_input_units: Option<u64>,
+    pub uncached_input_units: Option<u64>,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
 }
@@ -622,6 +631,7 @@ struct PassMachine<'a> {
     exchanges: Vec<ModelToolExchangeV1>,
     input_units: u64,
     output_units: u64,
+    cache_units: ModelCacheTotalsV1,
     attempted_model_turns: u32,
     settled_tool_calls: u32,
     timeout_recoveries: u32,
@@ -659,6 +669,8 @@ impl<'a> PassMachine<'a> {
             self.exchanges = pending.exchanges.clone();
             self.input_units = pending.input_units;
             self.output_units = pending.output_units;
+            self.cache_units.cached_input_tokens = pending.cached_input_units;
+            self.cache_units.cache_miss_input_tokens = pending.uncached_input_units;
             self.attempted_model_turns = pending.attempted_model_turns;
             self.settled_tool_calls = pending.settled_tool_calls;
             self.timeout_recoveries = pending.timeout_recoveries;
@@ -1042,6 +1054,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
             timeout_recoveries: self.timeout_recoveries,
@@ -1066,6 +1080,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
         }
@@ -1285,6 +1301,7 @@ impl<'a> PassMachine<'a> {
                     let units = (turn.input_tokens, turn.output_tokens);
                     self.input_units = self.input_units.saturating_add(units.0);
                     self.output_units = self.output_units.saturating_add(units.1);
+                    self.cache_units.add(turn.cache);
                     if text.trim().is_empty() {
                         Err(format!(
                             "agent node '{}' returned no assistant text",
@@ -1329,6 +1346,7 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(completed.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(completed.input_tokens);
                 self.output_units = self.output_units.saturating_add(completed.output_tokens);
+                self.cache_units.merge(completed.cache_totals());
                 self.timeout_recoveries = self
                     .timeout_recoveries
                     .saturating_add(completed.timeout_recoveries);
@@ -1361,6 +1379,7 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(failure.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(failure.input_tokens);
                 self.output_units = self.output_units.saturating_add(failure.output_tokens);
+                self.cache_units.merge(failure.cache_totals());
                 self.exchanges.extend(failure.exchanges);
                 self.tool_activity.extend(failure.activities);
                 Err(format!(
@@ -1595,6 +1614,7 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(completed.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(completed.input_tokens);
                 self.output_units = self.output_units.saturating_add(completed.output_tokens);
+                self.cache_units.merge(completed.cache_totals());
                 self.timeout_recoveries = self
                     .timeout_recoveries
                     .saturating_add(completed.timeout_recoveries);
@@ -1624,6 +1644,7 @@ impl<'a> PassMachine<'a> {
                     .saturating_add(failure.settled_tool_calls);
                 self.input_units = self.input_units.saturating_add(failure.input_tokens);
                 self.output_units = self.output_units.saturating_add(failure.output_tokens);
+                self.cache_units.merge(failure.cache_totals());
                 self.exchanges.extend(failure.exchanges);
                 self.tool_activity.extend(failure.activities);
                 AgentResumeOutcomeV1::Failed(format!(
@@ -1807,6 +1828,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
             timeout_recoveries: self.timeout_recoveries,
@@ -1824,6 +1847,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
         }
@@ -1842,6 +1867,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
         }
@@ -1860,6 +1887,8 @@ impl<'a> PassMachine<'a> {
             exchanges: self.exchanges.clone(),
             input_units: self.input_units,
             output_units: self.output_units,
+            cached_input_units: self.cache_units.cached_input_tokens,
+            uncached_input_units: self.cache_units.cache_miss_input_tokens,
             attempted_model_turns: self.attempted_model_turns,
             settled_tool_calls: self.settled_tool_calls,
         }
@@ -1923,6 +1952,7 @@ pub(crate) fn execute_graph_pass_observed(
         exchanges: Vec::new(),
         input_units: 0,
         output_units: 0,
+        cache_units: ModelCacheTotalsV1::default(),
         attempted_model_turns: 0,
         settled_tool_calls: 0,
         timeout_recoveries: 0,

@@ -114,6 +114,11 @@ impl BoundFileToolAuthorityV1 {
             error,
             input_units,
             output_units,
+            // Compaction preparation makes one auxiliary summary call whose
+            // usage is published separately as context.compaction-ended, so the
+            // pass-level cache aggregate has nothing to add here.
+            cached_input_units: None,
+            uncached_input_units: None,
             approval: None,
             pending_state: None,
             stopped_state: None,

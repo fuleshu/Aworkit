@@ -236,6 +236,8 @@ impl WorkflowExecutionPipeline {
             model: prepared.provider.model.clone(),
             input_units: 0,
             output_units: 0,
+            cached_input_units: None,
+            uncached_input_units: None,
             model_turns: 0,
             tool_calls: 0,
             tool_activity: Vec::new(),
@@ -258,6 +260,8 @@ impl WorkflowExecutionPipeline {
             result.model = outcome.model;
             result.input_units = outcome.input_units;
             result.output_units = outcome.output_units;
+            result.cached_input_units = outcome.cached_input_units;
+            result.uncached_input_units = outcome.uncached_input_units;
             result.model_turns = u64::from(outcome.attempted_model_turns);
             result.tool_calls = u64::from(outcome.settled_tool_calls);
             result.tool_activity = outcome.tool_activity;
@@ -265,6 +269,8 @@ impl WorkflowExecutionPipeline {
         } else if let Some(next) = next {
             result.input_units = next.input_units;
             result.output_units = next.output_units;
+            result.cached_input_units = next.cached_input_units;
+            result.uncached_input_units = next.uncached_input_units;
             result.model_turns = u64::from(next.attempted_model_turns);
             result.tool_calls = u64::from(next.settled_tool_calls);
             result.tool_activity = next.tool_activity;

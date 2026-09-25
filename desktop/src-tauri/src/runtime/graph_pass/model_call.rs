@@ -88,6 +88,7 @@ impl PassMachine<'_> {
             let text = turn.assistant_text;
             self.input_units = self.input_units.saturating_add(turn.input_tokens);
             self.output_units = self.output_units.saturating_add(turn.output_tokens);
+            self.cache_units.add(turn.cache);
             if text.trim().is_empty() {
                 return Err(format!(
                     "model_call node '{}' returned no assistant text",

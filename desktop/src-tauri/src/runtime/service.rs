@@ -59,7 +59,8 @@ use super::{
     history::{
         ChatHistory, ConversationMessage, FrozenChatExecutionContextV1,
         FrozenChatExecutionRecordV1, FrozenCredentialBindingV1, FrozenToolBindingV1,
-        PendingChatCommandV1, canonical_hash, identity_for_seed, message_fact, now_label,
+        MessageUsageV1, PendingChatCommandV1, canonical_hash, identity_for_seed, message_fact,
+        now_label,
     },
     mcp::probe_mcp_server,
     mcp::{materialize_bindings, prepare_mcp_server},
@@ -680,7 +681,7 @@ impl DesktopRuntime {
         if !pending_started {
             facts.push((
                 "message.user",
-                message_fact(&user_input, &created_at, None, None, None),
+                message_fact(&user_input, &created_at, MessageUsageV1::default()),
             ));
         } else {
             facts.extend(
@@ -1537,7 +1538,8 @@ impl DesktopRuntime {
                     }),
                 ));
             }
-            let mut user_fact = message_fact(&user_input, &created_at, None, None, None);
+            let mut user_fact =
+                message_fact(&user_input, &created_at, MessageUsageV1::default());
             if let Some(object) = user_fact.as_object_mut() {
                 if !images.is_empty() {
                     object.insert("attachments".into(), json!(images));
@@ -1601,9 +1603,13 @@ impl DesktopRuntime {
                 let mut fact = message_fact(
                     assistant,
                     &created_at,
-                    Some(&result.model),
-                    Some(result.input_units),
-                    Some(result.output_units),
+                    MessageUsageV1 {
+                        model: Some(&result.model),
+                        input_units: Some(result.input_units),
+                        output_units: Some(result.output_units),
+                        cached_input_units: result.cached_input_units,
+                        uncached_input_units: result.uncached_input_units,
+                    },
                 );
                 if let Some(object) = fact.as_object_mut() {
                     object.insert("commandId".into(), Value::String(input.command_id.clone()));
@@ -1720,6 +1726,8 @@ impl DesktopRuntime {
                         "status": execution_status_name(status),
                         "inputUnits":result.input_units,
                         "outputUnits":result.output_units,
+                        "cachedInputUnits":result.cached_input_units,
+                        "uncachedInputUnits":result.uncached_input_units,
                         "body": error,
                         "providerId": context.provider_id,
                         "modelId": context.model_id,
@@ -1964,9 +1972,13 @@ impl DesktopRuntime {
                 let mut fact = message_fact(
                     assistant,
                     &created_at,
-                    Some(&result.model),
-                    Some(result.input_units),
-                    Some(result.output_units),
+                    MessageUsageV1 {
+                        model: Some(&result.model),
+                        input_units: Some(result.input_units),
+                        output_units: Some(result.output_units),
+                        cached_input_units: result.cached_input_units,
+                        uncached_input_units: result.uncached_input_units,
+                    },
                 );
                 if let Some(object) = fact.as_object_mut() {
                     object.insert("commandId".into(), Value::String(input.command_id.clone()));
@@ -5137,6 +5149,8 @@ mod tests {
                 model: completion.model,
                 input_units: completion.input_units,
                 output_units: completion.output_units,
+                cached_input_units: None,
+                uncached_input_units: None,
                 model_turns: 1,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
@@ -5186,6 +5200,8 @@ mod tests {
                 model: request.provider.model,
                 input_units: 0,
                 output_units: 0,
+                cached_input_units: None,
+                uncached_input_units: None,
                 model_turns: 0,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
@@ -5258,6 +5274,8 @@ mod tests {
                 model: completion.model,
                 input_units: completion.input_units,
                 output_units: completion.output_units,
+                cached_input_units: None,
+                uncached_input_units: None,
                 model_turns: 1,
                 tool_calls: 0,
                 tool_activity: Vec::new(),
@@ -6261,7 +6279,11 @@ mod tests {
                     (
                         "message.user",
                         {
-                            let mut fact = message_fact("resume after a crash", &now_label(), None, None, None);
+                            let mut fact = message_fact(
+                                "resume after a crash",
+                                &now_label(),
+                                MessageUsageV1::default(),
+                            );
                             if let Some(object) = fact.as_object_mut() {
                                 object.insert(
                                     "requestId".into(),

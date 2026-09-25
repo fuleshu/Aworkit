@@ -35,7 +35,14 @@ impl Unit {
                     + 4
                     + e.results
                         .iter()
-                        .map(|r| result_tokens(&r.content) + 8 + r.images.iter().map(|i| json_tokens(&json!(i)) + 4).sum::<u64>())
+                        .map(|r| {
+                            result_tokens(&r.content)
+                                + 8
+                                + r.images
+                                    .iter()
+                                    .map(|i| json_tokens(&json!(i)) + 4)
+                                    .sum::<u64>()
+                        })
                         .sum::<u64>()
             }
         }

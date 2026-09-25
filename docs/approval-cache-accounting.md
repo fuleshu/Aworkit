@@ -36,6 +36,17 @@ separate from approval reviews. Partial coverage is labelled. Rate denominators
 include only calls reporting cached input; no inferred dollar prices are shown.
 Actual provider hits are best-effort and must be measured after deployment.
 
+A Run publishes its own whole-Run cached/uncached input totals on the same summary
+event that already carries `inputUnits`/`outputUnits` (`message.assistant`,
+`context.manual-completed/failed`, `execution.failed`). The figures accumulate the
+optional provider counters across the model loop, the graph pass, the durable
+outcome record and approval suspensions; a counter stays absent unless at least
+one turn reported it, so an unknown split is never published as a zero. The Run
+details panel prefers that aggregate over the per-span events it has loaded,
+because the client pages history and a loaded window is not a Run total. Runs
+recorded before the aggregate existed keep the windowed, explicitly labelled
+figures.
+
 ## Reviewer context
 
 The immutable policy and user-visible transcript precede workspace context,

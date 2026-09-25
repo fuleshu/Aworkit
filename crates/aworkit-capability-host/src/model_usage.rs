@@ -58,10 +58,172 @@ impl ModelCacheUsageV1 {
     }
 }
 
+/// Whole-Run accumulation of the optional cache counters above. A figure stays
+/// absent until at least one call reports it, so an unreported counter is never
+/// published as a fabricated zero. Reported values sum with saturation because a
+/// Run can bill more tokens than any single counter can hold.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ModelCacheTotalsV1 {
+    pub cached_input_tokens: Option<u64>,
+    pub cache_miss_input_tokens: Option<u64>,
+}
+
+impl ModelCacheTotalsV1 {
+    /// Adds one call's reported counters; a missing value leaves the running
+    /// total unchanged rather than resetting it.
+    pub fn add(&mut self, usage: ModelCacheUsageV1) {
+        self.merge(ModelCacheTotalsV1 {
+            cached_input_tokens: usage.cached_input_tokens,
+            cache_miss_input_tokens: usage.cache_miss_input_tokens,
+        });
+    }
+
+    /// Merges a nested total, keeping an unreported counter absent instead of
+    /// treating it as zero.
+    pub fn merge(&mut self, totals: ModelCacheTotalsV1) {
+        self.cached_input_tokens = add_units(self.cached_input_tokens, totals.cached_input_tokens);
+        self.cache_miss_input_tokens =
+            add_units(self.cache_miss_input_tokens, totals.cache_miss_input_tokens);
+    }
+
+    /// True when no call reported either counter.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cached_input_tokens.is_none() && self.cache_miss_input_tokens.is_none()
+    }
+}
+
+fn add_units(total: Option<u64>, next: Option<u64>) -> Option<u64> {
+    match (total, next) {
+        (Some(total), Some(next)) => Some(total.saturating_add(next)),
+        (Some(total), None) => Some(total),
+        (None, next) => next,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn totals_sum_reported_calls_and_keep_unreported_counters_absent() {
+        let mut totals = ModelCacheTotalsV1::default();
+        assert!(totals.is_empty());
+        // One call reports only a hit count; the miss counter stays unknown.
+        totals.add(ModelCacheUsageV1 {
+            cached_input_tokens: Some(80),
+            ..ModelCacheUsageV1::default()
+        });
+        assert_eq!(totals.cached_input_tokens, Some(80));
+        assert_eq!(totals.cache_miss_input_tokens, None);
+        // Later calls add to the known counter and introduce the missing one.
+        totals.add(ModelCacheUsageV1 {
+            cached_input_tokens: Some(20),
+            cache_miss_input_tokens: Some(5),
+            ..ModelCacheUsageV1::default()
+        });
+        assert_eq!(totals.cached_input_tokens, Some(100));
+        assert_eq!(totals.cache_miss_input_tokens, Some(5));
+        // A call that reports neither never resets the running totals.
+        totals.add(ModelCacheUsageV1::default());
+        assert_eq!(totals.cached_input_tokens, Some(100));
+        assert_eq!(totals.cache_miss_input_tokens, Some(5));
+    }
+
+    #[test]
+    fn totals_reproduce_the_recorded_test1_3_run_aggregate() {
+        // Per-turn (cached, miss) counters recorded for test1_3
+        // (chat.ef71761303be6ac41947a5a7954783d4ade0b614), read from the same
+        // store `qa/cache-usage-report.mjs` queries. Summing them must reproduce
+        // that report's Run total exactly, so the panel shows the Run figures
+        // rather than the last loaded page.
+        const TURNS: &[(u64, u64)] = &[
+            (256, 2537),
+            (2688, 238),
+            (2432, 8915),
+            (11264, 1025),
+            (12032, 532),
+            (46720, 204),
+            (46848, 6016),
+            (52736, 489),
+            (59008, 215),
+            (59520, 558),
+            (59776, 530),
+            (68864, 324),
+            (77312, 150),
+            (77440, 697),
+            (77824, 1689),
+            (79232, 2098),
+            (81024, 560),
+            (81664, 312),
+            (82048, 302),
+            (82304, 680),
+            (82688, 6761),
+            (89088, 2691),
+            (92416, 717),
+            (93184, 400),
+            (93312, 426),
+            (99328, 193),
+            (102400, 241),
+            (108416, 204),
+            (111104, 220),
+            (114560, 250),
+            (116480, 175),
+            (117376, 568),
+            (118656, 450),
+            (118784, 522),
+            (122624, 646),
+            (123008, 1610),
+            (124288, 1107),
+            (127488, 669),
+            (127872, 631),
+            (128896, 338),
+            (129664, 313),
+            (142720, 288),
+            (143360, 378),
+            (143360, 608),
+            (144000, 1020),
+            (150528, 363),
+            (150528, 560),
+            (151040, 1240),
+            (154240, 374),
+            (154752, 326),
+            (155136, 267),
+            (155520, 378),
+            (155520, 595),
+            (156160, 1045),
+            (157440, 752),
+            (162560, 157),
+            (163200, 2451),
+            (167808, 488),
+            (167936, 680),
+            (169728, 306),
+            (170496, 466),
+            (170624, 686),
+            (171264, 864),
+            (172416, 1717),
+            (174592, 980),
+        ];
+        let mut totals = ModelCacheTotalsV1::default();
+        for (cached, miss) in TURNS {
+            totals.add(ModelCacheUsageV1 {
+                cached_input_tokens: Some(*cached),
+                cache_miss_input_tokens: Some(*miss),
+                ..ModelCacheUsageV1::default()
+            });
+        }
+        assert_eq!(TURNS.len(), 65);
+        assert_eq!(totals.cached_input_tokens, Some(7_207_552));
+        assert_eq!(totals.cache_miss_input_tokens, Some(64_192));
+        let cached = totals.cached_input_tokens.unwrap();
+        let uncached = totals.cache_miss_input_tokens.unwrap();
+        assert_eq!(cached + uncached, 7_271_744, "partitions the Run input");
+        assert_eq!(
+            format!("{:.1}%", 100.0 * cached as f64 / (cached + uncached) as f64),
+            "99.1%"
+        );
+    }
 
     #[test]
     fn historical_usage_deserializes_and_reported_cache_survives_projection() {

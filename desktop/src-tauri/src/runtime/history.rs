@@ -1675,27 +1675,41 @@ pub(crate) fn identity_for_seed(seed: &str) -> Result<ChatIdentityV1, String> {
     })
 }
 
-pub(crate) fn message_fact(
-    body: &str,
-    created_at: &str,
-    model: Option<&str>,
-    input_units: Option<u64>,
-    output_units: Option<u64>,
-) -> Value {
+/// Optional provider accounting a message fact may carry. A missing figure is
+/// omitted from the payload rather than serialized as null, so a consumer can
+/// tell "not reported" from a reported zero.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MessageUsageV1<'a> {
+    pub model: Option<&'a str>,
+    pub input_units: Option<u64>,
+    pub output_units: Option<u64>,
+    /// Whole-Run cached input tokens, when the Run reported an aggregate.
+    pub cached_input_units: Option<u64>,
+    /// Whole-Run uncached input tokens, when the Run reported an aggregate.
+    pub uncached_input_units: Option<u64>,
+}
+
+pub(crate) fn message_fact(body: &str, created_at: &str, usage: MessageUsageV1<'_>) -> Value {
     let mut value = json!({
         "schemaVersion": 1,
         "body": body,
         "createdAt": created_at,
     });
     if let Some(object) = value.as_object_mut() {
-        if let Some(model) = model {
+        if let Some(model) = usage.model {
             object.insert("model".into(), Value::String(model.to_owned()));
         }
-        if let Some(units) = input_units {
+        if let Some(units) = usage.input_units {
             object.insert("inputUnits".into(), Value::from(units));
         }
-        if let Some(units) = output_units {
+        if let Some(units) = usage.output_units {
             object.insert("outputUnits".into(), Value::from(units));
+        }
+        if let Some(units) = usage.cached_input_units {
+            object.insert("cachedInputUnits".into(), Value::from(units));
+        }
+        if let Some(units) = usage.uncached_input_units {
+            object.insert("uncachedInputUnits".into(), Value::from(units));
         }
     }
     value
@@ -2316,6 +2330,34 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("child 'span.child' is open"));
     }
+
+    #[test]
+    fn message_fact_publishes_reported_run_cache_totals_and_omits_unknown_ones() {
+        // A complete Run aggregate becomes the summary the Run details panel
+        // reads; both keys must be present so the panel never falls back to a
+        // loaded window.
+        let aggregate = message_fact(
+            "done",
+            "1",
+            MessageUsageV1 {
+                model: Some("model.x"),
+                input_units: Some(7_271_744),
+                output_units: Some(188_758),
+                cached_input_units: Some(7_207_552),
+                uncached_input_units: Some(64_192),
+            },
+        );
+        assert_eq!(aggregate["cachedInputUnits"], 7_207_552);
+        assert_eq!(aggregate["uncachedInputUnits"], 64_192);
+        assert_eq!(aggregate["inputUnits"], 7_271_744);
+
+        // A Run whose provider reported no cache counters keeps the keys absent
+        // rather than publishing a fabricated zero.
+        let plain = message_fact("done", "1", MessageUsageV1::default());
+        assert!(plain.get("cachedInputUnits").is_none());
+        assert!(plain.get("uncachedInputUnits").is_none());
+        assert!(plain.get("inputUnits").is_none());
+    }
 }
 
 fn evidence(events: &[impl std::borrow::Borrow<Event>]) -> Vec<EvidenceRecordDto> {
@@ -2353,6 +2395,8 @@ fn evidence(events: &[impl std::borrow::Borrow<Event>]) -> Vec<EvidenceRecordDto
                 "frozenContextHash": event.payload.get("frozenContextHash").cloned().unwrap_or(Value::Null),
                 "inputUnits": event.payload.get("inputUnits").cloned().unwrap_or(Value::Null),
                 "outputUnits": event.payload.get("outputUnits").cloned().unwrap_or(Value::Null),
+                "cachedInputUnits": event.payload.get("cachedInputUnits").cloned().unwrap_or(Value::Null),
+                "uncachedInputUnits": event.payload.get("uncachedInputUnits").cloned().unwrap_or(Value::Null),
                 "status": event.payload.get("status").cloned().unwrap_or(Value::Null),
                 "snapshotId": event.payload.get("snapshotId").cloned().unwrap_or(Value::Null),
                 "snapshotHash": event.payload.get("snapshotHash").cloned().unwrap_or(Value::Null),

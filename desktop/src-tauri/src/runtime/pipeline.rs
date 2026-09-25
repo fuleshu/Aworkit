@@ -323,6 +323,13 @@ pub struct WorkflowExecutionResultV1 {
     pub model: String,
     pub input_units: u64,
     pub output_units: u64,
+    /// Whole-Run provider cache counters, published on the same summary the
+    /// input/output units ride on. Absent when no turn reported them, and
+    /// absent on records written before the aggregate existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_units: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncached_input_units: Option<u64>,
     pub model_turns: u64,
     pub tool_calls: u64,
     pub tool_activity: Vec<WorkflowToolActivityV1>,
@@ -736,6 +743,8 @@ impl WorkflowExecutionPipeline {
                 model: prepared.provider.model.clone(),
                 input_units: pending.input_units,
                 output_units: pending.output_units,
+                cached_input_units: pending.cached_input_units,
+                uncached_input_units: pending.uncached_input_units,
                 model_turns: u64::from(pending.attempted_model_turns),
                 tool_calls: u64::from(pending.settled_tool_calls),
                 tool_activity: pending.tool_activity.clone(),
@@ -786,6 +795,8 @@ impl WorkflowExecutionPipeline {
                 model: prepared.provider.model.clone(),
                 input_units: 0,
                 output_units: 0,
+                cached_input_units: None,
+                uncached_input_units: None,
                 attempted_model_turns: if uncertain { 1 } else { 0 },
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
@@ -816,6 +827,8 @@ impl WorkflowExecutionPipeline {
             model: outcome.model,
             input_units: outcome.input_units,
             output_units: outcome.output_units,
+            cached_input_units: outcome.cached_input_units,
+            uncached_input_units: outcome.uncached_input_units,
             model_turns: u64::from(outcome.attempted_model_turns),
             tool_calls: u64::from(outcome.settled_tool_calls),
             tool_activity: outcome.tool_activity,
@@ -1072,6 +1085,8 @@ impl WorkflowExecutionPipeline {
                     model: prepared.provider.model.clone(),
                     input_units: next.input_units,
                     output_units: next.output_units,
+                    cached_input_units: next.cached_input_units,
+                    uncached_input_units: next.uncached_input_units,
                     model_turns: u64::from(next.attempted_model_turns),
                     tool_calls: u64::from(next.settled_tool_calls),
                     tool_activity: next.tool_activity.clone(),
@@ -1096,6 +1111,8 @@ impl WorkflowExecutionPipeline {
                     model: prepared.provider.model.clone(),
                     input_units: pass.input_units,
                     output_units: pass.output_units,
+                    cached_input_units: pass.cached_input_units,
+                    uncached_input_units: pass.uncached_input_units,
                     attempted_model_turns: pass.attempted_model_turns,
                     settled_tool_calls: pass.settled_tool_calls,
                     tool_exchanges: pass.exchanges.clone(),
@@ -1131,6 +1148,8 @@ impl WorkflowExecutionPipeline {
                     model: record.model,
                     input_units: record.input_units,
                     output_units: record.output_units,
+                    cached_input_units: record.cached_input_units,
+                    uncached_input_units: record.uncached_input_units,
                     model_turns: u64::from(record.attempted_model_turns),
                     tool_calls: u64::from(record.settled_tool_calls),
                     tool_activity: record.tool_activity,
@@ -1659,6 +1678,10 @@ struct ProviderOutcomeRecordV1 {
     model: String,
     input_units: u64,
     output_units: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cached_input_units: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    uncached_input_units: Option<u64>,
     #[serde(default)]
     attempted_model_turns: u32,
     #[serde(default)]
@@ -2137,6 +2160,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 model: self.provider.model.clone(),
                 input_units: 0,
                 output_units: 0,
+                cached_input_units: None,
+                uncached_input_units: None,
                 attempted_model_turns: 0,
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
@@ -2161,6 +2186,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     model: self.provider.model.clone(),
                     input_units: 0,
                     output_units: 0,
+                    cached_input_units: None,
+                    uncached_input_units: None,
                     attempted_model_turns: 0,
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
@@ -2199,6 +2226,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         model: self.provider.model.clone(),
                         input_units: 0,
                         output_units: 0,
+                        cached_input_units: None,
+                        uncached_input_units: None,
                         attempted_model_turns: 0,
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
@@ -2231,6 +2260,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                         model: self.provider.model.clone(),
                         input_units: 0,
                         output_units: 0,
+                        cached_input_units: None,
+                        uncached_input_units: None,
                         attempted_model_turns: 0,
                         settled_tool_calls: 0,
                         tool_exchanges: Vec::new(),
@@ -2261,6 +2292,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                     model: self.provider.model.clone(),
                     input_units: 0,
                     output_units: 0,
+                    cached_input_units: None,
+                    uncached_input_units: None,
                     attempted_model_turns: 0,
                     settled_tool_calls: 0,
                     tool_exchanges: Vec::new(),
@@ -2284,6 +2317,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 model: self.provider.model.clone(),
                 input_units: 0,
                 output_units: 0,
+                cached_input_units: None,
+                uncached_input_units: None,
                 attempted_model_turns: 0,
                 settled_tool_calls: 0,
                 tool_exchanges: Vec::new(),
@@ -2449,6 +2484,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
                 model: self.provider.model.clone(),
                 input_units: pass.input_units,
                 output_units: pass.output_units,
+                cached_input_units: pass.cached_input_units,
+                uncached_input_units: pass.uncached_input_units,
                 attempted_model_turns: pass.attempted_model_turns,
                 settled_tool_calls: pass.settled_tool_calls,
                 tool_exchanges: pass.exchanges.clone(),
@@ -3898,7 +3935,11 @@ mod tests {
             emit(ModelEventV1::Usage {
                 input_tokens: 7,
                 output_tokens: 3,
-                cache: Default::default(),
+                cache: aworkit_capability_host::ModelCacheUsageV1 {
+                    cached_input_tokens: Some(5),
+                    cache_miss_input_tokens: Some(2),
+                    ..aworkit_capability_host::ModelCacheUsageV1::default()
+                },
             })?;
             Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted)
         }
@@ -5003,6 +5044,13 @@ mod tests {
         assert_eq!(first.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(first.assistant_text.as_deref(), Some("working answer"));
         assert_eq!((first.input_units, first.output_units), (7, 3));
+        // The provider's per-call cache counters reach the Run summary through
+        // the agent loop, the graph pass and the durable outcome record, so the
+        // panel never has to sum a loaded window of turns.
+        assert_eq!(
+            (first.cached_input_units, first.uncached_input_units),
+            (Some(5), Some(2))
+        );
         assert_eq!((first.model_turns, first.tool_calls), (1, 0));
         assert!(!first.replayed);
         assert_eq!(calls.load(Ordering::SeqCst), 1);

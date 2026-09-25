@@ -9,10 +9,10 @@
 use std::collections::BTreeMap;
 
 use aworkit_capability_host::{
-    CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCandidateV1,
-    ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1, ModelToolDispatchEvidenceV1,
-    ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1, ProviderError,
-    project_model_tool_events,
+    CancellationToken, FrozenModelGateway, ModelAssistantContentV1, ModelCacheTotalsV1,
+    ModelCandidateV1, ModelResolutionPlanV1, ModelToolCallV1, ModelToolDefinitionV1,
+    ModelToolDispatchEvidenceV1, ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1,
+    ProviderError, project_model_tool_events,
 };
 use aworkit_protocol::StableId;
 use aworkit_trusted_core::ApprovalResponseV1;
@@ -275,6 +275,13 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub activities: Vec<WorkflowToolActivityV1>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Provider-reported cache counters for the turns this prefix already
+    /// billed. Checkpoints written before the aggregate existed restore them as
+    /// unknown rather than as a fabricated zero.
+    #[serde(default)]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_miss_input_tokens: Option<u64>,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     /// Compatibility sink for approval checkpoints written while aggregate
@@ -287,6 +294,16 @@ pub(crate) struct ModelToolLoopPendingV1 {
     pub repeat_tool_reminder: RepeatToolReminderStateV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_runtime_notice: Option<String>,
+}
+
+impl ModelToolLoopPendingV1 {
+    /// Cache counters accumulated by the turns captured in this suspension.
+    pub(crate) fn cache_totals(&self) -> ModelCacheTotalsV1 {
+        ModelCacheTotalsV1 {
+            cached_input_tokens: self.cached_input_tokens,
+            cache_miss_input_tokens: self.cache_miss_input_tokens,
+        }
+    }
 }
 
 /// Outcome of one approval-aware agent loop invocation.
@@ -342,11 +359,25 @@ pub(crate) struct ModelToolLoopOutcomeV1 {
     pub assistant_text: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Whole-invocation provider cache counters. Absent when no turn reported
+    /// them, so a consumer never shows a fabricated zero.
+    pub cached_input_tokens: Option<u64>,
+    pub cache_miss_input_tokens: Option<u64>,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     pub timeout_recoveries: u32,
     pub exchanges: Vec<ModelToolExchangeV1>,
     pub activities: Vec<WorkflowToolActivityV1>,
+}
+
+impl ModelToolLoopOutcomeV1 {
+    /// Cache counters this invocation's turns reported, for a parent aggregate.
+    pub(crate) fn cache_totals(&self) -> ModelCacheTotalsV1 {
+        ModelCacheTotalsV1 {
+            cached_input_tokens: self.cached_input_tokens,
+            cache_miss_input_tokens: self.cache_miss_input_tokens,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -367,12 +398,24 @@ pub(crate) enum ModelToolLoopErrorV1 {
     MissingAssistantOutput,
 }
 
+impl ModelToolLoopFailureV1 {
+    /// Cache counters the turns before the failure reported.
+    pub(crate) fn cache_totals(&self) -> ModelCacheTotalsV1 {
+        ModelCacheTotalsV1 {
+            cached_input_tokens: self.cached_input_tokens,
+            cache_miss_input_tokens: self.cache_miss_input_tokens,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 #[error("{error}")]
 pub(crate) struct ModelToolLoopFailureV1 {
     pub error: ModelToolLoopErrorV1,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cached_input_tokens: Option<u64>,
+    pub cache_miss_input_tokens: Option<u64>,
     pub attempted_model_turns: u32,
     pub settled_tool_calls: u32,
     pub exchanges: Vec<ModelToolExchangeV1>,
@@ -389,7 +432,8 @@ pub(crate) fn execute_model_tool_loop_v1(
     authority: &dyn ModelToolInvocationPortV1,
     cancellation: &CancellationToken,
 ) -> Result<ModelToolLoopOutcomeV1, ModelToolLoopFailureV1> {
-    validate_limits(&request).map_err(|error| failure(error, 0, 0, 0, 0, &[], &[]))?;
+    validate_limits(&request)
+        .map_err(|error| failure(error, 0, 0, ModelCacheTotalsV1::default(), 0, 0, &[], &[]))?;
     let plan = ModelResolutionPlanV1 {
         candidates: vec![ModelCandidateV1 {
             binding_id: request.binding_id.clone(),
@@ -404,6 +448,7 @@ pub(crate) fn execute_model_tool_loop_v1(
     let mut activities = Vec::new();
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
+    let mut cache = ModelCacheTotalsV1::default();
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
     let mut timeout_recoveries = 0_u32;
@@ -436,6 +481,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 error.into(),
                 input_tokens,
                 output_tokens,
+                cache,
                 attempted_model_turns,
                 settled_tool_calls,
                 &exchanges,
@@ -445,10 +491,11 @@ pub(crate) fn execute_model_tool_loop_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
+        cache.add(turn_output.cache);
 
         if turn_output.calls.is_empty() {
             if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -458,6 +505,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                     ModelToolLoopErrorV1::MissingAssistantOutput,
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
@@ -468,6 +516,8 @@ pub(crate) fn execute_model_tool_loop_v1(
                 assistant_text,
                 input_tokens,
                 output_tokens,
+                cached_input_tokens: cache.cached_input_tokens,
+                cache_miss_input_tokens: cache.cache_miss_input_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
                 timeout_recoveries,
@@ -485,6 +535,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                         ModelToolLoopErrorV1::ToolAuthority(error),
                         input_tokens,
                         output_tokens,
+                        cache,
                         attempted_model_turns,
                         settled_tool_calls,
                         &exchanges,
@@ -523,6 +574,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                     ModelToolLoopErrorV1::ToolAuthority(error),
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
@@ -532,8 +584,16 @@ pub(crate) fn execute_model_tool_loop_v1(
         exchanges.push(exchange);
         if let Some(assistant_text) = authority.handoff_notice() {
             return Ok(ModelToolLoopOutcomeV1 {
-                assistant_text, input_tokens, output_tokens, attempted_model_turns,
-                settled_tool_calls, timeout_recoveries, exchanges, activities,
+                assistant_text,
+                input_tokens,
+                output_tokens,
+                cached_input_tokens: cache.cached_input_tokens,
+                cache_miss_input_tokens: cache.cache_miss_input_tokens,
+                attempted_model_turns,
+                settled_tool_calls,
+                timeout_recoveries,
+                exchanges,
+                activities,
             });
         }
         turn = turn.saturating_add(1);
@@ -544,6 +604,7 @@ fn failure(
     error: ModelToolLoopErrorV1,
     input_tokens: u64,
     output_tokens: u64,
+    cache: ModelCacheTotalsV1,
     attempted_model_turns: u32,
     settled_tool_calls: u32,
     exchanges: &[ModelToolExchangeV1],
@@ -553,6 +614,8 @@ fn failure(
         error,
         input_tokens,
         output_tokens,
+        cached_input_tokens: cache.cached_input_tokens,
+        cache_miss_input_tokens: cache.cache_miss_input_tokens,
         attempted_model_turns,
         settled_tool_calls,
         exchanges: exchanges.to_vec(),
@@ -787,7 +850,8 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     authority: &dyn ModelToolInvocationPortV1,
     cancellation: &CancellationToken,
 ) -> Result<ModelToolLoopRunV1, ModelToolLoopFailureV1> {
-    validate_limits(&request).map_err(|error| failure(error, 0, 0, 0, 0, &[], &[]))?;
+    validate_limits(&request)
+        .map_err(|error| failure(error, 0, 0, ModelCacheTotalsV1::default(), 0, 0, &[], &[]))?;
     let plan = ModelResolutionPlanV1 {
         candidates: vec![ModelCandidateV1 {
             binding_id: request.binding_id.clone(),
@@ -802,6 +866,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
     let mut activities = Vec::new();
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
+    let mut cache = ModelCacheTotalsV1::default();
     let mut attempted_model_turns = 0_u32;
     let mut settled_tool_calls = 0_u32;
     let mut timeout_recoveries = 0_u32;
@@ -834,6 +899,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 error.into(),
                 input_tokens,
                 output_tokens,
+                cache,
                 attempted_model_turns,
                 settled_tool_calls,
                 &exchanges,
@@ -843,9 +909,10 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
+        cache.add(turn_output.cache);
         if turn_output.calls.is_empty() {
             if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -855,6 +922,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                     ModelToolLoopErrorV1::MissingAssistantOutput,
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
@@ -865,6 +933,8 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 assistant_text,
                 input_tokens,
                 output_tokens,
+                cached_input_tokens: cache.cached_input_tokens,
+                cache_miss_input_tokens: cache.cache_miss_input_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
                 timeout_recoveries,
@@ -886,6 +956,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                         ModelToolLoopErrorV1::ToolAuthority(error),
                         input_tokens,
                         output_tokens,
+                        cache,
                         attempted_model_turns,
                         settled_tool_calls,
                         &exchanges,
@@ -919,6 +990,8 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                         activities,
                         input_tokens,
                         output_tokens,
+                        cached_input_tokens: cache.cached_input_tokens,
+                        cache_miss_input_tokens: cache.cache_miss_input_tokens,
                         attempted_model_turns,
                         settled_tool_calls,
                         _legacy_total_calls: None,
@@ -940,6 +1013,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                     ModelToolLoopErrorV1::ToolAuthority(error),
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
@@ -963,7 +1037,8 @@ pub(crate) fn resume_model_tool_loop_v1(
     now_epoch_millis: u64,
     cancellation: &CancellationToken,
 ) -> Result<ModelToolLoopRunV1, ModelToolLoopFailureV1> {
-    validate_limits(&request).map_err(|error| failure(error, 0, 0, 0, 0, &[], &[]))?;
+    validate_limits(&request)
+        .map_err(|error| failure(error, 0, 0, ModelCacheTotalsV1::default(), 0, 0, &[], &[]))?;
     let plan = ModelResolutionPlanV1 {
         candidates: vec![ModelCandidateV1 {
             binding_id: request.binding_id.clone(),
@@ -988,6 +1063,8 @@ pub(crate) fn resume_model_tool_loop_v1(
             pending,
         });
     }
+    // Read the aggregate before the prefix fields are moved out of `pending`.
+    let mut cache = pending.cache_totals();
     let mut exchanges = pending.exchanges;
     let mut activities = pending.activities;
     let mut input_tokens = pending.input_tokens;
@@ -1022,6 +1099,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 error.into(),
                 input_tokens,
                 output_tokens,
+                cache,
                 attempted_model_turns,
                 settled_tool_calls,
                 &exchanges,
@@ -1031,9 +1109,10 @@ pub(crate) fn resume_model_tool_loop_v1(
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
+        cache.add(turn_output.cache);
         if turn_output.calls.is_empty() {
             if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -1043,6 +1122,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                     ModelToolLoopErrorV1::MissingAssistantOutput,
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
@@ -1053,6 +1133,8 @@ pub(crate) fn resume_model_tool_loop_v1(
                 assistant_text,
                 input_tokens,
                 output_tokens,
+                cached_input_tokens: cache.cached_input_tokens,
+                cache_miss_input_tokens: cache.cache_miss_input_tokens,
                 attempted_model_turns,
                 settled_tool_calls,
                 timeout_recoveries,
@@ -1074,6 +1156,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                         ModelToolLoopErrorV1::ToolAuthority(error),
                         input_tokens,
                         output_tokens,
+                        cache,
                         attempted_model_turns,
                         settled_tool_calls,
                         &exchanges,
@@ -1107,6 +1190,8 @@ pub(crate) fn resume_model_tool_loop_v1(
                         activities,
                         input_tokens,
                         output_tokens,
+                        cached_input_tokens: cache.cached_input_tokens,
+                        cache_miss_input_tokens: cache.cache_miss_input_tokens,
                         attempted_model_turns,
                         settled_tool_calls,
                         _legacy_total_calls: None,
@@ -1128,6 +1213,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                     ModelToolLoopErrorV1::ToolAuthority(error),
                     input_tokens,
                     output_tokens,
+                    cache,
                     attempted_model_turns,
                     settled_tool_calls,
                     &exchanges,
