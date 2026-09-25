@@ -842,14 +842,35 @@ impl BoundFileToolAuthorityV1 {
                     if output.assistant_text.trim().is_empty() { return Err("Compaction produced no text summary".into()); }
                     let summary = c::Unit::Message(ModelToolContextV1 { content:c::frame_summary(output.assistant_text.trim()), ..Default::default() });
                     let shadowed_tokens: u64 = surface[..cut].iter().map(c::Unit::tokens).sum();
-                    if summary.tokens() >= shadowed_tokens { return Err("Compaction summary is not smaller than the selected history including checkpoint framing".into()); }
+                    let tail = &surface[cut..];
+                    // Prefer a replacement that carries the user's own turns
+                    // across the boundary rather than only summarising them, so
+                    // direction outranks tool spam of the same size. When that
+                    // cannot shrink the span — one oversized direction with
+                    // little other content — fall back to the plain summary so
+                    // compaction still makes progress.
+                    let pinned = c::pinned_user_units(&surface, cut);
+                    let pinned_units = pinned.len();
+                    let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
+                    let mut carried = pinned;
+                    carried.push(summary.clone());
+                    carried.extend_from_slice(tail);
+                    let carried_tokens: u64 = carried.iter().map(c::Unit::tokens).sum();
+                    let (next, pinned_units, pinned_tokens) = if carried_tokens < shadowed_tokens {
+                        (carried, pinned_units, pinned_tokens)
+                    } else {
+                        let mut plain = vec![summary];
+                        plain.extend_from_slice(tail);
+                        (plain, 0, 0)
+                    };
+                    let kept_tokens: u64 = next.iter().map(c::Unit::tokens).sum();
+                    if kept_tokens >= shadowed_tokens { return Err("Compaction replacement is not smaller than the selected history including checkpoint framing".into()); }
                     if c::hash(request) != before_hash || self.selection_generation(&owner)? != source_generation { return Err("Context changed during compaction".into()); }
                     let mut replacement = request.clone();
-                    let mut next = vec![summary]; next.extend_from_slice(&surface[cut..]);
                     c::replace_units(&mut replacement,&next)?;
                     let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
                     if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
-                    self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
+                    self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
                     *request = replacement;
                     Ok(())
                 });

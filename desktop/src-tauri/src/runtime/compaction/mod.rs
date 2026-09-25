@@ -286,10 +286,17 @@ pub(crate) fn prune_marker_bound_chars() -> usize {
     prune_marker(usize::MAX).chars().count()
 }
 pub(crate) const INSTRUCTION: &str = include_str!("instruction.txt");
+/// Opening sentence of every generated checkpoint. It frames the summary for the
+/// model, and it is also the marker that tells a later compaction that a
+/// user-role unit is a prior checkpoint to be consolidated rather than a real
+/// user turn to be pinned.
+pub(crate) const CHECKPOINT_PREAMBLE: &str = "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.";
 pub(crate) fn frame_summary(text: &str) -> String {
-    format!(
-        "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.\n\n<compacted-summary>\n{text}\n</compacted-summary>"
-    )
+    format!("{CHECKPOINT_PREAMBLE}\n\n<compacted-summary>\n{text}\n</compacted-summary>")
+}
+/// Whether one unit's content is a compaction checkpoint rather than a real turn.
+pub(crate) fn is_checkpoint(content: &str) -> bool {
+    content.starts_with(CHECKPOINT_PREAMBLE)
 }
 
 /// Pricing is UTF-16 compatible with the Harness estimator, not a tokenizer.

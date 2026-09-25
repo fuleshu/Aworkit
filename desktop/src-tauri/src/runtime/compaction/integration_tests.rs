@@ -391,6 +391,118 @@ fn prompt_shape(unit: &c::Unit) -> Value {
     }
 }
 
+/// Runs one manual compaction through the real authority.
+fn compact_manual(
+    f: &Fixture,
+    gateway: &FrozenModelGateway,
+    plan: &ModelResolutionPlanV1,
+    outer: &StableId,
+    request: &mut ModelToolRequestV1,
+) -> c::Preparation {
+    f.authority
+        .manage_model_context(
+            gateway,
+            plan,
+            outer,
+            1,
+            Some(&f.agent),
+            request,
+            &CancellationToken::default(),
+            Trigger::Manual,
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_compaction_keeps_the_user_direction_and_consolidates_prior_checkpoints() {
+    // The first user turn survives a real compaction verbatim instead of
+    // existing only as summary prose.
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    // The fixture's first user turn is deliberately huge; make it small and
+    // identifiable so pinning is observable in the replacement.
+    let pin = "PINNED USER DIRECTION 7391";
+    request.input["messages"][0]["content"] = json!(pin);
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let first = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(first.changed, "{:?}", first.error);
+    assert!(
+        serde_json::to_string(&request.input).unwrap().contains(pin),
+        "the first user direction must survive verbatim: {}",
+        serde_json::to_string(&request).unwrap()
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted = events
+        .iter()
+        .find(|e| e.kind == "context.compacted")
+        .unwrap();
+    assert_eq!(compacted.payload["pinnedUnits"].as_u64(), Some(1));
+    assert!(compacted.payload["pinnedTokenCount"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn a_compaction_replaces_a_prior_checkpoint_instead_of_pinning_it() {
+    let mut f = Fixture::new();
+    f.authority.context.model_context =
+        json!({"contextWindow":16000,"policy":{"auto":false,"retainTokens":0,"pruneToolResults":false}});
+    let outer = stable("outer.consolidate").unwrap();
+    let pin = "PINNED USER DIRECTION 7391";
+    let mut request = f.request();
+    request.input["messages"][0]["content"] = json!(pin);
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 0,
+        content: c::frame_summary("an older checkpoint"),
+        ..Default::default()
+    });
+    f.prepare(outer.as_str(), 0, &mut request);
+    // A large tool read inside the compactable span, closed by a small turn so
+    // the selection can retain its mandatory last unit.
+    f.write("src/big.txt", &"z".repeat(30_000));
+    let call = ModelToolCallV1 {
+        call_id: "read.big".into(),
+        provider_call_id: Some("read.big".into()),
+        capability_id: FILE_READ_CAPABILITY_ID.into(),
+        name: FILE_READ_PROVIDER_NAME.into(),
+        arguments: json!({"path":"src/big.txt"}),
+        provider_context: None,
+    };
+    let settled = f
+        .authority
+        .invoke(&outer, 1, &call, &CancellationToken::default())
+        .unwrap();
+    let exchange = aworkit_capability_host::ModelToolExchangeV1 {
+        assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::ToolCall { call }],
+        results: vec![settled.result],
+    };
+    f.authority.commit_exchange(&outer, 1, &exchange).unwrap();
+    request.exchanges.push(exchange);
+    let closing = aworkit_capability_host::ModelToolExchangeV1 {
+        assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::Text {
+            text: "Read it.".into(),
+        }],
+        results: Vec::new(),
+    };
+    f.authority.commit_exchange(&outer, 2, &closing).unwrap();
+    request.exchanges.push(closing);
+
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let result = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(result.changed, "{:?}", result.error);
+    let serialized = serde_json::to_string(&request).unwrap();
+    assert!(serialized.contains(pin), "the user direction survives");
+    assert_eq!(
+        serialized.matches(c::CHECKPOINT_PREAMBLE).count(),
+        1,
+        "the prior checkpoint is consolidated, not stacked or pinned as a user turn"
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted = events
+        .iter()
+        .find(|e| e.kind == "context.compacted")
+        .unwrap();
+    assert_eq!(compacted.payload["pinnedUnits"].as_u64(), Some(1));
+}
+
 #[test]
 fn the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive() {
     let mut f = Fixture::new();

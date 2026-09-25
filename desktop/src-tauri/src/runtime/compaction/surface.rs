@@ -199,6 +199,55 @@ pub(crate) fn select_prefix(surface: &[Unit], retain_tokens: u64) -> Option<usiz
     None
 }
 
+/// Real user turns from the shadowed span that a replacement keeps verbatim.
+///
+/// Pricing every unit by tokens alone would summarise the user's own direction
+/// together with bulk tool output. These units are carried across the boundary
+/// instead: workspace instructions have their own restoration path, a prior
+/// checkpoint is what this compaction replaces, and every other user-role
+/// message is the user speaking and outranks tool spam of the same size.
+///
+/// The first user turn is kept unconditionally. Later ones are kept newest-first
+/// while pinning still costs at most half of what the shadowed span frees, so a
+/// pasted specification cannot defeat the reduction; the returned units stay in
+/// their original order so the provider prefix survives to the first dropped
+/// unit.
+pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize) -> Vec<Unit> {
+    let shadowed = &surface[..cut];
+    let users: Vec<&Unit> = shadowed
+        .iter()
+        .filter(|unit| match unit {
+            Unit::Message(message) => {
+                message.instruction_event_id.is_none()
+                    && message.role.as_deref().unwrap_or("user") == "user"
+                    && !is_checkpoint(&message.content)
+            }
+            Unit::Exchange(_) => false,
+        })
+        .collect();
+    let Some(first) = users.first() else {
+        return Vec::new();
+    };
+    let freed: u64 = shadowed.iter().map(Unit::tokens).sum();
+    let mut budget = (freed / 2).saturating_sub(first.tokens());
+    let mut keep = vec![false; users.len()];
+    keep[0] = true;
+    for index in (1..users.len()).rev() {
+        let cost = users[index].tokens();
+        if cost > budget {
+            continue;
+        }
+        budget -= cost;
+        keep[index] = true;
+    }
+    users
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| keep[*index])
+        .map(|(_, unit)| unit.clone())
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Pruned {

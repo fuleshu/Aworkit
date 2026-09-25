@@ -107,6 +107,78 @@ fn selection_keeps_the_last_unit_even_for_zero_and_never_splits_tool_pairs() {
     let cut = select_prefix(&s, 50).unwrap();
     assert!(matches!(s[cut], Unit::Exchange(_)));
 }
+
+#[test]
+fn a_replacement_pins_real_user_turns_in_original_order() {
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first direction"}
+    ]);
+    r.exchanges = vec![exchange(&"x".repeat(4000)), exchange("mid")];
+    r.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 1,
+        content: "second direction".into(),
+        ..Default::default()
+    });
+    let s = units(&r).unwrap();
+    // user(first), exchange, user(second), exchange
+    assert_eq!(s.len(), 4);
+    let pinned = pinned_user_units(&s, 3);
+    assert_eq!(pinned.len(), 2, "both user turns are pinned");
+    assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first direction"));
+    assert!(matches!(&pinned[1], Unit::Message(m) if m.content == "second direction"));
+}
+
+#[test]
+fn an_oversized_late_user_turn_cannot_defeat_the_reduction() {
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first"}
+    ]);
+    r.exchanges = vec![exchange("small")];
+    r.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 1,
+        content: "y".repeat(40_000),
+        ..Default::default()
+    });
+    let s = units(&r).unwrap();
+    let pinned = pinned_user_units(&s, 3);
+    assert_eq!(
+        pinned.len(),
+        1,
+        "pinning may cost at most half of what is freed"
+    );
+    assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first"));
+}
+
+#[test]
+fn a_prior_checkpoint_and_instructions_are_not_pinned_as_user_turns() {
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first"}
+    ]);
+    r.exchanges = vec![exchange("result")];
+    r.context_messages = vec![
+        ModelToolContextV1 {
+            after_input_messages: Some(1),
+            instruction_event_id: Some("authentic".into()),
+            content: "instructions".into(),
+            ..Default::default()
+        },
+        ModelToolContextV1 {
+            after_exchanges: 0,
+            content: frame_summary("an older checkpoint"),
+            ..Default::default()
+        },
+    ];
+    let s = units(&r).unwrap();
+    let pinned = pinned_user_units(&s, s.len());
+    assert_eq!(pinned.len(), 1, "{pinned:?}");
+    assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first"));
+}
 #[test]
 fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
     let policy = Policy::default();
