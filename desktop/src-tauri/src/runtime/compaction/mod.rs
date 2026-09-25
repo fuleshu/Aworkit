@@ -20,6 +20,12 @@ pub(crate) struct Metadata {
     #[serde(default)]
     pub image_input: bool,
     pub context_window: Option<u64>,
+    /// The model's configured maximum output tokens. Compaction budgets are
+    /// computed on the window the provider leaves for input, so this
+    /// reservation is subtracted before any ratio applies. Absent on contexts
+    /// frozen before the key existed, which reserves nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_target: Option<FrozenSummaryTarget>,
     #[serde(default)]
@@ -159,8 +165,10 @@ pub(crate) struct Policy {
     pub retain_ratio: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retain_tokens: Option<u64>,
-    #[serde(default = "summary_tokens")]
-    pub max_tokens: u64,
+    /// Legacy sink for the removed absolute summary budget. A frozen Chat may
+    /// still carry `maxTokens`; it is read into nothing and never serialized.
+    #[serde(default, rename = "maxTokens", skip_serializing)]
+    pub _legacy_max_tokens: Option<u64>,
     #[serde(default = "one")]
     pub compaction_retries: u32,
     #[serde(default = "one")]
@@ -179,9 +187,6 @@ fn yes() -> bool {
 }
 fn threshold() -> f64 {
     0.8
-}
-fn summary_tokens() -> u64 {
-    8192
 }
 fn one() -> u32 {
     1
@@ -231,8 +236,6 @@ impl Policy {
             || !(0.0 < ratio && ratio <= 1.0)
             || (self.retain_ratio.is_some() && self.retain_tokens.is_some())
             || (self.retain_tokens.is_none() && ratio >= self.threshold_ratio)
-            || self.max_tokens == 0
-            || self.max_tokens > 1_048_576
             || self.compaction_retries > 32
             || self.max_overflow_retries > 32
             || self.threshold_chars == 0
@@ -243,7 +246,7 @@ impl Policy {
                 .saturating_add(prune_marker_bound_chars())
                 > self.threshold_chars
         {
-            return Err("Invalid compaction policy: require a positive threshold at most 1, smaller exclusive tail ratio/token budget, positive summary cap and valid pruning budgets.".into());
+            return Err("Invalid compaction policy: require a positive threshold at most 1, a smaller exclusive tail ratio/token budget and valid pruning budgets.".into());
         }
         if let Some(capacity) = capacity {
             if capacity == 0 || self.retention(capacity) >= self.threshold(capacity) {
@@ -262,7 +265,75 @@ impl Policy {
         self.retain_tokens
             .unwrap_or_else(|| (capacity as f64 * self.retain_ratio.unwrap_or(0.16)).floor() as u64)
     }
+
+    /// The window compaction budgets may spend: the declared context window
+    /// minus the provider's own output reservation, which comes out of the same
+    /// window. A missing reservation reserves nothing.
+    pub(crate) fn effective_window(&self, capacity: u64, max_output_tokens: Option<u64>) -> u64 {
+        capacity.saturating_sub(max_output_tokens.unwrap_or(0))
+    }
+
+    /// Budget for user turns carried verbatim across a compaction (`U = R/2`).
+    ///
+    /// Derived from the retention *ratio*, not from `retention()`: an absolute
+    /// `retainTokens` override describes how much recent history stays verbatim
+    /// and can legitimately be zero (manual and overflow reductions), while
+    /// carried user turns and the summary still need output room.
+    pub(crate) fn user_budget(&self, window: u64) -> u64 {
+        ((window as f64) * self.retain_ratio.unwrap_or(0.16) / 2.0).floor() as u64
+    }
+
+    /// Output budget for the checkpoint summary (`S = min(R/2, span/2)`).
+    /// Half of retention keeps a 4:1 ratio of freed context to replacement
+    /// cost; half of the shadowed span guarantees any committed compaction at
+    /// least halves what it replaces. No absolute budget remains.
+    pub(crate) fn summary_budget(&self, window: u64, shadowed_tokens: u64) -> u64 {
+        self.user_budget(window).min(shadowed_tokens / 2)
+    }
+
+    /// Working headroom left after one compaction: the trigger minus the whole
+    /// replacement (retained tail, carried user turns, summary) and the fixed
+    /// context the request always carries.
+    pub(crate) fn working_headroom(&self, window: u64, fixed_tokens: u64) -> u64 {
+        let retention = self.retention(window);
+        let replacement = retention
+            .saturating_add(self.user_budget(window))
+            .saturating_add(self.summary_budget(window, retention.saturating_mul(2)));
+        self.threshold(window)
+            .saturating_sub(replacement)
+            .saturating_sub(fixed_tokens)
+    }
+
+    /// Whether automatic compaction can both reduce this context and leave room
+    /// to work. `None` means yes; `Some(diagnostic)` names the reason it cannot
+    /// and is meant to be surfaced once instead of oscillating at the trigger.
+    ///
+    /// The minimum window is derived rather than chosen: with a quarter of the
+    /// window required as headroom and a conservative fixed context, the check
+    /// below fails below roughly 64k tokens.
+    pub(crate) fn automatic_compaction_available(
+        &self,
+        window: u64,
+        fixed_tokens: u64,
+    ) -> Option<String> {
+        if window < MINIMUM_COMPACT_CONTEXT_WINDOW {
+            return Some(format!(
+                "Automatic compaction needs a declared context window of at least {MINIMUM_COMPACT_CONTEXT_WINDOW} tokens; this model declares {window}. Manual compaction and provider overflow recovery remain available."
+            ));
+        }
+        if self.working_headroom(window, fixed_tokens) * 4 < window {
+            return Some(format!(
+                "Automatic compaction cannot free enough context for this model: the fixed context is {fixed_tokens} tokens against a {window}-token window, so one checkpoint would leave less than a quarter of the window to work in. Use a larger-context model or a smaller tool selection."
+            ));
+        }
+        None
+    }
 }
+
+/// Smallest effective window automatic compaction can work in. Below this the
+/// replacement budget (retained tail plus user turns plus summary) cannot leave
+/// a quarter of the window for actual work, so the feature would only thrash.
+pub(crate) const MINIMUM_COMPACT_CONTEXT_WINDOW: u64 = 64_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

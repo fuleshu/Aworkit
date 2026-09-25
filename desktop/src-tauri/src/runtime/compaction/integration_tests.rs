@@ -181,13 +181,23 @@ fn history(f: &mut Fixture) -> (StableId, ModelToolRequestV1) {
 fn automatic_pressure_repeats_a_valid_reduction_and_stops_once_under_threshold() {
     let mut f = Fixture::new();
     let (outer, mut request) = history(&mut f);
+    // Above the derived minimum window, or automatic compaction is refused.
+    let window = 65_536_u64;
+    f.authority.context.model_context["contextWindow"] = json!(window);
     f.authority.context.model_context["policy"]["auto"] = json!(true);
+    // Enough content to cross the trigger, and a first summary that is smaller
+    // than what it replaces but still leaves the context above the trigger, so
+    // the loop must reduce a second time.
+    request.input["messages"][0]["content"] =
+        json!("Established requirements and implementation history. ".repeat(6000));
+    let threshold = c::Policy::default().threshold(window);
+    let long_summary = "Interim ".repeat(((threshold + 4000) / 2) as usize);
     let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = counter.clone();
     let (gateway, calls, plan) = gateway(move |_| {
         Ok(
             if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                "Interim ".repeat(8000)
+                long_summary.clone()
             } else {
                 "Established requirements and decisions.".into()
             },
@@ -209,7 +219,7 @@ fn automatic_pressure_repeats_a_valid_reduction_and_stops_once_under_threshold()
     assert!(prepared.changed && prepared.error.is_none());
     assert_eq!(calls.lock().unwrap().len(), 2);
     assert_eq!(prepared.input_tokens, 14000);
-    assert!(c::estimate(&request).unwrap() < 12800);
+    assert!(c::estimate(&request).unwrap() < threshold);
     let mut next = f.request();
     f.authority
         .manage_model_context(
@@ -224,7 +234,48 @@ fn automatic_pressure_repeats_a_valid_reduction_and_stops_once_under_threshold()
         )
         .unwrap();
     assert_eq!(calls.lock().unwrap().len(), 2);
-    assert!(c::estimate(&next).unwrap() < 12800);
+    assert!(c::estimate(&next).unwrap() < threshold);
+}
+
+#[test]
+fn a_window_below_the_derived_floor_disables_automatic_compaction() {
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    f.authority.context.model_context["contextWindow"] = json!(32_768);
+    f.authority.context.model_context["policy"]["auto"] = json!(true);
+    request.input["messages"][0]["content"] =
+        json!("Established requirements and implementation history. ".repeat(3000));
+    let (gateway, calls, plan) = gateway(|_| Ok("a summary nobody should pay for".into()));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            1,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(!prepared.changed, "below the floor nothing is compacted");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "no summary call is paid for"
+    );
+    assert!(
+        f.committer
+            .committed_events()
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "context.compaction-warning"
+                && e.payload["body"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("64000")),
+        "the reason names the required minimum window"
+    );
 }
 
 #[test]
@@ -311,7 +362,9 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
         summary_requests[0].context_messages.last().unwrap().content,
         c::INSTRUCTION.trim_end()
     );
-    assert_eq!(summary_requests[0].parameters["maxOutputTokens"], 8192);
+    // The summary budget is derived: half of the 16k window's retention ratio,
+// never more than half the span it replaces.
+    assert_eq!(summary_requests[0].parameters["maxOutputTokens"], 1280);
     drop(summary_requests);
     let visible = c::units(&request).unwrap();
     let text = serde_json::to_string(&visible).unwrap();
@@ -540,7 +593,7 @@ fn the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive() {
         prefix.len() < live.len(),
         "the retained tail is kept live, not resent for summarization"
     );
-    assert_eq!(summary.parameters["maxOutputTokens"], json!(8192));
+    assert_eq!(summary.parameters["maxOutputTokens"], json!(1280));
 }
 
 #[test]

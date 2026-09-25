@@ -169,6 +169,13 @@ pub(crate) fn replace_units(
     Ok(())
 }
 pub(crate) fn estimate(request: &ModelToolRequestV1) -> Result<u64, String> {
+    Ok(fixed_tokens(request)? + units(request)?.iter().map(Unit::tokens).sum::<u64>())
+}
+
+/// Price of everything a request carries besides the compactable surface:
+/// system messages, tool schemas and the retry notice. Compaction budgets are
+/// spent on top of this, so the headroom check needs it separately from units.
+pub(crate) fn fixed_tokens(request: &ModelToolRequestV1) -> Result<u64, String> {
     let system: u64 = request.input["messages"]
         .as_array()
         .ok_or("Context requires messages")?
@@ -182,7 +189,6 @@ pub(crate) fn estimate(request: &ModelToolRequestV1) -> Result<u64, String> {
         } else {
             json_tokens(&request.tools) + 4
         }
-        + units(request)?.iter().map(Unit::tokens).sum::<u64>()
         + request
             .retry_notice
             .as_deref()
@@ -208,13 +214,11 @@ pub(crate) fn select_prefix(surface: &[Unit], retain_tokens: u64) -> Option<usiz
 /// message is the user speaking and outranks tool spam of the same size.
 ///
 /// The first user turn is kept unconditionally. Later ones are kept newest-first
-/// while pinning still costs at most half of what the shadowed span frees, so a
-/// pasted specification cannot defeat the reduction; the returned units stay in
-/// their original order so the provider prefix survives to the first dropped
-/// unit.
-pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize) -> Vec<Unit> {
-    let shadowed = &surface[..cut];
-    let users: Vec<&Unit> = shadowed
+/// while they fit `budget`, the `U = R/2` share of the effective window; the
+/// returned units stay in their original order so the provider prefix survives
+/// to the first dropped unit.
+pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize, budget: u64) -> Vec<Unit> {
+    let users: Vec<&Unit> = surface[..cut]
         .iter()
         .filter(|unit| match unit {
             Unit::Message(message) => {
@@ -228,16 +232,15 @@ pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize) -> Vec<Unit> {
     let Some(first) = users.first() else {
         return Vec::new();
     };
-    let freed: u64 = shadowed.iter().map(Unit::tokens).sum();
-    let mut budget = (freed / 2).saturating_sub(first.tokens());
+    let mut remaining = budget.saturating_sub(first.tokens());
     let mut keep = vec![false; users.len()];
     keep[0] = true;
     for index in (1..users.len()).rev() {
         let cost = users[index].tokens();
-        if cost > budget {
+        if cost > remaining {
             continue;
         }
-        budget -= cost;
+        remaining -= cost;
         keep[index] = true;
     }
     users

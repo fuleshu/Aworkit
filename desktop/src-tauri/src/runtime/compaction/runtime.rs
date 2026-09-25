@@ -675,21 +675,53 @@ impl BoundFileToolAuthorityV1 {
             .len();
         let pressure = c::pressure(request, anchor.as_ref())?;
         mark("pressure", &mut since, &mut timings);
+        // Every budget is a fraction of the window the provider leaves for
+        // input, so the model's own output reservation comes out first.
+        let window = metadata.context_window.map(|capacity| {
+            metadata
+                .policy
+                .effective_window(capacity, metadata.max_output_tokens)
+        });
+        // Automatic compaction is only allowed when one checkpoint can both
+        // reduce the context and leave a quarter of the window to work in.
+        // Whatever blocks it is reported once, and manual compaction plus
+        // provider overflow recovery stay available.
+        // A Chat that declares no window keeps the legacy 512 KiB byte guard:
+        // there is no ratio to judge, and the guard is model-free. A declared
+        // window below the derived floor, or one whose fixed context leaves no
+        // headroom, disables automatic compaction and says why once.
+        let automatic = metadata.policy.auto
+            && match window {
+                None => true,
+                Some(window) => {
+                    let fixed = c::fixed_tokens(request).unwrap_or(u64::MAX);
+                    match metadata
+                        .policy
+                        .automatic_compaction_available(window, fixed)
+                    {
+                        None => true,
+                        Some(diagnostic) => {
+                            let _ = self.run_events.context_event(
+                                "context.compaction-warning",
+                                json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":diagnostic}),
+                            );
+                            false
+                        }
+                    }
+                }
+            };
         // Align the byte-pressure trigger with the token threshold so a token
         // count below the configured 80% threshold cannot trip byte pressure
         // first. JSON context averages about four bytes per token; without a
         // configured context window the legacy 512 KiB floor applies.
-        let byte_limit = metadata
-            .context_window
-            .map(|capacity| metadata.policy.threshold(capacity).saturating_mul(4) as usize)
+        let byte_limit = window
+            .map(|window| metadata.policy.threshold(window).saturating_mul(4) as usize)
             .unwrap_or(512 * 1024);
         let byte_pressure = bytes > byte_limit;
         let qualifies = trigger != c::Trigger::Pressure
-            || (metadata.policy.auto
+            || (automatic
                 && (byte_pressure
-                    || metadata
-                        .context_window
-                        .is_some_and(|capacity| pressure >= metadata.policy.threshold(capacity))));
+                    || window.is_some_and(|window| pressure >= metadata.policy.threshold(window))));
         if metadata.policy.auto
             && metadata.context_window.is_none()
             && trigger == c::Trigger::Pressure
@@ -728,9 +760,9 @@ impl BoundFileToolAuthorityV1 {
                 if cancellation.is_cancelled() {
                     return Err("Context compaction cancelled".into());
                 }
-                let under_tokens = metadata.context_window.is_none_or(|capacity| {
+                let under_tokens = window.is_none_or(|window| {
                     c::pressure(request, anchor.as_ref()).unwrap_or(u64::MAX)
-                        < metadata.policy.threshold(capacity)
+                        < metadata.policy.threshold(window)
                 });
                 let under_bytes = serde_json::to_vec(request)
                     .map_err(|e| e.to_string())?
@@ -751,9 +783,7 @@ impl BoundFileToolAuthorityV1 {
                 ) {
                     0
                 } else {
-                    metadata
-                        .policy
-                        .retention(metadata.context_window.unwrap_or_default())
+                    metadata.policy.retention(window.unwrap_or_default())
                 };
                 let Some(cut) = c::select_prefix(&surface, retain) else {
                     break;
@@ -768,15 +798,16 @@ impl BoundFileToolAuthorityV1 {
                         .last()
                         .map_or(1, |e| e.sequence + 1)
                 );
-                // A summary must never be truncated by an output cap: the
-                // provider ends a truncated response with "length", which the
-                // stream rejects as an unsupported stop reason. Allow up to the
-                // retention budget instead of the small fixed cap.
-                let summary_output_cap = metadata
-                    .context_window
-                    .map(|capacity| metadata.policy.retention(capacity))
-                    .unwrap_or(0)
-                    .max(metadata.policy.max_tokens);
+                // The summary budget is derived, never configured: half of
+                // retention and never more than half the span it replaces, so a
+                // committed compaction always halves what it shadows and the
+                // cap can never be the thing that makes the replacement as big
+                // as the original. Without a declared window the span is the
+                // only proportional bound left.
+                let shadowed_tokens: u64 = surface[..cut].iter().map(c::Unit::tokens).sum();
+                let summary_output_cap = window
+                    .map(|window| metadata.policy.summary_budget(window, shadowed_tokens))
+                    .unwrap_or(shadowed_tokens / 2);
                 let mut summary_request = request.clone();
                 let mut summary_surface = surface[..cut].to_vec();
                 summary_surface.push(c::Unit::Message(ModelToolContextV1 {
@@ -826,7 +857,7 @@ impl BoundFileToolAuthorityV1 {
                 let output = project_model_tool_events(&raw);
                 outcome.input_tokens = outcome.input_tokens.saturating_add(output.input_tokens);
                 outcome.output_tokens = outcome.output_tokens.saturating_add(output.output_tokens);
-                let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":metadata.policy.max_tokens,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
+                let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":summary_output_cap,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
                 // Keep the provider's own verdict typed: the Agent loop reports
                 // it to the model, while an internal condition stays a real
                 // authority failure.
@@ -841,7 +872,6 @@ impl BoundFileToolAuthorityV1 {
                     // remain raw evidence only; this path has no tool dispatcher.
                     if output.assistant_text.trim().is_empty() { return Err("Compaction produced no text summary".into()); }
                     let summary = c::Unit::Message(ModelToolContextV1 { content:c::frame_summary(output.assistant_text.trim()), ..Default::default() });
-                    let shadowed_tokens: u64 = surface[..cut].iter().map(c::Unit::tokens).sum();
                     let tail = &surface[cut..];
                     // Prefer a replacement that carries the user's own turns
                     // across the boundary rather than only summarising them, so
@@ -849,7 +879,10 @@ impl BoundFileToolAuthorityV1 {
                     // cannot shrink the span — one oversized direction with
                     // little other content — fall back to the plain summary so
                     // compaction still makes progress.
-                    let pinned = c::pinned_user_units(&surface, cut);
+                    let user_budget = window
+                        .map(|window| metadata.policy.user_budget(window))
+                        .unwrap_or(shadowed_tokens / 2);
+                    let pinned = c::pinned_user_units(&surface, cut, user_budget);
                     let pinned_units = pinned.len();
                     let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
                     let mut carried = pinned;
@@ -908,9 +941,9 @@ impl BoundFileToolAuthorityV1 {
             }
         }
         if qualifies
-            && metadata.context_window.is_some_and(|capacity| {
+            && window.is_some_and(|window| {
                 c::pressure(request, anchor.as_ref()).unwrap_or(u64::MAX)
-                    >= metadata.policy.threshold(capacity)
+                    >= metadata.policy.threshold(window)
             })
         {
             self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":"Context is still above the configured pressure threshold after the permitted reductions. The latest context is preserved; provider overflow recovery remains bounded by the configured retry policy."}))?;

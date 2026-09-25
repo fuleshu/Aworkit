@@ -9,7 +9,7 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
       onChange={event=> { if(event.target.value!=="") set(key,Number(event.target.value)/scale); }} />
   </label>;
   return <><CompressionSettings model={model} onChange={onChange} /><details className="model-compaction-settings"><summary>Context compaction</summary>
-    <p className="section-intro">Summarize earlier work as this model approaches its context limit. The original Chat history remains available. Changes apply to new Chats.</p>
+    <p className="section-intro">Summarize earlier work as this model approaches its context limit. The retained history budget is the only proportional knob: the summary and the carried user turns are derived from it, and a window below 64k tokens cannot compact automatically. The original Chat history remains available. Changes apply to new Chats.</p>
     <label className="switch-label"><input type="checkbox" checked={policy.auto !== false} onChange={event=>set("auto",event.target.checked)} title="Automatically reduce context before model requests" />Automatic compaction</label>
     <div className="settings-grid two-columns">
       <label className="settings-field">Summary model<select title="Use the acting model or freeze a separate provider and model for summaries" value={policy.summarizationProvider ? JSON.stringify([policy.summarizationProvider,policy.summarizationModel]) : ""}
@@ -20,7 +20,6 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
       <label className="settings-field">Retained history budget<select value={policy.retainTokens == null ? "ratio":"tokens"} title="Keep a recent verbatim tail as a fraction of capacity or an absolute token budget"
         onChange={event=> { const next={...policy}; delete next.retainTokens; delete next.retainRatio; if(event.target.value==="tokens")next.retainTokens=4096;onChange({...model,compaction:next}); }}><option value="ratio">Percentage</option><option value="tokens">Tokens</option></select></label>
       {policy.retainTokens == null ? number("retainRatio","Retain recent history (%)",0.16,"Minimum recent history to preserve verbatim; must be below the trigger",100,1,99) : number("retainTokens","Retain recent tokens",4096,"Minimum recent history to preserve verbatim")}
-      {number("maxTokens","Summary token limit",8192,"Maximum output tokens for the checkpoint summary",1,1)}
       {number("compactionRetries","Additional pressure reductions",1,"Additional reductions if a valid checkpoint still leaves context above the threshold",1,0,32)}
       {number("maxOverflowRetries","Overflow recovery attempts",1,"Consecutive provider context-overflow retries; each requires a committed reduction",1,0,32)}
     </div>

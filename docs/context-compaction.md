@@ -11,7 +11,7 @@ Reference: `C:/src/deepseek-harness`, commit `b150a551b8d465e31e418e1b2eaf5e79bb
 | Timing | `compaction-basic/src/index.ts`: serial pre-step pressure check before deriving the next request. No first-request automatic pressure check until a durable route exists. |
 | Pressure | `token-meter/src/index.ts`: provider input + cache read/write + output anchor, plus heuristic changes since the response. Anchor accepted only for an equal canonical envelope and when usage is at least its heuristic price. Changed envelope falls back to full estimation. |
 | Estimation | `token-meter/src/estimate.ts`: four UTF-16 code units per token, four per block and role; recursive tool-result content; system and tool schemas counted. No tokenizer or arbitrary output-reserve subtraction. |
-| Policy | 80% of exact routed model context capacity; retain 16%, or configured absolute tokens. Exact provider/model overrides; unknown capacity produces an actionable diagnostic. Default summary cap 8192, one additional pressure reduction, one consecutive overflow recovery. |
+| Policy | 80% of exact routed model context capacity; retain 16%, or configured absolute tokens. Exact provider/model overrides; unknown capacity produces an actionable diagnostic. Summary and carried-user-turn budgets are derived from the retention ratio, one additional pressure reduction, one consecutive overflow recovery. |
 | Pruning | Optional `compaction-tool-result-pruner`: qualifying pressure or overflow first replaces text middles over 8192 Unicode code points with head 4096 + exact marker + tail 1024. Rich blocks stay ordered, errors and call IDs preserved. Remeasure after durable pruning. |
 | Selection | `compaction-basic/src/region.ts`: walk backwards to the retained budget, always keep at least the last surface node, move the cut backwards to a balanced tool boundary. A closed early step in the same user turn can compact. Explicit ranges use surface positions, never numeric event ordering. |
 | Summary | `summarizer.ts`: same system/tools and selected leading messages, final user-role directive with eight required sections. One isolated model call, no agent/tool loop. Configured target, latest route, then agent target precedence. Original auxiliary output and usage retained separately. |
@@ -55,7 +55,7 @@ Context details expose **Compact context** while the Chat is idle. A version fen
 
 ## Aworkit-specific design choices
 
-- Defaults are 80% pressure, 16% retained tail, 8192 summary output tokens, one additional pressure reduction and one overflow recovery. Pruning is enabled in the integrated default policy and can be disabled independently. All controls are available per exact model in Settings; there is no competing route-pattern allowlist.
+- Defaults are 80% pressure, 16% retained tail, a derived summary budget (`min(R/2, span/2)`), one additional pressure reduction and one overflow recovery. Pruning is enabled in the integrated default policy and can be disabled independently. All controls are available per exact model in Settings; there is no competing route-pattern allowlist.
 - Aworkit freezes the acting route and capacity at Chat creation. It can measure before the first request; Harness waits for its first durable dynamic route. An explicit frozen summary target overrides the acting model. Aworkit has no separate dynamic route or agent fallback to guess at execution time.
 - Complete parallel tool exchanges are atomic surface units. Keeping or removing that unit preserves calls, results, error flags, ordering and opaque provider continuation metadata together. This implements balanced boundaries using Aworkit's existing exchange representation.
 - Byte pressure can trigger reduction earlier than the model token threshold. Auxiliary requests use a bounded 768 KiB source. Provider responses (including reasoning, tool arguments and summaries), graph output, tool-call counts, individual exchanges and durable outcome commits have no application-imposed size/count ceiling. Large outcomes retain their status and full evidence. Model-facing tool previews and context compaction remain separate from durable originals. An irreducible final unit or unavailable/failed summary never authorizes deleting evidence or an unchanged overflow retry.
@@ -64,6 +64,28 @@ Context details expose **Compact context** while the Chat is idle. A version fen
 - New Chats freeze compaction version, policy, capacity and summary binding. Pre-upgrade Chats preserve their original frozen authority serialization and invocation identities: default byte-pressure, canonical overflow and manual maintenance remain available; exact token-pressure configuration and optional summary routing are adopted in a new Chat. Settings changes never silently alter an existing Chat's model or credentials.
 - Source fencing is intentionally stricter than Harness's selected-span append tolerance: a conflicting context revision rejects the summary. The desktop core serializes maintenance and queues input, so an unrelated user append cannot race a valid maintenance commit.
 - Full bounded context documents are immutable revisions in the existing semantic store, with source identities and exchange cursors. This does not introduce another conversation archive, replay tools, or mutate prior requests. The context panel remains the existing editor; no separate `/compact` parser or model-visible compaction tool is introduced.
+
+## Compaction budget model (2026-09-25)
+
+Every compaction budget is a fraction of the model's **effective window** `W' = contextWindow − maxOutputTokens`. The provider reserves its output space out of the same window, so the reservation is subtracted before any ratio applies; a model with no configured maximum output reserves nothing.
+
+| Budget | Value | Source |
+| --- | --- | --- |
+| Trigger `T` | 0.80 W' | `thresholdRatio`, unchanged |
+| Retained tail `R` | 0.16 W' (or explicit `retainTokens`) | `retainRatio`, unchanged |
+| Carried user turns `U` | `retainRatio/2` = 0.08 W' | derived |
+| Summary cap `S` | `min(R/2, shadowed span/2)` | derived |
+| Fixed context `F` | system + tool schemas + retry notice | measured per request |
+
+At the 16% default a replacement is at most `R + U + S` = 32% of the window, leaving 0.48 W' of work between compactions: 1,048,576 → 167,772 / 83,886 / 83,886; 262,144 → 41,943 / 20,971 / 20,971; 65,536 → 10,485 / 5,242 / 5,242.
+
+**Why `R/2`.** One compaction can free at most `T − R = 0.64 W'`. Spending an eighth of the window on the summary keeps a 4:1 ratio of freed context to replacement cost, so the framed-summary shrink check is never marginal, and the target post-compaction occupancy is exactly `1.5 × R` from a single slider. The same share bounds the user turns carried verbatim, which lands on the same number Codex reached empirically (its flat 20,000-token user budget is 7.75% of its 258,144 window). `S` is additionally clamped to half the span it replaces, so a committed compaction always halves what it shadows regardless of the window.
+
+**Why the summary budget is derived rather than configured.** The removed `maxTokens` setting read as a maximum while behaving as a minimum: the runtime used `max(retention, maxTokens)`, so above a 51,200-token window the setting was inert and the real cap was 16% of the window, up to 167,772 tokens at 1M — 25% of a 32k window and 0.8% of 1M. Frozen Chats that still carry `maxTokens` deserialize through a legacy serde sink and the value is ignored.
+
+**Why 64,000 tokens is the minimum window.** The invariant is that after one compaction occupancy is `R + U + S + F` and must stay below the trigger with a quarter of the window left to work in, i.e. `F ≤ T − R − U − S − 0.25 = 0.23 W'`. With a conservative `F` of 15,000 tokens for a large MCP tool catalog that fails below roughly 64k. Below the floor, or when the measured `F` leaves less than a quarter of the window, automatic pressure compaction is disabled and one diagnostic names the reason; manual compaction and provider overflow recovery remain available, and the Chat stays usable. Hermes ships the same floor as a hard reject (`MINIMUM_CONTEXT_LENGTH = 64_000`); a 32k declared window is refused rather than allowed to oscillate at the trigger.
+
+`context.compacted` records the whole decision: `shadowedUnits`, `shadowedTokenCount`, `pinnedUnits`, `pinnedTokenCount` and the derived `maxTokens` the summary call was authorised with.
 
 ## Verification
 
