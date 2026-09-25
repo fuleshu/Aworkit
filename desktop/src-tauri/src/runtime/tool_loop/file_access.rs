@@ -133,15 +133,44 @@ impl FileAccess {
         } else {
             workspace.root.join(path)
         };
-        // Resolve existing aliases to their actual target. A new file uses its
-        // existing parent; write_file does not implicitly create directories.
+        // Resolve existing aliases to their actual target. A target that does not
+        // exist yet resolves through its nearest existing ancestor, because the
+        // write creates every missing directory below it: refusing at the first
+        // absent component would make that creation unreachable, which is exactly
+        // what made scaffolding a tree fail before the tool ever ran.
         let target = match std::fs::canonicalize(&target) {
             Ok(target) => target,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !directory_tool => {
-                let parent = target.parent().ok_or("File path has no parent")?;
-                std::fs::canonicalize(parent)
-                    .map_err(|e| e.to_string())?
-                    .join(target.file_name().ok_or("File path must name a file")?)
+                let mut missing = vec![target
+                    .file_name()
+                    .ok_or("File path must name a file")?
+                    .to_owned()];
+                let mut ancestor = target.parent();
+                loop {
+                    let Some(current) = ancestor else {
+                        return Err(format!(
+                            "{}: no existing ancestor directory",
+                            target.display()
+                        ));
+                    };
+                    match std::fs::canonicalize(current) {
+                        Ok(existing) => {
+                            let mut resolved = existing;
+                            for component in missing.iter().rev() {
+                                resolved.push(component);
+                            }
+                            break resolved;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            let name = current
+                                .file_name()
+                                .ok_or_else(|| format!("{}: {error}", current.display()))?;
+                            missing.push(name.to_owned());
+                            ancestor = current.parent();
+                        }
+                        Err(error) => return Err(format!("{}: {error}", current.display())),
+                    }
+                }
             }
             // The platform message alone never names the path, which leaves a
             // mistyped target indistinguishable from a missing workspace.
@@ -162,11 +191,24 @@ impl FileAccess {
             ));
         } else {
             // A file target - including a regex search of one file - scopes the
-            // capability to the reviewed parent directory and the file's name.
-            (
-                target.parent().ok_or("File path has no parent")?.to_owned(),
-                PathBuf::from(target.file_name().ok_or("File path must name a file")?),
-            )
+            // capability to the reviewed parent directory and the file's name. A
+            // target whose parent does not exist yet scopes to the deepest
+            // existing ancestor instead and keeps the intermediate components in
+            // the relative path, so the write creates exactly the tree it named:
+            // a scope rooted at a directory that does not exist cannot be
+            // resolved at all.
+            let mut scope = target.parent().ok_or("File path has no parent")?.to_owned();
+            while !scope.is_dir() {
+                scope = scope
+                    .parent()
+                    .ok_or("File path has no existing ancestor directory")?
+                    .to_owned();
+            }
+            let relative = target
+                .strip_prefix(&scope)
+                .map_err(|_| "File path is outside its resolved directory")?
+                .to_owned();
+            (scope, relative)
         };
         let directory = projects
             .resolve_workspace_v1(root)

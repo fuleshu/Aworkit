@@ -254,6 +254,42 @@ fn relative_write_and_new_file_inside_workspace_need_no_review_even_with_overrid
 }
 
 #[test]
+fn a_write_creates_the_directories_it_names_before_the_tool_ever_runs() {
+    // The fixture creates `src` for other tests, which is why a write into a new
+    // directory was never exercised: path resolution canonicalised the parent and
+    // failed with a bare ENOENT before `write_v1`, whose parent creation was the
+    // part under test. A path with no existing ancestor below the workspace root
+    // is the production case - the first write of a scaffolded tree.
+    let f = Fixture::with_tools(&[FILE_WRITE_CAPABILITY_ID]);
+    let call = call(
+        &f,
+        FILE_WRITE_CAPABILITY_ID,
+        json!({"path":"assets/sprites/hero.json","content":"{}"}),
+    );
+    let result = f
+        .authority
+        .invoke_v1(
+            &stable("outer.nested-write").unwrap(),
+            1,
+            &call,
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(!result.result.is_error, "{:?}", result.result);
+    assert_eq!(
+        std::fs::read_to_string(
+            f.authority
+                .context
+                .workspace
+                .root
+                .join("assets/sprites/hero.json")
+        )
+        .unwrap(),
+        "{}"
+    );
+}
+
+#[test]
 fn external_denial_has_no_effect_and_full_access_uses_the_same_target() {
     for mode in [ApprovalMode::AskForApproval, ApprovalMode::FullAccess] {
         let mut f = Fixture::with_tools(&[FILE_WRITE_CAPABILITY_ID]);
