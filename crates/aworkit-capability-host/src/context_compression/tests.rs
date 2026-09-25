@@ -102,7 +102,15 @@ fn adaptive_requires_retrieval_and_preserves_complete_source_spans() {
             )
         })
         .collect::<String>();
-    assert!(compress(&json!(text), "component 73", "", &adaptive(), None, 65536).is_none());
+    // Without an archive reference, adaptive omission is unavailable. A
+    // reversible template may still apply, but nothing may be dropped.
+    let without_reference = compress(&json!(text), "component 73", "", &adaptive(), None, 65536);
+    assert!(
+        without_reference
+            .as_ref()
+            .is_none_or(|result| !result.metrics.lossy),
+        "adaptive omission requires a retrievable reference"
+    );
     let extracted = extract::text(&text, "component 73", &adaptive()).unwrap();
     for span in extracted["spans"].as_array().unwrap() {
         assert_eq!(
@@ -110,6 +118,74 @@ fn adaptive_requires_retrieval_and_preserves_complete_source_spans() {
             &text[span["start"].as_u64().unwrap() as usize..span["end"].as_u64().unwrap() as usize]
         );
     }
+}
+
+#[test]
+fn plain_repeated_text_is_templated_losslessly_without_a_log_level() {
+    // A directory listing carries no log level, but it repeats one token
+    // structure. The reversible template must reach it, and decoding the
+    // projection must reproduce every source byte.
+    let text = (0..80)
+        .map(|i| format!("src/module_{i:02}.js    4096  2026-09-08  build output {i}\n"))
+        .collect::<String>();
+    assert!(
+        !text.contains("INFO") && !text.contains("ERROR"),
+        "the fixture must not look like a log"
+    );
+    let policy = Policy {
+        minimum_bytes: 256,
+        ..Default::default()
+    };
+    let result = compress(&json!(text), "", "", &policy, Some(REF), 65536)
+        .expect("plain repeated text is losslessly representable");
+    assert!(!result.metrics.lossy);
+    assert!(result.metrics.after_tokens < result.metrics.before_tokens);
+    assert_eq!(
+        lossless::expand_templates(&result.content["value"]).as_deref(),
+        Some(text.as_str()),
+        "the template must reconstruct the original text exactly"
+    );
+}
+
+#[test]
+fn skip_reasons_name_the_gate_that_declined_the_candidate() {
+    // Below the configured minimum size.
+    assert_eq!(
+        compress_with_reason(&json!("tiny"), "", "", &Policy::default(), None, 65536).err(),
+        Some(SkipReason::Size)
+    );
+    // Above the size floor, but no reversible or extractive representation
+    // applies to a plain object with one long string leaf.
+    let shapeless = json!({"blob": "x".repeat(4096)});
+    assert_eq!(
+        compress_with_reason(&shapeless, "", "", &Policy::default(), Some(REF), 65536).err(),
+        Some(SkipReason::NoRepresentation)
+    );
+    // A representation exists and shrinks, but not by the configured 90%.
+    let rows = json!(
+        (0..100)
+            .map(|i| json!({"long_repeated_column_name": i, "another": "constant"}))
+            .collect::<Vec<_>>()
+    );
+    let demanding = Policy {
+        minimum_savings: 0.9,
+        ..Default::default()
+    };
+    assert_eq!(
+        compress_with_reason(&rows, "", "", &demanding, Some(REF), 65536).err(),
+        Some(SkipReason::Savings)
+    );
+    // The reporting wrapper keeps the plain API's answer.
+    assert!(compress(&rows, "", "", &Policy::default(), Some(REF), 65536).is_some());
+    assert_eq!(
+        (
+            SkipReason::Size.as_str(),
+            SkipReason::NoRepresentation.as_str(),
+            SkipReason::Savings.as_str(),
+            SkipReason::Policy.as_str(),
+        ),
+        ("size", "no-representation", "savings", "policy")
+    );
 }
 
 #[test]

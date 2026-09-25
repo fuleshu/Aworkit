@@ -86,6 +86,26 @@ Originals and projections are retained in canonical Chat semantic history, along
 
 After at least three compressed observations of a capability, retrieval of at least one third of its distinct references changes future observations in that owner scope to lossless mode. Existing projections remain unchanged. The context usage panel reports cumulative local bytes saved and retrieval calls; these are not billed tokens or net savings after subsequent retrieval.
 
+### Gate measurement and decision (2026-09-25)
+
+The benchmark runs of 2026-09-24/25 froze the default lossless policy and produced 60 generic `context.compression-skipped` events against 3 firings. Measuring the durable `pipeline.tool-outcome` records (421 settled results across the recorded runs) shows why:
+
+| Band | Recorded results |
+| --- | --- |
+| Median tool result | ~600–900 bytes |
+| Results at or above the 2048-byte floor | about 40 of 421, of which 14 are `tool.files.edit`, a capability that is excluded from compression |
+| Largest skipped shapes | `tool.shell.host` up to 2.7 KB, `tool.job.output` up to 27.7 KB, plus `tool.web_fetch`/`web_extract`/`web_search` at 17–38 KB in runs that used them |
+| The two firings | `tool.files.grep` 5,058 → 2,813 bytes / 1,265 → 704 tokens (44.4% bytes, 44.3% tokens); `tool.job.list` 4,756 → 2,783 / 1,189 → 696 (41.5% / 41.5%) |
+
+Decision: **widen the eligible representation set; keep the gates; make every skip name its gate.**
+
+- The 15% savings gate is not the binding constraint — the two firings beat it by roughly three times. Lowering or raising it would not change the recorded outcome, so it is unchanged.
+- The 2048-byte floor, not the savings gate, rejected almost every recorded candidate: the median tool result is well under it. Compressing sub-2 KiB results would save tens of tokens each while durably storing an original *and* a projection for every one of them, so the floor stays.
+- The eligible set was too narrow in one concrete way: `lossless::templates` is a reversible, validated representation of any repeated token structure, yet `transform` only offered it to text where at least a quarter of lines contained a log level. Plain tool stdout therefore had no lossless representation at all. The widening removes that heuristic; source paths with a known grammar still go to code extraction, and the representation is admitted only when it reconstructs the original byte for byte and beats both gates.
+- `context.compression` and `context.compression-skipped` now record `gate` (`size` / `no-representation` / `savings` / `policy`), the candidate's own `candidateBytes` and `candidateTokens`, and the thresholds in force. The previous single generic reason made this measurement impossible from the stream: a size-floor rejection and a representation gap looked identical.
+
+The backoff heuristic (`archives >= 3` and at least one third retrieved, forcing lossless) remains reachable and is exercised by the existing feedback regression test, but no recorded live run has produced three archived observations for one capability and owner, so it did not fire in production. It stays, because it can only reduce lossiness.
+
 ## Verification and measured results
 
 Validated on Windows on 2026-09-08:

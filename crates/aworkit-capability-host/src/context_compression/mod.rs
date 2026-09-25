@@ -34,6 +34,55 @@ pub fn render(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+/// Why a candidate was not compressed.
+///
+/// The recorded stream used to report one generic reason for every skip, so a
+/// benchmark could not tell a size-floor rejection from a representation gap.
+/// Each rejection now names the gate that actually decided it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SkipReason {
+    /// The frozen policy is invalid or compression is off.
+    Policy,
+    /// Below the configured minimum size, or above the 512 KiB ceiling.
+    Size,
+    /// No reversible or extractive representation applies to this value's shape.
+    NoRepresentation,
+    /// A representation was found but did not beat the byte and token savings
+    /// gate inside the output bound.
+    Savings,
+}
+
+impl SkipReason {
+    /// Stable machine value for a recorded skip event.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Policy => "policy",
+            Self::Size => "size",
+            Self::NoRepresentation => "no-representation",
+            Self::Savings => "savings",
+        }
+    }
+
+    /// Human sentence for the same event.
+    #[must_use]
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Policy => "Compression is off or the frozen policy is invalid.",
+            Self::Size => {
+                "The result is below the configured minimum size or above the 512 KiB compression ceiling."
+            }
+            Self::NoRepresentation => {
+                "No reversible or extractive representation applies to this result's shape."
+            }
+            Self::Savings => {
+                "A representation exists but does not beat the configured byte and token savings gate within the output bound."
+            }
+        }
+    }
+}
+
 /// Attempt lossless representations first. Adaptive extraction is available
 /// only with a usable reference owned and committed by the caller.
 pub fn compress(
@@ -44,13 +93,25 @@ pub fn compress(
     reference: Option<&str>,
     maximum_bytes: usize,
 ) -> Option<Compression> {
+    compress_with_reason(value, query, path, policy, reference, maximum_bytes).ok()
+}
+
+/// `compress`, but a declined candidate reports the gate that declined it.
+pub fn compress_with_reason(
+    value: &Value,
+    query: &str,
+    path: &str,
+    policy: &Policy,
+    reference: Option<&str>,
+    maximum_bytes: usize,
+) -> Result<Compression, SkipReason> {
     if policy.validate().is_err() || policy.mode == Mode::Off {
-        return None;
+        return Err(SkipReason::Policy);
     }
     let started = std::time::Instant::now();
     let original = render(value);
     if original.len() < policy.minimum_bytes || original.len() > 524288 {
-        return None;
+        return Err(SkipReason::Size);
     }
     let mut strategies = Vec::new();
     let mut lossy = false;
@@ -65,7 +126,7 @@ pub fn compress(
         0,
     );
     if strategies.is_empty() {
-        return None;
+        return Err(SkipReason::NoRepresentation);
     }
     let rich = contains_rich(value);
     let content = if let Some(reference) = reference {
@@ -77,7 +138,7 @@ pub fn compress(
             } else if result.get("aworkitContext").is_none() {
                 result["aworkitContext"] = metadata;
             } else {
-                return None;
+                return Err(SkipReason::Savings);
             }
             result
         } else {
@@ -100,11 +161,11 @@ pub fn compress(
                 mode: Mode::Lossless,
                 ..policy.clone()
             };
-            return compress(value, query, path, &fallback, reference, maximum_bytes);
+            return compress_with_reason(value, query, path, &fallback, reference, maximum_bytes);
         }
-        return None;
+        return Err(SkipReason::Savings);
     }
-    Some(Compression {
+    Ok(Compression {
         content,
         metrics: Metrics {
             before_bytes: original.len(),
@@ -214,22 +275,16 @@ fn transform(
         return result;
     }
     let original = render(value);
+    // A reversible template packs any repeated token structure, not only lines
+    // that happen to carry a log level. The recorded benchmark showed plain tool
+    // stdout reaching no lossless representation at all, because the log-level
+    // heuristic sat in front of a transform that does not need it. Source files
+    // keep their own grammar and belong to code extraction instead.
     let packed = if value.is_string() {
-        let lines: Vec<_> = original.lines().collect();
-        let log = lines
-            .iter()
-            .filter(|s| {
-                ["INFO", "DEBUG", "TRACE", "WARN", "ERROR"]
-                    .iter()
-                    .any(|w| s.contains(w))
-            })
-            .count()
-            * 4
-            >= lines.len();
-        if log && !code::supported(path) {
-            lossless::templates(&original)
-        } else {
+        if code::supported(path) {
             None
+        } else {
+            lossless::templates(&original)
         }
     } else if contains_rich(value) {
         None

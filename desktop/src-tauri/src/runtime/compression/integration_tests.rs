@@ -1,6 +1,6 @@
 //! Exercise the real broker, durable tool outcomes and owner-scoped retrieval.
 use super::*;
-use aworkit_capability_host::context_compression::Policy;
+use aworkit_capability_host::context_compression::{self as compression, Policy};
 
 fn fixture() -> Fixture {
     let mut f = Fixture::new();
@@ -213,6 +213,36 @@ fn retrieval_survives_new_outer_and_rejects_other_nodes_children_and_chats() {
             .result
             .is_error
     );
+}
+
+#[test]
+fn a_skipped_result_records_the_gate_and_its_own_size() {
+    let mut f = fixture();
+    // A floor above the result makes the size gate the deciding one; the
+    // recorded event has to name it and carry the candidate's own size, so the
+    // next benchmark can compare the two instead of reading one generic reason.
+    f.authority.context.model_context =
+        json!({"policy":{"compression":{"mode":"lossless","minimumBytes":524288}}});
+    scope(&f, "outer.skipped");
+    let result = read(&f, "outer.skipped", "read.1");
+    let events = f.committer.committed_events().unwrap();
+    assert!(!events.iter().any(|e| e.kind == "context.compression"));
+    let skipped = events
+        .iter()
+        .find(|e| e.kind == "context.compression-skipped")
+        .expect("a skipped event");
+    assert_eq!(skipped.payload["gate"], "size");
+    assert_eq!(skipped.payload["minimumBytes"], 524_288);
+    let candidate = compression::render(&result.result.content);
+    assert_eq!(
+        skipped.payload["candidateBytes"].as_u64(),
+        Some(candidate.len() as u64)
+    );
+    assert_eq!(
+        skipped.payload["candidateTokens"].as_u64(),
+        Some(compression::count(&candidate, compression::Tokenizer::Estimate) as u64)
+    );
+    assert_eq!(result.result.content.get("aworkitContext"), None);
 }
 
 #[test]

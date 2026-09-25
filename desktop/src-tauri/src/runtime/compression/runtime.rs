@@ -155,30 +155,52 @@ impl BoundFileToolAuthorityV1 {
             return Ok(settled);
         }
         let started = std::time::Instant::now();
-        let compressed = compression::compress(
+        // The skip reason is kept so the recorded event names the gate that
+        // decided, and the candidate's own size is recorded so a later
+        // benchmark can compare it against that gate instead of guessing.
+        let (compressed, skip) = match compression::compress_with_reason(
             &settled.result.content,
             &query,
             path,
             &policy,
             retrieval.then_some(key.as_str()),
             self.context.maximum_tool_output_bytes,
-        ).or_else(|| {
-            // A mandatory output cap would omit data even in lossless mode.
-            // When retrieval is authorized, archive that original before exposing
-            // its explicitly partial preview instead of creating an orphaned cut.
-            if !retrieval { return None; }
-            let content = crate::runtime::tool_result_preview::bounded_content(
-                &settled.result.content, self.context.maximum_tool_output_bytes, Some(&key))?;
-            let before = compression::render(&settled.result.content);
-            let after = compression::render(&content);
-            Some(compression::Compression { content, metrics: compression::Metrics {
-                before_bytes: before.len(), after_bytes: after.len(),
-                before_tokens: compression::count(&before, policy.tokenizer),
-                after_tokens: compression::count(&after, policy.tokenizer),
-                tokenizer: policy.tokenizer, strategies: vec!["output-limit-preview".into()],
-                lossy: true, elapsed_micros: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            } })
-        });
+        ) {
+            Ok(result) => (Some(result), None),
+            Err(reason) => {
+                // A mandatory output cap would omit data even in lossless mode.
+                // When retrieval is authorized, archive that original before exposing
+                // its explicitly partial preview instead of creating an orphaned cut.
+                let preview = retrieval
+                    .then(|| {
+                        crate::runtime::tool_result_preview::bounded_content(
+                            &settled.result.content,
+                            self.context.maximum_tool_output_bytes,
+                            Some(&key),
+                        )
+                    })
+                    .flatten()
+                    .map(|content| {
+                        let before = compression::render(&settled.result.content);
+                        let after = compression::render(&content);
+                        compression::Compression {
+                            content,
+                            metrics: compression::Metrics {
+                                before_bytes: before.len(),
+                                after_bytes: after.len(),
+                                before_tokens: compression::count(&before, policy.tokenizer),
+                                after_tokens: compression::count(&after, policy.tokenizer),
+                                tokenizer: policy.tokenizer,
+                                strategies: vec!["output-limit-preview".into()],
+                                lossy: true,
+                                elapsed_micros: started.elapsed().as_micros().min(u64::MAX as u128)
+                                    as u64,
+                            },
+                        }
+                    });
+                (preview, Some(reason))
+            }
+        };
         if cancellation.is_cancelled() {
             return Ok(settled);
         }
@@ -191,7 +213,9 @@ impl BoundFileToolAuthorityV1 {
                 .map_err(|e| invalid_tool(&e))?;
             settled.result.content = result.content;
         } else {
-            self.run_events.context_event("context.compression-skipped",json!({"ownerKey":scope.payload["ownerKey"],"nodeId":scope.payload["nodeId"],"child":scope.payload["child"],"reference":key,"capabilityId":call.capability_id,"reason":"No eligible representation met the size and token savings gates within the output bound.","backoff":backoff,"adaptiveAvailable":retrieval})).map_err(|e|invalid_tool(&e))?;
+            let reason = skip.unwrap_or(compression::SkipReason::NoRepresentation);
+            let candidate = compression::render(&settled.result.content);
+            self.run_events.context_event("context.compression-skipped",json!({"ownerKey":scope.payload["ownerKey"],"nodeId":scope.payload["nodeId"],"child":scope.payload["child"],"reference":key,"capabilityId":call.capability_id,"gate":reason.as_str(),"reason":reason.describe(),"candidateBytes":candidate.len(),"candidateTokens":compression::count(&candidate,policy.tokenizer),"minimumBytes":policy.minimum_bytes,"minimumSavings":policy.minimum_savings,"backoff":backoff,"adaptiveAvailable":retrieval})).map_err(|e|invalid_tool(&e))?;
         }
         Ok(settled)
     }
