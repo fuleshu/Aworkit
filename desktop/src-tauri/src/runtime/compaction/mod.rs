@@ -373,6 +373,14 @@ pub(crate) fn is_checkpoint(content: &str) -> bool {
     content.starts_with(CHECKPOINT_PREAMBLE)
 }
 
+/// How many times one compaction attempt shrinks its summary prompt and tries
+/// again before a failed summary becomes terminal.
+///
+/// Every recovery is a paid auxiliary call, so the bound is deliberately small.
+/// The budget is per attempt: a committed reduction moves on to the next
+/// attempt with a fresh one, so progress resets it.
+pub(crate) const SUMMARY_SHRINK_RETRIES: u32 = 2;
+
 /// Opening words of the generated messages that re-emit durable Run state
 /// after a compaction. They are labels, not instructions: the state itself is
 /// restored from records, so a compaction never carries an older copy of it

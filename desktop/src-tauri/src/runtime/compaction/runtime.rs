@@ -845,17 +845,11 @@ impl BoundFileToolAuthorityV1 {
                 let summary_output_cap = window
                     .map(|window| metadata.policy.summary_budget(window, shadowed_tokens))
                     .unwrap_or(shadowed_tokens / 2);
-                let mut summary_request = request.clone();
                 let mut summary_surface = surface[..cut].to_vec();
                 summary_surface.push(c::Unit::Message(ModelToolContextV1 {
                     content: c::INSTRUCTION.trim_end().into(),
                     ..Default::default()
                 }));
-                c::replace_units(&mut summary_request, &summary_surface)?;
-                summary_request.retry_notice = None;
-                summary_request
-                    .parameters
-                    .insert("maxOutputTokens".into(), json!(summary_output_cap));
                 let stream = self.run_events.context_events_shared()?;
                 let source_events: Vec<_> = stream
                     .iter()
@@ -878,76 +872,119 @@ impl BoundFileToolAuthorityV1 {
                         binding_id: c::SUMMARY_BINDING.into(),
                         version_hash: c::hash(target),
                     }];
-                    summary_request.parameters = target.model.parameters.clone();
+                }
+                // A summary the auxiliary call could not produce is retried
+                // against a smaller selected input before the failure becomes
+                // terminal: the large tool results inside the prompt are reduced
+                // first, then the oldest unit the prompt can spare is dropped.
+                // The shadowed span is unchanged, so the balanced boundaries, the
+                // framed-summary shrink check and the one-terminal-event contract
+                // still apply to whatever is committed, and every original stays
+                // durably retrievable. The budget is per attempt, so progress
+                // resets it.
+                let mut shrunk = 0u32;
+                let (result, auxiliary, provider_error) = loop {
+                    let summary_attempt = shrunk + 1;
+                    let mut summary_request = request.clone();
+                    c::replace_units(&mut summary_request, &summary_surface)?;
+                    summary_request.retry_notice = None;
+                    if let Some(target) = &metadata.summary_target {
+                        summary_request.parameters = target.model.parameters.clone();
+                    }
                     summary_request
                         .parameters
                         .insert("maxOutputTokens".into(), json!(summary_output_cap));
-                }
-                let capture = SummaryCapture::default();
-                let result = gateway.execute_compaction_cancellable(
-                    &summary_plan,
-                    &summary_request,
-                    cancellation,
-                    &capture,
-                );
-                let raw = capture.0.into_inner().unwrap_or_else(|p| p.into_inner());
-                let output = project_model_tool_events(&raw);
-                outcome.input_tokens = outcome.input_tokens.saturating_add(output.input_tokens);
-                outcome.output_tokens = outcome.output_tokens.saturating_add(output.output_tokens);
-                let auxiliary = json!({"selectedBinding":result.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":summary_output_cap,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
-                // Keep the provider's own verdict typed: the Agent loop reports
-                // it to the model, while an internal condition stays a real
-                // authority failure.
-                let mut provider_error = None;
-                let result = result.map_err(|error| {
-                    let message = error.to_string();
-                    provider_error = Some(error);
-                    message
-                }).and_then(|_evidence| {
-                    if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
-                    // Match Harness text projection. Auxiliary tool requests
-                    // remain raw evidence only; this path has no tool dispatcher.
-                    if output.assistant_text.trim().is_empty() { return Err("Compaction produced no text summary".into()); }
-                    let summary = c::Unit::Message(ModelToolContextV1 { content:c::frame_summary(output.assistant_text.trim()), ..Default::default() });
-                    let tail = &surface[cut..];
-                    // Prefer a replacement that carries the user's own turns
-                    // across the boundary rather than only summarising them, so
-                    // direction outranks tool spam of the same size. When that
-                    // cannot shrink the span — one oversized direction with
-                    // little other content — fall back to the plain summary so
-                    // compaction still makes progress.
-                    let user_budget = window
-                        .map(|window| metadata.policy.user_budget(window))
-                        .unwrap_or(shadowed_tokens / 2);
-                    let pinned = c::pinned_user_units(&surface, cut, user_budget);
-                    let pinned_units = pinned.len();
-                    let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
-                    let mut carried = pinned;
-                    carried.push(summary.clone());
-                    carried.extend_from_slice(tail);
-                    let carried_tokens: u64 = carried.iter().map(c::Unit::tokens).sum();
-                    let (next, pinned_units, pinned_tokens) = if carried_tokens < shadowed_tokens {
-                        (carried, pinned_units, pinned_tokens)
-                    } else {
-                        let mut plain = vec![summary];
-                        plain.extend_from_slice(tail);
-                        (plain, 0, 0)
-                    };
-                    let kept_tokens: u64 = next.iter().map(c::Unit::tokens).sum();
-                    if kept_tokens >= shadowed_tokens { return Err("Compaction replacement is not smaller than the selected history including checkpoint framing".into()); }
-                    if c::hash(request) != before_hash || self.selection_generation(&owner)? != source_generation { return Err("Context changed during compaction".into()); }
-                    let mut replacement = request.clone();
-                    c::replace_units(&mut replacement,&next)?;
-                    // The summary is a projection; the Run's goal, task list and
-                    // touched files are re-derived from their records and appended
-                    // to the replacement, so they are part of the checkpoint too.
-                    self.state_context(&mut replacement).map_err(|error| error.to_string())?;
-                    let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
-                    if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
-                    self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
-                    *request = replacement;
-                    Ok(())
-                });
+                    let capture = SummaryCapture::default();
+                    let provider = gateway.execute_compaction_cancellable(
+                        &summary_plan,
+                        &summary_request,
+                        cancellation,
+                        &capture,
+                    );
+                    let raw = capture.0.into_inner().unwrap_or_else(|p| p.into_inner());
+                    let output = project_model_tool_events(&raw);
+                    outcome.input_tokens = outcome.input_tokens.saturating_add(output.input_tokens);
+                    outcome.output_tokens =
+                        outcome.output_tokens.saturating_add(output.output_tokens);
+                    let auxiliary = json!({"selectedBinding":provider.as_ref().ok().map(|e|&e.selected_binding),"maxTokens":summary_output_cap,"attempt":summary_attempt,"rawOutput":raw,"inputTokens":output.input_tokens,"outputTokens":output.output_tokens,"cache":output.cache});
+                    // Keep the provider's own verdict typed: the Agent loop reports
+                    // it to the model, while an internal condition stays a real
+                    // authority failure.
+                    let mut provider_error = None;
+                    let result = provider.map_err(|error| {
+                        let message = error.to_string();
+                        provider_error = Some(error);
+                        message
+                    }).and_then(|_evidence| {
+                        if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
+                        // Match Harness text projection. Auxiliary tool requests
+                        // remain raw evidence only; this path has no tool dispatcher.
+                        if output.assistant_text.trim().is_empty() { return Err("Compaction produced no text summary".into()); }
+                        let summary = c::Unit::Message(ModelToolContextV1 { content:c::frame_summary(output.assistant_text.trim()), ..Default::default() });
+                        let tail = &surface[cut..];
+                        // Prefer a replacement that carries the user's own turns
+                        // across the boundary rather than only summarising them, so
+                        // direction outranks tool spam of the same size. When that
+                        // cannot shrink the span — one oversized direction with
+                        // little other content — fall back to the plain summary so
+                        // compaction still makes progress.
+                        let user_budget = window
+                            .map(|window| metadata.policy.user_budget(window))
+                            .unwrap_or(shadowed_tokens / 2);
+                        let pinned = c::pinned_user_units(&surface, cut, user_budget);
+                        let pinned_units = pinned.len();
+                        let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
+                        let mut carried = pinned;
+                        carried.push(summary.clone());
+                        carried.extend_from_slice(tail);
+                        let carried_tokens: u64 = carried.iter().map(c::Unit::tokens).sum();
+                        let (next, pinned_units, pinned_tokens) = if carried_tokens < shadowed_tokens {
+                            (carried, pinned_units, pinned_tokens)
+                        } else {
+                            let mut plain = vec![summary];
+                            plain.extend_from_slice(tail);
+                            (plain, 0, 0)
+                        };
+                        let kept_tokens: u64 = next.iter().map(c::Unit::tokens).sum();
+                        if kept_tokens >= shadowed_tokens { return Err("Compaction replacement is not smaller than the selected history including checkpoint framing".into()); }
+                        if c::hash(request) != before_hash || self.selection_generation(&owner)? != source_generation { return Err("Context changed during compaction".into()); }
+                        let mut replacement = request.clone();
+                        c::replace_units(&mut replacement,&next)?;
+                        // The summary is a projection; the Run's goal, task list and
+                        // touched files are re-derived from their records and appended
+                        // to the replacement, so they are part of the checkpoint too.
+                        self.state_context(&mut replacement).map_err(|error| error.to_string())?;
+                        let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
+                        if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
+                        self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"summaryAttempts":summary_attempt,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
+                        *request = replacement;
+                        Ok(())
+                    });
+                    if result.is_err()
+                        && !cancellation.is_cancelled()
+                        && shrunk < c::SUMMARY_SHRINK_RETRIES
+                    {
+                        // Bulk leaves the prompt before a whole unit does: a
+                        // reduced tool result keeps the unit's position, so the
+                        // prompt keeps its shape while the output the summariser
+                        // must produce shrinks. A Chat that disabled result
+                        // pruning keeps that choice here too.
+                        let smaller = if shrunk == 0
+                            && metadata.policy.prune_tool_results
+                            && !c::prune(&mut summary_request, &metadata.policy, 0).is_empty()
+                        {
+                            summary_surface = c::units(&summary_request)?;
+                            true
+                        } else {
+                            c::shrink_summary(&mut summary_surface)
+                        };
+                        if smaller {
+                            shrunk += 1;
+                            continue;
+                        }
+                    }
+                    break (result, auxiliary, provider_error);
+                };
                 self.run_events.context_event("context.compaction-ended", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"error":result.as_ref().err(),"auxiliary":auxiliary}))?;
                 match result {
                     Ok(()) => outcome.changed = true,

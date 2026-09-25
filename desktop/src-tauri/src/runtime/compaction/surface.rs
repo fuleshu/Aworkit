@@ -252,6 +252,30 @@ pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize, budget: u64) -> Ve
         .collect()
 }
 
+/// Removes the oldest unit a summary prompt can spare.
+///
+/// Used when an auxiliary summary failed and the same span is retried against a
+/// smaller prompt. The trailing directive is never a candidate, and neither is
+/// the first ordinary user message: `replace_units` needs one to build the
+/// prompt. Units are whole messages or whole exchanges, so no tool boundary is
+/// ever split. Returns whether anything was removed.
+pub(crate) fn shrink_summary(surface: &mut Vec<Unit>) -> bool {
+    let base = surface.iter().position(|unit| {
+        matches!(unit, Unit::Message(message)
+            if message.instruction_event_id.is_none()
+                && message.role.as_deref().unwrap_or("user") == "user")
+    });
+    let limit = surface.len().saturating_sub(1);
+    for index in 0..limit {
+        if Some(index) == base {
+            continue;
+        }
+        surface.remove(index);
+        return true;
+    }
+    false
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Pruned {

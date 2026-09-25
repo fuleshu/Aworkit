@@ -293,6 +293,33 @@ fn pruning_reduces_only_old_successful_results_and_records_the_estimate() {
 }
 
 #[test]
+fn a_failed_summary_prompt_shrinks_from_the_oldest_unit_and_keeps_its_shape() {
+    let directive = INSTRUCTION.trim_end();
+    let mut surface = vec![
+        Unit::Message(ModelToolContextV1 {
+            role: Some("user".into()),
+            content: "direction".into(),
+            ..Default::default()
+        }),
+        Unit::Exchange(exchange("first")),
+        Unit::Exchange(exchange("second")),
+        Unit::Message(ModelToolContextV1 {
+            content: directive.into(),
+            ..Default::default()
+        }),
+    ];
+    assert!(shrink_summary(&mut surface));
+    assert_eq!(surface.len(), 3, "the oldest unit left first");
+    assert!(matches!(&surface[1], Unit::Exchange(e) if e.results[0].content == json!("second")));
+    assert!(shrink_summary(&mut surface));
+    assert_eq!(surface.len(), 2);
+    // The base user message and the trailing directive are never candidates.
+    assert!(!shrink_summary(&mut surface));
+    assert!(matches!(&surface[0], Unit::Message(m) if m.content == "direction"));
+    assert!(matches!(&surface[1], Unit::Message(m) if m.content == directive));
+}
+
+#[test]
 fn pruning_never_touches_result_images() {
     let policy = Policy::default();
     let mut r = request();

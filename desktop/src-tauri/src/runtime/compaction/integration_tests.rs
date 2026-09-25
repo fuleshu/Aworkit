@@ -1213,6 +1213,215 @@ fn failed_cancelled_and_nonshrinking_summaries_leave_the_selection_unchanged() {
 }
 
 #[test]
+fn a_failed_summary_recovers_on_a_smaller_prompt_before_it_becomes_terminal() {
+    // The auxiliary call overran its output cap (the measured 32k-run failure:
+    // the stream ended without a supported stop reason). The same span is
+    // retried against a smaller prompt: the large result inside it is reduced
+    // first, then the oldest whole unit is dropped.
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    f.authority.context.model_context = json!({"policy":{"auto":false}});
+    request
+        .exchanges
+        .push(tool_exchange("read.big", json!("z".repeat(20_000))));
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: request.exchanges.len(),
+        content: "Continue with the next task.".into(),
+        ..Default::default()
+    });
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = attempts.clone();
+    let (gateway, requests, plan) =
+        gateway(
+            move |_| match counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+                0 | 1 => Err(ProviderError::Failed(
+                    "provider failed: stream finished without a supported stop reason".into(),
+                )),
+                _ => Ok("Condensed checkpoint.".into()),
+            },
+        );
+    let before = c::hash(&request);
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Manual,
+        )
+        .unwrap();
+    assert!(
+        prepared.changed && prepared.error.is_none(),
+        "{:?}",
+        prepared.error
+    );
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    let first = c::units(&requests[0]).unwrap();
+    let second = c::units(&requests[1]).unwrap();
+    let third = c::units(&requests[2]).unwrap();
+    assert_eq!(
+        first.len(),
+        second.len(),
+        "the first recovery reduces the result without dropping a unit"
+    );
+    assert!(
+        c::estimate(&requests[1]).unwrap() < c::estimate(&requests[0]).unwrap(),
+        "the pruned prompt is smaller"
+    );
+    assert_eq!(
+        second.len(),
+        third.len() + 1,
+        "the second recovery drops the oldest whole unit"
+    );
+    drop(requests);
+    assert_ne!(c::hash(&request), before, "one reduction was committed");
+    let events = f.committer.committed_events().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "context.compaction-started")
+            .count(),
+        1,
+        "recovery stays inside one attempt"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "context.compaction-ended")
+            .count(),
+        1
+    );
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "context.compacted")
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    assert_eq!(compacted[0].payload["summaryAttempts"], 3);
+}
+
+#[test]
+fn an_exhausted_summary_recovery_warns_once_and_keeps_the_selection() {
+    // An automatic reduction the provider never delivers: the recovery budget is
+    // spent, the selection is untouched, and the failure is reported once.
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    f.authority.context.model_context = json!({"contextWindow":65_536,"policy":{"auto":true,"retainTokens":0,"pruneToolResults":false}});
+    request.input["messages"][0]["content"] =
+        json!("Established requirements and implementation history. ".repeat(5_000));
+    request
+        .exchanges
+        .push(tool_exchange("read.big", json!("z".repeat(20_000))));
+    let before = c::hash(&request);
+    let (gateway, requests, plan) = gateway(|_| Err(ProviderError::RequestTimedOut));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.provider_error.is_some());
+    assert_eq!(c::hash(&request), before, "the selection is unchanged");
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1 + c::SUMMARY_SHRINK_RETRIES as usize,
+        "the recovery budget is bounded"
+    );
+    let events = f.committer.committed_events().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "context.compaction-started")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "context.compaction-ended")
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|e| e.kind == "context.compacted"));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "context.checkpoint")
+            .count(),
+        1,
+        "only the ordinary end-of-preparation snapshot is written"
+    );
+    let warnings: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "context.compaction-warning")
+        .collect();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|e| e.payload["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("provider request timed out")))
+            .count(),
+        1,
+        "one warning names the failure, not one per recovery"
+    );
+    assert_eq!(
+        warnings.len(),
+        2,
+        "plus the existing still-above-threshold notice: {warnings:?}"
+    );
+}
+
+#[test]
+fn cancellation_wins_over_summary_recovery() {
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    f.authority.context.model_context = json!({"policy":{"auto":false}});
+    request
+        .exchanges
+        .push(tool_exchange("read.big", json!("z".repeat(20_000))));
+    let before = c::hash(&request);
+    let token = CancellationToken::default();
+    let cancelling = token.clone();
+    let (gateway, requests, plan) = gateway(move |_| {
+        cancelling.cancel();
+        Err(ProviderError::RequestTimedOut)
+    });
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &token,
+            Trigger::Manual,
+        )
+        .unwrap();
+    assert!(prepared.error.is_some());
+    assert_eq!(c::hash(&request), before);
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "a cancelled attempt is never retried"
+    );
+}
+
+#[test]
 fn concurrent_edit_rejects_stale_summary_and_closes_the_transaction() {
     let mut f = Fixture::new();
     let (outer, mut request) = history(&mut f);
