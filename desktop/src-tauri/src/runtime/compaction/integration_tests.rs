@@ -466,6 +466,28 @@ fn compact_manual(
         .unwrap()
 }
 
+/// One closed tool exchange with a named call and an arbitrary result payload.
+fn tool_exchange(call_id: &str, content: Value) -> aworkit_capability_host::ModelToolExchangeV1 {
+    aworkit_capability_host::ModelToolExchangeV1 {
+        assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::ToolCall {
+            call: ModelToolCallV1 {
+                call_id: call_id.into(),
+                provider_call_id: Some(call_id.into()),
+                capability_id: FILE_READ_CAPABILITY_ID.into(),
+                name: FILE_READ_PROVIDER_NAME.into(),
+                arguments: json!({}),
+                provider_context: None,
+            },
+        }],
+        results: vec![aworkit_capability_host::ModelToolResultV1 {
+            images: Vec::new(),
+            call_id: call_id.into(),
+            content,
+            is_error: false,
+        }],
+    }
+}
+
 /// Generated state messages that mention `text`, in request order.
 fn generated_state(request: &ModelToolRequestV1, text: &str) -> Vec<ModelToolContextV1> {
     request
@@ -474,6 +496,284 @@ fn generated_state(request: &ModelToolRequestV1, text: &str) -> Vec<ModelToolCon
         .filter(|message| c::is_generated_state(&message.content) && message.content.contains(text))
         .cloned()
         .collect()
+}
+
+#[test]
+fn pruning_old_tool_results_clears_the_trigger_without_a_summary() {
+    // The gate is retuned so old, large results are reduced before an auxiliary
+    // summary is paid for: here one huge old result is the whole reason the
+    // context is over the trigger, and pruning alone brings it back under.
+    // No instruction binding, so nothing but the prune changes the request and
+    // the pressure drop is exactly the recorded reduction.
+    let mut f = Fixture::with_tools(&[FILE_READ_CAPABILITY_ID]);
+    let window = 65_536_u64;
+    f.authority.context.model_context = json!({
+        "contextWindow": window,
+        "policy": {"auto": true, "retainTokens": 0, "pruneToolResults": true}
+    });
+    let outer = stable("outer.prune-only").unwrap();
+    let mut request = f.request();
+    f.prepare(outer.as_str(), 0, &mut request);
+    request
+        .exchanges
+        .push(tool_exchange("read.big", json!("z".repeat(300_000))));
+    request
+        .exchanges
+        .push(tool_exchange("read.recent", json!("recent result")));
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 2,
+        content: "Continue with the next task.".into(),
+        ..Default::default()
+    });
+    let threshold = c::Policy::default().threshold(window);
+    let before = c::pressure(&request, None).unwrap();
+    assert!(before >= threshold, "{before} >= {threshold}");
+    let (gateway, calls, plan) = gateway(|_| panic!("pruning alone must not need a summary"));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            2,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(
+        prepared.changed && prepared.error.is_none(),
+        "{:?}",
+        prepared.error
+    );
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "no auxiliary summary call"
+    );
+    let after = c::pressure(&request, None).unwrap();
+    assert!(after < threshold, "{after} < {threshold}");
+    assert!(
+        request.exchanges[0].results[0]
+            .content
+            .as_str()
+            .unwrap()
+            .len()
+            < 300_000
+    );
+    assert_eq!(
+        request.exchanges[1].results[0].content,
+        json!("recent result"),
+        "the newest result is not a candidate"
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "context.compacted")
+        .collect();
+    assert_eq!(compacted.len(), 1, "exactly one reduction was committed");
+    assert_eq!(compacted[0].payload["strategy"], "tool-result-pruning");
+    assert_eq!(compacted[0].payload["retainedExchanges"], 1);
+    let pruned = compacted[0].payload["pruned"].as_array().unwrap();
+    assert_eq!(pruned.len(), 1);
+    assert_eq!(pruned[0]["callId"], "read.big");
+    let removed: u64 = pruned
+        .iter()
+        .map(|entry| {
+            entry["tokensBefore"].as_u64().unwrap() - entry["tokensAfter"].as_u64().unwrap()
+        })
+        .sum();
+    assert_eq!(
+        compacted[0].payload["removedTokens"].as_u64(),
+        Some(removed)
+    );
+    assert!(removed > 0);
+    assert_eq!(
+        before - after,
+        removed,
+        "the pressure drop is exactly the recorded reduction"
+    );
+}
+
+#[test]
+fn a_pruned_original_stays_retrievable_through_the_context_tool() {
+    // Pruning rewrites the request projection only: the durable archive the
+    // context tool reads keeps the whole original, so omitted text is still
+    // recoverable after a compaction.
+    let mut f = Fixture::new();
+    let native = crate::runtime::tool_registry::native_tool("tool.context").unwrap();
+    let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+        capability_id: "tool.context".into(),
+        configuration: json!(native.configuration),
+        options: Default::default(),
+        credential_bindings: vec![],
+        definition: None,
+    }])
+    .unwrap()
+    .remove(0);
+    let descriptor = file_tool_descriptors()
+        .unwrap()
+        .remove("tool.context")
+        .unwrap();
+    f.authority
+        .context
+        .manifest
+        .capability_bindings
+        .push(file_tool_capability_binding(&binding, &descriptor).unwrap());
+    f.authority.context.bindings.push(binding);
+    f.agent.tool_ids.push("tool.context".into());
+    // A host tool-output bound below the read page forces the archive path: the
+    // bounded preview still exceeds the prune gate, and the archive keeps the
+    // whole original for retrieval.
+    f.authority.context.maximum_tool_output_bytes = 40_000;
+    f.authority.context.model_context = json!({
+        "contextWindow": 65_536,
+        "policy": {
+            "auto": true,
+            "retainTokens": 0,
+            "pruneToolResults": true,
+            "compression": {"mode": "lossless", "targetRatio": 0.9, "minimumSavings": 0.05}
+        }
+    });
+    let marker = "UNIQUE MIDDLE RECEIPT 7391";
+    let source = |index: usize| {
+        (0..600)
+            .map(|step| {
+                format!(
+                    "{{\"step\":{step},\"worker\":{},\"detail\":\"observation {step} retained {}\"}}\n",
+                    step * 7 + index,
+                    step * 13
+                )
+            })
+            .collect::<String>()
+    };
+    let mut files = Vec::new();
+    let mut written = Vec::new();
+    for index in 0..6 {
+        let mut text = source(index);
+        if index == 0 {
+            text = text.replacen(
+                "observation 300 retained",
+                &format!("{marker} observation 300 retained"),
+                1,
+            );
+        }
+        let path = format!("src/big_{index}.txt");
+        f.write(&path, &text);
+        files.push(path);
+        written.push(text);
+    }
+    let outer = stable("outer.retrievable").unwrap();
+    f.authority
+        .register_compression_scope(&f.agent, &outer, &f.request())
+        .unwrap();
+    let mut request = f.request();
+    let mut reference = Value::Null;
+    let mut offset = 0;
+    for (turn, path) in files.iter().enumerate() {
+        let turn = turn as u32 + 1;
+        let call = ModelToolCallV1 {
+            call_id: format!("read.{turn}"),
+            provider_call_id: Some(format!("read.{turn}")),
+            capability_id: FILE_READ_CAPABILITY_ID.into(),
+            name: FILE_READ_PROVIDER_NAME.into(),
+            arguments: json!({"path": path}),
+            provider_context: None,
+        };
+        let settled = f
+            .authority
+            .invoke(&outer, turn, &call, &CancellationToken::default())
+            .unwrap();
+        if turn == 1 {
+            reference = settled.result.content["aworkitContext"]["reference"].clone();
+            offset = written[0].find(marker).unwrap();
+        }
+        let exchange = aworkit_capability_host::ModelToolExchangeV1 {
+            assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::ToolCall {
+                call,
+            }],
+            results: vec![settled.result],
+        };
+        f.authority
+            .commit_exchange(&outer, turn, &exchange)
+            .unwrap();
+        request.exchanges.push(exchange);
+    }
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: request.exchanges.len(),
+        content: "Continue with the next task.".into(),
+        ..Default::default()
+    });
+    assert!(reference.is_string());
+    let newest = request.exchanges[5].results[0].content.clone();
+    let threshold = c::Policy::default().threshold(65_536);
+    let before = c::pressure(&request, None).unwrap();
+    assert!(before >= threshold, "{before} >= {threshold}");
+    assert!(
+        serde_json::to_string(&request).unwrap().contains(marker),
+        "the original text is part of the request projection before pruning"
+    );
+    let (gateway, calls, plan) = gateway(|_| panic!("pruning alone must not need a summary"));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(
+        prepared.changed && prepared.error.is_none(),
+        "{:?}",
+        prepared.error
+    );
+    assert!(calls.lock().unwrap().is_empty());
+    assert!(c::pressure(&request, None).unwrap() < threshold);
+    assert!(
+        !serde_json::to_string(&request).unwrap().contains(marker),
+        "the reduced projection omits the middle of the old result"
+    );
+    assert_eq!(
+        request.exchanges[5].results[0].content, newest,
+        "the newest result is not a candidate"
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "context.compacted")
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    assert_eq!(compacted[0].payload["strategy"], "tool-result-pruning");
+    assert_eq!(compacted[0].payload["pruned"][0]["callId"], "read.1");
+    // The archive keeps the whole original, so the omitted text is still
+    // retrievable through the context tool.
+    let recovered = f
+        .authority
+        .invoke(
+            &outer,
+            1,
+            &ModelToolCallV1 {
+                call_id: "recover.1".into(),
+                provider_call_id: Some("recover.1".into()),
+                capability_id: "tool.context".into(),
+                name: "context".into(),
+                arguments: json!({"operation":"read","reference":reference,"pointer":"/content","offset":offset,"limit":256}),
+                provider_context: None,
+            },
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(!recovered.result.is_error, "{:?}", recovered.result);
+    assert!(
+        recovered.result.content.to_string().contains(marker),
+        "{:?}",
+        recovered.result.content
+    );
 }
 
 #[test]

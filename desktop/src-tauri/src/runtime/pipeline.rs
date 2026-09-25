@@ -6900,17 +6900,19 @@ mod tests {
         assert_eq!(results.len(), 1);
         // A result too large to forward is bounded rather than rejected: the model
         // receives a declared truncation notice and a preview it can narrow with a
-        // follow-up request. The pass itself keeps going. The MCP adapter carries
-        // the payload as a JSON *string*, so the encoded result is what the model
-        // actually receives.
+        // follow-up request. The pass itself keeps going. This is the newest
+        // exchange, so compaction-side pruning leaves it whole and the model
+        // receives the adapter's bounded value unchanged.
         let encoded = serde_json::to_string(&results[0]).expect("encoded result");
-        assert!(
-            encoded.contains(r#"\"truncated\":true"#),
+        assert_eq!(
+            results[0]["aworkitOutput"]["truncated"],
+            json!(true),
             "a bounded result must declare its truncation: {:.120}",
             encoded
         );
-        assert!(
-            encoded.contains(&format!(r#"\"maximumBytes\":{maximum_bytes}"#)),
+        assert_eq!(
+            results[0]["aworkitOutput"]["maximumBytes"],
+            json!(maximum_bytes),
             "the bound the projection honoured must be recorded"
         );
         assert!(
@@ -6921,8 +6923,11 @@ mod tests {
             !encoded.contains("provider continuation bound"),
             "an oversized result is no longer rejected outright"
         );
+        let original_bytes = results[0]["aworkitOutput"]["originalBytes"]
+            .as_u64()
+            .expect("the peer's original size");
         assert!(
-            encoded.len() < MAXIMUM_TOOL_RESULT_BYTES,
+            (encoded.len() as u64) < original_bytes,
             "the bounded form must be smaller than the peer's original result"
         );
         assert_eq!(result.tool_activity[0].status, "completed");

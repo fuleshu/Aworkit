@@ -751,16 +751,45 @@ impl BoundFileToolAuthorityV1 {
             } else {
                 trigger
             };
+            // The tail a compaction retains, and with it the boundary between
+            // results the model is still working with and results old enough to
+            // reduce. Pruning and summarising must agree on it.
+            let retain = if matches!(
+                effective_trigger,
+                c::Trigger::Manual | c::Trigger::ContextOverflow | c::Trigger::BytePressure
+            ) {
+                0
+            } else {
+                metadata.policy.retention(window.unwrap_or_default())
+            };
             if metadata.policy.prune_tool_results && trigger != c::Trigger::Manual {
                 let before = request.clone();
-                let pruned = c::prune(request, &metadata.policy);
+                let surface = c::units(request)?;
+                let retained = match c::select_prefix(&surface, retain) {
+                    // No prefix can be shadowed, so every result is inside the
+                    // retained tail and none of them is a pruning candidate.
+                    None => request.exchanges.len(),
+                    Some(cut) => surface[cut..]
+                        .iter()
+                        .filter(|unit| matches!(unit, c::Unit::Exchange(_)))
+                        .count()
+                        .max(1),
+                }
+                .min(request.exchanges.len());
+                let pruned = c::prune(request, &metadata.policy, retained);
                 if !pruned.is_empty() {
+                    let removed_chars: usize =
+                        pruned.iter().map(|p| p.chars_before - p.chars_after).sum();
+                    let removed_tokens: u64 = pruned
+                        .iter()
+                        .map(|p| p.tokens_before - p.tokens_after)
+                        .sum();
                     let checkpoint =
                         self.snapshot_payload(&owner, outer, through, request, anchor.clone())?;
                     if cancellation.is_cancelled() {
                         return Err("Context compaction cancelled".into());
                     }
-                    self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"trigger":effective_trigger,"strategy":"tool-result-pruning","beforeHash":c::hash(&before),"afterHash":c::hash(request),"pruned":pruned,"document":ContextDocument::from_request(request),"body":"Large tool results compacted; original results remain in Run details."})),("context.checkpoint",checkpoint)])?;
+                    self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"trigger":effective_trigger,"strategy":"tool-result-pruning","beforeHash":c::hash(&before),"afterHash":c::hash(request),"retainedExchanges":retained,"removedChars":removed_chars,"removedTokens":removed_tokens,"pruned":pruned,"document":ContextDocument::from_request(request),"body":"Large old tool results compacted; original results remain in Run details."})),("context.checkpoint",checkpoint)])?;
                     outcome.changed = true;
                 }
             }
@@ -793,14 +822,6 @@ impl BoundFileToolAuthorityV1 {
                     break;
                 }
                 let surface = c::units(request)?;
-                let retain = if matches!(
-                    effective_trigger,
-                    c::Trigger::Manual | c::Trigger::ContextOverflow | c::Trigger::BytePressure
-                ) {
-                    0
-                } else {
-                    metadata.policy.retention(window.unwrap_or_default())
-                };
                 let Some(cut) = c::select_prefix(&surface, retain) else {
                     break;
                 };

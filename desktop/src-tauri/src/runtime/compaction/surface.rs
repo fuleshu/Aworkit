@@ -260,14 +260,35 @@ pub(crate) struct Pruned {
     pub before_hash: String,
     pub chars_before: usize,
     pub chars_after: usize,
+    /// The payload priced exactly as [`Unit::tokens`] prices it, so the recorded
+    /// reduction is the same quantity the pressure estimate drops by.
+    pub tokens_before: u64,
+    pub tokens_after: u64,
 }
 
 /// Textual tool results are protocol-neutral JSON values. Native/MCP rich
 /// blocks are retained in their original order; only their text fields shrink.
-pub(crate) fn prune(request: &mut ModelToolRequestV1, policy: &Policy) -> Vec<Pruned> {
+///
+/// Compaction-side pruning is an age-and-size gate, not a blanket rewrite. Only
+/// the oldest exchanges are candidates: `retained` names how many newest
+/// exchanges stay whole, because the model is still working with those results.
+/// A failed result is never reduced either, so its diagnostic text survives a
+/// compaction verbatim; image and other non-text blocks are never rewritten.
+pub(crate) fn prune(
+    request: &mut ModelToolRequestV1,
+    policy: &Policy,
+    retained: usize,
+) -> Vec<Pruned> {
     let mut changes = Vec::new();
+    let candidates = request.exchanges.len().saturating_sub(retained);
     for (index, exchange) in request.exchanges.iter_mut().enumerate() {
+        if index >= candidates {
+            break;
+        }
         for result in &mut exchange.results {
+            if result.is_error {
+                continue;
+            }
             let original = result.content.clone();
             let (before, after) = prune_value(&mut result.content, policy);
             if after < before {
@@ -277,6 +298,8 @@ pub(crate) fn prune(request: &mut ModelToolRequestV1, policy: &Policy) -> Vec<Pr
                     before_hash: hash(&original),
                     chars_before: before,
                     chars_after: after,
+                    tokens_before: result_tokens(&original),
+                    tokens_after: result_tokens(&result.content),
                 });
             }
         }

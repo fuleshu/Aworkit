@@ -191,18 +191,21 @@ fn threshold() -> f64 {
 fn one() -> u32 {
     1
 }
-// One bounded file read returns at most 64 KiB. A tool result is pruned on its
-// rendered JSON, where escaping can inflate control characters, quotes and
-// backslashes, so the default budget is 25% larger than a read page: a whole
-// page survives verbatim for any realistic source file.
+// Compaction-side pruning has to actually fire before it can save a summary.
+// Measured durable outcomes put the median tool result at 600-900 bytes, shell
+// output at ~1.4 KB p90 and ~2.7 KB max, and the largest recorded job output at
+// ~28 KB, so the previous 80 KiB gate sat about 100x above the median and never
+// qualified. The default is now the same 8,000-character floor Hermes uses for
+// proactive pruning: a result large enough to matter is reduced to its head and
+// tail (the original stays durably retrievable) before a summary is paid for.
 fn prune_threshold() -> usize {
-    81920
+    8192
 }
 fn prune_head() -> usize {
-    73728
+    4096
 }
 fn prune_tail() -> usize {
-    4096
+    1024
 }
 impl Default for Policy {
     fn default() -> Self {

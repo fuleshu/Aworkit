@@ -218,26 +218,28 @@ fn generated_state_is_recognised_and_never_pinned_as_user_direction() {
     assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first"));
 }
 #[test]
-fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
+fn pruning_preserves_unicode_rich_blocks_ids_and_is_idempotent() {
     let policy = Policy::default();
     let mut r = request();
     r.exchanges.push(exchange(&"😀".repeat(100_000)));
-    r.exchanges[0].results[0].is_error = true;
-    let changes = prune(&mut r, &policy);
+    let changes = prune(&mut r, &policy, 0);
     let removed = 100_000 - policy.head_chars - policy.tail_chars;
     assert_eq!(changes[0].chars_before, 100_000);
     assert_eq!(
         changes[0].chars_after,
         policy.head_chars + policy.tail_chars + prune_marker(removed).chars().count()
     );
+    assert!(
+        changes[0].chars_after < changes[0].chars_before,
+        "pruning never expands a result"
+    );
     assert_eq!(r.exchanges[0].results[0].call_id, "c1");
-    assert!(r.exchanges[0].results[0].is_error);
     let pruned_text = r.exchanges[0].results[0].content.as_str().unwrap();
     assert!(pruned_text.contains(&format!("{removed} characters removed")));
     assert!(pruned_text.contains("incomplete"));
-    assert!(prune(&mut r, &policy).is_empty());
+    assert!(prune(&mut r, &policy, 0).is_empty());
     r.exchanges[0].results[0].content = json!({"content":[{"type":"text","text":"a".repeat(40_000)},{"type":"image","data":"opaque"},{"type":"text","text":"b".repeat(40_000)}]});
-    prune(&mut r, &policy);
+    prune(&mut r, &policy, 0);
     assert_eq!(
         r.exchanges[0].results[0].content["content"][1],
         json!({"type":"image","data":"opaque"})
@@ -248,12 +250,83 @@ fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
         .ends_with(&"b".repeat(policy.tail_chars)));
     r.exchanges[0].results[0].content =
         json!([{ "type":"text","text":"x".repeat(80_000) },{"type":"image","data":"opaque"}]);
-    prune(&mut r, &policy);
+    prune(&mut r, &policy, 0);
     assert_eq!(
         r.exchanges[0].results[0].content[1],
         json!({"type":"image","data":"opaque"})
     );
-    assert!(prune(&mut r, &policy).is_empty());
+    assert!(prune(&mut r, &policy, 0).is_empty());
+}
+
+#[test]
+fn pruning_reduces_only_old_successful_results_and_records_the_estimate() {
+    let policy = Policy::default();
+    let mut r = request();
+    r.exchanges.push(exchange(&"oldest".repeat(8_000)));
+    r.exchanges.push(exchange(&"middle".repeat(8_000)));
+    r.exchanges.push(exchange(&"newest".repeat(8_000)));
+    r.exchanges[0].results[0].is_error = true;
+    let before = estimate(&r).unwrap();
+    let changes = prune(&mut r, &policy, 1);
+    assert_eq!(changes.len(), 1, "one candidate: {changes:?}");
+    assert_eq!(changes[0].exchange, 1);
+    assert_eq!(
+        r.exchanges[0].results[0].content.as_str().unwrap().len(),
+        "oldest".len() * 8_000,
+        "a failed result stays verbatim"
+    );
+    assert_eq!(
+        r.exchanges[2].results[0].content.as_str().unwrap().len(),
+        "newest".len() * 8_000,
+        "the newest exchange is not a candidate"
+    );
+    let removed: u64 = changes
+        .iter()
+        .map(|pruned| pruned.tokens_before - pruned.tokens_after)
+        .sum();
+    assert!(removed > 0);
+    assert_eq!(
+        removed,
+        before - estimate(&r).unwrap(),
+        "the recorded reduction is the pressure drop"
+    );
+}
+
+#[test]
+fn pruning_never_touches_result_images() {
+    let policy = Policy::default();
+    let mut r = request();
+    let mut big = exchange(&"x".repeat(50_000));
+    big.results[0].images = vec![aworkit_capability_host::model_images::ImageAttachmentV1 {
+        id: "a".repeat(64),
+        name: "image.one".into(),
+        mime_type: "image/png".into(),
+        byte_length: 1234,
+    }];
+    r.exchanges.push(big);
+    let images = r.exchanges[0].results[0].images.clone();
+    let changes = prune(&mut r, &policy, 0);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(r.exchanges[0].results[0].images, images);
+}
+
+#[test]
+fn the_prune_gate_is_exclusive_and_never_grows_a_result() {
+    let policy = Policy::default();
+    let mut r = request();
+    r.exchanges
+        .push(exchange(&"y".repeat(policy.threshold_chars + 1)));
+    let changes = prune(&mut r, &policy, 0);
+    assert_eq!(changes.len(), 1);
+    assert!(changes[0].chars_after < changes[0].chars_before);
+    let mut small = request();
+    small
+        .exchanges
+        .push(exchange(&"y".repeat(policy.threshold_chars)));
+    assert!(
+        prune(&mut small, &policy, 0).is_empty(),
+        "a result exactly at the gate is already small enough"
+    );
 }
 #[test]
 fn budgets_are_derived_from_the_effective_window() {
@@ -308,7 +381,7 @@ fn usage_anchor_tracks_reductions_and_is_invalidated_by_a_header_change() {
         reported: estimated + 1000,
     };
     assert_eq!(pressure(&r, Some(&anchor)).unwrap(), estimated + 1000);
-    prune(&mut r, &Policy::default());
+    prune(&mut r, &Policy::default(), 0);
     assert_eq!(
         pressure(&r, Some(&anchor)).unwrap(),
         estimate(&r).unwrap() + 1000
