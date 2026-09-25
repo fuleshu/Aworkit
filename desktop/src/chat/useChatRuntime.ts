@@ -25,6 +25,7 @@ export interface ChatRuntimeState {
   loadOlder(): Promise<void>;
   readonly error: RuntimeErrorNotice | null;
   readonly pendingCommandIds: ReadonlySet<string>;
+  readonly recoveryAction: "resume" | "abandon_recovery" | null;
   readonly maintenancePending: boolean;
   readonly queuedMaintenanceInputs: readonly string[];
   dispatch(intent: ChatIntent, expectedVersion?: number): Promise<boolean>;
@@ -69,6 +70,7 @@ export function useChatRuntime(
   const [events, setEvents] = useState<readonly RuntimeEvent[]>([]);
   const flushTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef(new Map<string, string>());
+  const recoveryRef = useRef(new Map<string, "resume" | "abandon_recovery">());
   const generationRef = useRef(0);
   const snapshotRequestsRef = useRef({ requested: 0, applied: 0 });
   const navigatingRef = useRef(false);
@@ -322,11 +324,16 @@ export function useChatRuntime(
   const execute = useCallback(
     async (intent: ChatIntent, expectedVersion?: number): Promise<boolean> => {
       const current = snapshotRef.current;
-      if (current === null || (stale && !replacesSelectedChat(intent))) return false;
+      // A question answer is a one-shot user decision addressed to one durable
+      // question, so it is never gated on this projection's optimism: the core
+      // validates it against the durable question and enforces exactly-once, and
+      // a stale or unhappy projection must not swallow what the user chose.
+      if (current === null || (stale && !replacesSelectedChat(intent) && intent.type !== "question")) return false;
       const navigation = replacesSelectedChat(intent);
       if (navigatingRef.current && !navigation) return false;
       const chatId = intent.targetId ?? current.chat.chatId;
       pendingRef.current.set(intent.commandId, chatId);
+      if (intent.type === "resume" || intent.type === "abandon_recovery") recoveryRef.current.set(intent.commandId, intent.type);
       setPending((value) => new Set([...value, intent.commandId]));
       if (navigation) {
         cancelDeferredPublish();
@@ -353,7 +360,11 @@ export function useChatRuntime(
         const receiptPromise = navigation ? navigationTail.current.then(() => port.command(intent, version)) : port.command(intent, version);
         if (navigation) navigationTail.current = receiptPromise.then(() => {}, () => {});
         const receipt = await receiptPromise;
-        if (generation !== generationRef.current) return true;
+        if (generation !== generationRef.current) {
+          if (!receipt.accepted) commandError(receipt.reason ?? "Couldn’t complete this action.");
+          else if (!navigation) errorsRef.current.delete(chatId);
+          return receipt.accepted;
+        }
         if (!receipt.accepted) {
           const reason =
             receipt.reason ?? "The trusted core rejected the command.";
@@ -361,11 +372,11 @@ export function useChatRuntime(
           commandError(reason);
           return false;
         }
-        errorsRef.current.delete(chatId);
+        if (!navigation) errorsRef.current.delete(chatId);
         await resynchronize(navigation, intent.type === "select_chat" ? intent.targetId : undefined);
         return true;
       } catch (failure) {
-        if (generation !== generationRef.current) return true;
+        if (generation !== generationRef.current) { commandError(failure); return false; }
         const failureMessage = message(failure);
         // The command response can be lost after a stream-changing mutation
         // committed. Recovery must accept the newly selected stream even when
@@ -382,6 +393,7 @@ export function useChatRuntime(
       } finally {
         if (navigation && generation === generationRef.current) { navigatingRef.current = false; setLoading(false); }
         pendingRef.current.delete(intent.commandId);
+        recoveryRef.current.delete(intent.commandId);
         setPending((value) => {
           const next = new Set(value);
           next.delete(intent.commandId);
@@ -414,6 +426,7 @@ export function useChatRuntime(
     loadOlder: older.load,
     error,
     pendingCommandIds,
+    recoveryAction: [...pendingCommandIds].map(id => recoveryRef.current.get(id)).find(action => action !== undefined) ?? null,
     maintenancePending: maintenance.pending(snapshot?.chat.chatId ?? ""),
     queuedMaintenanceInputs: maintenance.inputs(snapshot?.chat.chatId ?? ""),
     dispatch,

@@ -29,7 +29,8 @@ export function useChatErrorNotices(
     if (stream.current !== chatId) { stream.current = chatId; through.current = head; return; }
     for (const event of events) {
       if (event.sequence <= through.current || event.kind !== "execution.failed") continue;
-      const payload = event.payload as { title?: unknown; body?: unknown };
+      const payload = event.payload as { title?: unknown; body?: unknown; recoveryAbandoned?: boolean };
+      if (payload.recoveryAbandoned) continue;
       const title = typeof payload.title === "string" ? payload.title : "Execution failed";
       const body = typeof payload.body === "string" ? payload.body : "Inspect Run details for the source record.";
       notifications.publish("execution-error", {

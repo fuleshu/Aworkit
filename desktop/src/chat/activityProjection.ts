@@ -62,7 +62,7 @@ export function projectSemanticTimeline(
   const questionAnswers = new Map<string, FactPayload>();
   const terminalEvents = ordered.filter(
     (event) =>
-      event.kind === "execution.failed" || event.kind === "chat.cancelled" || event.kind === "context.compaction-ended",
+      event.kind === "execution.failed" || event.kind === "chat.cancelled" || event.kind === "chat.turn_stopped" || event.kind === "context.compaction-ended",
   );
 
   for (const event of ordered) {
@@ -526,11 +526,11 @@ function questionStatus(
   terminalKind: string | undefined,
 ): string {
   if (answer !== undefined) {
-    if (answer.cancelled === true) return "skipped";
+    if (answer.cancelled === true) return answer.reason === "Reply stopped." ? "cancelled" : "skipped";
     if (string(answer.path) !== undefined) return "answered";
     return "answered";
   }
-  if (terminalKind === "chat.cancelled") return "cancelled";
+  if (terminalKind === "chat.cancelled" || terminalKind === "chat.turn_stopped") return "cancelled";
   if (terminalKind === "execution.failed") return "failed";
   return "pending";
 }

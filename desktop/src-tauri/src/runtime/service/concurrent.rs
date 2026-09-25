@@ -136,9 +136,19 @@ impl DesktopRuntime {
                 );
             }
             let snapshot = history.snapshot(u64::MAX)?;
+            // A Run parked on a user decision is resolved inside its own Chat.
+            // An approval and a model question are the same durable suspension,
+            // so neither may be discarded by deleting or forking the Chat that
+            // is waiting for it.
             if snapshot.chat.phase == "awaiting_approval" {
                 return Err(
                     "Resolve this Chat's pending approval before deleting or forking it.".into(),
+                );
+            }
+            if snapshot.chat.phase == "awaiting_answer" {
+                return Err(
+                    "Answer or skip this Chat's pending question before deleting or forking it."
+                        .into(),
                 );
             }
         }

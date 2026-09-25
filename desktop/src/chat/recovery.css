@@ -1,0 +1,23 @@
+.chat-compose-area { grid-row: 5; min-width: 0; }
+.chat-recovery-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 0 16px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--aw-divider);
+  border-left: 3px solid var(--aw-warning);
+  border-radius: 10px;
+  background: var(--aw-window);
+  font-size: var(--aw-font-ui);
+}
+.chat-recovery-copy { flex: 1 1 260px; min-width: 0; }
+.chat-recovery-copy strong { display: block; margin-bottom: 3px; }
+.chat-recovery-card p { margin: 0; line-height: 1.45; }
+.chat-recovery-copy p { color: var(--aw-secondary); }
+.chat-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-recovery-actions button { white-space: nowrap; min-height: 34px; }
+.chat-recovery-error { flex-basis: 100%; color: var(--aw-danger); }
+.chat-recovery-error details { margin-top: 4px; color: var(--aw-secondary); overflow-wrap: anywhere; }
+.chat-recovery-error summary { cursor: pointer; }

@@ -294,12 +294,15 @@ pub(crate) fn prepare_command(
     if let Some(path) = std::env::var_os("PATH") {
         command.env("PATH", path);
     }
-    // Winsock name resolution needs SystemRoot even for an absolute executable.
-    // Keep the OS baseline without inheriting credentials or app variables.
+    // Winsock name resolution needs SystemRoot even for an absolute executable,
+    // and command text that names a machine directory needs the rest of the
+    // machine-scoped Windows baseline: an undefined `%NAME%` stays verbatim in
+    // cmd.exe, so `%SystemDrive%` would otherwise resolve to a *relative* path
+    // and create a literal '%SystemDrive%' folder in the working directory.
+    // Keep the OS baseline without inheriting credentials, user environment or
+    // app variables.
     #[cfg(windows)]
-    if let Some(system_root) = std::env::var_os("SystemRoot") {
-        command.env("SystemRoot", system_root);
-    }
+    crate::shell::apply_machine_environment(&mut command);
     crate::shell::command_arguments(&mut command, &executable.canonical_path, &request.arguments);
     command.envs(&request.environment);
     if let Some(path) = &request.working_directory {

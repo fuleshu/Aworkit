@@ -30,6 +30,7 @@ use super::settings_v2::{
 };
 
 mod feed;
+mod questions;
 mod stream_cache;
 use stream_cache::{DecodedStream, StreamCache, StreamCaches};
 
@@ -45,6 +46,35 @@ const COMMITTED_EVENT_DESTINATION: &str = "chat.semantic.committed.v1";
 const MAXIMUM_FROZEN_CONTEXT_BYTES: usize = 32 * 1024 * 1024;
 const MAXIMUM_PENDING_COMMAND_BYTES: usize = 32 * 1024 * 1024;
 const MAXIMUM_USER_INPUT_BYTES: usize = 32 * 1024 * 1024;
+
+/// The committed facts that settle the effect-bearing command which produced
+/// them, read from the Chat stream. A suspension the user has to answer is one
+/// of them: an approval request and a question both park the Run on a durable
+/// decision, so the command is waiting for the user rather than interrupted.
+/// Omitting one of these kinds reports a live wait as an abandoned effect and
+/// invites the user to replay or abandon a Run that is still working.
+const SETTLING_COMMAND_FACT_KINDS: [&str; 7] = [
+    "message.assistant",
+    "context.manual-completed",
+    "context.manual-failed",
+    "approval.requested",
+    "question.asked",
+    "execution.failed",
+    "chat.turn_stopped",
+];
+
+/// Whether one committed Chat fact settles the effect-bearing command it names.
+/// The kind list and the command identity are the whole rule, so both staged
+/// records and the recovery fallback read the same predicate.
+fn settles_staged_command(event: &Event, command_id: &str) -> bool {
+    SETTLING_COMMAND_FACT_KINDS.contains(&event.kind.as_str())
+        && event
+            .payload
+            .get("settlesCommandId")
+            .or_else(|| event.payload.get("commandId"))
+            .and_then(Value::as_str)
+            == Some(command_id)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -634,9 +664,11 @@ impl ChatHistory {
         history_head: u64,
     ) -> Result<Option<PendingChatCommandV1>, String> {
         let selected_chat_id = self.selected_identity()?.chat_id;
-        let chat_events = self.store.events_of_kinds(selected_chat_id.as_str(), BRANCH_ID, &[
-            "message.assistant", "context.manual-completed", "context.manual-failed", "approval.requested", "execution.failed", "chat.turn_stopped",
-        ]).map_err(|e| e.to_string())?;
+        let chat_events = self.store.events_of_kinds(
+            selected_chat_id.as_str(),
+            BRANCH_ID,
+            &SETTLING_COMMAND_FACT_KINDS,
+        ).map_err(|e| e.to_string())?;
         // Decode the profile-level session aggregate exactly once. The former
         // nested lookup reopened and revalidated every frozen context for each
         // staged command, making every history selection quadratic in the
@@ -671,22 +703,9 @@ impl ChatHistory {
             if context.context.identity.chat_id != selected_chat_id {
                 continue;
             }
-            let settled = chat_events.iter().any(|event| {
-                matches!(
-                    event.kind.as_str(),
-                    "message.assistant"
-                        | "context.manual-completed"
-                        | "context.manual-failed"
-                        | "approval.requested"
-                        | "execution.failed"
-                        | "chat.turn_stopped"
-                ) && event
-                    .payload
-                    .get("settlesCommandId")
-                    .or_else(|| event.payload.get("commandId"))
-                    .and_then(Value::as_str)
-                    == Some(record.command.command_id.as_str())
-            });
+            let settled = chat_events
+                .iter()
+                .any(|event| settles_staged_command(event, record.command.command_id.as_str()));
             if !settled {
                 return Ok(Some(record));
             }
@@ -702,22 +721,9 @@ impl ChatHistory {
             .pending_start_command
             .clone()
             .and_then(|command| {
-                let settled = chat_events.iter().any(|event| {
-                    matches!(
-                        event.kind.as_str(),
-                        "message.assistant"
-                            | "context.manual-completed"
-                            | "context.manual-failed"
-                            | "approval.requested"
-                            | "execution.failed"
-                            | "chat.turn_stopped"
-                    ) && event
-                        .payload
-                        .get("settlesCommandId")
-                        .or_else(|| event.payload.get("commandId"))
-                        .and_then(Value::as_str)
-                        == Some(command.command_id.as_str())
-                });
+                let settled = chat_events
+                    .iter()
+                    .any(|event| settles_staged_command(event, command.command_id.as_str()));
                 (!settled).then(|| PendingChatCommandV1 {
                     schema_version: 1,
                     frozen_context_hash: context.context_hash,
@@ -727,7 +733,7 @@ impl ChatHistory {
             }))
     }
 
-    /// Stages an exact start/enqueue command on the separate session
+    /// Stages an exact effect-bearing command on the separate session
     /// aggregate before any provider effect. Retrying the same record is a
     /// durable no-op; reusing its command ID with different content is denied.
     pub(crate) fn stage_effect_command(
@@ -1341,16 +1347,6 @@ impl ChatHistory {
         })
     }
 
-    /// Whether this exact command already initialized the Chat. A recovery that
-    /// replays a `start` after this point would duplicate an in-progress Chat's
-    /// conversation, so it continues the task instead.
-    pub(crate) fn chat_started_by(&self, command_id: &str) -> Result<bool, String> {
-        Ok(self.events()?.iter().any(|event| {
-            event.kind == "chat.started"
-                && event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
-        }))
-    }
-
     fn events(&self) -> Result<Arc<Vec<Arc<Event>>>, String> {
         let chat_id = self.selected_identity()?.chat_id;
         let mut cache = self.lock_stream();
@@ -1775,36 +1771,21 @@ fn projected_phase(events: &[impl std::borrow::Borrow<Event>]) -> &'static str {
     // A question is the other way one Run waits for one user decision. It uses
     // the same open/resolved shape as an approval, so the phase is derived the
     // same way and an answered question leaves the waiting phase.
-    let has_open_question = events
-        .iter()
-        .filter(|event| event.kind == "question.asked")
-        .any(|event| {
-            let question_id = event
-                .payload
-                .get("questionId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            !events.iter().any(|resolved| {
-                matches!(
-                    resolved.kind.as_str(),
-                    "question.answered" | "question.cancelled"
-                ) && resolved.payload.get("questionId").and_then(Value::as_str)
-                    == Some(question_id)
-            })
-        });
+    let has_open_question = !questions::open_questions(events.iter().copied()).is_empty();
     let has_open_approval = events
         .iter()
-        .filter(|event| event.kind == "approval.requested")
-        .any(|event| {
+        .enumerate()
+        .filter(|(_, event)| event.kind == "approval.requested")
+        .any(|(index, event)| {
             let decision_id = event
                 .payload
                 .get("decisionId")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            !events.iter().any(|resolved| {
-                resolved.kind == "approval.resolved"
-                    && resolved.payload.get("decisionId").and_then(Value::as_str)
-                        == Some(decision_id)
+            !events[index + 1..].iter().any(|resolved| {
+                (resolved.kind == "approval.resolved"
+                    && resolved.payload.get("decisionId").and_then(Value::as_str) == Some(decision_id))
+                    || questions::ends_questions(&resolved.kind)
             })
         });
     if has_open_question {
@@ -2052,6 +2033,16 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
     let input = super::images::command_text(&command.payload).ok();
     let attachments_are_valid = super::images::command_images(&command.payload).is_ok();
     let action_shape_is_valid = match command.action.as_str() {
+        "question" => {
+            command.payload["questionId"]
+                .as_str()
+                .is_some_and(|id| StableId::parse(id.to_owned()).is_ok())
+                && super::service::approval_control::parse_question_answer(&command.payload)
+                    .is_ok_and(|answer| {
+                        answer.cancelled || answer.option_id.is_some()
+                            || answer.free_text.is_some() || answer.path.is_some()
+                    })
+        }
         "approval" => {
             command
                 .payload
@@ -2090,7 +2081,7 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         || command.schema_version != 1
         || StableId::parse(command.command_id.clone()).is_err()
         || !action_shape_is_valid
-        || (!matches!(command.action.as_str(), "approval" | "compact_context")
+        || (!matches!(command.action.as_str(), "approval" | "question" | "compact_context")
             && input
                 .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
                 .unwrap_or(true))
@@ -2150,6 +2141,8 @@ mod tests {
 
     use super::*;
     use tempfile::TempDir;
+
+    mod question;
 
     struct SwitchableEventPort {
         fail: AtomicBool,

@@ -17,7 +17,11 @@
   font-size: var(--aw-font-ui);
   margin: 2px 0 0;
 }
-.question-dialog-prompt {
+/* The markdown prompt is a text block, not an action row: the shared
+   `.workbench-dialog > div` rule matches this wrapper and would lay the
+   prompt's paragraphs, lists and code out side by side in narrow columns. */
+.question-dialog > .question-dialog-prompt {
+  display: block;
   margin: 12px 0 0;
 }
 .question-options {

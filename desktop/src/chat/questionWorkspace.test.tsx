@@ -104,6 +104,13 @@ function port(events: readonly RuntimeEvent[], dispatched: ChatIntent[]): ChatCo
   });
 }
 
+/** True when any alert (dialog error or workspace notice) carries the text. */
+function showsAlert(pattern: RegExp): boolean {
+  return screen
+    .queryAllByRole("alert")
+    .some((node) => pattern.test(node.textContent ?? ""));
+}
+
 describe("a model question in the Chat workspace", () => {
   it("raises its dialog, keeps a durable card, and sends the typed answer once", async () => {
     const user = userEvent.setup();
@@ -215,6 +222,125 @@ describe("a model question in the Chat workspace", () => {
       });
       unmount();
     }
+  });
+
+  it("still sends the answer when the projection is stale, and closes at once", async () => {
+    // The reported failure: the answer looked submitted but nothing reached the
+    // core. A user decision is addressed to one durable question, so a stale or
+    // unhappy projection must not swallow it - the answer is sent anyway.
+    const user = userEvent.setup();
+    const dispatched: ChatIntent[] = [];
+    let snapshots = 0;
+    const flaky = testPort({
+      async snapshot(): Promise<RuntimeSnapshot> {
+        snapshots += 1;
+        if (snapshots > 1) throw new Error("projection unavailable");
+        return snapshot(asked);
+      },
+      async command(intent) {
+        dispatched.push(intent);
+        return {
+          commandId: intent.commandId,
+          accepted: true,
+          currentVersion: 2,
+          reason: null,
+        };
+      },
+    });
+    render(<ChatWorkspaceScreen corePort={flaky} pollIntervalMs={20} />);
+    await screen.findByRole("dialog", { name: "Release channel" });
+    await waitFor(() => expect(showsAlert(/stale/i)).toBe(true));
+    await user.click(screen.getByRole("radio", { name: /Beta/ }));
+    await user.click(screen.getByRole("button", { name: "Submit answer" }));
+    await waitFor(() => expect(dispatched).toHaveLength(1));
+    expect(dispatched[0]).toMatchObject({
+      type: "question",
+      questionId: "question.release-channel",
+      optionId: "beta",
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Release channel" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("sends a refused answer again from the card and shows the core's reason", async () => {
+    const user = userEvent.setup();
+    const dispatched: ChatIntent[] = [];
+    const refusing = testPort({
+      async snapshot(): Promise<RuntimeSnapshot> {
+        return snapshot(asked);
+      },
+      async command(intent) {
+        dispatched.push(intent);
+        return {
+          commandId: intent.commandId,
+          accepted: false,
+          currentVersion: 2,
+          reason: "desktop version conflict: expected 2, actual 3",
+        };
+      },
+    });
+    render(<ChatWorkspaceScreen corePort={refusing} pollIntervalMs={60_000} />);
+    await screen.findByRole("dialog", { name: "Release channel" });
+    await user.click(screen.getByRole("radio", { name: /Beta/ }));
+    await user.click(screen.getByRole("button", { name: "Submit answer" }));
+    await waitFor(() => expect(dispatched).toHaveLength(1));
+    // The dialog closed immediately, the card is still the way back in.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Release channel" }),
+      ).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "Answer" }));
+    await screen.findByRole("dialog", { name: "Release channel" });
+    // A freshly opened dialog starts from the question's declared default, so
+    // the option is chosen again before submitting.
+    await user.click(screen.getByRole("radio", { name: /Beta/ }));
+    await user.click(screen.getByRole("button", { name: "Submit answer" }));
+    await waitFor(() => expect(dispatched).toHaveLength(2));
+    expect(dispatched[1]).toMatchObject({
+      type: "question",
+      questionId: "question.release-channel",
+      optionId: "beta",
+    });
+  });
+
+  it("raises the newest of several unanswered questions and keeps the older one on its card", async () => {
+    const user = userEvent.setup();
+    const dispatched: ChatIntent[] = [];
+    const twoAsked = [
+      ...asked,
+      event(3, "question.asked", {
+        createdAt: "3",
+        commandId: "command.start.2",
+        questionId: "question.newest",
+        nodeId: "agent.1",
+        title: "Newest question",
+        prompt: "Which of these should I use?",
+        kind: "choice",
+        options: [{ id: "one", label: "One" }],
+        allowFreeText: false,
+        invocationId: "invoke.newest",
+      }),
+    ];
+    render(
+      <ChatWorkspaceScreen corePort={port(twoAsked, dispatched)} pollIntervalMs={60_000} />,
+    );
+    // The Run waits on the newest question, so that is the dialog the user sees.
+    await screen.findByRole("dialog", { name: "Newest question" });
+    expect(
+      screen.queryByRole("dialog", { name: "Release channel" }),
+    ).toBeNull();
+    // Skipping it leaves the older question answerable from its own card.
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(dispatched).toHaveLength(1));
+    expect(dispatched[0]).toMatchObject({
+      type: "question",
+      questionId: "question.newest",
+      cancelled: true,
+    });
   });
 
   it("closes the dialog once the answer is committed", async () => {

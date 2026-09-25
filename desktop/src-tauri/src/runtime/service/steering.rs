@@ -56,6 +56,7 @@ impl DesktopRuntime {
             .into_iter()
             .map(|fact| ("span.cancelled", fact))
             .collect::<Vec<_>>();
+        facts.extend(self.history.cancel_open_questions(&created_at)?);
         facts.push(("chat.turn_stopped", json!({
             "createdAt":created_at,"stopCommandId":stop.command_id,"commandId":input.command_id,
             "chatId":stop.chat_id,"runId":stop.run_id,"body":"Response stopped by the user.",

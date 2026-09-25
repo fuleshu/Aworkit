@@ -108,6 +108,64 @@ describe("Milestone 08 Chat and Run details experience", () => {
     ).toBeNull();
   });
 
+  it("projects a question answer into the native payload the core validates", () => {
+    // The core validates the delivered answer against the durable question and
+    // reads it out of this payload only: an empty payload is refused with
+    // "command payload requires non-empty questionId" and the suspended Run
+    // never resumes, so every part of the answer must cross the IPC boundary.
+    expect(
+      chatIntentPayload({
+        type: "question",
+        commandId: "chat.answer",
+        targetId: "chat.1",
+        questionId: "invoke.question",
+        optionId: "leave_in_place",
+      }),
+    ).toEqual({ questionId: "invoke.question", optionId: "leave_in_place" });
+    expect(
+      chatIntentPayload({
+        type: "question",
+        commandId: "chat.answer",
+        targetId: "chat.1",
+        questionId: "invoke.question",
+        optionId: "leave_in_place",
+        freeText: "and leave the rest alone",
+      }),
+    ).toEqual({
+      questionId: "invoke.question",
+      optionId: "leave_in_place",
+      freeText: "and leave the rest alone",
+    });
+    // A browse answer is the chosen path, and a skip is the cancelled flag.
+    expect(
+      chatIntentPayload({
+        type: "question",
+        commandId: "chat.browse",
+        targetId: "chat.1",
+        questionId: "invoke.browse",
+        path: "C:\\reports\\q3.csv",
+      }),
+    ).toEqual({ questionId: "invoke.browse", path: "C:\\reports\\q3.csv" });
+    expect(
+      chatIntentPayload({
+        type: "question",
+        commandId: "chat.skip",
+        targetId: "chat.1",
+        questionId: "invoke.browse",
+        cancelled: true,
+      }),
+    ).toEqual({ questionId: "invoke.browse", cancelled: true });
+    expect(
+      chatIntentTargetId({
+        type: "question",
+        commandId: "chat.answer",
+        targetId: "chat.1",
+        questionId: "invoke.question",
+        optionId: "leave_in_place",
+      }),
+    ).toBe("chat.1");
+  });
+
   it("blocks IME composition and exposes projection-derived terminal controls", () => {
     expect(
       canSubmit(
@@ -146,7 +204,7 @@ describe("Milestone 08 Chat and Run details experience", () => {
         { ...emptyComposer, draft: "later" },
         { ...draftChat, recoveryPending: true, phase: "paused" },
       ),
-    ).toBe("Resume the interrupted command before composing another input.");
+    ).toBe("Continue or stop the interrupted reply to send a new message.");
     expect(controlsFor({ ...draftChat, phase: "running" })).toEqual([
       "cancel",
     ]);

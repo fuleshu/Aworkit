@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChatBusy } from "./ChatBusy";
+import { ChatRecoveryCard } from "./ChatRecoveryCard";
 import { conversationFeed } from "./conversationFeed";
 import "./chatLoading.css";
 import "./subagents.css";
@@ -77,10 +78,6 @@ interface ChatWorkspaceScreenProps {
     snapshot: RuntimeSnapshot,
     state: { readonly stale: boolean; readonly pending: boolean },
   ) => void;
-  readonly confirmRecoveryAbandon?: (
-    title: string,
-    body: string,
-  ) => Promise<boolean>;
   /** Persisted Run-details separator position, applied once when it arrives. */
   readonly storedInspectorWidth?: number;
   readonly onInspectorWidthChange?: (width: number) => void;
@@ -116,7 +113,6 @@ export function ChatWorkspaceScreen({
   libraryRevision = 0,
   onRecoveryPendingChange,
   onRuntimeSnapshotChange,
-  confirmRecoveryAbandon = browserRecoveryConfirmation,
   storedInspectorWidth,
   onInspectorWidthChange,
   subagentView = DEFAULT_SUBAGENT_VIEW,
@@ -161,12 +157,14 @@ export function ChatWorkspaceScreen({
   const [workflowReadinessError, setWorkflowReadinessError] = useState<
     string | null
   >(null);
-  const [confirmingRecoveryAbandon, setConfirmingRecoveryAbandon] =
-    useState(false);
   const [stopPending, setStopPending] = useState(false);
   // The question dialog is a focused surface over the durable question card:
   // dismissing it never answers the question and never hides the card.
   const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
+  // Why a submitted answer was not sent. The question stays the answerable
+  // surface until the core commits the answer, so a dropped or refused answer
+  // must never look like a submitted one.
+  const [answerNotAccepted, setAnswerNotAccepted] = useState<string | null>(null);
   const [dismissedQuestions, setDismissedQuestions] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -289,13 +287,18 @@ export function ChatWorkspaceScreen({
           ),
     [activeChild, childFeed.events, childFeed.firstSequence, childFeed.support],
   );
-  const pendingQuestion = useMemo(
-    () =>
-      timelineItems.find(
-        (item) => item.kind === "question" && item.status === "pending",
-      ) ?? null,
-    [timelineItems],
-  );
+  const pendingQuestion = useMemo(() => {
+    // The newest unanswered question drives the dialog: it is the one the Run
+    // is waiting on. An earlier question that is still pending stays answerable
+    // from its own card instead of hiding the new one, which would leave the
+    // Run parked with a dialog the user is never shown.
+    for (let index = timelineItems.length - 1; index >= 0; index -= 1) {
+      const item = timelineItems[index];
+      if (item !== undefined && item.kind === "question" && item.status === "pending")
+        return item;
+    }
+    return null;
+  }, [timelineItems]);
   useEffect(() => {
     const id = pendingQuestion?.id ?? null;
     if (id === null || dismissedQuestions.has(id) || autoOpenedQuestion.current === id)
@@ -303,6 +306,7 @@ export function ChatWorkspaceScreen({
     // A newly asked question raises its dialog once. A question the user closed
     // stays on its card and is never raised again on its own.
     autoOpenedQuestion.current = id;
+    setAnswerNotAccepted(null);
     setOpenQuestionId(id);
   }, [dismissedQuestions, pendingQuestion]);
   const dialogQuestion = useMemo(() => {
@@ -319,19 +323,25 @@ export function ChatWorkspaceScreen({
       setOpenQuestionId(null);
   }, [dialogQuestion, openQuestionId]);
   const answerQuestion = useCallback(
-    (questionId: string, answer: QuestionAnswerInput) => {
-      void runtime.dispatch({
+    async (
+      questionId: string,
+      answer: QuestionAnswerInput,
+    ): Promise<boolean> =>
+      // The answer is delivered with whatever version this projection holds: the
+      // core treats the durable question as the authority for an answer, so a
+      // resynchronization is neither required nor allowed to block the decision.
+      runtime.dispatch({
         type: "question",
         commandId: commandIds.createIntent("enqueue").commandId,
         targetId: projectedChatId ?? "",
         questionId,
         ...answer,
-      });
-    },
+      }),
     [commandIds, projectedChatId, runtime],
   );
   const dismissQuestion = useCallback((questionId: string) => {
     setDismissedQuestions((current) => new Set(current).add(questionId));
+    setAnswerNotAccepted(null);
     setOpenQuestionId(null);
   }, []);
   const openChildTab = useCallback(
@@ -361,7 +371,7 @@ export function ChatWorkspaceScreen({
     runtime.events,
     snapshot !== null,
     projectedChatId ?? null,
-    runtime.stale ? null : runtime.error,
+    runtime.stale || projectedRecoveryPending ? null : runtime.error,
     runtime.pendingCommandIds.size > 0,
     inspect,
   );
@@ -369,12 +379,15 @@ export function ChatWorkspaceScreen({
     route: "chat", summary: "Projection disconnected.", detail: runtime.error?.message ?? "The last known state remains visible. Changes are disabled until resynchronized.", severity: "warning", lifetime: { kind: "condition", conditionId: "chat-projection" },
     action: { label: "Resync", disabled: runtime.pendingCommandIds.size > 0, run: () => void runtime.resynchronize() },
   });
+  useProjectedNotification("Chat", "chat-answer", "answer", answerNotAccepted === null ? null : {
+    route: "chat", summary: answerNotAccepted, severity: "error", lifetime: { kind: "condition", conditionId: "chat-answer" },
+  });
   useProjectedNotification("Chat", "chat-recovery", "recovery", !projectedRecoveryPending ? null : {
-    route: "chat", summary: "Interrupted command requires an explicit decision.", severity: "action", lifetime: { kind: "condition", conditionId: `chat-recovery:${projectedChatId}` },
-    action: { label: "Review", run: () => { const reveal = () => chatLayoutRef.current?.querySelector<HTMLButtonElement>(".recovery-actions button")?.focus(); if (onReveal) onReveal(reveal); else reveal(); } },
+    route: "chat", summary: "Your reply was interrupted.", severity: "action", lifetime: { kind: "condition", conditionId: `chat-recovery:${projectedChatId}` },
+    action: { label: "Review", run: () => { const reveal = () => chatLayoutRef.current?.querySelector<HTMLButtonElement>(".chat-recovery-actions button")?.focus(); if (onReveal) onReveal(reveal); else reveal(); } },
   });
   useProjectedNotification("Chat", `chat:${projectedChatId ?? "startup"}`, "command", runtime.stale || runtime.pendingCommandIds.size === 0 ? null : {
-    route: "chat", summary: "Waiting for the Chat command to commit…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
+    route: "chat", summary: "Working on your request…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
   });
 
   // The saved-workflow library is re-read whenever this surface becomes active
@@ -535,7 +548,8 @@ export function ChatWorkspaceScreen({
     );
     const latest = failed.at(-1);
     if (latest === undefined) return null;
-    const payload = latest.payload as { title?: unknown; body?: unknown };
+    const payload = latest.payload as { title?: unknown; body?: unknown; recoveryAbandoned?: boolean };
+    if (payload.recoveryAbandoned) return null;
     return {
       id: latest.eventId,
       title: typeof payload.title === "string" ? payload.title : "The Run stopped.",
@@ -546,7 +560,7 @@ export function ChatWorkspaceScreen({
     };
   })();
   const dismissRunFailure = (id: string) => setDismissedRunFailure(id);
-  const visibleChat = liveTurnRunning
+  const visibleChat = liveTurnRunning && !chat.recoveryPending
     ? { ...chat, phase: "running" as const }
     : chat;
   const control = (type: "cancel") => {
@@ -631,84 +645,6 @@ export function ChatWorkspaceScreen({
             </button>
           </div>
         </header>
-        {chat.recoveryPending ? (
-          <div className="recovery-banner" role="status">
-            <div>
-              <strong>Choose how to recover this command.</strong>
-              <p>
-                Aworkit preserved the exact staged command. Resume recovers that
-                command. You can open other Chats or create a New Chat while this one awaits recovery.
-              </p>
-            </div>
-            <div className="recovery-actions">
-              {runtime.stale && (
-                <button
-                  title="Request a fresh trusted-core snapshot before recovery"
-                  type="button"
-                  onClick={() => void runtime.resynchronize()}
-                >
-                  Resync
-                </button>
-              )}
-              <button
-                className="primary-action"
-                disabled={
-                  runtime.stale ||
-                  runtime.pendingCommandIds.size > 0 ||
-                  confirmingRecoveryAbandon
-                }
-                title={
-                  runtime.stale
-                    ? "Resynchronize before resuming the interrupted command"
-                    : runtime.pendingCommandIds.size > 0
-                      ? "A recovery command is awaiting a committed core event"
-                      : confirmingRecoveryAbandon
-                        ? "Finish the recovery-abandonment confirmation first"
-                      : "Replay the exact staged interrupted command with a fresh idempotent resume command ID"
-                }
-                type="button"
-                onClick={() =>
-                  void runtime.dispatch(commandIds.createIntent("resume"))
-                }
-              >
-                Resume interrupted command
-              </button>
-              <button
-                className="danger-action"
-                disabled={
-                  runtime.stale ||
-                  runtime.pendingCommandIds.size > 0 ||
-                  confirmingRecoveryAbandon
-                }
-                title={
-                  runtime.stale
-                    ? "Resynchronize before abandoning the interrupted command"
-                    : runtime.pendingCommandIds.size > 0
-                      ? "A recovery command is awaiting a committed core event"
-                      : "Record the interrupted command as outcome-uncertain without replaying its provider or tool effects"
-                }
-                type="button"
-                onClick={() => {
-                  setConfirmingRecoveryAbandon(true);
-                  void confirmRecoveryAbandon(
-                    "Abandon interrupted command as uncertain?",
-                    "Aworkit will record an explicit outcome-uncertain failure and evidence for the original staged command without calling its provider or tools. This cannot determine whether effects occurred before the interruption.",
-                  )
-                    .then((confirmed) => {
-                      if (confirmed)
-                        return runtime.dispatch(
-                          commandIds.createIntent("abandon_recovery"),
-                        );
-                      return false;
-                    })
-                    .finally(() => setConfirmingRecoveryAbandon(false));
-                }}
-              >
-                Abandon as uncertain
-              </button>
-            </div>
-          </div>
-        ) : null}
         {runFailure !== null ? (
           <div className="recovery-banner run-failure-banner" role="alert">
             <div>
@@ -782,6 +718,9 @@ export function ChatWorkspaceScreen({
             />
           )}
         </div>
+        <div className="chat-compose-area">
+          <ChatRecoveryCard key={chat.chatId} chatId={chat.chatId} recoveryPending={chat.recoveryPending}
+            runtime={runtime} nextCommandId={() => commandIds.createIntent("resume").commandId} />
         {activeChild === null && (
           <ChatComposer
             drafts={composerDrafts}
@@ -796,7 +735,7 @@ export function ChatWorkspaceScreen({
             approvalControl={<ApprovalModeSelect compact value={chat.approvalMode ?? "ask_for_approval"}
             disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
             onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} />}
-          status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{label(visibleChat.phase)}</span>}
+          status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{chat.recoveryPending ? "Reply interrupted" : label(visibleChat.phase)}</span>}
           onStop={controlsFor(visibleChat).includes("cancel") ? () => control("cancel") : undefined}
           stopDisabled={chat.recoveryPending}
           stopRequested={stopPending}
@@ -837,6 +776,7 @@ export function ChatWorkspaceScreen({
           onSubmit={runtime.dispatch}
         />
         )}
+        </div>
       </main>
       {inspectorOpen && (
         <PaneSplitter
@@ -865,10 +805,19 @@ export function ChatWorkspaceScreen({
           }
           pickPath={pickPath}
           onAnswer={(answer) => {
-            answerQuestion(dialogQuestion.questionId, answer);
-            // A submitted answer hides the dialog immediately; the durable card
-            // and the committed phase remain the source of truth.
+            // A submitted answer closes the dialog immediately: the dialog is a
+            // transient surface, and the durable card plus the committed phase
+            // remain the source of truth. Delivery is made reliable where the
+            // answer is sent, never by holding the dialog open.
             setOpenQuestionId(null);
+            void answerQuestion(dialogQuestion.questionId, answer).then(
+              (accepted) => {
+                if (!accepted)
+                  setAnswerNotAccepted(
+                    "The answer was not accepted by the core. Resynchronize and answer the question again from its card.",
+                  );
+              },
+            );
           }}
           onDismiss={() => dismissQuestion(dialogQuestion.questionId)}
         />
@@ -914,11 +863,4 @@ function label(phase: string): string {
   return phase
     .replaceAll("_", " ")
     .replace(/^./, (value) => value.toUpperCase());
-}
-
-async function browserRecoveryConfirmation(
-  _title: string,
-  body: string,
-): Promise<boolean> {
-  return window.confirm(body);
 }

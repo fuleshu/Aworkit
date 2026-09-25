@@ -471,7 +471,7 @@ describe("Chat native-port recovery contracts", () => {
       await screen.findByRole("heading", { name: "Same-sequence Chat" }),
     ).toBeVisible();
     expect(
-      await screen.findByText(/Interrupted command requires an explicit decision/),
+      await screen.findByText(/Your reply was interrupted/),
     ).toBeVisible();
     expect(snapshots).toBeGreaterThan(1);
   });
@@ -666,7 +666,7 @@ describe("Chat native-port recovery contracts", () => {
     await user.type(input, "trigger staged failure");
     await user.click(screen.getByRole("button", { name: "Queue" }));
     expect(
-      await screen.findByText(/Interrupted command requires an explicit decision/),
+      await screen.findByText(/Your reply was interrupted/),
     ).toBeVisible();
     expect(input).toBeDisabled();
     const newChat = screen.getByRole("button", { name: /New Chat/ });
@@ -719,33 +719,28 @@ describe("Chat native-port recovery contracts", () => {
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
 
     expect(
-      await screen.findByText(/Interrupted command requires an explicit decision/),
+      await screen.findByText(/Your reply was interrupted/),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Stop/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Queue" })).not.toBeInTheDocument();
     const resume = screen.getByRole("button", {
-      name: "Resume interrupted command",
+      name: "Continue reply",
     });
     expect(resume).toBeEnabled();
     await user.click(resume);
     await waitFor(() => expect(commands).toHaveLength(1));
     expect(commands[0]).toMatchObject({ type: "resume" });
     expect(commands[0]!.commandId).toMatch(/^(?:desktop\.)?chat\./u);
-    await user.click(screen.getByRole("button", { name: /Notifications, / }));
-    expect(
-      await screen.findByText(/fixture keeps recovery pending/),
-    ).toBeVisible();
+    expect(await screen.findByText(/Couldn’t continue this reply/)).toBeVisible();
+    await user.click(screen.getByText("Show details"));
+    expect(screen.getByText("fixture keeps recovery pending")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toBeDisabled();
   });
 
   it("requires confirmation for abandonment while keeping New Chat available", async () => {
     const user = userEvent.setup();
     const onNewChat = vi.fn();
-    const confirm = vi
-      .fn<(title: string, body: string) => Promise<boolean>>()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
     const commands: ChatIntent[] = [];
     let abandoned = false;
     const interrupted = {
@@ -798,7 +793,6 @@ describe("Chat native-port recovery contracts", () => {
             onToggleCollapsed={() => undefined}
           />
           <ChatWorkspaceScreen
-            confirmRecoveryAbandon={confirm}
             corePort={port}
             pollIntervalMs={60_000}
           />
@@ -812,23 +806,24 @@ describe("Chat native-port recovery contracts", () => {
     const newChat = screen.getByRole("button", { name: /New Chat/ });
     expect(newChat).toBeEnabled();
     const abandon = await screen.findByRole("button", {
-      name: "Abandon as uncertain",
+      name: "Stop reply",
     });
     await user.click(abandon);
-    expect(confirm).toHaveBeenLastCalledWith(
-      "Abandon interrupted command as uncertain?",
-      expect.stringContaining("without calling its provider or tools"),
-    );
+    expect(screen.getByText("Stop this reply?")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(commands).toEqual([]);
     expect(newChat).toBeEnabled();
 
-    await user.click(abandon);
+    await user.click(screen.getByRole("button", { name: "Go back" }));
+    expect(commands).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Stop reply" }));
+    await user.click(screen.getByRole("button", { name: "Stop reply" }));
     await waitFor(() => expect(commands).toHaveLength(1));
     expect(commands[0]).toMatchObject({ type: "abandon_recovery" });
     expect(commands[0]!.commandId).toMatch(/^(?:desktop\.)?chat\./u);
     await waitFor(() => expect(newChat).toBeEnabled());
     expect(
-      screen.queryByRole("button", { name: "Abandon as uncertain" }),
+      screen.queryByRole("button", { name: "Stop reply" }),
     ).toBeNull();
     await user.click(newChat);
     expect(onNewChat).toHaveBeenCalledOnce();

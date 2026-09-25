@@ -1,4 +1,5 @@
 mod context_edit;
+mod recovery;
 mod concurrent;
 mod context_model;
 mod current_configuration;
@@ -473,255 +474,6 @@ impl DesktopRuntime {
         self.cancellation_controller.clone()
     }
 
-    /// Replays one explicitly resumed durable effect command after a process
-    /// crash. Recovery never blocks profile startup: the snapshot projects the
-    /// paused state and the user starts this bounded worker through `resume`.
-    fn recover_pending_effect(
-        &mut self,
-        resume_command_id: &str,
-        resume_fingerprint: &str,
-        expected_version: u64,
-    ) -> Result<UiCommandReceipt, String> {
-        // This history fence is deliberately not compared against the UI's
-        // optimistic version. Recovery replays one exact command that was staged
-        // before any effect, so a renderer that resynchronized after the
-        // interruption would otherwise never be able to resume it. The staged
-        // record's own frozen identity is the authority here.
-        let history_head = self.history.head()?;
-        if expected_version != history_head {
-            eprintln!(
-                "aworkit: recovery resume ignores a stale renderer fence \
-                 (renderer {expected_version}, durable {history_head})"
-            );
-        }
-        let pending = self
-            .history
-            .pending_effect_command_at_head(history_head)?
-            .ok_or_else(|| "there is no interrupted Chat command to resume".to_owned())?;
-        let pending_command_id = pending.command.command_id.clone();
-        let fingerprint = command_fingerprint(&pending.command)?;
-        if fingerprint != pending.command_hash {
-            return Err("pending Chat command failed command integrity validation".into());
-        }
-        // An original command can carry the fence it was staged with. Recovery
-        // replays that exact command at the current head, so a renderer that
-        // resynchronized after the interruption can always resume it; the staged
-        // record's own identity remains the authority.
-        //
-        // The process ended mid-effect, so the Chat still carries the
-        // interrupted pass' span hierarchy with its run and node spans open. No
-        // terminal fact can commit while a child span is open, and the
-        // interrupted attempt can never resume that work, so close every
-        // dangling child span as failed before replaying. The interrupted pass'
-        // own run span is left alone: the recovered command emits its terminal
-        // fact for that exact span, and closing it twice would be refused. This
-        // removes no evidence: the original events, tool outcomes and
-        // checkpoints stay as stored, and the closes are themselves recorded.
-        let resume_fingerprint = resume_fingerprint.to_owned();
-        let run_span_suffix = format!(".{pending_command_id}");
-        let dangling: Vec<Value> = self
-            .history
-            .open_span_terminal_facts(
-                "failed",
-                "The interrupted attempt ended without a terminal result.",
-                &now_label(),
-            )?
-            .into_iter()
-            .filter(|fact| {
-                fact.get("spanId")
-                    .and_then(Value::as_str)
-                    .is_none_or(|span_id| !span_id.ends_with(&run_span_suffix))
-            })
-            .collect();
-        if !dangling.is_empty() {
-            let facts = dangling
-                .into_iter()
-                .map(|fact| ("span.failed", fact))
-                .collect();
-            self.history.append(
-                resume_command_id,
-                &resume_fingerprint,
-                history_head,
-                facts,
-            )?;
-        }
-        // The interruption guard admits this replay only because it is the same
-        // staged command; every other lifecycle, target and version check still
-        // runs exactly as for an ordinary turn.
-        //
-        // A `start` whose first turn already began cannot replay: re-initializing
-        // a started Chat would duplicate its conversation. It continues the task
-        // instead, exactly like an uncertain outcome.
-        let replay_command = pending.command.clone();
-        let chat_already_started = self.history.chat_started_by(&pending_command_id)?;
-        let needs_continuation = if replay_command.action == "start" && chat_already_started {
-            true
-        } else {
-            let recovered = self
-                .complete_workflow_input(
-                    replay_command,
-                    fingerprint,
-                    Some(self.history.head()?),
-                )
-                .inspect_err(|error| {
-                    eprintln!(
-                        "aworkit: recovery resume of '{pending_command_id}' was refused: {error}"
-                    );
-                })?;
-            if recovered.1 == WorkflowExecutionStatusV1::OutcomeUncertain {
-                true
-            } else {
-                let receipt = recovered.0;
-                self.processed.insert(
-                    resume_command_id.to_owned(),
-                    ProcessedCommand {
-                        fingerprint: resume_fingerprint.to_owned(),
-                        receipt: receipt.clone(),
-                    },
-                );
-                return Ok(receipt);
-            }
-        };
-        debug_assert!(needs_continuation);
-        // The interrupted attempt can never resume its own provider work: the
-        // broker forbids replaying an attempted effect, so recovery finalizes it
-        // as an uncertain outcome. That must not stop the task. The Chat still
-        // owes the user an answer, so start a real next turn for the same task
-        // under a fresh command identity and the model keeps working instead of
-        // the Run dead-ending on infrastructure.
-        {
-            // The durable head makes the continuation identity unique and
-            // idempotent for exactly this recovery.
-            let continuation_id =
-                format!("{resume_command_id}.continue.{}", self.history.head()?);
-            let continuation = UiCommandInput {
-                schema_version: 1,
-                command_id: continuation_id,
-                expected_version: 0,
-                action: "enqueue".into(),
-                target_id: None,
-                payload: json!({
-                    "input": "Aworkit recovery: the previous attempt was interrupted by a process \
-                              restart, so it produced no answer. No tool call from that attempt is \
-                              assumed to have run. Restart the requested task now from the \
-                              conversation above and carry it through to completion."
-                }),
-            };
-            let continuation_fingerprint = command_fingerprint(&continuation)?;
-            let (continued, _status) = self.complete_workflow_input(
-                continuation,
-                continuation_fingerprint,
-                Some(self.history.head()?),
-            )?;
-            let receipt = UiCommandReceipt {
-                command_id: resume_command_id.to_owned(),
-                accepted: continued.accepted,
-                current_version: continued.current_version,
-                reason: Some(
-                    "The interrupted attempt was finalized as outcome-uncertain, so the task \
-                     restarted as a fresh turn."
-                        .into(),
-                ),
-                credential_mutation: None,
-            };
-            self.processed.insert(
-                resume_command_id.to_owned(),
-                ProcessedCommand {
-                    fingerprint: resume_fingerprint.to_owned(),
-                    receipt: receipt.clone(),
-                },
-            );
-            Ok(receipt)
-        }
-    }
-
-    /// Resolves an unrecoverable pending effect without pretending it never
-    /// started. This never invokes the pipeline. It records the exact staged
-    /// command as outcome-uncertain, returns control, and preserves evidence so
-    /// the user can safely create another Chat without an invisible orphan.
-    fn abandon_pending_effect(
-        &mut self,
-        command_id: &str,
-        command_fingerprint: &str,
-        expected_version: u64,
-    ) -> Result<UiCommandReceipt, String> {
-        self.history.ensure_expected(expected_version)?;
-        let pending = self
-            .history
-            .pending_effect_command_at_head(expected_version)?
-            .ok_or_else(|| "there is no interrupted Chat command to abandon".to_owned())?;
-        let frozen = self
-            .history
-            .pending_context_at_head(expected_version)?
-            .or(self.history.current_frozen_context()?)
-            .ok_or_else(|| "pending Chat recovery has no frozen execution context".to_owned())?;
-        if frozen.context_hash != pending.frozen_context_hash {
-            return Err("pending Chat command does not match its frozen context".into());
-        }
-        let context = &frozen.context;
-        let user_input = string_field(&pending.command.payload, "input")?;
-        let created_at = now_label();
-        let mut facts = Vec::new();
-        let pending_started = self.history.command_started(&pending.command.command_id)?;
-        if pending.command.action == "start" && !pending_started {
-            facts.push((
-                "chat.started",
-                json!({
-                    "workflowId":context.workflow_id,
-                    "workflowVersion":context.workflow_version,
-                    "frozenContextHash":frozen.context_hash,
-                    "createdAt":created_at,
-                    "chatId":context.identity.chat_id,
-                    "runId":context.identity.run_id,
-                    "projectId":context.project.as_ref().map(|project| project.project_id.as_str()),
-                    "workspaceIdentityHash":context.project.as_ref().map(|project| project.workspace_identity_hash.as_str()),
-                }),
-            ));
-        }
-        if !pending_started {
-            facts.push((
-                "message.user",
-                message_fact(&user_input, &created_at, MessageUsageV1::default()),
-            ));
-        } else {
-            facts.extend(
-                self.history
-                    .open_span_terminal_facts(
-                        "failed",
-                        "Interrupted execution was explicitly abandoned as outcome-uncertain.",
-                        &created_at,
-                    )?
-                    .into_iter()
-                    .map(|fact| ("span.failed", fact)),
-            );
-        }
-        facts.push((
-            "execution.failed",
-            json!({
-                "createdAt":created_at,
-                "status":"outcome_uncertain",
-                "body":"Interrupted execution was explicitly abandoned without replay. A prior external effect may have completed; inspect provider/project state before continuing.",
-                "providerId":context.provider_id,
-                "modelId":context.model_id,
-                "modelTierId":context.model_tier_id,
-                "frozenContextHash":frozen.context_hash,
-                "settlesCommandId":pending.command.command_id,
-                "pendingCommandId":pending.command.command_id,
-                "pendingCommandHash":pending.command_hash,
-                "automaticReplayAllowed":false,
-                "recoveryAbandoned":true,
-            }),
-        ));
-        let _ = self.record_provider_health(
-            &context.provider_snapshot,
-            ProviderHealth::error(
-                "Interrupted execution was abandoned as outcome-uncertain without replay.",
-            ),
-        );
-        self.history
-            .append(command_id, command_fingerprint, expected_version, facts)
-    }
-
     /// Installs the separately composed Management repair ledger.
     #[must_use]
     pub fn with_management_repair(mut self, gateway: ManagementRepairGateway) -> Self {
@@ -782,7 +534,7 @@ impl DesktopRuntime {
             snapshot.chat.locked_workflow = true;
             snapshot.chat.recovery_pending = true;
             snapshot.chat.disabled_reason = Some(
-                "An effect-bearing Chat command was interrupted. Resume it with its original durable command ID; Aworkit will not issue a replacement effect."
+                "Continue or stop the interrupted reply to send a new message."
                     .into(),
             );
         } else if snapshot.chat.phase == "draft" && !snapshot.chat.locked_workflow {
@@ -988,7 +740,7 @@ impl DesktopRuntime {
             "start" | "enqueue" | "compact_context" => self
                 .complete_workflow_input(input, fingerprint, replay_fence)
                 .map(|(receipt, _status)| receipt),
-            "approval" => self.complete_approval(input, fingerprint),
+            "approval" => self.complete_approval(input, fingerprint, None),
             "question" => self.complete_question(input, fingerprint),
             "approval_mode" => self.change_approval_mode(input, fingerprint),
             "set_goal" => self.change_goal(input, fingerprint),
@@ -1030,6 +782,7 @@ impl DesktopRuntime {
                     .into_iter()
                     .map(|fact| ("span.cancelled", fact))
                     .collect::<Vec<_>>();
+                facts.extend(self.history.cancel_open_questions(&created_at)?);
                 facts.push((
                     "chat.turn_stopped",
                     json!({
@@ -1235,7 +988,7 @@ impl DesktopRuntime {
         replay_fence: Option<u64>,
     ) -> Result<(UiCommandReceipt, WorkflowExecutionStatusV1), String> {
         let manual = input.action == "compact_context";
-        if manual && !self.history.command_started(&input.command_id)? {
+        if manual && replay_fence.is_none() && !self.history.command_started(&input.command_id)? {
             let snapshot = self.snapshot(0)?;
             if snapshot.chat.recovery_pending
                 || !matches!(
@@ -1786,10 +1539,12 @@ impl DesktopRuntime {
         &mut self,
         input: UiCommandInput,
         fingerprint: String,
+        replay_fence: Option<u64>,
     ) -> Result<UiCommandReceipt, String> {
         let command_started = self.history.command_started(&input.command_id)?;
+        let fence = replay_fence.unwrap_or(input.expected_version);
         if !command_started {
-            self.history.ensure_expected(input.expected_version)?;
+            self.history.ensure_expected(fence)?;
         }
         let decision_id = string_field(&input.payload, "decisionId")?;
         let resolution = parse_approval_resolution(&input.payload)?;
@@ -1820,7 +1575,7 @@ impl DesktopRuntime {
             self.history.begin_effect_command(
                 &input.command_id,
                 &fingerprint,
-                input.expected_version,
+                fence,
                 vec![
                     (
                         "command.started",
@@ -1869,11 +1624,19 @@ impl DesktopRuntime {
         input: UiCommandInput,
         fingerprint: String,
     ) -> Result<UiCommandReceipt, String> {
+        // An answer names one durable question, and the answer recorded against
+        // that question already gives exactly-once delivery, so the renderer's
+        // optimistic Chat fence is deliberately not consulted here. A question
+        // is committed by the pass that asked it, and the renderer can
+        // legitimately answer from a projection that has not seen that head yet:
+        // the dialog opens from the live event stream, ahead of the next
+        // snapshot poll, so a prompt answer carries the previous version. The
+        // resume path replays its exact staged command under the same reasoning.
+        // Refusing on the fence silently parks a user decision with the tool
+        // call still pending.
         let command_started = self.history.command_started(&input.command_id)?;
-        if !command_started {
-            self.history.ensure_expected(input.expected_version)?;
-        }
         let question_id = string_field(&input.payload, "questionId")?;
+        self.history.ensure_question_resumable(&question_id, &input.command_id)?;
         let answer = parse_question_answer(&input.payload)?;
         let frozen = self.history.current_frozen_context()?.ok_or_else(|| {
             "the current Chat has no durable frozen execution context for a question".to_owned()
@@ -1893,10 +1656,14 @@ impl DesktopRuntime {
         })?;
         if !command_started {
             let created_at = now_label();
+            // Target validation above and the Chat command lease authorize this
+            // decision. Commit at the current head while keeping the original
+            // command and fingerprint intact for recovery and deduplication.
+            let answer_head = self.history.head()?;
             self.history.begin_effect_command(
                 &input.command_id,
                 &fingerprint,
-                input.expected_version,
+                answer_head,
                 vec![
                     (
                         "command.started",
@@ -5007,6 +4774,7 @@ mod tests {
     mod goal_control;
     mod image_chat;
     mod projectless;
+    mod question;
 
     struct FixtureProvider {
         calls: AtomicUsize,
@@ -5972,10 +5740,10 @@ mod tests {
             })
             .unwrap();
         let replay = reopened.command(command).unwrap();
-        assert_eq!(first.current_version, replay.current_version);
-        // Recovery replays the exact staged command, so its committed receipt
-        // carries that command's identity rather than the resume wrapper's.
-        assert_eq!(first.command_id, "chat.pending-freeze");
+        // The original command settles first; a separate durable acknowledgement
+        // answers the Continue command without borrowing the original receipt.
+        assert_eq!(first.current_version, replay.current_version + 1);
+        assert_eq!(first.command_id, "chat.resume-pending-freeze");
         assert_eq!(replay.command_id, "chat.pending-freeze");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert!(!reopened.snapshot(0).unwrap().chat.recovery_pending);
@@ -6592,6 +6360,74 @@ mod tests {
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert_eq!(reopened.snapshot(0).unwrap().chat.phase, "draft");
+    }
+
+    #[test]
+    fn a_question_suspension_is_a_durable_wait_not_an_interrupted_command() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+        runtime
+            .command(send("chat.question-start", 0, "first"))
+            .unwrap();
+        // The asking command is staged before its provider effect exactly like
+        // any other effect-bearing command.
+        let asking = send("chat.question-follow-up", 6, "which one?");
+        let frozen = runtime.history.current_frozen_context().unwrap().unwrap();
+        runtime
+            .history
+            .stage_effect_command(PendingChatCommandV1 {
+                schema_version: 1,
+                frozen_context_hash: frozen.context_hash.clone(),
+                command_hash: command_fingerprint(&asking).unwrap(),
+                command: asking.clone(),
+            })
+            .unwrap();
+        assert!(
+            runtime.snapshot(0).unwrap().chat.recovery_pending,
+            "an unfinished staged command is an interrupted command"
+        );
+
+        // The staged command then parks the Run on a model question. Waiting for
+        // that answer is a durable state, not an abandoned effect, so the
+        // committed question settles the command that asked it the same way a
+        // committed approval request does.
+        let head = runtime.history.head().unwrap();
+        runtime
+            .history
+            .append(
+                &asking.command_id,
+                "sha256:question-wait",
+                head,
+                vec![(
+                    "question.asked",
+                    json!({
+                        "createdAt": "1",
+                        "prompt": "Which release channel?",
+                        "kind": "choice",
+                        "questionId": "invoke.question",
+                        "options": [{"id":"stable","label":"Stable"}],
+                        "allowFreeText": false,
+                        "frozenContextHash": frozen.context_hash,
+                    }),
+                )],
+            )
+            .unwrap();
+        let waiting = runtime.snapshot(0).unwrap();
+        assert_eq!(waiting.chat.phase, "awaiting_answer");
+        assert!(
+            !waiting.chat.recovery_pending,
+            "a Run waiting for an answer must never be offered a replay or an abandonment"
+        );
+        assert!(
+            runtime
+                .history
+                .pending_effect_command_at_head(runtime.history.head().unwrap())
+                .unwrap()
+                .is_none(),
+            "the committed question settles the command that asked it"
+        );
     }
 
     #[test]

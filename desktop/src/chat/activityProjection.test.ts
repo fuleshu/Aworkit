@@ -6,6 +6,15 @@ import {
 import type { RuntimeEvent } from "./corePort";
 
 describe("canonical semantic timeline projection", () => {
+  it("closes a question on a legacy stop without closing a later question", () => {
+    const items = projectSemanticTimeline([
+      event(1, "question.asked", { questionId: "old", prompt: "Old question" }),
+      event(2, "chat.turn_stopped", {}),
+      event(3, "question.asked", { questionId: "new", prompt: "New question" }),
+    ]);
+    expect(items.find(item => item.id === "old")).toMatchObject({ status: "cancelled", action: undefined });
+    expect(items.find(item => item.id === "new")).toMatchObject({ status: "pending", action: "answer" });
+  });
   it("attributes native child speech and tools to the subagent during streaming and replay", () => {
     const running = [
       span(1, "span.started", "parent", { spanKind: "agent_loop" }),

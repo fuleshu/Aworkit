@@ -177,7 +177,7 @@ export function ChatComposer({
     chat.projectId !== null &&
     !projects.some(({ projectId }) => projectId === chat.projectId);
   const recoveryReason = chat.recoveryPending
-    ? "Resume the interrupted command before composing another input."
+    ? "Continue or stop the interrupted reply to send a new message."
     : null;
   return (
     <section

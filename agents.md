@@ -89,10 +89,10 @@ When a full run is red, attribute before reacting:
 
 
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=683 -->
+<!-- adashi:generated revision=835 -->
 # Architecture (generated)
 Generated from the Adashi design model; do not edit, change the model.
-Top layer: 14 of 96 elements, 2 of 309 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.
+Top layer: 14 of 97 elements, 2 of 311 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.
 
 These responsibilities are already owned: extend them, do not duplicate.
 

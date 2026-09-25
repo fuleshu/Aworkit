@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=683 -->
+<!-- adashi:generated revision=835 -->
 # Architecture — `crates/aworkit-capability-host/src/workspace_instructions` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

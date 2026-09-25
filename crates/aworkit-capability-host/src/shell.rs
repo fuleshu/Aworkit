@@ -29,6 +29,50 @@ pub fn context(program: &Path) -> String {
     )
 }
 
+/// The Windows variables Windows defines for a process because they describe
+/// the *machine*, not the user.
+///
+/// A controlled child starts from an empty environment, and cmd.exe leaves an
+/// undefined `%NAME%` reference verbatim instead of expanding it. An ordinary
+/// command such as `mkdir "%SystemDrive%\Temp"` then resolves to a *relative*
+/// path and silently creates a literal `%SystemDrive%` folder in the working
+/// directory. Supplying the machine-scoped baseline keeps `%NAME%` references
+/// meaningful while still inheriting no user environment, no credentials and no
+/// Aworkit state.
+#[cfg(windows)]
+pub(crate) const WINDOWS_MACHINE_ENVIRONMENT: [&str; 15] = [
+    // Volumes, the OS directory and the command processor.
+    "SystemDrive",
+    "SystemRoot",
+    "windir",
+    "ComSpec",
+    // Machine-wide program and data directories, including the documented
+    // architecture-suffixed names of the 32-bit views.
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "CommonProgramFiles(x86)",
+    // Non-secret operating-system facts ordinary tools read.
+    "OS",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "NUMBER_OF_PROCESSORS",
+];
+
+/// Adds the machine-scoped Windows baseline to one launch. A caller's explicit
+/// environment is applied afterwards, so a configured value always wins.
+#[cfg(windows)]
+pub(crate) fn apply_machine_environment(command: &mut Command) {
+    for name in WINDOWS_MACHINE_ENVIRONMENT {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+}
+
 /// Give host-shell descendants normal executable discovery without inheriting secrets.
 /// Explicit invocation overrides win; standard Windows folders supplement the inherited PATH.
 pub(crate) fn environment(explicit: &BTreeMap<String, String>) -> BTreeMap<String, String> {

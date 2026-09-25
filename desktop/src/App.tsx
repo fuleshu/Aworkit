@@ -338,9 +338,6 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 <ChatWorkspaceScreen
                   active={route === "chat"}
                   onReveal={after => navigate("chat", after)}
-                  confirmRecoveryAbandon={(title, body) =>
-                    adapters.nativePresentation.confirm(title, body)
-                  }
                   newChatRequest={newChatRequest}
                   historyActionRequest={historyActionRequest}
                   libraryPort={workflowLibraryPort}

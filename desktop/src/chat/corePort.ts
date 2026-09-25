@@ -234,7 +234,76 @@ export function chatIntentPayload(intent: ChatIntent): unknown {
       ...(intent.filesystem === undefined ? {} : { filesystem: intent.filesystem }),
     };
   if (intent.type === "set_chat_pinned") return { pinned: intent.pinned };
-  return {};
+  if (intent.type === "question")
+    return {
+      questionId: intent.questionId,
+      ...(intent.optionId === undefined ? {} : { optionId: intent.optionId }),
+      ...(intent.freeText === undefined ? {} : { freeText: intent.freeText }),
+      ...(intent.path === undefined ? {} : { path: intent.path }),
+      ...(intent.cancelled === undefined ? {} : { cancelled: intent.cancelled }),
+    };
+  // An intent that carries a payload can never fall through to an empty object:
+  // the core decides every decision from that payload, so silently dropping one
+  // leaves a Run parked forever. The payload-less actions are therefore named
+  // explicitly and the projector below still has to handle everything else.
+  if (isPayloadlessChatIntent(intent)) return {};
+  return assertProjectedIntentPayload(intent);
+}
+
+/**
+ * The Chat intents whose native IPC payload is empty by contract.
+ *
+ * A question answer is deliberately not one of them: the core reads the answer
+ * out of the payload and refuses a command without it.
+ */
+type PayloadlessChatIntent = Extract<
+  ChatIntent,
+  {
+    readonly type:
+      | "new_chat"
+      | "pause"
+      | "resume"
+      | "abandon_recovery"
+      | "cancel"
+      | "retry"
+      | "continue"
+      | "select_chat"
+      | "delete_chat"
+      | "fork";
+  }
+>;
+
+const PAYLOADLESS_INTENT_TYPES: ReadonlySet<string> = new Set([
+  "new_chat",
+  "pause",
+  "resume",
+  "abandon_recovery",
+  "cancel",
+  "retry",
+  "continue",
+  "select_chat",
+  "delete_chat",
+  "fork",
+]);
+
+/**
+ * Narrows to an intent whose native payload is empty by contract.
+ *
+ * The declared predicate is what makes `assertProjectedIntentPayload` below a
+ * compile-time check: a new Chat intent that carries a payload is neither
+ * payload-less nor projected, so the projector stops type-checking until it is.
+ */
+function isPayloadlessChatIntent(intent: ChatIntent): intent is PayloadlessChatIntent {
+  return PAYLOADLESS_INTENT_TYPES.has(
+    intent.type as PayloadlessChatIntent["type"],
+  );
+}
+
+/** Compile-time proof that every Chat intent with a payload is projected. */
+function assertProjectedIntentPayload(intent: never): never {
+  throw new Error(
+    `Chat intent '${(intent as ChatIntent).type}' has no projected native payload`,
+  );
 }
 
 /** Only Chat-scoped actions participate in the native stale-target check. */

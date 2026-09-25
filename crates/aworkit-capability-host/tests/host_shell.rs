@@ -77,6 +77,55 @@ fn configured_powershell_can_read_date_and_call_installed_commands() {
 }
 
 #[test]
+fn cmd_expands_machine_windows_variables_instead_of_creating_literal_paths() {
+    // A controlled child starts from an empty environment, and cmd.exe leaves an
+    // undefined `%NAME%` reference verbatim. `mkdir "%SystemDrive%\Temp"` then
+    // resolved to a *relative* path and silently created a literal
+    // '%SystemDrive%' folder in the working directory instead of addressing the
+    // volume it names.
+    let names = [
+        "SystemDrive",
+        "SystemRoot",
+        "windir",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "CommonProgramFiles",
+        "OS",
+    ];
+    let command = names
+        .iter()
+        .map(|name| format!("echo {name}=[%{name}%]"))
+        .collect::<Vec<_>>()
+        .join(" & ");
+    let text = run(system32().join("cmd.exe"), &command);
+    let reported: BTreeMap<&str, &str> = text
+        .lines()
+        .filter_map(|line| line.trim().split_once('='))
+        .map(|(name, value)| (name, value.trim_matches(['[', ']'])))
+        .collect();
+    // Whatever the launching host defines among the machine baseline must reach
+    // the child expanded; a literal reference is the defect this covers. A host
+    // that defines less (a stripped launcher) can only be matched to what it has.
+    assert!(
+        std::env::var("SystemRoot").is_ok(),
+        "the test host must define the Windows machine baseline"
+    );
+    for name in names {
+        let value = *reported
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} was not reported: {text}"));
+        assert!(
+            !value.contains('%'),
+            "{name} stayed a literal reference in the child shell: {value}"
+        );
+        if let Ok(expected) = std::env::var(name) {
+            assert_eq!(value, expected, "{name} must reach the child unchanged");
+        }
+    }
+}
+
+#[test]
 fn host_shells_do_not_allocate_a_console_window() {
     // Query the child process itself: a hidden parent alone does not prevent
     // a GUI-hosted shell from allocating a new console when it is spawned.

@@ -37,7 +37,7 @@ export function canSubmit(
   readiness: ComposerReadiness = {},
 ): string | null {
   if (chat.recoveryPending)
-    return "Resume the interrupted command before composing another input.";
+    return "Continue or stop the interrupted reply to send a new message.";
   if (state.imeComposing) return "Finish IME composition before sending.";
   if (state.draft.trim() === "" && state.attachments.length === 0)
     return "Enter a message or add an image before sending.";
