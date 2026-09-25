@@ -50,12 +50,10 @@ fn policy_defaults_exclusive_retention_and_capacity_validation() {
         json!({"headChars":81920}),
         json!({"maxTokens":0}),
     ] {
-        assert!(
-            serde_json::from_value::<Policy>(value)
-                .unwrap()
-                .validate(Some(128000))
-                .is_err()
-        );
+        assert!(serde_json::from_value::<Policy>(value)
+            .unwrap()
+            .validate(Some(128000))
+            .is_err());
     }
     assert!(serde_json::from_value::<Policy>(json!({"typo":1})).is_err());
     let p: Policy = serde_json::from_value(json!({"retainTokens":0})).unwrap();
@@ -134,12 +132,10 @@ fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
         r.exchanges[0].results[0].content["content"][1],
         json!({"type":"image","data":"opaque"})
     );
-    assert!(
-        r.exchanges[0].results[0].content["content"][2]["text"]
-            .as_str()
-            .unwrap()
-            .ends_with(&"b".repeat(policy.tail_chars))
-    );
+    assert!(r.exchanges[0].results[0].content["content"][2]["text"]
+        .as_str()
+        .unwrap()
+        .ends_with(&"b".repeat(policy.tail_chars)));
     r.exchanges[0].results[0].content =
         json!([{ "type":"text","text":"x".repeat(80_000) },{"type":"image","data":"opaque"}]);
     prune(&mut r, &policy);
@@ -182,11 +178,9 @@ fn image_dispatch_follows_the_frozen_model_capability() {
         ImageDispatchV1::Reference,
         "a model without image input receives references"
     );
-    // A context frozen before the capability existed cannot promise image
-    // input, so it degrades to references instead of uploading bytes.
-    assert_eq!(
-        image_dispatch(&json!({})).unwrap(),
-        ImageDispatchV1::Reference
-    );
+    // A context frozen before the capability existed, or without an answer,
+    // keeps the previous behaviour: attaching bytes it may not need beats
+    // silently dropping image input from an existing Chat.
+    assert_eq!(image_dispatch(&json!({})).unwrap(), ImageDispatchV1::Attach);
     assert!(image_dispatch(&json!({"imageInput": "yes"})).is_err());
 }
