@@ -157,7 +157,8 @@ pub(crate) fn context_message(goal: &Value) -> aworkit_capability_host::ModelToo
         .and_then(Value::as_str)
         .filter(|note| !note.trim().is_empty());
     let mut content = format!(
-        "Current Chat goal ({status}; durable state for this Chat, not a new instruction):\n{objective}"
+        "{}{status}; durable state for this Chat, not a new instruction):\n{objective}",
+        crate::runtime::compaction::GOAL_STATE_LABEL
     );
     if let Some(note) = note {
         content.push_str("\nLatest note: ");

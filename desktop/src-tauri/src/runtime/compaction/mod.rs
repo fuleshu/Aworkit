@@ -370,6 +370,23 @@ pub(crate) fn is_checkpoint(content: &str) -> bool {
     content.starts_with(CHECKPOINT_PREAMBLE)
 }
 
+/// Opening words of the generated messages that re-emit durable Run state
+/// after a compaction. They are labels, not instructions: the state itself is
+/// restored from records, so a compaction never carries an older copy of it
+/// forward as if the user had written it.
+pub(crate) const GOAL_STATE_LABEL: &str = "Current Chat goal (";
+pub(crate) const TASK_STATE_LABEL: &str = "Current Run task list (";
+pub(crate) const FILES_STATE_LABEL: &str = "Files this Run has already read or changed (";
+/// Whether one unit's content is generated durable state rather than a real
+/// user turn. Generated state is re-derived from records after every compaction
+/// and when a restored checkpoint carries it, so pinning an older copy would
+/// duplicate it and could contradict it.
+pub(crate) fn is_generated_state(content: &str) -> bool {
+    [GOAL_STATE_LABEL, TASK_STATE_LABEL, FILES_STATE_LABEL]
+        .iter()
+        .any(|label| content.starts_with(label))
+}
+
 /// Pricing is UTF-16 compatible with the Harness estimator, not a tokenizer.
 pub(crate) fn text_tokens(text: &str) -> u64 {
     (text.encode_utf16().count() as u64).div_ceil(4)

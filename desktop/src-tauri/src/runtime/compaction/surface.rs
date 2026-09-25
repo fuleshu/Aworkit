@@ -225,6 +225,7 @@ pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize, budget: u64) -> Ve
                 message.instruction_event_id.is_none()
                     && message.role.as_deref().unwrap_or("user") == "user"
                     && !is_checkpoint(&message.content)
+                    && !is_generated_state(&message.content)
             }
             Unit::Exchange(_) => false,
         })

@@ -181,6 +181,42 @@ fn a_prior_checkpoint_and_instructions_are_not_pinned_as_user_turns() {
     assert_eq!(pinned.len(), 1, "{pinned:?}");
     assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first"));
 }
+
+#[test]
+fn generated_state_is_recognised_and_never_pinned_as_user_direction() {
+    // Each label the runtime emits is recognised, and a compaction carries none
+    // of them forward: they are re-derived from records instead.
+    for label in [GOAL_STATE_LABEL, TASK_STATE_LABEL, FILES_STATE_LABEL] {
+        assert!(is_generated_state(&format!("{label}0; durable state)")));
+    }
+    assert!(!is_generated_state("Current tasks I should do"));
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first"}
+    ]);
+    r.exchanges = vec![exchange("result")];
+    r.context_messages = vec![
+        ModelToolContextV1 {
+            after_exchanges: 0,
+            content: format!(
+                "{GOAL_STATE_LABEL}active; durable state for this Chat, not a new instruction):\nold goal"
+            ),
+            ..Default::default()
+        },
+        ModelToolContextV1 {
+            after_exchanges: 1,
+            content: format!(
+                "{FILES_STATE_LABEL}1 total; durable state for this Run, not a new instruction):\n/tmp/a"
+            ),
+            ..Default::default()
+        },
+    ];
+    let s = units(&r).unwrap();
+    let pinned = pinned_user_units(&s, s.len(), u64::MAX);
+    assert_eq!(pinned.len(), 1, "{pinned:?}");
+    assert!(matches!(&pinned[0], Unit::Message(m) if m.content == "first"));
+}
 #[test]
 fn pruning_preserves_unicode_rich_blocks_errors_ids_and_is_idempotent() {
     let policy = Policy::default();

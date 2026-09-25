@@ -20,6 +20,7 @@ mod result_compression;
 pub(crate) mod skills;
 #[cfg(test)]
 mod skills_tests;
+mod state_context;
 mod web;
 #[path = "workspace_instructions/mod.rs"]
 pub(crate) mod workspace_instructions;
@@ -166,6 +167,9 @@ const MAXIMUM_TOOL_PAYLOAD_BYTES: usize = 256 * 1024;
 pub(crate) const MAXIMUM_TOOL_RESULT_BYTES: usize = 512 * 1024;
 const MAXIMUM_FILE_SEARCH_QUERY_BYTES: usize = 16 * 1024;
 const MAXIMUM_ACTIVITY_TEXT_BYTES: usize = 512;
+/// Most recently observed files one compaction re-emits as Run state. The list
+/// is a reminder, not evidence, so it stays small enough to be cheap.
+const TOUCHED_FILE_LIMIT: usize = 24;
 pub(crate) const PROJECT_FILE_LIST_MAXIMUM_ENTRIES_V1: u64 = 1000;
 pub(crate) const PROJECT_FILE_GREP_MAXIMUM_MATCHES_V1: u64 = 512;
 // A whole-project regex walk needs a file budget large enough to reach real
@@ -3774,6 +3778,50 @@ impl ToolRecordStore {
             .filter(|value| value.get("runId").and_then(Value::as_str) == Some(run_id.as_str()))
             .last()
             .and_then(|value| value.get("todos").cloned()))
+    }
+
+    /// Distinct files this Run has read or changed, oldest observation first,
+    /// most recent [`TOUCHED_FILE_LIMIT`] kept. Only content-bearing file tools
+    /// count; a listing or a search resolves no file the model has seen. Each
+    /// file is named the way the tool call named it, because a resolved path is
+    /// relative to the reviewed directory scope and means nothing on its own.
+    pub(crate) fn touched_files(
+        &self,
+        run_id: &StableId,
+    ) -> Result<Vec<String>, WorkflowPipelineError> {
+        let mut files: Vec<String> = Vec::new();
+        for record in self.events("pipeline.tool-outcome")? {
+            if record.get("runId").and_then(Value::as_str) != Some(run_id.as_str())
+                || record.get("isError").and_then(Value::as_bool) == Some(true)
+            {
+                continue;
+            }
+            let capability = record
+                .get("capabilityId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !matches!(
+                capability,
+                FILE_READ_CAPABILITY_ID | FILE_EDIT_CAPABILITY_ID | FILE_WRITE_CAPABILITY_ID
+            ) {
+                continue;
+            }
+            let Some(path) = record
+                .get("path")
+                .and_then(Value::as_str)
+                .or_else(|| record.get("resolvedPath").and_then(Value::as_str))
+                .filter(|path| !path.is_empty())
+            else {
+                continue;
+            };
+            if !files.iter().any(|seen| seen == path) {
+                files.push(path.to_owned());
+            }
+        }
+        if files.len() > TOUCHED_FILE_LIMIT {
+            files.drain(..files.len() - TOUCHED_FILE_LIMIT);
+        }
+        Ok(files)
     }
 
     /// Appends one immutable goal snapshot for the Run. Later snapshots

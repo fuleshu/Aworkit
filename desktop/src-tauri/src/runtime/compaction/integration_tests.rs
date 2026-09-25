@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::compaction::{self as c, Trigger};
+use crate::runtime::compaction::{self as c, GOAL_STATE_LABEL, Trigger};
 use aworkit_capability_host::{
     FrozenModelGateway, ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1,
     ModelToolContextV1, ModelToolEventV1, ProviderAcceptanceV1, ProviderEnginePortV1,
@@ -464,6 +464,240 @@ fn compact_manual(
             Trigger::Manual,
         )
         .unwrap()
+}
+
+/// Generated state messages that mention `text`, in request order.
+fn generated_state(request: &ModelToolRequestV1, text: &str) -> Vec<ModelToolContextV1> {
+    request
+        .context_messages
+        .iter()
+        .filter(|message| c::is_generated_state(&message.content) && message.content.contains(text))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_compaction_re_emits_the_live_goal_the_task_list_and_touched_files() {
+    // A summary is lossy; the state the tools wrote is re-derived and appended
+    // to the replacement, replacing any older copy left in the retained tail.
+    let mut f = Fixture::with_tools(&[
+        ID,
+        FILE_READ_CAPABILITY_ID,
+        GOAL_CAPABILITY_ID,
+        TODO_CAPABILITY_ID,
+    ]);
+    let (outer, mut request) = history(&mut f);
+    let run = f.authority.context.run_id.clone();
+    f.authority
+        .runtime
+        .record_goal_state_for(
+            &run,
+            &json!({"status":"active","goal":"Ship the canonical state block"}),
+        )
+        .unwrap();
+    f.authority
+        .runtime
+        .records
+        .record_todo_state(
+            &run,
+            &json!([{"content":"compact safely","status":"in_progress"}]),
+        )
+        .unwrap();
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 1,
+        content: format!("{GOAL_STATE_LABEL}active; stale copy):\nOld goal"),
+        ..Default::default()
+    });
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let result = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(result.changed, "{:?}", result.error);
+    let state = |request: &ModelToolRequestV1, text: &str| generated_state(request, text);
+    let goal = state(&request, "Ship the canonical state block");
+    assert_eq!(goal.len(), 1, "exactly the live goal, not a stale copy");
+    assert_eq!(
+        state(&request, "compact safely").len(),
+        1,
+        "the task list is restored"
+    );
+    assert_eq!(
+        state(&request, "file.txt").len(),
+        1,
+        "a file this Run read is named"
+    );
+    assert!(
+        request
+            .context_messages
+            .iter()
+            .all(|message| !message.content.contains("Old goal")),
+        "a superseded state copy is replaced rather than stacked"
+    );
+    assert!(goal[0].content.starts_with(GOAL_STATE_LABEL));
+    for message in request
+        .context_messages
+        .iter()
+        .filter(|message| c::is_generated_state(&message.content))
+    {
+        assert_eq!(
+            message.after_exchanges,
+            request.exchanges.len(),
+            "restored state follows every retained exchange"
+        );
+        assert_eq!(message.role.as_deref(), Some("user"));
+        assert!(message.instruction_event_id.is_none());
+    }
+    // The checkpoint document carries the state too, so a restore re-reads it.
+    let events = f.committer.committed_events().unwrap();
+    let compacted = events
+        .iter()
+        .find(|e| e.kind == "context.compacted")
+        .unwrap();
+    let document = serde_json::to_string(&compacted.payload["document"]).unwrap();
+    assert!(
+        document.contains("Ship the canonical state block"),
+        "{document}"
+    );
+    assert!(document.contains("compact safely"), "{document}");
+    // A repeated compaction re-derives the same state instead of stacking a
+    // second copy, whether or not the second attempt can still shrink.
+    let additional = aworkit_capability_host::ModelToolExchangeV1 {
+        assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::Text {
+            text: "Working.".into(),
+        }],
+        results: Vec::new(),
+    };
+    f.authority.commit_exchange(&outer, 2, &additional).unwrap();
+    request.exchanges.push(additional);
+    f.write("src/big.txt", &"z".repeat(30_000));
+    let call = ModelToolCallV1 {
+        call_id: "read.big".into(),
+        provider_call_id: Some("read.big".into()),
+        capability_id: FILE_READ_CAPABILITY_ID.into(),
+        name: FILE_READ_PROVIDER_NAME.into(),
+        arguments: json!({"path":"src/big.txt"}),
+        provider_context: None,
+    };
+    let settled = f
+        .authority
+        .invoke(&outer, 3, &call, &CancellationToken::default())
+        .unwrap();
+    let read = aworkit_capability_host::ModelToolExchangeV1 {
+        assistant_content: vec![aworkit_capability_host::ModelAssistantContentV1::ToolCall { call }],
+        results: vec![settled.result],
+    };
+    f.authority.commit_exchange(&outer, 3, &read).unwrap();
+    request.exchanges.push(read);
+    let second = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(second.changed, "{:?}", second.error);
+    assert_eq!(state(&request, "Ship the canonical state block").len(), 1);
+    assert_eq!(state(&request, "compact safely").len(), 1);
+    assert_eq!(state(&request, "file.txt").len(), 1);
+}
+
+#[test]
+fn a_cleared_goal_and_an_empty_task_list_are_not_re_emitted() {
+    // Generated state is derived, never assumed: nothing recorded means no
+    // block, and a cleared goal must not be resurrected from an older copy.
+    let mut f = Fixture::with_tools(&[ID, GOAL_CAPABILITY_ID, TODO_CAPABILITY_ID]);
+    f.authority.context.review_messages[0].content =
+        "Established requirements and implementation history. ".repeat(1800);
+    f.authority.context.model_context =
+        json!({"contextWindow":16000,"policy":{"auto":false,"retainTokens":0,"pruneToolResults":false}});
+    let run = f.authority.context.run_id.clone();
+    f.authority
+        .runtime
+        .record_goal_state_for(&run, &json!({"status":"cleared"}))
+        .unwrap();
+    f.authority
+        .runtime
+        .records
+        .record_todo_state(&run, &json!([]))
+        .unwrap();
+    let outer = stable("outer.state-empty").unwrap();
+    let mut request = f.request();
+    f.prepare(outer.as_str(), 0, &mut request);
+    request.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 0,
+        content: "Continue with the next task.".into(),
+        ..Default::default()
+    });
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let result = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(result.changed, "{:?}", result.error);
+    assert!(
+        request
+            .context_messages
+            .iter()
+            .all(|message| !c::is_generated_state(&message.content)),
+        "no state block when the goal is cleared, the list is empty and no file was touched"
+    );
+}
+
+#[test]
+fn a_restore_refreshes_the_state_block_instead_of_reading_it_twice() {
+    // The pass after a compaction injects the live goal and restores the
+    // checkpoint that also carries the goal. The block is re-derived, so the
+    // model reads one current copy rather than a fresh and a stale one.
+    let mut f = Fixture::with_tools(&[
+        ID,
+        FILE_READ_CAPABILITY_ID,
+        GOAL_CAPABILITY_ID,
+        TODO_CAPABILITY_ID,
+    ]);
+    let (outer, mut request) = history(&mut f);
+    let run = f.authority.context.run_id.clone();
+    f.authority
+        .runtime
+        .record_goal_state_for(&run, &json!({"status":"active","goal":"First objective"}))
+        .unwrap();
+    f.authority
+        .runtime
+        .records
+        .record_todo_state(
+            &run,
+            &json!([{"content":"finish the block","status":"pending"}]),
+        )
+        .unwrap();
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let first = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(first.changed, "{:?}", first.error);
+    assert_eq!(generated_state(&request, "First objective").len(), 1);
+
+    // The user moves the goal on before the next pass begins.
+    f.authority
+        .runtime
+        .record_goal_state_for(&run, &json!({"status":"active","goal":"Second objective"}))
+        .unwrap();
+    let mut next = f.request();
+    next.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 0,
+        role: Some("user".into()),
+        content: format!(
+            "{GOAL_STATE_LABEL}active; durable state for this Chat, not a new instruction):\nSecond objective"
+        ),
+        ..Default::default()
+    });
+    let second = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &stable("outer.restore-state").unwrap(),
+            1,
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(second.error.is_none(), "{:?}", second.error);
+    let goal = generated_state(&next, "objective");
+    assert_eq!(goal.len(), 1, "{:?}", next.context_messages);
+    assert!(goal[0].content.contains("Second objective"));
+    assert_eq!(generated_state(&next, "finish the block").len(), 1);
+    assert!(
+        !serde_json::to_string(&next).unwrap().contains("First objective"),
+        "the superseded objective is gone"
+    );
 }
 
 #[test]

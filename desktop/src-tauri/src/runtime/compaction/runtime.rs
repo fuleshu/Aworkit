@@ -649,6 +649,14 @@ impl BoundFileToolAuthorityV1 {
         // pass really has — the next checkpoint then replaces the projection that
         // could not be represented.
         let mut through = through;
+        let generated_state = |request: &ModelToolRequestV1| {
+            request
+                .context_messages
+                .iter()
+                .filter(|message| c::is_generated_state(&message.content))
+                .count()
+        };
+        let state_before_restore = generated_state(request);
         let anchor = if !restore {
             None
         } else if trigger == c::Trigger::ContextOverflow {
@@ -662,6 +670,14 @@ impl BoundFileToolAuthorityV1 {
                 }
             }
         };
+        // A restored checkpoint already carries the state block of the pass that
+        // wrote it, and this turn's own goal injection sits beside it. Refresh
+        // the block from its records so the model reads one current copy instead
+        // of the same state twice, once of them stale.
+        if restore && generated_state(request) > state_before_restore {
+            self.state_context(request)
+                .map_err(|error| error.to_string())?;
+        }
         mark("restore", &mut since, &mut timings);
         if let Some(agent) = agent {
             self.workspace_context(outer, through, agent, request, cancellation)?;
@@ -901,6 +917,10 @@ impl BoundFileToolAuthorityV1 {
                     if c::hash(request) != before_hash || self.selection_generation(&owner)? != source_generation { return Err("Context changed during compaction".into()); }
                     let mut replacement = request.clone();
                     c::replace_units(&mut replacement,&next)?;
+                    // The summary is a projection; the Run's goal, task list and
+                    // touched files are re-derived from their records and appended
+                    // to the replacement, so they are part of the checkpoint too.
+                    self.state_context(&mut replacement).map_err(|error| error.to_string())?;
                     let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
                     if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
                     self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
