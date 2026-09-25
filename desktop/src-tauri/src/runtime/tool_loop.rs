@@ -10,6 +10,7 @@
 mod context_compaction;
 mod file_access;
 pub(crate) mod filesystem_permissions;
+mod file_edit_miss;
 mod file_operations;
 mod goal;
 pub(crate) mod question;
@@ -2389,6 +2390,8 @@ impl BoundFileToolAuthorityV1 {
                 call_id: call.call_id.clone(),
                 capability_id: call.capability_id.clone(),
                 path: String::new(),
+                run_id: None,
+                resolved_path: None,
                 result: result.clone(),
                 is_error,
                 summary: summary.to_owned(),
@@ -3327,6 +3330,8 @@ impl FileToolDispatcherV1 {
                 invocation_id: envelope.invocation_id.clone(),
                 call_id: self.record.call.call_id.clone(),
                 capability_id: self.record.call.capability_id.clone(),
+                run_id: Some(self.record.proposal.run_id.clone()),
+                resolved_path: Some(observed_file_path(&self.record, &path)),
                 path,
                 is_error: match self.record.binding.limit {
                     StoredFileToolLimitV1::WebFetch { .. } => web::unavailable(&result),
@@ -3349,6 +3354,8 @@ impl FileToolDispatcherV1 {
                 invocation_id: envelope.invocation_id.clone(),
                 call_id: self.record.call.call_id.clone(),
                 capability_id: self.record.call.capability_id.clone(),
+                run_id: Some(self.record.proposal.run_id.clone()),
+                resolved_path: Some(observed_file_path(&self.record, &path)),
                 path,
                 result: json!({
                     "error": bounded_activity_text(redact_tool_error(&materialized, &error))
@@ -3422,6 +3429,8 @@ impl FileToolDispatcherV1 {
             invocation_id: envelope.invocation_id.clone(),
             call_id: self.record.call.call_id.clone(),
             capability_id: self.record.call.capability_id.clone(),
+            run_id: Some(self.record.proposal.run_id.clone()),
+            resolved_path: Some(observed_file_path(&self.record, &path)),
             path,
             result: json!({"error": error}),
             is_error: true,
@@ -3551,6 +3560,26 @@ fn content_hash_local(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+/// The file location a durable tool outcome is keyed by: the resolved path the
+/// frozen access classified, or the model-visible argument when none was
+/// resolved. A read and a later edit of the same file must agree on this.
+fn observed_file_path(record: &ToolInvocationRecordV1, argument: &str) -> String {
+    record
+        .file_access
+        .as_ref()
+        .and_then(|access| access.as_ref().ok())
+        .map(|access| access.path.display().to_string())
+        .unwrap_or_else(|| argument.to_owned())
+}
+
+/// The content one durable file tool result observed: what a later edit
+/// compares the file against to tell a stale copy from wrong text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileObservationV1 {
+    content_hash: String,
+    bytes: Option<u64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ToolInvocationRecordV1 {
@@ -3579,6 +3608,12 @@ struct ToolOutcomeRecordV1 {
     call_id: String,
     capability_id: String,
     path: String,
+    /// Run and resolved file location this outcome observed, when it saw one.
+    /// Additive: records written before file diagnostics existed omit them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    run_id: Option<StableId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolved_path: Option<String>,
     result: Value,
     is_error: bool,
     summary: String,
@@ -3816,6 +3851,45 @@ impl ToolRecordStore {
 
     fn events(&self, kind: &str) -> Result<Vec<Value>, WorkflowPipelineError> {
         self.events_matching(kind, |_| true)
+    }
+
+    /// The most recent content this Run durably observed for one file, newest
+    /// first. Only settled file outcomes carry a content hash; a read, edit or
+    /// write therefore all count as an observation.
+    fn file_observation(
+        &self,
+        run_id: &StableId,
+        path: &str,
+    ) -> Result<Option<FileObservationV1>, WorkflowPipelineError> {
+        let mut observations = self.cache.recent(
+            &self.store,
+            TOOL_RECORD_CHAT_ID,
+            STORE_BRANCH_ID,
+            "pipeline.tool-outcome",
+            1,
+            |event| {
+                let record = event.payload.get("record")?;
+                if record["runId"] != run_id.as_str() {
+                    return None;
+                }
+                let recorded = record
+                    .get("resolvedPath")
+                    .and_then(Value::as_str)
+                    .or_else(|| record.get("path").and_then(Value::as_str))?;
+                if recorded != path {
+                    return None;
+                }
+                let content_hash = record["result"]["contentHash"].as_str()?;
+                Some(FileObservationV1 {
+                    content_hash: content_hash.to_owned(),
+                    bytes: record["result"]["bytes"]
+                        .as_u64()
+                        .or_else(|| record["result"]["bytesWritten"].as_u64()),
+                })
+            },
+        )
+        .map_err(WorkflowPipelineError::Store)?;
+        Ok(observations.pop())
     }
 
     /// Borrow the cached kind index and clone only selected records.

@@ -223,20 +223,36 @@ impl FileToolDispatcherV1 {
                     .map_err(|error| error.to_string())?;
                 let text = String::from_utf8(current.clone())
                     .map_err(|_| "file is not UTF-8 text".to_owned())?;
+                let current_hash = content_hash_local(&current);
                 let occurrences = text.match_indices(old_string).count();
                 if occurrences == 0 {
-                    return Err("old_string was not found in the file".to_owned());
+                    // The miss names what the Run already knows: the file's
+                    // current hash and size, how it differs from the last
+                    // observation, and any normalised or near match.
+                    let observed = self
+                        .records
+                        .file_observation(
+                            &self.record.proposal.run_id,
+                            &observed_file_path(&self.record, path),
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Err(file_edit_miss::describe_miss(
+                        &text,
+                        old_string,
+                        &file_edit_miss::EditMissContext {
+                            path,
+                            current_bytes: current.len(),
+                            current_hash: &current_hash,
+                            observed,
+                        },
+                    ));
                 }
                 if occurrences > 1 {
                     return Err("old_string matched more than once; make it unique".to_owned());
                 }
                 let replacement = text.replacen(old_string, new_string, 1).into_bytes();
                 files
-                    .edit_hash(
-                        &file_path.to_owned(),
-                        &content_hash_local(&current),
-                        &replacement,
-                    )
+                    .edit_hash(&file_path.to_owned(), &current_hash, &replacement)
                     .map_err(|error| error.to_string())?;
                 let value = json!({
                     "path": path,

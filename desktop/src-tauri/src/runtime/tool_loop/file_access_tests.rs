@@ -1,4 +1,5 @@
-//! Exercise location policy through the real durable broker and capability host.
+//! Exercise location policy and edit-miss diagnostics through the real durable
+//! broker and capability host.
 use super::*;
 
 #[test]
@@ -585,4 +586,139 @@ fn read_pages_a_file_with_offset_and_limit() {
         Err(error) => error.to_string(),
     };
     assert!(message.contains("offset"), "{message}");
+}
+
+/// Invokes a bounded read through the real broker and returns its settlement.
+fn read_file(f: &Fixture, outer: &str, path: &str) -> SettledModelToolCallV1 {
+    f.authority
+        .invoke_v1(
+            &stable(outer).unwrap(),
+            1,
+            &call(f, FILE_READ_CAPABILITY_ID, json!({"path":path})),
+            &CancellationToken::default(),
+        )
+        .unwrap()
+}
+
+/// Invokes an edit that must fail and returns the model-facing error string.
+fn edit_error(f: &Fixture, outer: &str, path: &str, old: &str, new: &str) -> String {
+    let settled = f
+        .authority
+        .invoke_v1(
+            &stable(outer).unwrap(),
+            1,
+            &call(
+                f,
+                FILE_EDIT_CAPABILITY_ID,
+                json!({"path":path,"old_string":old,"new_string":new}),
+            ),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(settled.result.is_error, "{:?}", settled.result);
+    settled.result.content["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// A miss must let the model tell a stale copy from wrong text: the read it
+/// already made is compared with the file's current content.
+#[test]
+fn a_stale_read_edit_reports_the_file_changed_since_the_read() {
+    let f = Fixture::with_tools(&[FILE_READ_CAPABILITY_ID, FILE_EDIT_CAPABILITY_ID]);
+    let file = f.authority.context.workspace.root.join("src/file.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    let read = read_file(&f, "outer.stale-read", "src/file.txt");
+    assert!(!read.result.is_error, "{:?}", read.result);
+    // Another writer changes the file after this Run's read.
+    std::fs::write(&file, "gamma\n").unwrap();
+
+    let error = edit_error(&f, "outer.stale-edit", "src/file.txt", "alpha", "beta");
+    assert!(
+        error.contains("The file changed since this Run last read or edited it"),
+        "{error}"
+    );
+    assert!(error.contains("Re-read it"), "{error}");
+    assert!(error.contains("(6 bytes)"), "{error}");
+}
+
+/// A miss against content this Run just read unchanged is simply a wrong quote,
+/// so it keeps the plain message instead of inventing a staleness claim.
+#[test]
+fn an_unchanged_read_edit_keeps_the_plain_not_found_message() {
+    let f = Fixture::with_tools(&[FILE_READ_CAPABILITY_ID, FILE_EDIT_CAPABILITY_ID]);
+    std::fs::write(
+        f.authority.context.workspace.root.join("src/file.txt"),
+        "alpha\n",
+    )
+    .unwrap();
+    assert!(
+        !read_file(&f, "outer.fresh-read", "src/file.txt")
+            .result
+            .is_error
+    );
+
+    let error = edit_error(&f, "outer.wrong-quote", "src/file.txt", "omega", "beta");
+    assert_eq!(error, "old_string was not found in the file");
+}
+
+/// A quote that only differs in line endings is present in the file; the miss
+/// reports the normalised match instead of a dead end.
+#[test]
+fn a_crlf_only_quote_reports_the_normalised_match() {
+    let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
+    std::fs::write(
+        f.authority.context.workspace.root.join("src/file.txt"),
+        "alpha\r\nbeta\r\n",
+    )
+    .unwrap();
+
+    let error = edit_error(&f, "outer.crlf", "src/file.txt", "alpha\nbeta", "gamma");
+    assert!(
+        error.contains("after normalising CRLF or lone CR line endings to LF"),
+        "{error}"
+    );
+    assert!(!error.contains("old_string was not found in the file"), "{error}");
+}
+
+/// The multi-match remedy is already actionable and must not change.
+#[test]
+fn a_multiple_match_keeps_the_existing_remedy() {
+    let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
+    std::fs::write(
+        f.authority.context.workspace.root.join("src/file.txt"),
+        "alpha alpha\n",
+    )
+    .unwrap();
+
+    let error = edit_error(&f, "outer.multiple", "src/file.txt", "alpha", "beta");
+    assert_eq!(error, "old_string matched more than once; make it unique");
+}
+
+/// A successful edit then a miss against the edited content must report the
+/// edit's own observation, proving the durable result carries the hash.
+#[test]
+fn an_edit_observes_the_content_it_wrote() {
+    let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
+    let file = f.authority.context.workspace.root.join("src/file.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    let edited = f
+        .authority
+        .invoke_v1(
+            &stable("outer.first-edit").unwrap(),
+            1,
+            &call(
+                &f,
+                FILE_EDIT_CAPABILITY_ID,
+                json!({"path":"src/file.txt","old_string":"alpha","new_string":"beta"}),
+            ),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(!edited.result.is_error, "{:?}", edited.result);
+
+    // The file is as the edit left it, so the plain miss is correct.
+    let error = edit_error(&f, "outer.after-edit", "src/file.txt", "alpha", "gamma");
+    assert_eq!(error, "old_string was not found in the file");
 }
