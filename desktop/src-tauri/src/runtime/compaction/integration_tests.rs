@@ -375,6 +375,62 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
+/// Prompt content of one surface unit, independent of position bookkeeping.
+/// The provider sees exactly this sequence, so comparing it proves the summary
+/// prompt is the live prompt's prefix rather than a reshaped copy.
+fn prompt_shape(unit: &c::Unit) -> Value {
+    match unit {
+        c::Unit::Message(message) => json!({
+            "kind": "message",
+            "role": message.role,
+            "content": message.content,
+            "images": message.images,
+            "instructionEventId": message.instruction_event_id,
+        }),
+        c::Unit::Exchange(exchange) => json!({"kind": "exchange", "exchange": exchange}),
+    }
+}
+
+#[test]
+fn the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive() {
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    let live: Vec<Value> = c::units(&request).unwrap().iter().map(prompt_shape).collect();
+    let (gateway, requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let result = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            1,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Manual,
+        )
+        .unwrap();
+    assert!(result.changed, "{:?}", result.error);
+
+    let summary = requests.lock().unwrap()[0].clone();
+    let summary_units = c::units(&summary).unwrap();
+    let (directive, prefix) = summary_units.split_last().expect("summary units");
+    let c::Unit::Message(directive) = directive else {
+        panic!("the summary prompt must end with the directive message");
+    };
+    assert_eq!(directive.content, c::INSTRUCTION.trim_end());
+    // The auxiliary call reuses the exact live prompt prefix and adds only the
+    // directive, so a provider prefix cache can match almost all of it.
+    let prefix: Vec<Value> = prefix.iter().map(prompt_shape).collect();
+    assert_eq!(prefix, live[..prefix.len()], "summary prefix diverged from the live prompt");
+    assert!(!prefix.is_empty());
+    assert!(
+        prefix.len() < live.len(),
+        "the retained tail is kept live, not resent for summarization"
+    );
+    assert_eq!(summary.parameters["maxOutputTokens"], json!(8192));
+}
+
 #[test]
 fn actual_compaction_does_not_restore_deleted_nested_rules_from_warm_cache() {
     let mut f = Fixture::new();

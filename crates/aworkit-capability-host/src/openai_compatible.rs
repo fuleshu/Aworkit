@@ -19,7 +19,10 @@ use crate::{
     CancellationToken, ModelEventV1, ModelRequestV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
     model_tools::validate_tool_request,
-    provider_tools::{OpenAiRequestParametersV1, consume_openai_stream, openai_tool_request},
+    provider_tools::{
+        OpenAiRequestParametersV1, consume_openai_stream, openai_tool_request_body,
+        prompt_first_body,
+    },
 };
 
 const MAX_IDENTITY_BYTES: usize = 256;
@@ -285,9 +288,9 @@ impl OpenAiCompatibleProvider {
 
     /// Sends one streaming text request and reports the exact body size sent.
     ///
-    /// The size is measured with the same serializer `json()` uses, which costs
-    /// one extra serialization per network request and buys the only independent
-    /// measure of what the provider was actually billed for.
+    /// The body is written once, prompt first, and those exact bytes are sent:
+    /// the measurement and the wire cannot drift, and a parameter that sorts
+    /// before `messages` cannot hide the reusable prompt prefix.
     fn streaming_completion_response(
         &self,
         request: &ModelRequestV1,
@@ -307,14 +310,18 @@ impl OpenAiCompatibleProvider {
             .with_overrides(&request.parameters)
             .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?
             .apply(&mut body);
-        let sent = self.record_sent_body(
-            &serde_json::to_vec(&body)
-                .map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?,
-        );
-        let response = self.successful_stream(self.send(
-            self.client.post(self.completions_url.clone()).json(&body),
-            "text/event-stream",
-        )?)?;
+        let body =
+            prompt_first_body(&body).map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
+        let sent = self.record_sent_body(&body);
+        let response = self.successful_stream(
+            self.send(
+                self.client
+                    .post(self.completions_url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(body),
+                "text/event-stream",
+            )?,
+        )?;
         Ok((response, sent))
     }
 
@@ -329,14 +336,14 @@ impl OpenAiCompatibleProvider {
             .request_parameters
             .with_overrides(&request.parameters)
             .map_err(|()| ProviderError::Failed("OpenAI request parameters are invalid".into()))?;
-        let body = openai_tool_request(&self.config.model, request, &parameters)?;
-        let sent = self.record_sent_body(
-            &serde_json::to_vec(&body)
-                .map_err(|_| ProviderError::Failed("OpenAI request body is invalid".into()))?,
-        );
+        let body = openai_tool_request_body(&self.config.model, request, &parameters)?;
+        let sent = self.record_sent_body(&body);
         let response = self
             .send(
-                self.client.post(self.completions_url.clone()).json(&body),
+                self.client
+                    .post(self.completions_url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(body),
                 "text/event-stream",
             )
             .map_err(ProviderError::from)?;

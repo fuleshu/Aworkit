@@ -2,12 +2,59 @@
 
 use std::collections::BTreeMap;
 
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
 
 use crate::{
     ModelAssistantContentV1, ModelToolRequestV1, ProviderError,
     model_tools::{ModelInputRoleV1, normalize_model_input, result_text},
 };
+
+/// Serializes one request object with the conversation prompt first.
+///
+/// `serde_json` orders an object's keys by name (its map is a `BTreeMap` unless
+/// the optional `preserve_order` feature is enabled), so a request-scoped
+/// parameter such as `max_tokens` would be written before `messages` and change
+/// the leading bytes of an otherwise unchanged prompt. A provider-side prefix
+/// cache matches from the start of the prompt, and Aworkit's own
+/// `sentBytes`/`commonPrefixBytes` evidence measures the same bytes, so a
+/// leading parameter both hides and — for a body-prefix cache — destroys the
+/// reuse of a prompt that is a strict extension of the previous one. Writing
+/// `messages` first keeps the wire prefix equal to the prompt prefix whatever
+/// parameters a call adds.
+struct PromptFirstBody<'a>(&'a Map<String, Value>);
+
+impl Serialize for PromptFirstBody<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        if let Some(messages) = self.0.get("messages") {
+            map.serialize_entry("messages", messages)?;
+        }
+        for (key, value) in self.0 {
+            if key != "messages" {
+                map.serialize_entry(key, value)?;
+            }
+        }
+        map.end()
+    }
+}
+
+/// The exact bytes to put on the wire for one request object, prompt first.
+pub(crate) fn prompt_first_body(body: &Value) -> Result<Vec<u8>, ProviderError> {
+    let object = body.as_object().ok_or_else(invalid_request)?;
+    serde_json::to_vec(&PromptFirstBody(object)).map_err(|_| invalid_request())
+}
+
+/// The exact bytes of one OpenAI-compatible tool request. The transport sends
+/// these bytes verbatim so the measured body is the body the provider receives.
+pub(crate) fn openai_tool_request_body(
+    model: &str,
+    request: &ModelToolRequestV1,
+    parameters: &OpenAiRequestParametersV1,
+) -> Result<Vec<u8>, ProviderError> {
+    prompt_first_body(&openai_tool_request(model, request, parameters)?)
+}
 
 pub(crate) fn openai_tool_request(
     model: &str,
