@@ -1,18 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": "Task 116 done: bounded loops execute. A `loop` header declares exitCondition + maximumIterations 1..=64 and routes body/exit/fallback; one declared `feedback` edge closes a single-entry/single-exit region (nesting <= 4, no wait/completion inside); only declared feedback edges close a cycle. analyze_loop_regions is shared by validator and compiler; routes may come from configuration.route, the top-level route, or the typed source handle. The executor repeats the region per iteration, decides completion by the frozen condition, and routes the declared fallback with a limit-exceeded observation when the bound or deadline is exhausted; loop frames persist across suspensions so a resume keeps its iteration without replay. Activities carry the frame; spans are iteration-stamped. The editor offers the loop with its exit-condition panel, bound and typed routes, and a declared loop is no longer a cycle. v1 gaps: no cumulative cost ledger, no iteration badge, no inherited tool exchanges.",
-    "created_at": "2026-09-23 10:47:22",
-    "id": 262,
-    "note_id": "2026-09-23-task116-done",
-    "operation_id": "memory-116-done-002",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "memory-116-done-002",
-    "task_id": null
+    "id": 262
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "bbaf81b7-55d5-807b-9fb3-116c01f877f8",
   "schemaVersion": 1
 }

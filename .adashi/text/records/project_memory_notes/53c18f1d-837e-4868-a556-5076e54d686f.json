@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Benchmark chat.59195e920fc296dbb852c5072bf61c8b65bad3e7 (Tetris test1_small2, deepseek-flash, contextWindow 100,000 frozen, reasoningEffort medium): best run yet - 58 turns, 8.2 min, 93.30% cache, 221,595 uncached, 128,262 output, $0.2389, selfcheck 53/53. One compaction, as designed: pressure 79,400, F = 7,706, budget 17,294, S = 6,606 = floor(0.382 x budget), R = 10,688, 1 pinned user turn (1,163), one attempt, summary prompt 99.4% cached, $0.006 / 16.6 s. Cache leak filed as task 148: the state block (goal/task list/touched files) sits at the compaction-era boundary (afterExchanges 7), so a 60-char refresh re-bills the suffix - turns 22/23/24/50/57/58 hold 165,263 of 221,595 uncached (74%, ~$0.050, 21%). Latency is not the issue (uncached prefill ~20k tok/s); append state changes at the tail instead. Window datum: same effort at 32k (chat.1da4255a) needed 126 turns, 29 compactions, 506,484 uncached, $0.3686, 24 min; the 1M high-effort runs re-sent 10-11.6M input.",
+    "created_at": "2026-09-26 20:11:29",
+    "id": 274,
+    "note_id": "benchmark-100k-run-and-cache-leak",
+    "operation_id": "memory-benchmark-100k-20260926",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-benchmark-100k-20260926",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "53c18f1d-837e-4868-a556-5076e54d686f",
+  "schemaVersion": 1
+}

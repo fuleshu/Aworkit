@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-26 20:10:46",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Measured on run.59195e920fc296dbb852c5072bf61c8b65bad3e7 / chat.59195e920fc296dbb852c5072bf61c8b65bad3e7 (Tetris benchmark, test1_small2, deepseek-flash, frozen contextWindow 100,000, reasoningEffort medium, 58 turns, 8.2 min, selfcheck 53/53).\n",
+        "\n",
+        "THE NUMBER. 3,308,699 input tokens, 93.30% cached, 221,595 uncached, 128,262 output, $0.2389 total. Five turns hold 165,263 of the 221,595 uncached tokens (74%), worth about $0.0497 (21% of the run). Each of those five turns is a small generated-state message being rewritten in place:\n",
+        "\n",
+        "| turn | uncached | what changed | message size |\n",
+        "| --- | --- | --- | --- |\n",
+        "| 22 | 18,163 | the compaction itself (context rewritten) | - |\n",
+        "| 23 | 3,025 | \"Files this Run has already read or changed (5 total)\" -> 6 | 450 -> 511 chars |\n",
+        "| 24 | 8,017 | the same list, 6 -> 7 | 511 -> 571 |\n",
+        "| 50 | 47,831 | the same list, 7 -> 8 | 571 -> 629 |\n",
+        "| 57 | 52,846 | \"Current Run task list (8 item(s))\" re-worded | 588 -> 594 |\n",
+        "| 58 | 53,544 | \"Current Chat goal (active)\" -> \"(completed)\" | 615 -> 934 |\n",
+        "\n",
+        "MECHANISM. The state messages are anchored at the exchange boundary that existed when they were first emitted (afterExchanges 7 in this run) and a refresh rewrites them where they stand, so they sit mid-context. Changing the bytes of a message at offset X invalidates the provider's cached prefix from X onward, and the cost is everything after X - which grows with the run: about 3k tokens of suffix at turn 23, about 50k by turn 50. Local evidence in the same store: context.usage's commonPrefixBytes drops from 480,030 (turn 56) to 81,208 (turn 57) and from 445,988 (turn 49) to 81,579 (turn 50), while sentBytes keeps growing. A 60-character edit therefore re-bills ~50k tokens; 47,831 x $0.3/M = $0.0143 for that one turn.\n",
+        "\n",
+        "WHY THE CURRENT DESIGN DOES IT, AND WHY THAT IS NOT A BUG. Task 139 built the block deliberately: exactly one current copy, never reordering the committed selection, refreshed once per pass after a restore that contributed generated state and at every compaction, because \"re-deriving it every turn would rewrite a mid-context message as file reads accumulate\" (its own words). The measured run shows that condition being reached anyway, because every model turn in this workflow is a new pass (a fresh outer invocation), so a restore fires on each turn and the refresh happens whenever the goal, the task list or the touched-file list has changed. The design's own worry is exactly the cost this task is about; it just underestimated how often it happens.\n",
+        "\n",
+        "LATENCY IS NOT THE ISSUE, COST IS. Those turns are not slow (turn 50 took 3.3 s, turn 57 2.6 s): deepseek's uncached prefill ran at roughly 20k tokens/s. So the fix is about money (21%) and about not paying for the same history three times; on a provider with slower uncached prefill it would also show up as time.\n",
+        "\n",
+        "OPTIONS, best first.\n",
+        "(a) Append the change at the tail instead of rewriting the block in place: emit the new or changed part as a fresh typed context message after the newest exchange (\"Touched files now also include ...; the list above is superseded\"), and let the next compaction consolidate it back into one block. Cost: one transitional stale copy of a few hundred tokens until the next compaction. Benefit: a change only touches the tail bytes, so the rewrite becomes ~200 tokens instead of ~50k. This is how an ordinary chat corrects itself, and the compaction path already guarantees eventual consolidation.\n",
+        "(b) Freeze the volatile parts at compaction time and make the staleness explicit in the message text (\"accurate as of the last compaction\") instead of refreshing them. Cheapest to implement, weakest freshness; acceptable for the touched-file list, not for the goal.\n",
+        "(c) Keep the volatile parts (touched files, task list) at the tail boundary and only the stable part (goal) mid-context, so the most frequent changes have the smallest blast radius.\n",
+        "(d) Accept it and make the cost visible in Run details (an explicit \"cache-broken by state refresh\" annotation) so a future regression is noticeable. Not a fix.\n",
+        "\n",
+        "Recommend (a), with (c) as the fallback if a transitional duplicate proves confusing to the model; either way the acceptance below is what matters.\n",
+        "\n",
+        "ACCEPTANCE.\n",
+        "- On the same benchmark (Tetris prompt, 100k window, deepseek-flash, ~58 turns), no single state refresh costs more than a few hundred uncached tokens: the touched-file list growing from 7 to 8 files must not re-bill the suffix. Target: total uncached below 80,000 on a run of this shape (measured 221,595, of which ~165k is this defect), and run cost below $0.20 with output unchanged.\n",
+        "- The model always reads at most one *current* copy of each part; a transitional stale copy, if option (a) is chosen, is superseded within the same context and gone after the next compaction (no unbounded stacking).\n",
+        "- Between compactions the selection stays append-only where it was already append-only: a context.checkpoint diff across two turns with a state change shows the new bytes only at the tail, and `commonPrefixBytes` does not collapse.\n",
+        "- No regression: the task-139 tests (one copy per label, stale copy gone, cleared goal/task list not re-emitted, restore refresh, generated state never pinned) and the compaction suites stay green.\n",
+        "- Evidence in Run details or the stored stream must show which turn refreshed what, so this is measurable again after the change rather than inferred.\n",
+        "\n",
+        "BOUNDARIES. Owns where and when generated state is re-emitted into the selection. Does not own the compaction budgets (share model, task 143/144), the content of the state generators (goal/todo/touched_files), which units may be shadowed (task 137), or the host clock and workspace-instruction paths (they have their own re-emission and were byte-stable for the whole measured run). Reference implementation: desktop/src-tauri/src/runtime/tool_loop/state_context.rs and the emission points in compaction/runtime.rs."
+      ]
+    },
+    "id": 148,
+    "number": 147,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "A mid-context state-block refresh re-bills the whole suffix: 21% of a benchmark run's cost",
+    "updated_at": "2026-09-26 20:11:33"
+  },
+  "deleted": false,
+  "identity": "0af72466-43d0-4d9a-bf9d-cc41e16d050e",
+  "schemaVersion": 1
+}
