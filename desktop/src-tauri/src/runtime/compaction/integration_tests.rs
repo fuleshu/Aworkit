@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::compaction::{self as c, GOAL_STATE_LABEL, Trigger};
+use crate::runtime::compaction::{self as c, GOAL_STATE_LABEL, TASK_STATE_LABEL, Trigger};
 use aworkit_capability_host::{
     FrozenModelGateway, ModelCandidateV1, ModelEventV1, ModelRequestV1, ModelResolutionPlanV1,
     ModelToolContextV1, ModelToolEventV1, ProviderAcceptanceV1, ProviderEnginePortV1,
@@ -1017,10 +1017,13 @@ fn a_cleared_goal_and_an_empty_task_list_are_not_re_emitted() {
 }
 
 #[test]
-fn a_restore_refreshes_the_state_block_instead_of_reading_it_twice() {
+fn a_restore_refreshes_the_state_block_without_rewriting_the_selection() {
     // The pass after a compaction injects the live goal and restores the
-    // checkpoint that also carries the goal. The block is re-derived, so the
-    // model reads one current copy rather than a fresh and a stale one.
+    // checkpoint that also carries the goal. The refresh must deliver the
+    // current objective without rewriting the copy already in the prompt: a
+    // changed byte mid-selection re-bills every token after it. The restored
+    // copy stays where it stood and this pass's own live copy is pushed after
+    // it, so the model still reads the current objective last.
     let mut f = Fixture::with_tools(&[
         ID,
         FILE_READ_CAPABILITY_ID,
@@ -1074,13 +1077,188 @@ fn a_restore_refreshes_the_state_block_instead_of_reading_it_twice() {
         )
         .unwrap();
     assert!(second.error.is_none(), "{:?}", second.error);
-    let goal = generated_state(&next, "objective");
-    assert_eq!(goal.len(), 1, "{:?}", next.context_messages);
-    assert!(goal[0].content.contains("Second objective"));
-    assert_eq!(generated_state(&next, "finish the block").len(), 1);
+    let goals = generated_state(&next, "objective");
+    assert_eq!(goals.len(), 2, "{:?}", next.context_messages);
     assert!(
-        !serde_json::to_string(&next).unwrap().contains("First objective"),
-        "the superseded objective is gone"
+        goals[0].content.contains("First objective"),
+        "the restored copy is left where it stood instead of being rewritten"
+    );
+    assert!(
+        goals.last().unwrap().content.contains("Second objective"),
+        "this pass's live goal is the last copy the model reads"
+    );
+    assert_eq!(
+        goals
+            .iter()
+            .filter(|message| message.content.contains("Second objective"))
+            .count(),
+        1,
+        "a current copy already in the selection is never appended twice"
+    );
+    assert_eq!(generated_state(&next, "finish the block").len(), 1);
+}
+
+#[test]
+fn a_state_change_is_appended_at_the_tail_instead_of_rewriting_the_context() {
+    // The measured defect: a 60-character state edit rewrote a message seven
+    // exchanges deep and re-billed about 50k tokens. A change between
+    // compactions must only append, so every unit the previous prompt carried
+    // stays byte-identical and the provider's cached prefix survives.
+    let mut f = Fixture::with_tools(&[ID, FILE_READ_CAPABILITY_ID, TODO_CAPABILITY_ID]);
+    let (outer, mut request) = history(&mut f);
+    let run = f.authority.context.run_id.clone();
+    f.authority
+        .runtime
+        .records
+        .record_todo_state(
+            &run,
+            &json!([{"content":"first task","status":"pending"}]),
+        )
+        .unwrap();
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let compacted = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(compacted.changed, "{:?}", compacted.error);
+    let before = c::units(&request).unwrap();
+    assert_eq!(
+        before
+            .iter()
+            .filter(|unit| matches!(unit, c::Unit::Message(m) if m.content.starts_with(TASK_STATE_LABEL)))
+            .count(),
+        1,
+        "a compaction consolidates the block into one copy"
+    );
+
+    // The Run finishes its first task and starts a second.
+    f.authority
+        .runtime
+        .records
+        .record_todo_state(
+            &run,
+            &json!([
+                {"content":"first task","status":"completed"},
+                {"content":"second task","status":"pending"}
+            ]),
+        )
+        .unwrap();
+    // A window this turn stays well inside, so nothing compacts and only the
+    // refresh runs.
+    f.authority.context.model_context = json!({"contextWindow":1_000_000,"policy":{"auto":true}});
+    let mut next = f.request();
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &stable("outer.state-append").unwrap(),
+            1,
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.error.is_none(), "{:?}", prepared.error);
+    assert!(!prepared.changed, "an appended refresh is not a reduction");
+
+    let after = c::units(&next).unwrap();
+    assert!(
+        after.len() > before.len(),
+        "the state change is appended: {} -> {}",
+        before.len(),
+        after.len()
+    );
+    assert_eq!(
+        &after[..before.len()],
+        before.as_slice(),
+        "every unit the previous prompt carried stays byte-identical"
+    );
+    let copies = generated_state(&next, "task");
+    assert_eq!(copies.len(), 2, "{:?}", next.context_messages);
+    assert!(
+        copies[0].content.contains("first task") && copies[0].content.contains("pending"),
+        "the copy the previous prompt carried is left where it stood"
+    );
+    let live = copies.last().unwrap();
+    assert!(live.content.contains("second task"));
+    assert!(
+        live.content.ends_with("(Supersedes the earlier copy of this state in this context.)"),
+        "the appended copy says which one wins: {}",
+        live.content
+    );
+    assert!(
+        live.after_exchanges == next.exchanges.len(),
+        "the appended copy sits after every exchange"
+    );
+
+    // A refresh with nothing to say appends nothing, so a quiet turn costs the
+    // provider's cache nothing at all.
+    let unchanged = c::units(&next).unwrap();
+    f.authority
+        .state_context(
+            &mut next,
+            crate::runtime::tool_loop::state_context::StateEmission::Append,
+        )
+        .unwrap();
+    assert_eq!(
+        c::units(&next).unwrap(),
+        unchanged,
+        "an unchanged refresh appends nothing"
+    );
+}
+
+#[test]
+fn a_block_of_superseded_copies_is_consolidated_instead_of_appended_to_again() {
+    // Appending keeps the cached prefix, but a superseded copy is never free, so
+    // the block is collapsed once those copies pass their budget: one rewrite per
+    // budget instead of one per change, and no unbounded growth.
+    let mut f = Fixture::with_tools(&[ID, FILE_READ_CAPABILITY_ID, GOAL_CAPABILITY_ID]);
+    let (outer, mut request) = history(&mut f);
+    let run = f.authority.context.run_id.clone();
+    f.authority.context.model_context = json!({"contextWindow":1_000_000,"policy":{"auto":true}});
+    f.authority
+        .runtime
+        .record_goal_state_for(&run, &json!({"status":"active","goal":"live objective"}))
+        .unwrap();
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    // A compaction writes the checkpoint whose restored block makes the next
+    // refresh run, and it consolidates the block itself.
+    let compacted = compact_manual(&f, &gateway, &plan, &outer, &mut request);
+    assert!(compacted.changed, "{:?}", compacted.error);
+    let mut next = f.request();
+    for index in 0..60 {
+        next.context_messages.push(ModelToolContextV1 {
+            content: format!(
+                "{GOAL_STATE_LABEL}active; durable state for this Chat, not a new instruction):\nstale objective {index}"
+            ),
+            role: Some("user".into()),
+            ..Default::default()
+        });
+    }
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &stable("outer.state-budget").unwrap(),
+            1,
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(prepared.error.is_none(), "{:?}", prepared.error);
+    let copies = generated_state(&next, "objective");
+    assert_eq!(
+        copies.len(),
+        1,
+        "the superseded block is collapsed instead of appended to: {:?}",
+        next.context_messages
+    );
+    assert!(copies[0].content.contains("live objective"));
+    assert!(
+        !serde_json::to_string(&next).unwrap().contains("stale objective"),
+        "the superseded copies are gone"
     );
 }
 
