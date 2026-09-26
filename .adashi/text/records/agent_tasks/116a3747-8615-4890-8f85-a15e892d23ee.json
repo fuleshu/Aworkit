@@ -1,0 +1,40 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-26 07:51:11",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "A declared 32,000-token window was not respected: automatic compaction is disabled below a hard 64,000-token floor, so the run never compacted, warned once per turn, and grew to 142,887 prompt tokens (4.5x the declared window) until the operator cancelled it.\n",
+        "\n",
+        "Run: run.dc494327fb61fde93f9322e599724dce6a45430f / chat.dc494327fb61fde93f9322e599724dce6a45430f, project test1_*, same Tetris prompt, model deepseek-flash with contextWindow 32000 frozen in chat.frozen-sessions (no summarization target, default policy). Evidence: 46 model turns, peak prompt 142,887 tokens, 47 context.compaction-warning events (one per turn) and ZERO context.compaction-started/compacted events; the three span.failed entries at seq 7408-7410 are the operator's cancellation (\"provider execution was cancelled\"). The warning text is the app's own: \"Automatic compaction needs a declared context window of at least 64000 tokens; this model declares 32000.\"\n",
+        "\n",
+        "Part 1 - the floor over-refuses (real bug, small fix). desktop/src-tauri/src/runtime/compaction/mod.rs:339 MINIMUM_COMPACT_CONTEXT_WINDOW = 64_000 short-circuits automatic_compaction_available before the derived check at line 327, which is the actual rule (\"one checkpoint must leave a quarter of the window\"). Its own unit test proves the over-refusal: automatic_compaction_available(32_768, 3_000) would pass the derived check (headroom 12,729; x4 = 50,917 >= 32,768) yet is refused by the constant and asserted to say \"64000\". Fix: delete the constant and let the headroom check decide, so the message names the real constraint. Update the two tests that pin 64000 (compaction/tests.rs:389, compaction/integration_tests.rs:276).\n",
+        "\n",
+        "Part 2 - the declared window is never enforced (the defect that actually hurt). When automatic summarisation is unavailable the app only warns and keeps going: 47 warnings and no reduction, because the provider's real window is 1M so no overflow error ever arrived to trigger the ContextOverflow path. With a provider that enforced 32k the same run would have died. Fix: when pressure reaches the declared window (or the threshold with no available compaction), reduce with a strategy that always fits - drop the oldest exchanges/tool results, keep user turns and a recent tail, reusing the selection machinery in compaction/runtime.rs (retain=0 for ContextOverflow). Emit the diagnostic once per condition, not once per turn.\n",
+        "\n",
+        "Part 3 - why removing the floor alone would not have fixed this run (measured arithmetic). fixed_tokens (system messages + tool schemas + notice, surface.rs:178) is about 12,300 for this Chat: turn 3 reports input 12,426 with estimated 12,596, and the stable header measured 12,032 on test1_3. With threshold 0.8 x 32,000 = 25,600 and the default replacement budget (retention 16% + user 8% + summary 8% = 32% of the window = 10,240), headroom = 25,600 - 10,240 - 12,300 = 3,060, and the quarter-window rule needs 8,000. So at 32k the derived check refuses too, truthfully: the fixed context plus the default budgets cannot leave room to work. Two ways to make 32k actually compact: scale the replacement budget for small windows (a 12k fixed context needs replacement <= about 17% of the window), or shrink the fixed context itself - 37 advertised tool schemas plus a 13 KB system prompt is what makes 32k marginal, which is exactly what the second warning advises (\"Use a larger-context model or a smaller tool selection\").\n",
+        "\n",
+        "Part 4 - follow-up, larger: the summary call sends the entire prefix in one request (measured 156,336 input tokens / 540 KB on the qwen run), so it can only ever work while the prefix fits the window. A context already at 142k on a 32k window cannot be summarised in one call; small windows need a segmented or map-reduce summary, or a lossy drop instead.\n",
+        "\n",
+        "Acceptance: a 32k-window run either compacts (once Part 1/Part 3 budgets allow) or degrades with a fitting lossy reduction, never exceeding its declared window; the diagnostic is emitted once and names the real constraint; no regression in the large-window runs (test1_3 stays at 64,192 uncached and 9/9 conformance)."
+      ]
+    },
+    "id": 143,
+    "number": 142,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "A declared 32k window is never enforced: the 64k compaction floor blocks it and nothing else acts",
+    "updated_at": "2026-09-26 07:51:11"
+  },
+  "deleted": false,
+  "identity": "116a3747-8615-4890-8f85-a15e892d23ee",
+  "schemaVersion": 1
+}
