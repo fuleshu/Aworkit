@@ -1,6 +1,6 @@
 # Context compaction
 
-Implementation specification and reference audit, 2026-09-08.
+Implementation specification and reference audit, 2026-09-08. The compaction budget model was replaced on 2026-09-26; the normative arithmetic is the Adashi specification `aworkit.workflow_worker.context_compaction_budget`.
 
 Reference: `C:/src/deepseek-harness`, commit `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`. The implementation is Rust-owned under Aworkit's frozen provider and tool authority. Compaction changes the model-visible selection; original semantic events, tool outcomes, instruction metadata and user messages remain immutable.
 
@@ -55,7 +55,7 @@ Context details expose **Compact context** while the Chat is idle. A version fen
 
 ## Aworkit-specific design choices
 
-- Defaults are 80% pressure, 16% retained tail, a derived summary budget (`min(R/2, span/2)`), one additional pressure reduction and one overflow recovery. Pruning is enabled in the integrated default policy and can be disabled independently. The pruning gate is 8,192 characters with a 4,096/1,024 head/tail split — the same floor Hermes uses proactively — so a genuinely large result is reduced before a summary is paid for; the previous 80 KiB gate sat about 100x above the measured median tool result and never qualified. Only results outside the retained tail are candidates, the newest exchange and every failed result stay whole, image and other non-text blocks are never rewritten, and each reduction records its character and token accounting. All controls are available per exact model in Settings; there is no competing route-pattern allowlist.
+- Defaults are an 80% pressure trigger, a quarter-window occupancy target, an 8% replacement floor, a 38.2% summary share and one additional pressure reduction plus one overflow recovery. Every budget is a share of the effective window, and the one ratio with no derivation - the summary share - is settable per exact model in Settings. Pruning is enabled in the integrated default policy and can be disabled independently. The pruning gate is 8,192 characters with a 4,096/1,024 head/tail split — the same floor Hermes uses proactively — so a genuinely large result is reduced before a summary is paid for; the previous 80 KiB gate sat about 100x above the measured median tool result and never qualified. Only results outside the retained tail are candidates, the newest exchange and every failed result stay whole, image and other non-text blocks are never rewritten, and each reduction records its character and token accounting. All controls are available per exact model in Settings; there is no competing route-pattern allowlist.
 - Aworkit freezes the acting route and capacity at Chat creation. It can measure before the first request; Harness waits for its first durable dynamic route. An explicit frozen summary target overrides the acting model. Aworkit has no separate dynamic route or agent fallback to guess at execution time.
 - Complete parallel tool exchanges are atomic surface units. Keeping or removing that unit preserves calls, results, error flags, ordering and opaque provider continuation metadata together. This implements balanced boundaries using Aworkit's existing exchange representation.
 - **A compaction re-emits durable state instead of trusting the summary for it.** After a committed replacement the runtime appends one generated state block derived from the same records the tools wrote: the live Chat goal, the Run's task list, and the files this Run has already read or changed. Summaries are lossy, so the objective, the plan and prior reads must not depend on the summariser keeping them. Generated state is never pinned as user direction and an older copy is dropped rather than stacked beside the new one, so repeated compactions keep exactly one block; the block is committed inside the checkpoint document, so a restore re-reads it.
@@ -67,27 +67,28 @@ Context details expose **Compact context** while the Chat is idle. A version fen
 - Source fencing is intentionally stricter than Harness's selected-span append tolerance: a conflicting context revision rejects the summary. The desktop core serializes maintenance and queues input, so an unrelated user append cannot race a valid maintenance commit.
 - Full bounded context documents are immutable revisions in the existing semantic store, with source identities and exchange cursors. This does not introduce another conversation archive, replay tools, or mutate prior requests. The context panel remains the existing editor; no separate `/compact` parser or model-visible compaction tool is introduced.
 
-## Compaction budget model (2026-09-25)
+## Compaction budget model (2026-09-26)
 
-Every compaction budget is a fraction of the model's **effective window** `W' = contextWindow − maxOutputTokens`. The provider reserves its output space out of the same window, so the reservation is subtracted before any ratio applies; a model with no configured maximum output reserves nothing.
+Every budget is a share of the model's **effective window** `W' = contextWindow − reservation`. The reservation is the output the model declares it can emit, clamped to a quarter of the declared capacity, because a model that declares more output than its whole window (393,216 against 32,000) would otherwise collapse the window to zero and compact on every request. A model that declares no output reserves nothing.
 
 | Budget | Value | Source |
 | --- | --- | --- |
-| Trigger `T` | 0.80 W' | `thresholdRatio`, unchanged |
-| Retained tail `R` | 0.16 W' (or explicit `retainTokens`) | `retainRatio`, unchanged |
-| Carried user turns `U` | `retainRatio/2` = 0.08 W' | derived |
-| Summary cap `S` | `min(R/2, shadowed span/2)` | derived |
-| Fixed context `F` | system + tool schemas + retry notice | measured per request |
+| Trigger | 0.80 W' (must stay above the target) | `thresholdRatio` |
+| Target `T` | 0.25 W' | fixed share |
+| Replacement `B` | `max(T − F, 0.08 W')` | fixed shares |
+| Summary `S` | `min(summaryShare × B, declared output)` | `summaryShare`, default 0.382 |
+| Retained tail `R` | `B − S` | remainder |
+| Fixed context `F` | system messages + tool schemas + retry notice | measured per request |
 
-At the 16% default a replacement is at most `R + U + S` = 32% of the window, leaving 0.48 W' of work between compactions: 1,048,576 → 167,772 / 83,886 / 83,886; 262,144 → 41,943 / 20,971 / 20,971; 65,536 → 10,485 / 5,242 / 5,242.
+At the default share with `F = 12,400` and no declared output: 100,000 → `R` 7,787 / `S` 4,813; 262,144 → 32,839 / 20,297; 1,048,576 → 154,342 / 95,402. Both parts keep the same ratio at every window, so a large-context model keeps proportionally more prose and proportionally more verbatim history instead of behaving like a small one. A model that declares an 8,000-token output bounds itself (1M → `R` 241,744 / `S` 8,000) because of its own setting, not because of a constant here.
 
-**Why `R/2`.** One compaction can free at most `T − R = 0.64 W'`. Spending an eighth of the window on the summary keeps a 4:1 ratio of freed context to replacement cost, so the framed-summary shrink check is never marginal, and the target post-compaction occupancy is exactly `1.5 × R` from a single slider. The same share bounds the user turns carried verbatim, which lands on the same number Codex reached empirically (its flat 20,000-token user budget is 7.75% of its 258,144 window). `S` is additionally clamped to half the span it replaces, so a committed compaction always halves what it shadows regardless of the window.
+**Why every part is a share.** Two earlier revisions of this model used absolute numbers and both decided the outcome instead of the context. A 64,000-token floor meant a declared 32k window never compacted at all. Replacing it with a 2,000/512-token minimum replacement and an 8,000-token summary cap meant a 1M window wrote the same 8,000-token summary as a 262k one. A share of the *window* for the tail is the other failure mode: at 32k it asks for more verbatim history than the window can hold once `F` is paid, which is what the floor was hiding. The replacement budget is the only framing in which a configured split is honoured exactly, because `R + S = B` at every window with no clamping.
 
-**Why the summary budget is derived rather than configured.** The removed `maxTokens` setting read as a maximum while behaving as a minimum: the runtime used `max(retention, maxTokens)`, so above a 51,200-token window the setting was inert and the real cap was 16% of the window, up to 167,772 tokens at 1M — 25% of a 32k window and 0.8% of 1M. Frozen Chats that still carry `maxTokens` deserialize through a legacy serde sink and the value is ignored.
+**Why the summary share is the only setting.** It is the only number in the model with no derivation: the target, the floor and the trigger are structural - the target must sit well below the trigger or the run compacts continuously, and the floor must sit below `target − F/W'` or every window clamps - while `F` is measured and the output bound is the model's own declaration. Prose against verbatim history is a preference, so it lives in Settings as **Summary share of compaction** (percent, default 38.2, accepted 1-90) and is frozen per Chat. The panel offers it only for a model that declares a context window; a model that declares none gets the absolute verbatim tail (`retainTokens`) instead, because no plan ratio can be derived without a window. Exactly one of the two controls appears, so neither can silently do nothing, and a read-out mirrors this arithmetic to show the numbers the runtime will use. The removed proportional `retainRatio` is now a legacy serde sink.
 
-**Why 64,000 tokens is the minimum window.** The invariant is that after one compaction occupancy is `R + U + S + F` and must stay below the trigger with a quarter of the window left to work in, i.e. `F ≤ T − R − U − S − 0.25 = 0.23 W'`. With a conservative `F` of 15,000 tokens for a large MCP tool catalog that fails below roughly 64k. Below the floor, or when the measured `F` leaves less than a quarter of the window, automatic pressure compaction is disabled and one diagnostic names the reason; manual compaction and provider overflow recovery remain available, and the Chat stays usable. Hermes ships the same floor as a hard reject (`MINIMUM_CONTEXT_LENGTH = 64_000`); a 32k declared window is refused rather than allowed to oscillate at the trigger.
+**Why the minimum window is derived.** One compaction must leave the target reachable, i.e. `F + 0.08 W' ≤ 0.25 W'`, so `minimum_window(F) = ceil(F / 0.17)` - 72,942 at `F` = 12,400 and 72,353 at the recorded Chat's 12,300. Below it the plan is the 8% floor, the target is simply missed, compaction still runs, and one advisory names the target, the measured `F`, the floor as a percentage of the window and the window that would reach the target. The only condition that stands automatic compaction down is `F + 0.08 W' ≥ trigger`: a fixed context that already reaches the trigger has nothing to gain and compacting would only oscillate. Nothing refuses.
 
-`context.compacted` records the whole decision: `shadowedUnits`, `shadowedTokenCount`, `pinnedUnits`, `pinnedTokenCount`, `summaryAttempts` (how many auxiliary calls one attempt needed) and the derived `maxTokens` the summary call was authorised with. A tool-result-pruning reduction records `retainedExchanges`, `removedChars`, `removedTokens` and one entry per reduced result.
+`context.compacted` records the whole decision: `shadowedUnits`, `shadowedTokenCount`, `pinnedUnits`, `pinnedTokenCount` and `summaryAttempts` (how many auxiliary calls one attempt needed), and `context.compacted.auxiliary` reports the derived `maxTokens` the summary call was authorised with. A tool-result-pruning reduction records `retainedExchanges`, `removedChars`, `removedTokens` and one entry per reduced result.
 
 ## Verification
 
@@ -98,6 +99,7 @@ Validated on Windows using the actual Tauri/WebView2 application and a loopback 
 | Desktop Rust suite | 275 passed |
 | Capability host suite | 91 passed, 2 existing ignored tests |
 | Frontend suite | 297 passed across 39 files; serial execution with 30-second timeout for the existing slow Settings navigation test |
+| Suites after the 2026-09-26 budget revision | Desktop 484 passed, 1 ignored; capability host 176 + 18 passed; frontend 511 passed across 68 files; tsc clean and the production bundle builds |
 | Frontend production build / native build | Passed; existing bundle-size and mixed-import warnings only |
 | Native tool Agent | Manual button, separate summary model, exact reduced provider payload, original evidence, restored instructions, canonical HTTP overflow plus one retry, restart, fork and balanced lifecycle passed |
 | Native queued input | Same flow with input held until manual settlement passed; a two-input integration test verifies FIFO order and changing history fences |
@@ -108,4 +110,4 @@ Validated on Windows using the actual Tauri/WebView2 application and a loopback 
 
 Native evidence directories under `desktop/src-tauri/target`: `native-compaction-1788869753292` (tool Agent), `native-compaction-1788869759124` (queue), `native-compaction-1788870054704` (text-only), and `native-compaction-1788870326025` (explicit model-call node, reproduced with `AWORKIT_QA_MODEL_CALL=1`). Each contains `report.json`, captured provider requests, native logs and a context-panel screenshot. These fixtures prove transport, authority, persistence and UI behavior; they do not claim a quality benchmark of a live model's summaries.
 
-The formal interaction contract is `uml.workflow_worker.context_compaction`, attached to `aworkit.workflow_worker.context_store` in Adashi (revision 563).
+The formal interaction contract is `uml.workflow_worker.context_compaction`, attached to `aworkit.workflow_worker.context_store` in Adashi, and the normative budget arithmetic is the specification `aworkit.workflow_worker.context_compaction_budget` bound to the compaction modules and their tests.
