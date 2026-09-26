@@ -698,34 +698,30 @@ impl BoundFileToolAuthorityV1 {
                 .policy
                 .effective_window(capacity, metadata.max_output_tokens)
         });
-        // Automatic compaction is only allowed when one checkpoint can both
-        // reduce the context and leave a quarter of the window to work in.
-        // Whatever blocks it is reported once, and manual compaction plus
-        // provider overflow recovery stay available.
-        // A Chat that declares no window keeps the legacy 512 KiB byte guard:
-        // there is no ratio to judge, and the guard is model-free. A declared
-        // window below the derived floor, or one whose fixed context leaves no
-        // headroom, disables automatic compaction and says why once.
+        // Automatic compaction always runs when a window is declared. A window
+        // too small for the target is reported once and still compacts with the
+        // minimum replacement, because a run that ignores its own declared
+        // window is worse than one that compacts badly; only a fixed context
+        // that already reaches the trigger disables it, and there is then
+        // genuinely nothing to gain. A Chat that declares no window keeps the
+        // legacy 512 KiB byte guard: there is no ratio to judge, and the guard
+        // is model-free.
+        let fixed = c::fixed_tokens(request).unwrap_or(u64::MAX);
         let automatic = metadata.policy.auto
             && match window {
                 None => true,
+                Some(_) if fixed == u64::MAX => false,
                 Some(window) => {
-                    let fixed = c::fixed_tokens(request).unwrap_or(u64::MAX);
-                    match metadata
-                        .policy
-                        .automatic_compaction_available(window, fixed)
-                    {
-                        None => true,
-                        Some(diagnostic) => {
-                            let _ = self.run_events.context_event(
-                                "context.compaction-warning",
-                                json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":diagnostic}),
-                            );
-                            false
-                        }
-                    }
+                    let advisory = metadata.policy.compaction_advisory(window, fixed);
+                    let _ = self.run_events.context_advisory_once(
+                        advisory.as_deref(),
+                        json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child}),
+                    );
+                    metadata.policy.can_reduce(window, fixed)
                 }
             };
+        // What one compaction replaces, from the same measured fixed context.
+        let replacement = window.map(|window| metadata.policy.replacement_plan(window, fixed));
         // Align the byte-pressure trigger with the token threshold so a token
         // count below the configured 80% threshold cannot trip byte pressure
         // first. JSON context averages about four bytes per token; without a
@@ -743,7 +739,7 @@ impl BoundFileToolAuthorityV1 {
             && trigger == c::Trigger::Pressure
             && self.context_snapshot(&owner)?.is_none()
         {
-            self.run_events.context_event("context.compaction-warning", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":"Automatic token-pressure compaction needs this model's context window in Settings. Provider overflow recovery and durable byte-pressure compaction remain available."}))?;
+            self.run_events.context_advisory_once(Some("Automatic token-pressure compaction needs this model's context window in Settings. Provider overflow recovery and durable byte-pressure compaction remain available."), json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child}))?;
         }
         if qualifies {
             let effective_trigger = if byte_pressure && trigger == c::Trigger::Pressure {
@@ -760,7 +756,10 @@ impl BoundFileToolAuthorityV1 {
             ) {
                 0
             } else {
-                metadata.policy.retention(window.unwrap_or_default())
+                replacement.map_or_else(
+                    || metadata.policy.retention(window.unwrap_or_default()),
+                    |plan| plan.retain,
+                )
             };
             if metadata.policy.prune_tool_results && trigger != c::Trigger::Manual {
                 let before = request.clone();
@@ -835,16 +834,15 @@ impl BoundFileToolAuthorityV1 {
                         .last()
                         .map_or(1, |e| e.sequence + 1)
                 );
-                // The summary budget is derived, never configured: half of
-                // retention and never more than half the span it replaces, so a
-                // committed compaction always halves what it shadows and the
-                // cap can never be the thing that makes the replacement as big
-                // as the original. Without a declared window the span is the
-                // only proportional bound left.
+                // The summary budget is derived from the window's target, never
+                // configured, and capped so a summary stays a summary. It is
+                // also never more than half the span it replaces, so a committed
+                // compaction always halves what it shadows. Without a declared
+                // window the span is the only bound left.
                 let shadowed_tokens: u64 = surface[..cut].iter().map(c::Unit::tokens).sum();
-                let summary_output_cap = window
-                    .map(|window| metadata.policy.summary_budget(window, shadowed_tokens))
-                    .unwrap_or(shadowed_tokens / 2);
+                let summary_output_cap = replacement
+                    .map_or(shadowed_tokens / 2, |plan| plan.summary)
+                    .min(shadowed_tokens / 2);
                 let mut summary_surface = surface[..cut].to_vec();
                 summary_surface.push(c::Unit::Message(ModelToolContextV1 {
                     content: c::INSTRUCTION.trim_end().into(),
@@ -928,9 +926,8 @@ impl BoundFileToolAuthorityV1 {
                         // cannot shrink the span — one oversized direction with
                         // little other content — fall back to the plain summary so
                         // compaction still makes progress.
-                        let user_budget = window
-                            .map(|window| metadata.policy.user_budget(window))
-                            .unwrap_or(shadowed_tokens / 2);
+                        let user_budget = replacement
+                            .map_or(shadowed_tokens / 2, |plan| plan.retain / 2);
                         let pinned = c::pinned_user_units(&surface, cut, user_budget);
                         let pinned_units = pinned.len();
                         let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();

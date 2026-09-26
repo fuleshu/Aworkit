@@ -273,70 +273,110 @@ impl Policy {
     /// minus the provider's own output reservation, which comes out of the same
     /// window. A missing reservation reserves nothing.
     pub(crate) fn effective_window(&self, capacity: u64, max_output_tokens: Option<u64>) -> u64 {
-        capacity.saturating_sub(max_output_tokens.unwrap_or(0))
+        // The reservation is what this turn's own output may spend. Capped at
+        // the target share, because a model that declares more output than its
+        // declared window (393,216 against a 32,000-token window) would
+        // otherwise collapse the window to zero - and a zero window has no
+        // threshold to cross, so it would compact on every single turn.
+        let reserve = max_output_tokens
+            .unwrap_or(0)
+            .min((capacity as f64 * COMPACTION_TARGET_RATIO).floor() as u64);
+        capacity.saturating_sub(reserve)
     }
 
-    /// Budget for user turns carried verbatim across a compaction (`U = R/2`).
+    /// Hard occupancy goal for one compaction, as a share of the window. Every
+    /// compaction must reach it, or the run would compact endlessly instead of
+    /// working.
+    pub(crate) fn target(&self, window: u64) -> u64 {
+        (window as f64 * COMPACTION_TARGET_RATIO).floor() as u64
+    }
+
+    /// What one compaction replaces: the verbatim tail and the summary it pays
+    /// for.
     ///
-    /// Derived from the retention *ratio*, not from `retention()`: an absolute
-    /// `retainTokens` override describes how much recent history stays verbatim
-    /// and can legitimately be zero (manual and overflow reductions), while
-    /// carried user turns and the summary still need output room.
-    pub(crate) fn user_budget(&self, window: u64) -> u64 {
-        ((window as f64) * self.retain_ratio.unwrap_or(0.16) / 2.0).floor() as u64
-    }
-
-    /// Output budget for the checkpoint summary (`S = min(R/2, span/2)`).
-    /// Half of retention keeps a 4:1 ratio of freed context to replacement
-    /// cost; half of the shadowed span guarantees any committed compaction at
-    /// least halves what it replaces. No absolute budget remains.
-    pub(crate) fn summary_budget(&self, window: u64, shadowed_tokens: u64) -> u64 {
-        self.user_budget(window).min(shadowed_tokens / 2)
-    }
-
-    /// Working headroom left after one compaction: the trigger minus the whole
-    /// replacement (retained tail, carried user turns, summary) and the fixed
-    /// context the request always carries.
-    pub(crate) fn working_headroom(&self, window: u64, fixed_tokens: u64) -> u64 {
-        let retention = self.retention(window);
-        let replacement = retention
-            .saturating_add(self.user_budget(window))
-            .saturating_add(self.summary_budget(window, retention.saturating_mul(2)));
-        self.threshold(window)
-            .saturating_sub(replacement)
+    /// `budget = target − fixed`, so a bigger window leaves a bigger budget and
+    /// the retained tail takes everything the capped summary does not. That is
+    /// the window's whole advantage: a large-context model keeps proportionally
+    /// more history verbatim instead of behaving like a small one. Below the
+    /// minimum the budgets clamp and the target is simply missed - a run that
+    /// ignores its declared window is worse than one that compacts badly.
+    pub(crate) fn replacement_plan(&self, window: u64, fixed_tokens: u64) -> ReplacementPlan {
+        let budget = self
+            .target(window)
             .saturating_sub(fixed_tokens)
+            .max(minimum_replacement());
+        // The tail is protected first, so the summary never grows past the
+        // point where the tail would fall below its own minimum: at the floor
+        // the plan is exactly both minima, which is what `can_reduce` and the
+        // advisory promise. The budget is spent exactly, never exceeded.
+        let summary = ((budget as f64 * SUMMARY_BUDGET_SHARE).floor() as u64)
+            .clamp(MINIMUM_SUMMARY_TOKENS, MAXIMUM_SUMMARY_TOKENS)
+            .min(budget - MINIMUM_RETAINED_TOKENS);
+        ReplacementPlan {
+            retain: budget - summary,
+            summary,
+        }
     }
 
-    /// Whether automatic compaction can both reduce this context and leave room
-    /// to work. `None` means yes; `Some(diagnostic)` names the reason it cannot
-    /// and is meant to be surfaced once instead of oscillating at the trigger.
+    /// Whether one compaction can leave the context below its own trigger. When
+    /// the fixed context already reaches the trigger there is nothing to gain,
+    /// and compacting would only oscillate.
+    pub(crate) fn can_reduce(&self, window: u64, fixed_tokens: u64) -> bool {
+        fixed_tokens.saturating_add(minimum_replacement()) < self.threshold(window)
+    }
+
+    /// Smallest window whose target reaches a given fixed context. Derived, not
+    /// chosen: it moves with the tool selection the model actually sees.
+    pub(crate) fn minimum_window(&self, fixed_tokens: u64) -> u64 {
+        (((fixed_tokens + minimum_replacement()) as f64) / COMPACTION_TARGET_RATIO).ceil() as u64
+    }
+
+    /// Why automatic compaction will miss its target here, if it will.
     ///
-    /// The minimum window is derived rather than chosen: with a quarter of the
-    /// window required as headroom and a conservative fixed context, the check
-    /// below fails below roughly 64k tokens.
-    pub(crate) fn automatic_compaction_available(
-        &self,
-        window: u64,
-        fixed_tokens: u64,
-    ) -> Option<String> {
-        if window < MINIMUM_COMPACT_CONTEXT_WINDOW {
+    /// Advisory, never a refusal: the caller compacts anyway with the minimum
+    /// replacement and surfaces this once per condition.
+    pub(crate) fn compaction_advisory(&self, window: u64, fixed_tokens: u64) -> Option<String> {
+        let minimum = minimum_replacement();
+        if self.target(window) < fixed_tokens.saturating_add(minimum) {
             return Some(format!(
-                "Automatic compaction needs a declared context window of at least {MINIMUM_COMPACT_CONTEXT_WINDOW} tokens; this model declares {window}. Manual compaction and provider overflow recovery remain available."
-            ));
-        }
-        if self.working_headroom(window, fixed_tokens) * 4 < window {
-            return Some(format!(
-                "Automatic compaction cannot free enough context for this model: the fixed context is {fixed_tokens} tokens against a {window}-token window, so one checkpoint would leave less than a quarter of the window to work in. Use a larger-context model or a smaller tool selection."
+                "Automatic compaction cannot reach its {percent:.0}% target in a {window}-token window: the target is {target} tokens, the fixed context is {fixed_tokens} and the smallest replacement is {minimum}. About {required} tokens is the smallest window that reaches the target with this tool selection; compaction still runs, and will run often.",
+                percent = COMPACTION_TARGET_RATIO * 100.0,
+                target = self.target(window),
+                required = self.minimum_window(fixed_tokens),
             ));
         }
         None
     }
 }
 
-/// Smallest effective window automatic compaction can work in. Below this the
-/// replacement budget (retained tail plus user turns plus summary) cannot leave
-/// a quarter of the window for actual work, so the feature would only thrash.
-pub(crate) const MINIMUM_COMPACT_CONTEXT_WINDOW: u64 = 64_000;
+/// Occupancy one compaction must reach, as a share of the window.
+pub(crate) const COMPACTION_TARGET_RATIO: f64 = 0.25;
+/// Smallest verbatim tail a compaction keeps.
+pub(crate) const MINIMUM_RETAINED_TOKENS: u64 = 2_000;
+/// Smallest summary output a compaction may ask for.
+pub(crate) const MINIMUM_SUMMARY_TOKENS: u64 = 512;
+/// Largest summary output a compaction may ask for. Past this a summary is a
+/// document rather than a summary, and on a decode-bound local model it is also
+/// minutes of work: the recorded local compaction spent 8 minutes producing 5,959
+/// tokens.
+pub(crate) const MAXIMUM_SUMMARY_TOKENS: u64 = 8_000;
+/// Share of the replacement budget spent on the summary while it is under the
+/// cap; the retained tail takes the rest, so a bigger window keeps more history.
+pub(crate) const SUMMARY_BUDGET_SHARE: f64 = 0.382;
+
+/// Smallest replacement a compaction can produce: both minima. At the floor
+/// `replacement_plan` returns exactly this, so it is what `can_reduce`,
+/// `minimum_window` and the advisory all measure against.
+pub(crate) fn minimum_replacement() -> u64 {
+    MINIMUM_RETAINED_TOKENS + MINIMUM_SUMMARY_TOKENS
+}
+
+/// What one compaction replaces: the verbatim tail and the summary it pays for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReplacementPlan {
+    pub retain: u64,
+    pub summary: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

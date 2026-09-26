@@ -175,6 +175,15 @@ pub(crate) fn estimate(request: &ModelToolRequestV1) -> Result<u64, String> {
 /// Price of everything a request carries besides the compactable surface:
 /// system messages, tool schemas and the retry notice. Compaction budgets are
 /// spent on top of this, so the headroom check needs it separately from units.
+///
+/// It deliberately excludes the user message and the regenerated context block,
+/// because those are part of what a compaction replaces. Measured, this is what
+/// makes a small window marginal: the recorded 32k Chat reported 12,426 input
+/// tokens on its third turn, of which about 12,300 was fixed - the workspace
+/// and per-tool instructions plus 31 advertised tool schemas. That is why the
+/// derived floor lands near 59,000 tokens for that Chat rather than at the
+/// 64,000 constant it replaced, and why the honest advice for a 32k window is a
+/// smaller tool selection as much as a smaller replacement budget.
 pub(crate) fn fixed_tokens(request: &ModelToolRequestV1) -> Result<u64, String> {
     let system: u64 = request.input["messages"]
         .as_array()

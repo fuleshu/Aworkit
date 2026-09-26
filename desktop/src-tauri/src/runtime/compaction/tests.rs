@@ -356,44 +356,110 @@ fn the_prune_gate_is_exclusive_and_never_grows_a_result() {
     );
 }
 #[test]
-fn budgets_are_derived_from_the_effective_window() {
+fn budgets_are_derived_from_the_target_window() {
     let p = Policy::default();
-    // The provider's own output reservation comes out of the window first.
+    // The provider's own output reservation comes out of the window first, but
+    // never more than the target: a model that declares more output than its
+    // window (393,216 against 32,000) would otherwise collapse the window to
+    // zero, and a zero window has no threshold to cross.
     assert_eq!(p.effective_window(262_144, Some(32_768)), 229_376);
     assert_eq!(p.effective_window(262_144, None), 262_144);
-    let window = 262_144;
-    let retention = p.retention(window);
-    assert_eq!(retention, 41_943);
-    assert_eq!(p.user_budget(window), retention / 2, "U = R/2");
-    assert_eq!(
-        p.summary_budget(window, retention * 100),
-        retention / 2,
-        "S = R/2 while the span is large"
-    );
-    assert_eq!(p.summary_budget(window, 10_000), 5_000, "S <= span/2");
-    assert_eq!(
-        p.working_headroom(window, 0),
-        p.threshold(window) - (retention + p.user_budget(window) + p.summary_budget(window, retention * 2))
-    );
-    assert!(p.automatic_compaction_available(window, 15_000).is_none());
+    assert_eq!(p.effective_window(32_768, Some(393_216)), 24_576);
+    assert_eq!(p.effective_window(32_000, Some(393_216)), 24_000);
 
-    // A zero absolute retention must not zero the generated budgets.
+    // Every compaction aims at a quarter of the window, whatever the window is.
+    assert_eq!(p.target(32_768), 8_192);
+    assert_eq!(p.target(100_000), 25_000);
+    assert_eq!(p.target(262_144), 65_536);
+    assert_eq!(p.target(1_048_576), 262_144);
+
+    // With room to spare the plan lands exactly on the target, and what the
+    // capped summary does not take goes to the verbatim tail: a large context
+    // keeps proportionally more history instead of behaving like a small one.
+    for window in [100_000, 262_144, 1_048_576] {
+        let plan = p.replacement_plan(window, 12_400);
+        assert_eq!(
+            12_400 + plan.retain + plan.summary,
+            p.target(window),
+            "one compaction lands exactly on the target in a {window}-token window"
+        );
+    }
+    assert_eq!(
+        p.replacement_plan(100_000, 12_400),
+        ReplacementPlan {
+            retain: 7_787,
+            summary: 4_813
+        }
+    );
+    assert_eq!(
+        p.replacement_plan(262_144, 12_400),
+        ReplacementPlan {
+            retain: 45_136,
+            summary: 8_000
+        },
+        "the summary stops at its cap and the tail takes the rest"
+    );
+    assert_eq!(
+        p.replacement_plan(1_048_576, 12_400),
+        ReplacementPlan {
+            retain: 241_744,
+            summary: 8_000
+        }
+    );
+
+    // Below the floor the budgets clamp to their minima, the target is missed,
+    // and the run compacts anyway - with a diagnostic that derives the window
+    // that would have reached the target instead of naming a constant.
+    assert_eq!(
+        p.replacement_plan(32_768, 12_400),
+        ReplacementPlan {
+            retain: 2_000,
+            summary: 512
+        },
+        "at the floor the plan is exactly both minima"
+    );
+    assert_eq!(
+        p.replacement_plan(32_768, 12_400).retain + p.replacement_plan(32_768, 12_400).summary,
+        minimum_replacement(),
+        "the promise the advisory and can_reduce make"
+    );
+    assert!(p.can_reduce(32_768, 12_400), "32k can still be reduced");
+    assert_eq!(
+        p.minimum_window(12_400),
+        59_648,
+        "the floor moves with the fixed context, not with a constant"
+    );
+    let advisory = p.compaction_advisory(32_768, 12_400).unwrap();
+    for expected in ["25%", "8192", "12400", "2512", "59648", "still runs"] {
+        assert!(
+            advisory.contains(expected),
+            "the advisory explains {expected}: {advisory}"
+        );
+    }
+    assert!(
+        p.compaction_advisory(100_000, 12_400).is_none(),
+        "above the floor there is nothing to report"
+    );
+
+    // The one remaining stand-down is about headroom, not about a constant: a
+    // fixed context that already reaches the trigger leaves nothing to gain, so
+    // compacting would only oscillate.
+    assert!(p.can_reduce(262_144, 12_400));
+    // 12_400 + 2_512 is 14_912, and 80% of 18_642 is 14_913: at 18_640 the
+    // fixed context already reaches the trigger, so there is nothing to gain.
+    assert!(!p.can_reduce(18_640, 12_400));
+    assert!(
+        p.can_reduce(18_642, 12_400),
+        "one token over the boundary reduces"
+    );
+    assert!(p.compaction_advisory(18_640, 12_400).is_some());
+
+    // A manual zero retention must not zero the generated replacement.
     let manual: Policy = serde_json::from_value(json!({"retainTokens":0})).unwrap();
-    assert_eq!(manual.retention(window), 0);
-    assert_eq!(manual.user_budget(window), 20_971);
-    assert_eq!(manual.summary_budget(window, 1_000_000), 20_971);
-
-    // Below the derived floor, and when the fixed context eats the headroom,
-    // the diagnostic names the reason instead of letting the run oscillate.
-    assert!(
-        p.automatic_compaction_available(32_768, 3_000)
-            .unwrap()
-            .contains("64000")
-    );
-    assert!(
-        p.automatic_compaction_available(65_536, 40_000)
-            .unwrap()
-            .contains("fixed context")
+    assert_eq!(manual.retention(262_144), 0);
+    assert_eq!(
+        manual.replacement_plan(262_144, 12_400),
+        p.replacement_plan(262_144, 12_400)
     );
 }
 

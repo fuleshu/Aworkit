@@ -181,7 +181,6 @@ fn history(f: &mut Fixture) -> (StableId, ModelToolRequestV1) {
 fn automatic_pressure_repeats_a_valid_reduction_and_stops_once_under_threshold() {
     let mut f = Fixture::new();
     let (outer, mut request) = history(&mut f);
-    // Above the derived minimum window, or automatic compaction is refused.
     let window = 65_536_u64;
     f.authority.context.model_context["contextWindow"] = json!(window);
     f.authority.context.model_context["policy"]["auto"] = json!(true);
@@ -238,14 +237,47 @@ fn automatic_pressure_repeats_a_valid_reduction_and_stops_once_under_threshold()
 }
 
 #[test]
-fn a_window_below_the_derived_floor_disables_automatic_compaction() {
+fn a_window_whose_target_is_out_of_reach_still_compacts_and_reports_once() {
     let mut f = Fixture::new();
     let (outer, mut request) = history(&mut f);
-    f.authority.context.model_context["contextWindow"] = json!(32_768);
+    let window = 32_768_u64;
+    f.authority.context.model_context["contextWindow"] = json!(window);
     f.authority.context.model_context["policy"]["auto"] = json!(true);
-    request.input["messages"][0]["content"] =
-        json!("Established requirements and implementation history. ".repeat(3000));
-    let (gateway, calls, plan) = gateway(|_| Ok("a summary nobody should pay for".into()));
+    let policy = c::Policy::default();
+    // The recorded 32k configuration: a fixed context (instructions and tool
+    // schemas) between the 8,192-token target and the 26,214-token trigger, so
+    // one compaction still buys headroom even though the 25% target is out of
+    // reach. This used to refuse and warn on every turn instead of compacting.
+    request.input["messages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"role": "system", "content": "s".repeat(49_616)}));
+    let fixed = c::fixed_tokens(&request).unwrap();
+    assert!(
+        fixed > policy.target(window) && fixed < policy.threshold(window),
+        "the fixture must sit between the target and the trigger: {fixed}"
+    );
+    assert!(
+        policy.compaction_advisory(window, fixed).is_some(),
+        "the target is out of reach at {fixed} fixed tokens"
+    );
+    assert!(
+        policy.can_reduce(window, fixed),
+        "but the window can still be reduced at {fixed} fixed tokens"
+    );
+    // Cross the 80% trigger with shadowed history, so the token threshold is
+    // what fires rather than the legacy byte guard.
+    let threshold = policy.threshold(window);
+    let shortfall = threshold.saturating_sub(c::estimate(&request).unwrap());
+    request.input["messages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "role": "user",
+            "content": "x".repeat(((shortfall + 2_000) * 4) as usize),
+        }));
+    assert!(c::estimate(&request).unwrap() >= threshold);
+    let (gateway, calls, plan) = gateway(|_| Ok("Prior requirements and decisions.".into()));
     let prepared = f
         .authority
         .manage_model_context(
@@ -259,23 +291,47 @@ fn a_window_below_the_derived_floor_disables_automatic_compaction() {
             Trigger::Pressure,
         )
         .unwrap();
-    assert!(!prepared.changed, "below the floor nothing is compacted");
     assert!(
-        calls.lock().unwrap().is_empty(),
-        "no summary call is paid for"
+        prepared.changed && prepared.error.is_none(),
+        "a declared window is honoured even when the target is out of reach"
     );
+    assert_eq!(calls.lock().unwrap().len(), 1, "the summary is paid for");
     assert!(
+        c::estimate(&request).unwrap() < threshold,
+        "one clamped compaction still leaves the context under the trigger"
+    );
+    let advisories = |f: &Fixture| {
         f.committer
             .committed_events()
             .unwrap()
             .iter()
-            .any(|e| e.kind == "context.compaction-warning"
-                && e.payload["body"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("64000")),
-        "the reason names the required minimum window"
+            .filter(|e| e.kind == "context.compaction-warning")
+            .filter_map(|e| e.payload["body"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    let bodies = advisories(&f);
+    assert_eq!(bodies.len(), 1, "one advisory, not 47: {bodies:?}");
+    let minimum = policy.minimum_window(fixed).to_string();
+    assert!(
+        bodies[0].contains(&minimum) && bodies[0].contains("still runs"),
+        "the advisory derives the {minimum}-token window and says compaction runs anyway: {bodies:?}"
     );
+    // The same standing condition is not repeated on later turns, and a turn
+    // that no longer crosses the trigger does not clear it either.
+    let mut next = f.request();
+    f.authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            1,
+            Some(&f.agent),
+            &mut next,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert_eq!(advisories(&f).len(), 1, "the condition is reported once");
 }
 
 #[test]
@@ -362,9 +418,14 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
         summary_requests[0].context_messages.last().unwrap().content,
         c::INSTRUCTION.trim_end()
     );
-    // The summary budget is derived: half of the 16k window's retention ratio,
-// never more than half the span it replaces.
-    assert_eq!(summary_requests[0].parameters["maxOutputTokens"], 1280);
+    // The summary budget is derived from what the window targets, never more
+    // than half the span it replaces: a 16k window targets 4,000 tokens, and
+    // the summary takes 38.2% of what the tail minimum leaves of that.
+    let fixed = c::fixed_tokens(&summary_requests[0]).unwrap();
+    assert_eq!(
+        summary_requests[0].parameters["maxOutputTokens"],
+        json!(c::Policy::default().replacement_plan(16_000, fixed).summary)
+    );
     drop(summary_requests);
     let visible = c::units(&request).unwrap();
     let text = serde_json::to_string(&visible).unwrap();
@@ -1127,7 +1188,14 @@ fn the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive() {
         prefix.len() < live.len(),
         "the retained tail is kept live, not resent for summarization"
     );
-    assert_eq!(summary.parameters["maxOutputTokens"], json!(1280));
+    assert_eq!(
+        summary.parameters["maxOutputTokens"],
+        json!(
+            c::Policy::default()
+                .replacement_plan(16_000, c::fixed_tokens(&summary).unwrap())
+                .summary
+        )
+    );
 }
 
 #[test]

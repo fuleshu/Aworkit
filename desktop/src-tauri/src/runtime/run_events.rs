@@ -33,6 +33,10 @@ struct RunEventState {
     active_subagent_span: Option<String>,
     tool_requests: BTreeMap<String, String>,
     commit_error: Option<String>,
+    /// Last compaction advisory published for this stream. A condition that
+    /// persists is reported once instead of on every turn, and a cleared
+    /// condition re-arms the next report.
+    last_compaction_advisory: Option<String>,
 }
 
 /// One streamed provider chunk used to mean one durable commit, which placed the
@@ -115,6 +119,38 @@ impl RunEventStream {
                     .unwrap_or_else(|| "Context event was not committed".into())
             })
     }
+    /// Publishes a compaction advisory once per condition.
+    ///
+    /// A persistent condition (a window too small for the target, a missing
+    /// window) is worth saying once, not on every turn: the recorded 32k run
+    /// emitted 47 identical warnings. `None` clears the condition so a later
+    /// recurrence is reported again.
+    pub(crate) fn context_advisory_once(
+        &self,
+        advisory: Option<&str>,
+        mut payload: Value,
+    ) -> Result<(), String> {
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            match advisory {
+                None => {
+                    state.last_compaction_advisory = None;
+                    return Ok(());
+                }
+                Some(body) if state.last_compaction_advisory.as_deref() == Some(body) => {
+                    return Ok(());
+                }
+                Some(body) => state.last_compaction_advisory = Some(body.to_owned()),
+            }
+        }
+        payload["body"] = json!(advisory);
+        self.context_event("context.compaction-warning", payload)
+            .map(|_| ())
+    }
+
     pub(crate) fn context_batch(&self, entries: Vec<(&str, Value)>) -> Result<(), String> {
         let _publish = self.publish_lock.lock().unwrap_or_else(|p| p.into_inner());
         self.ensure_healthy()?;
