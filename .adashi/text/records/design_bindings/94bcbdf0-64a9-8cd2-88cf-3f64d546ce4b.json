@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-17 18:14:59",
+    "design_external_id": "aworkit.workflow_worker.context_store",
+    "id": 36,
+    "target": "docs/context-continuation-performance.md",
+    "target_type": "file",
+    "updated_at": "2026-09-17 18:14:59",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "94bcbdf0-64a9-8cd2-88cf-3f64d546ce4b",
+  "schemaVersion": 1
+}

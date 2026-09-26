@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Forwards only authenticated CandidateGenerationReady and FocusedVerificationCompleted commands bound to ActivationId, installation ID, enrollment digest, capability-generation digest, nonce, executable hash, verification-plan digest, deadline, exact ProcessGenerationV1, and CapabilityOutcomeV1 identity",
+    "destination_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "external_id": "rel.bootstrap.protocol.watchdog",
+    "id": 297,
+    "source_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "tags": "Relationship,Internal,Handshake,Verification",
+    "technology": "LaunchHandshakePortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "90242422-30ab-8eb2-adc6-7a89aed921b9",
+  "schemaVersion": 1
+}

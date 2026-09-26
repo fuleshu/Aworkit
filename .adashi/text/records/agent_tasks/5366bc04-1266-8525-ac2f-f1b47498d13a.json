@@ -1,0 +1,64 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-25 12:05:55",
+    "completion_memo": {
+      "lines": [
+        "Implemented and verified. Verification: desktop suite 473 passed / 0 failed / 1 ignored (468 before this task; +5 new tests), and 15 consecutive full-suite runs green at default parallelism plus 4 green runs at 32 threads after the final code state. `cargo build --lib` adds no new warning; rustfmt clean on every line authored.\n",
+        "\n",
+        "WHAT WAS BUILT\n",
+        "\n",
+        "1. Retuned gate. `prune_threshold` 81,920 -> 8,192 characters, `prune_head` 73,728 -> 4,096, `prune_tail` 4,096 -> 1,024. The old gate sat ~100x above the median recorded tool result (600-900 bytes) and ~3x above the largest recorded shell output (2.7 KB), so it never qualified; 8,000 is the floor Hermes uses for proactive pruning. Existing Chats keep their frozen policy values; new Chats get the retuned default.\n",
+        "\n",
+        "2. Age/reachability scope. `c::prune(request, policy, retained)` now takes the size of the retained tail and skips everything at or after it, so only results the model is no longer working with are candidates. The call site derives `retained` from the same `select_prefix`/`retention` boundary the summary path uses (the `retain` computation was hoisted out of the attempt loop so the two can never disagree), with a floor of one exchange so the newest result is always left whole even when no tail is retained, and `None => all retained` when no prefix can be shadowed at all. Failed results are skipped entirely, so an error's diagnostic text survives a compaction verbatim; image and other non-text blocks are never rewritten (unchanged `prune_value`).\n",
+        "\n",
+        "3. Accounting. `Pruned` gained `tokensBefore`/`tokensAfter`, computed with the exact same `result_tokens` pricing `Unit::tokens` uses, so the recorded reduction is the quantity the pressure estimate drops by. The `context.compacted` tool-result-pruning payload gained `retainedExchanges`, `removedChars` and `removedTokens` totals.\n",
+        "\n",
+        "4. Position unchanged: the prune still runs before the summary attempt and, when it alone brings the context under the trigger, the attempt loop breaks at the top without any auxiliary call.\n",
+        "\n",
+        "TESTS\n",
+        "\n",
+        "- `pruning_old_tool_results_clears_the_trigger_without_a_summary` (integration): one 300 KB old result plus a small recent one over a 65,536 window; asserts the pressure drops below the trigger, exactly one `context.compacted` with strategy tool-result-pruning, exactly one pruned result, `retainedExchanges == 1`, the newest result byte-identical, and `before - after == removedTokens` exactly (fixture without the instruction binding so nothing else perturbs the request).\n",
+        "- `a_pruned_original_stays_retrievable_through_the_context_tool` (integration): six archived reads (host output bound 40,000 forces the archive path, the bounded preview still exceeds the gate), the request reduced by pruning, the marker gone from the projection, then a `tool.context` read by the original reference returns the omitted middle text. Also asserts the newest result is untouched and the recorded `pruned[0].callId == read.1`.\n",
+        "- `pruning_reduces_only_old_successful_results_and_records_the_estimate` (unit): the failed oldest result and the newest exchange stay byte-identical, only the middle is reduced, and the summed token reduction equals the estimate drop exactly.\n",
+        "- `pruning_never_touches_result_images`, `the_prune_gate_is_exclusive_and_never_grows_a_result` (unit), and the existing unicode/rich-block/idempotence test updated to the new signature.\n",
+        "- One pre-existing test needed updating because this change deliberately fixes its hidden dependency: `mcp_oversized_result_becomes_a_bounded_output_without_crashing_the_pass` passed before only because the old blanket prune reduced the just-received MCP result to ~78 KB (head+tail), which incidentally kept the wrapper's `truncated`/`maximumBytes` fields inside the retained head. With the newest exchange exempt, the model receives the adapter's bounded value unchanged, so the test now asserts the wrapper fields by value (`aworkitOutput.truncated == true`, `maximumBytes` equals the host bound) and `encoded.len() < originalBytes` instead of substrings of the pruned string form. The product behaviour is strictly better: a fresh result is no longer silently cut by history compaction.\n",
+        "\n",
+        "KNOWN PRE-EXISTING FLAKE (not introduced here): `successive_actual_compactions_rearm_missing_scopes_and_preserve_partial_survival` fails intermittently under high parallelism at integration_tests.rs:1335 (\"authentic surviving baseline remains selected\"). Reproduced on the unmodified tree with this change stashed: 2 failures in 8 runs at `--test-threads=48`, while the same tree passes repeatedly at default parallelism (and this task's final tree passed 15 consecutive full-suite runs plus 4 runs at 32 threads). It is a parallelism-sensitive race in instruction-baseline restoration, not a pruning regression; it deserves its own task.\n",
+        "\n",
+        "SCOPE: no store schema, event kind, protocol field or Settings UI changed. Threshold/head/tail remain per-node override controls; nothing was folded into the optional context-compression path."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 10:26:32",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Compaction jumps straight to an auxiliary summary call even when the pressure is caused by a few large, old tool results that could be reduced losslessly first.\n",
+        "\n",
+        "Current behaviour: the pre-summary prune runs through `c::prune(request, &metadata.policy)` with the frozen defaults `threshold_chars = 81,920`, `head_chars = 73,728`, `tail_chars = 4,096` (desktop/src-tauri/src/runtime/compaction/mod.rs). A tool result must exceed 80 KiB of rendered text to qualify, and every result in that range is small enough to fit whole (one bounded file read is 64 KiB). Task 134 measured the recorded runs and found the gate never fires: `context.compression-skipped` reasons were dominated by the size floor for the optional compression path, and the same 81,920-character threshold governs compaction pruning.\n",
+        "\n",
+        "Size evidence from the durable tool outcomes of the recorded runs: median tool result ~600-900 bytes, `tool.shell.host` p90 ~1.4 KB and max ~2.7 KB, `tool.job.output` max ~27.7 KB, `tool.files.read` max ~2.9 KB. So the prune gate sits roughly 100x above the median and ~3x above the largest recorded shell output.\n",
+        "\n",
+        "Precedent: DSH ships pruning as a separate pre-compaction plugin (`compaction-tool-result-pruner`) applied before summarisation; Hermes prunes proactively with `proactive_prune_min_result_chars = 8000` and `proactive_prune_min_reclaim_tokens = 4096` (agent/context_compressor.py).\n",
+        "\n",
+        "Change: retune the prune gate so old, large tool results are reduced (head + explicit marker + tail, original retrievable through tool.context) before paying for a summary. Consider age/reachability: only results outside the retained tail are candidates, errors and the most recent results stay intact, and the prune must be recorded with its byte/token accounting. This is compaction-side pruning and is separate from the optional context-compression path owned by task 134; do not fold the two together.\n",
+        "\n",
+        "Tests: a context dominated by old tool results is brought under the trigger by pruning alone, with no auxiliary summary call; errors, images and recent results are unchanged; pruned originals remain retrievable through tool.context; the recorded pruned reductions match the estimate; the gate never expands a result."
+      ]
+    },
+    "id": 141,
+    "number": 140,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Prune large old tool results before paying for a compaction summary",
+    "updated_at": "2026-09-25 12:05:55"
+  },
+  "deleted": false,
+  "identity": "5366bc04-1266-8525-ac2f-f1b47498d13a",
+  "schemaVersion": 1
+}

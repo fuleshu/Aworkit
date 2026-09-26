@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-19 09:31:57",
+    "design_external_id": "aworkit.workflow_worker.subagent",
+    "id": 66,
+    "target": "desktop/src-tauri/src/runtime/tool_loop/subagent.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-19 09:31:57",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "19dcb54a-de65-8fda-91bc-c481f3d6b05e",
+  "schemaVersion": 1
+}

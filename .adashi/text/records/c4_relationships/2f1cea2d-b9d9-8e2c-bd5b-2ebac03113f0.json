@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches only authorized invocations with scoped configuration, cancellation tokens, and secret leases",
+    "destination_external_id": "aworkit.capability_host",
+    "external_id": "rel.core.host.dispatch",
+    "id": 6,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship",
+    "technology": "Versioned local RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2f1cea2d-b9d9-8e2c-bd5b-2ebac03113f0",
+  "schemaVersion": 1
+}

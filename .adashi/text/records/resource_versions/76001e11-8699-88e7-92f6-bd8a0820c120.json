@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "10",
+    "resource_kind": "task",
+    "updated_at": "2026-09-21 14:55:23",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "76001e11-8699-88e7-92f6-bd8a0820c120",
+  "schemaVersion": 1
+}

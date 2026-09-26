@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Restores committed revision DAG metadata and active heads and discards unacknowledged worker-only revisions",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_recovery.context",
+    "id": 141,
+    "source_external_id": "aworkit.workflow_worker.recovery",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Versioned checkpoint codec",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4076c942-891b-8f40-afbc-54a7d5ef477f",
+  "schemaVersion": 1
+}

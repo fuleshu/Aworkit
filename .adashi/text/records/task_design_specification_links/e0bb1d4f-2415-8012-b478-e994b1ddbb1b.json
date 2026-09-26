@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:48",
+    "design_external_id": "aworkit.desktop_ui.management_repair",
+    "id": 246,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "5a15bff2-8317-8be0-92e7-f70e9f200b5a"
+    }
+  },
+  "deleted": false,
+  "identity": "e0bb1d4f-2415-8012-b478-e994b1ddbb1b",
+  "schemaVersion": 1
+}

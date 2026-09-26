@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:27:40",
+    "design_external_id": "uml.chat_run_lifecycle",
+    "id": 114,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "7653ae99-3c9b-8f6b-92ba-9f74310a9ed6"
+    }
+  },
+  "deleted": false,
+  "identity": "e7b57d9f-a0f5-8d4e-af8d-de9c0741a856",
+  "schemaVersion": 1
+}

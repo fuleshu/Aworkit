@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.web_extraction",
+    "resource_kind": "design.element",
+    "updated_at": "2026-09-05 18:37:43",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "27998907-48c3-8f53-b3dc-c777c096dc18",
+  "schemaVersion": 1
+}

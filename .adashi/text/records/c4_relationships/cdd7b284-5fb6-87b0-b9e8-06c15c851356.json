@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches idempotent versioned Chat/Run commands and receives domain rejection or committed outcome references",
+    "destination_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "external_id": "rel.core_api.lifecycle",
+    "id": 58,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust traits with Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cdd7b284-5fb6-87b0-b9e8-06c15c851356",
+  "schemaVersion": 1
+}

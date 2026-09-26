@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Accepts a committed FrozenRunSnapshotV1 for one worker generation, verifies its identity, and compiles the frozen typed workflow into the immutable in-memory ExecutionPlanV1 used by every runtime module. The plan indexes nodes, typed ports and transitions, declared loop edges, branch and join descriptors, route tables, retry policies, result contracts, capability references, extension pins, authority references, workspace identity, and limits without consulting live configuration.\n",
+        "Owned runtime state: one read-only Arc<ExecutionPlanV1> and SnapshotIdentityV1 per active Run, plus a bounded content-hash cache shared only when snapshot/compiler identities match. The workflow JSON, snapshot, and authority manifest remain immutable inputs owned canonically by the core.\n",
+        "Input/output DTOs and ports: LoadPlan(FrozenRunSnapshotV1, WorkerGenerationV1), VerifyPlan, and QueryPlan return PlanReadyV1, PlanBlockedV1, or immutable node/transition descriptors. Readiness echoes snapshotId, snapshotHash, compilerVersion, and generation through the Core Gateway.\n",
+        "Algorithms and invariants: verifies schema/compiler compatibility and content hashes, then builds indexes in deterministic node/edge order. Cycles are accepted only through declared bounded loop constructs. Every route, fallback, join, tool, agent, external-agent, tier, and executor reference must resolve to an item already pinned in the snapshot. The active graph cannot be added to, removed from, rewired, or overlaid, and authority, roots, credentials, targets, and budgets can only be consumed or narrowed.\n",
+        "Failure, cancellation, and recovery: malformed, drifting, unsupported, or hash-mismatched snapshots fail closed before scheduling and produce a blocking diagnostic proposal. Compilation is cancellable at bounded checkpoints and leaves no partial plan. Recovery recompiles only the exact snapshot hash named by RehydrationEnvelopeV1 and must reproduce the plan fingerprint before accepting a checkpoint.\n",
+        "Performance and NFRs: O(nodes plus edges) compilation, bounded indexes, stable diagnostic codes and JSON pointers, deterministic fingerprints, no secret values in memory dumps or diagnostics, and large-graph work kept off IPC heartbeat tasks.\n",
+        "Non-responsibilities: no workflow/configuration resolution, authority compilation or decision, live graph mutation, node execution, canonical persistence, capability dispatch, secret access, or Rig/provider-native state."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.execution_plan",
+    "id": 38,
+    "name": "Frozen Snapshot Loader & Execution Plan Compiler",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Snapshot,Execution Plan",
+    "technology": "Rust deterministic compiler over Aworkit-owned frozen snapshot schemas",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "975282ce-6528-8a44-a0b2-76e060984564",
+  "schemaVersion": 1
+}

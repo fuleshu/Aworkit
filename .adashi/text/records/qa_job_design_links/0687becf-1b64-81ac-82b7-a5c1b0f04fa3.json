@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-22 06:24:26",
+    "design_external_id": "uml.trusted_core.first_input_freeze_start",
+    "id": 38,
+    "qa_job_id": {
+      "ref": "256792fc-a3c4-81b5-a7ed-6d26b4612c63"
+    },
+    "sort_order": 3,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "0687becf-1b64-81ac-82b7-a5c1b0f04fa3",
+  "schemaVersion": 1
+}

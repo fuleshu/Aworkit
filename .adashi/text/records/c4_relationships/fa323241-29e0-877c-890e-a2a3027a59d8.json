@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates repair_candidate cards to the complete gated review",
+    "destination_external_id": "aworkit.desktop_ui.management_repair",
+    "external_id": "rel.ui.conversation.repair",
+    "id": 33,
+    "source_external_id": "aworkit.desktop_ui.conversation",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fa323241-29e0-877c-890e-a2a3027a59d8",
+  "schemaVersion": 1
+}

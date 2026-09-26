@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Lives within the selected project and may travel through user-controlled version control",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.portable.workspace",
+    "id": 10,
+    "source_external_id": "aworkit.portable_store",
+    "tags": "Relationship",
+    "technology": "Project-relative filesystem paths",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "be746842-72b3-82d0-9928-d6375b7fcdac",
+  "schemaVersion": 1
+}

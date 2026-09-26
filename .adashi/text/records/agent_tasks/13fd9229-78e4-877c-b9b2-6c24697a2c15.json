@@ -1,0 +1,65 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/App.tsx\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/workbench/WorkflowEditorScreen.tsx\"]",
+    "completed_at": "2026-09-19 12:36:06",
+    "completion_memo": {
+      "lines": [
+        "Root cause: the presentation treated the saved-workflow library as mount-local state.\n",
+        "- The editor never republished the library projection after an accepted document save, so a changed workflow name stayed invisible in its own dropdown.\n",
+        "- A library rename rewrote the stored document while the open editor kept its older copy; the editor therefore showed the previous name and wrote it back on the next save.\n",
+        "- ChatWorkspaceScreen read the saved-workflow library once on mount while the app keeps routed surfaces mounted, so a workflow created or renamed afterwards never appeared in the composer's Workflow dropdown and could not be selected.\n",
+        "\n",
+        "Changes:\n",
+        "- WorkflowEditorScreen: republish the library (and notify other surfaces) after an accepted document save; after a library rename adopt the renamed stored document as the new save base; if the editor holds unsaved edits, keep the draft untouched, adopt the renamed document version, align the draft name and report it with a notice; open a created workflow even when the follow-up library read fails.\n",
+        "- ChatWorkspaceScreen: re-read the saved-workflow library whenever the surface becomes active or the library revision changes; keep the last known entries when a reload fails; fall back to the stored default when the selected workflow no longer exists.\n",
+        "- ChatComposer: repair an empty workflow selection once a library default is known, so an unlocked composer is never left unable to send.\n",
+        "- App: owns the library-revision refresh signal passed to both surfaces.\n",
+        "\n",
+        "Audit result (task.end hook): the first implementation discarded unsaved editor edits when a rename landed while the draft was dirty. That gap was found in review, fixed, and covered by a new test; the audit is now clean.\n",
+        "\n",
+        "Evidence:\n",
+        "- tsc --noEmit clean.\n",
+        "- New tests desktop/src/workbench/workflowLibraryProjection.test.tsx (3: create/rename/save label, rename with unsaved edits, accepted-write with failed reread) and desktop/src/chat/workflowLibraryRefresh.test.tsx (3: re-entry list refresh and selectability, revision-driven refresh, failure keeps the last list). Verified failing on the unmodified editor/chat sources.\n",
+        "- Suites: chat + workbench workflow/library/contract + nativeMenuTypography 141 passed; workbench 175 passed; notifications/management/shell/protocol/commandId/settings-v2 75 passed; all 9 app.integration cases pass individually.\n",
+        "\n",
+        "Pre-existing, unrelated and untouched: domain/css chatLoading.css .inspector-window-note uses a fixed font-size and fails systemTextScale.test.ts; whole-file runs of app.integration.test.tsx and workbench/SettingsScreen.test.tsx stall in this environment (they also stall without these changes), so those files were run per test case.\n",
+        "\n",
+        "Verification limit: the Rust crate cannot be compiled here (MSVC cl.exe D8050, link.exe not found on the default PATH), so native workflow_create/workflow_rename behaviour was verified by reading desktop/src-tauri/src/runtime/documents.rs, runtime/service.rs and runtime/dto.rs; it derives each library entry name from the stored document, which is what the fixed UI now relies on."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 12:25:45",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported defects:\n",
+        "1. The workflow editor's saved-workflow dropdown kept the previous label after the stored workflow document name changed, because Save never republished the library projection.\n",
+        "2. A rename through the library strip left the open editor document stale, so the editor kept showing (and could later save) the previous name over the renamed stored document.\n",
+        "3. A workflow created or renamed in the editor never appeared in the Chat composer's Workflow dropdown, because ChatWorkspaceScreen read the saved-workflow library once when it mounted and the app keeps routed surfaces mounted.\n",
+        "\n",
+        "Fixes (frontend only; the trusted core already derives each entry name from the stored document):\n",
+        "- WorkflowEditorScreen: republish the library after an accepted document save; adopt the renamed stored document after a library rename (explicit notice when unsaved edits were replaced); open a created workflow even when the follow-up library read fails.\n",
+        "- ChatWorkspaceScreen: re-read the saved-workflow library whenever the surface becomes active or a library revision changes; keep the last known entries when a reload fails; fall back to the stored default when the selected workflow no longer exists.\n",
+        "- ChatComposer: repair an empty workflow selection once a library default is known, so an unlocked composer is never left unable to send.\n",
+        "- App: own a library-revision refresh signal passed to both surfaces.\n",
+        "\n",
+        "Regression tests: desktop/src/workbench/workflowLibraryProjection.test.tsx (one native-shaped document store behind both ports) and desktop/src/chat/workflowLibraryRefresh.test.tsx. All five fail without the fixes.\n",
+        "\n",
+        "Verification limits: the Rust crate cannot be built in this environment (MSVC cl.exe D8050 / link.exe), so native workflow_create/rename persistence was verified by reading runtime/documents.rs and service.rs, not by running native tests."
+      ]
+    },
+    "id": 104,
+    "number": 103,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Fix saved-workflow library staleness: renamed and newly created workflows missing from the editor and Chat dropdowns",
+    "updated_at": "2026-09-22 07:28:22"
+  },
+  "deleted": false,
+  "identity": "13fd9229-78e4-877c-b9b2-6c24697a2c15",
+  "schemaVersion": 1
+}

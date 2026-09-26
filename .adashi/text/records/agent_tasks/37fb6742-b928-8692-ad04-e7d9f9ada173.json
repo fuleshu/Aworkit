@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/mcp/contracts.rs\",\"crates/aworkit-capability-host/src/mcp/transport/peer.rs\",\"crates/aworkit-capability-host/tests/milestone_09_mcp.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/mcp.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/history.rs\"]",
+    "completed_at": "2026-08-24 16:49:45",
+    "completion_memo": "W6 (MCP tools in the agent loop) implemented and verified. Freeze: service layer resolves mcp://<server>/<tool> toolIds into SimpleChatToolBindingV1 {capability_id, configuration:{serverId,tool}, definition} against enabled core-attested MCP servers; prepare_mcp_sessions opens (or reuses) sessions keyed by the exact attested manifest — a changed manifest fails closed with binding drift, sessions are never hot-replaced, and each Run freezes its discovery snapshot. Execution: model calls settle through the durable broker approval-free (ApprovalRequirement::Never) and are executed via the dispatch_mcp bypass that skips the capability host and runs through McpToolRuntimeV1/McpSessionManager; per-invocation dedup (records.outcome), result bounds (MAXIMUM_TOOL_RESULT_BYTES), and schema-drift exact-match (validate_call expected_schema_hash) all enforced; failures fail that call only (mcp.failed activity + error result to the model) and the pass continues; uncertain outcomes fail and are never replayed. Cancellation: each admitted dispatch registers a scoped CancellationToken (keyed by the broker's cancel.<digest> id) threaded into run_mcp_tool (pre-flight fail-closed) plus cancel_dispatch -> McpSessionManager::cancel for in-flight invocation control; unsupported/lost cancellation never becomes proof of no-effect. Secrets: manifests/definitions carry no secrets; credential materialization is staged directly into the production peer and never enters the model loop, tool facts, or history. Activity: tool_activity_facts emits mcp.completed / mcp.failed facts for W7. Deviations (honest, documented in code): (1) mcp://… ids violate the StableId/capability-name grammar, so broker/manifest/descriptor layers use a deterministic internal id mcp.<sha256-40> while the model-facing capability_id stays mcp://… — the narrowest fix, no grammar relaxation; (2) mcp_provider_name sanitizes non-[A-Za-z0-9_-] characters (e.g. dots in server ids) to _ because provider tool names have a stricter grammar; (3) started-but-failed peer errors classify as OutcomeUncertain (never replay) by session-layer design — the test fixture models a definite failure via DefinitelyNotStarted. Verification: cargo test -p aworkit-desktop 159/159 lib + 2/2 integration green; full workspace cargo test 46 binaries green; capability-host milestone_09_mcp 9/9 green. Tests cover listing (frozen catalog/definition), call settle approval-free, call failure continuing the pass, oversized result rejection, session-scoped cancellation scope, and the exact two-key freeze contract (unknown keys and capability/config mismatches rejected). W7 UI scope untouched.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-24 10:52:56",
+    "created_files": "[\"desktop/src-tauri/src/runtime/mcp_tools.rs\"]",
+    "description": "Wire MCP tools into the agent loop for enabled, core-attested MCP servers: at freeze, open bounded sessions for the workflow's enabled MCP servers and register their tool definitions as mcp://<server>/<tool> names with declared schemas; model calls to MCP tools settle through the durable broker (approval-free, bounded inputs/outputs, session-scoped cancellation) and activity renders as mcp timeline cards with evidence. Sessions are frozen per Run (no hot replacement), failures fail that call without crashing the loop, and no secret values enter the model loop or history. Output: working MCP tool execution in chat with Rust integration tests (tool listing, call, failure, bounds).",
+    "id": 85,
+    "number": 84,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "W6 — MCP tools in the agent loop",
+    "updated_at": "2026-09-22 07:24:59"
+  },
+  "deleted": false,
+  "identity": "37fb6742-b928-8692-ad04-e7d9f9ada173",
+  "schemaVersion": 1
+}

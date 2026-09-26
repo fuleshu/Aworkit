@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads and atomically compare-and-swap saves schema-versioned JSON configuration/workflow/project records and metadata. Secrets are references only",
+    "destination_external_id": "aworkit.local_store",
+    "external_id": "rel.core_project_config.local_store.documents",
+    "id": 91,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "JSON repository and atomic filesystem/SQLite metadata ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9dd9c4c8-c033-8971-a839-6e2bd7f1bb9c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Streams only export-policy-permitted evidence artifacts into content-addressed storage and serves verified, bounded reads. Project workspace files remain in place and are represented by ProjectFileRefV1 rather than copied by default.\n",
+        "Owned files/records: artifacts/sha256/<prefix>/<digest> contains exact inert bytes; an immutable ArtifactDescriptorV1 records sha256 digest, byte length, portable media type, semantic kind, producing EventId, optional safe display name, policy version/hash, and no execute bit or launch command. ArtifactId is the content digest; duplicate content is idempotent. Staging files are never canonical.\n",
+        "Ports/DTOs: PreparePermittedArtifact(ArtifactCandidateV1), FinalizeArtifact, VerifyArtifact, ReadArtifactRange, and EnumerateArtifactDescriptors return PreparedArtifactV1/ArtifactRefV1 or stable rejection codes. The commit coordinator alone can make a prepared artifact reachable from a committed segment; projection consumers receive descriptors and explicitly bounded content only.\n",
+        "Admission and security: a versioned allowlist admits size-bounded inert text/JSON, safe raster media, and explicitly classified evidence such as plain-text patches. It rejects executable binaries/scripts, plugin/adapter bundles, active-content formats, executable metadata, credentials, unsafe debug captures, and ambiguous types. Stored bytes are never made executable, launched, installed, auto-applied, or supplied to a plugin. Content sniffing complements, never replaces, typed provenance and export policy.\n",
+        "Atomicity/degradation/NFRs: stream to a same-directory temp while hashing and enforcing quotas, fsync, then create-new rename and directory fsync. Hash mismatch, path collision, scan failure, or unsupported media fails closed. Reads recheck descriptor length/hash when integrity status is stale. Use bounded memory, range reads, cancellation, deduplicated quotas, and cross-platform permission tests.\n",
+        "Non-responsibilities: no arbitrary project-file backup, semantic event commit, branch reachability decision, credential store, artifact execution/materialization, Git operation, or deletion of reachable artifacts."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.artifact_cas",
+    "id": 77,
+    "name": "Permitted Content-Addressed Artifact Store",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Artifact,CAS,Security",
+    "technology": "Rust streaming SHA-256 CAS with policy-gated inert artifact descriptors",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "474f5378-3f49-886b-a803-46960e8fe894",
+  "schemaVersion": 1
+}

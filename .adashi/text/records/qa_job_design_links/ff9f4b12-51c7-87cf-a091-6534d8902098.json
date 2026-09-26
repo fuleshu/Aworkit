@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-23 11:00:04",
+    "design_external_id": "uml.bootstrap_helper.activation_recovery_state",
+    "id": 45,
+    "qa_job_id": {
+      "ref": "c79703cb-a570-8b68-a367-cd9909bd41e2"
+    },
+    "sort_order": 2,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "ff9f4b12-51c7-87cf-a091-6534d8902098",
+  "schemaVersion": 1
+}

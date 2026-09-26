@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Launches replacement generations only after reconciliation and validates echoed snapshot/checkpoint hashes",
+    "destination_external_id": "aworkit.trusted_core.process_supervisor",
+    "external_id": "rel.core_recovery.supervisor",
+    "id": 79,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust supervision port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5c2aa7fd-44c3-8378-ae64-13c75beb252b",
+  "schemaVersion": 1
+}

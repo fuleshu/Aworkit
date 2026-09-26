@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-process/src/lib.rs\",\"crates/aworkit-process/src/runtime.rs\",\"crates/aworkit-capability-host/src/mcp/transport/stdio.rs\",\"crates/aworkit-capability-host/src/plugin/process.rs\",\"crates/aworkit-capability-host/src/codex_app_server.rs\",\"crates/aworkit-trusted-core/src/supervisor.rs\",\"crates/aworkit-capability-host/tests/fixtures/mcp_stdio_fixture.py\",\"crates/aworkit-capability-host/tests/codex_app_server.rs\"]",
+    "completed_at": "2026-09-19 08:20:06",
+    "completion_memo": "Audited every production Rust child-process launch. Confirmed MCP Tokio STDIO omitted Windows CREATE_NO_WINDOW; plugin, Codex probe, worker supervisor, native registry and detached helper used command-group defaults that also allocate consoles and overwrite underlying Command flags. Added shared safe aworkit-process::command helpers: direct command suppression and group-builder suppression. Routed all affected launches through them; existing managed Shell/Python ProcessTree already suppresses consoles. STDIO, environment, ownership, cancellation and authority semantics remain unchanged; intentional GUI windows remain possible. Verification: 23 integration checks passed across real Windows root/ordinary-child console handle probes, executable and .cmd MCP discovery/call/reconnect, MCP HTTP, plugins, process sessions and Codex probe protocols. Corrected Windows Python discovery in Codex tests so they execute instead of silently skipping. Native WebView fixture passed real MCP/.cmd, Shell and Python calls, with four server starts and all root/child console handles zero. Evidence: desktop/src-tauri/target/native-console-1789805855987/proof.json and startup.jsonl. Source audit: no production group_spawn bypasses. Release compilation/linking succeeded, but Cargo could not replace the running app's locked executable. Copied the newly linked release and verified SHA256 identity at desktop/src-tauri/target/release/aworkit-desktop-no-console.exe; live app untouched. Build also includes prior cache-prefix fix. Specification: docs/background-process-windows.md.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 08:08:57",
+    "created_files": "[\"crates/aworkit-process/src/command.rs\",\"crates/aworkit-capability-host/tests/background_console.rs\",\"desktop/scripts/native-console-smoke.mjs\",\"docs/background-process-windows.md\"]",
+    "description": "Audit all production child-process launch paths. Fix MCP STDIO plus plugin/external-agent/worker/helper command-group paths, retaining managed Shell/Python suppression. Verify actual Windows console handles and native MCP/tool execution with isolated fixtures. Build without interrupting the active app. Specification: docs/background-process-windows.md.",
+    "id": 101,
+    "number": 100,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Suppress Windows console windows for all background tool and MCP launches",
+    "updated_at": "2026-09-22 07:27:10"
+  },
+  "deleted": false,
+  "identity": "c691d5d5-1c2d-84af-9c48-4207d2588de3",
+  "schemaVersion": 1
+}

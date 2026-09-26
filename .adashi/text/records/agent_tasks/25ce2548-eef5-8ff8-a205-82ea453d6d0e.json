@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/supervisor.rs\"]",
+    "completed_at": "2026-08-21 17:14:17",
+    "completion_memo": "Implemented core-owned generation-fenced worker supervision with immutable snapshot handshakes, committed control admission, health state, stale generation rejection, and restart budgets. The worker exposes no host channel. cargo test -p aworkit-trusted-core passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:27:34",
+    "created_files": "[\"crates/aworkit-trusted-core/src/supervisor.rs\"]",
+    "description": "Implement core-owned worker process generations, authenticated handshakes, health, restart budgets, cancellation, and complete process-tree cleanup. Wire the worker's sole IPC gateway to frozen snapshots, committed controls, proposals, checkpoints, and outcomes without creating a worker-to-host channel.",
+    "id": 25,
+    "number": 25,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M04.5 — Supervise and integrate the workflow worker",
+    "updated_at": "2026-09-21 14:57:08"
+  },
+  "deleted": false,
+  "identity": "25ce2548-eef5-8ff8-a205-82ea453d6d0e",
+  "schemaVersion": 1
+}

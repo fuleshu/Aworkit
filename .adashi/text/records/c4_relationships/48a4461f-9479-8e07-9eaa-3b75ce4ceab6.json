@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses normalized stdio/ACP process lifecycle, reserved cancellation, health, and descendant cleanup without treating kill as remote cancellation proof",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_external.process_runtime",
+    "id": 183,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Cross-platform sidecar lifecycle port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "48a4461f-9479-8e07-9eaa-3b75ce4ceab6",
+  "schemaVersion": 1
+}

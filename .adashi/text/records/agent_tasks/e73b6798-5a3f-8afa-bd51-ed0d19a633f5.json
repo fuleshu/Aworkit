@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/secrets.rs\"]",
+    "completed_at": "2026-08-21 17:20:24",
+    "completion_memo": "Implemented core-only opaque credential references and single-use, host-generation audience-bound, expiring/revocable secret leases. Values never enter canonical DTOs. cargo check -p aworkit-trusted-core passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:37",
+    "created_files": "[\"crates/aworkit-trusted-core/src/secrets.rs\"]",
+    "description": "Implement the core-only secret broker, PlatformCredentialStorePort, and hermetic credential-store conformance adapter with opaque references, audience-bound short-lived leases, single-purpose redemption, expiry, revocation, and zeroization. Secret values must never enter canonical or portable data. Native Windows, macOS, and Linux credential stores are owned by M12.3.",
+    "id": 33,
+    "number": 33,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.6 — Implement credential references and invocation-scoped secret leases",
+    "updated_at": "2026-09-22 07:12:21"
+  },
+  "deleted": false,
+  "identity": "e73b6798-5a3f-8afa-bd51-ed0d19a633f5",
+  "schemaVersion": 1
+}

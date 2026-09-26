@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests validation-only reachability and sibling-head analysis to expose dangling objects, cycles and concurrent tips; no repair or collection is authorized by import",
+    "destination_external_id": "aworkit.portable_store.integrity_retention",
+    "external_id": "rel.portable.import.integrity",
+    "id": 258,
+    "source_external_id": "aworkit.portable_store.import_quarantine",
+    "tags": "Relationship,Internal Portable Contract,Read Only",
+    "technology": "IntegrityScanReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a39b0919-0493-8817-9ce9-b0e59c42d23d",
+  "schemaVersion": 1
+}

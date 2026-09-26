@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Persists Aworkit-owned schema-versioned JSON documents for application settings and provider, standard/custom tier, agent, router, tool, plugin, external-agent, project, workspace-binding, data-behavior, and appearance configuration. JSON is the only editable canonical body.\n",
+        "Owned records/files: one bounded document or logical collection per configuration kind plus an atomic manifest containing DocumentId, kind, schemaVersion, documentVersion, content hash, path, and last committed generation. Provider/plugin configuration may contain CredentialRefV1 opaque handles but never values. Extension installed-code facts are not duplicated here.\n",
+        "Keys and ordering: DocumentId and stable logical capability IDs are unique; documentVersion advances by one successful compare-and-swap. Content hash covers the exact accepted JSON bytes; modification time does not decide conflicts.\n",
+        "Ports: exposes ConfigurationDocumentRepository (load/list/watch/compare-and-swap save/import inert/export lossless) only to the core Project, Workspace & Configuration Coordinator and a read-only schema/backup maintenance port to the storage coordinator.\n",
+        "Durability/migration/degraded behavior: save validates size/schema and secret-reference shape, writes a same-directory temporary file, fsyncs file, atomically renames, fsyncs the directory, then advances the manifest. A crash journal resolves old-or-new, never a hybrid. Migrations preserve unknown fields and keep a pre-migration backup; malformed or forward-incompatible documents remain byte-preserved and inspectable read-only while the offending capability is blocked.\n",
+        "Retention/performance: prior generations are bounded by configurable count/size and backup policy. The manifest enables startup/listing without parsing all bodies; watch events are debounced and content-hash verified. Default per-document limit is 8 MiB with an explicit override and off-interaction-thread validation.\n",
+        "Security/non-responsibilities: credential values, tokens, secret leases, hidden reasoning, and captured protocol data are prohibited in JSON and diagnostics. This repository does not store workflow graphs, canonical Chat history, extension binaries/integrity attestation, workspace file contents, Git commits, authority decisions, or secrets."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.config_repository",
+    "id": 65,
+    "name": "Versioned Application & Project Configuration JSON Repository",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Canonical,Configuration,JSON",
+    "technology": "Rust lossless JSON repository with atomic filesystem CAS",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1e6cd63a-b774-8852-acc1-66a47efb514f",
+  "schemaVersion": 1
+}

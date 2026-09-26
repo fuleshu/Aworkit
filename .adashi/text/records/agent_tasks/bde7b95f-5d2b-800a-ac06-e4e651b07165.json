@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.toml\",\"Cargo.lock\",\"crates/aworkit-capability-host/Cargo.toml\",\"crates/aworkit-capability-host/src/process.rs\",\"crates/aworkit-capability-host/src/tools.rs\",\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/tests/host_shell.rs\"]",
+    "completed_at": "2026-09-17 16:30:54",
+    "completion_memo": "Implemented shared supervised process sessions with independent tree monitoring, file-spooled output, bounded nonblocking stdin queue and soft output waits. Windows Job Objects own descendants before resume and kill on handle close; host application crates retain unsafe prohibition. Legacy ProcessRunner now waits on the full tree and cannot block joining inherited output pipes. Native process-session regressions: 3 passed; host shell regression suite: 4 passed including GUI-parent no-console checks; host network: 2 passed, 1 intentionally ignored. cargo check host and desktop passed. No Adashi QA changes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-17 16:10:59",
+    "created_files": "[\"crates/aworkit-process-platform/Cargo.toml\",\"crates/aworkit-process-platform/src/lib.rs\",\"crates/aworkit-process-platform/src/windows.rs\",\"crates/aworkit-process-platform/src/unix.rs\",\"crates/aworkit-capability-host/src/process_session.rs\",\"crates/aworkit-capability-host/tests/process_sessions.rs\"]",
+    "description": "Implement exact process-tree monitoring, bounded asynchronous output and stdin, resource limits, soft wait snapshots, cleanup after root exit, no console windows, and native lifecycle tests. Introduce a minimal audited OS boundary if required; preserve existing safe application code.",
+    "id": 90,
+    "number": 89,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Implement supervised process sessions and repair descendant/output cancellation",
+    "updated_at": "2026-09-22 07:25:56"
+  },
+  "deleted": false,
+  "identity": "bde7b95f-5d2b-800a-ac06-e4e651b07165",
+  "schemaVersion": 1
+}

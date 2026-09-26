@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/lib.rs\"]",
+    "completed_at": "2026-09-22 07:19:44",
+    "completion_memo": "Implemented opt-in bounded detailed capture and rotating machine-local diagnostics exactly at the local-store boundary. The shared invocation RedactionSet applies before queues or bytes, rejects credential-bearing fields, malformed structured data, binary/NUL payloads, and residual secrets, and records immutable policy identity without exposing secret values. Capture has absolute per-capture/chunk/count/global caps, bounded compression, atomic manifests, physical-quota accounting across every state, writer/recovery exclusion, safe path validation, expiry/corruption tombstones, and exact unavailable states. Diagnostics use allowlisted structured records with code-derived messages, bounded queue/segments/manifest/tombstones, crash-safe rotation/reconciliation, lifetime writer locking, deterministic flush/shutdown fences, and age/byte retention. The full local-store package passed 74/74 tests; Adashi QA job 10 run 28 passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:38",
+    "created_files": "[\"crates/aworkit-local-store/src/bounded_codec.rs\",\"crates/aworkit-local-store/src/redaction.rs\",\"crates/aworkit-local-store/src/debug_capture/common.rs\",\"crates/aworkit-local-store/src/debug_capture/maintenance.rs\",\"crates/aworkit-local-store/src/debug_capture/mod.rs\",\"crates/aworkit-local-store/src/debug_capture/model.rs\",\"crates/aworkit-local-store/src/debug_capture/read.rs\",\"crates/aworkit-local-store/src/debug_capture/store.rs\",\"crates/aworkit-local-store/src/debug_capture/tests.rs\",\"crates/aworkit-local-store/src/debug_capture/write.rs\",\"crates/aworkit-local-store/src/diagnostics/mod.rs\",\"crates/aworkit-local-store/src/diagnostics/model.rs\",\"crates/aworkit-local-store/src/diagnostics/reader.rs\",\"crates/aworkit-local-store/src/diagnostics/tests.rs\",\"crates/aworkit-local-store/src/diagnostics/writer.rs\"]",
+    "description": "Implement opt-in bounded detailed protocol/stream capture and rotating machine-local process/storage/IPC/health logs. Apply the invocation redaction set before persistence, keep capture independent from semantic history, enforce quotas and retention, and expose exact unavailable/expired states for evidence queries.",
+    "id": 62,
+    "number": 62,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M10.1 — Implement bounded debug capture and redacted diagnostics",
+    "updated_at": "2026-09-22 07:19:44"
+  },
+  "deleted": false,
+  "identity": "7dcdce52-a424-8912-9d03-6f5ae62c8441",
+  "schemaVersion": 1
+}

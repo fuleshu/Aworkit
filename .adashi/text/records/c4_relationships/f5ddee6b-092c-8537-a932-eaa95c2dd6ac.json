@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns normalized progress, approvals, usage, results, artifacts, uncertainty, and failures",
+    "destination_external_id": "aworkit.trusted_core",
+    "external_id": "rel.host.core.results",
+    "id": 7,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship",
+    "technology": "Versioned local RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f5ddee6b-092c-8537-a932-eaa95c2dd6ac",
+  "schemaVersion": 1
+}

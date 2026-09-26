@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Streams policy-permitted artifact candidates to prepared CAS objects and makes only their verified descriptors reachable from the same committed segment/head",
+    "destination_external_id": "aworkit.portable_store.artifact_cas",
+    "external_id": "rel.portable.commit.artifact_cas",
+    "id": 243,
+    "source_external_id": "aworkit.portable_store.commit_coordinator",
+    "tags": "Relationship,Internal Portable Contract,Evidence",
+    "technology": "PreparePermittedArtifactPort and ArtifactReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e291016b-326a-8891-8326-bcd9934198a8",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-17 17:03:21",
+    "design_external_id": "uml.tool_jobs.contract",
+    "id": 418,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "b76361de-e062-8954-a3ab-77e187bb220b"
+    }
+  },
+  "deleted": false,
+  "identity": "b7df1335-9703-8b28-9410-8e028a7dcfd9",
+  "schemaVersion": 1
+}

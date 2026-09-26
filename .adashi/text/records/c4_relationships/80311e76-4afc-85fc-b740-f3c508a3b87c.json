@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches approved contribution calls only to a core-attested enabled extension version/hash",
+    "destination_external_id": "aworkit.capability_host.plugin_runtime",
+    "external_id": "rel.host_gateway.plugins",
+    "id": 159,
+    "source_external_id": "aworkit.capability_host.invocation_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "In-process Aworkit plugin port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "80311e76-4afc-85fc-b740-f3c508a3b87c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.model_agent",
+    "resource_kind": "design.element",
+    "updated_at": "2026-09-19 18:45:03",
+    "version": 6
+  },
+  "deleted": false,
+  "identity": "e8ea1e06-d333-8706-8ca0-39780a511aef",
+  "schemaVersion": 1
+}

@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "A minimal independently surviving trusted helper process owns the activation handoff that the terminating Tauri core cannot perform for itself. It accepts an authenticated, content-addressed RepairActivationBatonV1 only after the user's explicit Activate and restart decision and the core's durable Management checkpoint. It validates the managed-local enrollment, candidate and previous-working whole-build slots, quiesces the current application generation, launches and watchdogs the candidate, records an integrity-protected activation result, and restores and relaunches the previous working build when startup or focused verification fails.\n",
+        "\n",
+        "Accepted v1 activation-profile ADR: Aworkit implements only ManagedLocalBuildProfileV1. A locally compiled build becomes eligible only after an explicit advanced-user enrollment has materialized a complete release-like bundle into a helper-controlled per-user installation with immutable active, candidate, and previous-known-good slots; an atomic selector and stable launcher; and a helper plus activation journal outside every swapped slot and outside the application's kill scope. Direct cargo run, cargo tauri dev, mutable target output, an unsigned installer installation, a package-manager installation, or an unknown or conflicting origin is never treated as an activation slot.\n",
+        "\n",
+        "The fixed one-time enrollment path is owned end to end: Management Repair emits RequestManagedLocalEnrollment; the Core Repair Orchestrator validates the local build and bounded whole-bundle artifact reference and calls BootstrapProtocolPortV1.PrepareManagedLocalEnrollment; the helper's coordinator requires that no activation is active, obtains an unprivileged EnrollmentPlanV1, and asks the slot manager to prepare the managed root. It returns EnrollmentPreparedV1 only after the stable helper, launcher, journal, initial immutable slot, selector, and enrollment record are durably verified. Enrollment never activates immediately; the current source build remains running until the user explicitly restarts through the stable launcher. Failure leaves the source checkout and running build untouched and any incomplete managed root unreachable.\n",
+        "\n",
+        "BuildOriginV1 is generated into the build as LocalSourceBuild, PackagedDistribution, Unknown, or Conflicting and is bound by the external whole-bundle slot manifest. LocalBuildEnrollmentStateV1 independently reports Enrolled, NotEnrolled, or Mismatched. The profile returns Supported only for LocalSourceBuild plus a matching enrollment and a successful runtime preflight; NotEnrolled returns EnrollmentRequired without quiescence; PackagedDistribution, Unknown, Conflicting, Mismatched, elevation-requiring, package-owned, mutable, cross-volume, non-durable, or rollback-incompatible layouts return UnsupportedV1 with a deterministic reason before quiescence. No path name, missing signature, environment variable, editable setting, or force flag may upgrade eligibility, and OS observations may only downgrade it.\n",
+        "\n",
+        "The managed-local profile is deliberately unprivileged and uses complete-bundle hashes, owner and filesystem identity, process-generation binding, and the journal hash chain. Its declared integrity strength is SameUserHashAndOwnership, not publisher authentication and not protection from malicious code already executing as the desktop user. Aworkit's Apache-2.0 licensing and unsigned distribution do not weaken or strengthen that claim. Packaged builds may still diagnose, edit, compile, test, and export repair candidates, but v1 update or reinstall remains a manual or installer-owned operation. Packaged self-activation, elevation, publisher signing, helper replacement, or updater integration requires a separate future ADR and profile version.\n",
+        "\n",
+        "The helper's durable state remains deliberately small: helper and protocol versions, activation ID, provenance and enrollment digests, capability-report digest, candidate and previous slot hashes, expected application identity, current phase, independently bounded monotonic deadlines, and integrity-protected receipts. It survives application termination and power loss, never updates itself during the activation it supervises, and never performs a forward-only data migration. It does not diagnose errors, build source, modify workflows or configuration, grant authority, handle secrets, commit Chat history, or run general tools; the Management workflow and trusted core prepare and disclose the candidate, while this helper performs only the fixed managed-local enrollment transaction plus verified activation, watchdog, rollback, and relaunch."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.bootstrap_helper",
+    "id": 87,
+    "name": "Trusted Bootstrap and Rollback Helper",
+    "parent_external_id": "1",
+    "tags": "Container,Trusted Core,Bootstrap,Repair",
+    "technology": "Small Rust helper executable, managed-local immutable build slots, atomic selector, and cross-platform launch/watchdog APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6e257b93-175e-8ee8-883d-6ae4f684d4f6",
+  "schemaVersion": 1
+}

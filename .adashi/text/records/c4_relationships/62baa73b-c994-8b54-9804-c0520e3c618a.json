@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Consumes committed projection-delivery outbox entries by durable cursor and marks delivery idempotently; lag or rebuild never delays canonical commit",
+    "destination_external_id": "aworkit.local_store.commit_adapter",
+    "external_id": "rel.local_store.query_projections.commit_outbox",
+    "id": 222,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Internal,Disposable",
+    "technology": "Projection outbox consumer port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "62baa73b-c994-8b54-9804-c0520e3c618a",
+  "schemaVersion": 1
+}

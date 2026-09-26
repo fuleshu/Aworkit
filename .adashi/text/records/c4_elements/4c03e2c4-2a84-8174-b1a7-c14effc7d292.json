@@ -1,0 +1,35 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns Chat-scoped job identity and lifecycle for every asynchronous capability producer. A job's runner is either a supervised OS process session (shell, shell_start, python, python_start) or a delegated background child Agent run (tool.subagent, tool.subagent_fork, tool.subagent_message); the kind is registry data, not a second scheduler. It owns durable start intents and observations, running and terminal snapshots, bounded output cursors and collection acknowledgement, retained-work disposition, capacity, keep/stop/input/list control routing, and the completion gate a final assistant answer must pass.\n",
+        "\n",
+        "Owned state: one JobRecord per job with kind (process or subagent), owner Chat, invoking Agent/child scope, model-facing label, running/terminal snapshot, captured-output byte counts and cursor, collected/kept/interrupted disposition, and - for a child job - the delegated child identity and its terminal outcome. Child live progress (one line per model turn) and the child's own job inventory are registry facts; the child's conversation and evidence remain the child scope's and are never merged into the parent transcript.\n",
+        "\n",
+        "Contracts: the durable broker authorizes each control (job_output, job_input, job_stop, job_keep, job_list) and the registry settles it. job_output returns status, bounded cursor output and, for a child job, kind=subagent with its durable childId, live progress and terminal outcome; job_input steers a running child at its next step boundary or resumes a settled child as a new background turn-set, and sends stdin to a process; job_stop cancels the runner and closes a child scope so it can never be resumed; job_keep records deliberate retention so the delegating Agent may finish while the work continues; completion_notice_scoped reports unresolved running or uncollected jobs to the Agent loop.\n",
+        "\n",
+        "Invariants: jobs never cross Chat boundaries, and a control is additionally scoped to the exact delegating Agent/child where one applies. Identity is committed before the side effect, and a terminal state is committed before it can be observed as collected. Process runners retain complete descendant-tree control; child runners use the child's own cancellation token and stop the child-scoped jobs they still own. Capacity bounds live and retained jobs (8 per Chat, 32 total) and a refused start is an explicit typed failure rather than a silent drop.\n",
+        "\n",
+        "Failure and recovery: restart marks every running job interrupted, releases retention, and never replays it; a process tree cannot be reconstructed from a PID and a child is not re-run. A child job's committed frame is then reported interrupted rather than running, and a continuation starts a fresh turn-set from the child's committed head. Collection is acknowledged only after the broker durably records the returned output, so a crash before that boundary leaves it readable again.\n",
+        "\n",
+        "Performance and NFRs: one supervisor pass drives runner snapshots and persistence; output is read by cursor from captured logs instead of buffered in memory; a kind index serves control lookups; bounded job history is evicted oldest-first only when terminal and collected; no job control requires a project.\n",
+        "\n",
+        "Non-responsibilities: no capability authorization or approval decision (Invocation Broker), no OS process spawning, health or descendant-tree mechanics (Process-Tree Supervisor), no graph scheduling or Agent-loop execution (Workflow Runtime Worker), no canonical semantic history, and no secret materialization."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.job_registry",
+    "id": 174,
+    "name": "Chat Job Registry & Completion Barrier",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Jobs,Completion",
+    "technology": "Rust owner-scoped job registry over supervised process and delegated-child runners",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4c03e2c4-2a84-8174-b1a7-c14effc7d292",
+  "schemaVersion": 1
+}

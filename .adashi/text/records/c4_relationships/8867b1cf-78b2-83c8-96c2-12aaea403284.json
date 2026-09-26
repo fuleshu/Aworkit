@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delivers only core-committed capability outcomes and uncertainty semantics for frozen attempt decisions",
+    "destination_external_id": "aworkit.workflow_worker.attempt_policy",
+    "external_id": "rel.worker_gateway.attempt_policy",
+    "id": 109,
+    "source_external_id": "aworkit.workflow_worker.core_gateway",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "In-process Aworkit outcome DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8867b1cf-78b2-83c8-96c2-12aaea403284",
+  "schemaVersion": 1
+}

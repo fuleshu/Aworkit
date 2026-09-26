@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/broker.rs\"]",
+    "completed_at": "2026-08-21 17:20:51",
+    "completion_memo": "Implemented the core-only worker proposal broker: it resolves frozen authority, rejects absent bindings, holds per-invocation approvals, and emits only approved invocation identities for later committed dispatch. cargo check for core and host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:40",
+    "created_files": "[\"crates/aworkit-trusted-core/src/broker.rs\"]",
+    "description": "Implement the sole worker-proposal-to-host-dispatch path: evaluate frozen authority and approval, durably stage an approved invocation and lease, dispatch through the supervised host, commit progress/evidence/outcome, and deliver only committed results to the worker. Preserve uncertain-effect state and forbid automatic replay.",
+    "id": 34,
+    "number": 34,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.7 — Integrate the core invocation broker with worker and host",
+    "updated_at": "2026-09-22 07:12:26"
+  },
+  "deleted": false,
+  "identity": "7003f2ea-7da4-8479-abd3-3d449eddf5f9",
+  "schemaVersion": 1
+}

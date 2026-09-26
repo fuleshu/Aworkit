@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates normalized node and evaluator outcomes to deterministic retry, fallback, gate, feedback-edge, or failure decisions",
+    "destination_external_id": "aworkit.workflow_worker.attempt_policy",
+    "external_id": "rel.worker_scheduler.attempt_policy",
+    "id": 119,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Pure attempt-policy port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b9377296-35dd-8c00-beb2-fbe6c86a2d2f",
+  "schemaVersion": 1
+}

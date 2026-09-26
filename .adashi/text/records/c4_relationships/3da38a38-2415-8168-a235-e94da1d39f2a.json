@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies the adopted revision's immutable plan for admission at the next settled boundary; no transition, continuation or child frame is ever executed under a plan other than the one it was admitted from.",
+    "destination_external_id": "aworkit.workflow_worker.scheduler",
+    "external_id": "rel.core.rebind.scheduler",
+    "id": 340,
+    "source_external_id": "aworkit.trusted_core.revision_rebind",
+    "tags": "Relationship,Internal Core Contract,Scheduling",
+    "technology": "Frozen ExecutionPlanV1 per revision segment",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3da38a38-2415-8168-a235-e94da1d39f2a",
+  "schemaVersion": 1
+}

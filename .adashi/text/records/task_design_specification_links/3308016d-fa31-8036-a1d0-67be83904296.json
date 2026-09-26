@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:38",
+    "design_external_id": "aworkit.local_store.diagnostic_logs",
+    "id": 238,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "7dcdce52-a424-8912-9d03-6f5ae62c8441"
+    }
+  },
+  "deleted": false,
+  "identity": "3308016d-fa31-8036-a1d0-67be83904296",
+  "schemaVersion": 1
+}

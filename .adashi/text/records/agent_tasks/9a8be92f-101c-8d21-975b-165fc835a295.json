@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-bootstrap-helper/src/lib.rs\",\"crates/aworkit-bootstrap-helper/src/journal/model.rs\",\"crates/aworkit-bootstrap-helper/src/journal/phase.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/model.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/watchdog.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/hermetic.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Implemented the single-flight enrollment, activation, rollback, and restart-recovery coordinator. Enrollment only materializes the fixed initial slot. Activation reverifies durable baton, slots, selector, generations, checkpoint, and verification plan; journals every effect intent and exact observation; seals candidate results only from watchdog-produced evidence; deterministically cleans, restores, reverifies, and relaunches the previous generation on failure; and seals bounded manual recovery when automatic proof is absent.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:45",
+    "created_files": "[\"crates/aworkit-bootstrap-helper/src/coordinator/mod.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/error.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/model.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/ports.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/coordinator.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/tests.rs\"]",
+    "description": "Implement the helper's single-flight coordinator for fixed nonactivating enrollment, admitted activation, selector switch, candidate verification, deterministic rollback/relaunch, terminal protected receipts, and ManualRecoveryRequired. Drive only the journal, slot, profile, and watchdog ports; expose immutable results through the existing bootstrap protocol. Core handoff and Management UI behavior are owned by M10.3 and M10.4.",
+    "id": 72,
+    "number": 72,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.6 — Implement the enrollment, activation, and rollback coordinator",
+    "updated_at": "2026-09-22 07:21:25"
+  },
+  "deleted": false,
+  "identity": "9a8be92f-101c-8d21-975b-165fc835a295",
+  "schemaVersion": 1
+}

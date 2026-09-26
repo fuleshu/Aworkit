@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses ledger, candidate, diff, test, provenance, enrollment, eligibility, integrity, unavailable-reason, rollback, and explicit activation-gate primitives",
+    "destination_external_id": "aworkit.desktop_ui.design_system",
+    "external_id": "rel.ui.management.design",
+    "id": 55,
+    "source_external_id": "aworkit.desktop_ui.management_repair",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a18e468b-3387-800a-8e40-09e3328d78e7",
+  "schemaVersion": 1
+}

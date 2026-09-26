@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-local-store/Cargo.toml\"]",
+    "completed_at": "2026-08-21 16:15:24",
+    "completion_memo": "Implemented the local-store canonical configuration and workflow JSON repositories. Editable documents retain exact schema-versioned JSON bytes (including unknown fields), content-addressed immutable body generations, manifest-only derived indexes, inter-process locked optimistic compare-and-swap versions, atomic temp-write/fsync/rename publication, manifest/body hash validation, bounded document size, and explicit corruption/schema/conflict failures. Added unit coverage for exact unknown-workflow round trips, stale-writer rejection, and required schemaVersion validation; cargo test -p aworkit-local-store passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:39",
+    "created_files": "[\"crates/aworkit-local-store/src/lib.rs\",\"crates/aworkit-local-store/src/document.rs\",\"crates/aworkit-local-store/src/filesystem.rs\",\"crates/aworkit-local-store/src/manifest.rs\",\"crates/aworkit-local-store/src/repository.rs\"]",
+    "description": "Implement schema-versioned application/project configuration and workflow document repositories with optimistic version checks, atomic durable writes, and lossless round trips for unknown workflow nodes and fields. JSON remains the sole editable canonical body; derived indexes or UI state must not leak into it.",
+    "id": 9,
+    "number": 9,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M02.1 — Implement canonical configuration and workflow JSON repositories",
+    "updated_at": "2026-09-21 14:55:13"
+  },
+  "deleted": false,
+  "identity": "417a43a9-feeb-824d-b40f-51c1cbe02355",
+  "schemaVersion": 1
+}

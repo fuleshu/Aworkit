@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-23 09:49:21",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Phase 2 of 3 of the workflow-revision rebinding design (aworkit.trusted_core.revision_rebind). Phase 1 makes a Chat able to adopt a newer workflow revision between turns; this phase makes the resulting chain honest in everything the user can see, export or fork.\n",
+        "\n",
+        "Deliverables.\n",
+        "- Revision-aware evidence: Run details, the Model context panel and the event projections show which revision each turn, node span and context revision belongs to, without relabelling anything already committed. One lineage, stamped — graphRevision (adopted workflow revision) and contextRevision (context lineage entry) stay distinct names, and no view may present them as the same thing.\n",
+        "- Portable history and fork: a Chat that adopted revisions carries its revision chain through export and import, and forking starts the child under an explicitly named revision rather than an implicit \"latest\". A portable branch must remain interpretable on another machine where the saved workflow may have moved on.\n",
+        "- Grants and approvals reconciliation: filesystem grants and saved tool approvals recorded for the Chat are reconciled with the adopted selection. A grant whose tool binding the adopted revision no longer selects is reported and either retained explicitly or dropped with a note; authority the adopted revision adds still requires the phase-1 consent step and is never inherited from the earlier revision's consent.\n",
+        "- Unreplayable-round preview, end to end: the pre-adoption report names the exact recorded tool rounds the candidate cannot replay (count, capability, turn), and the post-adoption path is verified to omit them from the outgoing request, record the decline, continue the turn, and re-import what is representable on the next turn.\n",
+        "- Documentation: the desktop notification/run-details surface explains a shorter-memory turn caused by an adoption, so a weaker answer after a rebind is traceable rather than mysterious.\n",
+        "\n",
+        "Non-goals. Research mode (phase 3); automatic or silent adoption; retroactive relabelling of committed turns or context revisions; rewriting recorded tool calls; extending a deadline.\n",
+        "\n",
+        "Tests. Revision labels in every projection; portable export/import round-trip of a rebonded Chat; fork inheritance of the chain and its explicit revision; grants reconciliation with and without consent; the unreplayable-round preview matching what the admission check actually declines; and a decline-then-recover cycle spanning an adoption boundary.\n",
+        "\n",
+        "Depends on. Phase 1 (task 123) and the region-aware validator and loop-frame predicate from task 116."
+      ]
+    },
+    "id": 124,
+    "number": 123,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Revision-aware evidence, export and grant reconciliation (phase 2 of 3)",
+    "updated_at": "2026-09-23 09:49:21"
+  },
+  "deleted": false,
+  "identity": "4b95cb4a-c594-8552-a0e6-fd158b3695de",
+  "schemaVersion": 1
+}

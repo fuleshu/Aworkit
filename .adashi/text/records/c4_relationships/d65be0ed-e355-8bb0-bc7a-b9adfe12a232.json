@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Owns the notification store, reserves bottom layout space, and supplies active route/visit context",
+    "destination_external_id": "aworkit.desktop_ui.notifications",
+    "external_id": "rel.ui.shell.notifications",
+    "id": 330,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d65be0ed-e355-8bb0-bc7a-b9adfe12a232",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Consumes branch-separated verified PortableProjectionEnvelopeV1 pages only to build evictable machine-local SQLite/FTS views; it cannot write portable history, select a branch, infer gaps, or become canonical",
+    "destination_external_id": "aworkit.portable_store.projection_feed",
+    "external_id": "rel.local_query.portable.projection_feed",
+    "id": 278,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Boundary Contract,Read Only,Disposable",
+    "technology": "PortableProjectionFeedPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "de41fc1f-f299-8c17-b5c0-5383ba67bbfc",
+  "schemaVersion": 1
+}

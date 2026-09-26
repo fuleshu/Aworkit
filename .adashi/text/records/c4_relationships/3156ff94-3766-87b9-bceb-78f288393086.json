@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Migrates and verifies inventory/audit schema while preserving exact extension version/hash/provenance and Run-pinned identities",
+    "destination_external_id": "aworkit.local_store.extension_inventory",
+    "external_id": "rel.local_store.storage_coordinator.extension_inventory",
+    "id": 236,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "ExtensionInventoryMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3156ff94-3766-87b9-bceb-78f288393086",
+  "schemaVersion": 1
+}

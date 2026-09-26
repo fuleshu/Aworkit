@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-workflow-worker/tests/milestone_03.rs\",\"qa/milestone-03.sh\"]",
+    "completed_at": "2026-08-21 17:02:11",
+    "completion_memo": "Added the repeatable Milestone 03 QA command and simulated-port tests for graph validation, deterministic traces, lineage/branches/joins, limits and policy, suspension/no-replay rehydration, and model/subagent isolation. qa/milestone-03.sh and cargo test --workspace pass.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:26:33",
+    "created_files": "[\"crates/aworkit-workflow-worker/tests/milestone_03.rs\",\"qa/milestone-03.sh\"]",
+    "description": "Create automated QA tests for the complete Milestone 03 worker using simulated core and capability ports. Cover graph validation, deterministic traces, context lineage, branch/parallel/for-each/join behavior, nested budgets, routing, retry/fallback/gates, waits and cancellation, checkpoint replacement, no-effect replay, and subagent result isolation.",
+    "id": 20,
+    "number": 20,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M03.QA — Create QA tests for deterministic workflow execution",
+    "updated_at": "2026-09-21 14:56:42"
+  },
+  "deleted": false,
+  "identity": "ca9f81fa-ef4e-8ec0-8bc5-f4347386f607",
+  "schemaVersion": 1
+}

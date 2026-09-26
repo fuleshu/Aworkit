@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Runs each temporary child through its own bounded Aworkit Agent loop and capability set without sharing mutable parent state",
+    "destination_external_id": "aworkit.workflow_worker.model_agent",
+    "external_id": "rel.worker_subagent.model_agent",
+    "id": 132,
+    "source_external_id": "aworkit.workflow_worker.subagent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Aworkit child agent-loop port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "034dab78-702e-811d-ba57-73b8083f6d50",
+  "schemaVersion": 1
+}

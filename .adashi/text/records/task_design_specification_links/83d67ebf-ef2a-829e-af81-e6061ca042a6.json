@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:45:58",
+    "design_external_id": "uml.trusted_core.repair_activation_rollback",
+    "id": 359,
+    "sort_order": 3,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "27be3823-25a6-8b53-ab6d-2931f1532b04"
+    }
+  },
+  "deleted": false,
+  "identity": "83d67ebf-ef2a-829e-af81-e6061ca042a6",
+  "schemaVersion": 1
+}

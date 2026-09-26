@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-23 12:10:58",
+    "id": 35,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[12],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-23 12:10:06",
+    "status": "failed",
+    "summary": "0 passed, 1 failed, 0 timed out",
+    "trigger_source": "codex-m12-task-78-retry-after-queue-fixture-fence"
+  },
+  "deleted": false,
+  "identity": "f830d1b1-ba8c-8e85-bf20-d2cc81987315",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-19 14:11:56",
+    "design_external_id": "uml.tool_jobs.python",
+    "id": 443,
+    "sort_order": 4,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "660d6bb4-4d39-8df2-8310-7036f52581bb"
+    }
+  },
+  "deleted": false,
+  "identity": "80e62335-d535-8c7c-af3b-a56a78c40b71",
+  "schemaVersion": 1
+}

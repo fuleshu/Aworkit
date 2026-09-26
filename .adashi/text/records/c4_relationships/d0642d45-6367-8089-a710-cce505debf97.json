@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses platform filesystem/process/job-object/process-group/signal/environment/temp-file/log primitives for normalized execution and reliable complete-tree cleanup on all supported desktop systems",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.host_process_runtime.os",
+    "id": 203,
+    "source_external_id": "aworkit.capability_host.process_runtime",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Windows and POSIX process/filesystem APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d0642d45-6367-8089-a710-cce505debf97",
+  "schemaVersion": 1
+}

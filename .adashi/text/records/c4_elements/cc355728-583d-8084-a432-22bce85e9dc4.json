@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Computes branch/object reachability, verifies published history, prepares explicit non-destructive repair alternatives, and collects only provably unreachable staging/orphan/quarantine objects after policy grace. It never rewrites or compacts published history.\n",
+        "Owned noncanonical records/DTOs: IntegrityReportV1 lists manifest/head-claim/head-record/segment/checkpoint/snapshot/artifact hashes and failures; ReachabilitySnapshotV1 records roots and scan generation; RepairPlanV1 identifies exact expected hashes and permitted pointer-only or new-child-branch actions; OrphanCandidateV1 records local first-seen scan generation and grace status. Optional .maintenance reports are export-excluded and have no authority.\n",
+        "Reachability and repair: roots are every valid session/branch manifest, durable branch-head ref, immutable head claim, pinned export, and user retention pin. Parent/hash edges determine order and reachability. A corrupt reachable object or ambiguous/multiple tip makes the branch read-only; the module reports all verified alternatives. Core Recovery may authorize restoring only an unambiguous ref to an already-verified immutable HeadRecord, or creating a new repair/continuation branch with explicit lineage. Segments, events, snapshots, checkpoints, and reachable artifacts are never edited, truncated, reordered, or deleted.\n",
+        "Retention/orphan behavior: temporary files, failed-CAS candidates, unreachable head records/claims/segments/checkpoints/artifacts, and expired quarantine reports become collectible only after repeated scans plus configured grace and a final locked reachability recheck. Filesystem timestamps may support local age policy but never history order. Anything that becomes reachable is removed from the deletion set. Published retention is append-only through new lineage; no in-place compaction exists.\n",
+        "Ports: ScanIntegrity, PlanRepair, ApplyAuthorizedRefRepair, EnumerateOrphans, and CollectApprovedOrphans. Mutating maintenance requires exact expected hashes and a trusted-core Recovery decision; import uses validation-only scans.\n",
+        "NFRs/non-responsibilities: incremental bounded IO, resumable scans, quotas, cancellation, checksummed reports, and observable corruption/orphan metrics. No semantic invention, automatic newest-tip choice, side-effect compensation/replay, authority/rebind decision, Git operation, or deletion of published history."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.integrity_retention",
+    "id": 83,
+    "name": "Integrity, Repair Plan, Retention & Orphan Collector",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Integrity,Repair,Retention",
+    "technology": "Rust incremental hash-graph scanner with guarded pointer repair and reachability-based orphan GC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cc355728-583d-8084-a432-22bce85e9dc4",
+  "schemaVersion": 1
+}

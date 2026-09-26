@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Launches, handshakes, health-checks, cancels, and cleans plugin descendant trees under core-owned restart authorization",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_plugins.process_runtime",
+    "id": 177,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Cross-platform sidecar lifecycle port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c599a6db-8b12-8f3a-adb2-21d839224ea7",
+  "schemaVersion": 1
+}

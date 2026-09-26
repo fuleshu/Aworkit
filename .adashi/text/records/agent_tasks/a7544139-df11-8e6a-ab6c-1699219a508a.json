@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-trusted-core/src/repair/model/bootstrap.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Audited and repaired the failed M11.1 implementation. The journal now verifies durable headers and every chain link, uses restart-safe OS advisory single-flight locking and owner-only atomic publication, distinguishes a torn final record from middle-chain corruption, enforces exact open-intent/observation matching and closed phase transitions, exposes recovery facts including open effects, and seals only shared-contract-valid terminal receipts. Covered by warning-denied journal, restart, corruption, durability, and receipt tests.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:29",
+    "created_files": "[\"crates/aworkit-bootstrap-helper/Cargo.toml\",\"crates/aworkit-bootstrap-helper/src/lib.rs\",\"crates/aworkit-bootstrap-helper/src/journal/mod.rs\",\"crates/aworkit-bootstrap-helper/src/journal/model.rs\",\"crates/aworkit-bootstrap-helper/src/journal/phase.rs\",\"crates/aworkit-bootstrap-helper/src/journal/hashing.rs\",\"crates/aworkit-bootstrap-helper/src/journal/error.rs\",\"crates/aworkit-bootstrap-helper/src/journal/storage.rs\",\"crates/aworkit-bootstrap-helper/src/journal/journal.rs\",\"crates/aworkit-bootstrap-helper/src/journal/tests.rs\"]",
+    "description": "Implement the helper's single-writer, append-only, hash-chained write-ahead journal and receipt vault for mutually exclusive enrollment or activation transactions. Persist intent before every effect, exact observation afterward, durable phase transitions, terminal receipts, and manual-recovery notices using owner-protected crash/power-safe files.",
+    "id": 67,
+    "number": 67,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.1 — Implement the enrollment and activation journal",
+    "updated_at": "2026-09-22 07:20:14"
+  },
+  "deleted": false,
+  "identity": "a7544139-df11-8e6a-ab6c-1699219a508a",
+  "schemaVersion": 1
+}

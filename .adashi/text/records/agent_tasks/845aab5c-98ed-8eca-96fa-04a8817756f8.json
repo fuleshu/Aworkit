@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-portable-store/Cargo.toml\",\"crates/aworkit-portable-store/src/lib.rs\",\"crates/aworkit-portable-store/src/codec.rs\",\"crates/aworkit-portable-store/src/export.rs\"]",
+    "completed_at": "2026-08-21 17:47:20",
+    "completion_memo": "Implemented deterministic canonical JSONL records, SHA-256 domain identities, bounded contiguous segments, and deny-by-default portable export scrubbing with explicit debug omissions.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:29:25",
+    "created_files": "[]",
+    "description": "Implement deterministic portable schemas and canonical byte encoding for scrubbed semantic events, segment framing, checkpoints, frozen snapshots, omission facts, and provenance. Apply the deny-by-default portability policy before serialization or hashing and reject any secret, local authority, hidden reasoning, debug capture, or executable content outside the admitted policy.",
+    "id": 36,
+    "number": 36,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M06.1 — Implement portable semantic encoding and export policy",
+    "updated_at": "2026-09-22 07:13:08"
+  },
+  "deleted": false,
+  "identity": "845aab5c-98ed-8eca-96fa-04a8817756f8",
+  "schemaVersion": 1
+}

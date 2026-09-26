@@ -1,0 +1,39 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the sole durable write-ahead record for one mutually exclusive managed-local enrollment or bootstrap activation transaction. For enrollment it records the authenticated bounded request, provenance and whole-bundle artifact hashes, helper-controlled root and publication intents, exact observations, and terminal EnrollmentPreparedV1. For activation it records baton acceptance, provenance, enrollment and capability-report digests, every intended and observed selector or process effect, monotonic phase transitions, generation fences, independent deadline budgets, recovery decisions, ManualRecoveryNoticeV1 when needed, and terminal BootstrapResultV1. Both transaction kinds survive core termination, helper restart, and power loss.\n",
+        "\n",
+        "Owned state/files: Owns a fixed helper-controlled directory outside initial, active, candidate, and previous slots containing one create-new maintenance lock, EnrollmentJournalHeaderV1 or ActivationJournalHeaderV1, ordered hash-chained records or bounded segments, phase snapshots, observation proofs, and exactly one immutable EnrollmentPreparedV1 or BootstrapResultV1 terminal receipt plus an optional ManualRecoveryNoticeV1. Enrollment records contain EnrollmentId, request and provenance hashes, whole-bundle artifact and expected hash, EnrollmentPlanV1, helper, launcher, journal, managed-root and selector identities, publication observations, and EnrollmentPreparedV1. Activation records contain ActivationId, record ordinal, previous-record hash, baton and command hashes, ManagedLocalBuildProfileV1 version, BuildProvenanceV1 and LocalBuildEnrollmentV1 digests, capability-generation digest, candidate and previous slot hashes, ProcessGenerationV1 values, BootstrapPhaseV1, monotonic-duration budgets, OS selector and process observation hashes, result disposition, SameUserHashAndOwnership descriptor, and helper and protocol versions. No Chat events, Management conversation, credentials, secret leases, source diff, build output, or arbitrary logs are stored.\n",
+        "\n",
+        "Ports/DTOs: ActivationJournalPortV1 exposes AcquireSingleFlight, AppendEnrollmentIntent, AppendEnrollmentObservation, StoreEnrollmentPrepared, AppendBatonAccepted, AppendEffectIntent, AppendObservedEffect, AdvancePhase, StoreManualRecoveryNotice, StoreBootstrapResult, LoadRecoveryState, ReadEnrollmentPrepared, ReadBootstrapResult, and SealTerminal. Inputs are closed BootstrapMaintenanceMutationV1 variants and outputs include JournalDurableAckV1, EnrollmentRecoveryStateV1, EnrollmentPreparedV1, BootstrapRecoveryStateV1, ManualRecoveryNoticeV1, and BootstrapResultV1. Only the protocol gateway and activation and rollback coordinator have operational access; no UI, worker, capability-host, portable-store, or plugin port exists.\n",
+        "\n",
+        "Phase and generation invariants: Ordinals and hashes form one append-only chain per EnrollmentId or ActivationId, and the single-flight lock prevents the two transaction kinds from overlapping. EnrollmentPhaseV1 and BootstrapPhaseV1 advance only through their separate defined state machines and under the expected journal version. Prepared enrollment is terminal but never means activated. Every effect intent names the exact current slot, target slot, capability generation, and ProcessGenerationV1; its observation closes the same intent before any later authority-changing phase. Terminal ActivatedVerified, RolledBack, Unsupported, AbortedBeforeSwitch, or ManualRecoveryRequired is immutable. Timestamps never select a phase or generation.\n",
+        "\n",
+        "Atomic and crash behavior: Each record is written create-new to the same filesystem, flushed, atomically published, and followed by directory durability where the managed-local profile claims it. A compact phase snapshot is replace-written only after its source record is durable and is always reconstructible from the chain. Startup scans bounded records, verifies transaction kind, hashes, ordinals, and schema, discards only an uncommitted temporary file or torn tail, and resumes from the last durable enrollment or activation intent or observation. An interrupted enrollment leaves the source build running, reconciles only the named temporary root and publication identity, and never launches it automatically. An intent without an observation triggers exact OS-state reconciliation, not blind repetition. Corruption, ambiguous selector state, missing generation proof, disk full, or failed sync blocks further switching and yields ManualRecoveryRequired when a safe terminal receipt can be durably recorded.\n",
+        "\n",
+        "Security and integrity semantics: EnrollmentPreparedV1 covers the request, provenance, initial bundle, stable helper and launcher, managed-root and selector identities, and ordered journal head. BootstrapResultV1 covers the baton hash, ordered journal head, provenance, enrollment and capability digests, final selected slot hash, candidate or rollback ProcessGenerationV1, verification-plan and CapabilityOutcomeV1 hashes, observations, reason codes, optional ManualRecoveryNoticeV1, and SameUserHashAndOwnership integrity strength. V1 uses the hash chain, strict owner ACL or mode, anchored directory identity, and peer and generation binding. It neither requires publisher signing nor claims resistance to malicious code already running as the same desktop user. The journal stores no secrets or signing keys.\n",
+        "\n",
+        "Cross-platform degradation: Windows uses write-through handles, atomic replace or rename semantics, directory and volume checks, and owner ACLs. macOS and Linux require same-volume atomic publication, file and parent-directory sync, no-follow identity checks, and stable helper storage outside swapped bundles. Network filesystems, storage without the selected durability semantics, read-only or cross-volume locations, or ownership and permission loss are Unsupported before a selector change; ambiguity after a change is ManualRecoveryRequired rather than invented success.\n",
+        "\n",
+        "NFRs: Phase acknowledgements target under 100 ms at normal local-disk latency; enrollment and activation records, receipts, and native recovery notices are small and bounded; recovery is linear in a capped record count with verified snapshots; sync latency, journal age, torn-tail recovery, corruption, and manual-recovery counts are observable; and fault-injection tests cover every write, flush, rename, selector, helper-restart, and power-loss window.\n",
+        "\n",
+        "Non-responsibilities: Does not decide which repair is acceptable, store or commit semantic Chat history, write the recurring-error ledger, contain candidate binaries, classify the build, choose platform actions, launch or kill processes, execute verification, repair user data, retain secrets, update itself, or provide a general persistence API."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.bootstrap_helper.activation_journal",
+    "id": 90,
+    "name": "Tamper-Evident Enrollment & Activation Journal / Receipt Vault",
+    "parent_external_id": "aworkit.bootstrap_helper",
+    "tags": "Component,Trusted Bootstrap,Journal,Durability,Integrity",
+    "technology": "Rust crash-safe hash-chained journal using atomic same-volume files, durable sync, owner ACLs or modes, and generation-bound receipts",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "aa4b3781-15ac-8618-8599-fbc7355e414e",
+  "schemaVersion": 1
+}

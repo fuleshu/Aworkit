@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:51",
+    "design_external_id": "uml.portable_store.branch_integrity_retention",
+    "id": 345,
+    "sort_order": 3,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "0e58faee-4389-8382-a4ac-0c79772682af"
+    }
+  },
+  "deleted": false,
+  "identity": "55f5662a-6d48-8362-867b-e16e74fffa1c",
+  "schemaVersion": 1
+}

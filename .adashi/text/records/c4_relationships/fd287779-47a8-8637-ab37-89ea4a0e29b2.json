@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requires a deterministic PlatformCapabilityReportV1 proving LocalSourceBuild provenance, matching enrollment, stable helper and launcher survival, per-user ownership without elevation, same-volume atomic selector and rollback, verification-only launch, preserved previous slot, and data compatibility before admitting activation; EnrollmentRequired may produce only a fixed EnrollmentPlanV1",
+    "destination_external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "external_id": "rel.bootstrap.protocol.profiles",
+    "id": 294,
+    "source_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "tags": "Relationship,Internal,Preflight,Platform",
+    "technology": "ProfilePreflightPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fd287779-47a8-8637-ab37-89ea4a0e29b2",
+  "schemaVersion": 1
+}

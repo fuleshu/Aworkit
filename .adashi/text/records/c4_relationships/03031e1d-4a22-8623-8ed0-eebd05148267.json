@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Declares per-Agent enable/disable through ordinary plugin-tool selection; runtime activation occurs only after core validation and Chat freeze.",
+    "destination_external_id": "aworkit.workflow_worker.workspace_instructions",
+    "external_id": "rel.workspace_instructions.selection",
+    "id": 335,
+    "source_external_id": "aworkit.desktop_ui.workflow_editor",
+    "tags": "",
+    "technology": "Workflow JSON through trusted core",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "03031e1d-4a22-8623-8ed0-eebd05148267",
+  "schemaVersion": 1
+}

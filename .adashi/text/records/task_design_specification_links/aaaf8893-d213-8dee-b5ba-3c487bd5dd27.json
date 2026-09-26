@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 00:15:38",
+    "design_external_id": "uml.system.portable_runtime_commit_recovery",
+    "id": 10,
+    "sort_order": 3,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "c0f1e28f-d6f5-8145-81dc-aa6995ec137e"
+    }
+  },
+  "deleted": false,
+  "identity": "aaaf8893-d213-8dee-b5ba-3c487bd5dd27",
+  "schemaVersion": 1
+}

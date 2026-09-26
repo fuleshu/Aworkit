@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.trusted_core.desktop_api|file|desktop/src-tauri/src/runtime/path_actions.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-22 21:32:14",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "d8a63431-6cde-83d1-aa07-04f32698b42b",
+  "schemaVersion": 1
+}

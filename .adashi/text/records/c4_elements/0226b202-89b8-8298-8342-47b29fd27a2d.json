@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Capability-owned rendering port composed by Tauri with an isolated ephemeral WebView, cancellation and deadlines, without app IPC, popups or downloads.",
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.native_web_renderer",
+    "id": 138,
+    "name": "Native Web Renderer Adapter",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "",
+    "technology": "Tauri WebView",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0226b202-89b8-8298-8342-47b29fd27a2d",
+  "schemaVersion": 1
+}

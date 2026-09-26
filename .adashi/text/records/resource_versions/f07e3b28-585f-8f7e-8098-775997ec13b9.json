@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.portable_store.import_quarantine",
+    "resource_kind": "design.element",
+    "updated_at": "2026-08-20 23:11:41",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "f07e3b28-585f-8f7e-8098-775997ec13b9",
+  "schemaVersion": 1
+}

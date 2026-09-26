@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns receipts/snapshots and ordered committed lifecycle/evidence/configuration/repair events",
+    "destination_external_id": "aworkit.desktop_ui.projection_gateway",
+    "external_id": "rel.core.ui.gateway.events",
+    "id": 47,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c274cb51-bde9-8ed2-9cb6-e532fc6a6804",
+  "schemaVersion": 1
+}

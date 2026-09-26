@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:31:57",
+    "design_external_id": "aworkit.capability_host.capability_registry",
+    "id": 219,
+    "sort_order": 2,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b01faa9a-6197-87bc-bd51-d37657dc07ed"
+    }
+  },
+  "deleted": false,
+  "identity": "31d819fa-5300-8019-9db6-067c7def0d4f",
+  "schemaVersion": 1
+}

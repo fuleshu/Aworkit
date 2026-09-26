@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "For enrollment, prepares only the bounded provenance-and-artifact-named initial whole bundle in the fixed helper-controlled root and returns EnrollmentPreparedV1. For activation, preflights only enrollment-bound active, candidate, and previous hashes, manifest closure, OS, architecture and protocol compatibility, previous preservation, deferred or backward-compatible data changes, and prohibition on same-activation helper replacement",
+    "destination_external_id": "aworkit.bootstrap_helper.build_slots",
+    "external_id": "rel.bootstrap.protocol.slots",
+    "id": 295,
+    "source_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "tags": "Relationship,Internal,Preflight,Integrity",
+    "technology": "BuildSlotVerifyPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c8226604-8cf7-8d9c-aaa0-dbfaa84a4e82",
+  "schemaVersion": 1
+}

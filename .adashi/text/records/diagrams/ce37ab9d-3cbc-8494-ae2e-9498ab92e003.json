@@ -1,0 +1,48 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.capability_host.result_pipeline",
+    "created_at": "2026-08-20 22:35:43",
+    "diagram_type": "flow",
+    "id": 19,
+    "key": "uml.capability_host.outcome_classification",
+    "kind": "mermaid",
+    "sort_order": 19,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "    A[Adapter terminal timeout cancel crash or disconnect fact] --> B{Effect dispatch proven not started}\n",
+        "    B -- Yes --> C[FailedDefiniteNotStarted]\n",
+        "    C --> C1[RetrySafety eligible only for core workflow policy]\n",
+        "    B -- No --> D{Verifiable terminal result exists}\n",
+        "    D -- Yes --> E{Result kind}\n",
+        "    E -- Success --> F[Succeeded with usage artifacts and effect evidence]\n",
+        "    E -- Known failure after start --> G[FailedKnownStarted]\n",
+        "    E -- Confirmed cancellation --> H[CancelledWithEvidence]\n",
+        "    G --> I{Descriptor guarantees idempotency and same-id dedup}\n",
+        "    H --> I\n",
+        "    I -- Yes and evidence supports --> J[RetrySafety same invocation id only]\n",
+        "    I -- No or incomplete --> K[RetrySafety not safe]\n",
+        "    D -- No --> L{Effect absence positively proven}\n",
+        "    L -- Yes --> C\n",
+        "    L -- No --> M[OutcomeUncertain]\n",
+        "    M --> N[RetrySafety unknown or not safe]\n",
+        "    N --> O[Return control to core and workflow or user]\n",
+        "    K --> O\n",
+        "    J --> O\n",
+        "    C1 --> O\n",
+        "    F --> O\n",
+        "    P[Process health or kill alone] --> M\n",
+        "    Q[Unknown is never labelled safe to retry] --> N"
+      ]
+    },
+    "title": "Conservative Side-Effect Outcome and Retry Metadata Classification",
+    "updated_at": "2026-08-20 22:35:43",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ce37ab9d-3cbc-8494-ae2e-9498ab92e003",
+  "schemaVersion": 1
+}

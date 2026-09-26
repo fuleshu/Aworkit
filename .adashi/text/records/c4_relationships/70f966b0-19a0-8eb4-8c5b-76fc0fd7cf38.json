@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Canonicalizes and revalidates selected workspace identity, roots, branch/worktree metadata, and portable-history location without implying sandboxing",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.core_project_config.workspaces.resolve",
+    "id": 90,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Filesystem and Git inspection",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "70f966b0-19a0-8eb4-8c5b-76fc0fd7cf38",
+  "schemaVersion": 1
+}

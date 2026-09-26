@@ -1,0 +1,50 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.portable_store.import_quarantine",
+    "created_at": "2026-08-20 23:11:41",
+    "diagram_type": "flow",
+    "id": 27,
+    "key": "uml.portable_store.inert_import_rebind",
+    "kind": "mermaid",
+    "sort_order": 27,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "    A[User selects an existing project portable repository] --> B[Resolve candidate through anchored project-relative paths]\n",
+        "    B --> C[Bounded parse of repository, session, branch and snapshot manifests]\n",
+        "    C --> D{Supported format and required features?}\n",
+        "    D -- No --> Q[Inspect-only quarantine report; no semantic apply or continuation]\n",
+        "    D -- Yes --> E[Verify exact hashes, schemas, forbidden fields and object limits]\n",
+        "    E --> F{Segments, checkpoints, artifacts and lineage valid?}\n",
+        "    F -- No --> Q2[Quarantine affected branch; preserve safe diagnostics and unaffected branches]\n",
+        "    F -- Yes --> G{Multiple child head claims from one checkpoint?}\n",
+        "    G -- Yes --> H[Expose explicit branch alternatives; never sort or merge by timestamp]\n",
+        "    G -- No --> I[Issue VerifiedPortableBranchHandleV1]\n",
+        "    H --> I\n",
+        "    I --> J[Extract logical capability and workspace requirements]\n",
+        "    J --> K[Build complete UnresolvedBindingInventoryV1]\n",
+        "    K --> L{All local bindings explicitly selected and compatible?}\n",
+        "    L -- No --> M[Remain inert and inspectable/searchable; show unresolved categories]\n",
+        "    L -- Yes --> N[Core Project and Configuration Coordinator validates local candidates]\n",
+        "    N --> O[Core Authority Engine compiles fresh manifest and user-visible authority summary]\n",
+        "    O --> P{User explicitly accepts fresh local authority?}\n",
+        "    P -- No --> M\n",
+        "    P -- Yes --> R[Snapshot Freezer creates immutable child continuation snapshot]\n",
+        "    R --> S[Core Event Committer creates or advances explicit portable child branch]\n",
+        "    S --> T[Recovery continues from committed checkpoint without replaying prior effects]\n",
+        "    Q --> Z[No install, enable, credential import, approval inheritance, artifact execution or side-effect replay]\n",
+        "    Q2 --> Z\n",
+        "    M --> Z"
+      ]
+    },
+    "title": "Inert import, unresolved bindings, fresh authority, and explicit continuation",
+    "updated_at": "2026-08-20 23:11:41",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "671a5789-6d46-8cdc-a347-56b4c6b37fbd",
+  "schemaVersion": 1
+}

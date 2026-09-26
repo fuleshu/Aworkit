@@ -1,0 +1,55 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.desktop_ui.app_shell",
+    "created_at": "2026-09-05 12:47:24",
+    "diagram_type": "state",
+    "id": 63,
+    "key": "uml.desktop_ui.notification_lifecycle",
+    "kind": "mermaid",
+    "sort_order": 40,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "  [*] --> Active: publish current occurrence\n",
+        "  Active --> Active: update same occurrence and valid source\n",
+        "  Active --> Acknowledged: dismiss ongoing condition\n",
+        "  Active --> Recent: transient expiry or dismiss\n",
+        "  Active --> Recent: resolved or superseded\n",
+        "  Active --> Recent: scope disposed or source invalidated\n",
+        "  Acknowledged --> Acknowledged: identical projection or replay\n",
+        "  Acknowledged --> Recent: source confirms resolution or invalidation\n",
+        "  Recent --> [*]: retention limit\n",
+        "  state Active {\n",
+        "    [*] --> Eligible\n",
+        "    Eligible --> Primary: priority and context selection\n",
+        "    Primary --> Eligible: more urgent notice\n",
+        "  }\n",
+        "  note right of Active\n",
+        "    Progress ends from command outcome or unavailable status.\n",
+        "    Old occurrence updates and timers are ignored.\n",
+        "    Hover or focus pauses only transient expiry.\n",
+        "    Source invalidation always wins.\n",
+        "  end note\n",
+        "  note right of Acknowledged\n",
+        "    Excluded from primary message.\n",
+        "    Still in Active count and owning surface.\n",
+        "    Dismissal is not domain resolution.\n",
+        "  end note\n",
+        "  note right of Recent\n",
+        "    Never replay into Active.\n",
+        "    True recurrence publishes a new occurrence.\n",
+        "    Maximum 50 redacted summaries for 24 hours in session memory.\n",
+        "  end note"
+      ]
+    },
+    "title": "Desktop notification relevance and dismissal lifecycle",
+    "updated_at": "2026-09-05 12:47:24",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "28bfd6e5-c4d2-8eec-915a-39d4ead0c13c",
+  "schemaVersion": 1
+}

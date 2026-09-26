@@ -1,0 +1,25 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "A supervised integration boundary executes core-approved capability invocations through built-in tool implementations, provider adapters, MCP clients, plugin subprocess protocols, external-agent adapters, and optional isolation backends. It normalizes streaming progress, results, usage, artifacts, errors, native session identifiers, and approval requests into Aworkit-owned contracts.\n",
+        "\n",
+        "The host receives only invocation-scoped configuration and short-lived secret material from the core. It declares real adapter capabilities and failure semantics. Process separation provides dependency and crash isolation, cancellation, restart, logging, and language independence, but does not make trusted plugins secure. Restricted tool modes must enforce their roots, mounts, or network policy in implementation."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.capability_host",
+    "id": 13,
+    "name": "Capability and Extension Host",
+    "parent_external_id": "1",
+    "tags": "Container,Integration,Supervised Process",
+    "technology": "Rust integration host plus supervised Python/Node/native/MCP sidecars",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fddddc52-5947-839a-9c9f-906c57119192",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:09",
+    "design_external_id": "uml.capability_host.external_agent_continuation",
+    "id": 228,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "05d6e3f2-835b-8b70-bf7a-fed1067ddb61"
+    }
+  },
+  "deleted": false,
+  "identity": "7c81568a-5bb8-8878-9669-112caad92bd1",
+  "schemaVersion": 1
+}

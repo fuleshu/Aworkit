@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-23 11:15:14",
+    "id": 33,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[11],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-23 11:15:01",
+    "status": "passed",
+    "summary": "1 passed, 0 failed, 0 timed out",
+    "trigger_source": "codex_m11_repair_final"
+  },
+  "deleted": false,
+  "identity": "14516e99-27f2-84c8-94a1-d9e2737bf221",
+  "schemaVersion": 1
+}

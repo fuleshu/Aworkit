@@ -1,0 +1,61 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/graph_pass/model_call.rs\",\"desktop/src-tauri/src/runtime/graph_pass/steering.rs\",\"desktop/src-tauri/src/runtime/graph_pass/context.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/run_events/tests/tool_nodes.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src/workbench/nodeCatalog.ts\",\"desktop/src/workbench/nodeCatalog.test.ts\",\"desktop/src/workbench/workflow.ts\",\"desktop/src/workbench/workflowExecution.ts\",\"desktop/src/workbench/workflowExecution.test.ts\",\"desktop/src/workbench/NodeConfigurationForm.tsx\"]",
+    "completed_at": "2026-09-23 14:09:58",
+    "completion_memo": {
+      "lines": [
+        "Corrected memo. Two statements in the previous memo were wrong and are fixed here: the loop bound is no longer required, and the claim that this codebase has no budget ledger was false.\n",
+        "\n",
+        "Commits: 4bff26e (contract and region-aware validation), 2c4548d (executor, frames and evidence), 1595a7b (per-iteration identity), 1073870 (editor and route declarations), dac29c4 (nested coverage), 6321e0c (optional bound, no clock check).\n",
+        "\n",
+        "Contract. A loop header declares a frozen exitCondition predicate and routes exactly one body, one exit and one fallback transition. maximumIterations is optional: a declared bound must be a positive whole number and is the author's own number, and an omitted (or explicitly empty) bound means the loop repeats until its exit condition holds. analyze_loop_regions is the single implementation used by both the validator and the compiler: the region is single-entry and single-exit, may not contain a wait or completion node, nests at most four deep, and only declared feedback edges may close a cycle. compile_graph_pass carries CompiledLoopV1 (routes, feedback edge, region in execution order, optional bound) and computes the order over the region-expanded graph.\n",
+        "\n",
+        "Execution. The pass walks a work queue; the header owns its region, evaluates the frozen exit condition before each iteration and repeats the region under it. A declared bound that is reached takes the declared fallback route with an explicit limit-exceeded observation. Cancellation is observed between iterations, so Stop always ends a loop — which matters now that the exit condition can be the only natural stop. A suspension inside a region persists the active frames, so resume continues its own iteration and never replays settled work; stopped-pass continuations carry the same frames.\n",
+        "\n",
+        "Limits and budgets, corrected. There is no aggregate run budget of any kind, and the worker ledger that does exist is inert for internal Agent runs: crates/aworkit-workflow-worker/src/limits.rs implements Budget/Usage/BudgetEnvelope/LimitLedger/LimitController, and pipeline.rs builds one for every run, but the desktop freezes every cumulative dimension to a sentinel — tokens and cost to MAX_SAFE_WIRE_INTEGER, and both budget.deadline_ms and deadline_epoch_millis to NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS, whose own comment states there is no aggregate run deadline and that usage is reported without a ceiling. The small figures (turns/attempts/actions = 1, depth/fanout/parallel) describe one outer brokered execution, and agent-internal provider calls are explicitly not turn-capped (legacy_maximum_turns: None). The frozen run_deadline_millis is inert legacy data with no consumer that builds a deadline from it. What remains are per-operation bounds (provider request timeout, transport retries, tool-output bytes, overflow retries, approval TTLs) and freeze-time structural validation, none of which cap a run's total work. The loop's deadline diversion added earlier was dormant because of that sentinel and has now been removed: a loop ends only on its exit condition, a declared bound, or the user stopping it.\n",
+        "\n",
+        "Evidence. Every activity carries its loop frame (header, iteration, optional bound); exit-condition evaluations and limit outcomes are their own observations of the header; a repeated iteration is a distinct span, and the span details carry loopHeaderId, iteration and either maximumIterations or unbounded: true. An unbounded loop's opening observation says so in words.\n",
+        "\n",
+        "Editor. The palette exposes the loop header with the predicate panel as its exit condition, an optional maximum-iterations field (empty means no cap; the numeric field now writes null when cleared rather than zero), and typed body/exit/fallback routes. A transition targeting a loop header that declares the feedback route closes that region, so neither the editor diagnostic nor Run admission reports a declared loop as a cycle; a missing feedback edge, a missing route, an undeclared back edge, a non-positive declared bound and a missing exit condition are each reported, while an undeclared bound is a named warning that never blocks a run.\n",
+        "\n",
+        "Tests. Region metadata; undeclared cycle; missing feedback edge; missing routes; doubled feedback; second entry and exit; wait inside a region; predicate validation; a declared bound of 0, 1.5, -3 and 2^32 refused while 65 is accepted; an omitted bound accepted; nesting 5 accepted and 6 refused; typed source-handle declarations; compiler metadata and the topological invariant; exit condition true before the first iteration; declared-bound exhaustion (two runs, three evaluations, one limit outcome, fallback reached, exit route skipped); determinism across two runs; suspension inside a region resuming its own iteration without replay; nested loops charging per invocation; an unbounded loop reporting itself and exiting on its condition; and an unbounded loop still yielding to Stop. TypeScript: declared-loop acceptance, unbounded acceptance as a non-blocking warning, invalid bound and missing exit condition refused, and the editor's diagnostics for declared and unbounded loops.\n",
+        "\n",
+        "Verification. Rust lib 437 passed, 0 failed, 1 ignored (one known order-dependent compaction test passes alone and on rerun). TypeScript 481 of 483 with tsc clean; the failures in the full parallel run are the long-standing 5-second timeouts in SettingsScreen.test.tsx, which passes 50/50 in isolation."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:48:11",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Give DSH-style iteration (the fitting part of tool-ralph and today's acyclic-only restriction) an Aworkit-native form, using the visible bounded loop the design already specifies.\n",
+        "\n",
+        "Current state. The executable workflow contract rejects every cycle, so retry, refinement and feedback constructs cannot be authored even though the design's context/revision flow already models a visible bounded loop: evaluate a frozen exit condition at the loop header, admit another pass only within iteration/nesting/deadline/budget limits, and emit an explicit limit outcome on exhaustion. DSH's ralph is the counterpart, but its worker-self-reported completion does not fit Aworkit's frozen attempt/evaluator policy.\n",
+        "\n",
+        "Design fit.\n",
+        "- Add a frozen loop construct to the node catalog and validate_v1_executable_catalog: a loop header node plus one declared feedback edge enclosing an explicit subgraph. The graph stays finite and compiler-verifiable, while the enclosed region repeats under a frozen exit condition.\n",
+        "- Replace the blanket cycle rejection with region-aware validation: only edges declared inside the loop region may close it; undeclared back edges remain hard errors; every node stays reachable from the input; nested loops are permitted only where the limits controller admits them.\n",
+        "- Each iteration appends a new immutable context revision on the loop lineage (no shared mutable state); the loop records its frame and charges ancestor budgets. Exhaustion produces an explicit LimitExceeded outcome routed by the frozen failure/fallback edge, never a silent stop.\n",
+        "- Execution is deterministic and inspectable: run details show loop frame, iteration index, exit-condition evaluation and the limit ledger. The editor renders the loop header with an explicit exit-condition panel and keeps acyclicity diagnostics for undeclared cycles.\n",
+        "- Completion is decided only by the frozen exit condition/evaluator, never by a worker's self-report, and an iteration never replays a settled side effect.\n",
+        "\n",
+        "Non-goals. Unattended autonomous loops; unbounded iteration; loops that cross a Wait boundary or a Chat terminal state; DSH ralph's self-reported completion.\n",
+        "\n",
+        "Outputs. Loop construct contract; compiler/validator and editor updates; context-revision and limit integration with provenance; run-details evidence; and tests for exit conditions, iteration/nesting/budget/deadline exhaustion, undeclared-cycle rejection, determinism, and no-replay recovery inside a loop."
+      ]
+    },
+    "id": 116,
+    "number": 115,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Add bounded loop and feedback-edge constructs to the executable catalog",
+    "updated_at": "2026-09-23 14:09:58"
+  },
+  "deleted": false,
+  "identity": "20f9858c-12c5-8490-b0b1-6d20c28be6a0",
+  "schemaVersion": 1
+}

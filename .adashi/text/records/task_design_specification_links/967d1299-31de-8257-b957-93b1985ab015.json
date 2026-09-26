@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:29:36",
+    "design_external_id": "aworkit.portable_store.manifest_catalog",
+    "id": 151,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "42905767-b4a8-8b74-9af3-57f47cb08c24"
+    }
+  },
+  "deleted": false,
+  "identity": "967d1299-31de-8257-b957-93b1985ab015",
+  "schemaVersion": 1
+}

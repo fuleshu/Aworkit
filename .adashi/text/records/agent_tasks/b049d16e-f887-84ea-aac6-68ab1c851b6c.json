@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-workflow-worker/Cargo.toml\",\"crates/aworkit-workflow-worker/src/lib.rs\",\"crates/aworkit-workflow-worker/src/scheduler.rs\"]",
+    "completed_at": "2026-08-21 17:02:09",
+    "completion_memo": "Implemented deterministic graph-token scheduling and frozen routing. Tokens are admitted in stable order, transitions resolve by priority and stable ID, and declared loop bounds prevent extra iteration.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:26:22",
+    "created_files": "[\"crates/aworkit-workflow-worker/src/scheduler.rs\"]",
+    "description": "Implement the graph scheduler and classifier/route evaluator over the immutable execution plan. Admit runnable tokens, apply only committed outcomes, evaluate visible frozen rules, and choose legal transitions with deterministic ordering across conditions, branches, loops, waits, and joins.",
+    "id": 16,
+    "number": 16,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M03.3 — Implement deterministic scheduling and frozen routing",
+    "updated_at": "2026-09-21 14:56:16"
+  },
+  "deleted": false,
+  "identity": "b049d16e-f887-84ea-aac6-68ab1c851b6c",
+  "schemaVersion": 1
+}

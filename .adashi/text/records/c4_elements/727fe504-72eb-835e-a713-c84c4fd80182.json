@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements versioned built-in file/search/edit, shell, Python, and related low-level tools exactly in the mode named by the approved envelope. Project Files enforces configured roots with handle-based containment and symlink/reparse-point escape checks. Sandboxed Python runs only through a backend that verifies restricted mounts and network policy. Host Python and Host Shell are explicitly unrestricted desktop-user-authority modes; a working directory is never represented as a restriction.\n",
+        "Owned runtime state: per-invocation open handles, normalized command specification, scratch/artifact references, output byte counters, execution milestones, and cleanup registrations. Workspace contents are external side effects, not host state.\n",
+        "Versioned ports and contracts: BuiltInToolManifestV1, ToolInvocationV1, ProjectRootSetV1, PythonIsolationProfileV1, HostCommandSpecV1, ToolRawEventV1, and ToolEffectEvidenceV1 declare schemas, modes, side-effect/idempotency semantics, secret slots, limits, and platform support.\n",
+        "Failure and degraded behavior: root identity drift, containment ambiguity, unavailable real sandbox, unsupported platform behavior, output overflow, deadline, or launch failure fails closed. There is no silent downgrade from Project Files/Sandboxed Python to a host mode; after possible effects, cancellation or crash is classified honestly.\n",
+        "Security and authority: the runtime enforces only restrictions its selected mode can actually guarantee and cannot expand roots, commands, credentials, network access, or approvals beyond the envelope.\n",
+        "Observability, performance, and cross-platform behavior: bounded stdout/stderr streaming, command/file/artifact evidence with redaction, duration/byte/exit metrics, cancellable I/O, and separately tested Windows path/reparse/Job Object, Linux descriptor/process-group, and macOS filesystem/process behavior.\n",
+        "Non-responsibilities: no workflow tool selection, authority grant, automatic undo of workspace changes, retry decision, canonical artifact/history commit, or claim that host modes are sandboxed.\n",
+        "\n",
+        "Conversational tools (2026-09-21): Two built-in tools have no host side effect and are realised as Run suspensions rather than executors. tool.ask_user (authorityMode run_question) submits a typed question with one or more labelled options, an optional free-text allowance and an optional default, and tool.browse (authorityMode run_browse) asks the user to choose a file or a folder through the desktop's operating-system dialog. Both are frozen capabilities like any other tool: they appear in the manifest, Settings admission and the frozen binding, they are owner-scoped per Chat, idempotent by command id, excluded from the delegated-subagent selection, and they never expand authority or read the filesystem themselves. tool.browse returns the user's chosen absolute path, or cancelled: true when the user dismisses the dialog, in which case the model continues with a normal tool result rather than an error."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.tool_runtime",
+    "id": 54,
+    "name": "Built-In Tool Runtime & Authority-Mode Enforcer",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Tools,Authority Modes",
+    "technology": "Rust built-in tool executors using enforced filesystem and process ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "727fe504-72eb-835e-a713-c84c4fd80182",
+  "schemaVersion": 1
+}

@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "qa_job_id": {
+      "ref": "61217e4f-4e65-84a5-8e91-42829603dc96"
+    },
+    "tag": "capability-host"
+  },
+  "deleted": false,
+  "identity": "262420a0-62a7-8800-97e2-4ecbb19cafe9",
+  "schemaVersion": 1
+}

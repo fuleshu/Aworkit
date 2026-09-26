@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "design_external_id": "uml.portable_store.inert_import_rebind",
+    "id": 24,
+    "qa_job_id": {
+      "ref": "190df8f1-fa82-887c-b04d-c026a1be484f"
+    },
+    "sort_order": 3,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "9ef5fd3d-9977-874d-9201-0ce5a227b396",
+  "schemaVersion": 1
+}

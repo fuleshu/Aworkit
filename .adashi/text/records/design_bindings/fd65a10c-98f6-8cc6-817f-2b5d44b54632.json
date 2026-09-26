@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-15 09:08:28",
+    "design_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "id": 7,
+    "target": "desktop/src-tauri/src/runtime/service/concurrent.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-15 09:08:28",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fd65a10c-98f6-8cc6-817f-2b5d44b54632",
+  "schemaVersion": 1
+}

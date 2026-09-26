@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Proposes normalized transitions, evidence, terminal outcomes, and checkpoint boundaries with run, generation, sequence, node, and attempt identities",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.worker_scheduler.gateway",
+    "id": 121,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Bounded in-process proposal channel",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ead79cf7-d109-89fc-bc52-909d2fe4b922",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Forks scoped child revisions from selected parent material and integrates only a declared validated child result into a new parent revision",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_subagent.context",
+    "id": 131,
+    "source_external_id": "aworkit.workflow_worker.subagent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Child lineage and integration port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "86bf4955-23cc-8894-b765-7824d9bc0428",
+  "schemaVersion": 1
+}

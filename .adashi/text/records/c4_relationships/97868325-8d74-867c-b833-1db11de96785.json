@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Compiles resolved capabilities, scopes, budgets, credential references, and workspace roots into the immutable manifest and summary",
+    "destination_external_id": "aworkit.trusted_core.authority",
+    "external_id": "rel.core_snapshot.authority",
+    "id": 70,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust authority compilation port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "97868325-8d74-867c-b833-1db11de96785",
+  "schemaVersion": 1
+}

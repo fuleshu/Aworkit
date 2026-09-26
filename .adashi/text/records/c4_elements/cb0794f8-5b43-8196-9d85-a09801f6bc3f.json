@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements the sealed PortableHistoryCommitPort used by the trusted-core Canonical Event Committer. It verifies the ChatHistoryBindingV1 is PortableProject, prepares permitted artifacts and a bounded semantic segment/checkpoint, then atomically advances exactly one explicit branch head before returning a durable receipt.\n",
+        "Owned files/records and state: immutable HeadRecordV1 objects name BranchId, previousHeadRecordHash, headSegmentHash, checkpointHash, nextOrdinal, aggregateVersion, and CommitId; immutable head-claim records name expected and proposed head hashes; refs/<BranchId>.json is the small atomically replaced BranchHeadRefV1 commit point. In-memory per-branch serialization is only an optimization. CommitRequestV1 carries stable CommitId, expectedHeadRecordHash, expected aggregate version/ordinal, sanitized candidate events, prepared-artifact intents, and optional checkpoint; PortableCommitReceiptV1 returns exact hashes/cursor.\n",
+        "Ports: CommitBatch, CreateRootBranch, CreateChildBranchFromCheckpoint, ReadStream, ReadCheckpoint, ReadHead, and VerifyCommitIdentity. Mutating methods are crate-private to the authenticated core repository adapter; recovery uses a separate read-only PortableRecoveryReadPort. No worker, capability host, plugin, or UI port exists.\n",
+        "Atomicity and crash behavior: all immutable objects and a new HeadRecord/head claim are fsynced first; under the workspace adapter's branch-scoped expected-head guard, the coordinator rechecks the current ref and atomically replaces/fsyncs it. The durable head ref is the commit point. A crash before it yields no acknowledgement and only unreachable candidates; after it, the stable CommitId/head hashes make an ambiguous response verifiable and idempotent. The core sends CoreCommittedAckV1 only from the returned durable receipt.\n",
+        "Branch conflicts: expected-head mismatch or multiple Git-synchronized child claims returns ConcurrentContinuationV1 with the common checkpoint and all verified tips. It never appends after the winner, uses timestamps, or silently merges. The trusted core must explicitly create a child Chat/Run/session and BranchId linked to that checkpoint; re-encoded events then commit on that branch.\n",
+        "Security/NFRs: fail closed on disk-full, partial durability, binding/root drift, policy rejection, corruption, or unsupported format; enter inspectable read-only mode where needed. Target bounded commit latency, configurable fsync durability, streaming payloads, stable metrics, and no duplicate local canonical history.\n",
+        "Normative incremental parity: PortableProject accepts the same bounded semantic microbatches, hierarchical SpanStarted/ContentDelta/terminal events, stable EventId/SpanId/ParentSpanId, causation links, and checkpoint throughSequence contract as LocalSqlite. Frequent small content-delta commits atomically create an immutable segment/head and return a durable sequence receipt before publication. It validates the same span lifecycle invariants and never stores a reduced activity snapshot in place of committed envelopes. Snapshot/checkpoint state is a verified projection throughSequence; replay and delta reads return exact committed events. Raw provider frames remain noncanonical. Batch/segment bounds and backpressure apply equally, while the 50 ms coalescing target is owned upstream rather than by filesystem code.\n",
+        "\n",
+        "Non-responsibilities: no choice between LocalSqlite and PortableProject, authority/rebind decisions, worker acknowledgement directly, event synthesis, Git commit/push, or side-effect execution/replay."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.commit_coordinator",
+    "id": 76,
+    "name": "Atomic Portable Commit, Branch Head & Checkpoint Coordinator",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Canonical Write,Atomic,Branching",
+    "technology": "Rust repository facade with expected-head CAS, immutable objects, atomic ref replacement, and fsync",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cb0794f8-5b43-8196-9d85-a09801f6bc3f",
+  "schemaVersion": 1
+}

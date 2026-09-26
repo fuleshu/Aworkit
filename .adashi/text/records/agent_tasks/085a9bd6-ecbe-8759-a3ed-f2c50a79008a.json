@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/committer.rs\"]",
+    "completed_at": "2026-08-21 17:13:35",
+    "completion_memo": "Implemented the core-only CanonicalCommitter LocalSqlite route, enforcing one history binding per Chat and delegating atomic ordered event/checkpoint/dedup/outbox commits to the local-store commit adapter. Pending delivery is observable only after commit. cargo test -p aworkit-trusted-core passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:27:31",
+    "created_files": "[\"crates/aworkit-trusted-core/src/committer.rs\"]",
+    "description": "Implement the Canonical Event Committer's LocalSqlite path over the atomic commit adapter. Enforce exactly one history binding per Chat, stable event ordering, command/invocation deduplication, checkpoint identity, and durable worker/UI delivery outboxes before acknowledgement.",
+    "id": 24,
+    "number": 24,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M04.4 — Implement canonical local event routing and delivery outboxes",
+    "updated_at": "2026-09-21 14:57:04"
+  },
+  "deleted": false,
+  "identity": "085a9bd6-ecbe-8759-a3ed-f2c50a79008a",
+  "schemaVersion": 1
+}

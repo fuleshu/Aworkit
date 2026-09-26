@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses anchored no-follow file handles, symlink, reparse and mount checks, whole-bundle and provenance hashing, same-volume immutable publication, file and directory sync, and exact open-object revalidation for initial, active, candidate, and previous slots",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.bootstrap.slots.os.filesystem_identity",
+    "id": 290,
+    "source_external_id": "aworkit.bootstrap_helper.build_slots",
+    "tags": "Relationship,Platform Contract,Filesystem,Integrity",
+    "technology": "Platform filesystem identity, hashing, durable sync, and atomic directory APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "054b80dd-c73c-85ef-adc8-7584df20cc3e",
+  "schemaVersion": 1
+}

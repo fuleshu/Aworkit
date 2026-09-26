@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Parses bounded inert repository/session/branch/snapshot manifests, negotiates format and required features, and preserves compatible unknown fields without publishing or activating them",
+    "destination_external_id": "aworkit.portable_store.manifest_catalog",
+    "external_id": "rel.portable.import.manifest",
+    "id": 252,
+    "source_external_id": "aworkit.portable_store.import_quarantine",
+    "tags": "Relationship,Internal Portable Contract,Import",
+    "technology": "Read-only PortableCatalogPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a2a5d641-6a14-8921-988a-4fce7df30ec7",
+  "schemaVersion": 1
+}

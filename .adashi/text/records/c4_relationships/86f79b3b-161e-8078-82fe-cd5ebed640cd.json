@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Under the shared journal single-flight fence, routes PrepareManagedLocalEnrollment for a bounded local enrollment request or starts and recovers the single admitted activation only after the baton and BootstrapCommandV1 are authenticated, generation-fenced, legal for the durable transaction phase, and durably acknowledged",
+    "destination_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "external_id": "rel.bootstrap.protocol.coordinator",
+    "id": 296,
+    "source_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "tags": "Relationship,Internal,Enrollment,Activation,Generation Fence",
+    "technology": "ActivationControlPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "86f79b3b-161e-8078-82fe-cd5ebed640cd",
+  "schemaVersion": 1
+}

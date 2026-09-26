@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\"]",
+    "completed_at": "2026-08-22 06:26:32",
+    "completion_memo": "Implemented inert bounded manifest parsing, exact version/hash/generation pinning, a bounded framed language-neutral protocol, supervised persistent subprocess lifecycle, scrubbed environment and process-group cleanup, watchdog/health/restart/disable/drift/cancel/shutdown behavior, persistent crash budgets, bounded settlement retention, and no replay after ambiguous dispatch. Critical verification passed: 13 plugin tests including real Python subprocess fixtures plus Adashi QA job #9 / run #25.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:04",
+    "created_files": "[\"crates/aworkit-capability-host/src/plugin/mod.rs\",\"crates/aworkit-capability-host/src/plugin/manifest.rs\",\"crates/aworkit-capability-host/src/plugin/protocol.rs\",\"crates/aworkit-capability-host/src/plugin/lifecycle.rs\",\"crates/aworkit-capability-host/src/plugin/process.rs\",\"crates/aworkit-capability-host/tests/milestone_09_plugin.rs\",\"crates/aworkit-capability-host/tests/fixtures/plugin_protocol_fixture.py\"]",
+    "description": "Implement parse-before-execution manifests and the language-neutral trusted plugin subprocess protocol for explicitly enabled, compatible, exact-version contributions. Add bounded handshake, invocation, health, crash, restart, disable, update/drift handling, and truthful disclosure that same-user trusted plugins are not security sandboxes.",
+    "id": 58,
+    "number": 58,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.3 — Implement trusted plugin subprocess lifecycle",
+    "updated_at": "2026-09-22 07:17:12"
+  },
+  "deleted": false,
+  "identity": "f952b111-9694-8367-9a2f-41c0a7aef433",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Stores/retrieves credential values through platform credential services and uses protected memory. Only opaque references and audit facts leave the broker",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.core_secret.os.credentials",
+    "id": 97,
+    "source_external_id": "aworkit.trusted_core.secret_broker",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "OS credential-store APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c38730ea-145f-883d-94c1-a64e84c6db24",
+  "schemaVersion": 1
+}

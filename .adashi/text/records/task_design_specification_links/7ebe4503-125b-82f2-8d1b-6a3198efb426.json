@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:27:31",
+    "design_external_id": "aworkit.local_store.commit_adapter",
+    "id": 104,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "085a9bd6-ecbe-8759-a3ed-f2c50a79008a"
+    }
+  },
+  "deleted": false,
+  "identity": "7ebe4503-125b-82f2-8d1b-6a3198efb426",
+  "schemaVersion": 1
+}

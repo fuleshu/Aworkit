@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Discovers and validates existing/synchronized portable repository candidates strictly as inert data, isolates invalid or unsupported branches, and returns a verified read handle plus diagnostics without installing, enabling, loading, or running any referenced capability or artifact.\n",
+        "Owned noncanonical records: QuarantineReportV1 keyed by opaque ImportId records candidate root identity, format verdict, limits, hash/schema/forbidden-field findings, lineage graph, concurrent tips, affected branch IDs, and safe remediation guidance. Reports may live under the export-excluded .maintenance/quarantine area; candidate bytes are not copied into execution locations and quarantine never becomes canonical history.\n",
+        "Validation pipeline and DTOs: InspectImport validates safe anchored layout and quotas; negotiates format/required features; verifies manifest/snapshot/segment/checkpoint/artifact exact-byte hashes; schema-validates known records; checks ChatId=RunId=SessionId, unique IDs, contiguous ordinals, parent/head/checkpoint lineage, cycles, dangling references, duplicate event identity, and forbidden portable content; then emits VerifiedPortableBranchHandleV1, InspectOnlyPortableBranchV1, or QuarantinedPortableBranchV1. Git-produced sibling head claims are reported as explicit alternatives, never merged by time.\n",
+        "Degradation: a newer major/required feature, unknown required event, or missing local implementation permits bounded raw/manifest inspection but blocks semantic projection and continuation. Unknown optional events are preserved as opaque verified records with an unsupported marker. Corruption quarantines only affected reachable branches where isolation is provable; missing files remain visible. No repair is applied implicitly.\n",
+        "Security/NFRs: parsing is streaming and size/depth/count bounded; archive extraction, executable deserialization, dynamic linking, plugin discovery execution, network fetch, and artifact launch are forbidden. Fuzzing covers hostile JSONL, path graphs, hash bombs, cycles, and Unicode/case edge cases.\n",
+        "Non-responsibilities: no canonical-backend selection, branch continuation, local binding choice, authority/approval inheritance, code installation, side-effect replay, Git merge/commit/push, or rewriting imported bytes."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.import_quarantine",
+    "id": 80,
+    "name": "Inert Import Validator & Quarantine",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Import,Quarantine,Security",
+    "technology": "Rust bounded parser and lineage/hash validator producing inert verified or quarantined handles",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "037a9e0f-9106-8aeb-90a0-ba863fd8283c",
+  "schemaVersion": 1
+}

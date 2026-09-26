@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns trusted-extension installed-version records and contribution identity, verifies manifest/integrity/compatibility facts, distinguishes missing from incompatible or disabled requirements, and attests host process generations before use.\n",
+        "Owned state: ExtensionRecordV1 with stable extensionId, version, manifest schema, Aworkit compatibility range, entry point, contribution descriptors, configuration schema, dependency/provenance facts, content hash/signature status where available, enabled state, and last attested host generation.\n",
+        "Public commands/events and ports: DiscoverManifestsInert, RegisterInstalledExtension, EnableExtension, DisableExtension, RemoveRecord, ResolveContribution, VerifyIntegrity, CheckCompatibility, PinForSnapshot, and AttestHostHandshake; emits ExtensionInventoryChangedV1 and CompatibilityChangedV1 without executing code.\n",
+        "Invariants: discovery and workflow import are inert; installation and enabling are separate explicit decisions. Enabled third-party code is trusted with desktop-user OS authority and may bypass mediated brokers; subprocess isolation is not described as security isolation. Each Run pins exact identity/version/hash, and an update is new trusted code. Unknown workflow nodes remain losslessly preserved and inactive.\n",
+        "Transactional and failure behavior: inventory updates use expected versions and atomic manifest/hash records. Hash/identity mismatch, incompatible protocol, disappeared entry point, or failed handshake quarantines the contribution and blocks new dispatch without mutating existing workflow JSON. A running pinned version is never silently substituted.\n",
+        "NFRs: deterministic compatibility resolution, fast indexed lookup, bounded discovery without execution, hash/provenance audit trail, cross-platform path handling, and clear diagnostics.\n",
+        "Non-responsibilities: no plugin marketplace/automatic install, code execution, sandbox enforcement, capability authorization, secret distribution, or workflow rewriting."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.extension_registry",
+    "id": 36,
+    "name": "Extension Identity, Integrity & Compatibility Registry",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Extensions,Integrity",
+    "technology": "Rust manifest registry, hash verifier, compatibility resolver, and process attestation",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "863015b4-ad72-8d85-9f93-83a46403726b",
+  "schemaVersion": 1
+}

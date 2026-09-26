@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates bounded tasks and maps native lifecycle behavior to declared Aworkit capabilities",
+    "destination_external_id": "ext.external_agents",
+    "external_id": "rel.host.agents",
+    "id": 15,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship",
+    "technology": "Codex App Server stdio / ACP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bc014f1a-040a-89ed-b34b-203399cc6491",
+  "schemaVersion": 1
+}

@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-15 09:42:46",
+    "design_external_id": "aworkit.trusted_core.invocation_broker",
+    "id": 16,
+    "target": "desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-15 09:42:46",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9e558d8f-42aa-8f0b-8be0-49dd9c54e5d0",
+  "schemaVersion": 1
+}

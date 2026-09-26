@@ -1,0 +1,53 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/worker.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/approval_control.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/tests.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/approval_control.rs\",\"desktop/src/chat/types.ts\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/conversation.ts\",\"desktop/src/chat/workspace.ts\",\"desktop/src/chat/composer.ts\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/App.tsx\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-21 19:37:04",
+    "completion_memo": {
+      "lines": [
+        "Implemented the model-facing ask_user tool over the existing suspension contract, presented as a proper modal UI dialog.\n",
+        "\n",
+        "Core. `tool.ask_user` and `tool.browse` are frozen native capabilities (`CapabilityKind::{AskUser, Browse}`, `authorityMode` `run_question`/`run_browse`, provider names `ask_user`/`browse`) admitted in Settings and in the frozen binding, side-effect free, owner-scoped per Chat, idempotent by command id, and excluded from the delegated-subagent selection. A question reuses the whole approval suspension rather than adding a channel: `ToolApprovalChallengeV1` and `GraphApprovalRequestV1` carry an optional question, the pass reports `GraphPassStatusV1::AwaitingAnswer`, the pipeline reports `WorkflowExecutionStatusV1::AwaitingAnswer`, and the service commits `question.asked` and the durable `awaiting_answer` phase. The question tools never reach an executor: the tool loop suspends with the question when no answer is recorded and settles the same call from the recorded answer afterwards, so an answer is delivered exactly once, a replayed resume re-delivers the committed outcome, a different answer is refused, and an unanswered question is never answered by a message, retry, restart or default. `resume_question` records the answer before resuming and reuses the approval resume body through a shared `commit_resumed_result`; `recover_committed_approval` was made reachable for the replay. Cancelling records `question.cancelled` and the model receives `cancelled: true` as an ordinary tool result.\n",
+        "\n",
+        "Desktop. `question.asked`/`answered`/`cancelled` project into a `question` timeline card that keeps the prompt, the offered options and the answer, and the workspace raises a modal `<dialog>` (native element, so backdrop, focus trap, Escape and focus restoration come from the platform) for the unanswered question. Dismissing it leaves the card answerable and it never re-opens on its own; it closes when the answer commits. Answer and Skip dispatch a typed `question` intent. While the Run is `awaiting_answer` the composer disables ordinary send and queue, keeps the draft, and offers Stop.\n",
+        "\n",
+        "Verification. Rust 403 passed with only the pre-existing `checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node` failure; four new pipeline tests cover the suspension shape and kind, the answer reaching the model once, the replay, a refused different answer, unknown and foreign question ids, the offered-option check, the cancelled question as an ordinary result and the chosen path. TypeScript `tsc --noEmit` clean; eight dialog tests and four workspace tests cover the dialog's labels, options, free text, declared default, skip, decide-later, rejected-answer state and the workspace auto-open, durable card, answer dispatch, dismissal and close-on-commit. Full vitest shows only the known pre-existing and load-flaky failures. The design model records the question reason, events, dialog, `awaiting_answer` phase and tool matrix; `docs/subagent-tool-inheritance.md` documents the feature."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:57",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/question.rs\",\"desktop/src-tauri/src/runtime/pipeline/question_control.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/question.rs\",\"desktop/src/chat/question.ts\",\"desktop/src/chat/question.css\",\"desktop/src/chat/QuestionDialog.tsx\",\"desktop/src/chat/QuestionDialog.test.tsx\",\"desktop/src/chat/questionWorkspace.test.tsx\"]",
+    "description": {
+      "lines": [
+        "Add the DSH tool-ask-user equivalent as a suspension-based question that reuses Aworkit's suspension and approval machinery instead of inventing a second interactive channel.\n",
+        "\n",
+        "Current state. Aworkit has durable approval requests, Wait-for-Input suspension with deduplicated resume, and a composer, but no model-facing way to ask the user a question. Today a model must answer from assumption or end its turn.\n",
+        "\n",
+        "Design fit.\n",
+        "- tool.ask_user submits a typed question (prompt, 1..n labelled options, optional free-text allowance, optional default) and suspends the Run with a new SuspensionReason::Question; the committed suspension is a QuestionAskedV1 event on the Chat stream.\n",
+        "- The composer/conversation presents the question as a typed card; the user's answer commits QuestionAnsweredV1 and is consumed exactly once on resume, producing one context revision with provenance (the same dedup and resume-once contract as Wait-for-Input). Cancelling or ending the Chat records QuestionCancelledV1 and follows the existing cancellation path.\n",
+        "- The tool is a normal frozen capability with authorityMode \"run_question\", owner-scoped per Chat, idempotent by command id, and no side effect. It appears in the frozen tool matrix and as a timeline card.\n",
+        "- Plan review reuses this suspension for its decision where the question is the approve/reject choice, so the product has exactly one way to interrupt a Run for a user decision.\n",
+        "- No-replay: recovery restores the committed waiting frontier; an unanswered question never auto-answers, never expires into a retry, and never silently defaults.\n",
+        "\n",
+        "Agreed interface (confirmed 2026-09-21). The question is a proper modal UI dialog, not only an inline composer card. A committed question renders twice from one projection: a selectable `question` timeline card that keeps the prompt, options, chosen answer and terminal outcome visible in chronology, and a modal dialog that is the focused answering surface. The dialog uses role=dialog with aria-modal, a labelled heading, a focus trap, Escape precedence after nested controls, and focus restoration; it opens when an unanswered question arrives, can be dismissed without answering while leaving the card answerable later, never renders a stale question, never reopens an answered or cancelled one, and never blocks Run details inspection. The Run sits in a new `awaiting_answer` phase in which the composer disables ordinary send and queue and keeps the unsent draft; the answer can never be given by typing a normal message. The same dialog family presents a path question for the sibling browse capability (task 121), which uses the operating system's own file or folder chooser.\n",
+        "\n",
+        "Non-goals. Unsolicited host notifications; questions asked outside an active Run; a parallel prompt UI.\n",
+        "\n",
+        "Outputs. Tool manifest entry, schema, Settings admission and frozen binding; question suspension reason, event family and reducer; a `question` timeline card plus the modal dialog with answer controls, option group, optional free text, default marking, Skip, and keyboard accessibility; the awaiting_answer phase and composer behavior; resume-once typing; and tests for answer, cancellation, resume after restart, owner isolation, single consumption of the answer, dialog a11y, and no auto-answer."
+      ]
+    },
+    "id": 114,
+    "number": 113,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Add a model-facing ask_user question tool over the suspension contract",
+    "updated_at": "2026-09-21 19:37:04"
+  },
+  "deleted": false,
+  "identity": "8240de77-b77b-87c0-89c0-e750cbc1c794",
+  "schemaVersion": 1
+}

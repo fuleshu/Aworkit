@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.worker_recovery.context",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "bacdfc2a-d5f9-8c1a-ad50-98359c1a6690",
+  "schemaVersion": 1
+}

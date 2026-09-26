@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/App.tsx\",\"desktop/src/styles.css\",\"desktop/src/adapters/contracts.ts\",\"desktop/src/adapters/defaultAdapters.ts\"]",
+    "completed_at": "2026-08-21 18:12:54",
+    "completion_memo": "Implemented the persistent desktop workbench shell: navigation order, accepted compact pane geometry, responsive inspector drawer, keyboard-visible focus, status, accessible controls, and native-presentation facade integration point.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:30:38",
+    "created_files": "[]",
+    "description": "Implement the persistent desktop navigation order, routing, resizable/collapsible panes, inspector drawer breakpoints, shortcuts, connection/stale banners, and focus restoration to the accepted geometry. Define the narrow Aworkit native-presentation port and accessible in-workbench fallbacks for menus, dialogs, and notifications; native OS bindings are owned by M12.4.",
+    "id": 46,
+    "number": 46,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M07.3 — Implement the desktop shell, navigation, panes, and native-presentation port",
+    "updated_at": "2026-09-22 07:14:36"
+  },
+  "deleted": false,
+  "identity": "6191aca9-7b00-865f-8473-2b4db4519127",
+  "schemaVersion": 1
+}

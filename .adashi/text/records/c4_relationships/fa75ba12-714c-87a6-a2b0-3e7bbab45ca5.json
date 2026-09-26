@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads verified local semantic events/checkpoints incrementally or from sequence 1 to rebuild disposable views; never reads uncommitted rows or writes canonical state",
+    "destination_external_id": "aworkit.local_store.semantic_ledger",
+    "external_id": "rel.local_store.query_projections.semantic_ledger",
+    "id": 223,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Internal,Read Only,Disposable",
+    "technology": "LocalHistoryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fa75ba12-714c-87a6-a2b0-3e7bbab45ca5",
+  "schemaVersion": 1
+}

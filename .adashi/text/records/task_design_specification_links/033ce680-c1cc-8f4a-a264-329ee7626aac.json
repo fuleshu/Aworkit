@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 00:15:38",
+    "design_external_id": "aworkit.portable_store.commit_coordinator",
+    "id": 8,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "c0f1e28f-d6f5-8145-81dc-aa6995ec137e"
+    }
+  },
+  "deleted": false,
+  "identity": "033ce680-c1cc-8f4a-a264-329ee7626aac",
+  "schemaVersion": 1
+}

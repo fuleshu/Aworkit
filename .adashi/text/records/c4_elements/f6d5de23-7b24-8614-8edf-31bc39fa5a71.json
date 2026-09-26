@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Opens or creates an opt-in portable repository only beneath a trusted-core-resolved project root; negotiates reader/writer compatibility; and catalogs immutable Chat/session, branch-lineage, frozen portable snapshot, and provenance manifests without treating discovery as activation.\n",
+        "Owned files/records and identities: repository.json contains PortableRepositoryManifestV1 and FormatVersionV1(family, major, minor, requiredFeatures, hashAlgorithm); sessions/<SessionId>/session.json contains PortableSessionManifestV1; snapshots/sha256/<digest>.json contains PortableFrozenSnapshotV1; branches/<BranchId>/branch.json contains immutable BranchManifestV1 and ParentLineageV1. ChatId, RunId, and SessionId are the same opaque stable identifier; BranchId is opaque and never time-ordered. All content addresses use the explicit sha256:<lowercase-hex> form. Parent lineage names the source SessionId, BranchId, checkpoint hash, and segment/head-record hash.\n",
+        "Ports/DTOs: exposes PortableCatalogPort(OpenRepository, CreateSession, CreateChildBranch, ReadSession, ReadBranch, ReadFrozenSnapshot, EnumerateBranches, NegotiateFormat) to trusted-core coordinators and internal validators. Creation requires a resolved PortableProject binding and expected absence; reads return immutable DTOs plus a CompatibilityVerdictV1.\n",
+        "Atomicity, conflicts, and degradation: manifests and snapshots are canonicalized, hashed, create-new written through a same-directory temporary file, fsynced, atomically renamed, and directory-fsynced. An existing identical object is idempotent; an ID collision with different bytes fails closed. Unknown major versions or required features are inspect-only; compatible minor unknown fields are retained byte-semantically. No migration rewrites published objects.\n",
+        "Portability, security, and NFRs: deterministic UTF-8 paths and records, bounded/cancellable enumeration, case-collision detection, and Windows/Linux/macOS fixtures. The catalog contains logical capability requirements and redacted provenance only—never credential values, inherited approvals, machine-local authority, debug capture, or executable plugin code.\n",
+        "Non-responsibilities: no semantic event append, branch-head advance, capability rebinding decision, authority grant, projection indexing, Git staging/commit/push, or timestamp-derived ordering."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.manifest_catalog",
+    "id": 73,
+    "name": "Portable Session Manifest Catalog & Format Negotiator",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Manifest,Format,Lineage",
+    "technology": "Rust catalog service over schema-versioned canonical JSON and content-addressed snapshots",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f6d5de23-7b24-8614-8edf-31bc39fa5a71",
+  "schemaVersion": 1
+}

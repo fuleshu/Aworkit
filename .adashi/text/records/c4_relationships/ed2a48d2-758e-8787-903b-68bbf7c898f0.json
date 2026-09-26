@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Creates workflows, configures capabilities, runs Chats, responds to approvals, and inspects evidence",
+    "destination_external_id": "aworkit.desktop_ui",
+    "external_id": "rel.user.ui",
+    "id": 1,
+    "source_external_id": "actor.desktop_user",
+    "tags": "Relationship",
+    "technology": "Desktop interaction",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ed2a48d2-758e-8787-903b-68bbf7c898f0",
+  "schemaVersion": 1
+}

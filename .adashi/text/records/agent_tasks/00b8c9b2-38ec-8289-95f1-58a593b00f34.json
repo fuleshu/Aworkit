@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/repository.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/dto.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/main.rs\"]",
+    "completed_at": "2026-08-24 11:09:20",
+    "completion_memo": "Implemented the native workflow library and the generalized v1 executability validation. CanonicalDocuments now holds a catalog of schema-versioned workflow documents with version-checked create/rename/duplicate/delete/set-default operations (DocumentRepository gained a CAS delete), a secret-free workflow-library configuration document for the per-profile default, and seeding of workflow.simple-chat plus workflow.standard-agent (input → model_call plan → agent with the full built-in tool set → output → wait). Fresh profiles default to Standard Agent; upgraded profiles keep Simple Chat. validate_v1_executable_catalog implements the closed v1 executable contract: known node catalog (input/agent/model_call/tool/condition/parallel/approval/output/wait/completion), per-type configuration contracts, declared-port validation, exactly-one input, wait/completion terminals, cycle rejection, full reachability, and condition true/false/fallback route labels; unknown node types remain lossless for save but block execution. Tool bindings are checked against the built-in id set with mcp: prefix support. Saves stay lossless (structural validation only) matching the existing contract. DELIBERATE SEQUENCING: accepting arbitrary saved workflow ids in the chat start command is deferred to W3 because the graph interpreter does not exist yet; enabling it now would violate fail-closed execution. Verification: documents tests 21/21, full desktop suite 132/134 with the two failures pre-existing in the uncommitted settings_v2/extension_inspection work (Windows path semantics + MCP contract), to be fixed in the W4/W6 tool work. New Tauri commands workflow_library/create/duplicate/delete/rename/set_default plus optional workflowId on workflow_snapshot/workflow_commit are exported and compile-clean.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-24 10:52:22",
+    "created_files": "[\"docs/design-extension-standard-agent-v1.md\"]",
+    "description": "Native workflow library and generalized v1 executability. Replace the single stored workflow with a catalog of schema-versioned workflow documents (list/create/rename/duplicate/delete/set-default, version-checked commits, lossless preservation). Seed workflow.simple-chat and workflow.standard-agent (input → model_call plan → agent with the full tool set → output → wait) on first open; keep the existing defaultWorkflowId setting honored. Generalize the native validator from the exact 4-node Simple Chat check to the full v1 executable node catalog (node types, typed ports, cycle detection, condition route labels, per-node configuration contracts, tool binding rules including approval classes). The chat start command must accept any saved executable workflow id, freezing the selected document at first input. Keep Simple Chat behavior byte-compatible for existing tests. Output: working catalog CRUD, seeding, generalized validation, chat start by workflow id, and Rust tests.",
+    "id": 81,
+    "number": 80,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "W2 — Workflow library and generalized v1 workflow executability validation",
+    "updated_at": "2026-09-22 07:22:40"
+  },
+  "deleted": false,
+  "identity": "00b8c9b2-38ec-8289-95f1-58a593b00f34",
+  "schemaVersion": 1
+}

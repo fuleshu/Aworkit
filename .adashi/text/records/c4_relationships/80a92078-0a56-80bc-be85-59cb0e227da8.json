@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Challenges each host generation for expected protocol and contribution identity/hash before snapshots pin or invocations target it",
+    "destination_external_id": "aworkit.capability_host",
+    "external_id": "rel.core_extensions.host.attestation",
+    "id": 104,
+    "source_external_id": "aworkit.trusted_core.extension_registry",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned local attestation RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "80a92078-0a56-80bc-be85-59cb0e227da8",
+  "schemaVersion": 1
+}

@@ -1,0 +1,35 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements the only native desktop-facing port, translates schema-versioned Tauri messages into Aworkit-owned commands/queries, returns transport receipts, and streams snapshots plus ordered committed events to the UI Projection Gateway.\n",
+        "Owned state: ephemeral connection/subscription generations, schema registry, bounded in-flight command map, and backpressure cursors; canonical command outcomes and projections are rebuilt from committed state.\n",
+        "Public commands/events and ports: accepts UiCommandV1 and ProjectionQueryV1 envelopes carrying commandId, expected target version, correlation, and typed payload; returns CommandReceiptV1, CommandRejectedV1, ProjectionSnapshotV1, ProjectionDeltaV1, and CoreEventEnvelopeV1. Dispatches Chat, workflow/configuration, credential, extension, approval, repair, evidence, and health intents to narrow core services.\n",
+        "Normative committed-stream contract: SubscribeCommitted(afterSequence) asynchronously sends only exact committed envelopes after the cursor. ProjectionSnapshot contains throughSequence, reducerVersion, stateHash, and reduced open/closed span state through that sequence; ProjectionDelta contains the exact missing committed envelopes. Live delivery is not a second event system and never substitutes a provisional event. A gap or reconnect recovers by exact delta or snapshot plus exact tail. Commit-to-delivery targets sub-100 ms feedback on supported local storage.\n",
+        "\n",
+        "Invariants: only Aworkit DTOs cross the boundary; provider-, Rig-, database-, and OS-native types never cross it. Envelope acceptance is not domain success. The UI cannot invoke a capability, receive a secret, grant authority beyond a core decision, or commit state through this port.\n",
+        "Transactional and failure behavior: rejects malformed, unknown-version, stale-target, and oversized messages before delegation; same commandId is safe to resubmit and resolves through the durable command/event ledger. A gap or reconnect requires snapshot/delta resynchronization; slow subscribers are disconnected with a resumable cursor rather than blocking commits.\n",
+        "NFRs: target sub-50 ms validation/receipt latency, bounded memory, cancellation, structured diagnostics without sensitive payloads, and cross-platform Tauri parity.\n",
+        "Non-responsibilities: no view state, workflow execution, authority policy, persistence implementation, secret storage, or privileged side effects.\n",
+        "\n",
+        "Concurrent desktop Chats (2026-09-15): Capture the explicit command target, reserve that Chat and execute in a blocking worker after releasing the coordinator lock. Queries, Settings, New Chat and selection stay available. Snapshots optionally address a Chat and otherwise resolve selected Chat. Project active Chat IDs and activity into history. Navigation and pinning use index semantics, independent of streaming Chat versions. Reject destructive/context-changing mutations only for an actively owned target. Late completion never changes selection.\n",
+        "\n",
+        "Responsive windowed Chat loading (2026-09-16): Open only a bounded recent contiguous range of canonical events; fetch older ranges on upward scrolling. A window states its first sequence, head, and older-page cursor. Exact supporting events hydrate spans crossing the range boundary and their ancestors; they are explicitly separate from the contiguous range and never imply that omitted history was loaded. Preserve canonical IDs, payloads, duplicate/conflict validation, cursor fences, and immutable evidence. Render only activities belonging to the loaded range. Live delivery extends its head; gaps recover the exact missing tail. Navigation immediately selects a Chat shell with a local busy indicator, independently of persistence and data loading. Fence every result by Chat and navigation generation; stale loads cannot replace selection. Preserve drafts and scroll anchors when prepending. Queries, loading, schema upgrades and database access run on workers; never wait on the native UI thread. Long queries release the shared command coordinator and use independent read connections. Keep navigation and other Chats usable during all loading."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.desktop_api",
+    "id": 26,
+    "name": "Desktop Command & Event API",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,IPC,Boundary",
+    "technology": "Rust Tauri command handlers, runtime schemas, async event streams",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1b107682-4c7c-8831-b863-ae0a843e7055",
+  "schemaVersion": 1
+}

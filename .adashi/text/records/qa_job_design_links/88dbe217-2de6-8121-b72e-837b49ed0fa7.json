@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "design_external_id": "uml.trusted_core.invocation_authority_commit",
+    "id": 17,
+    "qa_job_id": {
+      "ref": "61217e4f-4e65-84a5-8e91-42829603dc96"
+    },
+    "sort_order": 0,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "88dbe217-2de6-8121-b72e-837b49ed0fa7",
+  "schemaVersion": 1
+}

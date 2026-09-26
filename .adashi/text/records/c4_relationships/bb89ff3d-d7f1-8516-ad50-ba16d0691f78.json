@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Queries build-origin, enrollment, and runtime eligibility before exposing activation; for EnrollmentRequired, submits only a bounded ManagedLocalEnrollmentRequestV1 and receives EnrollmentPreparedV1; after canonical acknowledgement of explicit activation approval and complete disclosure, submits a baton bound to the fresh Supported capability generation, candidate and previous hashes, checkpoint, rollback point, and verification plan. The helper returns Unsupported before quiescence if any guarantee changed",
+    "destination_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "external_id": "rel.core_repair.bootstrap.protocol",
+    "id": 286,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Boundary Contract,Repair,Authenticated,Durable Gate",
+    "technology": "BootstrapProtocolPortV1 over one-shot OS-authenticated local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bb89ff3d-d7f1-8516-ad50-ba16d0691f78",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Opens or initializes the user-opted-in repository, negotiates format, and reads/creates immutable logical session metadata under expected versions; it never mirrors an existing Chat into both SQLite and portable history or appends events",
+    "destination_external_id": "aworkit.portable_store.manifest_catalog",
+    "external_id": "rel.core_project_config.portable.manifest",
+    "id": 269,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract,Repository Coordination",
+    "technology": "PortableCatalogPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ad4b7e61-fdf1-8c3d-b3dd-2011c357ef97",
+  "schemaVersion": 1
+}

@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-22 21:32:13",
+    "design_external_id": "aworkit.desktop_ui.settings",
+    "id": 79,
+    "target": "desktop/src/workbench/settings-v2/DesktopSection.tsx",
+    "target_type": "file",
+    "updated_at": "2026-09-22 21:32:13",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dbc7030e-f9f5-8660-ab7a-d3450a56b1ef",
+  "schemaVersion": 1
+}

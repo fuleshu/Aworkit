@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses credentials, native lifecycle, dialogs, filesystem identity, and supervised process-tree primitives",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.core.os",
+    "id": 11,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship",
+    "technology": "Platform APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d561894f-1b62-8697-ba20-cb760bb7fdb4",
+  "schemaVersion": 1
+}

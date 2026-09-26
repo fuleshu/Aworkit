@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.trusted_core.invocation_broker|file|desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-17 16:44:29",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "245a6cd3-0ede-8a1d-9c01-7b7c5d7162b1",
+  "schemaVersion": 1
+}

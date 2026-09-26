@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:45:58",
+    "design_external_id": "aworkit.local_store.error_repair_ledger",
+    "id": 357,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "27be3823-25a6-8b53-ab6d-2931f1532b04"
+    }
+  },
+  "deleted": false,
+  "identity": "866db3fb-bdb0-8676-bfc4-79ca03a81b8c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Verifies manifest/content hashes, stages unknown-field-preserving schema migrations, and includes accepted JSON generations in crash-consistent backup/restore",
+    "destination_external_id": "aworkit.local_store.config_repository",
+    "external_id": "rel.local_store.storage_coordinator.config_repository",
+    "id": 233,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "ConfigurationMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "efb6ece2-a4f4-8f64-a25f-339e853fb057",
+  "schemaVersion": 1
+}

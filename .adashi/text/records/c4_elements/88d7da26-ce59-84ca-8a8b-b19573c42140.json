@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Stores Aworkit-produced artifact evidence as ordinary local files with transactionally referenced metadata. Content is prepared durably before a semantic event may reference it, allowing SQLite commit to be authoritative while an interrupted prepare leaves only safe orphan cleanup.\n",
+        "Owned records/files: content objects under hash-partitioned paths; ArtifactMetadataV1 keyed by ArtifactId with SHA-256, byte size, media type, origin Chat/Event/Attempt, logical name, created generation, retention class, and availability; reference/refcount rows; prepared-token and orphan-GC journals. Metadata participating in a local event commit shares that SQLite transaction; bytes remain files.\n",
+        "Keys and ordering: ArtifactId is stable and distinct from content hash; identical content may deduplicate. Event references identify ArtifactId/hash, never mutable paths. PreparedArtifactToken binds hash/size/staging generation and is single-use or idempotently reusable for the same commit.\n",
+        "Ports: exposes streaming PrepareArtifact/ValidatePreparedRef to the core event committer and Atomic Commit Adapter, read-only ArtifactReadPort to Desktop API/projections, immutable evidence put/get to the core-governed repair ledger, and integrity/backup maintenance to the storage coordinator.\n",
+        "Durability/failure rules: stream to a bounded temp file, hash while writing, fsync, atomically rename to the object path, then allow metadata/reference commit. Failure after file promotion but before SQLite commit creates an unreferenced object eligible for delayed GC; failure before promotion is discarded. Reads verify size/hash on demand; missing/corrupt objects leave metadata and explicit unavailable evidence, never a substituted file.\n",
+        "Retention/performance: referenced evidence follows Chat/repair policy; unreferenced objects have a safety grace period. Quotas are checked before streaming; large content is never fully buffered, range reads are supported, and concurrent identical writes coalesce. Backpressure fails preparation before canonical commit.\n",
+        "Security/non-responsibilities: credential values and secret-lease material are not valid artifact inputs or metadata; ordinary user-selected artifact content is treated as sensitive local data and never logged/captured implicitly. The store does not execute/open content by itself, authorize OS access, mutate workspace files, commit events, choose portable CAS policy, or delete referenced evidence silently."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.artifact_store",
+    "id": 67,
+    "name": "Artifact Metadata & Content File Store",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Artifacts,Filesystem,Evidence",
+    "technology": "Rust content-addressed filesystem objects with SQLite metadata",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "88d7da26-ce59-84ca-8a8b-b19573c42140",
+  "schemaVersion": 1
+}

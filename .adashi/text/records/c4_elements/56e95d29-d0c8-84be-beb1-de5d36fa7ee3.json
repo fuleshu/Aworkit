@@ -1,0 +1,39 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Maintains recurring-error and repair aggregate state and gates bounded Management repair candidates through complete disclosure, deterministic activation-capability reporting, explicit user activation, durable handoff to the independently surviving Bootstrap Helper, focused-verification evidence, regression tracking, and committed rollback reporting.\n",
+        "\n",
+        "Owned state: ErrorGroupV1 fingerprints, occurrences, diagnoses, workarounds, verification, and regressions; RepairCandidateV1 with complete source and configuration diff, tests, benchmarks, consequences, removed or broadened behavior, uncertainty, artifact and provenance hashes, data-compatibility declaration, and rollback point; ManagementCheckpointRefV1; PlatformCapabilityReportV1 and capability-generation digest; explicit activation decision; RepairActivationBatonV1 identity and disclosure hash; bootstrap handoff status; and verified BootstrapResultV1 receipt reference. The helper, not this terminating core component, owns enrollment, build slots, platform selection, launch and watchdog state, and rollback mechanics.\n",
+        "\n",
+        "Candidate production and public contracts: A bounded Management workflow may diagnose, edit, compile, test, benchmark, and package a complete release-like local bundle through the Chat's frozen source-checkout and toolchain capabilities. The helper never compiles. Commands and ports include RecordRecurringFailure, StartBoundedInvestigation, RegisterRepairCandidate, QueryActivationCapability, RequestManagedLocalEnrollment, RejectCandidate, ActivateAndRestart(expected candidate, version, and capability digest), PrepareActivationBaton, AcceptBootstrapAdmission, ReconcileBootstrapResult, CompleteFocusedVerificationEvidence, and RecordRegression. It emits ledger, candidate, build origin, enrollment, eligibility and reason, checkpoint, activation-decision, handoff, bootstrap-result, verification, regression, rollback, and manual-recovery semantic events. RepairBootstrapPort queries the bootstrap protocol gateway, hands off RepairActivationBatonV1, and reads BootstrapResultV1.\n",
+        "\n",
+        "Invariants: Investigation begins only when the user asks or chooses Investigate and fix. There is no continuous self-improvement, automatic repair launch, or automatic activation. A candidate may be diagnosed, built, tested, and exported on any installation, but Activate and restart is exposed only when a fresh PlatformCapabilityReportV1 is Supported for ManagedLocalBuildProfileV1 and the candidate is a complete verified bundle with rollback-compatible or deferred data changes. PackagedDistribution, Unknown, Conflicting, Mismatched, and EnrollmentRequired states remain non-activatable and show exact next steps. Activate and restart is the decisive gate and requires complete disclosure, expected candidate version, and expected capability digest. The same Management Chat is checkpointed before handoff and resumes only after the newly launched or restored core commits the verified helper receipt.\n",
+        "\n",
+        "When eligibility is EnrollmentRequired, RequestManagedLocalEnrollment accepts only the projected local provenance plus a bounded whole-bundle ArtifactId and expected hash, commits the explicit user request, and calls BootstrapProtocolPortV1.PrepareManagedLocalEnrollment. Enrollment is rejected while another enrollment or activation is active. EnrollmentPreparedV1 is committed and instructs the user to restart through the stable launcher; the orchestrator never treats preparation as activation or resumes work in the prepared copy automatically.\n",
+        "\n",
+        "Transactional and failure behavior: Candidate and provenance hashes, previous-working-build reference, capability digest, Management checkpoint, activation decision, disclosure hash, and secret-free RepairActivationBatonV1 commit before any child quiescence or handoff. The helper independently revalidates provenance, enrollment, slots, profile, data compatibility, and capability generation; a changed or Unsupported profile returns BootstrapResultV1 Unsupported before quiescence so the current build remains running. After admission the helper survives core termination, launches and watchdogs the candidate, and seals ActivatedVerified, RolledBack, or ManualRecoveryRequired. The next authenticated core generation verifies that receipt, commits semantic evidence exactly once, and resumes the task. Missing, mismatched, or ambiguous receipts block reconciliation rather than assuming success. A recurrence after a verified repair reopens the ledger item as a regression and never launches another repair automatically.\n",
+        "\n",
+        "Packaged and unavailable behavior: An unsigned installer, package-manager, sandboxed package, unknown origin, or local build not enrolled in managed slots may still use diagnosis, source editing, compilation, tests, candidate export, patch export, rebuild instructions, and manual reinstall. It cannot register an in-place activatable candidate or ask the helper to elevate, overwrite installer-owned files, or bypass eligibility. A separate future ADR is required for any packaged updater or privileged activation profile.\n",
+        "\n",
+        "NFRs: Idempotent activation IDs; tamper-evident baton, capability and receipt hashes; independently bounded monotonic startup, focused-verification, cleanup, and rollback deadlines; reproducible evidence references; explicit platform reason codes; Windows, macOS, and Linux supported and Unsupported conformance paths; bounded ledger retention; and prominent unresolved uncertainty or manual-recovery guidance.\n",
+        "\n",
+        "Non-responsibilities: No autonomous diagnosis or source modification, compilation within this component, enrollment byte or filesystem mechanics, whole-application launch or watchdog, build-slot mutation, signing, elevation, installer ownership, direct rollback, general tool execution, authority bypass, secret handling, hidden patching, or deletion of prior evidence."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.repair",
+    "id": 37,
+    "name": "Recurring Error & Repair Orchestrator",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Management,Repair",
+    "technology": "Rust durable repair state machine with managed-local capability gate and restart/rollback baton",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "56e95d29-d0c8-84be-beb1-de5d36fa7ee3",
+  "schemaVersion": 1
+}

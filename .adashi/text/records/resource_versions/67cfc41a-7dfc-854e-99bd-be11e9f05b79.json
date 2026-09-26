@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.local_store.query_projections.commit_outbox",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:53:00",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "67cfc41a-7dfc-854e-99bd-be11e9f05b79",
+  "schemaVersion": 1
+}

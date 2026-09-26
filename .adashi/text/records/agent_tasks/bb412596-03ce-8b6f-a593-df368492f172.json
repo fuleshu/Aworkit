@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/normalize.rs\"]",
+    "completed_at": "2026-08-21 17:19:47",
+    "completion_memo": "Implemented a shared redaction set plus ordered stream normalization and conservative outcomes: unknown side effects are explicitly non-retry-safe. cargo check -p aworkit-capability-host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:31",
+    "created_files": "[\"crates/aworkit-capability-host/src/normalize.rs\"]",
+    "description": "Redeem only invocation-scoped secret leases for the intended host generation, materialize the minimum declared fields, and feed one redaction set through every diagnostic and result path. Normalize source streams into ordered HostInvocationEventV1 plus one conservative CapabilityOutcomeV1 without relabeling unknown side effects as retry-safe.",
+    "id": 32,
+    "number": 32,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.5 — Implement lease materialization, redaction, and outcome normalization",
+    "updated_at": "2026-09-22 07:12:13"
+  },
+  "deleted": false,
+  "identity": "bb412596-03ce-8b6f-a593-df368492f172",
+  "schemaVersion": 1
+}

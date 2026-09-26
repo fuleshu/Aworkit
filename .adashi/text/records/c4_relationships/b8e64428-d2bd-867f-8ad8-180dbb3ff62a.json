@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Registers descendant trees and reports generation-specific handshake, health, exit, crash, cancellation, cleanup, and orphan-risk facts; host health never proves effect absence",
+    "destination_external_id": "aworkit.trusted_core.process_supervisor",
+    "external_id": "rel.host_process_runtime.core_supervisor.facts",
+    "id": 193,
+    "source_external_id": "aworkit.capability_host.process_runtime",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned health and process-tree IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b8e64428-d2bd-867f-8ad8-180dbb3ff62a",
+  "schemaVersion": 1
+}

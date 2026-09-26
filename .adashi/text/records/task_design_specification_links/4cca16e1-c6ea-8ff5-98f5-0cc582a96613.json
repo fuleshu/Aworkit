@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:37",
+    "design_external_id": "uml.portable_store.atomic_append_head_ack",
+    "id": 332,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "10a2a8e9-f35a-844b-b019-7a117195ed7c"
+    }
+  },
+  "deleted": false,
+  "identity": "4cca16e1-c6ea-8ff5-98f5-0cc582a96613",
+  "schemaVersion": 1
+}

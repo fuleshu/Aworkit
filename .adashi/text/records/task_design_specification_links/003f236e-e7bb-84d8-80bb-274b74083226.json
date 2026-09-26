@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:43:48",
+    "design_external_id": "aworkit.capability_host.secret_materializer",
+    "id": 326,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "e73b6798-5a3f-8afa-bd51-ed0d19a633f5"
+    }
+  },
+  "deleted": false,
+  "identity": "003f236e-e7bb-84d8-80bb-274b74083226",
+  "schemaVersion": 1
+}

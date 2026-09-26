@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Verifies extension candidate identity/integrity/compatibility and records exact pinned versions before activation",
+    "destination_external_id": "aworkit.trusted_core.extension_registry",
+    "external_id": "rel.core_repair.extensions",
+    "id": 86,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust registry verification port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6c9e4225-3e19-84d3-830b-db8736c95a23",
+  "schemaVersion": 1
+}

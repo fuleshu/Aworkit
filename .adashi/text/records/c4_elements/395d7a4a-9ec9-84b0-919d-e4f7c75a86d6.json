@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Rebuilds non-terminal Chat aggregates after core/worker/host restart, reconciles transactional outboxes and ambiguous invocations, and rehydrates workers from the frozen snapshot plus the last committed logical checkpoint without replaying completed effects.\n",
+        "Owned state: ephemeral per-Chat RecoveryPlanV1, recovery lock/generation, validated stream head, checkpoint cursor, process-generation expectations, and reconciliation decisions; it owns no alternate session history or executor-native snapshot.\n",
+        "Public commands/events and ports: RecoverOnApplicationStart, RecoverChat, ReconcilePendingOutbox, ReconcileInvocation, ResumeAfterRepairRestart, and AbortRecovery; returns RecoveryReadyV1, RecoveryBlockedV1, RehydrationEnvelopeV1, and RecoveryEventV1.\n",
+        "Invariants: recovery replays pure reducers only, never an old model call, shell command, file edit, external request, or committed capability effect. Rehydration uses Aworkit FrozenRunSnapshotV1/events/checkpoint, never Rig AgentRun/provider-native state. Waits, approvals, queues, attempt IDs, and uncertain outcomes remain exactly as committed; portable imports remain inert and require local rebinding before continuation.\n",
+        "Transactional and failure behavior: acquires one durable recovery generation before launching a replacement worker; worker readiness must echo snapshot/checkpoint hashes before control resumes. Pending outbox delivery follows invocation idempotency rules. Missing/corrupt snapshots, incompatible extensions, unresolved local bindings, or exhausted supervision budgets leave the Chat inspectable and explicitly blocked rather than fabricating state.\n",
+        "NFRs: bounded parallel startup, lazy recovery for inactive Chats, integrity checks, deterministic reducers, progress diagnostics, and recovery time/failed-reconciliation metrics.\n",
+        "Non-responsibilities: no side-effect compensation, authority expansion, hidden continuation, process implementation, workflow execution, or canonical data repair without an explicit validated repair path.\n",
+        "\n",
+        "Typed desktop recovery (2026-09-25): Dispatch the exact staged action to its input, question, approval or context-maintenance handler, preserving its original command identity and payload. Decisions do not require a text input. Recovery preparation must not masquerade as a completed recovery receipt or close spans required by a suspended decision. Commit the recovery acknowledgement only after its original command settles. Unknown prior effects remain uncertain; do not silently synthesize a new user request to repeat them. Abandonment works for every staged action, preserves evidence and closes pending questions without invoking the pipeline."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.recovery",
+    "id": 35,
+    "name": "Recovery & Rehydration Coordinator",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Recovery,Rehydration",
+    "technology": "Rust startup/reconciliation coordinator over canonical Aworkit snapshots and events",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "395d7a4a-9ec9-84b0-919d-e4f7c75a86d6",
+  "schemaVersion": 1
+}

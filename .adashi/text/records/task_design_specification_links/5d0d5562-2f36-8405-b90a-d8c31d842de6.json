@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:45:00",
+    "design_external_id": "mockup.desktop_ui.workflow_editor",
+    "id": 352,
+    "sort_order": 2,
+    "target_type": "mockup",
+    "task_id": {
+      "ref": "a61f1586-8015-8926-be18-32e8615acd22"
+    }
+  },
+  "deleted": false,
+  "identity": "5d0d5562-2f36-8405-b90a-d8c31d842de6",
+  "schemaVersion": 1
+}

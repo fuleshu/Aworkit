@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses platform process groups/job objects, signals, protected relaunch, app lifecycle, filesystem identity, and rotating-log primitives",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.core_supervisor.os.process_tree",
+    "id": 102,
+    "source_external_id": "aworkit.trusted_core.process_supervisor",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Platform process and lifecycle APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e8bd057f-096d-8533-bd73-6c0b39cdfb1f",
+  "schemaVersion": 1
+}

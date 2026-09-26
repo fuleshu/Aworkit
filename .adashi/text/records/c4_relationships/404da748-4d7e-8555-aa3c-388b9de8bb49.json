@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches bounded investigate, export, rebuild-instruction, reject, managed-local enrollment, capability-refresh, and candidate-version-and-capability-bound activation commands",
+    "destination_external_id": "aworkit.desktop_ui.projection_gateway",
+    "external_id": "rel.ui.management.gateway",
+    "id": 44,
+    "source_external_id": "aworkit.desktop_ui.management_repair",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "404da748-4d7e-8555-aa3c-388b9de8bb49",
+  "schemaVersion": 1
+}

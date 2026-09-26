@@ -1,0 +1,46 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-23 09:49:15",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Phase 1 of 3 of the workflow-revision rebinding design (aworkit.trusted_core.revision_rebind). The freeze stays a freeze: one adopted revision explains one segment of a Chat, and a later segment may run a newer revision only because the user adopted it at a settled boundary.\n",
+        "\n",
+        "Current state. The first submitted input resolves and freezes the whole execution context once per Chat (FrozenChatExecutionContextV1 in runtime/history.rs): workflow snapshot, hash and version, tool bindings, model tier, provider and model snapshots, approval mode, compaction target, MCP manifests, project and workspace, deadline. Every later input reuses that single record, and the composer disables the workflow selector with \"Workflow locked — immutable after the first input\".\n",
+        "\n",
+        "Deliverable (phase 1). Allow a second frozen record to be adopted for the same Chat, so the Chat runs a chain of revisions.\n",
+        "- Preview: re-resolve the saved workflow document and current Settings, validate the candidate with the same path a first input uses (validate_v1_executable_catalog, region-aware once task 116 lands), and return a diff: structural changes, the authority delta (tool bindings, filesystem scope, credential references, approval mode, deadline), and the recorded tool rounds the candidate cannot represent under its selection — reuse the existing admission check (context_inspection::admit_current_tools) rather than writing a second one.\n",
+        "- Adopt: exactly one canonical event naming the superseded and adopted workflow snapshot hashes and versions, the authority delta, the ledger and deadline transition, and the commanding identity. Idempotent by command id; an uncertain or conflicting write is retried with the same identity and never half-applied.\n",
+        "- Boundary: refuse while a turn is in flight, an approval or suspension is pending, a loop frame is open, or a child frame is live. Refuse with a visible reason, not a silent no-op.\n",
+        "- Lookup: frozen-context reads return the newest adopted record for the Chat while the incumbent stays readable as evidence; crash recovery either finds the adoption event or leaves the Chat on the incumbent.\n",
+        "- Ledger: close the incumbent revision's ledger scope and open the next one; a deadline change is shown and recorded, never silent.\n",
+        "- Presentation: a reload control beside the locked workflow selector that shows the incumbent revision and the diff, requiring explicit confirmation when the authority delta is non-empty; Run details label which revision a turn ran under. A rebind is never automatic.\n",
+        "\n",
+        "Deliberately out of scope (phases 2 and 3). Revision-aware portable export and fork lineage; filesystem-grant and approval reconciliation; a research mode that offers the reload at every boundary.\n",
+        "\n",
+        "Non-goals. Silent re-read of the saved workflow; automatic adoption; mutating a running graph, a committed turn or committed evidence; letting the worker or the editor change a run in flight; rebinding a child or subagent; extending a deadline without an explicit recorded user decision.\n",
+        "\n",
+        "Outputs. Core preview and adoption commands plus their canonical event; newest-revision history lookup; ledger scope transition; composer control with the diff and consent; run-details revision label; tests for legal and illegal boundaries, authority-consent gating, idempotent retry, unchanged candidate as a no-op, incumbent preserved on validation failure, and a recorded tool round that must decline and recover after adoption.\n",
+        "\n",
+        "Depends on. Task 116 owns the region-aware validator and the loop-frame predicate; phase 1 must consume those contracts rather than invent a second validator or a second frame notion. If phase 1 is scheduled first, its boundary predicate and ledger transition are still written against 116's contract."
+      ]
+    },
+    "id": 123,
+    "number": 122,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Adopt a newer workflow revision between turns (phase 1 of 3)",
+    "updated_at": "2026-09-23 09:49:15"
+  },
+  "deleted": false,
+  "identity": "746b2ee5-e2cf-81da-9df6-3ae1713b3aa4",
+  "schemaVersion": 1
+}

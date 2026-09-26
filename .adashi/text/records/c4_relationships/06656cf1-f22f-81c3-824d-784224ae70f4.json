@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Activates workflow editor routes and preserves return navigation",
+    "destination_external_id": "aworkit.desktop_ui.workflow_editor",
+    "external_id": "rel.ui.shell.workflow",
+    "id": 24,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "06656cf1-f22f-81c3-824d-784224ae70f4",
+  "schemaVersion": 1
+}

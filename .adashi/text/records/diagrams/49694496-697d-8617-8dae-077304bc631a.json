@@ -1,0 +1,43 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.context_store",
+    "created_at": "2026-09-08 08:06:04",
+    "diagram_type": "flow",
+    "id": 68,
+    "key": "uml.workflow_worker.workspace_instructions_compaction",
+    "kind": "mermaid",
+    "sort_order": 44,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "  Trigger[\"Resume, remount or visible-context replacement\"] --> Source[\"Read authentic loader metadata from existing history\"]\n",
+        "  Source --> Active[\"Recover active baseline and scoped changes; retain retirements\"]\n",
+        "  Active --> Visible{\"Applicable instruction events still fully visible?\"}\n",
+        "  Visible -->|Yes| Reuse[\"Reuse represented content without duplicates\"]\n",
+        "  Visible -->|No| Probe[\"Reconcile missing baseline and active nested scopes via authorized reads\"]\n",
+        "  Probe --> Present[\"Present: current file text and digest\"]\n",
+        "  Probe --> Absent[\"Confirmed absent: removal transition\"]\n",
+        "  Probe --> Unavailable[\"Unavailable: last admitted bounded text plus stale diagnostic\"]\n",
+        "  Present --> Budget[\"Apply shared restoration budget; preserve specific rules and report omissions\"]\n",
+        "  Absent --> Budget\n",
+        "  Unavailable --> Budget\n",
+        "  Budget --> Commit[\"Atomically admit context delta before next model request\"]\n",
+        "  Reuse --> Ready[\"Proceed with actual visible context\"]\n",
+        "  Commit --> Ready\n",
+        "  Cache[\"Cache hit or summary prose cannot prove instruction visibility\"] -.-> Visible\n",
+        "  Tests[\"Implement production-boundary synthetic-compaction tests with loader now\"] --> Gate[\"Future compactor must pass same suite through its real replacement path\"]\n",
+        "  Gate -.-> Trigger\n",
+        "  Cancel[\"Cancelled or rejected preparation retains last committed context\"] -.-> Commit"
+      ]
+    },
+    "title": "Mandatory instruction restoration contract for future compaction",
+    "updated_at": "2026-09-08 08:06:04",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "49694496-697d-8617-8dae-077304bc631a",
+  "schemaVersion": 1
+}

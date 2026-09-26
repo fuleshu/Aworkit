@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Queries unresolved requirements and previews a local continuation plan for presentation; binding acceptance routes through core configuration, snapshot and authority services and this API never grants it",
+    "destination_external_id": "aworkit.portable_store.rebind_planner",
+    "external_id": "rel.core_api.portable.rebind",
+    "id": 277,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Read Only",
+    "technology": "Read-only rebind inventory/query DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4014cbe0-45e5-8d04-8a59-8b4ad41cdd48",
+  "schemaVersion": 1
+}

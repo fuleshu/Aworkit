@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.context_store|file|docs/context-continuation-performance.md",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-17 18:14:59",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "134d4076-8060-8a72-b0c4-271bbdaf74d9",
+  "schemaVersion": 1
+}

@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime.rs\"]",
+    "completed_at": "2026-08-24 11:46:13",
+    "completion_memo": "Implemented the generic v1 workflow-graph compiler and pass interpreter in the desktop runtime. compile_graph_snapshot maps any catalog-valid workflow document onto worker executors (input/model_call→Model, agent→Agent, tool→Brokered, condition→Router with true/false route predicates, parallel/approval/output→Pure, wait→Wait, completion→Terminal) with per-node frozen contribution hashes, resolved tool subsets, and savedNode identity; simple-chat keeps its proven hand-compiled path byte-for-byte. The new graph_pass.rs module executes one pass per user input with deterministic topological ordering, implicit joins, condition routing with true/false active-edge pruning, per-node output bounds, and pass-wide budget enforcement; model_call nodes are single no-tool completions, agent nodes run the standard model/tool loop, tool nodes settle one brokered capability invocation with {input} parameter substitution. Approval nodes suspend the pass with a durably stored prefix (PendingGraphPassStateV1 with completed values, conversation, usage, and node activity) so resume never recomputes completed model work; the approval command applies approve/reject via pipeline.resume_approval with idempotent single-use decisions, multi-gate chaining, and the exact broker-settlement path (ledger-recorded invocation correlation fixed: the broker mints invoke.* ids distinct from pass.* proposal ids). AwaitingApproval outcomes never persist as terminal records; replay of a suspended pass returns the pending state instead of fabricating uncertain outcomes. The service accepts any saved executable workflow id at start, freezes per-graph bindings (single resolved provider/model binding required across tiers in v1), commits node lifecycle events, projects awaiting_approval phase, and exposes the approval command with pending-effect recovery. Timeline mapping covers approval.requested/resolved and node events. Verification: 6 new graph-pass tests (plan→agent→output→wait, approval suspend/resume approve, rejection without downstream work, predicates, topological order) pass; full desktop suite 138/140 with only the two pre-existing failures in the uncommitted settings/extension work. Known sequencing boundary (not a defect): graph workflows binding tools beyond read/search still fail closed at freeze_file_tool_bindings until W4 installs those adapters; the Standard Agent seed therefore becomes runnable in W4.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-24 10:52:30",
+    "created_files": "[\"desktop/src-tauri/src/runtime/graph_pass.rs\"]",
+    "description": "General workflow graph compiler and interpreter in the desktop runtime. Replace compile_simple_chat_graph with a generic compiler that maps any validated v1 workflow document onto the worker scheduler/node machinery: input (Pure), agent (Agent loop), model_call (single no-tool model completion), tool (brokered capability invocation), condition (Router predicates with true/false/fallback edge routes), parallel (fork; nodes run when all predecessors settle), approval (Run gate via the approval flow), output (final text collection), wait (pass end), completion (terminal). One graph pass per user input with the accumulated conversation; per-node lifecycle events (node.started/node.completed/node.failed with nodeId) committed to history so the editor and timeline can show status. Deterministic topological ordering, cycle rejection, budget limits per node and per pass, honest error settlement (no replay of uncertain effects). Keep the existing Simple Chat path passing its tests (it becomes the 4-node instance of the general interpreter). Output: working generic execution with Rust integration tests covering multi-node graphs, condition routing, parallel fan-out, per-node events, and failure semantics.",
+    "id": 82,
+    "number": 81,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "W3 — General workflow graph compiler and interpreter in the desktop runtime",
+    "updated_at": "2026-09-22 07:22:48"
+  },
+  "deleted": false,
+  "identity": "0468a4bb-f4cb-81bf-a610-c2375fb3137d",
+  "schemaVersion": 1
+}

@@ -1,0 +1,52 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/settings_diagnostics.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/compression/runtime.rs\",\"desktop/src-tauri/src/runtime/service/tests/concurrency.rs\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/conversation.ts\",\"desktop/src/chat/types.ts\",\"desktop/src/chat/corePort.ts\",\"desktop/src/chat/workspace.ts\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-09-21 08:45:21",
+    "completion_memo": {
+      "lines": [
+        "tool.goal is implemented end to end, including the composer goal UI that was previously listed as incomplete. The goal is user-editable at any time, including during a Run.\n",
+        "\n",
+        "Core (first increment): native manifest entry tool.goal (operations set/get/update/complete/clear, 8 KiB objective, 4 KiB note, authorityMode run_goal, no approval, requiresProject false); CapabilityKindV1/CapabilityKind Goal with both protocol<->host mappings; freeze arm, StoredFileToolLimitV1::Goal, adapter adapter.run-tools.goal, scope run.goal, SideEffectClass::Pure, descriptor registration, argument validation, approval-free entry; new module runtime/tool_loop/goal.rs with the pure state machine, bounds, live/cleared semantics, context message and unit tests; durable immutable pipeline.goal-state snapshots beside the todo state; injection into each Agent pass as one generated context layer at after_exchanges=0 only when tool.goal is bound; Settings v2 validation and diagnostics probe; canonical tool.goal semantic fact after a settled goal call; timeline goal kind, goalCard, conversation label and ConversationTimeline card.\n",
+        "\n",
+        "UI increment: composer flag button next to the context ring opens an anchored dialog showing the goal status, latest note and an editable textarea with Submit and Cancel, plus Clear goal when a live goal exists; goalProjection.ts folds the latest tool.goal fact from the committed stream; goal.css styles the control; the dialog is disabled with an explanation only while the runtime is stale or the Chat is in recovery, so the goal stays editable during a Run. Write path: a new typed set_goal Chat command (types.ts, corePort.ts, workspace.ts) reaches service.goal_control.rs, which applies the shared user transition (tool_loop::apply_user_goal_change), records the same durable snapshot the goal tool writes so the next Agent pass injects it, and commits the canonical tool.goal fact so the UI updates without a model turn; Clear records a cleared snapshot, never a completion.\n",
+        "\n",
+        "Tests: goal.rs unit tests incl. user set/clear bounds; pipeline e2e provider_goal_call_records_run_local_goal_state; Rust command tests user_sets_and_clears_the_chat_goal and user_goal_input_is_bounded; frontend goalProjection 2/2 and GoalControl 4/4 (open/edit/submit, cancel without submit, clear, disabled reason, rejected change); full desktop lib 381 passed with only the pre-existing baseline failure checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node; all 22 chat test files / 119 tests pass; tsc --noEmit clean.\n",
+        "\n",
+        "Remaining minor note: cross-Run goal isolation and post-restart resume still rely on the shared run-keyed ToolRecordStore path covered for tool.todo rather than dedicated cases; add explicit tests if the goal later gains a core-side projection reader."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:46",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/goal.rs\",\"desktop/src-tauri/src/runtime/service/goal_control.rs\",\"desktop/src-tauri/src/runtime/service/tests/goal_control.rs\",\"desktop/src/chat/GoalControl.tsx\",\"desktop/src/chat/GoalControl.test.tsx\",\"desktop/src/chat/goalProjection.ts\",\"desktop/src/chat/goalProjection.test.ts\",\"desktop/src/chat/goal.css\"]",
+    "description": {
+      "lines": [
+        "Restore the DeepSeek Harness standard-preset goal capability (command-goal + tool-goal) in an Aworkit-fitting way: a goal is durable Chat-scoped completion state, not a host-driven autonomous loop.\n",
+        "\n",
+        "Context. DSH persists one objective that survives across goal rounds and steers later turns. Aworkit already has the durable substrate for this: one Chat is one persistent Run with committed canonical history, a Wait frontier that resumes on the next input, typed context revisions with provenance, and a frozen per-Chat authority/tool matrix. The absence is the goal object and its tool, not a new execution model.\n",
+        "\n",
+        "Design fit.\n",
+        "- Goal state is canonical Chat state committed through the existing event committer (GoalSetV1 / GoalUpdatedV1 / GoalCompletedV1 / GoalClearedV1) and folded by a pure reducer, so it survives Wait resume, pause, crash recovery, and portable export exactly like other semantic facts. It is never reconstructed from summary prose.\n",
+        "- The goal is injected into each Agent request as one typed context layer at the head of the projection (the same mechanism already used for workspace instructions), carrying the goal revision id as provenance. The frozen graph and frozen tool bindings are never mutated by goal changes.\n",
+        "- tool.goal joins the native plugin manifest and the frozen tool matrix with operations set/get/update/complete/clear, authorityMode \"run_goal\", owner-scoped per Chat, idempotent by command id, and no side effect. It is a normal brokered capability: proposed by the worker, committed by the core, never self-authorized.\n",
+        "- Goal state is visible in the conversation/run-details projection and summarized in the composer so the user can always see and clear it. Goal history is one durable record per Chat, not a parallel note store.\n",
+        "\n",
+        "Explicit non-goals (structural, not fitting). No process may continue a Chat on its own: the next pass always requires a committed frozen transition or a delivered user input. Cross-turn continuation is produced only by the bounded-loop construct (separate task) or by the user's next input.\n",
+        "\n",
+        "Outputs. GoalStateV1 DTO and event family with reducer; tool.goal manifest entry, schema, Settings admission, frozen binding, and broker path; context-layer projection with revision provenance; conversation/run-details and composer projection; tests for set/get/update/complete, persistence across Wait resume, recovery with no replay, owner isolation, and absence of autonomous continuation."
+      ]
+    },
+    "id": 109,
+    "number": 108,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Add a persisted Chat goal and a model-facing goal tool",
+    "updated_at": "2026-09-22 07:29:52"
+  },
+  "deleted": false,
+  "identity": "34699c3a-3773-8d2b-aaf7-4bad0da6871d",
+  "schemaVersion": 1
+}

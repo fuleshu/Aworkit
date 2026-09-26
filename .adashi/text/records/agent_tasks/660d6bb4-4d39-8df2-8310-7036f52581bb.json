@@ -1,0 +1,75 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/continuation.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/frozen_tools.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/scripts/native-shell-jobs-smoke.mjs\",\"docs/shell-jobs.md\"]",
+    "completed_at": "2026-09-19 14:53:21",
+    "completion_memo": {
+      "lines": [
+        "Removed the duplicated shell/Python execution modes and made the effective tool set resolve interface-from-build, authority-from-Chat.\n",
+        "\n",
+        "Landed:\n",
+        "1. tool_loop.rs - deleted both `if jobs::controls_available(&self.context.bindings)` forks; shell and python now have exactly one implementation each (start_shell_job / start_python_job, 10s soft wait). Deleted host_process_result_value and host_process_result_summary, the only emitter of \"was killed after the {n} second limit expired\"; zero references remain. timeout_seconds is destructured as `_` and is no longer a deadline; removed the unused ProcessTermination and ControlledProcessResult imports. Added pub(crate) implied_job_control_ids: a bound host shell/Python capability implies job.output, job.input, job.stop, job.list, job.keep.\n",
+        "2. pipeline/frozen_tools.rs - single entry `effective(requested, previous)`: requested capabilities plus implied controls, frozen from this build, then authority restored from the saved Chat (options/executable, requires_approval, secret, file_access_version, internal_id). `complete_saved` re-resolves a stored Chat's interface from this build, reconstructing credential bindings from the stored secret so web-search key requirements still validate.\n",
+        "3. pipeline.rs - freeze path uses `effective`; the agent node tool set gains the implied controls so the model is offered them.\n",
+        "4. pipeline/continuation.rs - an existing Chat re-resolves its bindings (complete_saved), extends the worker allowlist (agent_checkpoint.config.allowed_tool_capability_refs, enforced in aworkit-workflow-worker/src/agent.rs:319) and the manifest (broker authority boundary) for capabilities it did not have before. Restructured into two disjoint steps to avoid holding the budget borrow across a &mut saved.\n",
+        "5. Docs and text: docs/shell-jobs.md rewritten to one contract (no second mode, no \"start a new Chat\"); the bundled tool plugin no longer describes a legacy mode or \"requires ... in this Chat\"; the native smoke script's 'legacy' phase replaced by an 'implied' phase asserting that a Chat whose workflow never selected the control tools still yields a jobId and can stop it.\n",
+        "\n",
+        "Verification: `cargo check --lib --tests` finishes with no errors and no warnings after every step. The bundled tool plugin still parses as valid JSON (json.loads). No unit-test fixture binds tool.shell.host/tool.python.host, so the implied-control change does not alter existing fixture binding counts (reasoned from the fixtures, not executed).\n",
+        "\n",
+        "NOT verified, with causes:\n",
+        "- `cargo test` cannot build in this environment: the test profile must compile C dependencies (ring, aws-lc-sys, tree-sitter, libsqlite3-sys, vswhom-sys) and `cl.exe` is not on this shell's PATH (ToolNotFound). Needs an MSVC environment (vcvars / Developer Command Prompt). No test was executed; runtime behaviour is unproven.\n",
+        "- desktop/scripts/native-shell-jobs-smoke.mjs was not run for the same reason (it needs a built app).\n",
+        "- The running desktop app is the previous build, so the change is not observable until the app is rebuilt.\n",
+        "\n",
+        "Remaining after this task: (a) later passes still take node/tool definitions from the saved snapshot, so adding a brand-new tool to the workflow and continuing in the same Chat needs the current-document resolution required by the design (follow-up task created); (b) the four job-control tools are still user-facing Settings switches although they no longer gate behaviour, so the Settings surface still shows redundant toggles; (c) shell_start/python_start remain separate immediate-return entry points that now share one code path with shell/python and could be folded into them."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 14:11:56",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Replace the duplicated shell/Python execution modes with one managed job path, and stop pinning tool interfaces to a Chat.\n",
+        "\n",
+        "Reproduction (2026-09-19, this Chat, python tool, no job controls bound): script printing \"start\" then sleeping 40s returned exitCode 1, termination \"timed_out\", partial stdout \"start\", no jobId. Confirms the legacy blocking branch is live and that a Chat cannot obtain managed jobs without the four control tools frozen.\n",
+        "\n",
+        "Atomic edit set (all three parts must land together; removing the legacy branch alone would leave a Chat unable to collect job output):\n",
+        "\n",
+        "1. Single execution mode - desktop/src-tauri/src/runtime/tool_loop.rs\n",
+        "   - FileToolDispatcherV1::execute ~2622-2664 (Shell) and ~2666-2709 (Python): delete the `if jobs::controls_available(...)` fork and the whole legacy branch; always call start_shell_job / start_python_job.\n",
+        "   - Delete now-dead host_process_result_value (~3308) and host_process_result_summary (~3329), the only emitter of \"was killed after the {n} second limit expired\". Verify no other callers.\n",
+        "   - Drop imports that become unused (ProcessTermination; BuiltInProcessTools/NativeProcessPort/HostToolLimitsV1 remain used by jobs.rs).\n",
+        "\n",
+        "2. Job control is intrinsic - tool_loop/jobs/contract.rs + jobs.rs\n",
+        "   - controls_available becomes an invariant (job tools accompany host shell/Python), not a per-Chat gate chosen by four unrelated switches.\n",
+        "   - start_process_job guard in jobs.rs:125 becomes an assertion with a precise message.\n",
+        "   - completed_tool_bindings(): when the frozen set binds tool.shell.host or tool.python.host, add the job control bindings (jobs::IDS) with their model definitions, so the model can see and call them.\n",
+        "\n",
+        "3. Interface resolved at dispatch, authority frozen - tool_loop.rs + pipeline.rs\n",
+        "   - Refresh provider_name/description/input_schema/limit of built-in bindings from the current build via freeze_file_tool_bindings, keeping capability_id, requires_approval, secret, file_access_version, internal_id from the saved binding.\n",
+        "   - Apply the completed+refreshed set before compile_graph_snapshot / compile_graph_pass, before FrozenFileToolAuthorityContextV1.bindings (pipeline.rs ~934 and ~2285), and append the missing capability bindings to the manifest so prepare_broker accepts a job call (tool_loop.rs ~1968).\n",
+        "   - Continuation path: pipeline.rs:561 continuation::prepare plus the saved record reuse must use the same effective set.\n",
+        "\n",
+        "4. Docs and tests\n",
+        "   - docs/shell-jobs.md: one contract; remove the legacy-mode and \"start a new Chat\" passage; job control is not separately switchable.\n",
+        "   - Update tests that pin the legacy behaviour or the four-tool gate; keep the settings health probes (settings_diagnostics.rs) which legitimately use a bounded deadline.\n",
+        "\n",
+        "Verification status: incremental `cargo check --lib` in desktop/src-tauri works (0.57s when clean), so edits are checkable; a full post-edit crate rebuild may exceed the 30s legacy kill in a Chat without job controls, so verification may need a Chat with job controls or a foreground build outside the agent.\n",
+        "\n",
+        "Acceptance: one behaviour for shell/python in every Chat; no reachable path emits the 30-second kill message; existing and new Chats both obtain and can collect managed jobs."
+      ]
+    },
+    "id": 106,
+    "number": 105,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Remove the duplicated shell/Python execution modes and resolve tool interfaces at dispatch",
+    "updated_at": "2026-09-22 07:28:37"
+  },
+  "deleted": false,
+  "identity": "660d6bb4-4d39-8df2-8310-7036f52581bb",
+  "schemaVersion": 1
+}

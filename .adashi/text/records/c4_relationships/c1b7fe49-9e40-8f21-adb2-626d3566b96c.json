@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Restores tokens, attempts, construct frames, limits, child and suspension references at the acknowledged committed cursor without replaying work",
+    "destination_external_id": "aworkit.workflow_worker.scheduler",
+    "external_id": "rel.worker_recovery.scheduler",
+    "id": 142,
+    "source_external_id": "aworkit.workflow_worker.recovery",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "RestoreSchedule Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c1b7fe49-9e40-8f21-adb2-626d3566b96c",
+  "schemaVersion": 1
+}

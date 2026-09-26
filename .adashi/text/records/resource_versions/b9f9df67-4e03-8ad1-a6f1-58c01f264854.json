@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.desktop_ui.component_structure",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-05 12:47:24",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "b9f9df67-4e03-8ad1-a6f1-58c01f264854",
+  "schemaVersion": 1
+}

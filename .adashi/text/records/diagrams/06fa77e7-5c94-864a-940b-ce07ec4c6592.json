@@ -1,0 +1,60 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.bootstrap_helper",
+    "created_at": "2026-08-21 00:07:40",
+    "diagram_type": "state",
+    "id": 34,
+    "key": "uml.bootstrap_helper.activation_recovery_state",
+    "kind": "mermaid",
+    "sort_order": 32,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "    [*] --> Idle\n",
+        "    Idle --> AdmittingBaton: authenticated RepairActivationBatonV1\n",
+        "    AdmittingBaton --> Unsupported: managed-local provenance, enrollment, capability, or slot guarantee absent\n",
+        "    AdmittingBaton --> BatonDurable: journal fsync and durable acceptance\n",
+        "    BatonDurable --> SlotsVerified: candidate and previous whole-slot hashes verified\n",
+        "    SlotsVerified --> QuiescingCurrent: BootstrapCommandV1 BeginActivation\n",
+        "    QuiescingCurrent --> AbortedBeforeSwitch: current generation cannot quiesce before selector change\n",
+        "    QuiescingCurrent --> CandidateSelected: current tree empty and candidate selector intent durable\n",
+        "    CandidateSelected --> CandidateLaunching: candidate selector observed and verified\n",
+        "    CandidateLaunching --> AwaitingCandidateIdentity: fresh ProcessGenerationV1 launched\n",
+        "    AwaitingCandidateIdentity --> CandidateVerifying: nonce hash generation and plan handshake pass\n",
+        "    CandidateVerifying --> Verified: health and focused CapabilityOutcomeV1 pass\n",
+        "    Verified --> ResultAvailable: protected BootstrapResultV1 ActivatedVerified durable\n",
+        "\n",
+        "    CandidateSelected --> RollingBack: launch fails or helper recovers destructive phase\n",
+        "    CandidateLaunching --> RollingBack: spawn crash timeout or identity mismatch\n",
+        "    AwaitingCandidateIdentity --> RollingBack: startup deadline or wrong generation\n",
+        "    CandidateVerifying --> RollingBack: health timeout failed or missing verification\n",
+        "    RollingBack --> PreviousSelected: candidate tree empty and previous selector restored\n",
+        "    PreviousSelected --> PreviousRelaunching: previous slot reverified\n",
+        "    PreviousRelaunching --> RolledBack: fresh rollback ProcessGenerationV1 handshakes\n",
+        "    RolledBack --> ResultAvailable: protected BootstrapResultV1 RolledBack durable\n",
+        "    RollingBack --> ManualRecoveryRequired: previous corrupt restore fails or data incompatible\n",
+        "    PreviousRelaunching --> ManualRecoveryRequired: previous cannot relaunch or handshake\n",
+        "\n",
+        "    Unsupported --> ResultAvailable\n",
+        "    AbortedBeforeSwitch --> ResultAvailable\n",
+        "    ManualRecoveryRequired --> ResultAvailable\n",
+        "    ResultAvailable --> [*]: expected next core reads receipt\n",
+        "\n",
+        "    [*] --> Recovering: nonterminal journal found at helper start\n",
+        "    Recovering --> BatonDurable: accepted only and no selector effect\n",
+        "    Recovering --> RollingBack: switch launch watchdog or verification phase interrupted\n",
+        "    Recovering --> ResultAvailable: terminal receipt and journal head verify\n",
+        "    Recovering --> ManualRecoveryRequired: chain selector generation or slot proof ambiguous"
+      ]
+    },
+    "title": "Durable activation, watchdog, rollback, relaunch, result, and crash-recovery phases",
+    "updated_at": "2026-08-21 14:08:17",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "06fa77e7-5c94-864a-940b-ce07ec4c6592",
+  "schemaVersion": 1
+}

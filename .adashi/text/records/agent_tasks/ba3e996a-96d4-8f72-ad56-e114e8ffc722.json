@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/files.rs\"]",
+    "completed_at": "2026-08-21 17:19:16",
+    "completion_memo": "Implemented root-confined project file read/search/edit tools with canonical path and symlink escape checks, bounded input/output, write authority mode, and optimistic content identity for edits. cargo check -p aworkit-capability-host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:25",
+    "created_files": "[\"crates/aworkit-capability-host/src/files.rs\"]",
+    "description": "Implement versioned project-file read, search, and edit tools exactly in the approved authority mode. Enforce configured roots with anchored handles, traversal and symlink/reparse escape protection, optimistic content identity for edits, bounded inputs/outputs, cancellation, and explicit side-effect descriptors. Shell and Python adapters are implemented separately in M05.2.",
+    "id": 31,
+    "number": 31,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.4 — Implement contained file, search, and edit tools",
+    "updated_at": "2026-09-22 07:12:06"
+  },
+  "deleted": false,
+  "identity": "ba3e996a-96d4-8f72-ad56-e114e8ffc722",
+  "schemaVersion": 1
+}

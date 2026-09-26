@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\".gitignore\"]",
+    "completed_at": "2026-08-21 15:41:52",
+    "completion_memo": "Created the Rust workspace and six isolated process crates plus a shared bounded smoke lifecycle seam. Each binary accepts a generation and completes a smoke handshake; cargo format and workspace tests pass.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:09",
+    "created_files": "[\"Cargo.toml\",\"Cargo.lock\",\"crates/aworkit-process/Cargo.toml\",\"crates/aworkit-process/src/lib.rs\",\"crates/aworkit-trusted-core/Cargo.toml\",\"crates/aworkit-trusted-core/src/main.rs\",\"crates/aworkit-workflow-worker/Cargo.toml\",\"crates/aworkit-workflow-worker/src/main.rs\",\"crates/aworkit-capability-host/Cargo.toml\",\"crates/aworkit-capability-host/src/main.rs\",\"crates/aworkit-local-store/Cargo.toml\",\"crates/aworkit-local-store/src/main.rs\",\"crates/aworkit-portable-store/Cargo.toml\",\"crates/aworkit-portable-store/src/main.rs\",\"crates/aworkit-bootstrap-helper/Cargo.toml\",\"crates/aworkit-bootstrap-helper/src/main.rs\"]",
+    "description": "Create the Cargo workspace and crate/binary layout for the Trusted Core, Workflow Worker, Capability Host, Local Store, Portable Store, and Bootstrap Helper. Add minimal generation-aware startup and bounded shutdown entry points while enforcing the designed dependency directions; feature behavior is out of scope. The result must compile and each process entry point must complete a smoke handshake.",
+    "id": 5,
+    "number": 5,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M01.1 — Scaffold the Rust workspace and process boundaries",
+    "updated_at": "2026-09-21 14:54:37"
+  },
+  "deleted": false,
+  "identity": "463b9a57-3d39-8eab-93a5-7ec284c25d74",
+  "schemaVersion": 1
+}

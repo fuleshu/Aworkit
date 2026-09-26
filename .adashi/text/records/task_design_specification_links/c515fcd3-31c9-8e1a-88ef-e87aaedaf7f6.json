@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-17 17:49:11",
+    "design_external_id": "uml.chat.frozen_tool_continuation",
+    "id": 419,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "9ef0d0c4-71af-81d7-8565-3b4f78828ab9"
+    }
+  },
+  "deleted": false,
+  "identity": "c515fcd3-31c9-8e1a-88ef-e87aaedaf7f6",
+  "schemaVersion": 1
+}

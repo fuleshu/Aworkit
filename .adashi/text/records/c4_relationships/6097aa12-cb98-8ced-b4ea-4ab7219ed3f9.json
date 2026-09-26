@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Routes the rebind preview and adoption commands, returning incumbent and adopted identities plus the authority and unreplayable-round reports without granting authority itself.",
+    "destination_external_id": "aworkit.trusted_core.revision_rebind",
+    "external_id": "rel.core.rebind.api",
+    "id": 339,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Internal Core Contract,Authority",
+    "technology": "Typed core command and query DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6097aa12-cb98-8ced-b4ea-4ab7219ed3f9",
+  "schemaVersion": 1
+}

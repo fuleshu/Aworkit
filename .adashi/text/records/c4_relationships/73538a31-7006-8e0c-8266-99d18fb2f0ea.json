@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes built/attested handshake contribution descriptors while preserving the core-pinned identity/version/hash",
+    "destination_external_id": "aworkit.capability_host.capability_registry",
+    "external_id": "rel.host_plugins.registry",
+    "id": 174,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Versioned adapter-registration port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "73538a31-7006-8e0c-8266-99d18fb2f0ea",
+  "schemaVersion": 1
+}

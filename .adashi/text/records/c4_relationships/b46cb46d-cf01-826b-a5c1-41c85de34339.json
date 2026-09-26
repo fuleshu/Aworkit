@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes only durable ordered Aworkit event envelopes, snapshots, deltas, and resumable stream cursors",
+    "destination_external_id": "aworkit.trusted_core.desktop_api",
+    "external_id": "rel.core_committer.core_api.events",
+    "id": 64,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Async committed-event subscription",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b46cb46d-cf01-826b-a5c1-41c85de34339",
+  "schemaVersion": 1
+}

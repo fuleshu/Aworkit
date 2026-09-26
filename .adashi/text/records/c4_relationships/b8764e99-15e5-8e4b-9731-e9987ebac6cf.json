@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Redeems minimal SecretLeaseV1 fields only for the authenticated invocation, decision, audience, host generation, expiry, and use allowance",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.core_secret.host_materializer.redeem",
+    "id": 190,
+    "source_external_id": "aworkit.trusted_core.secret_broker",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Authenticated one-time secret lease channel",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b8764e99-15e5-8e4b-9731-e9987ebac6cf",
+  "schemaVersion": 1
+}

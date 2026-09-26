@@ -1,0 +1,43 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Defines the framework-neutral compact desktop design language and accessible primitives for typography, semantic color, spacing, borders, elevation, status, buttons, forms, transcript rows, structured activity, virtual lists, split panes, dialogs, banners, badges, tooltips, diffs, workflow nodes/ports, focus, motion, and empty/error/loading states. The reference geometry is the contract in Desktop App Shell & Navigation; features consume semantic primitives and must not invent local spacing, raw colors, card grammar, or theme logic.\n",
+        "\n",
+        "Typography and density: use system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"Noto Sans\", sans-serif; code uses ui-monospace, \"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace. Body/controls are 13/18 px, pane titles 14/20 px weight 600, view titles 16/20 px weight 600, metadata/labels 11/16 px, and code/logs 12/17 px. Allowed weights are 400, 500, and 600. Spacing tokens are 2, 4, 6, 8, 12, 16, and 24 px. V1 density is Compact; accessibility scaling changes font/available space, not the semantic hierarchy.\n",
+        "\n",
+        "Appearance model: AppearancePreferenceV1.mode is exactly System, Light, or Dark, defaults to System, and is persisted by the core. EffectiveAppearance resolves System against the current platform scheme and adds high-contrast, reduced-motion, font-scale, and input-modality facts. Light tokens: window/canvas #F7F8FA; main panel #FFFFFF; navigation #F1F3F5; raised #FAFAFB; inset/code #EEF1F4; divider #D8DDE3; necessary control boundary #8B95A2; primary text #1E2228; secondary #5B6470; muted #626B76; accent #315FD6; accent-subtle #EAF0FF; selected row #E5ECFA; on-accent #FFFFFF. Dark tokens: window/canvas #111318; main panel #17191D; navigation #15181D; raised #1D2128; inset/code #0D0F13; divider #2E343D; necessary control boundary #5E6876; primary text #F1F3F5; secondary #B7BDC7; muted #929AA6; accent #8AA8FF; accent-subtle #1B2742; selected row #202A40; on-accent #111827. Cobalt expresses product identity only through focus, selection, primary actions, links, and running state; it does not fill large navigation or content regions. Every shipped SVG/CSS color must resolve to one named DesktopTokenSet role; neutral variants are never introduced ad hoc.\n",
+        "\n",
+        "Semantic status pairs: Running/info uses #2653A3 on #EBF1FF in Light and #9BB5FF on #17233A in Dark. Completed uses #176B43 on #EAF7F0 and #79D39E on #14271D. Needs-input/approval/paused/uncertain uses #7A4300 on #FFF3D6 and #F2C36E on #2B2111. Failed/destructive uses #A52A22 on #FDEDEC and #FF9B92 on #321817. Cancelled/disabled/opaque uses #4F5866 on #EFF1F4 and #BCC2CC on #242830. Every state pairs color with text and an icon; uncertain side-effect outcome is never visually collapsed into a neutral or retry-safe state.\n",
+        "\n",
+        "Borders, radii, and elevation: docked panes are square and shadowless. Rows/inputs use 4 px radius; composer, workflow nodes, and structured cards use 6 px; menus/dialogs/popovers use 8 px; pill radius is reserved for compact statuses. Default border is 1 px. Selection uses a 2 px inset or left accent plus border, not a thick outline. Shadows exist only on temporary overlays: popover 0 8px 24px rgb(0 0 0 / 16%); modal 0 16px 48px rgb(0 0 0 / 24%), with contrast-adjusted opacity in Dark.\n",
+        "\n",
+        "Toolkit boundary: Aworkit-owned React components wrap Mantine Core/Hooks for controls, forms, menus/context menus, splitters, trees, tabs, dialogs, overlays, drag/drop affordances, focus restoration, and accessible interaction behavior. TanStack Table and TanStack Virtual are used only behind specialized Aworkit collection adapters for large grids, trees, outlines, and timelines. Aworkit semantic roles, DesktopTokenSet, geometry, action IDs, keyboard rules, focus behavior, and accessibility fixtures remain authoritative. Mantine or TanStack theme/state/types never become canonical data, feature contracts, or serialized layout. A second overlay/focus system is introduced only behind the same facade after a documented gap and regression review.\n",
+        "\n",
+        "Owned state: resolved noncanonical theme/high-contrast tokens, effective font scale, reduced-motion/input modality, preview theme, transient overlay/focus stack, and local icon metadata. Canonical AppearancePreferenceV1 and its version are projections.\n",
+        "\n",
+        "Contracts: consumes AppearanceProjection and platform appearance signals; resolves EffectiveAppearance and exposes immutable DesktopTokenSet, compact primitives, focus/overlay services, icon metadata, and accessibility fixtures. Theme application changes tokens without rebuilding the component tree. Feature modules provide semantic labels and domain state rather than raw colors. Settings may preview locally and commits UpdateAppearance(mode, expectedVersion) through the Projection Gateway.\n",
+        "\n",
+        "Failure/degraded behavior: missing fonts use the system stack; unsupported blur/transparency uses opaque solid surfaces; invalid preference/scale uses the last valid projection or platform scheme; disabled reasons remain available; no state relies on animation or color alone. A failed preference commit reverts the preview to the latest projection without losing unrelated Settings drafts. If a toolkit primitive fails a platform, keyboard, forced-colors, or focus test, the facade substitutes or owns that primitive without changing feature contracts.\n",
+        "\n",
+        "Performance/accessibility: standard pointer targets are 28×28 px and never below 24×24 px without an applicable WCAG exception; focus is a 2 px accent ring with 2 px offset and forced-colors preservation. Hover actions also appear on keyboard focus and remain in overflow menus. Hover/press transitions are 80 ms and overlays 120–160 ms; reduced-motion disables nonessential motion. Support keyboard splitters, 200% zoom, high contrast, system font scaling, native editing shortcuts, stable streaming layout, rate-limited live regions, and WCAG 2.2 AA. Automated token-matrix checks require at least 4.5:1 for normal text on every assigned surface and 3:1 for necessary control boundaries, focus indicators, and non-text state markers.\n",
+        "\n",
+        "Non-responsibilities: no domain logic, canonical preference persistence, remote assets, direct IPC, capability checks, authority, or privileged behavior. Mantine is an implementation dependency, not the owner of Aworkit's design system."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.design_system",
+    "id": 25,
+    "name": "Shared Design System & Accessibility",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Design System,Accessibility,Theme",
+    "technology": "Strict TypeScript semantic contracts and CSS tokens; Aworkit React workbench facade backed by Mantine Core/Hooks; system fonts and local SVG icons",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f40ab8cd-1ede-8db9-9e27-83ed9fec40a1",
+  "schemaVersion": 1
+}

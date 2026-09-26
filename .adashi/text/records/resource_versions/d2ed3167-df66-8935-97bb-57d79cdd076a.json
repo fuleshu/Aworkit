@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.local_store.canonical_record_structure",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-26 17:06:20",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "d2ed3167-df66-8935-97bb-57d79cdd076a",
+  "schemaVersion": 1
+}

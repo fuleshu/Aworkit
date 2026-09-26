@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes contiguous Chat, timeline, queue, approval, and status projections",
+    "destination_external_id": "aworkit.desktop_ui.chat_workspace",
+    "external_id": "rel.ui.gateway.chat",
+    "id": 37,
+    "source_external_id": "aworkit.desktop_ui.projection_gateway",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "483590d9-ab92-8920-b00e-0cebf38802d9",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Recompiles and verifies the exact frozen snapshot fingerprint before any checkpoint state can be admitted",
+    "destination_external_id": "aworkit.workflow_worker.execution_plan",
+    "external_id": "rel.worker_recovery.execution_plan",
+    "id": 140,
+    "source_external_id": "aworkit.workflow_worker.recovery",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Deterministic plan compiler port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "eea75665-deb9-847d-9efa-a06cc53c6e2c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Durably records the exact authenticated ManagedLocalEnrollmentRequestV1, baton, and BootstrapCommandV1 hashes before acknowledgement, verifies idempotent identity, rebuilds enrollment and activation session fences after restart, and serves only EnrollmentPreparedV1 or the terminal BootstrapResultV1 and ManualRecoveryNoticeV1",
+    "destination_external_id": "aworkit.bootstrap_helper.activation_journal",
+    "external_id": "rel.bootstrap.protocol.journal",
+    "id": 293,
+    "source_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "tags": "Relationship,Internal,Durability,Protocol",
+    "technology": "ActivationJournalPortV1 with closed versioned bootstrap-maintenance DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7e190353-4c7d-8ceb-9bdf-03d090518ca5",
+  "schemaVersion": 1
+}

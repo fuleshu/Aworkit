@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-18 11:59:42",
+    "design_external_id": "aworkit.trusted_core.authority",
+    "id": 57,
+    "target": "desktop/src-tauri/src/runtime/approvals/permission_migration.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-18 11:59:42",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3abb8dc0-9cdb-8470-961d-1f1a874fb433",
+  "schemaVersion": 1
+}

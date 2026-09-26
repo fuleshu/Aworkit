@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.model_agent|file|desktop/scripts/native-agent-prefix-smoke.mjs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-19 07:31:37",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "bbcac5f9-e250-841b-829a-cf32e35ceb25",
+  "schemaVersion": 1
+}

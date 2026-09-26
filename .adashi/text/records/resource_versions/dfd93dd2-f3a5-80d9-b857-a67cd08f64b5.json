@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.workflow_worker.workspace_instructions_activation",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-08 08:06:04",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "dfd93dd2-f3a5-80d9-b857-a67cd08f64b5",
+  "schemaVersion": 1
+}

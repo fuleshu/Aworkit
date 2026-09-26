@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/lib.rs\",\"crates/aworkit-local-store/src/ledger.rs\"]",
+    "completed_at": "2026-08-21 16:25:14",
+    "completion_memo": "Implemented StorageCoordinator as a cross-process maintenance gate for the local-store root. It selects explicit ReadWrite versus InspectableReadOnly startup modes after SQLite integrity and JSON-manifest validation, does not perform effect replay, and creates staged, synced, non-overwriting backups with a manifest while rejecting backup destinations nested under the source store. Added tests for the startup gate and non-destructive backup flow; cargo test -p aworkit-local-store passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:47",
+    "created_files": "[\"crates/aworkit-local-store/src/storage.rs\"]",
+    "description": "Implement the storage coordinator after the concrete stores exist, registering their maintenance ports as the startup gate for SQLite, JSON, artifact files, and disposable indexes. Provide schema compatibility checks, transactional migrations, integrity reporting, crash-consistent backup/restore, writer exclusion, and safe degraded modes without replaying effects.",
+    "id": 12,
+    "number": 12,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M02.4 — Implement storage startup, migration, integrity, and backup",
+    "updated_at": "2026-09-21 14:55:38"
+  },
+  "deleted": false,
+  "identity": "f5ab0587-f245-8978-b045-9da25b2a2ef3",
+  "schemaVersion": 1
+}

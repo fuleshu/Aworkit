@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-protocol/src/lib.rs\",\"desktop/package.json\",\"desktop/pnpm-lock.yaml\",\"desktop/tsconfig.json\"]",
+    "completed_at": "2026-08-21 15:54:35",
+    "completion_memo": "Added a single repeatable Milestone 01 QA command covering Rust formatting/build/tests, Rust process dependency directions, six smoke handshakes, strict TypeScript runtime-schema validation against the shared fixture, rejection of unsupported versions and malformed frames, Vite build, and a native Tauri build. Registered and ran Adashi QA job #1 successfully.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:17",
+    "created_files": "[\"qa/check-boundaries.sh\",\"qa/smoke-processes.sh\",\"qa/milestone-01.sh\",\"desktop/src/protocol/schema.test.ts\"]",
+    "description": "Create automated QA tests for the complete Milestone 01 result: Rust and desktop builds, dependency-boundary checks, process smoke handshakes, cross-language serialization fixtures, compatibility rejection, and malformed-message handling. Keep these tests runnable without implemented product features.",
+    "id": 8,
+    "number": 8,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M01.QA — Create QA tests for workspace and boundary contracts",
+    "updated_at": "2026-09-21 14:55:02"
+  },
+  "deleted": false,
+  "identity": "c20438f3-75c3-8b05-96f7-fba93623a0c7",
+  "schemaVersion": 1
+}

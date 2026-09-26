@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns only committed CapabilityOutcomeV1, approval status, normalized usage/artifact references, definite-not-started failure, cancellation, or OutcomeUncertain",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.core_invocation.worker_gateway.outcomes",
+    "id": 149,
+    "source_external_id": "aworkit.trusted_core.invocation_broker",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned framed local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a9816c28-e5a5-8987-8819-c0e75a9d93f9",
+  "schemaVersion": 1
+}

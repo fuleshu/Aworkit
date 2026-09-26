@@ -1,0 +1,52 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-09-22 20:56:01",
+    "completion_memo": {
+      "lines": [
+        "Closed without implementation as superseded by task 122 (Path context menu: open, open in editor, reveal in folder).\n",
+        "\n",
+        "Why it was rejected rather than built:\n",
+        "- The useful part is acting on a file a Run produced, and that is covered without any of this task's machinery: task 122 adds a right-click menu on the paths that already appear in the reply text and on file tool cards, core-mediated and workspace-scoped. No present tool, no model cooperation, no artifact-store plumbing, no previews.\n",
+        "- The task description overstates the current state. The artifact store does exist (crates/aworkit-local-store/src/artifacts.rs) but only one feature uses it: fetched web pages (desktop/src-tauri/src/runtime/web_documents.rs), so a web_fetch continuation reads a range without re-downloading. There is no PrepareArtifact or RevealArtifact path anywhere, no deliverable concept, and the chat's \"artifact\" timeline kind is never produced - Run details even has an Artifacts counter that is structurally always zero. So implementing this as written means building the tool, the event, the reveal path and both UI surfaces.\n",
+        "- What remains after removing that is decoration: a card in the conversation and a list in Run details, where the reply already names the path and the tool cards already show it. The dedup and hash semantics only matter for previews, which were never requested.\n",
+        "- A model-declared deliverable also depends on the model remembering to call the tool; a projection of what the Run produced would not.\n",
+        "\n",
+        "Re-open only if a concrete need appears for content previews or for content that outlives the workspace file. Full reasoning is also recorded in project memory."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": "2026-09-22 20:56:05",
+    "created_at": "2026-09-21 07:48:11",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Add the DSH present/deliverables capability using the artifact store and evidence surfaces Aworkit already owns.\n",
+        "\n",
+        "Current state. A Run can prepare and reveal artifacts through the core committer's streaming PrepareArtifact path and the artifact store, and the conversation/evidence inspector can display them, but the model has no way to declare that a produced file or artifact is a deliverable. The user must infer it from tool activity.\n",
+        "\n",
+        "Design fit.\n",
+        "- tool.present marks an existing workspace file or an already-produced artifact as a Run deliverable. It prepares content through the existing streaming artifact path (durable hash token committed atomically with the semantic event) and commits DeliverablePresentedV1; it never executes, installs, copies content into history, or grants filesystem authority beyond what the originating tool already had.\n",
+        "- Deliverables are keyed idempotently by content hash plus logical path, so presenting the same file twice yields one deliverable with an updated revision reference.\n",
+        "- Presentation: a typed deliverable card in the conversation and a per-Run deliverable list in the evidence inspector, with reveal actions routed through the existing bounded RevealArtifact read path. Large and binary content stays in the artifact store behind a bounded metadata projection; missing or expired content is reported explicitly, never inferred.\n",
+        "- Portable export and scrubbing follow the existing export policy; deliverables never become a second history backend.\n",
+        "\n",
+        "Non-goals. A general upload or file-sharing surface; presenting content the Run did not produce or read under existing authority.\n",
+        "\n",
+        "Outputs. Tool manifest entry, schema and frozen binding; artifact-prepare integration and event family; conversation card and evidence list with reveal policy; portable export handling; and tests for present, hash/path dedup, reveal authorization, oversized content, and missing-artifact diagnostics."
+      ]
+    },
+    "id": 115,
+    "number": 114,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Deliverable artifacts and a model-facing present tool",
+    "updated_at": "2026-09-22 20:56:05"
+  },
+  "deleted": false,
+  "identity": "a0b2d098-b1d3-8409-8420-d84fd7be5555",
+  "schemaVersion": 1
+}

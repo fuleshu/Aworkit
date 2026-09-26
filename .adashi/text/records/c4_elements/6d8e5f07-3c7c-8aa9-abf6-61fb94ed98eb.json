@@ -1,0 +1,37 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns lifecycle, identity handshakes, health, cancellation, restart budgets, logging handles, and complete tree cleanup for workflow workers, the capability host, and approved sidecars. For whole-application repair activation it only quiesces those children and exports generation-fenced cleanup facts before the independently surviving Bootstrap Helper takes control.\n",
+        "\n",
+        "Owned state: ProcessRecordV1 per logical child role with pid/tree handle, generation, expected executable or extension hash, protocol compatibility, Run association, start time, heartbeat, health, exit cause, restart budget/backoff, cancellation deadline, and bounded diagnostics references. It does not own application build slots, the active application selector, bootstrap journal, or candidate-core watchdog.\n",
+        "\n",
+        "Public commands/events and ports: SpawnWorker, SpawnCapabilityHost, RegisterSidecar, CheckHandshake, HealthSnapshot, CancelProcessTree, TerminateProcessTree, RestartRole, QuiesceForApplicationRestart, and ExportQuiescenceProof. It emits ProcessStartedV1, ProcessHealthChangedV1, ProcessExitedV1, RestartBudgetExhaustedV1, and ChildProcessQuiescenceV1.\n",
+        "\n",
+        "Invariants: the trusted core remains alive when children fail; cancellation and shutdown target the complete descendant tree. Every process generation authenticates expected identity and protocol before receiving work or leases. A process boundary supplies crash/dependency isolation, not a security sandbox, and health never implies a side effect did not occur. Quiescence proof covers only the current core's supervised children and cannot stand in for bootstrap verification of the application generation.\n",
+        "\n",
+        "Transactional and failure behavior: spawn becomes usable only after handshake; failed health checks use bounded backoff and circuit breaking and degrade affected Runs. Forced termination follows cooperative deadlines. The supervisor never automatically restarts an ambiguous non-idempotent invocation; recovery reconciles canonical and outbox state first. During repair activation, the durable RepairActivationBatonV1 is committed before this module quiesces children, and the Bootstrap Helper independently proves application-tree cleanup after the core exits.\n",
+        "\n",
+        "NFRs: Windows Job Object, POSIX process-group, and macOS behavior are tested; logs rotate within bounds; startup, heartbeat, graceful-stop, and forced-cleanup deadlines are distinct; resource and orphan-risk metrics are exposed without secrets; no successful cleanup leaves zombies or known descendants.\n",
+        "\n",
+        "Non-responsibilities: no whole-application candidate launch, startup watchdog, build-slot selection, signing or installer policy, automatic application rollback, graph execution, capability authorization, result classification, secret management, canonical event ordering, or claim of sandbox enforcement.\n",
+        "\n",
+        "Managed process jobs (approved 2026-09-17; registry split 2026-09-21): This component supplies the supervised process runner and process-tree semantics for process-kind jobs, including durable start intents, retained-work disposition, and cancellation that targets the complete owned tree. Chat job identity and generation, capacity, output cursors, collection acknowledgement, keep/stop/input/list routing and the final-answer completion gate are owned by aworkit.trusted_core.job_registry for every job kind, process or delegated child. shell, shell_start, python and python_start share this one supervised process path; ordinary shell and Python yield after a bounded soft wait without killing work. Process jobs cannot cross Chat boundaries or be replayed after restart. Stop cancels process jobs regardless of prior retention; shutdown kills owned trees. Tool job control remains usable without a project. Adashi QA execution and remote QA API changes are excluded."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.process_supervisor",
+    "id": 34,
+    "name": "Process-Tree Supervisor & Health Monitor",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Process,Health",
+    "technology": "Rust cross-platform process service using process groups, job objects, signals, and heartbeats",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6d8e5f07-3c7c-8aa9-abf6-61fb94ed98eb",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Pins exact enabled compatible contribution identities, versions, hashes, and declared adapter features",
+    "destination_external_id": "aworkit.trusted_core.extension_registry",
+    "external_id": "rel.core_snapshot.extensions",
+    "id": 69,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust registry resolution port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6179dd4e-900b-825f-9ed9-3f31372f123c",
+  "schemaVersion": 1
+}

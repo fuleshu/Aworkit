@@ -1,0 +1,44 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.trusted_core.job_registry",
+    "created_at": "2026-09-17 15:23:39",
+    "diagram_type": "flow",
+    "id": 73,
+    "key": "uml.tool_supervision.soft_wait_proposal",
+    "kind": "mermaid",
+    "sort_order": 48,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        " A[\"Authorize a job-producing capability (shell, python or delegated child) and persist a Chat-owned start intent\"] --> B[\"Start the kind's runner: supervised process tree or in-process child agent loop\"]\n",
+        " B --> C{\"Complete before soft wait?\"}\n",
+        " C -->|Yes| D[\"Return terminal result and acknowledge collected output\"]\n",
+        " C -->|No| E[\"Return job id, kind, cursor, partial output and running state\"]\n",
+        " E --> F[\"Agent uses job_output, job_input, job_stop or job_keep\"]\n",
+        " F --> G[\"Runner retains control after the parent turn ends\"]\n",
+        " G --> F\n",
+        " G --> H[\"Persist terminal state and queue the owner completion notice\"]\n",
+        " H --> I[\"job_output collects the final result\"]\n",
+        " F --> J[\"Agent proposes final answer\"]\n",
+        " J --> K{\"Any running or uncollected jobs?\"}\n",
+        " K -->|Yes| L[\"Nudge owner to collect, stop or explicitly retain\"]\n",
+        " L --> F\n",
+        " K -->|No| M[\"Accept final answer\"]\n",
+        " L --> N[\"job_keep records deliberate retention; a stopped child scope stays closed\"]\n",
+        " N --> M\n",
+        " B --> O[\"User Stop cancels every owned runner; a child job also closes its scope\"]\n",
+        " O --> H\n",
+        " B --> P[\"Crash recovery marks previous live jobs interrupted without replay\"]"
+      ]
+    },
+    "title": "Chat jobs, soft waits and completion",
+    "updated_at": "2026-09-21 15:35:17",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1fa09bc2-f826-81da-ad82-5ba9170070fa",
+  "schemaVersion": 1
+}

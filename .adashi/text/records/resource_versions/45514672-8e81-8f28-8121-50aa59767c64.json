@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.trusted_core.repair_activation_rollback",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-21 14:03:42",
+    "version": 4
+  },
+  "deleted": false,
+  "identity": "45514672-8e81-8f28-8121-50aa59767c64",
+  "schemaVersion": 1
+}

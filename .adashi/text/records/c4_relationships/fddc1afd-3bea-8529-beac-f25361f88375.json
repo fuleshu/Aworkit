@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Sends InvocationProposalV1 for model, tool, MCP, plugin-node, internal Agent step, and explicit External Agent work; never dispatches to the host",
+    "destination_external_id": "aworkit.trusted_core.invocation_broker",
+    "external_id": "rel.worker_gateway.core_invocation.proposals",
+    "id": 148,
+    "source_external_id": "aworkit.workflow_worker.core_gateway",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned framed local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fddc1afd-3bea-8529-beac-f25361f88375",
+  "schemaVersion": 1
+}

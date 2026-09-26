@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-21 20:28:46",
+    "id": 12,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[1],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-21 20:27:58",
+    "status": "passed",
+    "summary": "1 passed, 0 failed, 0 timed out",
+    "trigger_source": "codex-milestones-01-08-remediation"
+  },
+  "deleted": false,
+  "identity": "a678a91c-17f7-8580-a6f5-cdfb31cb2b05",
+  "schemaVersion": 1
+}

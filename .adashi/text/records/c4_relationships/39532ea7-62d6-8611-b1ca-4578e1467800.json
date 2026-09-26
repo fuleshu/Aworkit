@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Discovers manifests without execution and invokes only explicitly enabled servers or extension processes",
+    "destination_external_id": "ext.extensions_mcp",
+    "external_id": "rel.host.extensions",
+    "id": 16,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship",
+    "technology": "Plugin RPC / MCP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "39532ea7-62d6-8611-b1ca-4578e1467800",
+  "schemaVersion": 1
+}

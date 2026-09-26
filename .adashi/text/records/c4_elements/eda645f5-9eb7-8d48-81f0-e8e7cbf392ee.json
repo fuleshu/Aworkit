@@ -1,0 +1,39 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Edits one schema-versioned workflow JSON document with palette, pan/zoom canvas, typed ports/transitions, property forms, groups/comments, validation, resolution links, and authority summary. Parse/serialize preserves complete source including unknown node types/fields, original configuration/connections/positions, and requirement metadata. Missing plugin, incompatible version, Unconfigured standard tier, and missing custom identifier are distinct, visible, editable, and losslessly exportable.\n",
+        "\n",
+        "Editor ownership: Aworkit owns the complete WorkflowDraft, stable IDs, opaque fragments, nodes, ports, connections, cycles, self-loops, groups/comments, typed-link policy, validation, selection policy, command transactions, pointer-gesture coalescing, undo/redo, conflicts, and complete canonical serialization. One Aworkit action registry feeds canvas context menus, visible toolbars, shortcuts, command search, properties, and the keyboard outline/table; no operation may exist only in a context menu.\n",
+        "\n",
+        "Graph-surface adapter: React Flow implements rendering, hit-testing, connection and drag gestures, temporary pointer geometry, selection visuals, and viewport pan/zoom behind WorkflowGraphSurfacePort. React Flow JSON, state, IDs, or types never enter WorkflowDraft, workflow/core contracts, save payloads, undo records, or canonical storage. A failed performance, accessibility, or platform acceptance gate replaces the adapter without changing the editor kernel or document.\n",
+        "\n",
+        "Owned state: complete WorkflowDraft with base version, undo stack, selection, viewport, palette/filter, validation annotations, and opaque raw fragments; only a core-accepted save is canonical. Viewport and temporary gesture state may live inside the graph adapter; command outcomes do not.\n",
+        "\n",
+        "Contracts: consumes document, node catalog, capability resolution, validation, and authority projections; emits ValidateWorkflowDraft, SaveWorkflowDocument (base version plus complete JSON), Import, Export, and resolution-route intents. UnknownNodeEditor may change layout/comments but must round-trip opaque data. WorkflowGraphSurfacePort consumes Aworkit GraphViewModel and emits CanvasIntent; it exposes no library-native model.\n",
+        "\n",
+        "Failure/degraded behavior: unresolved requirements block Run, never inspection/edit/save-as/export; stale validator/catalog cannot claim readiness; conflicts retain draft and offer compare/reload/save-as; parse errors open source repair without destructive partial conversion; import is inert. If the graph surface fails, the lossless source/editor state and keyboard outline remain usable.\n",
+        "\n",
+        "Performance/accessibility: viewport culling and zoom-level detail target 60 fps near 1,000 representative visible nodes in the actual Windows WebView2, macOS WKWebView, and Linux WebKitGTK surfaces; validation is debounced/cancellable; large parsing and optional layout are off the interaction path. The synchronized keyboard outline/table provides all node, connection, move, grouping, and action operations; context actions have keyboard and visible-menu equivalents.\n",
+        "\n",
+        "Non-responsibilities: no graph execution/freezing, secrets, plugin install/enable, authority acceptance, silent substitution, active-Run mutation, or persistence of React Flow state.\n",
+        "\n",
+        "Workflow revision rebinding (2026-09-23): The editor stays the authoring surface and gains the counterpart view: for a running Chat it shows which revision that Chat uses, and it can offer adopting the saved version for the next turn together with the validation result, the authority delta and the recorded tool rounds the candidate cannot replay. Its non-responsibility stands unchanged — nothing the editor does changes a run in flight; only the user's adoption at a settled boundary does, and the editor's role is to make that choice informed."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.workflow_editor",
+    "id": 20,
+    "name": "Workflow Canvas & Document Editor",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Workflow Editor",
+    "technology": "Strict TypeScript lossless editor kernel and schema forms with a replaceable React Flow graph-surface adapter",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "eda645f5-9eb7-8d48-81f0-e8e7cbf392ee",
+  "schemaVersion": 1
+}

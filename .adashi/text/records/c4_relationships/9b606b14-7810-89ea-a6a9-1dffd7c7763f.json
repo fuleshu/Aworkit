@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads available redacted detailed-capture manifests and chunks lazily with retention/truncation status; missing or expired chunks are never inferred",
+    "destination_external_id": "aworkit.local_store.debug_capture",
+    "external_id": "rel.core_desktop_api.local_store.capture_read",
+    "id": 218,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Read Only,Optional",
+    "technology": "CaptureReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9b606b14-7810-89ea-a6a9-1dffd7c7763f",
+  "schemaVersion": 1
+}

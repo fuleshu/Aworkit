@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "tag": "projection"
+  },
+  "deleted": false,
+  "identity": "98f69e95-5552-8ae8-980f-54f89a35be8a",
+  "schemaVersion": 1
+}

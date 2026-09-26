@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Parses extension manifests without execution, reports discovery and handshake facts to the trusted core registry, and launches/invokes only an explicitly enabled, compatible, exact version/hash contribution authorized for the current host generation. It supplies a language-neutral subprocess protocol for plugin nodes, tools, providers, evaluators, and adapters.\n",
+        "Owned runtime state: ephemeral ExtensionManifestV1 parse results, PluginProtocolSessionV1, handshake/contribution schema cache, child execution handles, request correlation, health, restart backoff observation, and bounded logs. Installed/enabled identity records remain core-owned.\n",
+        "Versioned ports and contracts: ExtensionManifestV1 declares identity, version, Aworkit range, entry point, contributions, schemas, dependencies, and provenance; PluginHandshakeV1, PluginInvocationV1, PluginRawEventV1, PluginHealthV1, and PluginShutdownV1 form the subprocess protocol. Unknown contribution fields are preserved as opaque evidence when safe.\n",
+        "Failure and degraded behavior: malformed manifest, failed attestation, entry-point disappearance, schema/protocol mismatch, crash, or restart-budget exhaustion blocks new dispatch and reports degradation. A crash after possible side effects becomes uncertain; lifecycle restart never replays that invocation.\n",
+        "Security truthfulness: enabled third-party code runs with the desktop user's OS authority unless an explicit real isolation profile was selected. The subprocess boundary is for dependency/crash lifecycle, not security; plugin code can bypass file, network, secret, and approval brokers or spawn further processes.\n",
+        "Observability, performance, and cross-platform behavior: bounded framed messages/logs, health/handshake/crash/restart metrics, provenance and opacity diagnostics, reserved cancellation capacity, and normalized executable discovery/arguments/environment on Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no install/enable/integrity decision, marketplace, workflow rewrite, sandbox claim, authority/approval grant, secret-store access outside leases, automatic uncertain-effect retry, or canonical history commit."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.plugin_runtime",
+    "id": 56,
+    "name": "Trusted Extension Protocol & Lifecycle Manager",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Trusted Extensions,Subprocess Protocol",
+    "technology": "Rust plugin protocol client with supervised Python, Node, Rust, and native subprocesses",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a931fcee-0eab-8d82-8737-5ca5e74db633",
+  "schemaVersion": 1
+}

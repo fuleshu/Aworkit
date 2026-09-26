@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses only per-user filesystem identity and durability, atomic selector replacement, exact executable and process identity, local IPC, launch, watchdog, minimal native manual-recovery notice, and process-tree termination primitives required by ManagedLocalBuildProfileV1",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.bootstrap.os_services",
+    "id": 282,
+    "source_external_id": "aworkit.bootstrap_helper",
+    "tags": "Relationship,Platform Contract,Repair",
+    "technology": "Platform filesystem, process, local IPC, native notice, and application lifecycle APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7b54ce39-0b05-8f39-9d1c-58e31b2866f8",
+  "schemaVersion": 1
+}

@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "The machine-local persistence boundary contains canonical semantic Chat/Run events and operational indexes in SQLite, schema-versioned JSON configuration and workflows, ordinary artifact files, extension inventory, recurring-error evidence, bounded debug capture, rotating diagnostics, and the noncanonical runtime journal required to resume active portable Chats on the same machine.\n",
+        "\n",
+        "Only the trusted core commits canonical history. Transactions preserve ordered event identity, attempt identity, checkpoints, and outbox-style delivery metadata. Secrets are excluded and referenced by opaque credential-store handles. Streaming fragments are not canonical unless detailed capture is explicitly enabled. Local history is canonical only for Chats not configured for portable storage.\n",
+        "\n",
+        "For a Chat whose semantic history is canonical in the Portable Session Repository, this boundary may store only machine-local operational facts keyed to the portable CommitId/head hash: the full locally bound frozen snapshot reference, pending command/invocation deduplication, dispatch and worker-control outbox state, process generations, queued-input delivery cursor, pending approval state, and recovery reconciliation facts. Those rows are not a semantic event stream, cannot be exported as authority, and expire or become inert when their binding no longer matches the verified portable head.\n",
+        "\n",
+        "Incremental runtime reads (2026-09-17): Provide sequence-fenced tail reads, indexed event-kind and record identity queries, and scalar stream-head access. Runtime append and lookup must not decode an entire operational stream merely to find its head or one invocation. Canonical evidence remains immutable and durable-before-dispatch; disposable caches advance only after successful commits and reconcile external appends without replaying tools. Specification: docs/context-continuation-performance.md."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.local_store",
+    "id": 14,
+    "name": "Local State and Evidence Store",
+    "parent_external_id": "1",
+    "tags": "Container,Database,Local Data",
+    "technology": "SQLite, schema-versioned JSON, filesystem artifacts, rotating logs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "19d0cac2-c90e-8d08-8e41-0e149e99aa18",
+  "schemaVersion": 1
+}

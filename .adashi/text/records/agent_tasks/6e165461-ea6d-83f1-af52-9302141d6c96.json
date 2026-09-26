@@ -1,0 +1,52 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/model.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/descriptor_upgrade.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_continuation.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_tools.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/compatibility.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/control.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/frames.rs\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/settingsV2Port.test.ts\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-21 11:55:06",
+    "completion_memo": {
+      "lines": [
+        "Implemented and pushed as 61b6338 on top of 2b3f157.\n",
+        "\n",
+        "Delivered exactly the accepted decisions: background by default, the existing job tools as the control surface, and the same completion barrier as shell jobs with job_keep to continue.\n",
+        "\n",
+        "Registry. Entry.runner is now Process | Child and the persisted record carries a kind that decodes to process for legacy rows, so shell/Python behavior is unchanged. Child jobs share durable identity, owner/child scope, running/terminal snapshot, output cursor, acknowledge/collection, list, keep, stop, input, capacity and the completion notice. A running child job on restart becomes interrupted and is never replayed.\n",
+        "\n",
+        "Background delegation. New Chats freeze runInBackground: true on tool.subagent, tool.subagent_fork and tool.subagent_message (also exposed as an optional call argument). A delegation computes its child scope and frame, commits a running frame, registers a child job under the spawning invocation with the pass cancellation token, and returns {childId, jobId, running:true} immediately; the same code path runs inline when the contract or the call asks for it. subagent_list/message/cancel remain as scope aliases and now handle live children (steer, stop, closed-scope reporting).\n",
+        "\n",
+        "Controls. job_list/job_output report child jobs with kind subagent, childId and live per-turn progress; job_output with waitMs waits for the terminal snapshot; job_input steers a running child at its next step boundary through the child tool port's context drain, or resumes a settled child as a new background turn-set; job_stop cancels the child token, waits, and marks the scope cancelled so it can never be resumed; job_keep lets the delegating Agent finish while the child keeps working. Child jobs count toward the 8/Chat and 32/total running job capacity.\n",
+        "\n",
+        "Evidence fix (the substantive blocker). A background child outlives the delegating pass, and the canonical history forbids a parent span terminating while a committed child span is open. The child now owns its evidence: RunEventStream gained a detached child constructor whose span root carries the child identity, and the model loop takes an evidence observer from the invocation port, so a background child's model spans go to its own stream and observer while an inline child keeps the pass observer. The child root span carries subagentChildId and the desktop projection attributes its ancestry to the subagent actor. This was verified by reproducing the exact store error before the fix, then the four background end-to-end tests passing after it.\n",
+        "\n",
+        "Verification. cargo test --lib: 395 passed, 1 pre-existing failure (compaction_integration::checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node), reproduced failing at 088445b before this work. tsc --noEmit clean; vitest 404 passed with only the pre-existing systemTextScale and app.integration-timeout failures. New tests: registry child identity, keep/stop, ownership isolation and restart interruption; pipeline background ticket with live progress, step-boundary steering, stop-and-close, and keep-then-finish. The inheritance and continuation suites pin runInBackground:false so their scripted dialogues stay deterministic."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 11:28:52",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/subagent/worker.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_background.rs\"]",
+    "description": {
+      "lines": [
+        "Extend the existing Chat job registry so a delegated subagent is a real background job, not a blocking child loop.\n",
+        "\n",
+        "Current state. Task 112 made children durable and resumable but synchronous: tool.subagent/tool.subagent_fork run the whole child loop inside the parent tool invocation, so the parent cannot act while the child works, and subagent_list never reports a running child. Meanwhile jobs/registry.rs already owns durable identity, Chat/child scope, running/terminal status, output cursors, keep/stop/input controls and the completion barrier - but Entry.session is hard-wired to ProcessSession, so only OS processes can be jobs.\n",
+        "\n",
+        "Goal. Generalize a job entry's runner to Process | Child. A background delegation computes its child scope and frame first, registers a child job under the spawning invocation (owner = Chat, scope = delegating Agent), starts the child loop on its own thread with its own CancellationToken plus a watcher that forwards the pass token, streams per-turn progress into the job output, and returns {jobId, childId, running:true} immediately. The parent then uses job_output/job_list for live state, job_input to steer a running child or resume a settled one, job_stop to cancel and close the scope, and job_keep to finish its turn while the child keeps running. Running child jobs participate in the same completion barrier as shell jobs. On restart a running child job becomes interrupted and is never replayed.\n",
+        "\n",
+        "Decisions accepted by the user (2026-09-21): background is the default for new Chats (foreground remains per-call); the existing job tools are the control surface (subagent_list/message/cancel stay as scope aliases); the same completion barrier as shell jobs applies, with job_keep to continue.\n",
+        "\n",
+        "Outputs. Registry runner generalization with persisted kind (legacy records stay process), child job start/finish/progress, background spawn path shared with the synchronous path, control and completion handling for child jobs, manifest/schema/config for the background default, recovery behavior, tests for background progress, steering, stop, keep and restart interruption, and documentation."
+      ]
+    },
+    "id": 119,
+    "number": 118,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Run delegated subagents as background jobs",
+    "updated_at": "2026-09-21 20:13:19"
+  },
+  "deleted": false,
+  "identity": "6e165461-ea6d-83f1-af52-9302141d6c96",
+  "schemaVersion": 1
+}

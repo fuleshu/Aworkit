@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:17",
+    "design_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "id": 366,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "9a8be92f-101c-8d21-975b-165fc835a295"
+    }
+  },
+  "deleted": false,
+  "identity": "08849e27-74ef-83e9-818a-eaabc92bf086",
+  "schemaVersion": 1
+}

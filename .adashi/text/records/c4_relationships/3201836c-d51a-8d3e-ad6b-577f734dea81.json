@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates frozen Subagent nodes with explicit context selection, result contract, integration target, and inherited limits",
+    "destination_external_id": "aworkit.workflow_worker.subagent",
+    "external_id": "rel.worker_node_runtime.subagent",
+    "id": 123,
+    "source_external_id": "aworkit.workflow_worker.node_runtime",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Aworkit child-context port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3201836c-d51a-8d3e-ad6b-577f734dea81",
+  "schemaVersion": 1
+}

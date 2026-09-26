@@ -1,0 +1,64 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/pipeline/continuation.rs\",\"desktop/src-tauri/src/runtime/pipeline/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline/steering.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/descriptor_upgrade.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/scripts/native-shell-jobs-smoke.mjs\"]",
+    "completed_at": "2026-09-20 09:20:24",
+    "completion_memo": {
+      "lines": [
+        "IMPLEMENTED (task scope 1-5)\n",
+        "\n",
+        "A later pass of an existing Chat now adopts the current documents. The unit of configuration stability is one pass: node, edge and agent toolIds, the bound tool set and its interfaces come from now, while Chat identity, the Run's authority ceiling, the workspace binding and committed evidence carry over.\n",
+        "\n",
+        "Files:\n",
+        "- pipeline/continuation.rs: the pass compiles request.workflow_snapshot for real (validated + bounded + compiled at preflight), its effective tool set is frozen from request.tools with the saved Chat supplying authority, the broker manifest and the worker allowlist are extended for newly bound capabilities, and the pass payload config carries the current document.\n",
+        "- pipeline/frozen_tools.rs: effective() re-derives provider name, description and schema from this build for every bound capability; a capability the Chat already held keeps the configuration, executable identity, approval class, credential binding and file-access contract it was frozen with, so an echoed or edited field can never replace them.\n",
+        "- pipeline/steering.rs: Stop/Continue ownership is Chat/Run/pass identity, not config equality, so a workflow edit between stop and continue is adopted instead of blocking the Chat.\n",
+        "- service/current_configuration.rs (new): resolves the current workflow document and the tool set it binds for a later pass. A capability the Chat already holds reuses its frozen binding; a newly bound built-in freezes through the same path as a first-input freeze (must be installed and enabled in saved Settings); an MCP capability the Run never attested is refused rather than silently connected.\n",
+        "- service.rs: later passes use that resolution; freeze_builtin_tool and request_tool_bindings factor the shared first-input paths.\n",
+        "\n",
+        "Evidence: each invocation durably records the binding it actually used (provider name, description, input schema, configuration hash, limit, manifest binding) in pipeline.tool-invocation-prepared; that record now reflects the interface this pass resolved from, and is never enforced against a later pass.\n",
+        "\n",
+        "Tests: the two tests named in the task were rewritten to the new rule (service.rs later_pass_adopts_the_current_document_while_chat_identity_stays_frozen; pipeline/tests/frozen_tools.rs captured_chat_continuation_adopts_the_current_document_without_widening_authority), as were the two others that pinned the same invariant (descriptor_upgrade.rs later_pass_adopts_the_current_document_and_ignores_echoed_provider_and_budget, frozen_tools.rs later_pass_re_resolves_the_interface_and_keeps_saved_authority). New coverage: later_pass_adopts_a_capability_bound_mid_chat (capability bound mid-Chat is offered, manifest-bound, allow-listed, authority of held tools untouched, unresolved/unevaluable documents block the pass).\n",
+        "\n",
+        "Smoke: native-shell-jobs-smoke.mjs gained the 'midchat' phase — it enables tool.todo and binds it to the agent while the Chat waits, then proves the model is offered and can call it in the next pass of the same Chat.\n",
+        "\n",
+        "VERIFICATION\n",
+        "cargo test --lib: 371 passed, 2 failed, 1 ignored. Both failures pre-exist this change (tool_loop::skills_tests::skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable; workspace_instructions compaction_integration::checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node) and reproduce on a stashed tree; the third baseline failure (frozen_tools::continuation_and_replay_keep_native_descriptions_across_catalog_upgrade) is fixed by the rewritten test. The native smoke phase was added and syntax-checked (node --check) but NOT executed: it needs a rebuilt native desktop binary plus the WebView harness, which this environment did not build.\n",
+        "\n",
+        "INCOMPLETE / INCORRECT AGAINST THE DESIGN (needs follow-up)\n",
+        "1. Provider and tier selection, budgets, and the current explicit approval mode still carry over from the frozen Chat; the design's later-pass rule lists them as re-resolved from the current documents. This is outside task 107's enumerated scope, and re-resolving them is a larger change: it moves the credential lease, the authority manifest's model binding, the compaction/summary target and vision validation. It needs its own task.\n",
+        "2. MCP: only built-in capabilities are adopted mid-Chat (the task's scope). A newly bound MCP tool or server is refused with 'start a New Chat', and restore_frozen_mcp still rejects an MCP schema change for an existing Chat, which the design says must not lock a Chat out because installed metadata differs.\n",
+        "3. A capability the Chat already holds keeps its frozen configuration and numeric limits, so a mid-Chat Settings limit change does not retro-fit it. This is what keeps an echo from replacing saved authority and what project_file_tool_settings_and_workspace_are_frozen_for_follow_ups pins, but the design also says limits must not be pinned to the Chat; the tension is unresolved and should be decided deliberately."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 14:53:21",
+    "created_files": "[\"desktop/src-tauri/src/runtime/service/current_configuration.rs\"]",
+    "description": {
+      "lines": [
+        "The design (snapshot_freezer \"Existing Chat continuation\", chat_lifecycle \"User Stop and steering\") requires every later pass to resolve document-derived configuration from the current documents, so a user can stop, edit the workflow in response to what the model reported missing, and continue in the same Chat. Today a later pass still compiles its graph from the saved snapshot's node and tool definitions, so a capability the Chat did not already bind cannot be added mid-Chat.\n",
+        "\n",
+        "Scope:\n",
+        "1. Continuation must take node, edge and agent toolIds from the current workflow document (WorkflowExecutionRequestV1.workflow_snapshot / request.tools) rather than the saved snapshot, while keeping the Run's authority ceiling: a capability outside it is settled by the broker at the point of use, never silently granted.\n",
+        "2. Resolve newly bound built-in capabilities through the same path as first-input freeze (extend the effective binding set, manifest and worker allowlist), and record the interface actually used per invocation as evidence.\n",
+        "3. A resumed pass keeps its recorded position, completed node outputs and selected branches, and must not re-run or retro-fit completed work.\n",
+        "4. Update the tests that pin the previous invariant - service.rs active_chat_stays_frozen_while_settings_and_workflow_edits_feed_the_next_chat and pipeline/tests/frozen_tools.rs captured_chat_continuation_preflight_preserves_original_authority - to the new rule: interface and document-derived configuration re-resolve, authority does not extend by itself.\n",
+        "5. Extend desktop/scripts/native-shell-jobs-smoke.mjs with a phase that adds a tool mid-Chat and proves the model can call it in the next pass without a new Chat.\n",
+        "\n",
+        "Acceptance: enabling a tool and continuing in the same Chat makes it available to the model in the next pass; nothing already completed is re-run; a capability outside the Run's authority is still settled by approval at the point of use."
+      ]
+    },
+    "id": 107,
+    "number": 106,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Adopt the current workflow document for later passes so a tool added mid-Chat is usable without a new Chat",
+    "updated_at": "2026-09-20 09:20:24"
+  },
+  "deleted": false,
+  "identity": "38bebdfa-8fd1-853a-9ad6-623a2b747c15",
+  "schemaVersion": 1
+}

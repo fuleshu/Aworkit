@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Emits bounded tool output, commands/files/artifacts, exit facts, verification, and side-effect evidence",
+    "destination_external_id": "aworkit.capability_host.result_pipeline",
+    "external_id": "rel.host_tools.result",
+    "id": 170,
+    "source_external_id": "aworkit.capability_host.tool_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Bounded raw-event stream",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cde87c6c-afd1-80f3-a030-e745084dd7f6",
+  "schemaVersion": 1
+}

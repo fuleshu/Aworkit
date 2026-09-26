@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Applies accepted configuration/workflow candidate documents with expected versions and preserves complete before/after hashes",
+    "destination_external_id": "aworkit.trusted_core.project_config",
+    "external_id": "rel.core_repair.project_config",
+    "id": 85,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Versioned repository ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f7d68f4c-6d5a-83f1-ae26-4f758d0b26bd",
+  "schemaVersion": 1
+}

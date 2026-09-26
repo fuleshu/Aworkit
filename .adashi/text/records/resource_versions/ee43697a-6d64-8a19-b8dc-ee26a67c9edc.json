@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.trusted_core.chat_lifecycle|file|desktop/scripts/native-stop-steering.mjs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-18 07:28:11",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "ee43697a-6d64-8a19-b8dc-ee26a67c9edc",
+  "schemaVersion": 1
+}

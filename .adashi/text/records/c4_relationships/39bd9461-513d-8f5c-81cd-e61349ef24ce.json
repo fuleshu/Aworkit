@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Resolves artifact availability/hash/media metadata and bounded preview locators into evidence read models without copying content into indexes",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.local_store.query_projections.artifact_store",
+    "id": 225,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Internal,Read Only",
+    "technology": "ArtifactMetadataReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "39bd9461-513d-8f5c-81cd-e61349ef24ce",
+  "schemaVersion": 1
+}

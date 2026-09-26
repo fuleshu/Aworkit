@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/Cargo.lock\",\"desktop/src-tauri/Cargo.toml\",\"desktop/src-tauri/src/lib.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src/App.tsx\",\"desktop/src/shell/ManagementScreen.tsx\"]",
+    "completed_at": "2026-08-22 09:11:16",
+    "completion_memo": "Implemented the pinned Management repair review and production native persistence. The UI projects all recurring-error groups, investigation state, exact group-scoped candidate ID/version, independent diff/tests/benchmark/consequence/uncertainty/rollback/authority evidence states, explicit none/not-performed/unavailable/corrupt states, and Supported/EnrollmentRequired/Unsupported gates without fabricating bytes or verification. Activation requires a fresh exact capability digest and explicit confirmation; stale versions, incomplete disclosure, unavailable artifacts, missing authority context, and absent privileged ports remain disabled. Keyboard navigation, focus-trapped confirmation, tooltips, disclosure selection, and accessibility coverage match the mockup. The Tauri adapter atomically persists/reopens multi-group core events in OS app data, validates global/group sequences, rejects mixed snapshots and cross-group stale replay, and safely redrives lost accepted receipts while bootstrap/investigation/checkpoint/quiescence/artifact ports stay explicitly unavailable. Strict native tests passed 18/18, Management UI 23/23, TypeScript and Vite passed; Adashi QA job 10 run 28 passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:48",
+    "created_files": "[\"desktop/src-tauri/src/management/dto.rs\",\"desktop/src-tauri/src/management/gateway.rs\",\"desktop/src-tauri/src/management/local_ledger.rs\",\"desktop/src-tauri/src/management/mod.rs\",\"desktop/src-tauri/src/management/ports.rs\",\"desktop/src-tauri/src/management/projection.rs\",\"desktop/src/management/CandidateEvidenceSections.tsx\",\"desktop/src/management/ManagementRepairScreen.tsx\",\"desktop/src/management/ManagementSidebar.tsx\",\"desktop/src/management/RepairActivationGate.tsx\",\"desktop/src/management/RepairCandidateReview.tsx\",\"desktop/src/management/SourceDiffViewer.tsx\",\"desktop/src/management/activation-gate.css\",\"desktop/src/management/candidate-review.css\",\"desktop/src/management/corePort.ts\",\"desktop/src/management/management-layout.css\",\"desktop/src/management/preview.ts\",\"desktop/src/management/repair.ts\",\"desktop/src/management/types.ts\",\"desktop/src/management/useManagementRepair.ts\"]",
+    "description": "Implement the pinned Management Chat scope, recurring-error ledger, investigation progress, evidence selection, and complete repair-candidate review with exact diff, tests, benchmarks, consequences, uncertainty, rollback point, activation eligibility, and stale-version gates. Activation remains disabled unless a fresh core-projected Supported report and explicit user decision exist.",
+    "id": 65,
+    "number": 65,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M10.4 — Implement Management repair review",
+    "updated_at": "2026-08-22 09:11:16"
+  },
+  "deleted": false,
+  "identity": "5a15bff2-8317-8be0-92e7-f70e9f200b5a",
+  "schemaVersion": 1
+}

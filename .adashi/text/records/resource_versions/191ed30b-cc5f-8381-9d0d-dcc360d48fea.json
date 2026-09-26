@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.conversation|file|desktop/src/chat/pathContextMenu.css",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-22 21:32:14",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "191ed30b-cc5f-8381-9d0d-dcc360d48fea",
+  "schemaVersion": 1
+}

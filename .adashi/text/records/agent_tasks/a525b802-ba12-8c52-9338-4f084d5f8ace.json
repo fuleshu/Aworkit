@@ -1,0 +1,63 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-25 12:14:53",
+    "completion_memo": {
+      "lines": [
+        "Implemented and verified. Verification: desktop suite 477 passed / 0 failed / 1 ignored (473 before this task; +4 tests), three consecutive full-suite runs green, `cargo build --lib` adds no new warning, rustfmt clean on every line authored.\n",
+        "\n",
+        "WHAT WAS BUILT\n",
+        "\n",
+        "The summary attempt body is now a bounded recovery loop inside the existing per-attempt structure:\n",
+        "\n",
+        "- On any failed auxiliary summary (an overrun whose stream ends without a supported stop reason, an empty answer, a replacement that is not smaller, a provider error) the runtime shrinks the *summary prompt* and retries the same span instead of ending the attempt. Step one reduces the large tool results inside the prompt (only when the frozen policy keeps result pruning enabled, so a Chat that disabled it stays disabled); step two drops the oldest whole unit the prompt can spare via the new `c::shrink_summary`.\n",
+        "- Bounded by the new `c::SUMMARY_SHRINK_RETRIES = 2`, so one attempt costs at most 3 auxiliary calls; every call's tokens are still added to the reported usage, so the cost of recovery is billed honestly rather than hidden. The budget is per attempt, and a committed reduction moves on to the next attempt with a fresh one - that is what \"resets on any progress\" means here.\n",
+        "- What does *not* change: the shadowed span, the cut, `shadowedTokenCount`, the derived output cap, the tail, the pinned user turns, the framed-summary shrink check, the balanced-boundary rule (recovery removes whole messages or whole exchanges; the prune rewrites only text inside a result) and the commit fencing. The prompt is what shrinks; the replacement always shadows the full span, and every original stays durably retrievable.\n",
+        "- The one-terminal-event contract is untouched because recovery lives *inside* an attempt: one `context.compaction-started` and one `context.compaction-ended` per attempt, no per-retry pair. `context.compacted` gained `summaryAttempts` (how many auxiliary calls the committed attempt needed) and the ended event's `auxiliary` carries `attempt` (1-based), so a recovered compaction is measurable from the stream.\n",
+        "- Cancellation always wins: a cancelled token skips the retry and reports cancellation.\n",
+        "- Manual compaction also recovers (the user asked for a reduction; retrying a smaller prompt is in their interest). Its failure path still reports the provider diagnostic as that node's failure rather than emitting a model-facing warning - pre-existing behaviour, since no model turn is waiting - so the \"exactly one warning\" requirement is asserted on the automatic path, where the warning exists.\n",
+        "\n",
+        "COORDINATION WITH THE BUDGET FINDINGS: the recovery deliberately does not raise the output cap. The cap is now derived (`min(R/2, span/2)`) since the budget task, and most of the measured overruns came from the removed absolute floor; after that removal a smaller prompt is the remaining lever, which is what this recovery pulls.\n",
+        "\n",
+        "TESTS\n",
+        "\n",
+        "- `a_failed_summary_recovers_on_a_smaller_prompt_before_it_becomes_terminal`: the first two calls fail with the exact measured overrun text, the third succeeds. Asserts 3 calls, that the first recovery kept the unit count while lowering the estimate (the prune), that the second dropped exactly one unit, that exactly one reduction was committed with `summaryAttempts == 3`, and that there is exactly one started/ended pair.\n",
+        "- `an_exhausted_summary_recovery_warns_once_and_keeps_the_selection`: automatic pressure reduction, provider always fails; asserts the bounded call count (1 + 2), an unchanged selection hash, one started/ended pair, no `context.compacted`, only the ordinary end-of-preparation checkpoint, exactly one warning naming the failure (plus the distinct pre-existing still-above-threshold notice).\n",
+        "- `cancellation_wins_over_summary_recovery`: the provider cancels the token while failing; asserts exactly one call (no recovery), an unchanged selection and a reported error.\n",
+        "- `a_failed_summary_prompt_shrinks_from_the_oldest_unit_and_keeps_its_shape` (unit): the oldest removable unit leaves first, the base user message and the trailing directive are never candidates, and the helper reports exhaustion.\n",
+        "- The existing `failed_cancelled_and_nonshrinking_summaries_leave_the_selection_unchanged` still passes unchanged: failure, cancellation, an oversized summary and an empty summary all leave the selection untouched with one started/ended pair and no committed reduction."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 10:26:27",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "A failed compaction summary currently ends the attempt instead of recovering, so the auxiliary call is paid for and produces nothing.\n",
+        "\n",
+        "Current behaviour (desktop/src-tauri/src/runtime/compaction/runtime.rs, the summary branch): on any summary error the runtime emits `context.compaction-warning` and `break`s the attempts loop. It never retries the same span with a smaller selection, and `compaction_retries` only applies to a fresh selection on the next loop iteration.\n",
+        "\n",
+        "Measured evidence (chat.1da4255acdf6e6545691bb0ddf63c4f179ec92b7, the 32k run): 35 compaction attempts, 6 failures — 3 x \"provider failed: OpenAI stream finished without a supported stop reason\" (the summary hit the effective output cap and the `length` finish was rejected by the stream parser) and 2 x \"Compaction summary is not smaller than the selected history including checkpoint framing\". Failed attempts cost 85,853 input + 34,662 output tokens for no reduction.\n",
+        "\n",
+        "Precedent: Codex retries the compaction request on ContextWindowExceeded by dropping the oldest history item and resetting its retry counter (codex-rs/core/src/compact.rs, `history.remove_first_item(); retries = 0; continue;`); DSH exposes `compaction/summary-error` as a waterfall so a listener can durably shrink the selected input and the same span is re-summarised (packages/compaction/compaction/src/index.ts and region.ts, the summarizer retry loop).\n",
+        "\n",
+        "Change: add a bounded recovery path for a failed summary that (a) shrinks the selected input (drop the oldest selected unit, and prune large tool results first) and retries the same span, (b) resets on any progress, (c) keeps the framed-summary shrink check, the balanced-boundary rule, cancellation precedence and the one-terminal-event contract, and (d) still ends in exactly one warning with the selection unchanged when recovery is exhausted. Coordinate with the summary-budget findings from tasks 134/135: the cap that caused two of these failures is the absolute maxTokens floor.\n",
+        "\n",
+        "Tests: a summary that overruns the output cap on the first attempt succeeds after the selection shrinks; a permanently failing summary produces one warning, an unchanged selection and no duplicate compaction/checkpoint events; cancellation during recovery wins; the retry count is bounded."
+      ]
+    },
+    "id": 140,
+    "number": 139,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Recover a failed compaction summary by shrinking the selection and retrying",
+    "updated_at": "2026-09-25 12:14:53"
+  },
+  "deleted": false,
+  "identity": "a525b802-ba12-8c52-9338-4f084d5f8ace",
+  "schemaVersion": 1
+}

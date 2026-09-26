@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-21 20:47:58",
+    "id": 23,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[1,2,3,4,5,6,7,8],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-21 20:45:50",
+    "status": "passed",
+    "summary": "8 passed, 0 failed, 0 timed out",
+    "trigger_source": "codex-final-consolidated-audit"
+  },
+  "deleted": false,
+  "identity": "98aec232-9f91-83c1-bbe8-733f0156d653",
+  "schemaVersion": 1
+}

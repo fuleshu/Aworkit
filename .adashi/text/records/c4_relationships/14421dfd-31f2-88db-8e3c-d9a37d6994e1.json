@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads verified artifact metadata and bounded content ranges for RevealArtifact/evidence responses through trusted-core policy; never writes or executes artifacts",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.core_desktop_api.local_store.artifact_read",
+    "id": 217,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Read Only",
+    "technology": "ArtifactReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "14421dfd-31f2-88db-8e3c-d9a37d6994e1",
+  "schemaVersion": 1
+}

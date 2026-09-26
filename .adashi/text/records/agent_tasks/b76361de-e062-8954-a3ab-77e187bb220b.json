@@ -1,0 +1,29 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/tools.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/tests.rs\",\"desktop/src-tauri/src/runtime/tool_registry.rs\",\"desktop/src-tauri/src/runtime/tool_registry/tests.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/scripts/native-shell-jobs-smoke.mjs\",\"docs/shell-jobs.md\"]",
+    "completed_at": "2026-09-17 17:14:16",
+    "completion_memo": {
+      "lines": [
+        "Implemented and critically audited against uml.tool_jobs.python and uml.tool_jobs.contract. Python now uses the existing Chat-owned process registry: python_start returns immediately with optional stdin; ordinary python uses a soft initial wait capped at ten seconds when output/input/stop/list are frozen. Both retain frozen interpreter and approval authority; managed Python adds -u alongside -I for live output. Shared controls, owner isolation, final-answer gate, stop, output cursors, restart/no-replay and hidden Windows console behavior apply without a separate Python lifecycle. Legacy Python without controls retains its original argv and hard timeout; python_start without controls fails before launch. Shared job labels and documentation cover both languages.\n",
+        "Verification: desktop Rust library 347 passed; host milestone_05 14, process_sessions 3, python_adapter 2 passed (one process fixture intentionally ignored). TypeScript check, Vite build, native desktop build and git diff --check passed. Actual isolated projectless Windows WebView test with C:\\Python313\\python.exe passed 18 provider requests: approval resume, premature-final reminder, unbuffered print and stdin, sys.flags.isolated=1, GetConsoleWindow=0, retained job across inputs, ordinary soft yield, complete tree stop, root exit with live descendant followed by verified treeEmpty, missing-controls rejection, legacy hard timeout. Evidence: desktop/src-tauri/target/native-python-jobs-1789665154584/requests.json and verified.png. Existing shell native regression passed 11 requests: desktop/src-tauri/target/native-shell-jobs-1789665193780. Test apps clean their own process trees. No Adashi QA changes. Windows verified; no new native Linux/macOS execution claim. Generated architecture projections and .adashi state updated by Adashi. No outstanding implementation blocker; task finished for review."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-17 17:03:21",
+    "created_files": "[\"crates/aworkit-capability-host/tests/python_adapter.rs\"]",
+    "description": "Implement python_start and normal Python soft waits through the existing Chat-owned job registry. Preserve frozen interpreter, approvals, legacy Chats without job controls, isolation validation and cancellation. Support incremental unbuffered output, stdin, tree stop, final-response nudge, restart semantics, and no console window. Verify Rust contracts and real native projectless Chat lifecycle; no Adashi QA changes.",
+    "id": 93,
+    "number": 92,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Extend managed process jobs to the Python tool",
+    "updated_at": "2026-09-22 07:26:16"
+  },
+  "deleted": false,
+  "identity": "b76361de-e062-8954-a3ab-77e187bb220b",
+  "schemaVersion": 1
+}

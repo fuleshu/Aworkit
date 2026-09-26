@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-21 07:48:11",
+    "design_external_id": "aworkit.desktop_ui.evidence_inspector",
+    "id": 473,
+    "sort_order": 2,
+    "target_type": "element",
+    "task_id": {
+      "ref": "a0b2d098-b1d3-8409-8420-d84fd7be5555"
+    }
+  },
+  "deleted": false,
+  "identity": "674a9dcf-0cab-8ca1-8ef9-cefdc152406f",
+  "schemaVersion": 1
+}

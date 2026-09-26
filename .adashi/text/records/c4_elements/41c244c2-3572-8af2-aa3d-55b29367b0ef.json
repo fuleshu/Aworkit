@@ -1,0 +1,25 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "A supervised Rust worker executes one or more isolated Chat/Run harness instances from immutable frozen snapshots. It schedules typed graph transitions, maintains logical Harness Context revisions and branch lineage, coordinates joins and bounded loops, runs classifiers and agent cycles, applies retry/fallback policy, enforces execution budgets, pauses at waits or approvals, and emits normalized proposed events and capability requests.\n",
+        "\n",
+        "The worker cannot grant itself authority, read secrets directly, change the frozen graph, or commit canonical history. Its recoverable logical checkpoints and acknowledged event position allow the trusted core to restart it without replaying committed side effects. Worker crashes degrade affected Runs while the desktop remains available."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.workflow_worker",
+    "id": 12,
+    "name": "Workflow Runtime Worker",
+    "parent_external_id": "1",
+    "tags": "Container,Execution,Supervised Process",
+    "technology": "Rust supervised worker process; versioned framed local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "41c244c2-3572-8af2-aa3d-55b29367b0ef",
+  "schemaVersion": 1
+}

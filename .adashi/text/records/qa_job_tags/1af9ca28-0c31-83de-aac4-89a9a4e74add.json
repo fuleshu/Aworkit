@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "tag": "chat"
+  },
+  "deleted": false,
+  "identity": "1af9ca28-0c31-83de-aac4-89a9a4e74add",
+  "schemaVersion": 1
+}

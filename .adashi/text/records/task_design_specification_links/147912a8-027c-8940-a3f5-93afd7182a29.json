@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:30:33",
+    "design_external_id": "aworkit.desktop_ui.projection_gateway",
+    "id": 179,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b66db194-1890-85ad-9b6c-b4633ff1c8cc"
+    }
+  },
+  "deleted": false,
+  "identity": "147912a8-027c-8940-a3f5-93afd7182a29",
+  "schemaVersion": 1
+}

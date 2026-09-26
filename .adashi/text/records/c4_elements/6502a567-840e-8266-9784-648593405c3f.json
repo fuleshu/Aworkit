@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "The Tauri webview presentation container implements the familiar chat shell, workflow canvas, management conversation, settings, progressive evidence inspector, and native desktop affordances. It owns transient view state, navigation, editing drafts, accessibility, theme, and responsive streaming presentation, but owns no canonical Run state and performs no privileged action directly.\n",
+        "\n",
+        "All privileged or persistent operations use typed commands to the Trusted Application Core. Core events are reduced into deterministic UI projections. The UI can be restarted and rebuilt from canonical state. Large workflow and settings surfaces may replace the conversation center while preserving navigation and selected scope.\n",
+        "\n",
+        "Accepted frontend implementation decision: Aworkit ships a local bundled desktop presentation built with React, strict TypeScript, Vite, and pnpm. It uses Aworkit-owned semantic components backed primarily by Mantine Core/Hooks for compact workbench controls, a replaceable React Flow adapter for the workflow graph surface, and specialized TanStack Table/Virtual adapters for serious grids and large lists. It is a desktop workbench, not a hosted website: no SSR, SEO, mobile-first product mode, marketing layout grammar, decorative page transitions, floating-card composition, or network-served UI runtime is introduced. Narrow-window, touch, forced-colors, reduced-motion, font-scale, and 200% zoom behavior remain accessibility requirements rather than a mobile product design.\n",
+        "\n",
+        "State and dependency boundary: domain documents, commands, events, projections, reducers, selectors, action definitions, undo transactions, and serialization remain Aworkit-owned strict TypeScript contracts. React and all widget, graph, table, virtualization, and native-UI libraries are downstream adapters; none of their state, types, or serialization enters the Trusted Core contract or canonical persistence.\n",
+        "\n",
+        "ChatShell decision: ChatShell is reference-only. This decision reuses no ChatShell source, packages, assets, styles, state model, build configuration, fork, or submodule and therefore introduces no donor dependency or notice obligation. Any future copied leaf asset or component requires a separate per-file provenance, license, security, dependency, accessibility, and maintenance audit without changing Aworkit's product identity or architecture.\n",
+        "\n",
+        "Verification and upgrade policy: exact dependency versions are owned by the package manifest and pnpm lockfile. Component contracts use Vitest, React Testing Library, and automated accessibility checks; critical workflow, focus, menu, drag/drop, virtualization, and projection behavior is exercised in real Tauri WebViews, using Tauri WebDriver automation where supported plus platform smoke coverage elsewhere. Major library upgrades occur independently behind Aworkit adapters and must pass contract, WCAG 2.2 AA, representative approximately 1,000-visible-node performance, and cross-WebView regression gates. React was selected over Vue and Svelte for the deepest maintainable node-editor and desktop-control ecosystem; a source-copied shadcn/Radix layer and a ChatShell fork were rejected as primary foundations because they would shift long-term component maintenance or donor coupling into Aworkit. The three accepted feature mockups require no change."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.desktop_ui",
+    "id": 10,
+    "name": "Desktop Presentation",
+    "parent_external_id": "1",
+    "tags": "Container,Presentation",
+    "technology": "Bundled Tauri desktop presentation; React with strict TypeScript; Vite; pnpm; Aworkit adapters over Mantine Core/Hooks, React Flow, and TanStack Table/Virtual",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6502a567-840e-8266-9784-648593405c3f",
+  "schemaVersion": 1
+}

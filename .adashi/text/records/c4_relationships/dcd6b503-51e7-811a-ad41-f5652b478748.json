@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Hosts collapsible/resizable inspector or narrow-window drawer and restores focus",
+    "destination_external_id": "aworkit.desktop_ui.evidence_inspector",
+    "external_id": "rel.ui.shell.inspector",
+    "id": 27,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dcd6b503-51e7-811a-ad41-f5652b478748",
+  "schemaVersion": 1
+}

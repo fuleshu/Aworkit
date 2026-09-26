@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Coordinates project records, selected workspace identities, application configuration, capability bindings, and lossless workflow JSON repositories while keeping JSON the sole canonical definition format.\n",
+        "Owned state: logical ProjectRecordV1 and WorkspaceBindingV1 identities, document versions/content hashes, configuration and workflow repository metadata, and discardable read caches; persisted documents live behind repository ports, and secrets appear only as CredentialRefV1.\n",
+        "Public commands/events and ports: ResolveProjectScope, ResolveWorkspace, Load/SaveConfigurationDocument, Load/SaveWorkflowDocument, ImportWorkflowInert, ExportWorkflowLossless, ListBindings, and WatchDocumentChanges; returns versioned Aworkit JSON documents, canonical workspace roots/branch metadata, conflicts, and unresolved-reference facts.\n",
+        "Invariants: unknown workflow nodes, fields, connections, and layout round-trip byte-semantically; JSON bodies are not duplicated as editable SQL records. Import never installs/enables code or grants authority. A working directory is not claimed as a restriction; only a capability implementation that enforces resolved roots may make that claim.\n",
+        "Transactional and failure behavior: saves use compare-and-swap base versions plus atomic temp-write/fsync/rename or a storage transaction; stale writers never overwrite newer JSON. Workspace identity, existence, and configured roots are revalidated at freeze time to prevent time-of-check/time-of-use drift. Unavailable or ambiguous workspaces return explicit blocking diagnostics and preserve drafts.\n",
+        "NFRs: deterministic serialization, schema migration with unknown-field preservation, cancellable filesystem/Git inspection, bounded caches, and Windows/Linux/macOS path normalization tests.\n",
+        "Non-responsibilities: no graph execution, capability invocation, approval, secret value handling, canonical Chat event commits, Git commit/push, or automatic workspace copying."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.project_config",
+    "id": 27,
+    "name": "Project, Workspace & Configuration Coordinator",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Configuration,Workspace",
+    "technology": "Rust domain service over schema-versioned JSON repositories and workspace adapters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ee01d974-0cb1-81d2-a497-c39e0ecbddb3",
+  "schemaVersion": 1
+}

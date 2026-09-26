@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Lists pending outbox records and verifies ambiguous commit/dedup identities so recovery can reconcile delivery conservatively without repeating model, tool, shell, file, MCP, or external-agent effects",
+    "destination_external_id": "aworkit.local_store.commit_adapter",
+    "external_id": "rel.core_recovery.local_store.outbox_reconcile",
+    "id": 215,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Recovery,No Replay",
+    "technology": "OutboxAdminPort and CommitVerificationPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "58c4c261-408c-85a8-afad-1af0a3fe8a1b",
+  "schemaVersion": 1
+}

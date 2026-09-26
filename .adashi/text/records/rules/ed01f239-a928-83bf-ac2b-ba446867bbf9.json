@@ -1,0 +1,35 @@
+{
+  "collection": "rules",
+  "data": {
+    "created_at": "2026-08-20 18:15:35",
+    "enabled": 1,
+    "hook": "task.start",
+    "id": 3,
+    "intend": "implementation",
+    "name": "Coding Standards & Rules",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "prompt": {
+      "lines": [
+        "# Coding Standards & Rules\n",
+        "- Always write clean code in logic modules, classes, and folders that are sized for human-readable maintenance. \n",
+        "- Do not create or grow single large classes or source files.\n",
+        "- Split code into focused files, types, and modules before it becomes a catch-all implementation.\n",
+        "- Clean architecture means functional module/class design, not mechanical file splitting.\n",
+        "- don't add copyright notices\n",
+        "- Always write complete working code, never partial snippets.\n",
+        "- Preserve existing coding style where practical.\n",
+        "- Document the code. Explain function/modules/classes as comments.\n",
+        "- Keep UI design clean and clear. No redundant info or comments in the UI.\n",
+        "- Always create tooltips for input fields.\n",
+        "- Always write performant code. Do no unnecessary updates or repeated data processing. Do updates/processing on demands and bundle updates/processing.\n",
+        "- Write algorithms that can handle big data loads, no simple implmentations that do not perform under load."
+      ]
+    },
+    "updated_at": "2026-09-18 08:20:27"
+  },
+  "deleted": false,
+  "identity": "ed01f239-a928-83bf-ac2b-ba446867bbf9",
+  "schemaVersion": 1
+}

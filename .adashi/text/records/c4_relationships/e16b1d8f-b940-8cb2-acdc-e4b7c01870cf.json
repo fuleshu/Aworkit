@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "For an already-selected PortableProject Chat, is the sole caller allowed to create/advance canonical root or child branches, supplying stable IDs, expected head/version, scrubbed event candidates and checkpoint; it acknowledges nothing until PortableCommitReceiptV1 proves a durable head ref",
+    "destination_external_id": "aworkit.portable_store.commit_coordinator",
+    "external_id": "rel.core_committer.portable.commit",
+    "id": 268,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract,Canonical Write",
+    "technology": "Sealed PortableHistoryCommitPort with Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e16b1d8f-b940-8cb2-acdc-e4b7c01870cf",
+  "schemaVersion": 1
+}

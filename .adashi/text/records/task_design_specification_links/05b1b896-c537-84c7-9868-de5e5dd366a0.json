@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:19",
+    "design_external_id": "aworkit.workflow_worker.branch_join",
+    "id": 74,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b9da00fe-797b-88ea-b7f3-e626d83335a1"
+    }
+  },
+  "deleted": false,
+  "identity": "05b1b896-c537-84c7-9868-de5e5dd366a0",
+  "schemaVersion": 1
+}

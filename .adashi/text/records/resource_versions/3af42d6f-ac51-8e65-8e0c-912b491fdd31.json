@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.chat.frozen_tool_continuation",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-17 17:49:11",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "3af42d6f-ac51-8e65-8e0c-912b491fdd31",
+  "schemaVersion": 1
+}

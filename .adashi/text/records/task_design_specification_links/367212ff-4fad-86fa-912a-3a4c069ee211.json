@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:43:24",
+    "design_external_id": "uml.local_store.canonical_record_structure",
+    "id": 307,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "f90df80b-a093-8f23-b737-b74f7a993c66"
+    }
+  },
+  "deleted": false,
+  "identity": "367212ff-4fad-86fa-912a-3a4c069ee211",
+  "schemaVersion": 1
+}

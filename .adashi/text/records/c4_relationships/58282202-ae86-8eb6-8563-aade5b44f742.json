@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Emits Aworkit ProviderRawEventV1, concrete resolution evidence, usage, and exact source visibility categories",
+    "destination_external_id": "aworkit.capability_host.result_pipeline",
+    "external_id": "rel.host_model.result",
+    "id": 166,
+    "source_external_id": "aworkit.capability_host.model_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Bounded raw-event stream",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "58282202-ae86-8eb6-8563-aade5b44f742",
+  "schemaVersion": 1
+}

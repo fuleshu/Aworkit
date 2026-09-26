@@ -1,0 +1,37 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns the one act that changes which frozen workflow plan a continuing Chat executes: adopting a newer saved workflow revision at a turn boundary. It keeps the freeze's guarantees — one plan explains a segment's evidence, and authority never widens by itself — while shrinking their scope from the Chat's lifetime to a revision segment.\n",
+        "\n",
+        "Owned runtime state: the ordered chain of adopted frozen execution contexts (workflow snapshot hash and version, tool bindings, model/provider snapshots, approval mode, compaction target, optional project and workspace) with the ledger scope of each; the incumbent-versus-candidate diff; and the pending rebind command identity that makes an uncertain write retryable.\n",
+        "\n",
+        "Contracts: consumes the saved workflow document, the current Settings resolution and the executable-catalog validation; emits ValidateRebind (structural diff, authority delta, and the recorded tool rounds the candidate cannot replay) and AdoptRevision (expected incumbent snapshot hash plus command identity); reads RebindHistory for presentation. Adoption commits exactly one canonical event naming the superseded and adopted snapshot hashes, the authority delta, the budget and deadline transition, and the commanding identity. Recovery either finds that event or leaves the incumbent revision untouched; it never half-adopts.\n",
+        "\n",
+        "Algorithms and invariants: adoption is legal only at a settled boundary — no in-flight turn, no pending approval or suspension, no open loop frame, no live child frame — and only after the candidate passes the same validation a first input performs. Authority never widens silently: a candidate that adds tool bindings, filesystem scope, credential references, an approval mode or a longer deadline requires explicit user consent, shown as the exact delta. Committed turns are never re-labelled; each remains explained by the revision it ran under. A rebind opens a fresh limit-ledger scope instead of reversing or minting usage, and a deadline change is displayed and recorded rather than silent. Recorded tool rounds the adopted selection cannot represent are reported before adoption and resolved afterwards by the existing admission-and-decline path, never by rewriting recorded calls. An unchanged candidate is a no-op, and a Chat that never adopts keeps the single frozen context it was created with.\n",
+        "\n",
+        "Failure and degraded behaviour: failed validation, a boundary that is no longer settled, or a stale incumbent hash adopts nothing and keeps the Chat on its current revision, with the reason visible. A refused or uncertain canonical write is retried with the same command identity instead of applying a second adoption.\n",
+        "\n",
+        "Performance and NFRs: diff and validation run off the interactive path and are cancellable; exactly one canonical commit per adoption; the adopted chain is bounded in practice by explicit user actions and paginated in presentation together with its evidence.\n",
+        "\n",
+        "Naming rule: a Chat has exactly one context-revision lineage, and every context revision records the graph revision that produced it. graphRevision (the adopted workflow revision) and contextRevision (an entry in the context lineage) are distinct names for distinct things and must not be conflated in evidence, projections or documentation.\n",
+        "\n",
+        "Non-responsibilities: no silent re-read or automatic adoption at each turn; no mutation of a running graph, a committed turn or committed evidence; no budget or deadline extension without an explicit recorded user decision; no rebinding of a child or subagent mid-flight; no change to an approval decision the user already made; no scheduling, node semantics or provider calls."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.revision_rebind",
+    "id": 175,
+    "name": "Workflow Revision Rebinding",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Revision,Authority",
+    "technology": "Rust frozen execution-context revisions over canonical SQLite history",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8847433c-353c-89bd-9cf1-806008fbb15c",
+  "schemaVersion": 1
+}

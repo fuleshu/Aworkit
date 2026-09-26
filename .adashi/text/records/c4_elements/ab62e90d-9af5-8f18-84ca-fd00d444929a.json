@@ -1,0 +1,37 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Aworkit (Agent Workflow Toolkit) is a cross-platform Apache-2.0 desktop application for defining, running, resuming, and inspecting stateful AI-agent harnesses. It owns the complete local product lifecycle: portable JSON workflow definitions, capability binding, classification-based routing, frozen per-Chat authority, structured Harness Context revisions, canonical semantic evidence, approvals, recovery, and progressive desktop interaction.\n",
+        "\n",
+        "System boundary and invariants:\n",
+        "- One Chat is one persistent workflow Run and stored session. The first submitted input resolves and freezes the workflow graph, capability bindings, workspace, budgets, and authority for that Chat. Later inputs resume the same instance until it reaches a terminal state.\n",
+        "- The frozen graph is immutable for a running Chat, while routing, bounded loops, retries, parallel branches, waits, approvals, evaluators, and internal agent cycles remain dynamic.\n",
+        "- The trusted Rust core is the sole authority decision point, process supervisor, secret broker, and committer of canonical Chat events. Worker or extension failure cannot bypass authority or corrupt committed history.\n",
+        "- Workflow and application definitions are schema-versioned JSON owned by Aworkit. Local Chat history is canonical semantic SQLite history; opt-in portable project history is canonical immutable JSONL/CAS history. A Chat has exactly one canonical history backend.\n",
+        "- An active portable Chat may additionally have a machine-local, explicitly noncanonical runtime journal keyed to portable commit hashes. That journal contains delivery and recovery facts only, never a second semantic history. Exact reconciliation of the matching MachineInstanceId, BindingGeneration, ChatId, BranchId, CommitId, verified portable head, and journal fences on the same installation resumes the original Chat/Run. A missing or mismatched journal, clone/new machine, stale restored generation, or explicit rebind never resumes that runtime: the portable history remains inert until the trusted core creates a new child Chat/Run and portable branch with a newly resolved snapshot, fresh local authority, and fresh approvals.\n",
+        "- Unknown workflow nodes and configuration fields are preserved losslessly. Missing or incompatible capabilities block execution, never inspection, editing, or export. Import is inert and never installs code or grants authority.\n",
+        "- Trusted extensions execute with the desktop user's OS authority and are never described as sandboxes. Aworkit-mediated tools enforce only restrictions their implementation can actually guarantee.\n",
+        "- Side-effecting operations with uncertain outcomes are not silently repeated. Recovery rehydrates logical state without replaying completed effects.\n",
+        "- Repair activation and automatic startup rollback are handed to a separately surviving, non-extensible trusted bootstrap helper; the Tauri core never assumes it can watchdog or restore itself after termination.\n",
+        "- Aworkit exposes the evidence it possesses and labels source-provided raw reasoning, summaries, progress, and assistant output accurately; it does not reconstruct hidden reasoning.\n",
+        "\n",
+        "Quality goals: responsive desktop interaction under streaming workloads; deterministic and inspectable orchestration; crash isolation across supervised processes; bounded resource use and retention; cross-platform behavior on Windows, Linux, and macOS; portable extension and workflow contracts; explicit degradation when capabilities are unavailable; and no network control plane requirement."
+      ]
+    },
+    "element_type": "Software System",
+    "external_id": "1",
+    "id": 1,
+    "name": "Aworkit",
+    "parent_external_id": null,
+    "tags": "Element,Software System,Trusted Boundary",
+    "technology": "Rust, Tauri, TypeScript web UI, SQLite, JSON/JSONL, supervised local processes and trusted bootstrap helper",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ab62e90d-9af5-8f18-84ca-fd00d444929a",
+  "schemaVersion": 1
+}

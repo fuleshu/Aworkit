@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "test1_2 cache diagnosis (findings in task 130, number 129). New build: 108 turns, input 10,089,635, cached 9,927,552, uncached 162,083 (1.61%). tokens>bytes is not escaping overhead but provider-side prompt inflation: probe live deepseek-flash with a stored surface as one user message (max_tokens 1) - 229,174 chars -> 72,328 prompt tokens, yet the run recorded 151,537 for that turn. A thinking-mode tool continuation is billed with a surplus tracking the previous turn's reasoning (~0.7-1.0x). context.checkpoint pressureTokens follows the inflated number; context.usage anchor.estimated follows the honest text. From turn 48 replayed screenshots make the wire body up to 4.66x the stored surface (~1.2 MB/turn, not billed). Largest uncached turns (seq 9433: 25,318; seq 10096: 11,794) are provider-side partial cache evictions with 86-91% byte-identical prefix. Real content runs 3.3-4.7 bytes/token.",
+    "created_at": "2026-09-24 18:04:09",
+    "id": 266,
+    "note_id": "cache-diagnosis-test1-2",
+    "operation_id": "test1-2-cache-diagnosis",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "test1-2-cache-diagnosis",
+    "task_id": {
+      "ref": "bd0fbb43-c6bc-8fa5-86b9-b7fb0f60b578"
+    }
+  },
+  "deleted": false,
+  "identity": "5c42498e-744e-834e-8ed8-da12cf87ca67",
+  "schemaVersion": 1
+}

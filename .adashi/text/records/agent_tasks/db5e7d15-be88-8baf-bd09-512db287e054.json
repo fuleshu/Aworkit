@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/model.rs\",\"crates/aworkit-capability-host/src/model_tools.rs\",\"crates/aworkit-capability-host/src/model_result.rs\",\"crates/aworkit-capability-host/src/provider_tools/openai_stream.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/approvals/reviewer.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src/chat/runDetails.ts\"]",
+    "completed_at": "2026-09-18 11:59:42",
+    "completion_memo": "Implemented first: optional DeepSeek hit/miss usage with OpenAI cached-token alias precedence, no double-counting and unknown distinct from zero. Carried text/tool usage through terminal projections, durable spans, auxiliary compaction and independent reviews. Failed/cancelled reviews retain emitted provider usage; cached decisions do not republish billed calls. Run details separates model/review cache metrics and coverage. Final audit added legacy ModelToolEventV1 default plus historical deserialization/projection test. Capability-host full suite passed; focused compatibility tests passed; desktop suite 357 passed/1 ignored; frontend focused suite 10 passed and production frontend build passed. Native isolated upgrade/review fixture and SQLite verification: 9 model usage records (720 cached/180 uncached) and 4 actual reviews (240/160), matching the local provider. UI screenshot inspected at desktop/src-tauri/target/native-approval-cache-1789732599799/verified.png. No live provider hits or dollar savings claimed; historical counters cannot be backfilled.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-18 10:31:44",
+    "created_files": "[\"crates/aworkit-capability-host/src/model_usage.rs\",\"desktop/src/chat/cacheUsage.ts\",\"desktop/src/chat/cacheUsage.test.ts\",\"desktop/src-tauri/src/runtime/approvals/reviewer_tests.rs\",\"docs/approval-cache-accounting.md\"]",
+    "description": "First implementation step. Normalize DeepSeek cache-hit/miss counters, preserve them through text/tool/reviewer/auxiliary evidence, keep missing data unknown and aliases non-additive, and show independent model/review cache usage with regression tests. Design: docs/approval-cache-accounting.md.",
+    "id": 97,
+    "number": 96,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Retain and expose provider cache usage",
+    "updated_at": "2026-09-22 07:26:43"
+  },
+  "deleted": false,
+  "identity": "db5e7d15-be88-8baf-bd09-512db287e054",
+  "schemaVersion": 1
+}

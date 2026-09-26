@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Scrubs referenced content hashes, identifies delayed orphans, and backs up/restores only manifest-referenced objects before promotion",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.local_store.storage_coordinator.artifact_store",
+    "id": 235,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "ArtifactIntegrityAndBackupPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "609e5637-4438-84d7-ab8c-dd71041213e8",
+  "schemaVersion": 1
+}

@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "CORRECTION to note dsh-vs-aworkit-cache-gap: \"Aworkit rewrites its prefix every sixth turn\" is wrong. (1) The 17,412-byte penalty is an artifact of commonPrefixBytes comparing raw JSON bytes: tools/stream_options follow messages in the body, so the byte prefix always ends before the ~17.4 KB tools array. The provider still caches tools (median miss 629, not 5,400); measure the rendered message prefix instead. (2) recorded_prefix_tests: 40 of 49 pairs are strict appends, the other 9 differ only at the trailing shell-jobs notice. (3) Probe: repeat X+trailer1 miss 190; X+trailer2 miss 191; X+new+trailer1 miss 198 - a changed or inserted trailing message costs only its own tokens, so the notice cannot explain the big misses. Still true: ~36% of the 162,083 uncached is per-turn novel content (629/turn vs DSH 212); ~58% is ~18 turns crediting only the 12,032-token header despite an identical history, coinciding with the replayed-reasoning surplus flipping 60-90k.",
+    "created_at": "2026-09-24 18:21:15",
+    "id": 268,
+    "note_id": "dsh-vs-aworkit-cache-gap-correction",
+    "operation_id": "dsh-vs-aworkit-cache-gap-correction",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "dsh-vs-aworkit-cache-gap-correction",
+    "task_id": {
+      "ref": "bd0fbb43-c6bc-8fa5-86b9-b7fb0f60b578"
+    }
+  },
+  "deleted": false,
+  "identity": "78bfc98a-c95c-8e2b-abf0-77c5c50e811e",
+  "schemaVersion": 1
+}

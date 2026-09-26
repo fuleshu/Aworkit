@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.host_gateway.result_input",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:35:43",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7597343f-a8c6-8c8c-a9b7-a6abdf8aec33",
+  "schemaVersion": 1
+}

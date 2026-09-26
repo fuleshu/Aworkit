@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.model_gateway|file|crates/aworkit-capability-host/src/model_usage.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-18 10:31:43",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7b2c904f-746f-8c51-a226-d9f8a053d9b8",
+  "schemaVersion": 1
+}

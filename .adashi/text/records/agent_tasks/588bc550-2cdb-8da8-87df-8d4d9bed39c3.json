@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/types.ts\",\"desktop/src/chat/workspace.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/App.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-08-21 18:24:49",
+    "completion_memo": "Implemented the projected Chat workspace with immutable core-event reductions, contiguous projection gap freezing/resynchronization, one-Chat/one-Run header status, virtualized timeline composition, stable evidence selection, and typed start/input/pause/cancel/retry/fork/continue intents.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:31:16",
+    "created_files": "[\"desktop/src/chat/types.ts\",\"desktop/src/chat/workspace.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
+    "description": "Implement the selected Chat/Run header, virtualized semantic timeline composition, contextual controls, evidence selection, and one-Chat/one-Run status over immutable projections. Preserve scroll and unsent-draft handoff, freeze the last contiguous view on gaps, and dispatch only typed start/input/pause/cancel/retry/fork/continue intents.",
+    "id": 51,
+    "number": 51,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M08.1 — Implement the projected Chat workspace",
+    "updated_at": "2026-09-22 07:16:07"
+  },
+  "deleted": false,
+  "identity": "588bc550-2cdb-8da8-87df-8d4d9bed39c3",
+  "schemaVersion": 1
+}

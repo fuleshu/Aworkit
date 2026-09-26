@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads actual visible context and proposes bounded instruction deltas; uses existing canonical commit acknowledgement; restores missing active rules after resume or context replacement.",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.workspace_instructions.context",
+    "id": 332,
+    "source_external_id": "aworkit.workflow_worker.workspace_instructions",
+    "tags": "",
+    "technology": "Typed context preparation and existing core commit ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9c2f15cf-d329-8e17-be5f-50d2a7877f4a",
+  "schemaVersion": 1
+}

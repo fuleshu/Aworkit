@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:30",
+    "design_external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "id": 382,
+    "sort_order": 2,
+    "target_type": "element",
+    "task_id": {
+      "ref": "550abd7c-878b-825d-89ad-18a8d30fa7f9"
+    }
+  },
+  "deleted": false,
+  "identity": "765453ab-2768-8238-9bf7-993a35294e58",
+  "schemaVersion": 1
+}

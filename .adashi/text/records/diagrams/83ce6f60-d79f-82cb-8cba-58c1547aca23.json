@@ -1,0 +1,33 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.trusted_core.invocation_broker",
+    "created_at": "2026-09-17 16:10:59",
+    "diagram_type": "flow",
+    "id": 76,
+    "key": "uml.tool_jobs.contract",
+    "kind": "mermaid",
+    "sort_order": 50,
+    "source": {
+      "lines": [
+        "flowchart LR\n",
+        " A[\"Frozen Chat authority\"] --> B[\"shell, shell_start, python or python_start\"]\n",
+        " B --> C[\"Durable owner and invocation keyed job registry\"]\n",
+        " C --> D[\"job_output: status and bounded cursor reads\"]\n",
+        " C --> E[\"job_input: bounded stdin and EOF\"]\n",
+        " C --> F[\"job_stop: complete tree cancellation\"]\n",
+        " C --> G[\"job_list: owner jobs only\"]\n",
+        " C --> H[\"job_keep: explicit approved handover\"]\n",
+        " C --> I[\"Restart reconciliation never replays work\"]"
+      ]
+    },
+    "title": "Native job tools and owner isolation",
+    "updated_at": "2026-09-17 17:03:21",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "83ce6f60-d79f-82cb-8cba-58c1547aca23",
+  "schemaVersion": 1
+}

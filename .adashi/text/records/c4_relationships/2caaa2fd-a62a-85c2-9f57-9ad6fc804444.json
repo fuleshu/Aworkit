@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads and create-new publishes fixed-layout repository/session/branch/snapshot manifests beneath the resolved root with collision, fsync, case, and symlink defenses",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.portable.manifest.workspace_adapter",
+    "id": 245,
+    "source_external_id": "aworkit.portable_store.manifest_catalog",
+    "tags": "Relationship,Internal Portable Contract",
+    "technology": "Anchored manifest filesystem operations",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2caaa2fd-a62a-85c2-9f57-9ad6fc804444",
+  "schemaVersion": 1
+}

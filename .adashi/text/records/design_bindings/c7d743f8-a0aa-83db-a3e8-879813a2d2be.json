@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-22 21:32:13",
+    "design_external_id": "aworkit.trusted_core.desktop_api",
+    "id": 81,
+    "target": "chat_path_action",
+    "target_type": "symbol",
+    "updated_at": "2026-09-22 21:32:13",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c7d743f8-a0aa-83db-a3e8-879813a2d2be",
+  "schemaVersion": 1
+}

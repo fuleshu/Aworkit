@@ -7,3 +7,11 @@ desktop/src-tauri/target/
 /.tmp-c24.html
 /.tmp-gh.html
 /.pnpm-store/v11
+
+# Adashi portable project storage (local state and conversion backups stay private)
+!/.adashi/
+/.adashi/*
+!/.adashi/storage.json
+!/.adashi/text/
+!/.adashi/text/**
+/.adashi/text/**/.adashi-publish-*.tmp

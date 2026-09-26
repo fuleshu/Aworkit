@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Immediately before spawn and when adopting a process after helper restart, revalidates the opened executable or bundle identity, whole-slot root and provenance hashes, installation ID, enrollment selector and digest, capability generation, and ProcessGenerationV1 binding to close path and object TOCTOU gaps",
+    "destination_external_id": "aworkit.bootstrap_helper.build_slots",
+    "external_id": "rel.bootstrap.watchdog.slots.reverify",
+    "id": 303,
+    "source_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "tags": "Relationship,Internal,Integrity,TOCTOU",
+    "technology": "LaunchIdentityPortV1 over anchored open handles",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "648bf349-7cbd-8e2b-82ae-10b956782b4f",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:41",
+    "design_external_id": "uml.local_store.repair_evidence_lifecycle",
+    "id": 241,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "8a4862b6-8ae2-83a6-8d1d-ab911951a5ba"
+    }
+  },
+  "deleted": false,
+  "identity": "e24eeab8-f656-8017-943a-b8d52e585709",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "design_external_id": "uml.portable_store.branch_integrity_retention",
+    "id": 25,
+    "qa_job_id": {
+      "ref": "190df8f1-fa82-887c-b04d-c026a1be484f"
+    },
+    "sort_order": 4,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "4558ab66-c704-8bfb-9cb1-ecdd2c3ff456",
+  "schemaVersion": 1
+}

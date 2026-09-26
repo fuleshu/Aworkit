@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Defines the portable Aworkit-owned schemas and deterministic byte encoding for semantic Chat/Run events, segment headers/trailers, immutable checkpoints, portable frozen snapshots, omission facts, and provenance. It converts only already-scrubbed DTOs and validates decoded records before any semantic consumer sees them.\n",
+        "Owned contracts: PortableSemanticEventV1 carries EventId, ChatId/RunId/SessionId, BranchId, branchOrdinal, aggregateVersion, attempt/correlation identifiers, optional parentEventId, semantic event kind, and sanitized payload. SegmentHeaderV1 carries SegmentHash domain, parentSegmentHash, baseCheckpointHash, firstOrdinal, eventCount, codec/schema versions, and CommitId. PortableCheckpointRecordV1 has a content hash and the last included event/head identities. EventId and CommitId are stable opaque IDs; ordering comes only from parent pointers plus contiguous ordinals, never UUID or wall-clock order.\n",
+        "Serialization and hashes: emits UTF-8, LF-terminated, one canonical JSON object per line using RFC 8785-compatible key/string/number rules, forbids non-finite or ambiguous numeric forms, and domain-separates event, segment, checkpoint, snapshot, and artifact hashes. Hash verification operates over exact stored bytes. Unknown optional fields remain available as opaque canonical bytes; unknown required event/schema versions cannot be applied and yield an inspect-only diagnostic.\n",
+        "Ports/DTOs: CanonicalEventCodecPort encodes/decodes bounded streams; SchemaRegistryPort reports supported versions/features; VerifyPortableRecordPort returns stable JSON-pointer diagnostics without mutating input.\n",
+        "Failure, security, and NFRs: malformed UTF-8/JSON, duplicate keys, oversized lines, ID mismatch, ordinal gaps, native provider/Rig types, or forbidden sensitive variants fail closed. Streaming decode is memory-bounded and deterministic across supported platforms; golden vectors pin every hash and canonical byte sequence.\n",
+        "Non-responsibilities: no export-policy decision, secret scanning substitute, file IO, artifact admission, branch choice/head mutation, side-effect replay, or capability execution."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.semantic_codec",
+    "id": 74,
+    "name": "Aworkit Semantic Event Codec & Canonical Serializer",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Codec,Events,Deterministic",
+    "technology": "Rust Aworkit DTO schemas, streaming JSONL codec, RFC 8785 canonical JSON, SHA-256",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "29508b3a-a112-8ff1-a8ad-a1efc6186970",
+  "schemaVersion": 1
+}

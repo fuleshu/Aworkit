@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses message/card/status/action/virtual-list/disclosure primitives",
+    "destination_external_id": "aworkit.desktop_ui.design_system",
+    "external_id": "rel.ui.conversation.design",
+    "id": 50,
+    "source_external_id": "aworkit.desktop_ui.conversation",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "43dc7d1b-7376-8477-975d-0207914033e4",
+  "schemaVersion": 1
+}

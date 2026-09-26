@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "For enrollment, materializes and verifies only the request-bound initial whole bundle in the fixed helper-controlled root and returns EnrollmentPreparedV1 without launch. For activation, opens and reverifies candidate and preserved previous slots against baton, enrollment, capability, and journal identities; it never asks the slot manager to compile or mutate a published slot",
+    "destination_external_id": "aworkit.bootstrap_helper.build_slots",
+    "external_id": "rel.bootstrap.coordinator.slots",
+    "id": 299,
+    "source_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "tags": "Relationship,Internal,Build Slots,Integrity",
+    "technology": "BuildSlotVerifyPortV1 with bounded artifacts and opened identity handles",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fd81a8ac-6fa4-8175-9f13-5d7aefdad245",
+  "schemaVersion": 1
+}

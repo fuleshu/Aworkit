@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.tool_supervision.soft_wait_proposal",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-21 15:35:17",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "6586d251-8489-8532-a19f-73aacdd82b57",
+  "schemaVersion": 1
+}

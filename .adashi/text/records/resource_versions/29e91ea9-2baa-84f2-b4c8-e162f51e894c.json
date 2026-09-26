@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.chat_workspace|file|desktop/src/chat/composerDrafts.ts",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-15 09:42:46",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "29e91ea9-2baa-84f2-b4c8-e162f51e894c",
+  "schemaVersion": 1
+}

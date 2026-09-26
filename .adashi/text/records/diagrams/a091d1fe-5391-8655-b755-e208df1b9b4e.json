@@ -1,0 +1,52 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "created_at": "2026-09-15 09:08:28",
+    "diagram_type": "sequence",
+    "id": 72,
+    "key": "uml.chat.concurrent_execution",
+    "kind": "mermaid",
+    "sort_order": 47,
+    "source": {
+      "lines": [
+        "sequenceDiagram\n",
+        "  actor User\n",
+        "  participant UI as Chat Workspace\n",
+        "  participant Core as Desktop Coordinator\n",
+        "  participant A as Chat A Worker\n",
+        "  participant B as Chat B Worker\n",
+        "  participant Store as Canonical Store\n",
+        "  User->>UI: Send in Chat A\n",
+        "  UI->>Core: Command(A, commandId, version)\n",
+        "  Core->>A: Reserve A and bind identity\n",
+        "  A->>Store: Freeze and stage command\n",
+        "  A->>A: Execute model and tools\n",
+        "  User->>UI: New Chat B and send\n",
+        "  UI->>Core: Create/select B and command(B)\n",
+        "  Core->>B: Reserve B and bind identity\n",
+        "  par A progress\n",
+        "    A->>Store: Commit A events\n",
+        "    Store-->>UI: A envelopes and activity\n",
+        "  and B progress\n",
+        "    B->>Store: Commit B events\n",
+        "    Store-->>UI: B envelopes and activity\n",
+        "  end\n",
+        "  User->>UI: Select A and Stop A\n",
+        "  UI->>Core: Cancel(A)\n",
+        "  Core->>A: Cancel exact A token\n",
+        "  A->>Store: Settle A and retain effects\n",
+        "  A->>Core: Release A and merge feedback\n",
+        "  Note over B: B continues independently"
+      ]
+    },
+    "title": "Concurrent Chat execution and navigation",
+    "updated_at": "2026-09-15 09:08:28",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a091d1fe-5391-8655-b755-e208df1b9b4e",
+  "schemaVersion": 1
+}

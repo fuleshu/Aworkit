@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Obtains admission before transitions, loop iterations, branches, attempts, or new work and stops on explicit limit outcomes",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_scheduler.limits",
+    "id": 117,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Hierarchical limit decision port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8d018b26-b060-860a-95f2-d19b544dd827",
+  "schemaVersion": 1
+}

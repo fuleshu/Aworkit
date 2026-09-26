@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests startup/branch integrity reports and alone may authorize an exact pointer-only repair, explicit repair branch, or post-grace orphan collection; ambiguous/corrupt history remains inspectable and blocked",
+    "destination_external_id": "aworkit.portable_store.integrity_retention",
+    "external_id": "rel.core_recovery.portable.integrity",
+    "id": 274,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Recovery",
+    "technology": "IntegrityReportV1 and guarded RepairPlanV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7d77a619-cc5f-8578-aae9-778ed742ac6f",
+  "schemaVersion": 1
+}

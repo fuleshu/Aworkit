@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes ordered lifecycle, streaming, evidence, approval, and configuration projection events",
+    "destination_external_id": "aworkit.desktop_ui",
+    "external_id": "rel.core.ui.events",
+    "id": 3,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship",
+    "technology": "Tauri IPC events",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8b540376-da37-8c20-852f-1290ddf9b961",
+  "schemaVersion": 1
+}

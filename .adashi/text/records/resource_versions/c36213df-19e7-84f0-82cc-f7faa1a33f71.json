@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "resource_kind": "design.element",
+    "updated_at": "2026-08-21 14:08:17",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "c36213df-19e7-84f0-82cc-f7faa1a33f71",
+  "schemaVersion": 1
+}

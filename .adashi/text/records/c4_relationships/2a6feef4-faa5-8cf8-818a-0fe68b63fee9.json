@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests only declared tool secret slots and receives invocation-scoped injection/redaction material",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.host_tools.secrets",
+    "id": 167,
+    "source_external_id": "aworkit.capability_host.tool_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Authenticated invocation-secret port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2a6feef4-faa5-8cf8-818a-0fe68b63fee9",
+  "schemaVersion": 1
+}

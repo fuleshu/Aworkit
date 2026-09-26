@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Streams already-authorized and redacted artifact bytes to a durable prepared hash token, then references that token from the atomic semantic commit; no worker or host path exists",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.core_committer.local_store.artifact_prepare",
+    "id": 207,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract,Evidence",
+    "technology": "Streaming PrepareArtifact and ArtifactRead ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "30ffc242-f615-873e-83cd-39567c562107",
+  "schemaVersion": 1
+}

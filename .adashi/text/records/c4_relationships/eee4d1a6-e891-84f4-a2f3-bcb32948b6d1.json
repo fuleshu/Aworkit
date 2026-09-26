@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests the deterministic revalidated first-input freeze and receives an immutable snapshot or blocking report",
+    "destination_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "external_id": "rel.core_lifecycle.snapshot_freezer",
+    "id": 67,
+    "source_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust freeze port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "eee4d1a6-e891-84f4-a2f3-bcb32948b6d1",
+  "schemaVersion": 1
+}

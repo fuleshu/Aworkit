@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Starts, continues, controls, and observes explicit native agent sessions through Codex App Server stdio or ACP while reporting unsupported lifecycle features honestly",
+    "destination_external_id": "ext.external_agents",
+    "external_id": "rel.host_external_manager.agents",
+    "id": 200,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Codex App Server stdio and ACP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2227b219-4937-88a3-98b9-77ed5387be9f",
+  "schemaVersion": 1
+}

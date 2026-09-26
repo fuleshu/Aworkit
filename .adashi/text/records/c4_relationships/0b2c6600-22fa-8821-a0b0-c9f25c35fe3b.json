@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Performs approved direct file/search/edit/shell/Python operations with actually enforced Project Files roots or explicitly unrestricted host modes; changes are immediate and not automatically undone",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.host_tool_runtime.workspace",
+    "id": 197,
+    "source_external_id": "aworkit.capability_host.tool_runtime",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Handle-safe filesystem APIs and explicit host processes",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0b2c6600-22fa-8821-a0b0-c9f25c35fe3b",
+  "schemaVersion": 1
+}

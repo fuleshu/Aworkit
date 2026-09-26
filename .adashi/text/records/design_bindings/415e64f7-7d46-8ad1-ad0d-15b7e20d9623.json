@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-18 10:31:43",
+    "design_external_id": "aworkit.capability_host.model_gateway",
+    "id": 51,
+    "target": "crates/aworkit-capability-host/src/provider_tools/openai_stream.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-18 10:31:43",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "415e64f7-7d46-8ad1-ad0d-15b7e20d9623",
+  "schemaVersion": 1
+}

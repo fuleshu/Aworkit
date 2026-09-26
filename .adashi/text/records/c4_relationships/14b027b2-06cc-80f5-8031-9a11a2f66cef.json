@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches only durably authorized ApprovedInvocationEnvelopeV1 records with pinned binding/hash, enforced scope, budget/deadline, cancellation token, host generation, and invocation-scoped lease handles",
+    "destination_external_id": "aworkit.capability_host.invocation_gateway",
+    "external_id": "rel.core_invocation.host_gateway.approved",
+    "id": 188,
+    "source_external_id": "aworkit.trusted_core.invocation_broker",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned authenticated local RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "14b027b2-06cc-80f5-8031-9a11a2f66cef",
+  "schemaVersion": 1
+}

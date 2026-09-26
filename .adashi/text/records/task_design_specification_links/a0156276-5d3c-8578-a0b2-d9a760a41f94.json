@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:19",
+    "design_external_id": "uml.workflow_worker.context_branch_loop_flow",
+    "id": 75,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "b9da00fe-797b-88ea-b7f3-e626d83335a1"
+    }
+  },
+  "deleted": false,
+  "identity": "a0156276-5d3c-8578-a0b2-d9a760a41f94",
+  "schemaVersion": 1
+}

@@ -1,0 +1,30 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Presents a human-readable, JSON-free Details view for either the entire run or one selected chat block. The entire-run scope summarizes status, workflow/scope/timing, models and token usage, activity counts, and a chronological execution log. A selected block shows its breadcrumb, status/type/parent/timing, applicable model/reasoning/thinking/usage or tool fields, structured input/output, and contained child activity. A separate Raw JSON tab exposes exact redacted data for the same current scope.\n",
+        "Owned state: active Details or Raw JSON tab. Selection, open state, and panel width are owned by Chat Workspace; events, records, and timeline items remain projections.\n",
+        "Contracts: consumes ChatProjection, projected semantic timeline items, canonical runtime events, and projected run records; emits stable timeline-item selection, whole-run selection, and close intents.\n",
+        "Failure/degraded behavior: unavailable or redacted record values stay explicit, unknown fields use humanized labels, malformed non-serializable raw data produces a bounded message, and no hidden reasoning is inferred.\n",
+        "Performance/accessibility: memoized projection, complementary region, tab semantics, keyboard resizing through the workspace, breadcrumb navigation, and bounded recursive structured-value rendering.\n",
+        "Non-responsibilities: no event collection or retention, secret revelation, hidden chain-of-thought inference, Run mutation, or direct file opening.\n",
+        "\n",
+        "Cache usage inspection (2026-09-18): Show provider-reported cached input, uncached input, reporting coverage and cache-hit ratio in model and review usage independently. A partial history or missing counters must remain explicit; do not present unknown as zero, double count alias fields, or turn token totals into invented billed costs. Durable per-call usage remains available in Raw JSON. See docs/approval-cache-accounting.md."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.evidence_inspector",
+    "id": 21,
+    "name": "Run Details Inspector",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Inspection",
+    "technology": "TypeScript semantic projection and accessible contextual inspector",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "89ceb754-e5a7-84ec-a996-3cf429729fb4",
+  "schemaVersion": 1
+}

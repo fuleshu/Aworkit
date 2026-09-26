@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:17:43",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "The only remaining path to task 129's acceptance bar (uncached input within ~1.5x of DSH). Everything attributable to prompt caching is fixed and verified; what is left is the size of what Aworkit appends each turn.\n",
+        "\n",
+        "Measured on test1_3 (chat.ef71761303be6ac41947a5a7954783d4ade0b614, 65 turns, uncached 64,192) against the DSH run of the same prompt (session-e521226b, 79 steps, uncached 36,540):\n",
+        "- cold starts removed, Aworkit re-bills 52,740 uncached tokens over 63 turns = 837/turn; DSH re-bills 22,000 over 78 steps = 282/turn. Ratio ~3x, and it is the whole remaining gap.\n",
+        "- Aworkit's per-turn uncached cost is the new material itself: the 7 turns above 2,000 (49% of its uncached total) each append 7-25 KB of new content (a file write result, a shell/job output, an image read), and its median turn still re-bills 532 tokens where DSH's is ~212.\n",
+        "- DSH's tool results are tiny by comparison: median 572 bytes, max 7,138 bytes over its 79 results.\n",
+        "\n",
+        "Levers to evaluate, cheapest first (do not reduce what the model is shown merely to move the number; each option must keep the information recoverable, e.g. a bounded capture plus a pointer the model can re-read):\n",
+        "1. Bound individual tool results at settle, with an explicit \"truncated; re-read with offset/limit\" pointer. Aworkit already pages file reads (commit 6869449) and has a lossless compression path that fired twice in test1_qwen (grep 1,265 -> 704 tokens, job.list 1,366 -> 728) while skipping 58 candidates for failing the size/savings gates - see the compression-gates task.\n",
+        "2. Re-check what the shell and job tools return: whole stdout plus a cursor, versus DSH's small tail.\n",
+        "3. Re-check image reads: one image costs 200-968 prompt tokens by dimensions and is replayed every later turn; the bounded image dispatch already caps attachments at 16 images / 24 MiB, so the remaining question is whether a screenshot must stay in the replayed history at all.\n",
+        "4. Consider whether the assistant's own message content (reasoning is now replayed, ~64.5k tokens on one test1_2 turn) should be replayed in full or summarised on later turns - currently it is retained verbatim by design.\n",
+        "\n",
+        "Acceptance: a repeat benchmark run with total tokens no worse than test1_3's 7.46M and uncached input within ~1.5x of DSH's 36,540, with no conformance regression on tetris-conformance.js (currently 9/9)."
+      ]
+    },
+    "id": 136,
+    "number": 135,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Cut per-turn novel tool-result payload (837 vs DSH's 282 uncached tokens per turn)",
+    "updated_at": "2026-09-25 07:17:43"
+  },
+  "deleted": false,
+  "identity": "30f560dc-0232-871b-81b1-21cf611c60ee",
+  "schemaVersion": 1
+}

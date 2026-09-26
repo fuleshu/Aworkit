@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:41",
+    "design_external_id": "aworkit.local_store.portable_runtime_journal",
+    "id": 333,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "9ad442be-9d04-82fa-a1ea-e1496dbbe888"
+    }
+  },
+  "deleted": false,
+  "identity": "497a2079-e2bf-8670-8c46-6d4a4ba542c2",
+  "schemaVersion": 1
+}

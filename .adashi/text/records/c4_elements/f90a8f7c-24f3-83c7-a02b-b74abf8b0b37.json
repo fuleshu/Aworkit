@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the host's sole core-facing execution port. It admits and dispatches only a durable core-issued ApprovedInvocationEnvelopeV1 and accepts generation-fenced HostControlEnvelopeV1 cancellation/timeout controls; it validates protocol/schema, invocation/decision identity, pinned binding hash, enforced scopes, budget, deadline, cancellation token, lease handles, and maximum payload sizes before any adapter observes work.\n",
+        "Owned runtime state: ephemeral InvocationAdmissionV1 records keyed by invocationId, same-ID acceptance/dedup facts, dispatch milestone, bounded per-invocation stream window, cancellation registration, and host-generation correlation. None is canonical and all may be rebuilt only from reconciled core controls.\n",
+        "Versioned ports and contracts: ApprovedInvocationPortV1 receives ApprovedInvocationEnvelopeV1; HostEventPortV1 returns HostInvocationEventV1 containing Accepted, FlowControl, Progress, ApprovalRequest, Usage, Artifact, TerminalOutcome, or RejectedDefiniteNotStarted. It resolves only exact CapabilityDescriptorV1 records and never substitutes a binding.\n",
+        "Failure and degraded behavior: malformed, stale-generation, expired, oversized, unknown, or hash-mismatched envelopes fail closed before dispatch. Disconnect or backpressure stops new admissions while reserving control capacity; after a possible start it reports facts to outcome normalization and never guesses that an effect did not occur.\n",
+        "Security and authority: it cannot create or broaden authority, grant approval, select a graph destination, mint a lease, access a secret value, or accept a worker connection. The worker has no host channel.\n",
+        "Observability, performance, and cross-platform behavior: bounded queues, explicit flow-control credits, monotonic deadlines, latency/queue/validation metrics, secret-free correlation logs, and identical length-delimited Aworkit framing on Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no workflow routing/retry policy, provider/tool implementation, process supervision policy, canonical event commit, history persistence, or side-effect replay."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.invocation_gateway",
+    "id": 51,
+    "name": "Approved Invocation Gateway & Runtime",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,IPC,Admission,Backpressure",
+    "technology": "Rust async local-RPC gateway and bounded invocation runtime",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f90a8f7c-24f3-83c7-a02b-b74abf8b0b37",
+  "schemaVersion": 1
+}

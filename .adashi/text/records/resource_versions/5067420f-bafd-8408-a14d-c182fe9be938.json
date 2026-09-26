@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.composer",
+    "resource_kind": "design.element",
+    "updated_at": "2026-09-21 19:03:02",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "5067420f-bafd-8408-a14d-c182fe9be938",
+  "schemaVersion": 1
+}

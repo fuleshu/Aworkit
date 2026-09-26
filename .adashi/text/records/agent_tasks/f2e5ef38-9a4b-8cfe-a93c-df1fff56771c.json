@@ -1,0 +1,65 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/goal.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-25 11:16:09",
+    "completion_memo": {
+      "lines": [
+        "Implemented and verified. Verification: full desktop suite 468 passed / 0 failed / 1 ignored (466 before this task; the two added behaviour tests are the re-emission test and the restored-refresh test); compaction-focused run 39 passed; `cargo build --lib` adds no new warning; rustfmt clean on every file and line authored.\n",
+        "\n",
+        "WHAT WAS BUILT\n",
+        "\n",
+        "- New `tool_loop/state_context.rs` derives one canonical state block from records, in this order: the live Chat goal (existing `goal::context_message`, only when the goal tool is callable and the snapshot is `is_live`), this Run's newest task-list snapshot (`- [status] content` per item), and the files this Run already read or changed. Each message is a typed `ModelToolContextV1` with `role: Some(\"user\")`, no `instruction_event_id`, and a 2 KiB bound. The block is written either by appending after every exchange (when no copy is present) or by rewriting the existing copy where it stands, so a refresh never reorders the committed selection and exactly one current copy always remains.\n",
+        "- `ToolRecordStore::touched_files` collects distinct `path`s from successful `tool.files.read|edit|write` outcomes of this Run (newest 24, `TOUCHED_FILE_LIMIT`). It deliberately names files the way the tool call named them: `resolvedPath` is relative to the reviewed directory scope (`FileAccess::resolve`), so on its own it is not an identity the model can act on.\n",
+        "- Emitted inside the compaction commit path (`compaction/runtime.rs`) before `snapshot_payload`, so the block is part of the committed checkpoint document and a restore re-reads it. Emitted again after a restore that contributed generated state (`generated_state(request) > state_before_restore`), which collapses the checkpoint's older block and this turn's own head goal into one fresh block: without it the pass after a compaction showed two goal messages, one stale (verified by disabling the refresh: the new test then fails with \"First objective\" and \"Second objective\" side by side).\n",
+        "- `is_generated_state` in `compaction/mod.rs` plus a shared `GOAL_STATE_LABEL` (now used by `goal::context_message`) make generated state recognisable. `pinned_user_units` excludes it, so a compaction re-derives the goal instead of pinning an older copy as if the user had written it. Workspace instructions keep their own `instruction_event_id` restoration path and the host clock keeps its per-pass path; neither is duplicated here.\n",
+        "- `docs/context-compaction.md` documents the design choice.\n",
+        "\n",
+        "TESTS\n",
+        "\n",
+        "- `a_compaction_re_emits_the_live_goal_the_task_list_and_touched_files`: goal + todo + file read, an artificially stale goal copy in the retained tail, then two successive compactions. Asserts one copy per label, the stale copy gone, positions after the retained exchanges, `role == user`, no instruction id, and that the `context.compacted` document carries the state.\n",
+        "- `a_cleared_goal_and_an_empty_task_list_are_not_re_emitted`: cleared goal, empty list, no file outcome => no state block at all.\n",
+        "- `a_restore_refreshes_the_state_block_instead_of_reading_it_twice`: after a compaction the goal is changed and a fresh head goal is injected, then a restore runs under a new outer invocation; asserts exactly one goal message carrying the new objective, the task list still present, and the superseded objective gone.\n",
+        "- `generated_state_is_recognised_and_never_pinned_as_user_direction` (unit): every label matches, a lookalike prose message does not, and neither a goal nor a files message is pinned.\n",
+        "\n",
+        "SCOPE NOTES / HONEST DEVIATION\n",
+        "\n",
+        "- The task lists \"workspace instructions (existing path)\" and \"the host clock\" inside the block. Both already have a correct re-emission path (`workspace_context` is re-run whenever the selection changed; the clock rides that path). Re-emitting them again inside this block would create a second, independent copy of the same instruction text with a different identity, so they are intentionally left to their existing path, which the module documents. Nothing about their behaviour changed.\n",
+        "- The block is refreshed once per pass after a compaction (and at every compaction), not on every turn of the same pass: within a pass the retained block is already current, and re-deriving it every turn would rewrite a mid-context message as file reads accumulate. If the goal tool changes the goal mid-pass, that turn's tool result tells the model, and the next pass or compaction refreshes the block.\n",
+        "- No store schema, event kind or protocol field changed. The block is ordinary positioned context inside the existing checkpoint document."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 10:26:20",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/state_context.rs\"]",
+    "description": {
+      "lines": [
+        "After a compaction the model keeps the summary plus the retained tail, but Aworkit does not re-emit the small amount of canonical state that must never depend on transcript survival.\n",
+        "\n",
+        "Current behaviour:\n",
+        "- Goal: injected as an ordinary user-role context message (`goal::context_message` in tool_loop/goal.rs; its own test asserts role \"user\" and no instruction id) and only when `after_exchanges == 0` (tool_loop.rs `prepare_context`). It therefore sits inside the compactable surface, can be shadowed by a compaction, and is not re-injected for the remainder of that pass.\n",
+        "- Todo: `record_todo_state` (tool_loop.rs) persists the latest snapshot for the UI and the tool returns it in its result, but nothing re-injects it into the model context. After a compaction the task list survives only as summary prose.\n",
+        "- Workspace instructions ARE handled: instruction messages carry `instruction_event_id`, `replace_units` preserves them, and compaction/runtime.rs re-runs `workspace_context(...)` when the selection changed. That is the only state with a correct path today.\n",
+        "- Host clock: re-injected per pass and observed surviving compaction in the test1_qwen post-compaction surface.\n",
+        "\n",
+        "Precedent: Codex rebuilds canonical initial context and world state after every compaction (`build_compaction_initial_context` / `InitialContextInjection` in codex-rs/core/src/compact.rs); Hermes notifies its context engines and memory providers after compression (agent/conversation_compression.py).\n",
+        "\n",
+        "Change: after any committed compaction, deterministically re-emit one canonical state block: workspace instructions (existing path), the live goal, the current todo snapshot, the host clock, and the list of files this Run has touched (available durably from tool outcomes). Goal and todo must no longer rely on transcript survival, and the goal must not be limited to `after_exchanges == 0`. Keep the block typed and positioned so it does not duplicate the instruction restoration path.\n",
+        "\n",
+        "Tests: set a goal and a todo list, compact, and assert both reach the next request as typed context messages; repeat compactions without duplication; cleared goal/todo stop being injected; instructions still restore through their own path; the block is absent when nothing is set."
+      ]
+    },
+    "id": 139,
+    "number": 138,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Re-inject goal, todo and the canonical state block after every compaction",
+    "updated_at": "2026-09-25 11:16:09"
+  },
+  "deleted": false,
+  "identity": "f2e5ef38-9a4b-8cfe-a93c-df1fff56771c",
+  "schemaVersion": 1
+}

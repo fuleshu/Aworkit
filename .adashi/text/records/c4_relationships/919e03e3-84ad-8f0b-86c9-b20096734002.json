@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Indexes only capture availability, correlations, redaction/truncation, size, and expiry metadata; exact chunks stay out of search/projection tables",
+    "destination_external_id": "aworkit.local_store.debug_capture",
+    "external_id": "rel.local_store.query_projections.debug_capture",
+    "id": 226,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Internal,Read Only,Optional",
+    "technology": "CaptureManifestReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "919e03e3-84ad-8f0b-86c9-b20096734002",
+  "schemaVersion": 1
+}

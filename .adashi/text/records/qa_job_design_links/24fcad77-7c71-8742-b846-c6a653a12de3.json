@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "design_external_id": "uml.chat_run_lifecycle",
+    "id": 34,
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "sort_order": 3,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "24fcad77-7c71-8742-b846-c6a653a12de3",
+  "schemaVersion": 1
+}

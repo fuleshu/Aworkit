@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates draft validation, requirement resolution, and authority-summary queries. Only lifecycle may commit a first-input freeze",
+    "destination_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "external_id": "rel.core_api.snapshot_freezer",
+    "id": 57,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust traits with Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ff61b764-091f-8a20-a82c-42421e38e7ee",
+  "schemaVersion": 1
+}

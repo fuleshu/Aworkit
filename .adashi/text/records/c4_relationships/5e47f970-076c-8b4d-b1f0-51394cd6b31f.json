@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Redeems only the provider secret slots referenced by the approved model invocation and receives redacted delivery handles",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.host_model.secrets",
+    "id": 164,
+    "source_external_id": "aworkit.capability_host.model_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Authenticated invocation-secret port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5e47f970-076c-8b4d-b1f0-51394cd6b31f",
+  "schemaVersion": 1
+}

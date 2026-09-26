@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "mockup.desktop_ui.theme_reference_dark",
+    "resource_kind": "mockup.working",
+    "updated_at": "2026-08-21 07:20:54",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "529e72d8-038d-8cfd-8e24-ce9dcfad7b5e",
+  "schemaVersion": 1
+}

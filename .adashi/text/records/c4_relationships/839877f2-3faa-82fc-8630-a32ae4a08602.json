@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests compatibility/integrity gate, validated migration or backup restore, and projection rebuild before rehydration; core recovery retains all decisions about continuation and blocking",
+    "destination_external_id": "aworkit.local_store.storage_coordinator",
+    "external_id": "rel.core_recovery.local_store.startup_gate",
+    "id": 213,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Recovery",
+    "technology": "StartupStoreCheckPort and ValidatedBackupRestorePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "839877f2-3faa-82fc-8630-a32ae4a08602",
+  "schemaVersion": 1
+}

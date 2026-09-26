@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.worker_execution_plan.scheduler",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "20a51640-5da8-8316-98a1-3aed7a2fc69c",
+  "schemaVersion": 1
+}

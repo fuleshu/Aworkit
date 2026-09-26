@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-21 07:47:57",
+    "design_external_id": "aworkit.desktop_ui.composer",
+    "id": 468,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "8240de77-b77b-87c0-89c0-e750cbc1c794"
+    }
+  },
+  "deleted": false,
+  "identity": "d23b0bc1-f8c6-8e72-9c60-009d72488437",
+  "schemaVersion": 1
+}

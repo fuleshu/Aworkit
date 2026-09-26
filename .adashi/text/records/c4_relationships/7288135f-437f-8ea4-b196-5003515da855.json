@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses the sole LocalSqlite write port to atomically commit semantic event batches, attempts, head/version, checkpoint, dedup outcomes, and delivery outbox; receives no success before durable commit and never routes PortableProject history here",
+    "destination_external_id": "aworkit.local_store.commit_adapter",
+    "external_id": "rel.core_committer.local_store.atomic_commit",
+    "id": 205,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract,Canonical Write",
+    "technology": "LocalHistoryCommitPort with Aworkit DTOs over in-process Rust",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7288135f-437f-8ea4-b196-5003515da855",
+  "schemaVersion": 1
+}

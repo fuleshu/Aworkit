@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.portable.segment.workspace_adapter",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 23:11:41",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "a58f0624-1caf-841d-963c-b3f85d3da39d",
+  "schemaVersion": 1
+}

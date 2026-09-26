@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Submits normalized provider, contract, and uncertain-side-effect outcomes while keeping internal turns distinct from harness attempts",
+    "destination_external_id": "aworkit.workflow_worker.attempt_policy",
+    "external_id": "rel.worker_model_agent.attempt_policy",
+    "id": 130,
+    "source_external_id": "aworkit.workflow_worker.model_agent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Typed outcome classification port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9af831d5-eafd-863b-a0b4-137bc001b0a3",
+  "schemaVersion": 1
+}

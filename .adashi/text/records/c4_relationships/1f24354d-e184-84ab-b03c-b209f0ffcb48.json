@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Propagates pause/cancel/terminal scope to outstanding invocations without assuming side effects are reversible",
+    "destination_external_id": "aworkit.trusted_core.invocation_broker",
+    "external_id": "rel.core_lifecycle.invocation",
+    "id": 73,
+    "source_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust invocation-control port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1f24354d-e184-84ab-b03c-b209f0ffcb48",
+  "schemaVersion": 1
+}

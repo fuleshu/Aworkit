@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-workflow-worker/Cargo.toml\",\"crates/aworkit-workflow-worker/src/lib.rs\",\"crates/aworkit-workflow-worker/src/context.rs\"]",
+    "completed_at": "2026-08-21 17:02:09",
+    "completion_memo": "Implemented immutable Harness Context revisions with explicit parent lineage, deterministic projection and for-each expansion, independent forks, and declared equal/object-union joins that reject conflicts and prior-revision mutation.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:26:19",
+    "created_files": "[\"crates/aworkit-workflow-worker/src/context.rs\"]",
+    "description": "Implement immutable Harness Context revisions plus deterministic fork, projection, for-each expansion, parallel-region, and explicit join reconciliation. Preserve branch and child lineage and reject undeclared merges or mutation of prior revisions.",
+    "id": 15,
+    "number": 15,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M03.2 — Implement context lineage, branching, and joins",
+    "updated_at": "2026-09-21 14:56:10"
+  },
+  "deleted": false,
+  "identity": "b9da00fe-797b-88ea-b7f3-e626d83335a1",
+  "schemaVersion": 1
+}

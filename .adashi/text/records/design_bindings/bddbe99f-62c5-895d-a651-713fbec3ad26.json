@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-19 07:31:37",
+    "design_external_id": "aworkit.workflow_worker.model_agent",
+    "id": 60,
+    "target": "desktop/src-tauri/src/runtime/graph_pass/context.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-19 07:31:37",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bddbe99f-62c5-895d-a651-713fbec3ad26",
+  "schemaVersion": 1
+}

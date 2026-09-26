@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-19 09:31:57",
+    "design_external_id": "aworkit.workflow_worker.subagent",
+    "id": 65,
+    "target": "docs/subagent-tool-inheritance.md",
+    "target_type": "file",
+    "updated_at": "2026-09-19 09:31:57",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3c84070f-1502-80a1-b982-c640ed360f75",
+  "schemaVersion": 1
+}

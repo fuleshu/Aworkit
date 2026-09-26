@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Closes the writer gate, drains or preserves bounded transactions, verifies dedup/outbox schema, and reopens writes only after successful compatibility and integrity checks",
+    "destination_external_id": "aworkit.local_store.commit_adapter",
+    "external_id": "rel.local_store.storage_coordinator.commit_adapter",
+    "id": 231,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "CommitMaintenanceGatePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "71df7bd9-5ad3-8ffc-81cf-6332b949f000",
+  "schemaVersion": 1
+}

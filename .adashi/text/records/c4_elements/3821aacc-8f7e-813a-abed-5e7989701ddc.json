@@ -1,0 +1,45 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Presents progressively disclosed providers/standard and custom tiers/credential references/tools/trusted plugins/MCP/external agents/data/portable sessions/appearance. Resolves missing workflow identifiers to configured capabilities and previews resulting authority before acceptance. The Appearance section exposes exactly System (default), Light, and Dark; previews the complete token set immediately; displays the resolved system mode; and uses the same compact desktop primitives as the rest of the application.\n",
+        "\n",
+        "Owned state: section drafts, dirty markers, field errors, disclosure, Settings visit identity, local appearance preview, and ephemeral secret input cleared after submit/navigation. Canonical JSON, AppearancePreferenceV1/version, credential handles, installed inventory, and capability resolution are core projections.\n",
+        "\n",
+        "Contracts: consumes configuration, capability, diagnostic, health, and AppearanceProjection; emits Validate/SaveConfiguration (expected version), StoreCredentialSecret, TestConnection, Discover/Enable/DisableExtension, ResolveWorkflowReference, and UpdateAppearance({mode: System|Light|Dark}, expectedVersion). The Design System resolves the preview; the Projection Gateway commits the preference. Secret values use a dedicated command and never echo into projections/logs.\n",
+        "\n",
+        "Failure/degraded behavior: sections fail independently; version conflicts preserve drafts; a rejected/uncertain appearance update returns to the latest projected theme while retaining unrelated drafts; OS scheme changes affect only System mode. Failed connection tests never rebind; workflow import/discovery cannot install, enable, or grant authority implicitly.\n",
+        "\n",
+        "Performance/accessibility: searchable virtualized catalogs, cancellable tests, lazy sections, no full-tree rebuild for theme preview, labelled forms/errors/status, keyboard order, 200% zoom, high contrast, reduced motion, and WCAG 2.2 AA.\n",
+        "\n",
+        "Non-responsibilities: no web-storage preference or secrets, direct provider/plugin contact, workflow editing, implicit code activation, compatibility guessing, or Run-authority approval.\n",
+        "\n",
+        "Reversible Settings visit and notifications (2026-09-05): Provide visible Back before the title, with destination-specific accessible name such as Back to Workflows. The shell owns the single return context; Settings owns the visit-scoped draft and leave guard. Escape closes only after nested controls/dialogs decline it and never during IME composition. Dirty exit offers Save and return, Discard and return, or Stay in Settings. Save leaves only after receipt plus snapshot postcondition proves success; validation/conflict/uncertainty keeps complete drafts and Settings open. Discard restores latest canonical data and appearance before leaving, or stays on reconciliation failure. Pending mutations are reconciled without duplicate save/discard; a Back request can leave after verified success. Clear secret inputs and visit-scoped notices on actual exit; cancel/detach read-only probes and ignore late old-visit generations. Success uses a five-second transient notice, invalidated on new edit or exit. Test results retain provider/project/record-fingerprint validity. No absolute banners or informational error modals. Field errors, neutral capability help, and consent controls remain contextual. Detailed specification: docs/design-desktop-notifications-settings-return.md\n",
+        "\n",
+        "Filesystem permissions: Separately display live filesystem grants and saved tool approvals. Show chat/project owner, read or read/write access, and canonical directory/subtree or all external locations. Revoke immediately for future authorizations, independently of the Settings draft. Project permissions cover every chat bound to the same project/native workspace; chat permissions cover only the owning chat. Both survive restart.\n",
+        "\n",
+        "Subagent tabs preference (2026-09-21): A Subagent tabs subsection, presented with the subagent tool settings, exposes SubagentViewPreferenceV1 as two checkboxes: auto-open subagent tabs and auto-close subagent tabs. These are global presentation preferences, never part of the frozen per-Chat tool contract, so they apply to every Chat and may change at any time. Auto-open creates each new child's tab at creation in the background without switching the active tab; auto-close closes an open, non-active child tab when that child reaches any terminal state, and a tab the user closed by hand stays closed. The preference lives in the Settings document, is projected with the document version it was read at, and is committed by a dedicated version-checked command rather than the Save/Discard draft, so a conflict, rejection or uncertain update returns to the latest projected values while every unrelated Settings draft is untouched. A generic full-document save that carries the default keeps the stored preference.\n",
+        "\n",
+        "Bundled tools available by default (2026-09-21): Every installed bundled tool starts enabled, so a new profile can select any of them in a workflow without first visiting Settings. A document written while bundled tools started disabled carries no toolsDefaultedEnabled marker; the first load after this build enables every bundled tool once and records the marker, and a newly bundled tool arrives available like every other default. Turning a tool off in Settings is the user's decision and is never reverted: the one-time step runs only for a document that never made the choice. Enabling a tool is availability, not authority — workflow selection, approval policy, filesystem grants and frozen per-Chat bindings are unchanged.\n",
+        "\n",
+        "Boolean settings fields (2026-09-21): A boolean field in Settings renders as a single row — the checkbox, then its label and its help text — and keeps its intrinsic size. The full-width rule that applies to text, select and textarea controls excludes checkboxes and radios, so a tool's manifest-declared booleans (for example \"Approval policy applies\") and the subagent-tab preferences are aligned and sized like every other boolean control in Settings instead of stretching across the field.\n",
+        "\n",
+        "Desktop editor command (2026-09-22): A Desktop section carries DesktopConfigurationV2, whose only field is the editor command: one bare command name resolved from PATH, or an absolute executable path, or empty for the operating system's own default application. The trusted core validates the stored value with the same rule and the section reports the equivalent issue before Save, focusing the field, so a relative location — which the host would resolve against whatever directory the desktop process happens to have — is refused with a named reason instead of stored. The command is ordinary document state: it participates in the Save/Discard draft, marks the section Unsaved while it differs, and is written with the expected document version. It is the program the conversation path menu starts for its Open in editor action, with the resolved file as the single argument."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.settings",
+    "id": 22,
+    "name": "Settings & Capability Resolution",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Settings,Appearance",
+    "technology": "Schema-driven TypeScript forms over typed projections",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3821aacc-8f7e-813a-abed-5e7989701ddc",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.local_store.storage_coordinator.portable_runtime_journal",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 23:45:05",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "f4a07fdf-f731-89dd-b50c-d44a60523491",
+  "schemaVersion": 1
+}

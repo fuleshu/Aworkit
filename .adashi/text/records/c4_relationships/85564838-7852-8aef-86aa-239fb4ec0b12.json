@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Provides acceptance/rejection, dispatch, cancellation, deadline, and backpressure milestones for conservative normalization",
+    "destination_external_id": "aworkit.capability_host.result_pipeline",
+    "external_id": "rel.host_gateway.result_input",
+    "id": 161,
+    "source_external_id": "aworkit.capability_host.invocation_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Bounded in-process evidence channel",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "85564838-7852-8aef-86aa-239fb4ec0b12",
+  "schemaVersion": 1
+}

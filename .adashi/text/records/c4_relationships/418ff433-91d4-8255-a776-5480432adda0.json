@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Stores visible portable files beneath the chosen project and reads descriptive filesystem/Git facts; the user and Git own staging, commits, merges and pushes, and Aworkit performs none automatically",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.portable.workspace_adapter.external_workspace",
+    "id": 279,
+    "source_external_id": "aworkit.portable_store.workspace_adapter",
+    "tags": "Relationship,Boundary Contract,Filesystem,No Git Writes",
+    "technology": "Project-relative filesystem IO and read-only Git inspection",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "418ff433-91d4-8255-a776-5480432adda0",
+  "schemaVersion": 1
+}

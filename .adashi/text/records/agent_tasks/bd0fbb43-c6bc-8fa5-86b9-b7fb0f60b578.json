@@ -1,0 +1,46 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-09-25 07:17:28",
+    "completion_memo": {
+      "lines": [
+        "Findings recorded, both fixes implemented and verified on a live run. Nothing in this task remains.\n",
+        "\n",
+        "Implemented: 8248eee (retain and replay the chain of thought: ModelAssistantContentV1::Reasoning, projection retains raw reasoning only, openai_tool_request emits reasoning_content, anthropic/gemini skip it, the compaction estimator counts it) and b207144 (ImageDispatchV1 on the frozen gateway, set per run from the model's imageInput capability; reference mode sends no bytes and describes each image; attached dispatches keep the newest 16 images / 24 MiB and degrade older ones to references). Tests: capability host 169 lib + 4 provider_images, desktop compaction 27, reasoning passback fixture.\n",
+        "\n",
+        "Verification run test1_3 (chat.ef71761303be6ac41947a5a7954783d4ade0b614, 65 turns): input 7,271,744, cached 7,207,552 (99.12%), uncached 64,192 (0.88%), output 188,758; 0 of 65 turns flagged (was 6); all 65 surfaces carry retained reasoning; hit+miss == input on every row. Against test1_2 (162,083 uncached) that is a 60% reduction, and against test1_1 (225,104) 71%. Cost at the operator's DeepSeek Flash pricing: $0.2890 versus DSH's $0.2738 on the same prompt.\n",
+        "\n",
+        "Corrections this task now carries: images ARE billed (measured 200/642/968 prompt tokens for 640x400/1280x800/1920x1080), so the earlier \"uploaded and discarded\" claim is withdrawn; DeepSeek advertises deepseek-flash as input_modalities [\"text\",\"image\"], so the new image policy correctly chooses Attach for it and would choose Reference for a text-only model such as deepseek-v4-pro. The claim that Aworkit \"rewrites its prefix every sixth turn\" was also withdrawn: the 17,412-byte penalty was an artifact of comparing raw JSON bytes (tools follow messages in the body), and recorded_prefix_tests showed 40 of 49 pairs are strict appends.\n",
+        "\n",
+        "Open follow-ups live elsewhere: 131 (publish whole-run cached/uncached totals on the run summary so the Run details panel stops falling back to a paged window), 132 (the compaction summary call is issued cold: sentBytes 540,125 with commonPrefixBytes 3), 133-135 (promoted from task 126's notes), and the residual per-turn payload work that is the only remaining path to task 129's 1.5x bar."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-24 18:04:01",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "FIXED AND VERIFIED in test1_3 (chat.ef71761303be6ac41947a5a7954783d4ade0b614, 09-24 20:57-21:12, 9,183 events, 65 model turns): input 7,271,744, cached 7,207,552, uncached 64,192 (0.88%), against test1_2's 162,083 (1.61%) and test1_1's 225,104 (1.94%). Flagged turns: 0 of 65 (was 6). Per-turn uncached: mean 987 (was 1,500), median 532 (was 629). DSH steady state is still lower (~282/step), and the residue is now mostly unavoidable new tool-result payload (the 7 turns above 2,000 append 7-25 KB of new content), not cache pathology.\n",
+        "\n",
+        "ROOT CAUSE of finding (1), proven and fixed: Aworkit never passed the chain of thought back. DSH's DeepSeek adapter does (packages/llm/llm-deepseek/src/protocols/chat-completions/serialize.ts: \"CoT passback on every reasoning-carrying turn ... required on tool-call turns\"). Probing the live endpoint shows prompt_tokens identical with and without the passback (530 vs 530), so the provider counts a turn's reasoning either way and re-inserts it when omitted. Every turn where that re-insertion flipped was one the provider credited only the stable 12,032-token header for, re-billing the history; those turns were 104,453 of test1_2's 162,083 uncached tokens (64%). FIX (8248eee): ModelAssistantContentV1 gained Reasoning{text}; the projection retains raw reasoning (never a display summary) from channel=reasoning deltas; openai_tool_request emits reasoning_content; anthropic/gemini skip it; the compaction estimator counts it. In test1_3 all 65 surfaces carry retained reasoning (1,224 parts) and no turn exceeds the byte bound.\n",
+        "\n",
+        "CORRECTION to finding (2): images ARE billed; my earlier claim that they are not was wrong. Measured against deepseek-flash, one image adds prompt tokens by dimensions, not base64 length: 640x400 -> 200, 1280x800 -> 642, 1920x1080 -> 968. The error came from assuming ~3.16 bytes/token for stored text; the real density is ~3.7, which is exactly the room those image tokens occupied. So the ~0.2-0.8 MB of base64 per image per turn is not discarded: it is cached on replay (cheap per turn) but does occupy context. DeepSeek advertises deepseek-flash as input_modalities [\"text\",\"image\"], so attaching is legitimate and the new policy correctly chooses Attach; deepseek-v4-pro is text-only and would get references. FIX (b207144): the frozen imageInput capability now decides dispatch (ImageDispatchV1::Reference sends no bytes and describes each image), and attached dispatches are bounded to the newest 16 images / 24 MiB with older images degrading to references. The bound did not engage in test1_3 (max 5 images).\n",
+        "\n",
+        "Finding (3) stands as provider-side partial cache loss; the passback and the bound are the levers Aworkit controls. Repo: instrumentation plus both fixes committed and pushed (8248eee, b207144, 0666155)."
+      ]
+    },
+    "id": 130,
+    "number": 129,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "test1_2 cache findings: CoT passback and image dispatch implemented; verified in test1_3",
+    "updated_at": "2026-09-25 07:17:28"
+  },
+  "deleted": false,
+  "identity": "bd0fbb43-c6bc-8fa5-86b9-b7fb0f60b578",
+  "schemaVersion": 1
+}

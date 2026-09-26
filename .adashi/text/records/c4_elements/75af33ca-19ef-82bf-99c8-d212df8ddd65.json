@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Builds recoverable logical checkpoint proposals and restores a replacement worker generation from the exact frozen snapshot, a core-validated checkpoint, and the acknowledged committed event cursor. It reconstructs runtime coordination state without replaying completed model, tool, file, shell, MCP, or external-agent effects.\n",
+        "Owned runtime state: WorkerCheckpointV1 draft containing snapshot and plan fingerprints, scheduler tokens, context revision metadata and active heads, branch/join/for-each frames, loop and budget ledger, attempt/no-resend facts, suspension and delivered-input cursors, temporary child frames, last applied core cursor, and last emitted proposal sequence. The core owns the committed checkpoint and stream.\n",
+        "Input/output DTOs and ports: BuildCheckpoint, Restore(RehydrationEnvelopeV1), ApplyCommittedDelta(CoreEventEnvelopeV1), VerifyRestoredState, and AbortRecovery; returns CheckpointProposalV1, RehydrationReadyV1 with echoed hashes/cursor, or RehydrationBlockedV1 with stable diagnostics.\n",
+        "Algorithms and invariants: first recompile and fingerprint the exact FrozenRunSnapshotV1, verify checkpoint schema/hash and generation fence, restore pure Aworkit state, then apply only committed semantic deltas after the checkpoint through deterministic reducers. Unacknowledged worker revisions and proposals are discarded unless the core returns their committed identities. Pending invocations are resolved only from explicit broker reconciliation outcomes. No operation is inferred absent from process health, and no provider-, extension-, external-agent-, or Rig-native snapshot is canonical.\n",
+        "Failure, cancellation, and recovery: missing/corrupt/incompatible snapshots or checkpoints, cursor gaps, unresolved bindings, or exhausted restart budgets leave the Run inspectable and explicitly blocked. Restore is cancellable before readiness and never partially admits scheduler work. A ready signal is accepted only when snapshot, plan, checkpoint, generation, and committed cursor all match.\n",
+        "Performance and NFRs: bounded checkpoint size and frequency, incremental content hashes, lazy decoding of inactive context values, deterministic cross-version migrations, recovery timing and integrity metrics, and no secret values or hidden reasoning.\n",
+        "Non-responsibilities: no canonical checkpoint storage or repair, authority expansion, process launch, invocation delivery reconciliation, side-effect compensation/replay, provider resumption, alternate history, or graph mutation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.recovery",
+    "id": 50,
+    "name": "Logical Checkpoint & No-Replay Rehydrator",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Recovery,Checkpoint",
+    "technology": "Rust deterministic Aworkit checkpoint codec and pure reducers",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "75af33ca-19ef-82bf-99c8-d212df8ddd65",
+  "schemaVersion": 1
+}

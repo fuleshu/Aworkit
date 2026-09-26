@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:12:33",
+    "qa_job_id": {
+      "ref": "a665aeea-d04b-8fcd-83cf-85bf3972d7e0"
+    },
+    "tag": "local-store"
+  },
+  "deleted": false,
+  "identity": "a771980a-df60-838b-be73-ee5b6016d57d",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Registers each background delegation's child run as an owner-scoped Chat job, streams its turns into the bounded job output, and stops or closes the child scope through the shared job controls",
+    "destination_external_id": "aworkit.trusted_core.job_registry",
+    "external_id": "rel.worker_subagent.job_registry",
+    "id": 337,
+    "source_external_id": "aworkit.workflow_worker.subagent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Delegated child job port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b263a39b-0c2f-871c-9350-4b82d320f61b",
+  "schemaVersion": 1
+}

@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:48",
+    "qa_job_id": {
+      "ref": "a406a9ad-a25e-89fa-94c5-8f49b386eb92"
+    },
+    "tag": "budgets"
+  },
+  "deleted": false,
+  "identity": "2004f380-ca46-8aff-8a49-24dfd8b5e098",
+  "schemaVersion": 1
+}

@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": ".\\qa\\live-model-application.ps1 -BaseUrl \"http://192.168.0.31:8000/v1\" -Model \"qwen3.8-27b\"",
+    "created_at": "2026-08-25 14:27:41",
+    "created_by": "codex",
+    "description": "Builds and launches the real aworkit-desktop.exe in isolated live-QA mode against the local Qwen OpenAI-compatible endpoint. Exercises the production DesktopRuntime, provider adapter, frozen workflow authority, approval resume path, base agent loop, and every installed built-in tool. No fixture provider, mock tool dispatcher, or parallel test runtime is used.",
+    "enabled": 1,
+    "id": 14,
+    "name": "Live Qwen actual application agent and tools",
+    "number": 14,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "powershell",
+    "timeout_seconds": 900,
+    "updated_at": "2026-08-25 14:27:41",
+    "working_directory": "C:\\src\\Aworkit"
+  },
+  "deleted": false,
+  "identity": "94148058-e081-8402-8f5b-10dfe03fb68b",
+  "schemaVersion": 1
+}

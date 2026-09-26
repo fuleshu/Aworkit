@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Maps supported sanitized semantic DTOs to stable projection envelopes and emits explicit opaque/omitted markers rather than guessing unknown event meaning",
+    "destination_external_id": "aworkit.portable_store.semantic_codec",
+    "external_id": "rel.portable.projection.codec",
+    "id": 262,
+    "source_external_id": "aworkit.portable_store.projection_feed",
+    "tags": "Relationship,Internal Portable Contract,Read Only",
+    "technology": "CanonicalEventCodecPort, decode only",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3ecc0390-be68-8301-8346-313dd67cb5b4",
+  "schemaVersion": 1
+}

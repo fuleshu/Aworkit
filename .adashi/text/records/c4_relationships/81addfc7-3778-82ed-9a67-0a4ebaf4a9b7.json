@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delivers RehydrationEnvelopeV1, committed deltas, acknowledged cursor, and exact snapshot/checkpoint identities",
+    "destination_external_id": "aworkit.workflow_worker.recovery",
+    "external_id": "rel.worker_gateway.recovery",
+    "id": 107,
+    "source_external_id": "aworkit.workflow_worker.core_gateway",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "In-process Aworkit recovery DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "81addfc7-3778-82ed-9a67-0a4ebaf4a9b7",
+  "schemaVersion": 1
+}

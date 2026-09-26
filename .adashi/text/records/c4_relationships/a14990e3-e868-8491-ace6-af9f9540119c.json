@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Launches and controls stdio servers or normalizes HTTP session lifecycle with bounded health and cancellation",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_mcp.process_runtime",
+    "id": 172,
+    "source_external_id": "aworkit.capability_host.mcp_sessions",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Cross-platform sidecar/session port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a14990e3-e868-8491-ace6-af9f9540119c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,17 @@
+{
+  "collection": "qa_job_task_links",
+  "data": {
+    "created_at": "2026-08-21 20:12:33",
+    "id": 56,
+    "qa_job_id": {
+      "ref": "a665aeea-d04b-8fcd-83cf-85bf3972d7e0"
+    },
+    "sort_order": 4,
+    "task_id": {
+      "ref": "de843dfd-9d4a-8366-b866-203466878f22"
+    }
+  },
+  "deleted": false,
+  "identity": "986ff0cf-5799-842e-ae0d-3c9d5ccabdf2",
+  "schemaVersion": 1
+}

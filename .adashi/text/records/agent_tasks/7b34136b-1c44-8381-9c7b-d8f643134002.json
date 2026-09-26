@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/conversation.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
+    "completed_at": "2026-08-21 18:26:15",
+    "completion_memo": "Implemented typed semantic activity-card normalization for messages, plans, model/tool/MCP/plugin/subagent/external-agent/artifact/approval/route/error/verification/repair items. Rich content is escaped, reasoning labels remain source-provided, unknown records remain inspectable, actions are converted only to typed gateway intents, and a bounded virtual timeline window avoids whole-history rendering.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:31:22",
+    "created_files": "[\"desktop/src/chat/conversation.ts\"]",
+    "description": "Implement virtualized rendering for messages and typed plan, model, tool, MCP, plugin, subagent, external-agent, artifact, approval, route, error, verification, and repair items. Sanitize rich content, preserve source-supplied reasoning categories, render unknown items as escaped inspectable data, and emit only typed actions.",
+    "id": 53,
+    "number": 53,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M08.3 — Implement semantic conversation and activity cards",
+    "updated_at": "2026-09-22 07:16:31"
+  },
+  "deleted": false,
+  "identity": "7b34136b-1c44-8381-9c7b-d8f643134002",
+  "schemaVersion": 1
+}

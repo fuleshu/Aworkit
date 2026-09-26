@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Preserves immutable heads while suspended and creates exactly one revision when a deduplicated Wait-for-Input delivery is consumed",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_suspension.context",
+    "id": 138,
+    "source_external_id": "aworkit.workflow_worker.suspension",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Suspension context port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e5be3dea-f8ce-83ef-84b7-8ad53cd2c0f8",
+  "schemaVersion": 1
+}

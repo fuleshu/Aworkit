@@ -1,0 +1,41 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the helper's sole core-facing, authenticated, version-negotiated local protocol boundary. It issues a one-use BootstrapChallengeV1, bounds and schema-validates activation-capability queries, ManagedLocalEnrollmentRequestV1, RepairActivationBatonV1, and BootstrapCommandV1, verifies peer, executable, installation, BuildProvenanceV1, and LocalBuildEnrollmentV1 identities, deduplicates command IDs, fences the current, candidate, and rollback application generations with ProcessGenerationV1, and exposes only a deterministic PlatformCapabilityReportV1 or terminal BootstrapResultV1 to the expected core generation.\n",
+        "\n",
+        "Owned state/files: Owns only bounded in-memory BootstrapSessionV1 records keyed by ActivationId, challenge nonce, protocol version, peer process handle and identity, peer executable hash, provenance and enrollment digests, capability-report digest, accepted baton hash, expected current, candidate, and rollback ProcessGenerationV1 values, command IDs, deadlines, and channel state. It owns no independent durable file. Accepted identity and command facts are written through ActivationJournalPortV1 before acknowledgement and are rebuilt from the journal after helper restart.\n",
+        "\n",
+        "Ports/DTOs: BootstrapProtocolPortV1 provides BeginBootstrapChallenge, QueryActivationCapability(BuildProvenanceV1, LocalBuildEnrollmentV1, candidate and previous references), PrepareManagedLocalEnrollment(ManagedLocalEnrollmentRequestV1) returning EnrollmentPreparedV1, SubmitRepairActivationBaton(RepairActivationBatonV1), SubmitBootstrapCommand(BootstrapCommandV1), and ReadBootstrapResult returning BootstrapResultV1. BootstrapCommandV1 is a closed union for BeginActivation, CandidateGenerationReady, FocusedVerificationCompleted carrying the exact generation and plan-bound CapabilityOutcomeV1, and ReadResult. Internal ports are ProfilePreflightPortV1, BuildSlotVerifyPortV1, ActivationJournalPortV1, LaunchHandshakePortV1, and ActivationControlPortV1. Generic paths, shell strings, environment maps, tool requests, plugin payloads, and eligibility overrides are invalid.\n",
+        "\n",
+        "Phase and generation invariants: Exactly one ActivationId may be nonterminal. At most one EnrollmentId may be nonterminal, and enrollment and activation may never overlap. The UI-facing capability report is advisory until the helper independently revalidates it during baton admission. A baton must bind a current Supported report digest, the durably approved candidate version and disclosure hash, ManagementCheckpointRefV1, candidate and previous content hashes, helper and enrollment identities, ManagedLocalBuildProfileV1, verification-plan digest, current application identity, and all ProcessGenerationV1 fences. A changed or expired capability generation returns Unsupported before quiescence. Candidate and rollback relaunch generations are fresh identities and never reuse a PID or generation. Stale channels, duplicate IDs with different bytes, unknown required fields, helper self-update, or commands illegal in the durable BootstrapPhaseV1 fail closed.\n",
+        "\n",
+        "Enrollment admission accepts only an embedded LocalSourceBuild provenance digest and bounded whole-bundle ArtifactId and expected hash; arbitrary paths, installer bytes, shell commands, environment maps, and caller-selected helper destinations are invalid. It journals an enrollment intent, uses only the fixed helper-controlled layout, and returns EnrollmentPreparedV1 after durable verification. It never treats enrollment preparation as activation and never quiesces the running source build.\n",
+        "\n",
+        "Atomic and crash behavior: No BatonAcceptedV1 or actionable command acknowledgement is returned until the exact baton or command hash is durable in the activation journal. A byte-identical retry is idempotent; the same ID with different content is corruption. A crash before an activation journal append leaves no activation. A crash during enrollment leaves the original source build running and no partially published managed installation reachable from the stable launcher. After restart the gateway accepts only recovery or result-read traffic consistent with the journal head and fresh OS process identity and never reconstructs a command from IPC logs.\n",
+        "\n",
+        "Security, integrity, and privilege semantics: The preferred channel is an inherited one-shot pipe or socket with OS peer credentials, an activation nonce, a live process handle, and exact executable and enrollment identity. V1 accepts only ManagedLocalBuildProfileV1 and declares SameUserHashAndOwnership integrity; PackagedDistribution, Unknown, Conflicting, or unenrolled origins are report-only and cannot submit an actionable baton. The gateway stores no secret, credential, signing key, or lease. Public build metadata and opaque OS identity handles are permitted, but no received value grants workflow or tool authority.\n",
+        "\n",
+        "Cross-platform degradation: Windows uses named-pipe peer identity and process handles and rejects PID-only identity; macOS uses audit-token and process identity; Linux uses peer credentials, process handles where available, and executable and inode identity. All platforms require the stable helper and launcher to survive outside the swapped slots. If peer identity, enrollment identity, helper survival, local IPC, same-volume slot access, or the declared profile guarantee is missing, admission returns Unsupported before quiescence.\n",
+        "\n",
+        "NFRs: Admission is bounded in bytes, fields, versions, and time; target metadata preflight latency is under 250 ms excluding full content hashing; command lookup is constant-time; reason codes are deterministic and redacted; fuzzing covers every wire DTO and downgrade path; and metrics expose rejects, replay attempts, stale generations, eligibility reasons, and negotiation latency without payloads.\n",
+        "\n",
+        "Non-responsibilities: Does not diagnose or build repairs, choose arbitrary enrollment inputs, present the activation UI, infer approval, broaden frozen authority, run tools or extensions, resolve secrets, supervise arbitrary processes, commit Chat history, read portable history, update the helper, or contact workflow workers or the capability host."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.bootstrap_helper.protocol_gateway",
+    "id": 89,
+    "name": "Activation Baton Protocol & Generation Fence",
+    "parent_external_id": "aworkit.bootstrap_helper",
+    "tags": "Component,Trusted Bootstrap,Protocol,Generation Fence",
+    "technology": "Small Rust authenticated local IPC service with closed Aworkit DTOs, build provenance, enrollment identity, and OS peer identity",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "88e15083-f479-857f-8c88-afee7c4b7ffd",
+  "schemaVersion": 1
+}

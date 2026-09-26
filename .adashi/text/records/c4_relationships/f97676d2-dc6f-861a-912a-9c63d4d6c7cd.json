@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Schema-validates known event/checkpoint/snapshot records and marks unknown optional records opaque or unknown required records inspect-only while preserving exact hashed bytes",
+    "destination_external_id": "aworkit.portable_store.semantic_codec",
+    "external_id": "rel.portable.import.codec",
+    "id": 256,
+    "source_external_id": "aworkit.portable_store.import_quarantine",
+    "tags": "Relationship,Internal Portable Contract,Validation",
+    "technology": "SchemaRegistryPort and VerifyPortableRecordPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f97676d2-dc6f-861a-912a-9c63d4d6c7cd",
+  "schemaVersion": 1
+}

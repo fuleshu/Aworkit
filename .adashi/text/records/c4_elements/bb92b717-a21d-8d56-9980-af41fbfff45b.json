@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Creates and resolves portable project-file and artifact references against the exact trusted-core-resolved workspace/repository root while preventing traversal, symlink/reparse escape, case confusion, and time-of-check/time-of-use substitution.\n",
+        "Owned contracts: ProjectFileRefV1 contains WorkspaceIdentityV1, normalized slash-separated relativePath, reference kind, optional expected sha256/size, and producing EventId; ArtifactRefV1 contains only CAS digest, length, media type, and descriptor hash. References never embed absolute paths, home directories, drive-specific bindings, credential locations, file handles, or implicit authority.\n",
+        "Ports/DTOs: CreateProjectFileRef, ResolveProjectFileRef, ResolveRepositoryPath, and ValidateArtifactRef consume ResolvedPortableRootV1 and return handle-anchored ResolvedReferenceV1 or stable Missing/Moved/HashChanged/EscapesRoot/Unsupported diagnostics. Missing references remain visible and unresolved; the resolver never searches another workspace for a similarly named file.\n",
+        "Defense and atomicity: rejects absolute/UNC/device paths, drive prefixes, NUL, dot-dot, alternate data streams, reserved names, separator ambiguity, and case-fold collisions. Repository-internal paths reject every symlink/reparse point. Project file reads use descriptor/handle-relative no-follow traversal where available and verify the final opened object remains beneath the root; supported in-root links require an explicit policy and race-safe final-handle validation. Writes are not exposed through this port.\n",
+        "Portability/NFRs: deterministic normalization, bounded path/component lengths, cancellation, low-allocation lookup, and Windows/Linux/macOS adversarial fixtures for junctions, reparse points, hard links, case folding, and rename races.\n",
+        "Non-responsibilities: no claim that a working directory is a sandbox, file editing, workspace authority, artifact execution, Git operation, missing-file substitution, or canonical history mutation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.reference_resolver",
+    "id": 78,
+    "name": "Safe Project-Relative File & Artifact Reference Resolver",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,References,Path Security,Read Only",
+    "technology": "Rust handle-anchored cross-platform path resolver with no-follow filesystem primitives",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bb92b717-a21d-8d56-9980-af41fbfff45b",
+  "schemaVersion": 1
+}

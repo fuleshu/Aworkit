@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:31:31",
+    "design_external_id": "uml.desktop_ui.command_event_projection",
+    "id": 215,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "4cce4c52-421c-8c3d-9f7e-eda21771b7de"
+    }
+  },
+  "deleted": false,
+  "identity": "41539d4e-2903-88d7-8e26-bccf61ca47b1",
+  "schemaVersion": 1
+}

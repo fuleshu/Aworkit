@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Optionally retains exact redacted provider, MCP, plugin, external-agent, and internal stream chunks/protocol frames for debugging under an explicit capture policy. It is independent, noncanonical evidence; normal history remains semantic events.\n",
+        "Owned records/files: CaptureManifestV1 keyed by CaptureId with Chat/Event/Invocation/Attempt correlation, source category, policy generation, created/sealed state, TTL/quota class, byte/chunk counts, hashes, truncation/redaction flags; ordered compressed chunk files keyed by (CaptureId, chunkOrdinal). Partial-file recovery journals are local only.\n",
+        "Keys and ordering: CaptureId is stable; chunkOrdinal is contiguous within one capture and records receive order only, never canonical Chat order. Semantic EventId/AttemptId correlation may be absent for pre-normalization frames but cannot be invented.\n",
+        "Ports: accepts bounded DetailedCaptureWritePort only through the core event committer/router, exposes paginated CaptureReadPort to the core Desktop API/projections, and provides purge/integrity maintenance to the storage coordinator. It has no worker, capability-host, provider, plugin, or portable-store write channel.\n",
+        "Durability/degraded behavior: redaction/secret-field rejection happens before append; chunks write to bounded segments and manifests seal atomically. Crash leaves an explicitly truncated capture that can be sealed or discarded. Disk pressure, quota, slow compression, corruption, or unsupported payload ends/discards capture with a diagnostic and never delays or fails the semantic event commit.\n",
+        "Retention/performance: capture is disabled by default, independently configurable per bounded scope, excluded from portable Git history and backups by default, and removed by TTL/least-recently-sealed quota after active readers release leases. Per-capture and global hard limits, streaming compression, bounded queues, and sampling prevent memory/disk growth.\n",
+        "Security/non-responsibilities: credential values, authorization headers, secret leases, environment secrets, and known secret fields are never stored; redaction omissions are surfaced. Capture does not become history authority, ordering authority, replay input, hidden-reasoning reconstruction, an audit log, or a reason to repeat effects."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.debug_capture",
+    "id": 70,
+    "name": "Bounded Detailed Protocol & Stream Capture",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Optional,Debug Capture,Noncanonical",
+    "technology": "Rust bounded compressed chunk files with SQLite manifests",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4a873640-4165-8dc7-a21f-772550aaed23",
+  "schemaVersion": 1
+}

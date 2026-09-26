@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "An individual who configures capabilities, selects project workspaces, builds workflows, starts and continues Chats, grants bounded authority, reviews evidence and approvals, and explicitly activates repair candidates. The same progressively disclosed interface serves guided and expert use.",
+    "element_type": "Person",
+    "external_id": "actor.desktop_user",
+    "id": 3,
+    "name": "Desktop User",
+    "parent_external_id": null,
+    "tags": "External,Primary User",
+    "technology": "",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "824149a5-7217-8e71-89ab-74ad795b0297",
+  "schemaVersion": 1
+}

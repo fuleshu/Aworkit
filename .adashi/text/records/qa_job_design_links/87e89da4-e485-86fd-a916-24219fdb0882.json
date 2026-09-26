@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "design_external_id": "uml.portable_store.atomic_append_head_ack",
+    "id": 22,
+    "qa_job_id": {
+      "ref": "190df8f1-fa82-887c-b04d-c026a1be484f"
+    },
+    "sort_order": 1,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "87e89da4-e485-86fd-a916-24219fdb0882",
+  "schemaVersion": 1
+}

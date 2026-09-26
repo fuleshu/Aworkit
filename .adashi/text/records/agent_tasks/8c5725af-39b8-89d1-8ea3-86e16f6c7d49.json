@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-portable-store/src/workspace.rs\",\"crates/aworkit-portable-store/src/repository.rs\"]",
+    "completed_at": "2026-08-21 17:47:40",
+    "completion_memo": "Implemented root-anchored project references and immutable object filesystem publication with traversal and symlink escape checks; Git actions remain absent.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:29:32",
+    "created_files": "[]",
+    "description": "Implement project-root-anchored portable filesystem and Git-coexistence ports, a hermetic filesystem conformance adapter, descriptive read-only Git/worktree facts, and traversal/symlink/reparse/case-safe project-file references. Aworkit must not stage, commit, merge, or push. Native filesystem and durability implementations are owned by M12.1; portable artifact CAS is implemented in M06.4.",
+    "id": 37,
+    "number": 37,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M06.2 — Implement safe portable workspace and reference adapters",
+    "updated_at": "2026-08-21 17:47:40"
+  },
+  "deleted": false,
+  "identity": "8c5725af-39b8-89d1-8ea3-86e16f6c7d49",
+  "schemaVersion": 1
+}

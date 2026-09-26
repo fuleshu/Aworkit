@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Configured local or hosted completion and embedding endpoints. Providers return only the outputs, reasoning categories, usage, and protocol evidence they actually expose. Concrete endpoints and credentials remain machine-local; workflows reference portable model tiers.",
+    "element_type": "Software System",
+    "external_id": "ext.model_providers",
+    "id": 4,
+    "name": "Model Provider Endpoints",
+    "parent_external_id": null,
+    "tags": "External,Capability Source",
+    "technology": "Provider APIs, local inference APIs, HTTPS or local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cc98fed3-a9a9-83d5-88db-af1b24762964",
+  "schemaVersion": 1
+}

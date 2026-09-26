@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:22",
+    "design_external_id": "aworkit.workflow_worker.scheduler",
+    "id": 76,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b049d16e-f887-84ea-aac6-68ab1c851b6c"
+    }
+  },
+  "deleted": false,
+  "identity": "78b00fa2-b626-81b1-8c25-9e195c2c7c98",
+  "schemaVersion": 1
+}

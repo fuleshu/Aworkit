@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\"]",
+    "completed_at": "2026-08-22 06:26:10",
+    "completion_memo": "Implemented exact core-attested MCP negotiation and discovery, bounded session reuse, progress, cancellation, reconnect, evidence normalization, replay/close/init race fences, and conservative post-dispatch ambiguity handling. Critical and adversarial verification passed: 9 MCP tests plus Adashi QA job #9 / run #25.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:01",
+    "created_files": "[\"crates/aworkit-capability-host/src/mcp/mod.rs\",\"crates/aworkit-capability-host/src/mcp/contracts.rs\",\"crates/aworkit-capability-host/src/mcp/session.rs\",\"crates/aworkit-capability-host/tests/milestone_09_mcp.rs\"]",
+    "description": "Implement configured, core-attested MCP initialization and feature negotiation, tool/resource/prompt discovery, bounded session reuse, invocation, progress, cancellation, reconnect, and protocol evidence. Session loss or an ambiguous effect must produce a conservative outcome and must not trigger silent replay.",
+    "id": 57,
+    "number": 57,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.2 — Implement MCP client sessions",
+    "updated_at": "2026-09-22 07:17:06"
+  },
+  "deleted": false,
+  "identity": "f387e07a-8e0e-86fe-b216-d8ff156c63da",
+  "schemaVersion": 1
+}

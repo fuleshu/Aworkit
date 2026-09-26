@@ -1,0 +1,56 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "created_at": "2026-08-21 13:52:16",
+    "diagram_type": "flow",
+    "id": 49,
+    "key": "uml.bootstrap_helper.activation_profile_v1_matrix",
+    "kind": "mermaid",
+    "sort_order": 37,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "A[\"Read embedded BuildProvenanceV1 and OS installation observations\"] --> B{\"Build origin?\"}\n",
+        "B -- \"PackagedDistribution\" --> U1[\"Unsupported before approval and quiescence: export candidate and update manually\"]\n",
+        "B -- \"Unknown or Conflicting\" --> U2[\"Unsupported before approval and quiescence: origin cannot be verified\"]\n",
+        "B -- \"LocalSourceBuild\" --> C{\"Matching LocalBuildEnrollmentV1?\"}\n",
+        "C -- \"NotEnrolled\" --> E1[\"EnrollmentRequired: user may explicitly request managed-local enrollment\"]\n",
+        "E1 --> E2[\"Core commits bounded provenance and whole-bundle artifact request\"]\n",
+        "E2 --> E3[\"Bootstrap helper prepares stable helper launcher journal selector and initial immutable slot\"]\n",
+        "E3 --> E4[\"EnrollmentPreparedV1: restart explicitly through stable launcher before rechecking eligibility\"]\n",
+        "C -- \"Mismatched\" --> U3[\"Unsupported before approval and quiescence: enrollment identity mismatch\"]\n",
+        "C -- \"Enrolled\" --> D{\"Managed-local runtime guarantees pass?\"}\n",
+        "D -- \"No\" --> U4[\"Unsupported before quiescence with exact deterministic reason\"]\n",
+        "D -- \"Yes\" --> S[\"Supported ManagedLocalBuildProfileV1\"]\n",
+        "\n",
+        "D -. \"checks\" .-> D1[\"Per-user ownership and no elevation\"]\n",
+        "D -. \"checks\" .-> D2[\"Stable helper launcher and journal outside swapped slots\"]\n",
+        "D -. \"checks\" .-> D3[\"Active candidate and previous whole-bundle hashes verify\"]\n",
+        "D -. \"checks\" .-> D4[\"One durable local volume and atomic selector\"]\n",
+        "D -. \"checks\" .-> D5[\"Complete process-tree cleanup and verification-only launch\"]\n",
+        "D -. \"checks\" .-> D6[\"Backward-compatible or deferred data migration\"]\n",
+        "\n",
+        "S --> P[\"User may approve Activate and restart\"]\n",
+        "P --> R[\"Helper revalidates the capability generation before quiescence\"]\n",
+        "R --> Q{\"Still Supported?\"}\n",
+        "Q -- \"No\" --> U5[\"Unsupported receipt; current build remains active\"]\n",
+        "Q -- \"Yes\" --> X[\"Atomic switch watchdog focused verification and rollback contract\"]\n",
+        "\n",
+        "N1[\"Direct cargo run cargo tauri dev mutable target output\"] --> E1\n",
+        "E4 --> A\n",
+        "N2[\"Path name missing signature environment variable or editable setting\"] --> N3[\"Never upgrades eligibility\"]\n",
+        "N4[\"OS observations\"] --> N5[\"May downgrade but never upgrade build origin or eligibility\"]\n",
+        "N6[\"Integrity strength\"] --> N7[\"Same-user hash and ownership; not publisher authentication\"]"
+      ]
+    },
+    "title": "V1 managed-local build provenance, enrollment, and activation capability matrix",
+    "updated_at": "2026-08-21 14:03:42",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4ab8464e-12bf-8b5c-a798-ca453c320347",
+  "schemaVersion": 1
+}

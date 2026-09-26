@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Compiles declared context projections with layer provenance and appends structured observations/results without turning context into a shared prompt string",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_model_agent.context",
+    "id": 127,
+    "source_external_id": "aworkit.workflow_worker.model_agent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Context projection and patch port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f464699d-d90c-80f6-9ae3-90ce645da045",
+  "schemaVersion": 1
+}

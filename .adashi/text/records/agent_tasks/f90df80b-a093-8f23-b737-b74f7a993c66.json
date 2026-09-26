@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/lib.rs\"]",
+    "completed_at": "2026-08-21 16:23:07",
+    "completion_memo": "Implemented a content-addressed local artifact store and disposable projection store. Artifact preparation hashes and durably promotes immutable objects before they are referenced; a durable SQLite token journal verifies hash/size and supports one-event finalization (or idempotent same-event retry), metadata is separate from paths, and range reads re-verify content. Projection rebuilds replace a timeline only from committed local ledger records in one SQLite transaction and are safely disposable. Tests cover prepare/finalize/read/token safety and rebuilding a timeline from committed history; cargo test -p aworkit-local-store passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:44",
+    "created_files": "[\"crates/aworkit-local-store/src/artifacts.rs\",\"crates/aworkit-local-store/src/projections.rs\"]",
+    "description": "Implement durable artifact prepare/reference/finalize semantics and replaceable query projections for Chat lists, timelines, evidence, search, and artifact joins. Projection rebuilds must consume canonical records, tolerate interruption, and never become evidence or history authority.",
+    "id": 11,
+    "number": 11,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M02.3 — Implement artifact storage and disposable query projections",
+    "updated_at": "2026-09-21 14:55:30"
+  },
+  "deleted": false,
+  "identity": "f90df80b-a093-8f23-b737-b74f7a993c66",
+  "schemaVersion": 1
+}

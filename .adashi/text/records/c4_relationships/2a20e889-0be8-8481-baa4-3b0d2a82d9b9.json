@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns normalized acceptance, progress, approval-capability facts, usage, artifacts, result, definite-not-started, or uncertain failure with invocation identity",
+    "destination_external_id": "aworkit.trusted_core.invocation_broker",
+    "external_id": "rel.host.core_invocation.results",
+    "id": 96,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned local RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2a20e889-0be8-8481-baa4-3b0d2a82d9b9",
+  "schemaVersion": 1
+}

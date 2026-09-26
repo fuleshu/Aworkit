@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:43:28",
+    "design_external_id": "aworkit.local_store.storage_coordinator",
+    "id": 308,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "f5ab0587-f245-8978-b045-9da25b2a2ef3"
+    }
+  },
+  "deleted": false,
+  "identity": "a3944573-8e54-8b09-b182-4f9ad8252f8f",
+  "schemaVersion": 1
+}

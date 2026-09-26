@@ -1,0 +1,36 @@
+{
+  "collection": "rules",
+  "data": {
+    "created_at": "2026-08-20 18:14:49",
+    "enabled": 1,
+    "hook": "task.start",
+    "id": 2,
+    "intend": "design",
+    "name": "Design Rules",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "prompt": {
+      "lines": [
+        "# Design Rules\n",
+        "- Keep the design to the actual task, do not extend it unasked.\n",
+        "- Keep the design clean and clear.\n",
+        "- Create logical components, modules and structures.\n",
+        "- A framework must be understandable, maintainable and extendable\n",
+        "- Keep it as minimal as possible and only as complex as really needed.\n",
+        "- Keep UI design clean and clear. No redundant info or comments in the UI.\n",
+        "- Clean architecture means functional module/class design.\n",
+        "- Define clear system boundaries, bounded contexts, and API contracts between modules.\n",
+        "- Address non-functional requirements (NFRs) explicitly, including scalability, observability, security, and performance.\n",
+        "- Enforce loose coupling and high cohesion using established principles like Dependency Inversion and Interface Segregation.\n",
+        "- Specify data flow, state management, and persistence strategies clearly.\n",
+        "- Design for failure by incorporating resilience patterns (e.g., retries, circuit breakers, graceful degradation).\n",
+        "- Document architectural trade-offs and the reasoning behind structural decisions."
+      ]
+    },
+    "updated_at": "2026-08-20 18:24:50"
+  },
+  "deleted": false,
+  "identity": "70f767b8-6530-8ae7-bec0-b37fda2ec947",
+  "schemaVersion": 1
+}

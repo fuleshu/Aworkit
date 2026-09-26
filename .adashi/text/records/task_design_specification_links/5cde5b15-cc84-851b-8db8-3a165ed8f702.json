@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:25:50",
+    "design_external_id": "uml.local_store.startup_integrity_recovery",
+    "id": 68,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "de843dfd-9d4a-8366-b866-203466878f22"
+    }
+  },
+  "deleted": false,
+  "identity": "5cde5b15-cc84-851b-8db8-3a165ed8f702",
+  "schemaVersion": 1
+}

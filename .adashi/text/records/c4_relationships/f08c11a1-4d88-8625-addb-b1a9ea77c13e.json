@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Spawns, authenticates, health-checks, cancels, restarts, and tree-cleans the capability host under bounded budgets",
+    "destination_external_id": "aworkit.capability_host",
+    "external_id": "rel.core_supervisor.host.process",
+    "id": 101,
+    "source_external_id": "aworkit.trusted_core.process_supervisor",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "OS process supervision and health IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f08c11a1-4d88-8625-addb-b1a9ea77c13e",
+  "schemaVersion": 1
+}

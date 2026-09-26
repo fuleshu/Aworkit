@@ -1,0 +1,44 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.capability_host.plugin_runtime",
+    "created_at": "2026-08-20 22:35:43",
+    "diagram_type": "state",
+    "id": 18,
+    "key": "uml.capability_host.plugin_lifecycle",
+    "kind": "mermaid",
+    "sort_order": 18,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "    [*] --> DiscoveredInert : manifest parsed without execution\n",
+        "    DiscoveredInert --> Blocked : malformed missing or incompatible\n",
+        "    DiscoveredInert --> AttestedDisabled : core records identity version and hash\n",
+        "    AttestedDisabled --> EnabledPinned : explicit core enable and fresh attestation\n",
+        "    EnabledPinned --> Launching : approved invocation or authorized warm start\n",
+        "    Launching --> Healthy : protocol handshake matches pin\n",
+        "    Launching --> Degraded : launch handshake or health failure\n",
+        "    Healthy --> RunningInvocation : approved plugin call\n",
+        "    RunningInvocation --> Healthy : known terminal and cleanup\n",
+        "    RunningInvocation --> OutcomeUncertain : crash after possible effect\n",
+        "    Healthy --> Degraded : idle crash or failed heartbeat\n",
+        "    Degraded --> RestartBackoff : core authorizes restart within budget\n",
+        "    RestartBackoff --> Launching : backoff elapsed with no replay\n",
+        "    Degraded --> Quarantined : budget exhausted or identity drift\n",
+        "    OutcomeUncertain --> Quarantined : invocation is never auto-replayed\n",
+        "    Quarantined --> EnabledPinned : explicit repair and new attestation\n",
+        "    EnabledPinned --> Disabled : core disable\n",
+        "    Disabled --> [*]\n",
+        "    Blocked --> [*]"
+      ]
+    },
+    "title": "Trusted Plugin Discovery, Enablement, Health, Crash, and Restart",
+    "updated_at": "2026-08-20 22:35:43",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "924efef4-ade0-8cfe-b971-b2d9c444e068",
+  "schemaVersion": 1
+}

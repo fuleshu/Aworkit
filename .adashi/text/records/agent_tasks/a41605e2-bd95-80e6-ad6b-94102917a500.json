@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/database.rs\",\"desktop/scripts/native-chat-concurrency.mjs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/semantic_events.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/context_inspection.rs\",\"desktop/src-tauri/src/runtime/compression/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/workspace_instructions/mod.rs\",\"desktop/src-tauri/src/runtime/workspace_instructions/chat_clock.rs\"]",
+    "completed_at": "2026-09-17 18:52:14",
+    "completion_memo": "Implemented incremental shared immutable Chat history snapshots and sequence-fenced operational record caches. Successful appends retain existing decoded payloads; external writers reconcile only committed tails. Recent Chat caches survive worker/navigation changes; independent Chats have independent locks. Operational lookups select relevant identities before cloning/deserializing, and scalar head reads no longer load streams. Context restoration borrows shared history. Preserved durable ordering, frozen authority, edits, compaction, instruction ownership and no-replay recovery. Audited implementation against linked design and task. Verification: desktop Rust suite 352 passed, 0 failed, 1 pre-existing ignored; optimized native regression with 14,178 historical events, 1,388,951,040 history payload bytes, 101,087,658 operational bytes and 2,170,236 active context bytes passed all eight real shell/Python continuations at 220,249,220,223,215,210,220,220 ms from durable terminal timestamp to complete provider HTTP request. Every message/tool prefix remained identical. Report desktop/src-tauri/target/native-continuation-1789670773306/result.json. Native concurrent Chats plus Stop/resume/restart passed at desktop/src-tauri/target/native-concurrency-1789670888607. Production release binary rebuilt successfully. Live user history unchanged. Provider cache limitation: verified DeepSeek automatic caching contract and exact prefix eligibility, not actual remote cache hit counts; provider persistence, cold hydration, explicit compaction and remote network/model latency are distinct from the measured warm local handoff. Design and reproduction documented in docs/context-continuation-performance.md.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-17 18:14:59",
+    "created_files": "[\"desktop/src-tauri/src/runtime/history/stream_cache.rs\",\"desktop/src-tauri/src/runtime/record_cache.rs\",\"desktop/scripts/native-continuation-performance.mjs\",\"desktop/scripts/seed-continuation-history.py\",\"desktop/scripts/measure-continuation-history.py\",\"docs/context-continuation-performance.md\"]",
+    "description": "Remove repeated decoding/copying of Chat history and whole operational stream scans. Preserve durable evidence, owner isolation, Stop/restart recovery, context edits and compaction. Audit provider prompt prefix stability and cache usage. Verify release tool completion to HTTP model request below one second with the affected large Chat fixture; keep live user history untouched. Design document: docs/context-continuation-performance.md.",
+    "id": 95,
+    "number": 94,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make tool continuation incremental and verify sub-second model dispatch",
+    "updated_at": "2026-09-17 18:52:14"
+  },
+  "deleted": false,
+  "identity": "a41605e2-bd95-80e6-ad6b-94102917a500",
+  "schemaVersion": 1
+}

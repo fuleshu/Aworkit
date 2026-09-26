@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:47",
+    "design_external_id": "uml.trusted_core.contract_structure",
+    "id": 5,
+    "qa_job_id": {
+      "ref": "e0468672-35c4-8bf4-b6f8-873a6bc93096"
+    },
+    "sort_order": 1,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "e2bd4b2c-735a-8582-81e1-8ec1de03bf66",
+  "schemaVersion": 1
+}

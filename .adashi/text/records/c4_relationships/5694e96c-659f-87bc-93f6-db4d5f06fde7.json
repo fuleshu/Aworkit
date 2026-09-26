@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reports generation-specific crash, health, handshake, and restart-budget facts for reconciliation. Health never proves effect absence",
+    "destination_external_id": "aworkit.trusted_core.recovery",
+    "external_id": "rel.core_supervisor.recovery",
+    "id": 77,
+    "source_external_id": "aworkit.trusted_core.process_supervisor",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Typed supervision events",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5694e96c-659f-87bc-93f6-db4d5f06fde7",
+  "schemaVersion": 1
+}

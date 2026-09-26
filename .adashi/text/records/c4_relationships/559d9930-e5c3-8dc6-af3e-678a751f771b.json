@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads exact pending, head-linked, quarantined, binding, frozen-snapshot, approval/input, dedup/outbox, process-generation and recovery-cursor facts. It compares them with the verified portable head through the existing portable recovery port, then asks the event committer to resume an exact prepared publication, finalize, or quarantine. It cannot mutate the journal directly or replay effects",
+    "destination_external_id": "aworkit.local_store.portable_runtime_journal",
+    "external_id": "rel.core_recovery.local_store.portable_runtime_journal",
+    "id": 284,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Recovery,Read Only,No Replay,Noncanonical",
+    "technology": "Read-only PortableRuntimeRecoveryReadPort with generation-fenced Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "559d9930-e5c3-8dc6-af3e-678a751f771b",
+  "schemaVersion": 1
+}

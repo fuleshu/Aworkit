@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:51",
+    "design_external_id": "aworkit.portable_store.rebind_planner",
+    "id": 342,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "0e58faee-4389-8382-a4ac-0c79772682af"
+    }
+  },
+  "deleted": false,
+  "identity": "dca9f12f-97d2-8917-b4a1-07120f638fe2",
+  "schemaVersion": 1
+}

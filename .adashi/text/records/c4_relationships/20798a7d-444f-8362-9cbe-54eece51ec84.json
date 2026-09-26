@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Commands bounded current and candidate tree cleanup, verification-only candidate launch, enrollment-and-capability-bound identity, health and focused-verification watchdog, candidate termination, fresh previous-generation relaunch, and creation of ManualRecoveryNoticeV1 only from durable legal phases",
+    "destination_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "external_id": "rel.bootstrap.coordinator.watchdog",
+    "id": 301,
+    "source_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "tags": "Relationship,Internal,Launcher,Watchdog,Rollback",
+    "technology": "ApplicationLaunchWatchdogPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "20798a7d-444f-8362-9cbe-54eece51ec84",
+  "schemaVersion": 1
+}

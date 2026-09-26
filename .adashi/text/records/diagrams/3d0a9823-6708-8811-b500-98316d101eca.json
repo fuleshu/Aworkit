@@ -1,0 +1,37 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.trusted_core.invocation_broker",
+    "created_at": "2026-09-17 17:03:21",
+    "diagram_type": "flow",
+    "id": 78,
+    "key": "uml.tool_jobs.python",
+    "kind": "mermaid",
+    "sort_order": 51,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        " A[\"Frozen Python interpreter and approved host authority\"] --> B{\"Call\"}\n",
+        " B --> C[\"python_start requires four job controls\"]\n",
+        " B --> D{\"python has all four frozen job controls\"}\n",
+        " D -->|No| E[\"Legacy bounded execution with hard timeout\"]\n",
+        " D -->|Yes| F[\"Soft initial wait capped at ten seconds\"]\n",
+        " C --> G[\"Shared Python validation and isolated interpreter with unbuffered output\"]\n",
+        " F --> G\n",
+        " G --> H[\"Existing Chat job registry and process tree supervisor\"]\n",
+        " H --> I[\"Immediate ID or bounded output snapshot without killing on wait\"]\n",
+        " I --> J[\"job_output, job_input, job_list, job_stop and approved job_keep\"]\n",
+        " J --> K[\"Existing final response gate and user Stop cleanup\"]\n",
+        " H --> L[\"Hidden console, bounded output and no replay after restart\"]"
+      ]
+    },
+    "title": "Python managed execution and legacy compatibility",
+    "updated_at": "2026-09-17 17:03:21",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3d0a9823-6708-8811-b500-98316d101eca",
+  "schemaVersion": 1
+}

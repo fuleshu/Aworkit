@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.core_committer.worker_gateway.ack_cursor",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "89d5702f-2854-81cf-a920-42339336f9f2",
+  "schemaVersion": 1
+}

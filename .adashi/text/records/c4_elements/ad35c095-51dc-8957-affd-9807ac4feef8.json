@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Maintains the Run's structured, inspectable Harness Context as logical immutable revisions; supports revise, project, fork, explicit join reconciliation, child-context creation, and deliberate child-result integration. It stores conversation references, instruction layers, selected evidence and artifacts, working values, observations, route decisions, loop state, and budget references as typed layers rather than one shared prompt string.\n",
+        "Owned runtime state: ContextRevisionV1 DAG nodes with revisionId, parent revision IDs, branch/child lineage, typed layer deltas, provenance, omission/redaction markers, and content hash; active head references and bounded copy-on-write value/blob indexes. Canonical semantic evidence and artifacts remain core-owned.\n",
+        "Input/output DTOs and ports: Revise(ContextPatchV1), Fork(ForkContextV1), Project(ContextSelectionV1), ReconcileJoin(JoinReconciliationV1), SpawnChild(ChildContextSpecV1), and IntegrateChild(ChildResultIntegrationV1); returns immutable revision IDs, ContextProjectionV1, typed conflicts, and inspectable transform evidence.\n",
+        "Algorithms and invariants: patches apply atomically in stable key order to a declared base revision. Branches always fork the same explicit parent. Joins require a frozen reconciliation contract such as map, ordered aggregate, evaluator-selected value, or explicit conflict rejection; shared mutable state, implicit whole-context union, and last-writer-wins are forbidden. Each model, tool, agent, or external agent receives only its declared projection, and selected/omitted material remains traceable.\n",
+        "Failure, cancellation, and recovery: invalid schemas, stale bases, budget overflow, or unresolved join conflicts create no revision. Transform cancellation occurs before publishing a new head. Checkpoints contain Aworkit revision metadata and content hashes; recovery restores only committed heads and discards unacknowledged revisions. Missing referenced artifacts block the consuming node without fabricating content.\n",
+        "Performance and NFRs: copy-on-write sharing, bounded inline payloads and revision depth, content-addressed large-value references, deterministic hashing, explicit retention/pruning only after acknowledged checkpoints, and paginatable provenance.\n",
+        "Non-responsibilities: no canonical history commit, prompt-provider request execution, artifact byte storage, authority, secret values, branch scheduling, live graph edits, or opaque executor snapshots.\n",
+        "\n",
+        "Tool continuation performance (2026-09-17): Normal tool-to-model continuation extends retained committed context state instead of replaying or deep-cloning the Chat ledger. Immutable shared event snapshots remain valid across appends; only new durable events advance the live view. Recovery may hydrate once, and external writers advance it from a durable sequence fence. Context owners, edit/compaction boundaries, instruction references and frozen tools remain exact. Model prompt prefixes stay byte-stable across append-only exchanges to permit provider prefix-cache hits. Acceptance: measured local tool terminal-to-provider request latency below 1000 ms in a release large-history regression, with no history-size-dependent reads during warm continuation. Specification: docs/context-continuation-performance.md.\n",
+        "\n",
+        "Workflow revision rebinding (2026-09-23): A Chat keeps exactly one context-revision lineage across adopted workflow revisions, and every context revision records the graph revision that produced it, so a single lineage explains the evidence instead of two competing revision axes; committed revisions are never relabelled. The non-responsibility above still holds — the store performs no live graph edits: adopting a revision is a core act between turns, and only that boundary is what allows a later context revision to belong to a different frozen plan."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.context_store",
+    "id": 41,
+    "name": "Harness Context Revision & Lineage Store",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Context,Lineage",
+    "technology": "Rust immutable copy-on-write revision DAG with typed Aworkit context schemas",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ad35c095-51dc-8957-affd-9807ac4feef8",
+  "schemaVersion": 1
+}

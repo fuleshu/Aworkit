@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns generation-specific LaunchObservationV1, ProcessTreeCleanupV1, VerificationObservationV1, or WatchdogFailureV1. Readiness/heartbeat never means Verified, and missing or ambiguous proof after selection is rollback-biased",
+    "destination_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "external_id": "rel.bootstrap.watchdog.coordinator.outcome",
+    "id": 302,
+    "source_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "tags": "Relationship,Internal,Outcome,Generation Fence",
+    "technology": "Typed bootstrap lifecycle outcomes",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e3e6c81d-b0d7-84c9-b90f-4f699b33e5f6",
+  "schemaVersion": 1
+}

@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Implementation baseline 2026-09-08; not yet implemented. Specification: docs/design-workspace-instructions.md. Registers Workspace Instructions (proposed tool.workspace_instructions) as an independently selectable automatic_context contribution in the existing Agent plugin-tool catalog. Settings controls availability; frozen Chat/node selection activates lifecycle hooks without a model function call, including instruction-only Agents and text-only providers.\n",
+        "Responsibilities: per-Chat/node/branch/child instruction state, initial root-to-cwd/global baseline, successful structured read/write/edit touch collection, bounded queued reconciliation, append-only additions/replacements/removals, resume/remount, and pre-dispatch restoration against the actual visible context. Port Harness agent-instructions at b150a551b8d465e31e418e1b2eaf5e79bbb7d28e, including candidate/local-overlay ordering, trimmed-content dedup, exact prompt templates, incomplete-read semantics, UTF-8 budgeting, and cancellation. Global home is .aworkit; no .dsh discovery.\n",
+        "Boundaries: all filesystem access uses existing trusted-core-approved capability operations; the worker does not gain direct host filesystem or history commit authority. Rendering/discovery helpers belong in focused capability-host modules. Model context and canonical records use existing context_store/core history. Existing native code can compose this logical component from a dedicated runtime/workspace_instructions module.\n",
+        "State: exact injected text in existing context messages plus typed producer/owner, baseline identity, and action/scope/path/content-digest changes. Provider version/trimmed-digest cache is optional and reconstructable. No separate memory DB, file-version archive, or provenance framework. Only authentic admitted context metadata determines visibility; summaries and repository prose cannot spoof it.\n",
+        "Mandatory compaction readiness: build the actual visible-context revision contract and restoration algorithm with this plugin now. Test context replacement through the production preparation boundary. Before the next model request restore missing baseline and previously active applicable nested scopes within the batch budget, reconcile changes/deletions, preserve retirements, and prevent duplicates on repeat/retry. Temporarily unavailable sources may use last admitted text with a stale diagnostic. Future compactor integration must pass the same suite through its real replacement path. The automatic compaction engine itself is separate future work and must not be represented as implemented.\n",
+        "NFRs: bounded 1MiB source reads/64KiB context batches by default; no full repository scan or watcher; per-owner serialization; coalesced pending updates; warm-cache fast paths; cancellation and disposal cleanup; commit-before-dispatch; explicit omissions/read failures in existing diagnostics. Restore/replay must not repeat committed tool effects. Complete feature inventory WI-01..WI-18 and acceptance gates are in the bound specification."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.workspace_instructions",
+    "id": 140,
+    "name": "Workspace Instructions Lifecycle",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Implementation baseline,Workspace instructions",
+    "technology": "Rust; automatic context plugin; existing history and authorized filesystem ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "abcdb899-da89-8bcb-b8fa-5f849b892c2d",
+  "schemaVersion": 1
+}

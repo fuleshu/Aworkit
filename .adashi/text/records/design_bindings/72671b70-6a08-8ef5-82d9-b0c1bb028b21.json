@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-25 18:38:23",
+    "design_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "id": 86,
+    "target": "desktop/src-tauri/src/runtime/history/questions.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-25 18:38:23",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "72671b70-6a08-8ef5-82d9-b0c1bb028b21",
+  "schemaVersion": 1
+}

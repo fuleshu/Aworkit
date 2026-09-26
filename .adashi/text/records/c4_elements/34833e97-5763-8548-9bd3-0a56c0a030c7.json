@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Maps each frozen node type and version to an exact pinned executor contract, validates typed inputs and outputs, and runs pure built-in node steps or prepares brokered capability work. It provides a small extension-facing execution surface while keeping workflow control in the scheduler.\n",
+        "Owned runtime state: immutable ExecutorBindingV1 table keyed by nodeType, nodeVersion, and pinned contribution hash; bounded active NodeTaskV1 records with node, token, attempt, cancellation, input revision, and declared output schema. Installed-version and integrity records remain owned by the trusted core.\n",
+        "Input/output DTOs and ports: ResolveExecutor, Execute(NodeInputEnvelopeV1), Resume(NodeResumeEnvelopeV1), and CancelNode; executors return NodeOutcomeV1 as Completed with typed values, NeedCapability with InvocationProposalDraftV1, Suspended with a declared reason, or Failed with normalized error semantics. Tool, MCP, provider, and External Agent nodes are converted to Aworkit invocation proposals through the Core Gateway.\n",
+        "Algorithms and invariants: exact stable type/version/hash matching and input/output schema validation occur before state advances. Unknown, missing, disabled, or incompatible executors should have blocked freezing and still fail closed here if encountered. Runtime registration or hot replacement is forbidden for an active Run. Executors cannot add transitions, rewrite configuration, broaden authority, read secrets, or contact the Capability Host directly. External Agent lifecycle requests remain explicit node work and are never substituted as model fallbacks.\n",
+        "Failure, cancellation, and recovery: contract violations and executor errors become typed node failures. Cooperative cancellation has deadlines; an opaque external execution is settled only from broker outcomes. Pure executor state may be checkpointed only as versioned Aworkit DTOs. Worker failure may restart the Run from committed state, but no extension-, provider-, or Rig-native snapshot is trusted for recovery.\n",
+        "Performance and NFRs: constant-time registry lookup, bounded schema sizes and executor concurrency, per-node deadlines, isolated tracing, deterministic pure executors, and no blocking extension code on scheduler tasks.\n",
+        "Non-responsibilities: no extension installation, integrity attestation, authority or approval, secret leasing, host process management, canonical event storage, provider implementation, or scheduling policy."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.node_runtime",
+    "id": 40,
+    "name": "Typed Node Runtime & Executor Registry",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Nodes,Extensions",
+    "technology": "Rust versioned NodeExecutor traits and schema-validated Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "34833e97-5763-8548-9bd3-0a56c0a030c7",
+  "schemaVersion": 1
+}

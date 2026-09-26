@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes scoped operation and diagnostic facts; invalidates notices on edit, resolution, generation change, and visit exit",
+    "destination_external_id": "aworkit.desktop_ui.notifications",
+    "external_id": "rel.ui.settings.notifications",
+    "id": 331,
+    "source_external_id": "aworkit.desktop_ui.settings",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "NotificationPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "daf06ab2-d9b1-80a9-8ef3-c8d94153a6ea",
+  "schemaVersion": 1
+}

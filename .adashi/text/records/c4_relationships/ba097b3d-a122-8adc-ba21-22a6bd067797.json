@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Admits lazy for-each items and parallel branches within inherited fan-out, concurrency, deadline, and budget bounds",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_branch_join.limits",
+    "id": 136,
+    "source_external_id": "aworkit.workflow_worker.branch_join",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Parallel admission port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ba097b3d-a122-8adc-ba21-22a6bd067797",
+  "schemaVersion": 1
+}

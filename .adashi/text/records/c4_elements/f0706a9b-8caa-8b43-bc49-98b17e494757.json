@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the worker's sole process-boundary adapter to the Trusted Application Core. It receives generation-fenced controls and committed outcomes, and sends normalized lifecycle/context/evidence/checkpoint proposals plus InvocationProposalV1 requests. No other worker module talks to core services or the Capability Host directly.\n",
+        "Owned runtime state: negotiated protocol version, authenticated worker/run generation, snapshot identity, inbound committed cursor, outbound worker sequence, stable proposal IDs, bounded unacknowledged proposal buffer, heartbeat state, and per-stream backpressure windows. These are delivery mechanics, not canonical history.\n",
+        "Input/output DTOs and ports: receives WorkerControlEnvelopeV1, CapabilityOutcomeV1, ApprovalOutcomeV1, InputDeliveryV1, CoreCommittedAckV1, and RehydrationEnvelopeV1; sends ReadyV1, WorkerProposalEnvelopeV1, InvocationProposalV1, CheckpointProposalV1, HealthV1, QuiescedV1, and RehydrationReadyV1 or RehydrationBlockedV1.\n",
+        "Algorithms and invariants: validates frame size, schema version, run, generation, snapshot, attempt, and contiguous committed cursor before delivery. Transport acceptance never means a proposal is committed. The acknowledged cursor advances only from a core durable-commit acknowledgement. Safe proposal retransmission uses the same proposal ID; it never repeats a capability effect. Invocation requests carry only opaque authority, capability, budget, attempt, and credential-reference metadata for the broker. The worker never receives secret values and has no channel to aworkit.capability_host.\n",
+        "Failure, cancellation, and recovery: malformed or cross-generation frames fail closed. Backpressure quiesces new effect-producing admissions before memory becomes unbounded. Disconnect preserves the bounded proposal buffer and stops assuming progress; replacement generations recover from core state. Cancellation and heartbeats use reserved control capacity so streams cannot starve them.\n",
+        "Performance and NFRs: explicit maximum frame and in-flight sizes, CRC or authenticated local-channel framing as selected by the core, bounded memory, resumable cursors, low-latency control lanes, protocol conformance fixtures, and structured diagnostics without secrets.\n",
+        "Normative semantic proposal transport: WorkerProposalEnvelopeV1 carries stable proposalId, SpanId, optional ParentSpanId, SpanKind, optional causation proposal/event identity, semantic event kind, and normalized redacted payload or artifact reference. The gateway preserves proposal order and backpressure boundaries from scheduler/model-agent; retransmission reuses proposalId. Transport acceptance is never live UI visibility. Only CoreCommittedAckV1 advances the acknowledged semantic cursor, after the trusted core has durably committed and assigned EventId/Chat sequence. The gateway must not send provider fragments as canonical events or maintain a second live-event sequence.\n",
+        "\n",
+        "Non-responsibilities: no authority or approval, secret brokerage, host/provider/tool execution, process supervision, canonical event commit, workflow policy, or side-effect replay."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.core_gateway",
+    "id": 49,
+    "name": "Trusted Core IPC & Proposal Gateway",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,IPC,Core Boundary",
+    "technology": "Rust versioned length-delimited framed IPC with bounded async channels",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f0706a9b-8caa-8b43-bc49-98b17e494757",
+  "schemaVersion": 1
+}

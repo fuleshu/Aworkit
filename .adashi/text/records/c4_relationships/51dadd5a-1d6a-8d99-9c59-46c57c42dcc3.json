@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Resumes the same checkpointed Management Chat after candidate restart or rollback and focused verification",
+    "destination_external_id": "aworkit.trusted_core.recovery",
+    "external_id": "rel.core_repair.recovery",
+    "id": 87,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Repair restart recovery DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "51dadd5a-1d6a-8d99-9c59-46c57c42dcc3",
+  "schemaVersion": 1
+}

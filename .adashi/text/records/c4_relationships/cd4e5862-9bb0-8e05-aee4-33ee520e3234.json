@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Resolves bounded redacted DiagnosticRecordId correlations for occurrences and startup watchdog evidence; log expiry leaves an explicit unavailable reference",
+    "destination_external_id": "aworkit.local_store.diagnostic_logs",
+    "external_id": "rel.local_store.error_repair_ledger.diagnostic_logs",
+    "id": 229,
+    "source_external_id": "aworkit.local_store.error_repair_ledger",
+    "tags": "Relationship,Internal,Read Only",
+    "technology": "DiagnosticReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cd4e5862-9bb0-8e05-aee4-33ee520e3234",
+  "schemaVersion": 1
+}

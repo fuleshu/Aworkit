@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Materializes the exact adapter set permitted for the authenticated host generation and resolves an approved binding to one versioned execution port. It combines built-in descriptors with core-attested provider, MCP, plugin, external-agent, and isolation handshakes without live substitution.\n",
+        "Owned runtime state: an immutable-per-generation index of CapabilityDescriptorV1 and AdapterManifestV1 keyed by logical capability ID plus version/hash. Descriptors declare input/output schemas, capability kind, side-effect class, idempotency/dedup guarantee, streaming and cancellation semantics, continuation/session/approval/MCP-forwarding features, secret slots, workspace/isolation needs, concurrency limits, supported platforms, and opaque-visibility limits.\n",
+        "Versioned ports and contracts: RegisterBuiltInV1, MaterializeAttestedSetV1, ResolveExactBindingV1, AdapterHandshakeV1, CapabilityHealthV1, and DescribeDegradedV1. ExtensionManifestV1 identity/version/hash and contribution facts must match the trusted core registry pin; a manifest describes capability but does not constrain trusted code.\n",
+        "Failure and degraded behavior: missing, disabled, incompatible, unhealthy, drifted, or hash-mismatched bindings return explicit definite-not-started diagnostics and are quarantined for new dispatch. No fallback or updated version is chosen silently.\n",
+        "Security truthfulness: discovery data is inert; the registry neither installs nor enables code. Trusted plugin descriptors are labelled host-authority and may bypass Aworkit brokers. A process descriptor is not a sandbox claim.\n",
+        "Observability, performance, and cross-platform behavior: deterministic indexed lookup, bounded handshake time, registry generation/hash metrics, capability-health snapshots, provenance diagnostics, and normalized path/platform matrices for Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no extension identity/integrity authority, workflow capability binding, tier/route selection, approval, secret retrieval, adapter execution, or canonical inventory persistence."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.capability_registry",
+    "id": 52,
+    "name": "Adapter Capability Descriptor Registry",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Registry,Contracts",
+    "technology": "Rust immutable descriptor index and versioned adapter SPI",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ce942734-957c-8800-bc19-dfde9251d1ea",
+  "schemaVersion": 1
+}

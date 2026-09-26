@@ -1,0 +1,30 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/scripts/native-chat-concurrency.mjs\"]",
+    "completed_at": "2026-09-17 17:57:39",
+    "completion_memo": {
+      "lines": [
+        "Fixed the reported continuation regression. Read-only inspection of the affected saved Chat (chat.56f7feea0c9795ce653fc2c2128fe3be6919911b) found three prepared executions with unchanged frozen authority and a valid Stop boundary. Its original shell and Python descriptions differed from the current catalog following the managed-job implementation. Re-freezing those descriptions on a new input changed the binding/graph comparison and raised the reported error.\n",
+        "Continuation now looks up the original prepared Run before rebuilding and preserves its native descriptions in both follow-up preparation and exact-request validation. It does not rewrite user history, replay cancelled effects, or relax schema/configuration/credential/permission checks. MCP definitions remain strict. New Chats use current catalog descriptions.\n",
+        "Verification: 349 desktop library tests passed; one diagnostic fixture is intentionally ignored by default and was run separately successfully using a read-only exported copy of the user's actual prepared record. The captured-record test reproduced the pre-fix mismatch, then validated the continuation with identical original snapshot and manifest and zero provider calls. Current frozen Chat tool configuration/options were independently confirmed identical to the stored bindings. Upgrade/replay tests prove original model-facing descriptions persist across restart and genuine timeout, approval, provider or context changes still fail before effects; MCP description drift remains visible. Native Windows UI test passed Stop, same Chat/Run continuation, and continuation after restart alongside concurrency/navigation/draft/recovery isolation (six provider calls). Evidence: desktop/src-tauri/target/native-concurrency-1789667806675/result.json and stopped-chat-continued.png. Native build and git diff --check passed. Critical task-end audit passed. Existing running app needs restart to load the rebuilt fix; no new Chat or data repair is required."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-17 17:49:11",
+    "created_files": "[\"desktop/src-tauri/src/runtime/pipeline/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/frozen_tools.rs\"]",
+    "description": "Confirmed on the user's saved Chat: original frozen context hash is unchanged; persisted shell/Python descriptions differ from the newly installed catalog and re-freezing descriptions changes the snapshot on follow-up. Preserve original descriptions for existing native bindings in follow-up and exact-request validation, without weakening schema/configuration/credential/permission checks or MCP definition checks. Add upgrade/Stop/restart regression coverage, read-only verification against the affected saved Chat, and real native Stop/continue proof. Preserve all user history; no database rewrite or forced new Chat.",
+    "id": 94,
+    "number": 93,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Fix continuation after Stop across native tool description updates",
+    "updated_at": "2026-09-22 07:26:23"
+  },
+  "deleted": false,
+  "identity": "9ef0d0c4-71af-81d7-8565-3b4f78828ab9",
+  "schemaVersion": 1
+}

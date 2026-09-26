@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:27:40",
+    "design_external_id": "uml.trusted_core.first_input_freeze_start",
+    "id": 115,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "7653ae99-3c9b-8f6b-92ba-9f74310a9ed6"
+    }
+  },
+  "deleted": false,
+  "identity": "99828916-4384-8bc6-9dab-b37ec9a8626f",
+  "schemaVersion": 1
+}

@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Implemented both DSH-parity fixes, pushed as 8248eee (CoT passback) and b207144 (image dispatch). CoT: ModelAssistantContentV1 gained Reasoning{text}; ProjectionBuilder retains raw reasoning (never a summary) from channel=reasoning deltas into the exchange; openai_tool_request emits reasoning_content; anthropic/gemini skip it; compaction Unit::tokens counts it. Image: ImageDispatchV1 on FrozenModelGateway, set per run by compaction::image_dispatch(model_context) from the frozen imageInput capability the image tools already use; reference mode reads no bytes and describes every image; attached mode keeps the newest 16 images / 24 MiB and degrades older ones to references. Tests green: capability host 169 lib + 4 provider_images, desktop compaction 27. NOT yet verified live: the desktop bundle predates both fixes, so the expected recovery (104,453 uncached tokens on reasoning-flip turns; ~1.2 MB/turn of image upload) is unmeasured.",
+    "created_at": "2026-09-24 18:53:25",
+    "id": 269,
+    "note_id": "cot-and-image-fixes",
+    "operation_id": "cot-and-image-fixes",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "cot-and-image-fixes",
+    "task_id": {
+      "ref": "bd0fbb43-c6bc-8fa5-86b9-b7fb0f60b578"
+    }
+  },
+  "deleted": false,
+  "identity": "6f6d7adf-0581-896d-b680-e092f1c14817",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Builds only the classifier projection declared by the workflow and records classification, considered routes, matched rule, and selected tier as a new revision",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_routing.context",
+    "id": 126,
+    "source_external_id": "aworkit.workflow_worker.routing",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Context projection and revision port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a1935592-8e38-8680-993f-d85b89abb0ff",
+  "schemaVersion": 1
+}

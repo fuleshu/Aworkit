@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-bootstrap-helper/Cargo.toml\",\"crates/aworkit-bootstrap-helper/src/lib.rs\",\"desktop/src-tauri/Cargo.lock\",\"desktop/src-tauri/Cargo.toml\",\"desktop/src-tauri/src/lib.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/gen/schemas/acl-manifests.json\",\"desktop/src-tauri/gen/schemas/desktop-schema.json\",\"desktop/src-tauri/gen/schemas/linux-schema.json\",\"desktop/src/App.tsx\",\"desktop/src/adapters/contracts.ts\",\"desktop/src/adapters/defaultAdapters.ts\",\"desktop/src/workbench/appearance.ts\"]",
+    "completed_at": "2026-08-23 12:04:26",
+    "completion_memo": "Implemented cross-platform native desktop presentation through Tauri on Windows, macOS, and Linux: native system/light/dark appearance projection, a complete application menu with workbench event routing, bounded native file and folder pickers, confirmation and informational OS message dialogs, OS notifications, show/hide/focus/minimize/maximize/fullscreen/close window actions, and a typed capability report. Native failures fall back to the existing accessible in-workbench status surface and focus-trapped confirmation dialog; browser/headless runs remain fully usable. Added a reproducible whole-application release assembler and executable build script. It builds and atomically publishes the desktop/core/worker/host/helper executables plus the complete UI closure, rejects symlinks/special files and existing outputs, normalizes permissions and SOURCE_DATE_EPOCH timestamps, hashes every entry, emits protocol compatibility metadata and a design-compatible BuildProvenanceV1, and classifies packaged builds as package-owned with managed-local activation unavailable. The task-end audit ran the actual optimized release path: it produced all five binary roles plus the UI and verified provenance sha256:02b5cbd3ce7d90beb02d1f6ef6d907002c4c0583b8dd64dbdeeb8f6eee5766cc. Warnings-denied desktop Rust tests pass (20), frontend typecheck and 61 Vitest tests pass, bootstrap-helper tests pass (63), bash syntax and git diff checks are clean.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:34:43",
+    "created_files": "[\"desktop/src-tauri/src/presentation.rs\",\"crates/aworkit-bootstrap-helper/src/release.rs\",\"crates/aworkit-bootstrap-helper/src/bin/aworkit-release-assembler.rs\",\"scripts/assemble-release-bundle.sh\"]",
+    "description": "Implement Windows, macOS, and Linux bindings for platform appearance, application menus, file/folder and OS-message dialogs, notifications, window lifecycle, and accessible in-workbench fallback. Assemble reproducible whole-application bundles containing the core, worker, host, helper, and UI with protocol compatibility metadata and BuildProvenanceV1; packaged layouts must truthfully report managed-local self-activation Unsupported unless explicitly enrolled.",
+    "id": 77,
+    "number": 77,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M12.4 — Implement native desktop presentation and whole-bundle release assembly",
+    "updated_at": "2026-09-22 07:22:02"
+  },
+  "deleted": false,
+  "identity": "bf15efff-795e-80e8-b2d4-445e19eadd5a",
+  "schemaVersion": 1
+}

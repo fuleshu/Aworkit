@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "design_external_id": "uml.desktop_ui.theme_density_contract",
+    "id": 26,
+    "qa_job_id": {
+      "ref": "4cd7c20a-daa7-8a59-930d-d208ec1d79e5"
+    },
+    "sort_order": 0,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "a6138179-43a7-8df5-9ef2-b7eda29f1a1b",
+  "schemaVersion": 1
+}

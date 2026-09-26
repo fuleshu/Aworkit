@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies frozen classification schemas, visible route rules, destinations, tier references, and tie-break order",
+    "destination_external_id": "aworkit.workflow_worker.routing",
+    "external_id": "rel.worker_execution_plan.routing",
+    "id": 112,
+    "source_external_id": "aworkit.workflow_worker.execution_plan",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Immutable routing descriptors",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e8f3b2ee-27b7-8d1a-aae8-becc7a8b31a8",
+  "schemaVersion": 1
+}

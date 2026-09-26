@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Builds replaceable read models for Chat lists, semantic timelines, evidence lookup, full-text search, artifact/error/extension joins, and portable-session discovery. It accelerates inspection but never becomes evidence authority.\n",
+        "Owned records/files: disposable chat_summary, timeline_projection, evidence_locator, FTS/token indexes, source_cursor, projection_schema_version, and rebuild_health tables. Every row carries source kind (LocalSqlite or PortableProject), ChatId, canonical cursor/hash, and projection version; portable rows are explicitly marked noncanonical.\n",
+        "Keys and ordering: local timelines follow committed (ChatId, BranchId, sequence); portable timelines follow verified parent-linked segment and event order. Timestamps never merge concurrent portable branches. Projection row IDs derive from stable source IDs so applying a committed item twice is idempotent.\n",
+        "Ports: exposes read-only paginated ProjectionReadPort/SearchPort to the core Desktop API and ProjectionMaintenancePort to the storage coordinator. It consumes committed projection outbox cursors, reads LocalHistoryReadPort, reads verified portable segments through PortableHistoryReadPort, and resolves only metadata/pages from artifact, capture, and log stores.\n",
+        "Durability/degraded behavior: projection writes are independent of canonical commit and may lag. Gaps, schema changes, checksum failures, or corruption mark results stale/catching-up, drop the affected projection, and rebuild from canonical sources; no projection value is used to infer missing canonical state. Portable source disappearance removes only its cache rows.\n",
+        "Retention/performance: indexes obey configurable disk/FTS quotas and source visibility, use incremental batches and cancellable rebuilds, and may be evicted wholesale. Indexed list/search queries target p95 under 100 ms for 100k semantic events; expensive evidence is lazy and cursor-paginated. Backpressure slows projection catch-up, never canonical commits.\n",
+        "Security/non-responsibilities: indexes contain only already-redacted semantic/searchable fields and opaque credential references; secrets, raw lease material, and unredacted debug payloads are excluded. This module cannot write local or portable history, acknowledge capability effects, edit JSON, activate repairs/extensions, or authorize replay."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.query_projections",
+    "id": 64,
+    "name": "Disposable Query Projections, Search & Indexes",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Disposable,Projection,Search",
+    "technology": "Rust projection workers over disposable SQLite/FTS indexes",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9d3822ba-b867-8757-aed1-f42410294840",
+  "schemaVersion": 1
+}

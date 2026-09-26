@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses header/status/control/split-pane/live-region primitives",
+    "destination_external_id": "aworkit.desktop_ui.design_system",
+    "external_id": "rel.ui.chat.design",
+    "id": 49,
+    "source_external_id": "aworkit.desktop_ui.chat_workspace",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "294a8bda-e50f-8b6c-8ad1-e57438b33042",
+  "schemaVersion": 1
+}

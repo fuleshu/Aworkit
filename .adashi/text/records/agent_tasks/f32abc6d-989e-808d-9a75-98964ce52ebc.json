@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/Cargo.toml\",\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"crates/aworkit-capability-host/src/gateway.rs\"]",
+    "completed_at": "2026-08-21 17:16:48",
+    "completion_memo": "Implemented the host’s frozen adapter descriptor registry and sole core-facing approved-invocation gateway. Admission rejects stale host generations, adapter version drift, unknown descriptors, and capability-kind substitution. cargo test -p aworkit-capability-host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:14",
+    "created_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"crates/aworkit-capability-host/src/gateway.rs\"]",
+    "description": "Implement the Capability Host's sole core-facing invocation gateway and generation-frozen adapter descriptor registry. Admit only schema-valid core-approved envelopes bound to the authenticated host generation and exact adapter version; reject live substitution, stale bindings, or any worker-originated channel.",
+    "id": 28,
+    "number": 28,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.1 — Implement approved-invocation admission and adapter resolution",
+    "updated_at": "2026-09-21 14:57:24"
+  },
+  "deleted": false,
+  "identity": "f32abc6d-989e-808d-9a75-98964ce52ebc",
+  "schemaVersion": 1
+}

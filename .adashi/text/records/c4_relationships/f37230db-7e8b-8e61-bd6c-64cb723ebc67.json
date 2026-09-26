@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses split/tabs/tree/code/diff/provenance/copy primitives",
+    "destination_external_id": "aworkit.desktop_ui.design_system",
+    "external_id": "rel.ui.inspector.design",
+    "id": 53,
+    "source_external_id": "aworkit.desktop_ui.evidence_inspector",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f37230db-7e8b-8e61-bd6c-64cb723ebc67",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Builds bounded correlation locators for redacted diagnostic generations while keeping log payloads outside canonical timelines and search authority",
+    "destination_external_id": "aworkit.local_store.diagnostic_logs",
+    "external_id": "rel.local_store.query_projections.diagnostic_logs",
+    "id": 227,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Internal,Read Only",
+    "technology": "DiagnosticMetadataReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "051aaf39-fbab-8d56-9da3-129c0459d833",
+  "schemaVersion": 1
+}

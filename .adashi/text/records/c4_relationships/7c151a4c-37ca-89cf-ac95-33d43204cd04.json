@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supervises host identity, compatibility, health, restart, and complete process-tree cleanup",
+    "destination_external_id": "aworkit.capability_host",
+    "external_id": "rel.core.host.supervision",
+    "id": 13,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship",
+    "technology": "OS process supervision",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7c151a4c-37ca-89cf-ac95-33d43204cd04",
+  "schemaVersion": 1
+}

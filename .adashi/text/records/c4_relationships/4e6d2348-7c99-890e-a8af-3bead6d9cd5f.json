@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Persists versioned manifest identity, enablement, provenance, hash, compatibility, and attestation records. Workflow history never stores executable code",
+    "destination_external_id": "aworkit.local_store",
+    "external_id": "rel.core_extensions.local_store.inventory",
+    "id": 103,
+    "source_external_id": "aworkit.trusted_core.extension_registry",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Atomic registry records and JSON",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4e6d2348-7c99-890e-a8af-3bead6d9cd5f",
+  "schemaVersion": 1
+}

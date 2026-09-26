@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns receipts/rejections and streams snapshots, deltas, and contiguous committed CoreEventEnvelopeV1 records",
+    "destination_external_id": "aworkit.desktop_ui.projection_gateway",
+    "external_id": "rel.core_api.ui_gateway.events",
+    "id": 89,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Tauri IPC events",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "14631007-48a7-8292-8bf0-df05574ba697",
+  "schemaVersion": 1
+}

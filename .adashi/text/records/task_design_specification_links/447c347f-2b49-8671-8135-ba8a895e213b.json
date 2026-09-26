@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:28:43",
+    "design_external_id": "uml.capability_host.outcome_classification",
+    "id": 143,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "c82229b5-5ad7-8ed1-9dd6-7ae5e81acb82"
+    }
+  },
+  "deleted": false,
+  "identity": "447c347f-2b49-8671-8135-ba8a895e213b",
+  "schemaVersion": 1
+}

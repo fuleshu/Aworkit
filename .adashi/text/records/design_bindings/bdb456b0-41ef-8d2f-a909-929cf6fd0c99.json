@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-25 18:38:23",
+    "design_external_id": "aworkit.desktop_ui.chat_workspace",
+    "id": 87,
+    "target": "desktop/src/chat/ChatRecoveryCard.tsx",
+    "target_type": "file",
+    "updated_at": "2026-09-25 18:38:23",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bdb456b0-41ef-8d2f-a909-929cf6fd0c99",
+  "schemaVersion": 1
+}

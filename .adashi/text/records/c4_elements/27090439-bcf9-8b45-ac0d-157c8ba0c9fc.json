@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the LocalSqlite implementation of the trusted core LocalHistoryCommitPort. It validates the selected backend and expected stream head, then atomically commits semantic events, attempts, head/version, optional checkpoint, command/invocation deduplication result, and delivery outbox rows.\n",
+        "Owned records/files: command_dedup and invocation_dedup keyed by stable idempotency key and request hash; delivery_outbox keyed by OutboxId with ChatId/commit sequence, payload hash, destination, state, and delivery cursor; transaction/commit receipts and bounded failure counters. Canonical event/checkpoint rows remain owned by the Semantic Ledger.\n",
+        "Keys and ordering: one BEGIN IMMEDIATE writer serializes head advancement per database; duplicate keys with the same request hash return the original durable receipt, while key reuse with different content is rejected. Outbox entries are ordered by commit sequence and OutboxId; delivered marking cannot alter canonical events.\n",
+        "Ports: accepts CommitBatch, VerifyCommit, ListPendingOutbox, and MarkOutboxDelivered only from the core event committer/recovery. It calls LocalLedgerTxnPort and PreparedArtifactRefPort; projection delivery consumes an idempotent committed-outbox cursor. PortableProject bindings are rejected and never mirrored here.\n",
+        "Normative microbatch contract: A CommitBatch preserves semantic proposal order, receives one contiguous sequence range, and validates span start/parent/content/terminal transitions. It rejects parent changes, content before start, duplicate terminals, and a parent terminal with open children. Incremental batches use the same atomic event/head/checkpoint/dedup/outbox transaction as terminal batches. No success acknowledgement or committed-stream publication occurs before COMMIT. The bounded writer supports frequent small live-delta commits while retaining the 64-event/1-MiB hard limit and under-50-ms local p95 target.\n",
+        "\n",
+        "Durability/failure rules: prepared artifact bytes must be hash-verified and fsynced before BEGIN; the SQLite transaction writes every relational part and COMMITs before any success acknowledgement. Failure before durable COMMIT rolls back and returns no state transition. An ambiguous COMMIT is resolved on a fresh connection by EventId/dedup key/request hash, never by blindly repeating a possibly side-effecting operation. SQLITE_FULL, I/O error, corruption, or outbox hard limit closes writes with an inspectable reason.\n",
+        "Retention/performance: batches are bounded to 64 semantic events/1 MiB; the single-writer queue is bounded and exposes latency/depth. Dedup rows live at least through the configurable command/invocation retry horizon and are compacted only against terminal-stream checkpoints; outbox rows compact only after acknowledged delivery and safety margin.\n",
+        "Security/non-responsibilities: credential values, raw secrets, hidden reasoning, and unredacted protocol payloads are invalid. The adapter does not select a history backend, make workflow/authority decisions, execute or retry effects, publish uncommitted events, build projections, or write portable JSONL."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.commit_adapter",
+    "id": 63,
+    "name": "Atomic Commit, Checkpoint, Deduplication & Outbox Adapter",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Canonical,Transactions,Outbox",
+    "technology": "Rust SQLite transaction adapter with transactional outbox",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "27090439-bcf9-8b45-ac0d-157c8ba0c9fc",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Stamps every context revision with the graph revision that produced it, so one lineage explains the evidence across an adopted revision without relabelling committed history.",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.core.rebind.context_store",
+    "id": 342,
+    "source_external_id": "aworkit.trusted_core.revision_rebind",
+    "tags": "Relationship,Internal Core Contract,Context",
+    "technology": "Revision-stamped context lineage",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4ebd126f-20cd-815e-9e9d-a2c0db420b52",
+  "schemaVersion": 1
+}

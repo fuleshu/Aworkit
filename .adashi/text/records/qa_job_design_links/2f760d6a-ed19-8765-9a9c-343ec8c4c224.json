@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-23 11:00:04",
+    "design_external_id": "mockup.desktop_ui.management_repair",
+    "id": 47,
+    "qa_job_id": {
+      "ref": "c79703cb-a570-8b68-a367-cd9909bd41e2"
+    },
+    "sort_order": 4,
+    "target_type": "mockup"
+  },
+  "deleted": false,
+  "identity": "2f760d6a-ed19-8765-9a9c-343ec8c4c224",
+  "schemaVersion": 1
+}

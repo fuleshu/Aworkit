@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Writes and reads immutable, bounded, parent-linked semantic JSONL segments and immutable logical checkpoints after policy and DTO validation. Readers expose records only after exact-byte hash, schema, bounds, parent-link, and ordinal verification.\n",
+        "Owned files/records: sessions/<SessionId>/segments/sha256/<digest>.jsonl stores SegmentHeaderV1, a bounded sequence of PortableSemanticEventV1 lines, and SegmentTrailerV1; checkpoints/sha256/<digest>.json stores PortableCheckpointRecordV1. Segment identity is its sha256 content address. Each header names SessionId, BranchId, parentSegmentHash or the root marker, baseCheckpointHash, first/last branch ordinal, event count, byte count, codec version, and CommitId; the checkpoint names the exact head/event/aggregate cursor it summarizes. Format hard limits cap line, segment, event-count, and checkpoint sizes; lower configurable rollover targets may be used.\n",
+        "Ports/DTOs: ImmutableSegmentWritePort prepares a candidate from scrubbed events and checkpoint, returning PreparedSegmentV1; PortableHistoryReadPort streams verified pages by BranchCursorV1; VerifySegmentPort and VerifyCheckpointPort return structured integrity facts. Only the Atomic Commit Coordinator can finalize a prepared canonical object.\n",
+        "Atomicity and crash recovery: writes occur to collision-resistant same-directory staging names, are flushed and fsynced, hashed, then published with create-new atomic rename and directory fsync. Existing identical hashes are idempotent; different bytes at an occupied path are corruption. Files are never appended or rewritten. A crash before branch-head publication leaves unreachable objects that cannot be acknowledged and are later eligible for guarded orphan collection.\n",
+        "Conflicts, degradation, and NFRs: a parent mismatch is reported, never repaired by timestamp ordering. Corrupt or missing reachable objects make the affected branch read-only/quarantined while unrelated branches remain inspectable. Incremental verification, bounded file descriptors/memory, cancellation, backpressure, and cross-platform atomic-file fixtures are required.\n",
+        "Non-responsibilities: no branch-head advancement, canonical-backend selection, policy scrubbing, projection writes, Git operation, retention deletion, authority, or replay of historical effects."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.segment_repository",
+    "id": 75,
+    "name": "Immutable Bounded JSONL Segment & Checkpoint Repository",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,JSONL,Checkpoint,Immutable",
+    "technology": "Rust streaming immutable JSONL/checkpoint repository over atomic filesystem ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "82d7a57c-9789-8f7a-b93d-5be07a3714b4",
+  "schemaVersion": 1
+}

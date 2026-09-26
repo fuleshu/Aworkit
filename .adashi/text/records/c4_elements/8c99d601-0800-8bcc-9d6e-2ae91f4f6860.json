@@ -1,0 +1,25 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "The small trusted Rust core owns the application lifecycle and non-replaceable contracts: typed desktop command/event API, project and capability resolution, workflow validation and freezing, Chat lifecycle, authority manifests and approvals, secret references and credential brokerage, canonical semantic event commits, process-tree supervision, extension identity/integrity/version records, recovery coordination, and repair activation/rollback gates.\n",
+        "\n",
+        "It validates every worker capability request against the frozen Run manifest before dispatch, records the decision and outcome, and refuses ambiguous automatic replays. It persists events atomically before acknowledging committed state. Functional agent behavior, routing strategies, providers, tools, and adapters remain behind versioned interfaces and are not embedded into this boundary unless needed for trust or lifecycle integrity."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.trusted_core",
+    "id": 11,
+    "name": "Trusted Application Core",
+    "parent_external_id": "1",
+    "tags": "Container,Trusted Core,Authority Boundary",
+    "technology": "Rust within the Tauri native process; async command/event services",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8c99d601-0800-8bcc-9d6e-2ae91f4f6860",
+  "schemaVersion": 1
+}

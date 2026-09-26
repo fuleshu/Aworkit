@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-22 06:24:26",
+    "qa_job_id": {
+      "ref": "256792fc-a3c4-81b5-a7ed-6d26b4612c63"
+    },
+    "tag": "mcp"
+  },
+  "deleted": false,
+  "identity": "809e4b5f-960c-809c-9969-3c8283a77dec",
+  "schemaVersion": 1
+}

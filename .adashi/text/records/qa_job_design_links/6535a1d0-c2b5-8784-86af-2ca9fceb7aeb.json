@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 16:52:46",
+    "design_external_id": "uml.local_store.canonical_record_structure",
+    "id": 1,
+    "qa_job_id": {
+      "ref": "a665aeea-d04b-8fcd-83cf-85bf3972d7e0"
+    },
+    "sort_order": 0,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "6535a1d0-c2b5-8784-86af-2ca9fceb7aeb",
+  "schemaVersion": 1
+}

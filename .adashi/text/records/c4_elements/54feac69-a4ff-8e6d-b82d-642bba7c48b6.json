@@ -1,0 +1,43 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Sole TypeScript adapter to Trusted Core. Schema-validates versioned commands/queries and ordered event envelopes, tracks client command IDs/receipts, gates by sequence, reduces with pure deterministic reducers, publishes immutable feature projections, and resynchronizes via snapshot/delta after startup, reconnect, duplicates, or gaps. Non-canonical stream presentation may be coalesced without reordering semantic events.\n",
+        "\n",
+        "Owned state: discardable projection store, last contiguous sequence per stream, generation, connection/resync status, bounded pending-command map, cancellation handles, and subscriptions; none is canonical.\n",
+        "\n",
+        "Contracts: sends UiCommand/ProjectionQuery over Tauri IPC; receives CommandReceipt/Rejected, Snapshot/Delta, and CoreEventEnvelope. Commands carry schema version, command ID, target version, typed payload; events carry stream ID, sequence, semantic event ID, kind, schema version, payload. Publishes shell/chat/workflow/evidence/config/capability/repair/command-status projections. Runtime IPC schemas are generated or mechanically checked against the versioned Rust-owned contract rather than maintained as an unrelated hand-written duplicate.\n",
+        "\n",
+        "Normative single-stream reducer contract: Live, replay, and snapshot-tail recovery use the same pure semantic reducer and canonical event kinds. State includes a discardable map keyed by SpanId. SpanStarted fixes parent/kind/input; SpanContentDelta appends in committed sequence to its named channel; terminal events set actual output/error and exactly one terminal state. Children order by first committed sequence while the event list remains globally ordered; causation is displayed separately from containment. Reject content-before-start, parent change, duplicate terminal, child-after-parent-terminal, and any gap, then request canonical recovery. Snapshot hydration sets cursor=throughSequence and the exact tail runs through the same reducer. No best-effort live reducer or reduced activity snapshot may infer or synthesize canonical order.\n",
+        "\n",
+        "Implementation boundary: schemas, ordering gates, reducers, selectors, action definitions, and immutable projection models are pure strict TypeScript and test without React. React bindings are downstream subscriptions through a thin replaceable store adapter. React, Mantine, React Flow, TanStack, and Tauri-native presentation types cannot enter UiCommand, CoreEventEnvelope, FeatureProjection, reducer state, or persisted data.\n",
+        "\n",
+        "Failure/degraded behavior: malformed/unsupported envelopes become diagnostics; duplicates drop; out-of-order events never apply; gaps mark affected projections stale, suspend state changes, and request recovery. Receipt is not domain success until a committed event; transport retry uses only idempotent query or same command ID.\n",
+        "\n",
+        "Performance/accessibility: fixture-testable pure reducers, updates batched to one animation frame during streams, bounded inactive projections, incremental resync; emits semantic status for live regions.\n",
+        "\n",
+        "Non-responsibilities: no authority, privileged action, secrets, canonical state, scheduling, evidence reinterpretation, or framework/widget-specific store semantics.\n",
+        "\n",
+        "Concurrent desktop Chats (2026-09-15): Pending commands, errors and maintenance are keyed by Chat. Capture target before awaiting IPC. Fence snapshot responses by navigation generation and Chat identity; discard obsolete responses. Buffers use stream ID plus sequence, and only the selected Chat contributes transcript events. Background completion refreshes history without replacing selection. Poll during work, hydrate exact canonical events on return, retain duplicate/conflict checks, and never replay effects.\n",
+        "\n",
+        "Responsive windowed Chat loading (2026-09-16): Open only a bounded recent contiguous range of canonical events; fetch older ranges on upward scrolling. A window states its first sequence, head, and older-page cursor. Exact supporting events hydrate spans crossing the range boundary and their ancestors; they are explicitly separate from the contiguous range and never imply that omitted history was loaded. Preserve canonical IDs, payloads, duplicate/conflict validation, cursor fences, and immutable evidence. Render only activities belonging to the loaded range. Live delivery extends its head; gaps recover the exact missing tail. Navigation immediately selects a Chat shell with a local busy indicator, independently of persistence and data loading. Fence every result by Chat and navigation generation; stale loads cannot replace selection. Preserve drafts and scroll anchors when prepending. Queries, loading, schema upgrades and database access run on workers; never wait on the native UI thread. Long queries release the shared command coordinator and use independent read connections. Keep navigation and other Chats usable during all loading.\n",
+        "\n",
+        "Subagent child projection (2026-09-21): Publishes a bounded per-Chat subagent catalog derived from the durable child frames and job state: childId, kind, status and running flag, task, counters, timestamps and parent lineage, plus the child's assigned task. It updates on child creation, on each committed child turn or progress change, and on each terminal transition, so the Chat Workspace can drive tabs, the Composer control and the auto-open/auto-close preference. A child's timeline is served from the same canonical event stream through the existing windowed query path, fenced by Chat and child identity, with the same bounded recent range, older-page cursor, supporting-event hydration and gap recovery as the main feed; it never introduces a second stream or synthesizes child order. Child conversation content stays in operational state and is never merged into the semantic transcript."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.projection_gateway",
+    "id": 24,
+    "name": "Typed Command & Event Projection Gateway",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,IPC,Projection",
+    "technology": "Pure strict TypeScript Tauri IPC contracts, runtime schemas, reducers, selectors, and replaceable downstream store binding",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "54feac69-a4ff-8e6d-b82d-642bba7c48b6",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:33",
+    "design_external_id": "aworkit.portable_store.workspace_adapter",
+    "id": 328,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "8c5725af-39b8-89d1-8ea3-86e16f6c7d49"
+    }
+  },
+  "deleted": false,
+  "identity": "25b51e2c-279d-8035-907d-c001a8e1b40c",
+  "schemaVersion": 1
+}

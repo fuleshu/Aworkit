@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Passes only a fully verified inert branch handle and logical portable snapshot into unresolved-binding inventory construction; quarantine or inspect-only handles cannot continue",
+    "destination_external_id": "aworkit.portable_store.rebind_planner",
+    "external_id": "rel.portable.import.rebind",
+    "id": 257,
+    "source_external_id": "aworkit.portable_store.import_quarantine",
+    "tags": "Relationship,Internal Portable Contract,Inert",
+    "technology": "VerifiedPortableBranchHandleV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d9f26114-227d-84d6-b308-71b7ee468c74",
+  "schemaVersion": 1
+}

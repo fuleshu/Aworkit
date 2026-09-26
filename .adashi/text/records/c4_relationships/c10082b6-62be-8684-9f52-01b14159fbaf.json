@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests invocation/audience-bound short-lived leases only after a durable permit and revokes them on settlement or uncertainty",
+    "destination_external_id": "aworkit.trusted_core.secret_broker",
+    "external_id": "rel.core_invocation.secrets",
+    "id": 75,
+    "source_external_id": "aworkit.trusted_core.invocation_broker",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust secret-lease port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c10082b6-62be-8684-9f52-01b14159fbaf",
+  "schemaVersion": 1
+}

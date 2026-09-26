@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Applies frozen failure, contract, retry, evaluator, or fallback policy to child outcomes without merging partial state implicitly",
+    "destination_external_id": "aworkit.workflow_worker.attempt_policy",
+    "external_id": "rel.worker_subagent.attempt_policy",
+    "id": 134,
+    "source_external_id": "aworkit.workflow_worker.subagent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Typed child outcome port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "42414407-1af0-8153-8089-bb52173a1fb8",
+  "schemaVersion": 1
+}

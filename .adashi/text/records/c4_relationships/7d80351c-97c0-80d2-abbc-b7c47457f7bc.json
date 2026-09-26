@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Sends committed generation-fenced Start, Restore, input, pause, resume, cancel, and checkpoint controls for one Chat/Run",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.core_lifecycle.worker_gateway.control",
+    "id": 145,
+    "source_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned framed local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7d80351c-97c0-80d2-abbc-b7c47457f7bc",
+  "schemaVersion": 1
+}

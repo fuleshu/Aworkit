@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns hash- and cursor-echoing readiness or blocking diagnostics and proposes new checkpoints; never treats local restoration as canonical commit",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.worker_recovery.gateway",
+    "id": 143,
+    "source_external_id": "aworkit.workflow_worker.recovery",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "RehydrationReadyV1 and CheckpointProposalV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "79edabba-073a-8e38-bacf-fc2f7dc2032a",
+  "schemaVersion": 1
+}

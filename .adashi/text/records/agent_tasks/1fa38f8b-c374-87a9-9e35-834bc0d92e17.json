@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/approvals.rs\",\"desktop/src-tauri/src/runtime/approvals/store.rs\",\"desktop/src-tauri/src/runtime/approvals/tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs\"]",
+    "completed_at": "2026-09-18 12:00:50",
+    "completion_memo": "Implemented execution-v1 standing permission identity for native Shell/Python host/start tools, excluding only descriptions/instructions. Complete invocation/replay identity remains untouched. Transactional migration requires an extant valid project-tool grant, same project key and exact historical frozen binding hash; it never creates permission from reviews/receipts and leaves unprovable formats unmatched. Migration scan memoization avoids repeating unchanged history scans. Audit verified authority fields remain hashed, cross-project evidence rejected, exact old binding evidence required, metadata-only changes compatible, executable/config/schema/limits/approval changes incompatible, idempotence and durable revocation. Desktop suite 357 passed/1 ignored. Native isolated app created two user grants, downgraded them to legacy exact-binding hashes, changed current instructions, restarted, and executed real Shell and Python with zero reviewer calls. Revoking both grants restored two automatic reviews. Evidence: desktop/src-tauri/target/native-approval-cache-1789732599799/proof.json and verified.png. User runtime data, settings, and grants were not directly altered by verification; migration will run when the rebuilt application starts.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-18 10:31:44",
+    "created_files": "[\"desktop/src-tauri/src/runtime/approvals/permission_identity.rs\",\"desktop/src-tauri/src/runtime/approvals/permission_migration.rs\",\"desktop/src-tauri/src/runtime/approvals/permission_migration_tests.rs\"]",
+    "description": "Third implementation step. Version execution-relevant permission identity; descriptions/instructions do not invalidate grants. Recover extant compatible grants using trusted stored binding evidence; preserve revocation, project isolation and fail-closed behavior on authority changes. Native upgrade proof must show zero reviewer calls for existing compatible grants. Design: docs/approval-cache-accounting.md.",
+    "id": 99,
+    "number": 98,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Reuse compatible saved project permissions across tool updates",
+    "updated_at": "2026-09-22 07:26:58"
+  },
+  "deleted": false,
+  "identity": "1fa38f8b-c374-87a9-9e35-834bc0d92e17",
+  "schemaVersion": 1
+}

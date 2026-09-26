@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:28:21",
+    "design_external_id": "uml.capability_host.approved_invocation_stream",
+    "id": 125,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "60cbbb6f-3fa3-8508-b426-814bdd32e78a"
+    }
+  },
+  "deleted": false,
+  "identity": "339dafb0-2fbc-8349-ab2b-947f2a07ffa9",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.bootstrap.profiles.os.activation",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-21 14:03:42",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "09f927e8-9ede-807e-b851-35d33cc6369b",
+  "schemaVersion": 1
+}

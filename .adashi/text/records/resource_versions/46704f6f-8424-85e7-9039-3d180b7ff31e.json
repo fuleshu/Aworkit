@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.worker_scheduler.node_runtime",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "46704f6f-8424-85e7-9039-3d180b7ff31e",
+  "schemaVersion": 1
+}

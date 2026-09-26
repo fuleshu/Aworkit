@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:29:36",
+    "design_external_id": "uml.portable_store.record_lineage",
+    "id": 153,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "42905767-b4a8-8b74-9af3-57f47cb08c24"
+    }
+  },
+  "deleted": false,
+  "identity": "99b9bd80-768f-8353-8dd7-0805ed6e13ee",
+  "schemaVersion": 1
+}

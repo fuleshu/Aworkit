@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Hands over exact token positions and context heads at Wait, approval, pause, cancel, or quiesce and resumes only from fenced actions",
+    "destination_external_id": "aworkit.workflow_worker.suspension",
+    "external_id": "rel.worker_scheduler.suspension",
+    "id": 120,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Typed suspension commands",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fd47a170-b952-8fbd-8c03-c0dc212f8540",
+  "schemaVersion": 1
+}

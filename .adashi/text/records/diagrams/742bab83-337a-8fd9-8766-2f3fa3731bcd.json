@@ -1,0 +1,56 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.branch_join",
+    "created_at": "2026-08-20 22:14:40",
+    "diagram_type": "flow",
+    "id": 12,
+    "key": "uml.workflow_worker.context_branch_loop_flow",
+    "kind": "mermaid",
+    "sort_order": 12,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "A[\"Token holds explicit context revision R0\"] --> B{\"Frozen control construct\"}\n",
+        "B -- \"Normal node\" --> C[\"Apply typed patch atomically to R0\"]\n",
+        "C --> D[\"Create revision R1 with provenance\"]\n",
+        "D --> Z[\"Advance only on a frozen transition\"]\n",
+        "B -- \"Router selects one path\" --> E[\"Record classification, considered routes, matched rule, tier, and destination\"]\n",
+        "E --> F[\"Revise R0 and move token to selected existing edge\"]\n",
+        "F --> Z\n",
+        "B -- \"Router selects many, Parallel, or For Each\" --> G[\"Create branch frame from R0 with stable child IDs or item indexes\"]\n",
+        "G --> H[\"Fork isolated revisions R0.1 through R0.n\"]\n",
+        "H --> I[\"Admit bounded child work from hierarchical budget\"]\n",
+        "I --> J[\"Each branch revises only its own lineage\"]\n",
+        "J --> K{\"Frozen join completion rule satisfied\"}\n",
+        "K -- \"No\" --> L[\"Record failure, cancellation, skipped path, or wait for declared arrivals\"]\n",
+        "L --> K\n",
+        "K -- \"Yes\" --> M[\"Order arrivals by frozen branch ordinal or item index\"]\n",
+        "M --> N[\"Apply declared map, aggregate, evaluator, or conflict policy\"]\n",
+        "N --> O{\"Reconciliation valid\"}\n",
+        "O -- \"No\" --> P[\"Emit explicit JoinBlocked or follow declared failure edge\"]\n",
+        "O -- \"Yes\" --> Q[\"Create joined revision RJ with all parent revision IDs\"]\n",
+        "Q --> Z\n",
+        "B -- \"Visible bounded loop\" --> R[\"Evaluate frozen exit condition at loop header\"]\n",
+        "R --> S{\"Exit condition true\"}\n",
+        "S -- \"Yes\" --> Z\n",
+        "S -- \"No\" --> T{\"Iteration, nesting, deadline, and budget permit another pass\"}\n",
+        "T -- \"No\" --> U[\"Emit LimitExceeded and use declared failure or fallback edge\"]\n",
+        "T -- \"Yes\" --> V[\"Record next loop frame and follow the visible frozen feedback edge\"]\n",
+        "V --> W[\"Node work creates a new immutable revision\"]\n",
+        "W --> R\n",
+        "AA[\"No shared mutable context\"] --> H\n",
+        "AB[\"No arrival-order or last-writer-wins merge\"] --> M\n",
+        "AC[\"Retries and child branches consume ancestor budgets\"] --> I"
+      ]
+    },
+    "title": "Context Revision, Fork, Join, and Visible Loop Semantics",
+    "updated_at": "2026-08-20 22:14:40",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "742bab83-337a-8fd9-8766-2f3fa3731bcd",
+  "schemaVersion": 1
+}

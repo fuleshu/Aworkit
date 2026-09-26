@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-22 09:06:57",
+    "design_external_id": "uml.local_store.repair_evidence_lifecycle",
+    "id": 40,
+    "qa_job_id": {
+      "ref": "98b8d619-3633-84ec-8f36-8dfb00c188e6"
+    },
+    "sort_order": 1,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "c7e9ff40-5740-8381-bdd1-b33f18f07af0",
+  "schemaVersion": 1
+}

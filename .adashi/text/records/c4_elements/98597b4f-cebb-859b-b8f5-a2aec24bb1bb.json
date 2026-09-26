@@ -1,0 +1,34 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Coordinates invocation-local deadlines, cooperative cancellation, forced timeout, child/sidecar health, bounded restart handshakes, and complete descendant cleanup under commands and budgets owned by the trusted core Process-Tree Supervisor. It also provides the shared cross-platform command/environment/path/process port used by tools, MCP, plugins, external agents, and isolation adapters.\n",
+        "Owned runtime state: ephemeral ExecutionHandleV1 with host generation, child tree handle, process/session IDs, normalized command/environment, start/accept/effect milestones, heartbeat, deadline, cancellation phase, exit cause, cleanup status, and restart authorization token. Authoritative ProcessRecordV1 and restart budgets remain in core.\n",
+        "Versioned ports and contracts: PlatformCommandSpecV1, NormalizedEnvironmentV1, PathIdentityV1, ProcessTreeHandleV1, SidecarRegistrationV1, ExecutionLifecycleV1, CancelTreeV1, HealthFactV1, ExitFactV1, CleanupFactV1, and RestartAuthorizationV1. Argument-vector execution is default; shell parsing exists only for explicit Host Shell mode.\n",
+        "Failure and degraded behavior: launch/handshake/heartbeat failure, deadline, orphan risk, or exhausted core budget stops new dispatch and emits exact milestones. Cooperative cancel escalates after a deadline, but process kill never implies rollback or proves a remote/side effect did not occur. Restart cannot replay an uncertain invocation.\n",
+        "Security truthfulness: working directory and environment normalization are not access restrictions. Process groups and Job Objects provide lifecycle isolation, not plugin security; only a separately verified isolation backend may claim stronger enforcement.\n",
+        "Observability, performance, and cross-platform behavior: bounded rotating diagnostics, startup/heartbeat/cancel/cleanup/resource metrics, reserved control capacity, no zombies/orphans, Windows Job Objects and quoting/environment blocks, Linux/macOS process groups/signals, normalized UTF-8/path/newline behavior, and conformance tests on all three platforms.\n",
+        "Non-responsibilities: no authority, process-supervision policy, extension enablement, side-effect outcome guess, canonical lifecycle/history commit, or workflow scheduling.\n",
+        "\n",
+        "Managed process sessions (approved 2026-09-17): Process lifetime includes descendants after root exit and output drain. Monitor and cancellation never block on reader joins, stdin writes, or process waits. Use exact Windows Job Object membership and POSIX process groups; launch into containment before executing. Windows console tools use CREATE_NO_WINDOW; GUI programs may show their intended windows. Capture stdout/stderr continuously with bounded memory, bounded spill files and byte cursors; preserve stdin for shell_start and python_start. Explicit limits, stop, host shutdown and supervisor failures clean owned trees; a soft wait only returns a snapshot. Native OS FFI is confined to the small process-platform boundary; application and capability logic remain safe Rust.\n",
+        "\n",
+        "Python launch preparation is shared by every call and every managed job. Retain isolated interpreter (-I), executable identity and existing authority validation; managed Python adds unbuffered output (-u). There is no second invocation mode: host shell and host Python always run as supervised jobs with a bounded soft initial wait, and their lifetime ends at exit, explicit stop, or an explicit output limit - never at a wall-clock deadline. A wall-clock deadline remains only where the caller is a bounded one-shot probe, such as a Settings health probe; it is never an interface of the shell or Python tool. No separate Python registry, completion gate or test-specific lifecycle is introduced.\n",
+        "Windows background launch policy (2026-09-19): Native tools/jobs, STDIO MCP discovery/session/reconnect, external-agent probes, plugins, worker supervision and bootstrap helpers must not allocate a visible console. Shared safe helpers in aworkit-process apply CREATE_NO_WINDOW to direct commands and to command-group's builder (which overwrites Command flags). Preserve existing process containment, STDIO, environment, authority and lifecycle behavior. GUI applications retain intended windows; no global window hiding. Specification and launch audit: docs/background-process-windows.md."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.process_runtime",
+    "id": 61,
+    "name": "Invocation Lifecycle & Cross-Platform Process Runtime",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Lifecycle,Process,Cross Platform",
+    "technology": "Rust OS abstraction over Windows Job Objects and POSIX process groups",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "98597b4f-cebb-859b-b8f5-a2aec24bb1bb",
+  "schemaVersion": 1
+}

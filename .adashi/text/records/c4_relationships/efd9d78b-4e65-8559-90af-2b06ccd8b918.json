@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Depends on bounded authorized instruction-file probes/reads supplied through the existing worker-to-core gateway and invocation broker; no direct worker-to-host IPC or expanded filesystem authority.",
+    "destination_external_id": "aworkit.capability_host.tool_runtime",
+    "external_id": "rel.workspace_instructions.files",
+    "id": 333,
+    "source_external_id": "aworkit.workflow_worker.workspace_instructions",
+    "tags": "",
+    "technology": "Existing approved filesystem capability boundary",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "efd9d78b-4e65-8559-90af-2b06ccd8b918",
+  "schemaVersion": 1
+}

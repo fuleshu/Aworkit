@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Streams parent-verified branch pages from exact SegmentHash and line ordinals; it never asks the segment repository to write, repair, merge, or infer a gap",
+    "destination_external_id": "aworkit.portable_store.segment_repository",
+    "external_id": "rel.portable.projection.segment",
+    "id": 261,
+    "source_external_id": "aworkit.portable_store.projection_feed",
+    "tags": "Relationship,Internal Portable Contract,Read Only",
+    "technology": "PortableHistoryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "232b46bf-94a8-8143-81de-29f798544fd5",
+  "schemaVersion": 1
+}

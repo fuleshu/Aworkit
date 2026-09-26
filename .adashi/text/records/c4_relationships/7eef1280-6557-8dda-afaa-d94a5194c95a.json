@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns metadata-only redemption, use, revoke, expiry, zeroization, and process-loss audit facts without secret values",
+    "destination_external_id": "aworkit.trusted_core.secret_broker",
+    "external_id": "rel.host_materializer.core_secret.audit",
+    "id": 191,
+    "source_external_id": "aworkit.capability_host.secret_materializer",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Authenticated metadata-only lease channel",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7eef1280-6557-8dda-afaa-d94a5194c95a",
+  "schemaVersion": 1
+}

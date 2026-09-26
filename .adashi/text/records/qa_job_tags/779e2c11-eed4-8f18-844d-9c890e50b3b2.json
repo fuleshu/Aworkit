@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-22 06:24:26",
+    "qa_job_id": {
+      "ref": "256792fc-a3c4-81b5-a7ed-6d26b4612c63"
+    },
+    "tag": "external-agents"
+  },
+  "deleted": false,
+  "identity": "779e2c11-eed4-8f18-844d-9c890e50b3b2",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.ui.shell.chat",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 21:42:53",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "641115cd-4533-8a97-b8e9-36f3c5ef741c",
+  "schemaVersion": 1
+}

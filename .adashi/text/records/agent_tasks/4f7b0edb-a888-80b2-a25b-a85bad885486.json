@@ -1,0 +1,50 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/nodeCatalog.ts\",\"desktop/src/workbench/nodeCatalog.test.ts\",\"desktop/src/workbench/NodeConfigurationForm.tsx\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\"]",
+    "completed_at": "2026-09-21 08:17:10",
+    "completion_memo": {
+      "lines": [
+        "Implemented the value-carrying control-node contract.\n",
+        "\n",
+        "Delivered: (1) portKindsConnect now treats flow/route as control semantics that carry the incoming value, so flow -> text and route -> text are valid while text -> route stays invalid; approval and parallel ports are relabelled (Value / Carried value) and condition/parallel/approval descriptions state the pass-through. (2) The condition node's default predicate was corrected from the runtime-unknown {op:\"always\"} to {kind:\"always\"}, and the predicate form now reads and writes the runtime's `kind` vocabulary (with `op` still read as a legacy alias so old documents stay editable). The flat form now offers only the kinds it can fully author (always/exists/eq/neq); nested and/or/not remain accepted by the validator for hand-authored JSON. (3) Native side: validate_v1_executable_catalog never checked port kinds, so no validator change was needed; a new documents.rs test proves the native catalog accepts a graph where an approval gate and a routed condition both feed an Agent (editor-clean == runtime-executable). (4) Runtime guarantee made directly testable: the value selection was extracted into the pure `carried_value` helper used by incoming_value, documenting and testing that a value crosses an active transition unchanged, that a skipped branch contributes nothing, and that an active transition from an unexecuted source yields nothing. Approval denial keeps the existing failed-outcome path and therefore produces no successor value.\n",
+        "\n",
+        "Tests: graph_pass 11/11 (new control_values_cross_active_edges_and_skipped_branches_contribute_nothing); documents catalog_rejects_unknown_nodes_cycles_bad_conditions_and_bad_configs incl. the new value-carrying acceptance; frontend nodeCatalog 10/10 (new value-carrying graph asserts both validateWorkflow and assessNativeWorkflow agree) and NodeConfigurationForm 2/2; tsc --noEmit clean.\n",
+        "\n",
+        "No changes to freeze, authority, no-replay, or the node-type set. NOTE: the flat predicate form intentionally no longer offers and/or/not because it cannot author their required operands; they stay valid in JSON and are evaluated by the frozen runtime."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:46",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Remove the typed-port limitation that stops control constructs from gating or routing a text pipeline.\n",
+        "\n",
+        "Problem. In the shipped v1 catalog, approval and parallel expose only flow ports and condition only route ports, while agent, model_call, tool, output and wait consume only text. The editor's portKindsConnect rejects flow -> text and route -> text, so an approval node or a routed branch can never feed a model node, even though the runtime already carries a value through these nodes via incoming_value. The result is that any gated or conditional model workflow is editor-invalid and Save-blocked, which is why DSH-style plan approval and conditional routing cannot be authored today.\n",
+        "\n",
+        "Design fit. Treat flow/route as control semantics rather than an incompatible data type, and give control nodes a declared typed pass-through value.\n",
+        "- Extend the node catalog and port model: approval and parallel accept the incoming value and emit it unchanged on their control output; condition accepts text and emits the incoming value on both the true and false routes. Unknown or skipped branches produce no value.\n",
+        "- Update the editor validator (validateWorkflow, portKindsConnect, nodeCatalog) and the native executable validator (validate_v1_executable_catalog) and assessNativeWorkflow together, so editor-clean and runtime-executable stay equivalent; add contract tests that assert this equivalence in both directions.\n",
+        "- Runtime guarantees: a value crosses at most one node identity and lands on the successor through a new immutable context revision with provenance; a skipped branch contributes nothing; an approval denial keeps the existing failed-outcome contract and never invents a value.\n",
+        "- Keep the frozen-graph, authority, freeze and no-replay invariants untouched. No new authority and no new node type.\n",
+        "\n",
+        "This unblocks the plan-review gate and conditional routing into model/tool nodes as pure contract corrections.\n",
+        "\n",
+        "Outputs. Catalog and port-contract change; runtime pass-through and skip semantics with provenance; editor handle rendering and properties help; contract tests for approval pass-through, condition route value selection, skipped-branch behavior, denial semantics, and editor/runtime validation equivalence."
+      ]
+    },
+    "id": 110,
+    "number": 109,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Let approval, condition, and parallel nodes carry values into model nodes",
+    "updated_at": "2026-09-22 07:30:37"
+  },
+  "deleted": false,
+  "identity": "4f7b0edb-a888-80b2-a25b-a85bad885486",
+  "schemaVersion": 1
+}

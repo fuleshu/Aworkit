@@ -1,0 +1,60 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/context_compression/mod.rs\",\"crates/aworkit-capability-host/src/context_compression/tests.rs\",\"desktop/src-tauri/src/runtime/compression/integration_tests.rs\",\"desktop/src-tauri/src/runtime/compression/runtime.rs\",\"docs/context-compression.md\"]",
+    "completed_at": "2026-09-25 08:31:06",
+    "completion_memo": {
+      "lines": [
+        "Settled: the adaptive compression gates are not mis-tuned, the eligible set was too narrow in exactly one place, and the path is not unnecessary. Evidence and decision are recorded in docs/context-compression.md (\"Gate measurement and decision\"); the code change is the widening plus the observability the measurement needed.\n",
+        "\n",
+        "Measurements (durable pipeline.tool-outcome records, 421 settled results across the recorded runs, plus the recorded context.compression events)\n",
+        "- Median tool result is ~600-900 bytes. Only about 40 of 421 are at or above the 2048-byte minimumBytes floor, and 14 of those are tool.files.edit, which is excluded from compression. That is why the recorded runs emitted ~60 skips: the size floor, not the savings gate, rejected almost every candidate.\n",
+        "- The two recorded firings beat the 15% savings gate by roughly 3x: tool.files.grep 5,058 -> 2,813 bytes / 1,265 -> 704 tokens (44.4% / 44.3%), tool.job.list 4,756 -> 2,783 / 1,189 -> 696 (41.5% / 41.5%). Raising or lowering the savings gate would not have changed the recorded outcome, so it stays.\n",
+        "- The eligible set was too narrow: lossless::templates is a reversible, validated representation of any repeated token structure, but transform only offered it to text where >=25% of lines carried INFO/DEBUG/TRACE/WARN/ERROR. Plain tool stdout therefore reached no lossless representation at all.\n",
+        "\n",
+        "Decision and change\n",
+        "- Widened the representation set: any string result whose path has no known source grammar now reaches lossless::templates; templates is skipped for code paths (their grammar owns them) and is still admitted only when it reconstructs the original byte for byte and beats both gates. No tool allowlist exists, so tool.files.grep and tool.job.list were already eligible (they were the two that fired); nothing needed widening there.\n",
+        "- Kept the minimumBytes floor and the savings gate. Lowering the floor would save tens of tokens per sub-2 KiB result while durably storing an original and a projection for every one of them; the measurement does not support that trade.\n",
+        "- Made every skip name its gate: compress_with_reason returns SkipReason (size / no-representation / savings / policy) and the context.compression-skipped event now records gate, reason, candidateBytes, candidateTokens, minimumBytes and minimumSavings. The old single generic reason made the size-floor rejection indistinguishable from a representation gap, which is precisely why this question could not be answered from the stream.\n",
+        "- The backoff heuristic is reachable and is exercised by the existing retrieval-feedback regression; no recorded live run produced three archives for one owner+capability, so it did not fire in production. It stays.\n",
+        "\n",
+        "Verification\n",
+        "- capability-host: 17 context_compression tests pass, including new coverage for plain repeated text templating losslessly without a log level, exact reconstruction of the projection, and each skip reason. The adaptive-requires-retrieval test now asserts the real invariant (no lossy omission without a reference; a reversible template is allowed).\n",
+        "- desktop: new integration test a_skipped_result_records_the_gate_and_its_own_size asserts the recorded event's gate/candidateBytes/candidateTokens/minimumBytes against a real broker read. Full capability-host suite 176 passed / 2 ignored; full desktop suite 457 passed / 1 ignored / 0 failed."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:14:58",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Promoted from the \"To append next\" paragraph at the bottom of task 126 (number 125), which was recorded as investigation notes rather than commitments and so never became tracked work.\n",
+        "\n",
+        "Question to settle: does the adaptive context compression earn anything, and are its gates mis-tuned? It is separate from the cache work (#130/#131) because compression projections are persisted before the exchange is committed, so they cannot cause cache misses; the issue is whether a feature that rarely fires is mis-tuned or unnecessary.\n",
+        "\n",
+        "Evidence so far:\n",
+        "- first benchmark run: 54 context.compression-skipped, zero context.compression, everything skipped with \"No eligible representation met the size and token savings gates within the output bound\", including the shell output around a 24 KB file write.\n",
+        "- test1_qwen (chat.3fdeab43b37ed6406ff6a62b53fa01bec2a3ca30): 58 skipped with the same reason (22 tool.shell.host, 20 tool.job.output, 8 tool.files.read, 4 tool.image.read) and exactly 2 lossless reductions that did fire — tool.files.grep 1,265 -> 704 tokens and tool.job.list 1,366 -> 728 tokens — so the pipeline works and the gates are the variable.\n",
+        "\n",
+        "Three questions to answer with measurements:\n",
+        "1. Are the size and token-savings gates too conservative for real tool output? Compare the candidate sizes that were skipped against the gate thresholds and the achieved savings on the two that fired.\n",
+        "2. Is the eligible-representation set too narrow? Only tool.shell.host, tool.job.output, tool.shell.start, tool.image.read, tool.files.list and tool.files.read were evaluated at all; decide whether tool.files.grep and tool.job.list should be first-class (they were the ones that actually shrank) and what else is routinely large.\n",
+        "3. Can the backoff heuristic (archives.len() >= 3 && retrieved * 3 >= archives.len() forces Mode::Lossless) ever trigger in practice? The recorded runs produced zero archives, so either it is unreachable or archives are not being kept.\n",
+        "\n",
+        "Deliverable: a short measurement note plus a decision — retune the gates, widen the eligible set, or remove the path — and a test that pins whichever behaviour is chosen."
+      ]
+    },
+    "id": 134,
+    "number": 133,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Settle whether the adaptive context-compression gates are mis-tuned, too narrow, or unnecessary",
+    "updated_at": "2026-09-25 08:31:06"
+  },
+  "deleted": false,
+  "identity": "5aa390dc-602a-80a9-9b65-37fdbff007db",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads only the two baton-named staged build artifacts by ArtifactId, expected whole-bundle content hash, manifest-relative entry, and bounded range. It cannot enumerate arbitrary artifacts, write metadata/content, read repair-ledger rows, or access Chat evidence",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.bootstrap.slots.local_store.artifacts",
+    "id": 288,
+    "source_external_id": "aworkit.bootstrap_helper.build_slots",
+    "tags": "Relationship,Boundary Contract,Read Only,Content Addressed,Repair",
+    "technology": "Read-only sealed BootstrapArtifactReadPort with content-addressed BuildArtifactRefV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fcecb648-33eb-8b6f-8f44-d5c788ccbf0f",
+  "schemaVersion": 1
+}

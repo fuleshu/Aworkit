@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.ui.shell.notifications",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-09-05 12:47:24",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "a8061513-f242-8bba-9c40-769fa800d544",
+  "schemaVersion": 1
+}

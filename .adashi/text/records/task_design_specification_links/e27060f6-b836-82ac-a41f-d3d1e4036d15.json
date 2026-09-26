@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:51",
+    "design_external_id": "uml.portable_store.inert_import_rebind",
+    "id": 344,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "0e58faee-4389-8382-a4ac-0c79772682af"
+    }
+  },
+  "deleted": false,
+  "identity": "e27060f6-b836-82ac-a41f-d3d1e4036d15",
+  "schemaVersion": 1
+}

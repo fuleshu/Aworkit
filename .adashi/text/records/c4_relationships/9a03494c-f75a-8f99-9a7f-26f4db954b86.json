@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches NodeInputEnvelopeV1 and accepts one schema-validated NodeOutcomeV1 per node execution identity",
+    "destination_external_id": "aworkit.workflow_worker.node_runtime",
+    "external_id": "rel.worker_scheduler.node_runtime",
+    "id": 115,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Async typed executor port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9a03494c-f75a-8f99-9a7f-26f4db954b86",
+  "schemaVersion": 1
+}

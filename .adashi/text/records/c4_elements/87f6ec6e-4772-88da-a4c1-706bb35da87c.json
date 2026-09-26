@@ -1,0 +1,34 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Validates a complete workflow document, resolves every required capability and workspace binding, computes the concise authority summary, and compiles the immutable first-input Run snapshot consumed by the worker and brokers.\n",
+        "Owned state: no mutable execution state; owns the compiler/schema versions and produces FrozenRunSnapshotV1 containing workflow bytes/hash, typed graph, resolved model tiers/tools/nodes/external agents, pinned extension identities/versions/hashes, adapter feature declarations, workspace identity/roots, budgets, credential references, AuthorityManifestV1, history mode, and provenance.\n",
+        "Public commands/events and ports: ValidateWorkflowDraft, ResolveRequirements, SummarizeAuthority, and FreezeForFirstInput(FreezeInputsV1); returns ValidationReportV1, ResolutionReportV1, AuthoritySummaryV1, or FrozenRunSnapshotV1 with a stable snapshotId and content hash.\n",
+        "Invariants: every required reference is resolved, compatible, enabled, and accepted before readiness; standard tiers distinguish Unconfigured from missing custom IDs. Snapshots contain no secret values, provider-native/Rig-native objects, inherited portable approvals, or executable plugin code. Once ChatStarted is committed, its snapshot is immutable as the record of what that Chat started with, but it is not the configuration authority for later passes: every pass resolves the current documents, so a later JSON edit reaches the next pass of the same Chat.\n",
+        "Transactional and failure behavior: freeze re-reads and compares all document, project, binding, extension, and workspace versions/hashes under the lifecycle commit precondition. Any drift, missing/incompatible contribution, invalid graph/type/loop limit, or authority mismatch aborts without a partial Run; diagnostics preserve the original graph.\n",
+        "NFRs: deterministic output for identical inputs, bounded and cancellable validation, stable diagnostic codes/JSON pointers, content-addressable snapshots, and large-graph performance budgets.\n",
+        "Non-responsibilities: no dynamic routing/execution, live graph mutation, provider calls, approvals, secrets, or worker process control.\n",
+        "\n",
+        "Existing Chat continuation (user clarification 2026-09-19): FreezeForFirstInput runs only for a new Chat. Every later pass - ordinary input, Stop/Continue, and continuation after a workflow, Settings, or capability edit - re-resolves document-derived configuration from the current documents: node and edge definitions, the bound tool set and its interfaces, provider and tier selection, budgets, and the current explicit approval mode. Only Chat identity, the Run's authority ceiling, the workspace binding, and committed evidence carry over.\n",
+        "The unit of configuration stability is one pass, never the Chat. A change takes effect for work that has not run yet: a resumed pass keeps its recorded position, completed node outputs, selected branches, and settled tool evidence, adopts the current configuration from that point on, and never re-runs what already completed. A change therefore never retro-fits a finished pass, and nothing is replayed.\n",
+        "Enabling a tool that was disabled, or adding or editing a capability or MCP server inside the Run's authorised capability set, is available to the very next pass in the same Chat and is offered to the model immediately. Do not re-freeze tool metadata and then reject the Chat because installed metadata differs, and do not pin tool schema, description, provider name, or limits to the Chat: an improved tool replaces its previous behaviour for existing Chats. Each invocation records the interface and configuration it actually used as evidence for inspection and portable export, without enforcing it later.\n",
+        "Authority is the only thing an edit does not extend: a capability outside the Run's authorised set is settled by the existing broker and approval boundaries at the point of use. Echoed configuration fields from the desktop are not new authority and cannot replace the saved configuration. Exact command replay is identified by Chat/Run ownership and message/control payload, not current catalogs. Validate effects through the existing broker and operation-specific permission boundaries. Explicit supported adapter compatibility is checked when dispatching a tool, never as an app-upgrade Chat-lockout gate."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.snapshot_freezer",
+    "id": 28,
+    "name": "Workflow Resolution & Run Snapshot Freezer",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Workflow,Authority",
+    "technology": "Rust deterministic validator/compiler with Aworkit-owned JSON schemas",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "87f6ec6e-4772-88da-a4c1-706bb35da87c",
+  "schemaVersion": 1
+}

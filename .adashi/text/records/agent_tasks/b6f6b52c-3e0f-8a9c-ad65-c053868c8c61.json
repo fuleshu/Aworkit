@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-local-store/Cargo.toml\",\"crates/aworkit-local-store/src/lib.rs\"]",
+    "completed_at": "2026-08-21 16:19:42",
+    "completion_memo": "Implemented the LocalSqlite semantic ledger and its sole atomic commit API. SQLite is initialized with foreign keys, WAL, and FULL synchronous mode; an IMMEDIATE transaction verifies expected stream head then commits contiguous immutable events, optional attempt/checkpoint, deduplication receipt, and ordered outbox entries together. Identical idempotency retries return the stored receipt, changed-hash key reuse rejects, stale heads roll back with no partial rows, and semantic/outbox payload validation excludes secret/token/lease material. Added read-only event ID and pending-outbox access plus idempotent delivery marking, with tests covering full commit, dedup retry, stale-head atomicity, and secret rejection. cargo test -p aworkit-local-store passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:25:41",
+    "created_files": "[\"crates/aworkit-local-store/src/ledger.rs\"]",
+    "description": "Implement the LocalSqlite semantic Chat/Run ledger and LocalHistoryCommitPort transaction. A commit must atomically enforce the expected stream head and persist semantic events, attempt/head state, optional checkpoint, command and invocation deduplication, and delivery outbox rows before acknowledgement.",
+    "id": 10,
+    "number": 10,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M02.2 — Implement the local semantic ledger and atomic commit adapter",
+    "updated_at": "2026-09-21 14:55:23"
+  },
+  "deleted": false,
+  "identity": "b6f6b52c-3e0f-8a9c-ad65-c053868c8c61",
+  "schemaVersion": 1
+}

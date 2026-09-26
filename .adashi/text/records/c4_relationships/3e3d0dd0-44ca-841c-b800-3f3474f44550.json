@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Stores immutable candidate diffs, tests, benchmarks, build hashes, verification output, and rollback evidence by ArtifactId/hash while the ledger retains lifecycle metadata",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.local_store.error_repair_ledger.artifact_store",
+    "id": 228,
+    "source_external_id": "aworkit.local_store.error_repair_ledger",
+    "tags": "Relationship,Internal,Evidence",
+    "technology": "RepairEvidenceArtifactPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3e3d0dd0-44ca-841c-b800-3f3474f44550",
+  "schemaVersion": 1
+}

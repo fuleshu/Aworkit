@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses root/file handles and filesystem identity facts for race-safe no-follow traversal and final-object containment verification; missing paths never fall back to another workspace",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.portable.reference.workspace_adapter",
+    "id": 251,
+    "source_external_id": "aworkit.portable_store.reference_resolver",
+    "tags": "Relationship,Internal Portable Contract,Path Security",
+    "technology": "HandleAnchoredResolutionPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d55eee80-4a61-811d-9a5c-01166bb3937c",
+  "schemaVersion": 1
+}

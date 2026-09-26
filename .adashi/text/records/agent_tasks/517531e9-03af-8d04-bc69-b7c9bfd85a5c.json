@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/src-tauri/src/runtime/tool_registry.rs\",\"desktop/src-tauri/src/runtime/tool_registry/tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/Cargo.lock\"]",
+    "completed_at": "2026-09-17 16:50:36",
+    "completion_memo": "Implemented all six native managed-job tools, Settings admission, frozen bindings and normal broker approval. Ordinary shell yields within at most 10 seconds when its four job controls are bound; existing frozen Chats without controls preserve bounded legacy behavior. Chat-owned registry persists launch identity before side effects, acknowledges output cursors only after broker outcome commit, never replays interrupted jobs, and restores post-snapshot output sizes on restart. Bounded running capacity/output/history; native sessions released on terminal state. Tests: 4 native registry cases pass (ownership, launch dedup, retention, Stop, restart/no replay, durable cursor and crash output); six catalog tests pass; desktop suite 345 passed before the additional crash-output case. Native projectless Chat fixture passes with real Windows shell processes. No Adashi QA changes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-17 16:10:59",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/tests.rs\",\"docs/shell-jobs.md\"]",
+    "description": "Implement shell_start, job_output, job_input, job_stop, job_list and approval-protected job_keep; ordinary shell yields into the shared engine. Persist job identity/state/output cursors and recover without replay. Enforce owner isolation, normal authorization, projectless execution, capacity and shutdown cleanup. Exclude Adashi QA.",
+    "id": 91,
+    "number": 90,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Expose durable Chat-owned shell jobs and control tools",
+    "updated_at": "2026-09-22 07:26:03"
+  },
+  "deleted": false,
+  "identity": "517531e9-03af-8d04-bc69-b7c9bfd85a5c",
+  "schemaVersion": 1
+}

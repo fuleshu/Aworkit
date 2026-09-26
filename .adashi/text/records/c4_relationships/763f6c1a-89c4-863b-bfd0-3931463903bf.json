@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies frozen automatic plugin selection, configuration, owner and workspace authority independently from callable model-tool definitions.",
+    "destination_external_id": "aworkit.workflow_worker.workspace_instructions",
+    "external_id": "rel.workspace_instructions.freeze",
+    "id": 334,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "",
+    "technology": "Frozen Chat/node binding",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "763f6c1a-89c4-863b-bfd0-3931463903bf",
+  "schemaVersion": 1
+}

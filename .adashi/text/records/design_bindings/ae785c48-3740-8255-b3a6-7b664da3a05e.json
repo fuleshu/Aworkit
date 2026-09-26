@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-22 21:32:13",
+    "design_external_id": "aworkit.desktop_ui.conversation",
+    "id": 78,
+    "target": "desktop/src/chat/ConversationTimeline.tsx",
+    "target_type": "file",
+    "updated_at": "2026-09-22 21:32:13",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ae785c48-3740-8255-b3a6-7b664da3a05e",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Makes the immutable SameUserHashAndOwnership-protected BootstrapResultV1 available only to the expected candidate or rollback ProcessGenerationV1. The next Core Repair Orchestrator commits activation, verification, rollback, Unsupported, or manual-recovery evidence and resumes the same Management Chat",
+    "destination_external_id": "aworkit.trusted_core.repair",
+    "external_id": "rel.bootstrap.coordinator.core_repair.result",
+    "id": 287,
+    "source_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "tags": "Relationship,Boundary Contract,Repair,Receipt,No Direct Commit",
+    "technology": "BootstrapResultReadPortV1 over authenticated local bootstrap protocol",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f7237634-4795-8232-87ad-2da0f62cfc71",
+  "schemaVersion": 1
+}

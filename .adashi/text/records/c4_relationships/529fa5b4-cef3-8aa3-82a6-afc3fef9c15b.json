@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Computes artifact reachability from verified event descriptors, reports corrupt reachable content, and collects only approved unreferenced staged/CAS objects after grace",
+    "destination_external_id": "aworkit.portable_store.artifact_cas",
+    "external_id": "rel.portable.integrity.artifact",
+    "id": 265,
+    "source_external_id": "aworkit.portable_store.integrity_retention",
+    "tags": "Relationship,Internal Portable Contract,Retention",
+    "technology": "ArtifactIntegrityAndOrphanPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "529fa5b4-cef3-8aa3-82a6-afc3fef9c15b",
+  "schemaVersion": 1
+}

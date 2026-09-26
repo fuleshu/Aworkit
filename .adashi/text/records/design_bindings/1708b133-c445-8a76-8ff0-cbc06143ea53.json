@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-17 17:49:11",
+    "design_external_id": "aworkit.trusted_core.invocation_broker",
+    "id": 35,
+    "target": "desktop/src-tauri/src/runtime/pipeline/frozen_tools.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-17 17:49:11",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1708b133-c445-8a76-8ff0-cbc06143ea53",
+  "schemaVersion": 1
+}

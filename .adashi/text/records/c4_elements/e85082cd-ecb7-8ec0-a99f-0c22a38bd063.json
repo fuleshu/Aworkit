@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Persists each saved workflow as exactly one schema-versioned canonical JSON graph edited by the canvas. It losslessly round-trips known and unknown node types, configuration fields, typed connections, transitions, positions, groups, comments, logical capability references, and dependency requirements.\n",
+        "Owned records/files: WorkflowId-addressed JSON documents plus a small atomic manifest of WorkflowId, schemaVersion, documentVersion, content hash, path, title/status metadata, and committed generation. There is no editable SQL or secondary graph body.\n",
+        "Keys and ordering: WorkflowId is stable; documentVersion is monotonic compare-and-swap state; contentHash identifies accepted bytes. Base-version conflicts never use timestamps or last-writer-wins. Active Chat snapshots refer to an accepted WorkflowId/version/hash and are not mutated by later saves.\n",
+        "Ports: exposes WorkflowDocumentRepository load/save/import-inert/export-lossless/watch operations only to the core Project, Workspace & Configuration Coordinator, plus read-only migration/backup maintenance to the storage coordinator.\n",
+        "Durability/migration/degraded behavior: atomic same-directory temp-write, file and directory fsync, rename, and manifest generation produce either the prior or new complete document. Schema migration is staged, checksum-verified, and unknown-field preserving. Malformed, missing-plugin, incompatible-node, or forward-schema documents remain intact and inspectable; unresolved requirements block execution rather than save/export. Recovery never fabricates lost nodes.\n",
+        "Retention/performance: bounded prior generations support conflict/recovery; default document limit is 16 MiB with explicit override. Parsing/validation is cancellable and off the UI path; manifest listing avoids full graph parsing, and watches are hash based.\n",
+        "Security/non-responsibilities: workflows contain only logical capability IDs and opaque credential references; credential values, lease material, executable plugin code, inherited approvals, and hidden reasoning are forbidden. This repository does not freeze Runs, resolve bindings, install/enable code, execute graphs, store run-local overlays, commit Git, or hold canonical Chat events."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.workflow_repository",
+    "id": 66,
+    "name": "Canonical Workflow JSON Document Repository",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Canonical,Workflow,JSON",
+    "technology": "Rust lossless schema-versioned JSON document repository",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e85082cd-ecb7-8ec0-a99f-0c22a38bd063",
+  "schemaVersion": 1
+}

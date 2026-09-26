@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Owns journal schema compatibility, integrity checks, crash-consistent machine-local backup and validated restore, writer maintenance gates, and compaction mechanics. It compacts only event-committer-marked terminal or superseded facts after the safety horizon, preserves pending/undelivered/uncertain or quarantined evidence, and never interprets portable history or creates operational transitions",
+    "destination_external_id": "aworkit.local_store.portable_runtime_journal",
+    "external_id": "rel.local_store.storage_coordinator.portable_runtime_journal",
+    "id": 285,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance,Integrity,Backup,Retention,Noncanonical",
+    "technology": "PortableRuntimeJournalMaintenancePort over SQLite backup, integrity, migration, and retention primitives",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b54fc459-bf0c-8000-b54c-28867b2082fc",
+  "schemaVersion": 1
+}

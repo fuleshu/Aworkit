@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Registers generation-fenced deadlines, cancellation, stream-control capacity, and dispatch milestones for each admitted invocation",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_gateway.process_runtime",
+    "id": 155,
+    "source_external_id": "aworkit.capability_host.invocation_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "In-process Rust lifecycle port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d3cd9809-5e4c-8401-9aa4-f5d8ba7124c4",
+  "schemaVersion": 1
+}

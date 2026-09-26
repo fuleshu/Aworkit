@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies immutable hierarchical budgets, loop bounds, deadlines, nesting, fan-out, and concurrency ceilings",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_execution_plan.limits",
+    "id": 113,
+    "source_external_id": "aworkit.workflow_worker.execution_plan",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Immutable limit descriptors",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5d7a9254-313f-83b3-a602-dafc833a4ea7",
+  "schemaVersion": 1
+}

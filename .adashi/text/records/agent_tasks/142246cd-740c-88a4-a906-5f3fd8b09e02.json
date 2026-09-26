@@ -1,0 +1,55 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/external_agent.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/frames.rs\",\"desktop/src-tauri/src/runtime/tool_registry/tests.rs\",\"desktop/src-tauri/tests/external_agent_probe.rs\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/workbench/NodeConfigurationForm.tsx\",\"desktop/src/workbench/NodeConfigurationForm.test.tsx\",\"desktop/src/workbench/SettingsScreen.test.tsx\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/configuration.test.ts\",\"desktop/src/workbench/nodeCatalog.ts\",\"desktop/src/workbench/nodeCatalog.test.ts\",\"desktop/src/workbench/settings-v2/IntegrationSections.tsx\",\"desktop/src/workbench/workflowExecution.ts\",\"crates/aworkit-capability-host/src/codex_app_server.rs\",\"crates/aworkit-capability-host/src/external_agent/mod.rs\",\"crates/aworkit-capability-host/src/external_agent/codex_one_shot.rs\",\"crates/aworkit-capability-host/src/external_agent/provider.rs\"]",
+    "completed_at": "2026-09-22 18:01:22",
+    "completion_memo": {
+      "lines": [
+        "Delivered the DeepSeek Harness provider shape for external agents, end to end, in five reviewed commits: 6620def (Claude Code backend + reasoning-effort gating), aa3687e (per-target delegation defaults), 86fe5a4 (static tools, freeze resolution, dispatch, child frames, spanKind split), 621a735 (workflow node), ab084e5 (background delegation).\n",
+        "\n",
+        "What exists now. (1) Seam: ExternalAgentBackendV1 with declared start-time capabilities, a reasoning-effort allow-list per product, one-shot run outcome with bounded secret-free diagnostics, and a registry that refuses an unsupported option before anything starts. (2) Two production backends. Codex drives one app-server process, one ephemeral thread and exactly one turn, maps the permission mode onto thread/start approvalPolicy/approvalsReviewer/sandbox, answers approval/user-input/MCP requests unattended, fails the run on an unknown server request, classifies failed turns into limit/access-policy/service/transport/product-error/unknown, and settles on the final_answer agent message. Claude Code drives one `--print --output-format stream-json` process, submits the task on stdin so it never appears in the argument vector, maps `--permission-mode`/`--model`/`--effort`, classifies from terminal_reason and api_error_status, recognises a signed-out CLI and reports it with a fixed sign-in hint, and reports denied actions without hiding the answer. Both kill the complete child process group on cancellation; integration tests prove no descendant survives. (3) Tools: tool.subagent_codex and tool.subagent_claude_code are static manifest tools; the configured target resolves once at first-input freeze into the tool snapshot (backend, absolute executable, arguments, working directory, permission mode, model, effort), so a later Settings change cannot alter a running Chat. Gating fails closed with stable messages for no enabled target, unknown or disabled target, unsupported transport, missing executable, and credential-backed environment values this build cannot yet materialize; native product login stays authoritative. Per-call model/effort only narrows the frozen route. (4) Execution records a ChildKindV1::External one-shot frame with identity, lineage, status and the final answer, with no continuation, steering or inherited tools; a background request commits a running revision first and returns a job id whose answer arrives through job_output. spanKind is split: in-process children publish `subagent`, real product sessions `external_agent`. (5) The external_agent workflow node carries provider, model, reasoning effort and instructions, shares the delegation capability and authority, and runs one delegation per execution; the editor gained a delegation-tool selector and a product-aware effort selector.\n",
+        "\n",
+        "Verification. Capability host: 44 unit tests plus 7 Codex and 7 Claude Code process-level integration tests, and both opt-in live gates run against the real products on this machine (Codex returned an answer; the signed-out Claude CLI produced the fixed authentication diagnostic). Desktop Rust: 416 passed with the single pre-existing unrelated compaction failure. TypeScript: 462 tests across 63 files with a clean type-check. The pipeline suite drives the whole path with a scripted product process: tool delegation, branch-graph node execution, background job collection, unresolved-target refusal, and a node route its product cannot express.\n",
+        "\n",
+        "Known and deliberate limits. Credential-backed environment injection into a delegated child is refused rather than silently dropped (tool credential leases are not materialized into child processes yet). The tool-level target is a typed target id rather than a dropdown; the node has a proper provider selector. External children are one-shot by design: no continuation, steering, usage or artifact forwarding."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:57",
+    "created_files": "[\"crates/aworkit-capability-host/src/external_agent/provider.rs\",\"crates/aworkit-capability-host/src/external_agent/codex_one_shot.rs\",\"crates/aworkit-capability-host/src/external_agent/claude_code.rs\",\"crates/aworkit-capability-host/tests/codex_one_shot.rs\",\"crates/aworkit-capability-host/tests/codex_one_shot_live.rs\",\"crates/aworkit-capability-host/tests/claude_one_shot.rs\",\"crates/aworkit-capability-host/tests/claude_one_shot_live.rs\",\"crates/aworkit-capability-host/tests/fixtures/codex_one_shot_fixture.py\",\"crates/aworkit-capability-host/tests/fixtures/claude_one_shot_fixture.py\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/external.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/external_agent_tools.rs\"]",
+    "description": {
+      "lines": [
+        "Expose configured External Agent Runtimes as one-shot subagent delegation providers, mirroring the DeepSeek Harness provider seam (subagent-codex, subagent-claude-code, subagent-acp) through the boundary Aworkit already owns rather than a new mechanism.\n",
+        "\n",
+        "Current state. The external-agent lifecycle manager exists as a library only (M09.4/task 59), Settings can configure and handshake-probe a Codex target, and the delegation tool offers only the built-in spawn/fork child runtime. No production peer exists, nothing dispatches through the manager, and no frozen Chat snapshot can select an external runtime.\n",
+        "\n",
+        "Reference shape (DeepSeek Harness, verified in its checkout). A provider seam registers named backends: in-process spawn, in-process fork, generic out-of-process ACP, one-shot Codex, one-shot Claude Code. Each backend is exposed to the model as its own static delegation tool configured with a provider and a tool name; the model never picks a backend through a provider argument on a shared tool. A one-shot backend runs unattended, neither continues nor steers, and returns only the child's final answer or a safe failure diagnostic - child reasoning, tool traffic, stderr, usage and workspace diffs never enter the parent. Installation controls availability only: a backend is dormant until a delegation tool exposes it.\n",
+        "\n",
+        "Deliverables.\n",
+        "- Provider seam in the capability host: named backends with declared start-time capabilities, a one-shot run handle exposing a terminal result (final answer, optional structured value, bounded secret-free diagnostic, typed stop reason), and idempotent disposal. A start-time option a backend does not support is rejected with a typed error rather than accepted and ignored.\n",
+        "- A production Codex peer over the Codex App Server protocol: one fresh process, one ephemeral thread and exactly one turn per delegation; native Codex configuration and login stay authoritative; the configured permission mode maps to thread/start approvalPolicy, approvalsReviewer and sandbox. Approval, user-input and MCP requests raised by the child are answered or declined without a human, and an unknown server request fails the run with a safe diagnostic.\n",
+        "- A production Claude Code backend over the non-interactive CLI (print with stream-json output), one process per delegation, with the permission mode mapped to the CLI permission mode. Claude Code exposes no ACP mode, so it is not treated as an ACP target.\n",
+        "- Generic ACP stays an explicit backend for user-configured ACP stdio targets.\n",
+        "- Static model-facing delegation tools, one per configured backend, each naming its own tool and provider, with background delegation through the existing job registry and one-shot semantics.\n",
+        "- Gating through configuration and attestation: a backend is selectable only when its target is configured, enabled, executable and compatible with the current host generation; otherwise execution is blocked with a stable diagnostic while editing and export stay intact. Aworkit never installs or enables a runtime on the model's behalf and never describes an external agent as a sandbox.\n",
+        "- Bounds of depth, turns, deadline and budget admission; terminate and tree-clean on completion, cancellation or Run terminal state; on recovery, never replay an acknowledged external effect and reconcile by committed invocation identity.\n",
+        "\n",
+        "Non-goals. Bundling or installing either external runtime; bypassing approval by default; treating external-agent output as canonical history without core commit; forwarding child progress, reasoning, usage or artifacts into the parent; continuing, forking or steering an external-agent session.\n",
+        "\n",
+        "Outputs. Provider seam and run contract, Codex and ACP peers plus the Claude Code backend, static per-backend delegation tools, permission-mode configuration with diagnostics, lifecycle cleanup and cancellation, and tests for backend selection, unavailable or unattested target blocking, cancellation cleanup, unattended child request handling, final-answer selection, and recovery without replay."
+      ]
+    },
+    "id": 113,
+    "number": 112,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "External-agent subagent providers (Codex and Claude Code)",
+    "updated_at": "2026-09-22 18:01:22"
+  },
+  "deleted": false,
+  "identity": "142246cd-740c-88a4-a906-5f3fd8b09e02",
+  "schemaVersion": 1
+}

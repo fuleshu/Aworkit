@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/appearance.ts\",\"desktop/src/styles.css\",\"desktop/src/main.tsx\"]",
+    "completed_at": "2026-08-21 18:12:51",
+    "completion_memo": "Implemented the compact semantic token system with pre-render System/Light/Dark resolution, forced-colors/reduced-motion support, focus styling, density geometry, and theme-parity tests.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:30:30",
+    "created_files": "[]",
+    "description": "Implement Aworkit-owned React workbench primitives over the approved component facade, exact Light/Dark token sets, System/Light/Dark resolution before reveal, compact density, focus/overlay services, forced-colors, reduced-motion, font scaling, and accessibility fixtures. Feature modules must consume semantic roles rather than raw toolkit state or colors.",
+    "id": 44,
+    "number": 44,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M07.1 — Implement the compact desktop design system and appearance model",
+    "updated_at": "2026-09-22 07:14:21"
+  },
+  "deleted": false,
+  "identity": "264610fe-ad33-8afb-834e-9505831cd296",
+  "schemaVersion": 1
+}

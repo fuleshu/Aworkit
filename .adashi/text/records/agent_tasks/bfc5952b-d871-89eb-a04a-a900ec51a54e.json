@@ -1,0 +1,51 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/App.tsx\",\"desktop/src/chat/ConversationTimeline.tsx\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-21 19:37:10",
+    "completion_memo": {
+      "lines": [
+        "Implemented the model-facing browse capability on the shared question suspension.\n",
+        "\n",
+        "`tool.browse` is one frozen native capability with `authorityMode` `run_browse` and provider name `browse`, taking `prompt`, `kind` (`file` or `folder`) and an optional `title`. It accepts no path from the model: the user chooses, and the tool never reads or lists anything. It is admitted in Settings and in the frozen binding, owner-scoped per Chat, idempotent by command id, and excluded from the delegated-subagent selection.\n",
+        "\n",
+        "It is realised as the same Run suspension as `tool.ask_user` (task 114) — a committed `question.asked` whose `kind` is `file` or `folder` — so the answer-once, no-replay, owner-isolation and restart rules are identical rather than reimplemented. The desktop renders the path question in the same modal dialog: the prompt, the currently chosen path, and one button that opens the operating system's own chooser through the existing native picker commands. Confirming submits the chosen absolute path as the tool result; dismissing the chooser leaves the dialog unchanged; Skip submits `cancelled: true`, which the model receives as an ordinary result and continues from instead of an error or a retry. A chosen path is a user-supplied value and not a grant, so the file and shell tools still apply their own approval policy to it.\n",
+        "\n",
+        "Verification. Rust 403 passed with only the pre-existing pre-existing checkpoint compaction failure; the pipeline tests cover a folder suspension with no options, a chosen path delivered as the answer value, free text refused for a path question, and the cancelled-instead-of-error result. TypeScript `tsc --noEmit` clean; the dialog tests cover the chooser being opened for the right kind, the chosen path, the unchanged dialog when the chooser is dismissed, and the disabled state when a desktop has no chooser; the workspace test covers the path question end to end. Design revision 751 records the capability and its shared suspension; `docs/subagent-tool-inheritance.md` documents it."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 19:03:36",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/question.rs\",\"desktop/src-tauri/src/runtime/pipeline/question_control.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/question.rs\",\"desktop/src/chat/question.ts\",\"desktop/src/chat/QuestionDialog.tsx\"]",
+    "description": {
+      "lines": [
+        "Add a model-facing capability that asks the user to choose a file or a folder through the desktop's operating-system dialog.\n",
+        "\n",
+        "Current state. Aworkit has no way for the model to obtain a path from the user. The desktop already exposes native OS pickers (`presentation::pick_file` / `pick_folder`, the `native_pick_file` / `native_pick_folder` Tauri commands, bound to the Settings executable picker), but they are reachable only from Settings UI code, never from a Run, and a tool call has no channel to ask for one.\n",
+        "\n",
+        "Agreed behavior (confirmed 2026-09-21).\n",
+        "- One frozen native capability `tool.browse` with `authorityMode: run_browse`, provider name `browse`, and a `kind` argument of `file` or `folder`. A single tool keeps the manifest, Settings admission and the frozen binding to one entry; the model states which it needs.\n",
+        "- Arguments: `prompt` (what the model needs and why, shown to the user), `kind` (`file` or `folder`), optional `title`, optional `extensions` filter for files. No default path is accepted from the model: the user chooses, the model never proposes a path.\n",
+        "- The tool has no host side effect and reads nothing itself. It is realised as the same Run suspension as `tool.ask_user` (task 114): a committed question whose presentation is a path request, answered once and consumed once on resume, with the same no-replay, owner-isolation and restart rules.\n",
+        "- The desktop renders the path question in the same modal dialog family: the prompt, the currently chosen path, and one button that opens the operating system's own file or folder chooser through the existing native dialog plumbing. Confirming commits the chosen absolute path as the tool result. Dismissing the OS chooser leaves the dialog open and unchanged. Skip commits `cancelled: true` as the tool result, and the model continues its turn with that ordinary result instead of an error or a retry.\n",
+        "- Owner-scoped per Chat, idempotent by command id, excluded from the delegated-subagent selection (a child that needs a path returns the blocked action to its parent), and never an authority expansion: a chosen path is a user-supplied value, not a grant, and the existing file and shell tools still apply their own approval policy to it.\n",
+        "\n",
+        "Outputs. Tool manifest entry, schema, freeze and Settings admission; the path-question presentation on the shared question suspension; the desktop dialog with OS chooser integration; tests for choosing a file, choosing a folder, cancelled-is-a-result, no default path from the model, answer-once, owner isolation, child exclusion, and the dialog's accessibility.\n",
+        "\n",
+        "Non-goals. No second interactive channel beside the question suspension; no model-proposed paths; no directory listing returned with the path; no standing filesystem grant created by a choice; no change to the existing Settings executable picker."
+      ]
+    },
+    "id": 121,
+    "number": 120,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Model-facing browse tool for user-chosen files and folders",
+    "updated_at": "2026-09-21 19:37:10"
+  },
+  "deleted": false,
+  "identity": "bfc5952b-d871-89eb-a04a-a900ec51a54e",
+  "schemaVersion": 1
+}

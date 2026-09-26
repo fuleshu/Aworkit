@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-23 12:08:05",
+    "qa_job_id": {
+      "ref": "8136ab71-2eeb-8fc6-8c16-b468fd82a8ad"
+    },
+    "tag": "cross-platform"
+  },
+  "deleted": false,
+  "identity": "47c1dac5-d6b1-8281-b903-c28dfe940823",
+  "schemaVersion": 1
+}

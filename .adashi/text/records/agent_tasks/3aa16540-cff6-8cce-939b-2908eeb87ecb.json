@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-workflow-worker/Cargo.toml\",\"crates/aworkit-workflow-worker/src/lib.rs\",\"crates/aworkit-workflow-worker/src/suspension.rs\"]",
+    "completed_at": "2026-08-21 17:02:10",
+    "completion_memo": "Implemented exact-position input/approval/pause/cancel suspension plus checkpoint and generation-fenced no-replay rehydration. Recovery validates frozen snapshot and plan identities before restoring logical tokens.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:26:27",
+    "created_files": "[\"crates/aworkit-workflow-worker/src/suspension.rs\"]",
+    "description": "Implement exact-position suspension for input, approval, pause, cancellation, and controlled quiescence plus logical checkpoint proposals and replacement-generation rehydration behind an abstract trusted-core port. Resume only from the frozen snapshot, a core-validated checkpoint, and committed cursor; completed effects must never be replayed. Concrete process IPC is implemented in M04.5.",
+    "id": 18,
+    "number": 18,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M03.5 — Implement suspension and no-replay worker rehydration",
+    "updated_at": "2026-09-21 14:56:29"
+  },
+  "deleted": false,
+  "identity": "3aa16540-cff6-8cce-939b-2908eeb87ecb",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Offers reload of the saved workflow for the next turn and shows the incumbent revision, the validation result, the authority delta and the recorded tool rounds the candidate cannot replay; it never mutates a run in flight.",
+    "destination_external_id": "aworkit.trusted_core.revision_rebind",
+    "external_id": "rel.core.rebind.presentation",
+    "id": 338,
+    "source_external_id": "aworkit.desktop_ui.workflow_editor",
+    "tags": "Relationship,Internal UI Contract,Revision",
+    "technology": "In-process typed command and projection contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ce0c9ee2-8e90-8434-8c14-070604ea051f",
+  "schemaVersion": 1
+}

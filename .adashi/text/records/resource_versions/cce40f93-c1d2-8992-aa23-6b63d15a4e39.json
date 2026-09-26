@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "implementation.run.start.design-guide",
+    "resource_kind": "fixed-hook",
+    "updated_at": "2026-09-17 06:59:50",
+    "version": 4
+  },
+  "deleted": false,
+  "identity": "cce40f93-c1d2-8992-aa23-6b63d15a4e39",
+  "schemaVersion": 1
+}

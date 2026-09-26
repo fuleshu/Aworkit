@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Executes model requests through Aworkit-owned contracts and performs only subordinate provider resolution within the frozen ModelResolutionPlanV1 carried by an approved envelope. The workflow route and tier are already selected; the gateway may choose among pinned eligible concrete candidates or an ordered fallback only according to that plan, recording candidates, health facts, and the exact provider/model selected.\n",
+        "Owned runtime state: ephemeral provider connection pools, rate-limit windows, circuit/health observations, active stream handles, and per-invocation concrete resolution. Configuration, tier mappings, and selected results remain core-owned facts.\n",
+        "Versioned ports and contracts: ModelCapabilityManifestV1, ModelRequestV1, ModelResolutionPlanV1, ProviderEnginePortV1, ProviderRawEventV1, and ModelDispatchEvidenceV1. A narrow RigTranslationAdapterV1 maps these stable Aworkit DTOs to one selected Rig version and back; it is replaceable or bypassable per provider, and Rig/provider-native types never leave this module or enter workflow/config/history.\n",
+        "Failure and degraded behavior: only a definitely-not-accepted candidate may advance to the next frozen candidate. Ambiguous acceptance, lost terminal state, unsupported modality/tool schema, exhausted limits, or rate-limit uncertainty is surfaced without silent provider fallback; open circuits degrade only affected pinned candidates.\n",
+        "Security and authority: obtains only declared secret slots through the lease client, sends only approved context and parameters, and cannot change tiers, add tools, select an external agent, broaden scopes, or grant approvals.\n",
+        "Observability, performance, and cross-platform behavior: bounded streaming, provider latency/first-token/usage/error metrics, exact opaque-evidence limits, backpressure to transports, pooled HTTPS/local IPC, and equivalent local-endpoint behavior on Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no harness routing, Agent loop policy, retry/fallback outside the frozen provider plan, secret persistence, canonical usage/history commit, or Rig snapshot persistence.\n",
+        "\n",
+        "Provider cache accounting (2026-09-18): Preserve optional provider-reported cached-input and cache-miss-input token counts through text/tool streams, terminal projections, durable model spans, auxiliary calls and approval reviews. Normalize DeepSeek prompt_cache_hit_tokens and the equivalent prompt_tokens_details.cached_tokens without summing aliases; retain prompt_cache_miss_tokens independently. Missing counters remain unknown and zero remains a reported zero. Never infer historical hits or alter total token accounting. Usage extraction must not change request prompts or model dispatch timing. See docs/approval-cache-accounting.md."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.model_gateway",
+    "id": 53,
+    "name": "Aworkit Model & Provider Gateway",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Models,Providers,Rig Boundary",
+    "technology": "Rust Aworkit provider gateway with replaceable Rig translation port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8f6ac7e1-515f-8e22-a1f9-9874ddb6d761",
+  "schemaVersion": 1
+}

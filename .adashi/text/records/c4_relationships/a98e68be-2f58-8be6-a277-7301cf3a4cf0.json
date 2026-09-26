@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Commits metadata-only configuration/workflow change events after atomic JSON saves and never stores a duplicate editable body",
+    "destination_external_id": "aworkit.trusted_core.event_committer",
+    "external_id": "rel.core_project_config.committer",
+    "id": 66,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Canonical application-stream commit port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a98e68be-2f58-8be6-a277-7301cf3a4cf0",
+  "schemaVersion": 1
+}

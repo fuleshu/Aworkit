@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Repairs or discards partial capture segments, verifies manifests, and enforces independent TTL/quota; capture bytes remain excluded from backup by default",
+    "destination_external_id": "aworkit.local_store.debug_capture",
+    "external_id": "rel.local_store.storage_coordinator.debug_capture",
+    "id": 238,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance,Optional",
+    "technology": "CaptureMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dfc6ad30-4232-8f1e-befa-b6623866d27d",
+  "schemaVersion": 1
+}

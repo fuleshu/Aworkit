@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "design_external_id": "mockup.desktop_ui.theme_reference_light",
+    "id": 28,
+    "qa_job_id": {
+      "ref": "4cd7c20a-daa7-8a59-930d-d208ec1d79e5"
+    },
+    "sort_order": 2,
+    "target_type": "mockup"
+  },
+  "deleted": false,
+  "identity": "150a7ed2-abb8-811d-b56e-3b32a974eeb0",
+  "schemaVersion": 1
+}

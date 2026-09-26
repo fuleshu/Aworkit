@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Durably records ledger/candidate/disclosure/checkpoint/activation/restart/verification/rollback facts before transitions",
+    "destination_external_id": "aworkit.trusted_core.event_committer",
+    "external_id": "rel.core_repair.committer",
+    "id": 82,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Canonical management-stream commit port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a17cdacc-8c77-804b-893d-a3fc4d441721",
+  "schemaVersion": 1
+}

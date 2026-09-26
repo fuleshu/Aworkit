@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.local_store.repair_evidence_lifecycle",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 22:53:00",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "9bc71716-4781-86fe-aa0b-d4cacefb0b6f",
+  "schemaVersion": 1
+}

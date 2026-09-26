@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Spawns and health-checks expected worker generations and cleans complete trees. Process isolation is not labeled a security sandbox",
+    "destination_external_id": "aworkit.workflow_worker",
+    "external_id": "rel.core_supervisor.worker.process",
+    "id": 100,
+    "source_external_id": "aworkit.trusted_core.process_supervisor",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "OS process supervision and health IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "32b3d335-24a0-8c0d-827f-f49583da3761",
+  "schemaVersion": 1
+}

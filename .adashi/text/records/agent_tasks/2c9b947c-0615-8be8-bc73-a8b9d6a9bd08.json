@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-process/src/lib.rs\",\"crates/aworkit-process/src/filesystem.rs\",\"crates/aworkit-process/src/identity.rs\",\"crates/aworkit-process/src/ipc.rs\",\"crates/aworkit-process/src/runtime.rs\",\"crates/aworkit-local-store/src/diagnostics/mod.rs\",\"crates/aworkit-local-store/src/diagnostics/tests.rs\",\"crates/aworkit-local-store/src/maintenance.rs\",\"crates/aworkit-local-store/src/repository.rs\",\"qa/smoke-processes.sh\",\"scripts/assemble-release-bundle.sh\"]",
+    "completed_at": "2026-08-23 12:36:39",
+    "completion_memo": "Implemented the M12 cross-platform release conformance aggregate and created Adashi QA job 12. Added exact Windows/macOS/Linux native capability/degraded-state matrix validation, complete-bundle role/provenance validation, native warnings-denied Rust/desktop tests, frontend typecheck/Vitest/build, stable M01-M11 aggregation, portable SHA-256 and timeout execution, and actual optimized release assembly. Critical task-end audit passed: git diff --check, shell syntax, Node matrix validator, six process smoke handshakes, focused M09 warnings-denied Clippy, and Adashi QA run 38/job evidence 53 all passed (exit 0, 528368 ms). Final release bundle provenance: sha256:8b4da151144589b53a74bc4f4460a16bde69d510078e664f9ed9315256dd4351.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:34:47",
+    "created_files": "[\"qa/fixtures/milestone-12-platform-matrix.json\",\"qa/check-milestone-12.mjs\",\"qa/run-with-timeout.mjs\",\"qa/milestone-12-native.sh\",\"qa/milestone-12.sh\"]",
+    "description": "Create the additional Windows, macOS, and Linux conformance tests for the native filesystem, process/IPC, credential, presentation, and release-bundle adapters, including supported and degraded capability reports. Aggregate the stable M01–M11 QA commands into one release-candidate matrix and add only cross-system smoke, upgrade, packaging, and failure-boundary tests not already owned by an earlier milestone.",
+    "id": 78,
+    "number": 78,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M12.QA — Create cross-platform release conformance and QA aggregation",
+    "updated_at": "2026-09-22 07:22:07"
+  },
+  "deleted": false,
+  "identity": "2c9b947c-0615-8be8-bc73-a8b9d6a9bd08",
+  "schemaVersion": 1
+}

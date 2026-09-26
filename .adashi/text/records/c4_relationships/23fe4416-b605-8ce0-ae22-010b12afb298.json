@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Starts/stops the worker generation only from committed lifecycle/outbox state and consumes typed health outcomes",
+    "destination_external_id": "aworkit.trusted_core.process_supervisor",
+    "external_id": "rel.core_lifecycle.supervisor",
+    "id": 72,
+    "source_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust supervision port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "23fe4416-b605-8ce0-ae22-010b12afb298",
+  "schemaVersion": 1
+}

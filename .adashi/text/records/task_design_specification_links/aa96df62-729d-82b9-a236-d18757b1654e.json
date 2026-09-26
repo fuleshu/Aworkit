@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:31:31",
+    "design_external_id": "uml.desktop_ui.composer_projection_state",
+    "id": 214,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "4cce4c52-421c-8c3d-9f7e-eda21771b7de"
+    }
+  },
+  "deleted": false,
+  "identity": "aa96df62-729d-82b9-a236-d18757b1654e",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Proposes every model and internal Agent tool step with stable invocation, authority, budget, node, and attempt references and receives committed outcomes",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.worker_model_agent.gateway",
+    "id": 128,
+    "source_external_id": "aworkit.workflow_worker.model_agent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "InvocationProposalV1 and CapabilityOutcomeV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c15a8588-9e1d-8b50-96db-c530d67b1276",
+  "schemaVersion": 1
+}

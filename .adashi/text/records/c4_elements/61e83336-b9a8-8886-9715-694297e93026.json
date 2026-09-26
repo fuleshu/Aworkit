@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the sole authority grant and approval decision point for Aworkit-mediated actions; compiles and evaluates frozen authority manifests and produces human-readable authority summaries and auditable decisions.\n",
+        "Owned state: versioned policy semantics, immutable AuthorityManifestV1 references, approval requirements/nonces/expiry, and decision facts keyed by run, node, attempt, invocation, and manifest hash; durable evidence is committed through the invoking coordinator.\n",
+        "Public commands/events and ports: CompileManifest, SummarizeAuthority, EvaluateInvocation(InvocationProposalV1), OpenApproval, ResolveApproval(ApprovalResponseV1), and RevalidateDecision; returns PermitV1, DenyV1, ApprovalRequiredV1, or ApprovalResolvedV1 with exact capability, modes, scopes, limits, credential-reference use, and rationale codes.\n",
+        "Invariants: invocation decisions retain exact frozen tools and targets. Explicit user filesystem grants may extend accessible locations for already enabled native file tools; models, workers, UI, hosts, imports, and portable history cannot grant authority themselves. Approval nodes and configured tool rules are honored; accepted project authority avoids generic per-action prompts. Trusted extension code is plainly identified as host-authority code that may bypass mediated brokers, never as sandboxed.\n",
+        "Transactional and failure behavior: ambiguity, stale manifests, changed bindings, expired/mismatched approval nonces, or unsupported enforcement fail closed. Approval request/resolution and the resulting authorization evidence commit before dispatch; a UI receipt alone grants nothing.\n",
+        "NFRs: deterministic fixture-testable policy, stable reason codes, constant-time sensitive identifier comparison, low-millisecond evaluation, and complete traceability without secret values.\n",
+        "Non-responsibilities: no capability execution, workflow scheduling, secret retrieval, process sandboxing, UI presentation, or candidate-repair activation.\n",
+        "\n",
+        "Filesystem permissions (2026-09-15): The core owns explicit revocable filesystem grants separately from tool approvals. Read covers all enabled list/read/search/grep/image tools; read/write also covers enabled edit/write tools. Users select a canonical directory and descendants or explicitly all external locations, saved for one chat or every chat bound to the same project/native workspace. Both scopes persist across restarts. Grant and one-use decision commit atomically before dispatch. Every use still requires the frozen enabled tool, immutable resolved target and native directory identity revalidation; directory grants never follow alias escapes or replaced identities. Models, automatic review, imports and portable history cannot create grants. Revocation affects future authorizations without replay. Existing per-tool project grants imply no external filesystem access.\n",
+        "\n",
+        "Approval efficiency and compatible grants (2026-09-18): Evaluate existing user-owned grants and deterministic tool policy before any automatic reviewer call. Use a versioned permission identity derived from execution-relevant binding fields; model-facing descriptions/instructions alone must not invalidate saved project permission. Upgrade only extant grants proven compatible by their exact old binding hash and trusted local binding evidence in the same project/workspace; preserve revocation, fail closed for changed executable/configuration/schema/credentials/mode, and never infer grants from past automatic approvals. Unsandboxed arbitrary host code without a matching explicit grant still needs review. Necessary automatic reviews retain full user authorization constraints, use stable policy/transcript/workspace first, bounded relevant immutable tool evidence next, and the exact changing action last. Compaction of review evidence is deterministic, append-stable within a bounded window, explicitly marked and never grants authority. Store provider usage on review success and failure. See docs/approval-cache-accounting.md."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.authority",
+    "id": 30,
+    "name": "Authority & Approval Decision Engine",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Authority,Approval",
+    "technology": "Rust pure policy engine over immutable authority manifests",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "61e83336-b9a8-8886-9715-694297e93026",
+  "schemaVersion": 1
+}

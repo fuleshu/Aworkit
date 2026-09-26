@@ -1,0 +1,70 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src/workbench/nodeCatalog.ts\",\"desktop/src/workbench/NodeConfigurationForm.tsx\",\"desktop/src/workbench/workflowExecution.ts\"]",
+    "completed_at": "2026-09-22 21:32:56",
+    "completion_memo": {
+      "lines": [
+        "Implemented the narrowed remainder: per-Agent-node compaction overrides, committed as 52eef35.\n",
+        "\n",
+        "What shipped\n",
+        "- runtime/compaction/mod.rs: a typed Overlay (auto, pruneToolResults, thresholdChars, headChars, tailChars) with from_node_configuration and apply, plus tests for parsing and application onto the frozen model policy.\n",
+        "- AgentContextV1 gained an optional compaction overlay; graph_pass fills it from the node configuration, and the overlay is applied at the single manage_selected_context decision point, so nothing Chat-wide silently kept the model policy.\n",
+        "- The manual compact_context path carries the same overlay, so a node that disabled compaction stays disabled for a manual request too.\n",
+        "- Executable catalog and document validation: the Agent node accepts the compaction overlay with bounded, node-local keys, and an absent overlay means inherit the model policy. Out-of-range and unknown keys are rejected instead of guessed.\n",
+        "- Workflow editor: a Context compaction overlay field on the Agent node (inherit/on/off plus the three prune thresholds), rendered from the catalog like every other node field.\n",
+        "\n",
+        "Deliberate limits, as the task required\n",
+        "- The summarization provider/model, retention budget and retry counts remain model-level; one Chat never carries two policies for one mechanism.\n",
+        "- An empty overlay is stored as null, so inherit is expressible and a later model-level change still reaches the node.\n",
+        "\n",
+        "Verification: desktop Rust lib 419 passed (one pre-existing unrelated failure in the compaction integration suite, unchanged by this work); TypeScript 466 passed; tsc clean.\n",
+        "\n",
+        "Correction recorded for the future: the original task text claimed there was no user-invocable compact action. That was wrong; the compact_context command already existed and was not rebuilt."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:48:11",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Scope correction 2026-09-22: most of this task already exists; the true remainder is per-Agent-node compaction overrides. The original text is kept at the end for the record.\n",
+        "\n",
+        "What already exists and must not be rebuilt.\n",
+        "- The typed compaction policy with the intended knobs: auto (enable/disable), pruneToolResults, thresholdChars, headChars, tailChars, thresholdRatio, retainRatio/retainTokens, maxTokens, retry counts, and a selectable summarization provider/model (runtime/compaction/mod.rs).\n",
+        "- A Settings surface for it, per model, with validation and the note that changes apply to new Chats (desktop/src/workbench/settings-v2/CompactionSettings.tsx).\n",
+        "- Freezing into the Chat: the policy is snapshotted into the frozen model configuration at first input, and legacy Chats deliberately keep compression disabled (runtime/service.rs).\n",
+        "- A user-invocable Compact action, which the original text claims does not exist: the compact_context command carries a node and a base sequence, is dispatched from the Context Usage control, and the runtime already distinguishes manual from automatic compaction (desktop/src/chat/types.ts, desktop/src/chat/ChatWorkspaceScreen.tsx, runtime/history.rs, runtime/service.rs).\n",
+        "- Committed checkpoint revisions with lineage, no mutation of committed history, originals still retrievable through the context tool, and isolation across chat, node, branch and child, covered by the compaction integration tests.\n",
+        "- Explicit degradation when a compactor is unreachable, plus the existing provider-overflow recovery path.\n",
+        "\n",
+        "The remainder to implement.\n",
+        "- Per-Agent-node compaction overrides: typed keys on the Agent node contract, validated by the executable catalog, frozen into the node configuration with the rest of the node, exposed in the workflow properties pane, and applied when that node's context is compacted.\n",
+        "- Keep v1 narrow: a node may disable compaction and tighten the tool-result prune thresholds. The summarization model, retention budget and retry counts stay model-level, so one Chat never carries two policies for one mechanism.\n",
+        "- Before promising a size, read the compaction decision points: they currently read the frozen model policy, and any point that is Chat-wide rather than per-invocation needs a per-invocation policy resolution to honour a node override. That is the only part whose size is not yet known.\n",
+        "\n",
+        "Deliberately out of scope now. A new Settings panel for node policy; a second compact command on the composer, since the Context Usage control already exposes one; per-node retention or summarization-model overrides; per-request ad hoc summarization outside the compaction contract; provider-side context management; deleting original evidence.\n",
+        "\n",
+        "Tests. Configured node thresholds take effect; a node with compaction disabled never compacts; the model policy still applies where a node does not override it; manual compaction is unaffected; committed history is never mutated and originals remain retrievable; degradation stays visible.\n",
+        "\n",
+        "Original text, kept for the record.\n",
+        "Make compaction a configurable, user-invocable workflow capability instead of an automatic-only behavior, matching the DSH compaction-basic / command-compact / tool-result-pruner rows in an Aworkit-fitting way.\n",
+        "Current state. Context compaction and compression are implemented and run automatically; compressed tool results remain retrievable through the context tool. There is no per-Agent control over whether or how a node compacts, and no user-invocable compact action.\n",
+        "Design fit. Add typed compaction settings to the frozen Agent node (and child) contract: enable/disable, result-prune thresholds (threshold/head/tail), and retention policy. They are validated by the executable catalog, frozen into the snapshot with the rest of the node configuration, and shown in the workflow properties pane and Settings with the same values. Add a Chat-level compact command on the composer command surface that requests compaction at a safe point. Compaction produces a new committed context revision with provenance; it never mutates or deletes committed history, and original tool/conversation evidence stays immutably retrievable through the existing context tool. Keep the prompt prefix as stable as the compaction policy allows, and never compact in the middle of a tool exchange or across a suspension boundary. A disabled or unreachable compactor degrades explicitly rather than failing the Run; over-limit provider responses keep following the existing recovery path.\n",
+        "Non-goals. Provider-side context management; deleting original evidence; per-request ad hoc summarization outside the compaction contract."
+      ]
+    },
+    "id": 117,
+    "number": 116,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Per-Agent compaction controls and a Compact command",
+    "updated_at": "2026-09-22 21:32:56"
+  },
+  "deleted": false,
+  "identity": "e572803e-a290-809d-94eb-ee4a5ef94cfe",
+  "schemaVersion": 1
+}

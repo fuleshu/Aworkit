@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reconciles pending delivery/acceptance/result state under declared idempotency and uncertain-outcome rules",
+    "destination_external_id": "aworkit.trusted_core.invocation_broker",
+    "external_id": "rel.core_recovery.invocation",
+    "id": 81,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust reconciliation port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "726e2a9c-bf4b-8cc8-a4c1-8243700e9600",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:48",
+    "design_external_id": "uml.workflow_worker.suspension_recovery_state",
+    "id": 11,
+    "qa_job_id": {
+      "ref": "a406a9ad-a25e-89fa-94c5-8f49b386eb92"
+    },
+    "sort_order": 2,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "c5199ad3-4443-854e-9e18-9166abe5f258",
+  "schemaVersion": 1
+}

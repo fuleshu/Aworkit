@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.process_runtime|file|crates/aworkit-process/src/command.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-19 08:08:57",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "22e4fb9b-e700-8b21-bae9-b4d1fa99ced5",
+  "schemaVersion": 1
+}

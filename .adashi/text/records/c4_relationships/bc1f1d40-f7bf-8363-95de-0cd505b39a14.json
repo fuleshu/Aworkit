@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Routes optional bounded, independently retained, pre-redacted protocol/stream frames after policy selection; semantic commits never depend on capture acceptance",
+    "destination_external_id": "aworkit.local_store.debug_capture",
+    "external_id": "rel.core_committer.local_store.debug_capture",
+    "id": 208,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract,Optional,Noncanonical",
+    "technology": "DetailedCaptureWritePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bc1f1d40-f7bf-8363-95de-0cd505b39a14",
+  "schemaVersion": 1
+}

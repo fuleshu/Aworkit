@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Compiles permitted context and performs provider-neutral requests while retaining exact returned evidence and usage",
+    "destination_external_id": "ext.model_providers",
+    "external_id": "rel.host.models",
+    "id": 14,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship",
+    "technology": "Provider APIs / local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a9e8d150-7b11-8f63-b1c1-4cf3f095489f",
+  "schemaVersion": 1
+}

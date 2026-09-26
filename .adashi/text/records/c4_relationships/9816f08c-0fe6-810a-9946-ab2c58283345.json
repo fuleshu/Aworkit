@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Exclusively records and queries versioned extension identity, enablement, provenance, manifest/hash, compatibility, contribution, quarantine, and process-attestation facts",
+    "destination_external_id": "aworkit.local_store.extension_inventory",
+    "external_id": "rel.core_extension_registry.local_store.inventory_repo",
+    "id": 211,
+    "source_external_id": "aworkit.trusted_core.extension_registry",
+    "tags": "Relationship,Boundary Contract,Core Governed",
+    "technology": "ExtensionInventoryRepository with expected versions",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9816f08c-0fe6-810a-9946-ab2c58283345",
+  "schemaVersion": 1
+}

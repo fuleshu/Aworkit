@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:51",
+    "design_external_id": "aworkit.portable_store.integrity_retention",
+    "id": 343,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "0e58faee-4389-8382-a4ac-0c79772682af"
+    }
+  },
+  "deleted": false,
+  "identity": "7e05e74f-55a3-805a-9fbf-2a228438d60b",
+  "schemaVersion": 1
+}

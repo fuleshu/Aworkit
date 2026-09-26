@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-24 10:11:27",
+    "design_external_id": "aworkit.workflow_worker.model_agent",
+    "id": 538,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "0d6bc254-7393-8cbe-93e3-becddb5980df"
+    }
+  },
+  "deleted": false,
+  "identity": "8fb8915b-2b17-8b1e-aa75-34ba13e145dd",
+  "schemaVersion": 1
+}

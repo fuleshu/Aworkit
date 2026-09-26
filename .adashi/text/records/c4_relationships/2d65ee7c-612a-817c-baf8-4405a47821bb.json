@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads exact workflow/configuration/project/workspace versions and hashes for validation and freeze",
+    "destination_external_id": "aworkit.trusted_core.project_config",
+    "external_id": "rel.core_snapshot.project_config",
+    "id": 68,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Versioned repository/query ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2d65ee7c-612a-817c-baf8-4405a47821bb",
+  "schemaVersion": 1
+}

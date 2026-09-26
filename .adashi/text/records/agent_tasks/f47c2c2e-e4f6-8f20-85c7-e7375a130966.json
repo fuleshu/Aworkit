@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/gateway.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"crates/aworkit-capability-host/src/process.rs\",\"crates/aworkit-capability-host/tests/milestone_05.rs\",\"crates/aworkit-capability-host/tests/milestone_09_attestation.rs\",\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-protocol/src/runtime.rs\",\"crates/aworkit-trusted-core/src/authority.rs\",\"crates/aworkit-workflow-worker/src/plan.rs\",\"crates/aworkit-workflow-worker/tests/milestone_03_runtime.rs\"]",
+    "completed_at": "2026-08-22 06:27:01",
+    "completion_memo": "Implemented optional isolation backends with exact strength/profile/identity, mounts/network/user/process/resource enforcement, deadlines, hashed transfer, cancellation, cleanup, unavailable reasons, and no downgrade. Added the concrete approved-envelope gateway dispatcher, signed generation/invocation/cancellation controls, live cancellation-token propagation, active-vs-terminal admission lifecycle, and frozen required-isolation snapshot binding. Critical verification passed: 9 isolation tests plus host regressions and Adashi QA job #9 / run #25.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:12",
+    "created_files": "[\"crates/aworkit-capability-host/src/isolation/mod.rs\",\"crates/aworkit-capability-host/src/isolation/contract.rs\",\"crates/aworkit-capability-host/src/isolation/execution.rs\",\"crates/aworkit-capability-host/src/isolation/runtime.rs\",\"crates/aworkit-capability-host/src/isolation/hermetic.rs\",\"crates/aworkit-capability-host/src/isolation/gateway.rs\",\"crates/aworkit-capability-host/tests/isolation.rs\"]",
+    "description": "Implement optional isolation backends behind the approved-envelope port with exact reported strength, limits, mounts, networking, deadlines, result transfer, cancellation, cleanup, and unavailable reasons. Never silently downgrade requested isolation or describe trusted plugin processes as sandboxed. Descriptor registration, Settings resolution, and snapshot binding use the already implemented registry, Settings, and freezer contracts.",
+    "id": 60,
+    "number": 60,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.5 — Implement optional verified isolation backends",
+    "updated_at": "2026-09-22 07:17:25"
+  },
+  "deleted": false,
+  "identity": "f47c2c2e-e4f6-8f20-85c7-e7375a130966",
+  "schemaVersion": 1
+}

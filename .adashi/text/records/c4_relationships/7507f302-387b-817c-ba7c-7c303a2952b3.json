@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches only explicit External Agent envelopes with pinned target, task, scope, budget, desired result, and declared controls",
+    "destination_external_id": "aworkit.capability_host.external_agents",
+    "external_id": "rel.host_gateway.external_agents",
+    "id": 160,
+    "source_external_id": "aworkit.capability_host.invocation_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "In-process Aworkit external-agent port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7507f302-387b-817c-ba7c-7c303a2952b3",
+  "schemaVersion": 1
+}

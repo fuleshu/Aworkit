@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:30:30",
+    "design_external_id": "uml.desktop_ui.theme_density_contract",
+    "id": 176,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "264610fe-ad33-8afb-834e-9505831cd296"
+    }
+  },
+  "deleted": false,
+  "identity": "44a6fa35-5cf8-8f4b-b516-29d408518c6e",
+  "schemaVersion": 1
+}

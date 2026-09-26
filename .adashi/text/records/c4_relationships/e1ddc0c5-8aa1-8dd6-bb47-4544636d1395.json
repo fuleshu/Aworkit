@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Streams bounded CAS writes and range reads beneath fixed non-symlink paths using create-new atomic publication and exact content-length/hash verification",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.portable.artifact.workspace_adapter",
+    "id": 250,
+    "source_external_id": "aworkit.portable_store.artifact_cas",
+    "tags": "Relationship,Internal Portable Contract,CAS",
+    "technology": "Anchored CAS filesystem operations",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e1ddc0c5-8aa1-8dd6-bb47-4544636d1395",
+  "schemaVersion": 1
+}

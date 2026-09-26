@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Performs validated transaction-scoped insertion of events/attempts/checkpoints and monotonic head advancement; the ledger exposes no independent writer",
+    "destination_external_id": "aworkit.local_store.semantic_ledger",
+    "external_id": "rel.local_store.commit_adapter.semantic_ledger",
+    "id": 220,
+    "source_external_id": "aworkit.local_store.commit_adapter",
+    "tags": "Relationship,Internal,Canonical Write",
+    "technology": "LocalLedgerTxnPort inside one SQLite transaction",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6f8476c6-fdd9-82d1-829c-231995cb086f",
+  "schemaVersion": 1
+}

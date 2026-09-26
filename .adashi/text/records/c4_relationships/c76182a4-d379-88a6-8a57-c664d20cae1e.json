@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Redeems only approved target authentication fields and creates redaction material for native protocol evidence",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.host_external.secrets",
+    "id": 180,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Authenticated invocation-secret port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c76182a4-d379-88a6-8a57-c664d20cae1e",
+  "schemaVersion": 1
+}

@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/lifecycle.rs\"]",
+    "completed_at": "2026-08-21 17:13:00",
+    "completion_memo": "Implemented an event-sourced one-Chat/one-Run lifecycle aggregate with legal start/input/attempt/wait/approval/pause/cancel/retry/fork/continuation and terminal transitions. Frozen snapshot identity is write-once. cargo test -p aworkit-trusted-core passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:27:28",
+    "created_files": "[\"crates/aworkit-trusted-core/src/lifecycle.rs\"]",
+    "description": "Implement the event-sourced one-Chat/one-Run lifecycle with legal commands and transitions for creation, first-input start, queued input, attempts, waits, approvals, pause, cancellation, retry, fork, continuation, and terminal inspection. Frozen workflow, binding, and authority identity must remain immutable after start.",
+    "id": 23,
+    "number": 23,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M04.3 — Implement the Chat and Run lifecycle aggregate",
+    "updated_at": "2026-09-21 14:57:00"
+  },
+  "deleted": false,
+  "identity": "8860095a-3a8e-85b2-b8c0-3cd7d2da6e5b",
+  "schemaVersion": 1
+}

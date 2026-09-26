@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Preflights and invokes only the fixed per-user ManagedLocalBuildProfileV1 enrollment, selector, and rollback primitives. Packaged, package-owned, elevation-requiring, read-only, cross-volume, or unknown layouts return Unsupported rather than shell, installer, updater, or copy-over-live fallback",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.bootstrap.profiles.os.activation",
+    "id": 291,
+    "source_external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "tags": "Relationship,Platform Contract,Activation Profile,Unprivileged",
+    "technology": "Platform per-user selector, filesystem identity, durability, and application lifecycle APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8a13b036-fe57-867e-92fb-05d909cc2385",
+  "schemaVersion": 1
+}

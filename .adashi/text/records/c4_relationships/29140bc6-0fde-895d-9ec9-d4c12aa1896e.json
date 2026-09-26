@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Loads, watches, imports inertly, exports, and compare-and-swap saves the sole canonical schema-versioned application/capability/project JSON documents; only opaque credential references cross",
+    "destination_external_id": "aworkit.local_store.config_repository",
+    "external_id": "rel.core_project_config.local_store.config_repo",
+    "id": 209,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract,Canonical JSON",
+    "technology": "ConfigurationDocumentRepository",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "29140bc6-0fde-895d-9ec9-d4c12aa1896e",
+  "schemaVersion": 1
+}

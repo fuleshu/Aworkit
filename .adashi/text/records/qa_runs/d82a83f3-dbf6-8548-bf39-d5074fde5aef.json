@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-23 12:11:35",
+    "id": 36,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[12],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-23 12:11:29",
+    "status": "failed",
+    "summary": "0 passed, 1 failed, 0 timed out",
+    "trigger_source": "codex-m12-task-78-retry-after-smoke-bin-fence"
+  },
+  "deleted": false,
+  "identity": "d82a83f3-dbf6-8548-bf39-d5074fde5aef",
+  "schemaVersion": 1
+}

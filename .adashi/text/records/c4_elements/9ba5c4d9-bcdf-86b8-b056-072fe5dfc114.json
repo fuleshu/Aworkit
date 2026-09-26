@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Preserves exact harness positions and context heads when a Wait for Input, approval, pause, cancellation, or controlled quiesce suspends progress. It consumes core-delivered input and approval outcomes and coordinates safe resume or cancellation across the worker runtime.\n",
+        "Owned runtime state: SuspensionFrameV1 with reason, affected token scope, preserved plan positions and revision IDs, wait node, delivered input cursor, bounded non-canonical delivery window, approval/invocation reference, resume nonce, cancellation token, active-work acknowledgements, and proposed checkpoint status. The authoritative FIFO input queue and Chat phase remain in Chat Lifecycle.\n",
+        "Input/output DTOs and ports: SuspendAtWait, DeliverQueuedInput(InputDeliveryV1), DeliverApprovalOutcome, PauseRequested, ResumeRequested, CancelRequested, NodeQuiesced, and InvocationCancelled; emits SuspensionProposalV1, InputConsumedProposalV1, PauseReadyV1, CancelProgressV1, ResumeActionV1, and checkpoint requests.\n",
+        "Algorithms and invariants: Wait for Input consumes the next core-ordered ordinary input exactly once and creates a deliberate context revision before leaving the wait node. Busy ordinary input remains FIFO unless the frozen adapter explicitly supports steering and the plan exposes that behavior. Approval resumes only from a committed broker outcome. Pause stops new work at safe points. Cancel propagates by scope, does not rewrite terminal evidence, and never implies undo of workspace effects.\n",
+        "Failure, cancellation, and recovery: inputId, approvalId, generation, and resume nonce deduplicate deliveries. Disconnect or worker crash leaves canonical queue and suspension facts in core. Forced process termination may follow missed cancellation deadlines through the supervisor. Recovery restores the committed suspension frame and cursor; it neither loses queued input nor reconsumes acknowledged input.\n",
+        "Performance and NFRs: responsive control handling independent of model streams, bounded delivery buffers, monotonic cancellation deadlines, progress heartbeats, deterministic state transitions, and no busy waiting.\n",
+        "Non-responsibilities: no canonical Chat lifecycle or queue, approval/authority decision, UI control, process kill, side-effect rollback, graph scheduling outside resume actions, or canonical event commit.\n",
+        "\n",
+        "User Stop and steering (2026-09-18): Stopping an unfinished built-in workflow response preserves a durable continuation of that exact frozen graph pass: current node, completed node outputs and selected branches. The next accepted ordinary user message in that Chat steers the interrupted model/Agent node and then continues downstream; it must not rerun earlier planning or completed effects. Restore committed per-node model context and settled tool evidence, append the new user message once, and use fresh invocation identities. Stop cancels in-flight calls; cancelled or uncertain tools are not automatically replayed. Persist and validate continuation ownership against Chat, Run and frozen workflow; retain it across restart and repeated Stop. A normally completed pass consumes its continuation, so the following user message starts the workflow at its entry as before. A Stop racing completed work does not fabricate an unfinished continuation. Preserve canonical history, frozen authority and per-Chat concurrency. The v1 graph executes sequentially; a Stop during an Agent-owned tool resumes the owning Agent's model with the recorded tool outcome.\n",
+        "\n",
+        "User question suspension (2026-09-21): A pending model question is a distinct suspension reason alongside Wait-for-Input, approval, and pause, and it is the only way a Run is interrupted for a user decision. SuspensionFrameV1.reason gains `question` with the asked question id and its affected token scope. A frozen native `tool.ask_user` (typed prompt, one or more labelled options, optional free-text allowance, optional default) proposes QuestionAskedV1 and the graph pass ends awaiting an answer; the desktop answers with QuestionAnsweredV1 carrying the selected option id, the free text, or an explicit cancellation, and `tool.browse` (kind file or folder) uses the same reason and events with a path answer. The answer is delivered once, deduplicated by question id and resume nonce exactly like an approval outcome, and creates exactly one context revision whose provenance names the question event; a resumed pass never re-asks a question it already consumed. Recovery restores the committed question frontier instead of replaying the tool loop: an unanswered question never auto-answers, never expires into a retry, and never silently takes a default. Cancel and Chat Stop close the question scope and record QuestionCancelledV1 on the existing cancellation path. A question tool has no side effect, is never asked outside an active Run, and never expands authority."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.suspension",
+    "id": 48,
+    "name": "Input, Approval, Pause & Cancellation Suspension Controller",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Wait,Pause,Cancel",
+    "technology": "Rust generation-fenced suspension state machine",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9ba5c4d9-bcdf-86b8-b056-072fe5dfc114",
+  "schemaVersion": 1
+}

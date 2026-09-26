@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.workflow_worker.contract_structure",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "507b7ef2-56d4-8d04-89af-3085cc42cfeb",
+  "schemaVersion": 1
+}

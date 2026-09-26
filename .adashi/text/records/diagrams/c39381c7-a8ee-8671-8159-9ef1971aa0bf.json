@@ -1,0 +1,39 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.local_store.debug_capture",
+    "created_at": "2026-08-20 22:53:00",
+    "diagram_type": "state",
+    "id": 24,
+    "key": "uml.local_store.capture_retention",
+    "kind": "mermaid",
+    "sort_order": 24,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "[*] --> Disabled\n",
+        "Disabled --> Recording: Core enables explicit bounded capture policy\n",
+        "Recording --> Recording: Append redacted chunk within quota\n",
+        "Recording --> Sealed: Invocation ends or capture is manually stopped\n",
+        "Recording --> Truncated: Per-capture quota queue pressure or disk pressure\n",
+        "Truncated --> Sealed: Seal manifest with truncation reason\n",
+        "Sealed --> Available: Hash and manifest verify\n",
+        "Sealed --> CorruptDiscarded: Verification fails\n",
+        "Available --> Expired: Independent TTL or global quota selects capture\n",
+        "Expired --> Purged: Reader leases released and GC commits tombstone\n",
+        "CorruptDiscarded --> Purged: Preserve only unavailable metadata\n",
+        "Purged --> [*]\n",
+        "Available --> Recording: New CaptureId for later bounded scope\n",
+        "Disabled --> [*]: Semantic history continues normally"
+      ]
+    },
+    "title": "Independent Detailed Capture Retention and Degradation",
+    "updated_at": "2026-08-20 22:53:00",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c39381c7-a8ee-8671-8159-9ef1971aa0bf",
+  "schemaVersion": 1
+}

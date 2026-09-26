@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Routes credential mutation/test commands through ephemeral secret-safe native payloads and never returns plaintext",
+    "destination_external_id": "aworkit.trusted_core.secret_broker",
+    "external_id": "rel.core_api.secrets",
+    "id": 60,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust traits and protected Tauri payloads",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d8278baf-2e9e-8111-a0b3-0e91facf3043",
+  "schemaVersion": 1
+}

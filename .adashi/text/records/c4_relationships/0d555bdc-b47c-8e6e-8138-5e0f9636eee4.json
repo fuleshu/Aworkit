@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reserves and charges turn, tool, token, cost, and deadline envelopes for each bounded internal Agent cycle",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_model_agent.limits",
+    "id": 129,
+    "source_external_id": "aworkit.workflow_worker.model_agent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Hierarchical budget port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0d555bdc-b47c-8e6e-8138-5e0f9636eee4",
+  "schemaVersion": 1
+}

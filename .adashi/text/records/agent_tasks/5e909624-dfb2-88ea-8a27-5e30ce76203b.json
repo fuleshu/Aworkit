@@ -1,0 +1,51 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/graph_pass.rs\"]",
+    "completed_at": "2026-09-21 08:19:39",
+    "completion_memo": {
+      "lines": [
+        "Implemented the plan-review gate on top of the value-carrying control-node contract from task 109.\n",
+        "\n",
+        "Delivered: (1) plan_review_source recognizes when an approval node's active incoming transition comes from a `model_call` that declares `outputContract: \"plan\"`; (2) a plan-review gate defaults its title to \"Approve plan\" when the node configures none, and the challenge message carries the plan itself - approval_value_summary renders goal, openQuestions, evidenceNeeded and toolOrder as readable lines within a 16 KiB bound (the frozen plan contract already bounds each field), so the reviewer decides on the exact content the next node receives; (3) on approval the plan continues to the Agent unchanged through the existing approval value return and graph value propagation, and the Agent receives it as generated context via incoming_agent_context; planning stays a tool-free model_call and execution stays an agent node, so the frozen tool catalog is identical across the gate. No freeze, authority, or no-replay behavior changed.\n",
+        "\n",
+        "Tests: graph_pass 12/12 including the new a_plan_review_source_is_recognized_and_the_plan_is_rendered_readably (plan detection, non-plan model call rejected, skipped transition rejected, readable rendering, plain-value fallback); full desktop lib suite 378 passed / 1 failed, where the single failure is the pre-existing baseline failure checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node (confirmed identical with all my changes stashed). Frontend tsc clean; nodeCatalog 10/10, activityProjection 11/11.\n",
+        "\n",
+        "KNOWN INCOMPLETE (warning): (a) there is no dedicated PlanProposedV1/PlanApprovedV1/PlanRejectedV1/PlanRevisedV1 event family and no distinct plan-review card; the plan is shown by the existing plan model-call span card and the decision uses the existing approval request/resolution events, which now carry the plan text in the challenge. Reason: a parallel event family would duplicate canonical evidence the approval aggregate already commits; if presentation must differ, wire a typed card onto the existing approval events. (b) A revise-plan loop is not implemented because it depends on the bounded-loop construct (task 116), which the executable catalog does not yet support; today a rejected plan stops the pass and the user resubmits. (c) No explicit test asserts tool-catalog identity across the gate; the property holds structurally because planning is a model_call and execution is an agent node in the same frozen snapshot."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:46",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Complete the DSH plan-mode equivalent using what Aworkit already owns: a structured plan contract and broker-mediated approvals.\n",
+        "\n",
+        "Current state. A model_call can declare outputContract \"plan\" and is validated by the strict PlanOutputV1 contract (goal, openQuestions, evidenceNeeded, toolOrder). Planning is already tool-free and the plan is injected into the next Agent as generated context. What is missing is a mode with review: there is no way to make the user approve, reject or revise a plan before execution, and no durable plan lifecycle.\n",
+        "\n",
+        "Design fit.\n",
+        "- Introduce a plan-review construct bound to the existing plan model_call: the frozen plan contract plus a review decision created through the normal approval path (same proposal, nonce, expected-version and committed-outcome semantics), plus a committed event family PlanProposedV1, PlanApprovedV1, PlanRejectedV1, PlanRevisedV1.\n",
+        "- Keep the tool catalog identical across planning and execution for request-prefix stability. Planning stays a tool-free model_call; execution stays the agent node. The plan itself is the gate; the tool list is not swapped mid-Run. This preserves the frozen per-Chat bindings and the prefix cache.\n",
+        "- The approved plan enters the Agent as one typed context layer with revision provenance. A rejected plan produces a committed outcome and stops; a revision request re-enters the plan call through the bounded-loop construct rather than an implicit retry.\n",
+        "- Render the plan as a typed conversation card with approve, reject and revise actions, reusing the existing approval reviewer UI and its accessibility rules. Run details show the plan revisions as evidence.\n",
+        "- No-replay: a crash while awaiting review restores the committed approval frontier; a decided plan is never re-decided on resume. The dependency on the value-carrying control-node task is explicit.\n",
+        "\n",
+        "Non-goals. A session-level mode that mutates the frozen tool catalog or graph; implicit automatic approval; a second interaction channel (reuse the question/approval suspension).\n",
+        "\n",
+        "Outputs. Plan-review contract and freeze/validation updates, event family and reducer, conversation card and decision actions, approved-plan context layer with provenance, and tests for approve, reject, revise, tool-catalog stability across the gate, resume during review, and no double decision after recovery."
+      ]
+    },
+    "id": 111,
+    "number": 110,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Add plan mode and a plan-review gate to the workflow contract",
+    "updated_at": "2026-09-22 07:31:17"
+  },
+  "deleted": false,
+  "identity": "5e909624-dfb2-88ea-8a27-5e30ce76203b",
+  "schemaVersion": 1
+}

@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements the canonical local SQLite repository for semantic Chat/Run history only when ChatHistoryBindingV1 selects LocalSqlite. Normal history records meaningful Aworkit state transitions and evidence, not every provider or transport stream fragment.\n",
+        "Owned records/files: chat_stream with ChatId as the stable identity and RunId/sessionId constrained to the same logical object; branch/head and aggregate version; immutable SemanticEventV1 rows; AttemptV1 rows; and LocalLedgerCheckpointV1 rows containing reducer version, frozen-snapshot reference, committed sequence, and state hash. Payloads are schema-versioned Aworkit DTO JSON, never Rig, provider, or database-native types.\n",
+        "Keys and ordering: EventId and AttemptId are globally stable; (ChatId, BranchId, sequence) is unique and contiguous from 1; aggregateVersion is monotonic; an operation retry receives a new AttemptId/ordinal and never rewrites an earlier attempt. Timestamps are display facts, never ordering authority. Only the Atomic Commit Adapter may advance head or sequence.\n",
+        "Ports: exposes transaction-scoped LocalLedgerTxnPort only to the Atomic Commit Adapter and read-only LocalHistoryReadPort/VerifyEventIdentityPort to the core committer, core recovery, and disposable projection builder. Reads are cursor-paginated and return committed rows only.\n",
+        "Normative semantic-stream and span records: Canonical history includes bounded SpanStarted, SpanContentDelta, SpanCompleted, SpanFailed, and SpanCancelled events, not every raw provider fragment. SpanStarted fixes SpanId, optional ParentSpanId, SpanKind, semantic workflow role, correlations, and actual normalized redacted input or an immutable artifact reference. Content delta names SpanId and source-supplied channel. Terminal events contain actual normalized redacted output/error or a reference. CausationEventId links cause without changing ownership. Parentage is immutable; start precedes content/children/terminal; terminal occurs exactly once; no parent terminal precedes an open child. LocalLedgerCheckpointV1 uses throughSequence, reducerVersion, stateHash, and snapshot reference. Frequent small commits retain the existing 64-event/1-MiB hard bound and under-50-ms local p95 target.\n",
+        "\n",
+        "Durability/degraded behavior: uses foreign keys, WAL-compatible committed reads, bounded batches, checksums/state hashes, and configurable synchronous durability with no visibility before commit. Disk-full, failed integrity checks, unknown schema, or broken sequence continuity closes mutation and enters explicit read-only quarantine; it never guesses a head or repairs canonical rows automatically.\n",
+        "Retention/performance: semantic history follows user data-retention policy and is not evicted as a cache; checkpoints are compacted only after a newer verified checkpoint remains and events stay available under policy. Indexed incremental reads and commits of at most 64 events/1 MiB target p95 under 50 ms on supported local SSDs without blocking readers.\n",
+        "Security/non-responsibilities: credential values and secret lease material are rejected; only opaque CredentialRefV1 values may occur. This module does not store configuration bodies, detailed capture, logs, artifact bytes, portable canonical sessions, view projections, or permission to replay model/tool/external effects."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.semantic_ledger",
+    "id": 62,
+    "name": "Semantic Chat Event Ledger",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Canonical,Events,SQLite",
+    "technology": "Rust repository over SQLite canonical event tables",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dd967537-3914-8c5b-9f39-4567daa1a6d9",
+  "schemaVersion": 1
+}

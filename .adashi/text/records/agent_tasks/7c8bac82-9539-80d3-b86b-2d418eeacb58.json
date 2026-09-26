@@ -1,0 +1,32 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\".adashi/adashi.sqlite3\",\"agents.md\",\"crates/aworkit-capability-host/src/workspace_instructions/AGENTS.md\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/cancellation.rs\",\"desktop/src-tauri/src/runtime/chat_workspace.rs\",\"desktop/src-tauri/src/runtime/credential_journal.rs\",\"desktop/src-tauri/src/runtime/credentials.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/dto.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/approval_control.rs\",\"desktop/src-tauri/src/runtime/provider_health.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/context_model.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs\",\"desktop/src-tauri/src/runtime/workspace_instructions/AGENTS.md\",\"desktop/src/App.tsx\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/corePort.ts\",\"desktop/src/chat/runtime.integration.test.tsx\",\"desktop/src/chat/types.ts\",\"desktop/src/chat/useChatRuntime.ts\",\"desktop/src/shell/NavigationPane.tsx\",\"desktop/src/styles.css\",\"docs/AGENTS.md\"]",
+    "completed_at": "2026-09-15 09:46:01",
+    "completion_memo": {
+      "lines": [
+        "Implemented and critically audited the formal concurrent Chat design after investigating DeepSeek Harness first. Native commands own immutable Chat-bound workers and release the coordinator during effects. History/session metadata writes use short shared locks; per-Chat reservations and cancellation isolate activity. Worker Settings feedback merges into current documents. All live model/tool/approval dispatches use invocation-specific delivery, preventing a sibling active dispatch from being classified as abandoned. UI permits history/New Chat throughout work and recovery, shows busy icons, preserves Chat drafts/pending/errors/maintenance queues, captures command targets, and fences navigation plus overtaken snapshots without dropping live events. Delete/fork guards apply to their target. Updated legacy UI tests that encoded the old global recovery lock.\n",
+        "\n",
+        "Verification: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib runtime::: 325 passed; targeted frontend suite: 58 passed; changed recovery and concurrency tests rerun: 38 passed. npm run check, npm run build, cargo check --tests, cargo build, and git diff --check passed. Final real native WebView/IPC test passed using two simultaneously held SSE requests: both busy icons, New Chat/history navigation, Stop A while B stays active, draft restoration, concurrent Settings preservation, isolated transcript events, background completion preserving selection, and restart recovery without replay while a new Chat runs. Evidence: desktop/src-tauri/target/native-concurrency-1789465424061/result.json, two-chats-running.png, completed-chat.png, requests.json. Reproduction and architecture notes: docs/chat-concurrency.md.\n",
+        "\n",
+        "Existing boundary: the synchronous provider parser observes cancellation between reads; the SSE fixture keeps connections alive with heartbeats. Immediate interruption of a silent provider socket is not introduced here. Drafts persist across navigation within the workspace lifetime. Existing dead-code/bundle warnings remain. Pre-existing and concurrent Settings/default-selection edits were preserved. The debug executable is rebuilt; no installer deployment or commit was performed. Task is finished for review, not closed."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-15 09:08:43",
+    "created_files": "[\"desktop/scripts/native-chat-concurrency.mjs\",\"desktop/src-tauri/src/AGENTS.md\",\"desktop/src-tauri/src/runtime/AGENTS.md\",\"desktop/src-tauri/src/runtime/concurrency.rs\",\"desktop/src-tauri/src/runtime/service/AGENTS.md\",\"desktop/src-tauri/src/runtime/service/concurrent.rs\",\"desktop/src-tauri/src/runtime/service/tests/concurrency.rs\",\"desktop/src/chat/AGENTS.md\",\"desktop/src/chat/composerDrafts.ts\",\"desktop/src/chat/concurrency.test.tsx\",\"desktop/src/chat/useChatMaintenance.ts\",\"desktop/src/shell/AGENTS.md\",\"docs/chat-concurrency.md\"]",
+    "description": "Implement concurrent Chat design (uml.chat.concurrent_execution) and the invocation broker ownership rule added during native verification, formal design revisions 587–591. Reference: DeepSeek core/agent-loop/src/agent.ts owns a driver/inbox/AbortController per SessionId; api/session-controller/src/client/sessions/manager.ts separates selection from resident sessions; ui-workspace/src/client/rows/Rows.tsx keeps running rows clickable. Replace Aworkit's full-command global mutex and selection-dependent committer with immutable Chat-bound workers, per-Chat reservation/cancellation, short shared metadata locks and coordinator-only Settings feedback. Live model/tool dispatch must deliver and reconcile only its own invocation; sibling DispatchAttempted records are active work. Route commands/snapshots explicitly, fence navigation and out-of-order responses, preserve live events, Chat drafts, pending/error/maintenance queues, and show accessible busy history icons. Preserve frozen authority and idempotent recovery. Acceptance: overlapping actual native provider calls; New Chat/history/Settings responsive; Stop, drafts, events, approvals and recovery remain with their owner; background completion preserves selection; busy target delete/fork rejected; targeted Rust/UI tests and native WebView proof. Preserve pre-existing worktree changes.",
+    "id": 89,
+    "number": 88,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Enable independent concurrent Chats and nonblocking navigation",
+    "updated_at": "2026-09-22 07:25:48"
+  },
+  "deleted": false,
+  "identity": "7c8bac82-9539-80d3-b86b-2d418eeacb58",
+  "schemaVersion": 1
+}

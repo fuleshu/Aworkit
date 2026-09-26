@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "qa_job_id": {
+      "ref": "61217e4f-4e65-84a5-8e91-42829603dc96"
+    },
+    "tag": "secrets"
+  },
+  "deleted": false,
+  "identity": "bcf99450-9488-8b67-9929-485e617ecacf",
+  "schemaVersion": 1
+}

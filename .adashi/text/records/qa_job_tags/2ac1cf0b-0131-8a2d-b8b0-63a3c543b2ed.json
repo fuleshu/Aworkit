@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "qa_job_id": {
+      "ref": "61217e4f-4e65-84a5-8e91-42829603dc96"
+    },
+    "tag": "milestone-05"
+  },
+  "deleted": false,
+  "identity": "2ac1cf0b-0131-8a2d-b8b0-63a3c543b2ed",
+  "schemaVersion": 1
+}

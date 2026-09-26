@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.trusted_core.extension_registry",
+    "resource_kind": "design.element",
+    "updated_at": "2026-08-20 22:00:11",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "d9ee3cd9-8c01-89fa-99e7-9c5dfc19eb9c",
+  "schemaVersion": 1
+}

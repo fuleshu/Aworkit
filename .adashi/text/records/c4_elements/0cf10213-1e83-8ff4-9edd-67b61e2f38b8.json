@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Connects only to configured, core-attested MCP servers and manages initialize/feature negotiation, session reuse, tools/resources/prompts discovery, approved calls, progress, cancellation, and teardown over MCP. MCP remains a tool/resource/prompt protocol and is never treated as a universal external-agent lifecycle.\n",
+        "Owned runtime state: bounded sessions keyed by exact server binding/version/hash and host generation, negotiated protocol/capability snapshot, request-ID correlation, in-flight limits, reconnect/backoff state, and health observations. Discovered catalogs are runtime evidence, not canonical configuration.\n",
+        "Versioned ports and contracts: McpServerManifestV1, McpSessionSpecV1, McpCapabilitySnapshotV1, McpCallV1, McpRawEventV1, ForwardableMcpSetV1, and CloseSessionV1. Catalog/schema drift from the frozen descriptor blocks affected calls rather than mutating workflow definitions.\n",
+        "Failure and degraded behavior: initialization timeout, protocol violation, vanished tool, incompatible schema, transport loss, or exhausted restart budget produces explicit degraded/definite-not-started or uncertain outcomes according to dispatch milestones. Reconnect never silently repeats an effectful call.\n",
+        "Security truthfulness: secret slots and workspace exposure are lease/envelope-bound; configured local MCP servers may themselves be trusted user-level processes and are not a sandbox unless an explicit isolation backend enforces one.\n",
+        "Observability, performance, and cross-platform behavior: bounded request/notification queues, progress coalescing without semantic reordering, session/latency/error metrics, redacted protocol diagnostics, MCP stdio/HTTP backpressure, and normalized stdio/environment behavior on Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no server installation/enablement, external-agent continuation or approvals, workflow node creation, authority grant, provider fallback, canonical catalog/history persistence, or automatic call retry."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.mcp_sessions",
+    "id": 55,
+    "name": "MCP Client & Session Manager",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,MCP,Sessions",
+    "technology": "Rust MCP client pool over stdio and HTTP transports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0cf10213-1e83-8ff4-9edd-67b61e2f38b8",
+  "schemaVersion": 1
+}

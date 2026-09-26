@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses normalized backend command/session handles, deadlines, cancellation, health, and cleanup while returning enforcement evidence separately",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_isolation.process_runtime",
+    "id": 185,
+    "source_external_id": "aworkit.capability_host.isolation_backend",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Cross-platform backend lifecycle port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e62cbff6-7463-8938-bf0c-598f17ccb7a3",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Builds only the fixed unprivileged EnrollmentPlanV1 or observes, applies, verifies, and restores the exact journal-intended ManagedLocalBuildProfileV1 selector transition under expected capability generation, source and destination hashes, filesystem identity, and ownership facts; ambiguity is reconciled by observation and never blind retry",
+    "destination_external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "external_id": "rel.bootstrap.coordinator.profiles",
+    "id": 300,
+    "source_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "tags": "Relationship,Internal,Activation Profile,Rollback",
+    "technology": "ProfilePreflightPortV1 and PlatformActivationPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "492b8b19-c9e9-860b-92ef-b0dbc7d502a6",
+  "schemaVersion": 1
+}

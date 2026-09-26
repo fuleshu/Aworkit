@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies immutable indexed nodes, typed transitions, construct ordinals, and terminal semantics for deterministic execution",
+    "destination_external_id": "aworkit.workflow_worker.scheduler",
+    "external_id": "rel.worker_execution_plan.scheduler",
+    "id": 110,
+    "source_external_id": "aworkit.workflow_worker.execution_plan",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Arc-backed immutable ExecutionPlanV1 query port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9199f8e0-93c6-8092-9459-9c4ee4f2b403",
+  "schemaVersion": 1
+}

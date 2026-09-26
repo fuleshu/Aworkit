@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Applies a deny-by-default, versioned portability policy to every event, frozen-snapshot/provenance record, manifest field, and artifact candidate before canonical serialization or hashing. It produces an explicit sanitized DTO plus omission facts, or rejects the commit.\n",
+        "Owned contracts: PortableExportPolicyV1 is code/config identified by policyId and content hash; ScrubDecisionV1 records allowed, transformed, omitted, or rejected fields with stable JSON pointers/reason codes; OmissionFactV1 can state that nonportable evidence existed without preserving its value. Policy configuration remains core-governed; portable records carry only its ID/hash.\n",
+        "Mandatory exclusions: credential values and lease material; approval responses, nonces, permits, grants, and inherited authority; hidden or reconstructed reasoning; machine-local capability IDs, absolute roots, device/user names, endpoint bindings, and local secret references; optional raw/debug protocol capture; provider/Rig/native runtime state; executable binaries/scripts, plugin or adapter code/packages, launch metadata, and unsafe active-content artifacts. Logical capability requirements, safe project-relative refs, source-supplied semantic output/progress categories, redacted concrete execution provenance, and inert plain-text patches may pass under schema.\n",
+        "Ports/DTOs: ScrubEventBatch, ScrubFrozenSnapshot, ScrubManifestCandidate, and ClassifyArtifact accept typed candidates and return SanitizedPortable* DTOs. Unknown record variants or fields fail closed rather than being copied optimistically. Type-driven selection is authoritative; pattern scanning is defense in depth and never proof that a payload is safe.\n",
+        "Failure and NFRs: any discovered secret/executable/oversize/ambiguous field aborts the whole canonical commit before object publication. Deterministic fixtures guarantee identical sanitized bytes and omissions across platforms; processing is streaming, bounded, cancellable, and produces non-sensitive policy metrics.\n",
+        "Non-responsibilities: no branch/head write, credential retrieval, approval evaluation, reasoning reconstruction, arbitrary redaction of project files, import validation, artifact execution, or Git operation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.export_policy",
+    "id": 79,
+    "name": "Portable Export Scrubber & Policy Gate",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Export,Redaction,Policy",
+    "technology": "Rust typed allowlist scrubber with versioned portable-data policy and deterministic omission DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d9357b3a-f2c9-86c3-97df-f06389bcbb7f",
+  "schemaVersion": 1
+}

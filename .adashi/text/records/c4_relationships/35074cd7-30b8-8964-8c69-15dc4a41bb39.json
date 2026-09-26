@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Forwards only the pinned selected MCP server set when both adapter and target negotiated that feature",
+    "destination_external_id": "aworkit.capability_host.mcp_sessions",
+    "external_id": "rel.host_external.mcp",
+    "id": 181,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "ForwardableMcpSetV1 port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "35074cd7-30b8-8964-8c69-15dc4a41bb39",
+  "schemaVersion": 1
+}

@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-process/Cargo.toml\",\"crates/aworkit-process/src/lib.rs\",\"crates/aworkit-capability-host/src/process.rs\",\"crates/aworkit-capability-host/src/plugin/process.rs\",\"crates/aworkit-trusted-core/Cargo.toml\",\"crates/aworkit-trusted-core/src/supervisor.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/mod.rs\"]",
+    "completed_at": "2026-08-23 11:40:57",
+    "completion_memo": "Implemented shared native process and authenticated local-IPC primitives and wired them into bootstrap verification launch, capability-host process execution, plugin processes, and trusted-core worker supervision. Added monotonic deadlines, canonical executable identity with stable object/hash revalidation, authenticated bounded local channels using Windows named pipes or Unix-domain sockets, peer credential binding, random nonces, generation fencing, sanitized exact-executable spawning, cleared environments, retained exact group/job handles, descendant enumeration, cooperative then forced cleanup, bounded waits, cleanup evidence, and detached-helper separation. The final task-end audit corrected duplicate-generation ordering, pre-spawn containment validation, post-spawn executable revalidation, retained group/job ownership, detached-helper isolation, authenticated cooperative bootstrap shutdown, stable object identity hashing, and added a negative IPC nonce test. Verification passed with warnings denied across aworkit-process, capability-host, trusted-core, and bootstrap-helper; the focused process suite has 7 passing tests; git diff --check is clean.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:34:37",
+    "created_files": "[\"crates/aworkit-process/src/identity.rs\",\"crates/aworkit-process/src/ipc.rs\",\"crates/aworkit-process/src/runtime.rs\",\"crates/aworkit-process/src/time.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/native.rs\"]",
+    "description": "Implement the shared process and local-IPC ports on Windows, macOS, and Linux: authenticated peer/process/executable identity, named-pipe or Unix-channel primitives, sanitized spawning, exact process handles, Job Object or process-group/pidfd lifecycle, descendant enumeration, cooperative and forced cleanup, monotonic deadlines, detached-helper survival, and verification-only generation launch.",
+    "id": 75,
+    "number": 75,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M12.2 — Implement native process, IPC, identity, and cleanup adapters",
+    "updated_at": "2026-09-22 07:21:49"
+  },
+  "deleted": false,
+  "identity": "550abd7c-878b-825d-89ad-18a8d30fa7f9",
+  "schemaVersion": 1
+}

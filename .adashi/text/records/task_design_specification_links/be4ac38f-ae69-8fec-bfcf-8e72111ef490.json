@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:21",
+    "design_external_id": "uml.bootstrap_helper.activate_restart_receipt",
+    "id": 374,
+    "sort_order": 3,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "94d9e673-e9b1-8a72-bb3e-882b39d3a0fa"
+    }
+  },
+  "deleted": false,
+  "identity": "be4ac38f-ae69-8fec-bfcf-8e72111ef490",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:47",
+    "design_external_id": "uml.system.boundary_contract_ownership",
+    "id": 4,
+    "qa_job_id": {
+      "ref": "e0468672-35c4-8bf4-b6f8-873a6bc93096"
+    },
+    "sort_order": 0,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "c5671988-d653-8d1e-bb3a-454f297e1649",
+  "schemaVersion": 1
+}

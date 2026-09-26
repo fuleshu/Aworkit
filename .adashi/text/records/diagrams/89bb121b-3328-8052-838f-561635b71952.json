@@ -1,0 +1,41 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.context_store",
+    "created_at": "2026-09-08 07:36:03",
+    "diagram_type": "flow",
+    "id": 65,
+    "key": "uml.workflow_worker.workspace_instructions_activation",
+    "kind": "mermaid",
+    "sort_order": 42,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "  Manifest[\"Workspace Instructions: automatic_context plugin\"] --> Settings[\"Settings availability and configuration\"]\n",
+        "  Settings --> Select[\"Agent node plugin checkbox, independent of Skills\"]\n",
+        "  Select --> Freeze[\"Core validates and freezes selection, configuration and authority\"]\n",
+        "  Freeze --> Enabled{\"Selected for this node or child?\"}\n",
+        "  Enabled -->|No| Skip[\"No automatic loader contribution\"]\n",
+        "  Enabled -->|Yes| Boundary[\"Common preparation before every Agent request\"]\n",
+        "  Boundary --> Visibility[\"Inspect actual visible context plus admitted loader metadata\"]\n",
+        "  Visibility --> Reconcile[\"Baseline, file changes, resume or post-compaction restoration\"]\n",
+        "  Reconcile --> Read[\"Bounded reads through existing core-approved filesystem access\"]\n",
+        "  Read --> Render[\"Reference templates, scoped rules, dedup and shared byte budget\"]\n",
+        "  Render --> Commit[\"Commit message delta to existing history before dispatch\"]\n",
+        "  Commit --> Request[\"Text-only or tool-capable provider request\"]\n",
+        "  Request --> Touch[\"Observe successful file operations after settled result and step\"]\n",
+        "  Touch --> Boundary\n",
+        "  Replaced[\"Future compactor replaces visible selection; plugin contract implemented and tested now\"] --> Boundary\n",
+        "  Contract[\"No callable function required; no separate memory database; .aworkit home\"] -.-> Manifest"
+      ]
+    },
+    "title": "Workspace Instructions plugin activation and request preparation",
+    "updated_at": "2026-09-08 08:06:04",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "89bb121b-3328-8052-838f-561635b71952",
+  "schemaVersion": 1
+}

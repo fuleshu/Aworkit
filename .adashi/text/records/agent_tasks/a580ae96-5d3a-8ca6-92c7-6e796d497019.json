@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-bootstrap-helper/Cargo.toml\",\"crates/aworkit-bootstrap-helper/src/lib.rs\",\"crates/aworkit-bootstrap-helper/src/journal/model.rs\",\"crates/aworkit-bootstrap-helper/src/journal/journal.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Implemented the bounded authenticated bootstrap gateway: OS-entropy one-use challenges, same-user peer and executable identity binding, canonical baton/admission hashes, capability revalidation, current/candidate/rollback generation fences, durable command admission and restart-rebuilt deduplication, fixed enrollment preparation, and recipient-exact result reads. Ten protocol scenarios plus workspace QA pass.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:32",
+    "created_files": "[\"crates/aworkit-bootstrap-helper/src/protocol/mod.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/error.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/model.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/ports.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/gateway.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/tests.rs\"]",
+    "description": "Implement the helper's sole core-facing versioned local protocol with one-use challenges, OS peer and executable identity, bounded DTOs, command deduplication, capability-report digest, accepted-baton hash, and current/candidate/rollback ProcessGeneration fences. Journal bytes before acknowledgement and reject stale, replayed, changed, or illegal-phase commands.",
+    "id": 68,
+    "number": 68,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.2 — Implement the authenticated bootstrap protocol and generation fence",
+    "updated_at": "2026-09-22 07:20:20"
+  },
+  "deleted": false,
+  "identity": "a580ae96-5d3a-8ca6-92c7-6e796d497019",
+  "schemaVersion": 1
+}

@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Redeems only invocation-scoped lease handles over the authenticated host-generation channel, materializes the minimum permitted fields into declared headers, environment variables, stdin, protected temporary files, or sidecar channels, and supplies a RedactionSetV1 to every diagnostic/result path. It revokes and zeroizes material on terminal, cancellation, timeout, uncertainty, or generation loss.\n",
+        "Owned runtime state: in-memory SecretMaterializationV1 bound to decisionId, invocationId, audience, process generation, field allowlist, expiry, use count, injection target, redaction fingerprints, and cleanup status. Credential values are never persisted and non-recoverable leases are not cached across restart.\n",
+        "Versioned ports and contracts: SecretLeaseHandleV1, RedeemLeaseV1, SecretMaterializationPlanV1, SecretDeliveryV1, RedactionSetV1, LeaseUseAuditV1, RevokeLeaseV1, and ZeroizationEvidenceV1. The core secret broker remains the only issuer and may deny any redemption.\n",
+        "Failure and degraded behavior: expired/revoked/mismatched audience, field, invocation, or generation fails closed before disclosure. Partial injection cleans all material; after a secret-bearing request may have started, transport ambiguity is passed to outcome classification rather than guessed.\n",
+        "Security truthfulness: no access outside lease fields or lifetime, no secret values in Aworkit DTOs/logs/artifacts/crash diagnostics. Redaction cannot prevent enabled trusted plugin code from independently reading/retaining user-accessible data or bypassing brokers, and the design states that limit.\n",
+        "Observability, performance, and cross-platform behavior: metadata-only issue/redeem/revoke/zeroize audit, redaction-leak fixtures, bounded TTL/use counts, constant-time token checks, memory zeroization, and protected environment/temp-file/pipe implementations for Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no credential storage, lease issuance, authority/approval, provider authentication policy, canonical audit commit, portable credential sync, or plugin sandboxing."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.secret_materializer",
+    "id": 59,
+    "name": "Invocation Secret Lease Materializer & Redactor",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Secrets,Redaction",
+    "technology": "Rust memory-hardened lease client and streaming redaction filters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dd8540d4-8cb2-8c87-9f62-5f589987af9a",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Consumes an explicitly selected, fully resolved ContinuationRebindPlanV1 and source checkpoint hashes when freezing a new child continuation; the original graph/snapshot/history is never mutated",
+    "destination_external_id": "aworkit.portable_store.rebind_planner",
+    "external_id": "rel.core_snapshot.portable.rebind",
+    "id": 272,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "Relationship,Boundary Contract,Rebinding",
+    "technology": "Continuation rebind validation DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ea2803af-6cc1-828c-9596-696f8f731cff",
+  "schemaVersion": 1
+}

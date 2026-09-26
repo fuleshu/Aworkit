@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Persists the facts governed by the core Extension Identity, Integrity & Compatibility Registry without discovering or executing code itself.\n",
+        "Owned records/files: ExtensionRecordV1 keyed by ExtensionId/version/content hash with manifest schema, Aworkit compatibility range, canonical entry-point identity, contribution descriptors, configuration-schema hash, dependencies, provenance/signature facts, installed/enabled/quarantined state, record version, and last attested host process generation; immutable hash/compatibility audit entries.\n",
+        "Keys and ordering: ExtensionId plus semantic version/content hash identifies exact trusted code; each inventory record has monotonic expectedVersion. An update creates a distinct version/hash fact and never mutates a Run-pinned identity. Attestation generation is monotonic per supervised host identity, not wall-clock ordered.\n",
+        "Ports: exposes expected-version ExtensionInventoryRepository load/list/upsert/enable-state/quarantine/attestation operations only to the core Extension Registry and read-only integrity/backup maintenance to the storage coordinator.\n",
+        "Durability/degraded behavior: inventory changes commit atomically with audit rows. Missing entry points, hash mismatch, incompatible manifest/protocol, failed handshake, schema incompatibility, or corruption preserve the record and mark it unavailable/quarantined; they never rewrite workflows or substitute another installed version. Forward schema opens read-only until compatible.\n",
+        "Retention/performance: historical identities pinned by Chats/repairs are retained; unreferenced removed-version facts compact only after policy and backup. Indexed ExtensionId/contribution lookup targets sub-20 ms for normal desktop inventories; discovery/hash work remains bounded and external to the transaction.\n",
+        "Security/non-responsibilities: only opaque credential references and non-secret manifest facts may be stored; values, environment secrets, and lease material are prohibited. This repository does not install, enable by policy, execute, sandbox, attest by itself, authorize capabilities, store extension binaries, or duplicate user plugin configuration JSON."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.extension_inventory",
+    "id": 68,
+    "name": "Trusted Extension Inventory & Attestation Repository",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Extensions,Integrity,SQLite",
+    "technology": "Rust SQLite inventory repository with immutable integrity audit",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b6a0ee7c-e225-8c9f-bd3c-f13efbc681db",
+  "schemaVersion": 1
+}

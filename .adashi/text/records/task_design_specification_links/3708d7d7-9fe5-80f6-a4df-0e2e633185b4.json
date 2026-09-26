@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:31:31",
+    "design_external_id": "mockup.desktop_ui.chat_shell",
+    "id": 213,
+    "sort_order": 0,
+    "target_type": "mockup",
+    "task_id": {
+      "ref": "4cce4c52-421c-8c3d-9f7e-eda21771b7de"
+    }
+  },
+  "deleted": false,
+  "identity": "3708d7d7-9fe5-80f6-a4df-0e2e633185b4",
+  "schemaVersion": 1
+}

@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-15 09:08:28",
+    "design_external_id": "aworkit.desktop_ui.app_shell",
+    "id": 13,
+    "target": "desktop/src/shell/NavigationPane.tsx",
+    "target_type": "file",
+    "updated_at": "2026-09-15 09:08:28",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3402f698-944f-8c2b-9207-9627bde3fb1e",
+  "schemaVersion": 1
+}

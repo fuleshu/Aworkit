@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "mockup.desktop_ui.management_repair",
+    "resource_kind": "mockup.accepted",
+    "updated_at": "2026-08-21 14:03:42",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "f1172936-33b4-8c74-9d07-8ea79b2f730e",
+  "schemaVersion": 1
+}

@@ -1,0 +1,43 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Under ManagedLocalBuildProfileV1, owns the complete candidate, active, and previous-known-good build-slot model and proves that every activated executable belongs to the exact content-addressed whole-application bundle named by the enrollment and baton. It reads only staged artifacts by ArtifactId and hash, materializes or opens immutable helper-controlled slots, verifies manifest closure, BuildProvenanceV1, platform, architecture, helper-protocol and application-schema compatibility, and revalidates opened object identity immediately before switch, launch, rollback, and receipt.\n",
+        "\n",
+        "Build provenance and enrollment contracts: BuildProvenanceV1 is generated during compilation and contains schema version, BuildOriginV1, build ID, VCS revision, complete dirty-tree or diff digest, dependency lock hashes, target triple, build profile and features, toolchain digest, application schema range, and helper protocol range. It is causal build evidence and a capability label, not proof that behavior equals reviewed source. The external SlotManifestV1 binds its digest to the canonical complete-bundle root to avoid recursive self-hashing. LocalBuildEnrollmentV1 contains installation ID, profile version, filesystem and managed-root identities, helper and stable-launcher hashes, journal identity, initial active-slot root, selector identity, current bundle hash, ownership facts, and SameUserHashAndOwnership integrity strength.\n",
+        "\n",
+        "Advanced-user enrollment is a fixed maintenance operation, not a runtime flag. It accepts only a complete locally compiled release-like bundle, creates a per-user helper-controlled root, installs the stable helper, launcher, and journal outside all application slots, materializes and verifies the initial active immutable slot, atomically publishes the selector, probe-launches the managed copy, and requires the user to restart through that stable launcher. The original source checkout remains untouched for manual recovery. Direct cargo run, cargo tauri dev, mutable target output, partial binaries, and arbitrary caller paths are never enrolled or activated. The helper is not replaced during an activation; an explicit later maintenance enrollment is required for a compatible helper update.\n",
+        "\n",
+        "Owned state/files: Owns helper-controlled SlotManifestV1 files and immutable slot directories keyed by BuildContentHash, plus bounded materialization temporary directories and SlotVerificationCacheV1 entries keyed by file identity, manifest hash, size, and verification generation. A manifest covers every executable, library, resource, bundle metadata file, expected core identity, embedded provenance digest, bootstrap protocol range, target OS and architecture, data-compatibility declaration, and excludes the stable helper, launcher, and journal. Candidate and previous are distinct immutable descriptors; the active known-good slot becomes the preserved rollback reference when a candidate is staged and is never overwritten by candidate preparation.\n",
+        "\n",
+        "Ports/DTOs: BuildSlotVerifyPortV1 exposes VerifyStagedArtifact(BuildArtifactRefV1), PrepareLocalEnrollment(BuildArtifactRefV1, BuildProvenanceV1), MaterializeImmutableSlot, OpenVerifiedSlot, ReverifyOpenedSlot, DescribeActiveAndPreviousKnownGood, and ProduceSlotObservation. It returns LocalBuildEnrollmentV1, VerifiedBuildSlotV1, OpenBuildSlotHandleV1, SlotObservationV1, or explicit Unsupported or IntegrityFailure. BootstrapArtifactReadPort accepts only ArtifactId, expected content hash, bounded ranges, and manifest-relative entries from the Local Artifact Store. ActivationControlPortV1 and LaunchIdentityPortV1 consume opened handles, never caller-supplied paths.\n",
+        "\n",
+        "Phase and generation invariants: Candidate, active, and previous hashes must equal the enrollment, capability report, and RepairActivationBatonV1 and remain byte-identical across preflight, switch, launch, verification, rollback, and result. The active selector may name only a verified immutable slot in the matching managed root. Candidate cannot replace the previous-known-good descriptor until ActivatedVerified is durable; failure preserves the original previous descriptor. Slot identity is separate from ProcessGenerationV1: every launch receives a fresh generation bound to the same verified slot. Candidate data changes must be backward-compatible or deferred until verification is durable; executable rollback never claims to reverse a forward-only migration.\n",
+        "\n",
+        "Atomic and crash behavior: Materialization streams to a new same-volume temporary directory, validates lengths and hashes while writing, flushes files and manifest, removes write permission where enforceable, and atomically publishes by content hash. Existing content with the same hash is opened and reverified; a collision with different identity is corruption. Partial materialization is unreachable and delayed-cleanable. Selector changes are not performed here. After crash, only a complete manifest-closed slot can be returned, and last-moment open-handle and file-identity revalidation closes path, symlink, reparse-point, bundle replacement, and PID-era TOCTOU gaps.\n",
+        "\n",
+        "Security and integrity semantics: Uses anchored no-follow traversal, canonical manifest-relative names, case and collision checks, bounded extraction, executable and media allowlists, and whole-bundle hashing. Managed local slots truthfully provide content-hash and same-user ownership integrity only; absence of a publisher signature neither grants nor removes eligibility. Cache hits never bypass fresh file-identity and manifest-root checks. No credentials, private keys, arbitrary workspace files, general archives, or plugin code outside the hashed app bundle are accepted.\n",
+        "\n",
+        "Cross-platform degradation: Windows rejects reparse traversal and handles locked DLL and executable bundles using side-by-side directories. macOS verifies the complete locally enrolled application bundle identity with the helper and launcher outside the selected bundle. Linux detects package-manager, AppImage, Snap, Flatpak, read-only, mount, symlink, network, and cross-device constraints. Mutable staging, missing whole-bundle manifests, mismatched provenance or enrollment, unsupported architecture or protocol, inability to preserve the current known-good slot, or non-atomic storage returns Unsupported or IntegrityFailure before the current core exits.\n",
+        "\n",
+        "NFRs: Verification streams without whole-bundle buffering, supports bounded parallel hashing, reports deterministic per-entry failures, reuses only identity-keyed cache entries, enforces size, file-count, and path-depth quotas, and records hash throughput, cache validity, materialization bytes, provenance or enrollment mismatch, TOCTOU failures, and previous-slot health without logging content.\n",
+        "\n",
+        "Non-responsibilities: Does not edit or compile source, diagnose, download, choose or approve a candidate, mutate a source checkout, switch the active selector during repair activation, launch processes, run focused verification, repair application data, write Chat evidence, expose arbitrary artifact reads, store secrets, or update the helper during the activation it supervises."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.bootstrap_helper.build_slots",
+    "id": 91,
+    "name": "Immutable Build-Slot & Content Verifier",
+    "parent_external_id": "aworkit.bootstrap_helper",
+    "tags": "Component,Trusted Bootstrap,Build Slots,Integrity,Filesystem",
+    "technology": "Rust provenance-bound whole-bundle verifier and managed-local enrollment over content-addressed immutable side-by-side slots",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1fdcf874-ed23-837a-95aa-918e8d30dc13",
+  "schemaVersion": 1
+}

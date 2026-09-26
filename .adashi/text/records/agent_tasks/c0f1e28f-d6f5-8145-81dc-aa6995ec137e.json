@@ -1,0 +1,42 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-08-21 13:18:53",
+    "completion_memo": "User approved Option A. Portable JSONL/CAS remains the sole canonical semantic history; a strictly noncanonical machine-local SQLite Portable Runtime Journal stores only local binding, frozen-snapshot, approval/input delivery, deduplication, outbox, process-generation, uncertain-outcome, and recovery facts fenced by exact portable commit/head identities. The already-designed two-store sequence remains: prepare portable objects, durably record PendingPortableCommit and operational mutations, publish and freshly verify the portable head, durably finalize HeadLinked, then and only then acknowledge or deliver. Exact same-installation reconciliation of MachineInstanceId, BindingGeneration, ChatId, BranchId, CommitId, verified head, and journal fences resumes the original Chat/Run. Missing/mismatched journal, clone/new machine, stale backup generation, or explicit rebind stays inert/quarantined and creates a new child Chat/Run and portable branch only after fresh local binding, authority, and approvals. Backups cannot transfer identity or authority. Only fully settled terminal/superseded state may compact; pending, uncertain, and quarantined evidence remains protected. Hardened the root system invariant and Portable Runtime Journal absence/retention contract at design revision 69; existing commit/recovery UML and structural design required no change. No source files were created or changed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 00:15:38",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Verify the formal design decision that an active PortableProject Chat may use a strictly noncanonical machine-local Portable Runtime Journal while its semantic history remains canonical only in immutable project JSONL/CAS.\n",
+        "\n",
+        "Proposed semantics to confirm:\n",
+        "- The local journal is keyed to the verified portable CommitId/head hash and contains only local binding, full frozen-snapshot, approval/input delivery, deduplication, outbox, process-generation, and recovery facts.\n",
+        "- It is never exported, never a semantic event stream, never authority on another machine, and never permits effect replay.\n",
+        "- Same-machine restart can resume the same non-terminal Chat after exact two-store reconciliation.\n",
+        "- A checkout/import without a matching journal remains inert and requires explicit local capability rebinding and fresh authority. It does not silently continue the old active runtime.\n",
+        "- Terminal/superseded operational state may be compacted only after all pending/uncertain delivery facts are resolved.\n",
+        "\n",
+        "Alternatives to discuss:\n",
+        "A. Accept this design (recommended) as compatible with exactly one canonical history.\n",
+        "B. Treat portable history only as inert checkpoints and always create a new child Chat for continuation, revising the concept's same-Run restart promise.\n",
+        "C. Put machine-neutral runtime state into portable records, which would require revisiting the deliberate exclusion of local bindings, approvals, and authority.\n",
+        "\n",
+        "Required output: confirm the semantic model, missing-journal behavior, backup/retention expectations, same-machine versus new-machine identity rules, and any wording changes to the root/store contracts."
+      ]
+    },
+    "id": 2,
+    "number": 2,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Discussion: verify portable same-Run recovery semantics",
+    "updated_at": "2026-09-21 14:54:23"
+  },
+  "deleted": false,
+  "identity": "c0f1e28f-d6f5-8145-81dc-aa6995ec137e",
+  "schemaVersion": 1
+}

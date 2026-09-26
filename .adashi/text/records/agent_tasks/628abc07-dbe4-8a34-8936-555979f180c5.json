@@ -1,0 +1,60 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-09-22 20:41:02",
+    "completion_memo": {
+      "lines": [
+        "Closed without implementation. Reviewed 2026-09-22 and judged not valuable, so the slot is freed rather than left as a plausible-sounding backlog item.\n",
+        "\n",
+        "Why it was rejected:\n",
+        "- The workspace root and project identity already reach the model as a project context message on every Agent run, and per-project instruction text already has a managed home in Workspace Instructions (tool.workspace_instructions, activation automatic_context, which injects the project's instruction files). Placeholders for those facts would duplicate delivery that already works.\n",
+        "- The agent request prefix is already frozen when the Chat starts, so resolving facts inside instructions buys no additional stability, cache benefit, or resume parity.\n",
+        "- The only fact not already present is the model id/name, and a persona does not need it to do its work. That is not worth introducing substitution syntax into every persona.\n",
+        "- The mechanism came from DeepSeek Harness, where a persona is deployment configuration shared across many machines and workspaces, so a hardcoded path there is genuinely wrong. Aworkit delivers workspace and project facts at runtime instead, so the motivation does not transfer.\n",
+        "- Cost: every persona becomes noisier to author for zero behavioural gain.\n",
+        "\n",
+        "Re-open only with a concrete use case. If the real pain is retyping the same persona across nodes and workflows, the better shape is named personas defined once in Settings and selected per node from a dropdown - no variables inside the instruction text. Full reasoning is appended to the task description."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": "2026-09-22 20:41:06",
+    "created_at": "2026-09-21 07:48:11",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Close the persona gap: DSH resolves {{model}} and {{cwd}} inside its persona; Aworkit Agent instructions are static text and the workspace reaches the model only through a project context message.\n",
+        "\n",
+        "Design fit.\n",
+        "- Allow agent and model_call instructions to reference a small, closed vocabulary of frozen runtime facts (selected model id/name, workspace root and relative project-relative paths, Chat id). Placeholders are resolved once at snapshot freeze and stored resolved in the frozen node configuration, so the request prefix stays stable for the life of the Chat and cannot drift when Settings or the workspace change mid-Run.\n",
+        "- Freeze-time validation rejects unknown or malformed placeholders with a stable diagnostic; a declared fact that is unresolvable at freeze renders as a labelled absence rather than an empty string, so the model never silently loses context.\n",
+        "- The workflow editor provides insertion help and a preview of resolved values against the current Settings and selected workspace, and the properties pane documents the vocabulary.\n",
+        "- Reuse the existing date/time and workspace-instruction context for facts that are already delivered automatically; do not duplicate them as placeholders.\n",
+        "\n",
+        "Non-goals. Arbitrary templating or scripting inside workflow documents; runtime re-resolution of facts; exposing secrets, credentials or absolute host paths beyond the already-visible workspace identity.\n",
+        "\n",
+        "Outputs. Placeholder vocabulary and freeze-time resolver; validation diagnostics; editor help and preview; and tests for stable rendering across turns, resume parity, unknown-placeholder rejection, and labelled absence for unresolvable facts.\n",
+        "\n",
+        "Decision 2026-09-22 - closed without implementation, judged not valuable. Reasons recorded so it is not re-proposed:\n",
+        "- The workspace root and project identity already reach the model as a project context message on every Agent run, and per-project instruction text already has a managed home in Workspace Instructions (tool.workspace_instructions, activation automatic_context, which injects the project's instruction files). Placeholders for those facts would duplicate delivery that already works.\n",
+        "- The agent request prefix is already frozen when the Chat starts, so resolving facts inside instructions buys no additional stability, cache benefit, or resume parity.\n",
+        "- The only fact not already present is the model id/name, and a persona does not need it to do its work; that is not worth introducing substitution syntax into every persona.\n",
+        "- The mechanism was derived from DeepSeek Harness, where a persona is deployment configuration shared across many machines and workspaces, so a hardcoded path there is genuinely wrong. Aworkit delivers workspace and project facts at runtime instead, so the motivation does not transfer.\n",
+        "- Cost: every persona becomes noisier to author for zero behavioural gain.\n",
+        "\n",
+        "Re-open only with a concrete use case. If the real pain is retyping the same persona across nodes and workflows, the better shape is named personas defined once in Settings and selected per node from a dropdown - no variables in the text."
+      ]
+    },
+    "id": 118,
+    "number": 117,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Resolve frozen runtime facts inside Agent and Plan instructions",
+    "updated_at": "2026-09-22 20:41:06"
+  },
+  "deleted": false,
+  "identity": "628abc07-dbe4-8a34-8936-555979f180c5",
+  "schemaVersion": 1
+}

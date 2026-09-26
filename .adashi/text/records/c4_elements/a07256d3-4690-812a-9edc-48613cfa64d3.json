@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Provides the storage-mechanics startup gate for the core Recovery Coordinator across the deliberate multi-medium boundary: canonical/event SQLite, disposable indexes, versioned JSON, artifact/evidence files, debug capture, and rotating logs. It coordinates compatibility, migrations, integrity checks, crash-consistent backup, quarantine, validated restore, and projection rebuild.\n",
+        "Owned records/files: StorageSchemaManifestV1 with per-store format/min-reader/min-writer versions; exclusive maintenance lease/generation; migration journal and step hashes; IntegrityReportV1; quarantine markers; and BackupManifestV1 containing SQLite snapshot, accepted JSON generations/hashes, referenced artifact hashes, creation version, completeness, and restore verification. Capture/log payloads are excluded from backup by default.\n",
+        "Keys and ordering: migration IDs are unique and strictly ordered per store; every step is restart-idempotent and records from/to version and checksum. BackupId/content manifest identifies a consistent generation; modification times never decide validity.\n",
+        "Ports: exposes CheckStartupCompatibility, RunMigration, VerifyIntegrity, CreateBackup, ValidateRestore, PromoteRestore, RebuildDisposableProjections, and ReleaseStartupGate only to the core Recovery Coordinator. It calls maintenance ports on every local repository; it does not expose data to workers/hosts.\n",
+        "Durability/migration/recovery: acquires exclusive maintenance before writes; makes and verifies a backup before destructive migration; performs SQLite changes transactionally and JSON/filesystem changes through staged fsync/rename plus a resumable journal, preserving unknown fields. Newer unsupported schema opens inspectable read-only. Corruption quarantines only the affected store; restore occurs to staging, passes schema/hash/sequence checks, then is atomically promoted. No automatic salvage overwrites original evidence.\n",
+        "Startup/retention/performance: quick compatibility/integrity checks target under two seconds for normal stores; full artifact/database scrubs are cancellable/lazy. Backups are deduplicated and retained by configurable count/size with at least one last-known-good generation protected; restore reports space requirements before copy. Projection rebuild is resumable and never blocks canonical reads longer than the maintenance gate requires.\n",
+        "Security/non-responsibilities: backup/migration inputs reject secret values; opaque credential references survive unchanged. This coordinator does not choose LocalSqlite versus PortableProject, repair semantic facts, decide whether a Chat may continue, replay model/tool/external calls, compensate effects, rewrite forward-unknown JSON, activate repairs, or treat a disposable portable index as authority."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.storage_coordinator",
+    "id": 72,
+    "name": "Schema, Integrity, Migration & Backup Coordinator",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Migration,Integrity,Backup,Recovery",
+    "technology": "Rust storage maintenance coordinator using SQLite backup and atomic filesystem staging",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "a07256d3-4690-812a-9edc-48613cfa64d3",
+  "schemaVersion": 1
+}

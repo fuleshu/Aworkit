@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/tests/milestone_04.rs\",\"qa/milestone-04.sh\"]",
+    "completed_at": "2026-08-21 17:15:56",
+    "completion_memo": "Added repeatable Milestone 04 QA covering atomic ordered local outbox commits/history-binding immutability, lifecycle transition rejection, and stale worker generation controls. bash qa/milestone-04.sh passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:27:40",
+    "created_files": "[\"crates/aworkit-trusted-core/tests/milestone_04.rs\",\"qa/milestone-04.sh\"]",
+    "description": "Create automated QA tests for Milestone 04 using pure workflows and fake capability outcomes. Cover project/workspace conflicts, first-input freeze, authority summaries, every Chat transition, ordered event/outbox delivery, worker generation fencing, pause/cancel cleanup, core and worker crashes, checkpoint replacement, and no-replay recovery.",
+    "id": 27,
+    "number": 27,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M04.QA — Create QA tests for the headless local Chat runtime",
+    "updated_at": "2026-09-21 14:57:17"
+  },
+  "deleted": false,
+  "identity": "7653ae99-3c9b-8f6b-92ba-9f74310a9ed6",
+  "schemaVersion": 1
+}

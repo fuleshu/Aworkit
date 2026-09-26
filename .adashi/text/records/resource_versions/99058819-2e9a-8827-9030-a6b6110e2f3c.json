@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.subagent|file|desktop/src-tauri/src/runtime/tool_loop/subagent.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-19 09:31:57",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "99058819-2e9a-8827-9030-a6b6110e2f3c",
+  "schemaVersion": 1
+}

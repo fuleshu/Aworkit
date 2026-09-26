@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Returns current-generation quiescence, process-tree, timeout, and orphan-risk facts for the bootstrap handoff; candidate and rollback launch results arrive only through the Bootstrap Helper receipt",
+    "destination_external_id": "aworkit.trusted_core.repair",
+    "external_id": "rel.core_supervisor.repair",
+    "id": 84,
+    "source_external_id": "aworkit.trusted_core.process_supervisor",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Typed current-generation quiescence events",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "186faaf5-1b44-8e30-9ab2-0231fa260815",
+  "schemaVersion": 1
+}

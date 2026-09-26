@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Hands off a durably committed, user-approved ManagedLocalBuildProfileV1 baton naming the supported capability-generation digest, provenance and enrollment digests, candidate, previous-known-good slot, Management checkpoint, verification plan, and independent bounded deadlines",
+    "destination_external_id": "aworkit.bootstrap_helper",
+    "external_id": "rel.core_repair.bootstrap.activate",
+    "id": 280,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Boundary Contract,Repair",
+    "technology": "Authenticated local bootstrap protocol",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "55b11010-2ec4-84af-b039-b9806e8067d6",
+  "schemaVersion": 1
+}

@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "tag": "mockup"
+  },
+  "deleted": false,
+  "identity": "3a60e510-8931-8562-961b-25a7f1d83475",
+  "schemaVersion": 1
+}

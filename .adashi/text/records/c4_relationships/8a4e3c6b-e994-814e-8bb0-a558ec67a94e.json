@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Initializes and invokes only configured attested MCP servers and surfaces negotiated tools/resources/prompts/progress/cancel behavior without treating MCP as an agent lifecycle",
+    "destination_external_id": "ext.extensions_mcp",
+    "external_id": "rel.host_mcp_sessions.extensions",
+    "id": 198,
+    "source_external_id": "aworkit.capability_host.mcp_sessions",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "MCP stdio or HTTP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8a4e3c6b-e994-814e-8bb0-a558ec67a94e",
+  "schemaVersion": 1
+}

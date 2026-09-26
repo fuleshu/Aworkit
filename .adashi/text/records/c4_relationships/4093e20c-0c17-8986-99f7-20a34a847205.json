@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Obtains nested-delegation, depth, fan-out, deadline, context, turn, and inherited budget admission before spawning children",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_subagent.limits",
+    "id": 133,
+    "source_external_id": "aworkit.workflow_worker.subagent",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Hierarchical child-limit port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "4093e20c-0c17-8986-99f7-20a34a847205",
+  "schemaVersion": 1
+}

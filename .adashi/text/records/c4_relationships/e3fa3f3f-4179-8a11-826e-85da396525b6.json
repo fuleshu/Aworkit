@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses responsive layout, navigation, focus, overlay, theme, and accessibility primitives",
+    "destination_external_id": "aworkit.desktop_ui.design_system",
+    "external_id": "rel.ui.shell.design",
+    "id": 48,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e3fa3f3f-4179-8a11-826e-85da396525b6",
+  "schemaVersion": 1
+}

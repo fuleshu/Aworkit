@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.local_store.atomic_commit_ack",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 22:53:00",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "bde556f2-2898-8335-8fed-3c2a579c0a45",
+  "schemaVersion": 1
+}

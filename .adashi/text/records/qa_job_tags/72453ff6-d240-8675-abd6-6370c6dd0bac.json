@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-25 14:27:41",
+    "qa_job_id": {
+      "ref": "94148058-e081-8402-8f5b-10dfe03fb68b"
+    },
+    "tag": "qwen"
+  },
+  "deleted": false,
+  "identity": "72453ff6-d240-8675-abd6-6370c6dd0bac",
+  "schemaVersion": 1
+}

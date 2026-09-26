@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "mockup.desktop_ui.chat_shell",
+    "resource_kind": "mockup.working",
+    "updated_at": "2026-08-21 07:38:41",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "4e241c73-0386-87a1-9531-a1ac02807a87",
+  "schemaVersion": 1
+}

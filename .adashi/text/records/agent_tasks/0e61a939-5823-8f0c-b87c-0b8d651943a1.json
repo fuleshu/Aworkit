@@ -1,0 +1,59 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_access_tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_operations.rs\"]",
+    "completed_at": "2026-09-25 08:23:46",
+    "completion_memo": {
+      "lines": [
+        "A missed files.edit old_string is now actionable instead of a dead end.\n",
+        "\n",
+        "What changed\n",
+        "- ToolOutcomeRecordV1 (the durable per-call result) gained optional runId and resolvedPath, filled by every executor outcome. They are additive serde-default fields, so older records still deserialize and still count as observations via their argument path.\n",
+        "- New ToolRecordStore::file_observation(run_id, resolved_path) returns the newest settled content hash this Run observed for one file, reading the durable pipeline.tool-outcome records newest-first (RecordCache::recent stops as soon as it finds one). A read, edit or write all record an observation, and the resolved path makes a read by absolute path and an edit by relative path refer to the same file.\n",
+        "- New tool_loop/file_edit_miss.rs owns the diagnostics: normalised match first (CRLF/CR line endings, then leading whitespace), otherwise the file's current byte size and hash, whether it changed since the Run's last observation (with both hashes and sizes), a bounded excerpt of what was searched for, and the closest current line by line number. The message stays inside the 512-byte bounded tool-error field, which a unit test pins.\n",
+        "- file_operations.rs edit branch computes the current hash once, calls describe_miss on a zero match, and leaves the multi-match remedy byte-identical.\n",
+        "\n",
+        "Deliberate reading of the task's fourth test: when the file is byte-identical to the Run's last observation the quote is simply wrong, so that case keeps the exact plain \"old_string was not found in the file\" and deliberately adds no staleness claim. The changed and never-observed cases carry the size/hash/candidate detail requirement 2 and 3 ask for; the CRLF/indentation case reports the normalised match instead of a miss.\n",
+        "\n",
+        "Verification\n",
+        "- 7 unit tests in file_edit_miss.rs: changed-file staleness, unchanged keeps the plain message, CRLF-only normalised match, indentation-only normalised match, closest-line candidate, first-line match located by line number, and the 512-byte bound over long lines and long file names.\n",
+        "- 5 integration tests through the real durable broker in file_access_tests.rs: read then external change reports \"The file changed since this Run last read or edited it\" with both sizes; read then wrong quote returns exactly the plain message; a CRLF-only quote reports the normalised match; the multi-match remedy is unchanged; and a successful edit observes the content it wrote.\n",
+        "- cargo test --lib: 456 passed, 1 ignored, 0 failed (full desktop suite after the change)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:14:52",
+    "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/file_edit_miss.rs\"]",
+    "description": {
+      "lines": [
+        "Promoted from the \"To append next\" paragraph at the bottom of task 126 (number 125), which was recorded as investigation notes rather than commitments and so never became tracked work. The other two notes there are now tasks as well.\n",
+        "\n",
+        "Current behaviour (verified today): desktop/src-tauri/src/runtime/tool_loop/file_operations.rs:226-229 counts occurrences of old_string in the freshly read file and, at zero, returns exactly \"old_string was not found in the file\" with no direction. The tool loop has read the file itself moments earlier (line 221), so it already knows the current content and hash; the message throws that away.\n",
+        "\n",
+        "Evidence it costs real turns:\n",
+        "- first DSH-vs-Aworkit run (chat.7522b6d254ed3ce05ad234556353b3b232105e2c): three attempts to land one comment-block edit, sequences 6178, 6300, 6324.\n",
+        "- test1_qwen (chat.3fdeab43b37ed6406ff6a62b53fa01bec2a3ca30): sequence 56921, one failed tool.files.edit with the same message out of 31 edit calls.\n",
+        "\n",
+        "Fix to implement: make the miss actionable rather than merely true.\n",
+        "1. Say whether the file changed since this run last read or edited it (the durable result carries the content hash), so the model can tell \"stale copy\" from \"wrong text\".\n",
+        "2. Report what was searched for and where it fails: the file's current size and hash, and whether the old_string appears with different line endings or leading whitespace (normalise CRLF/indentation before concluding zero matches).\n",
+        "3. When the user's intent is obvious, include the nearest candidate: the first line of old_string is often a near-match, so return the closest matching region or its line number.\n",
+        "4. Keep the existing \"matched more than once; make it unique\" branch as is; it already names the remedy.\n",
+        "\n",
+        "Tests: a stale-read edit reports the file changed since the read; a CRLF/indentation-only mismatch reports the normalised near-match instead of \"not found\"; an edit after a successful read of unchanged content keeps the plain message; the multi-match branch is unchanged."
+      ]
+    },
+    "id": 133,
+    "number": 132,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make a missed files.edit old_string actionable instead of a bare \"not found\"",
+    "updated_at": "2026-09-25 08:23:46"
+  },
+  "deleted": false,
+  "identity": "0e61a939-5823-8f0c-b87c-0b8d651943a1",
+  "schemaVersion": 1
+}

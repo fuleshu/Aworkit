@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Atomically commits versioned lifecycle event batches, snapshot/checkpoint references, command deduplication, and worker-control outbox",
+    "destination_external_id": "aworkit.trusted_core.event_committer",
+    "external_id": "rel.core_lifecycle.committer",
+    "id": 71,
+    "source_external_id": "aworkit.trusted_core.chat_lifecycle",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Canonical commit port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1d2710d3-ab16-8fcf-84f1-838612e9df93",
+  "schemaVersion": 1
+}

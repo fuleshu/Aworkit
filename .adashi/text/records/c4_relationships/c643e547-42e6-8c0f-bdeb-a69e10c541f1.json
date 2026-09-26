@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Enumerates valid session/branch/pin roots and immutable lineage, producing exact reachability and repair inputs without changing published manifests or snapshots",
+    "destination_external_id": "aworkit.portable_store.manifest_catalog",
+    "external_id": "rel.portable.integrity.manifest",
+    "id": 263,
+    "source_external_id": "aworkit.portable_store.integrity_retention",
+    "tags": "Relationship,Internal Portable Contract,Integrity",
+    "technology": "PortableCatalogIntegrityPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c643e547-42e6-8c0f-bdeb-a69e10c541f1",
+  "schemaVersion": 1
+}

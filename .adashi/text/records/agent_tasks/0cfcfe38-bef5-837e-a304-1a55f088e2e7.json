@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-portable-store/src/projection.rs\"]",
+    "completed_at": "2026-08-21 17:47:55",
+    "completion_memo": "Implemented hostile import validation and bounded verified read-only portable projection pages, with no write/execution/binding/authority surface.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:29:49",
+    "created_files": "[]",
+    "description": "Implement hostile-input validation/quarantine and verified read-only pages for branch-separated events, omission markers, and permitted artifact metadata. Imported history and artifacts remain inert, unsupported/corrupt branches remain diagnosable, and disposable projection builders receive no write, execution, binding, or authority surface.",
+    "id": 41,
+    "number": 41,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M06.6 — Implement inert import and portable projection feeds",
+    "updated_at": "2026-08-21 17:47:55"
+  },
+  "deleted": false,
+  "identity": "0cfcfe38-bef5-837e-a304-1a55f088e2e7",
+  "schemaVersion": 1
+}

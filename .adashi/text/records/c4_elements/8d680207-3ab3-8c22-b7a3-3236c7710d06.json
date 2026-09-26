@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Writes bounded machine-local process, storage, IPC, migration, and health diagnostics delivered through the trusted-core logging/supervision boundary. It supports troubleshooting without replacing semantic evidence.\n",
+        "Owned records/files: size- and age-rotated structured JSONL/text files, rotation manifest, optional compressed closed generations, and DiagnosticRecordId composed from writer/process generation plus local sequence. Supervisor-proxied worker/host output is sanitized before this sink; those processes never read or write files here directly.\n",
+        "Keys and ordering: sequence is monotonic only within writer/process generation; wall time and monotonic offset aid display but do not establish cross-process or Chat event order. Correlation uses opaque Chat/Event/Attempt/Invocation IDs.\n",
+        "Ports: exposes nonblocking RedactedDiagnosticSinkPort through the existing Trusted Core to Local Store boundary, paginated DiagnosticReadPort to the core Desktop API/projections/repair correlations, and rotation/integrity maintenance to the storage coordinator.\n",
+        "Durability/degraded behavior: append/rotation uses atomic manifest replacement and crash-tolerant closed segments. Logging failure, disk-full, corrupt segment, or compression failure increments an in-memory/drop counter and emits a minimal platform diagnostic; it never blocks canonical commits or effects. Corrupt generations are isolated and skipped explicitly.\n",
+        "Retention/performance: defaults to ten 20 MiB generations plus seven days, configurable within a hard global quota; closed generations compress asynchronously. The bounded queue drops lowest-severity repetitive records first and emits one aggregate drop record. Reads are range/cursor based.\n",
+        "Security/non-responsibilities: credential values, authorization headers, prompt bodies, secret leases, environment secrets, unredacted protocol frames, and hidden reasoning are forbidden; allowlisted structured fields and redaction are applied before persistence. Logs are not canonical history, an audit guarantee, full stream capture, effect replay input, or a direct worker/host channel."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.diagnostic_logs",
+    "id": 71,
+    "name": "Rotating Redacted Diagnostic Log Store",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Diagnostics,Logs,Noncanonical",
+    "technology": "Rust asynchronous rotating structured file logger",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8d680207-3ab3-8c22-b7a3-3236c7710d06",
+  "schemaVersion": 1
+}

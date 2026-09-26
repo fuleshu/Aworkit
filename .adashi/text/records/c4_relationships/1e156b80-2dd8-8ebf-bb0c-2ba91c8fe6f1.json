@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Establishes the durable CoreCommittedAckV1 cursor relayed by core coordinators; only this acknowledgement advances worker recovery and proposal watermarks",
+    "destination_external_id": "aworkit.workflow_worker.core_gateway",
+    "external_id": "rel.core_committer.worker_gateway.ack_cursor",
+    "id": 150,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Committed-cursor contract over core IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1e156b80-2dd8-8ebf-bb0c-2ba91c8fe6f1",
+  "schemaVersion": 1
+}

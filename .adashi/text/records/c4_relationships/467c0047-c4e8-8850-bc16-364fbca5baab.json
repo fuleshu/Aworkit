@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Passes declared workspace context when requested and records that enabled trusted plugin code may independently access this or other user-accessible paths outside Aworkit brokers",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.host_plugin_runtime.workspace_truth",
+    "id": 202,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Security Truth",
+    "technology": "Trusted subprocess OS access",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "467c0047-c4e8-8850-bc16-364fbca5baab",
+  "schemaVersion": 1
+}

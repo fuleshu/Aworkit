@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Immutable extracted evidence using ArtifactStore and URL-validated Run-scoped continuation. Storage failure preserves useful inline results.",
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.web_documents",
+    "id": 139,
+    "name": "Retained Web Documents",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "",
+    "technology": "Rust, ArtifactStore",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dc98729f-8bf2-8b24-b6cd-107446cf1dc4",
+  "schemaVersion": 1
+}

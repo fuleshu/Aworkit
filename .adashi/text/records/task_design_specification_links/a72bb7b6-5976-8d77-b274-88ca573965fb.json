@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:33:32",
+    "design_external_id": "uml.bootstrap_helper.contract_structure",
+    "id": 256,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "a580ae96-5d3a-8ca6-92c7-6e796d497019"
+    }
+  },
+  "deleted": false,
+  "identity": "a72bb7b6-5976-8d77-b274-88ca573965fb",
+  "schemaVersion": 1
+}

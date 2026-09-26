@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-23 09:49:15",
+    "design_external_id": "aworkit.trusted_core.desktop_api",
+    "id": 524,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "746b2ee5-e2cf-81da-9df6-3ae1713b3aa4"
+    }
+  },
+  "deleted": false,
+  "identity": "828b3ff5-f9cc-89e1-a9f4-745d51570e9c",
+  "schemaVersion": 1
+}

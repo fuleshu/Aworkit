@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Activates pinned Management Chat scope and repair-candidate review",
+    "destination_external_id": "aworkit.desktop_ui.management_repair",
+    "external_id": "rel.ui.shell.management",
+    "id": 26,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6143cdb3-5aa0-8824-a786-b3f90c87e737",
+  "schemaVersion": 1
+}

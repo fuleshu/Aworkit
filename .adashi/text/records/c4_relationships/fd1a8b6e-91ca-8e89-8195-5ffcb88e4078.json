@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "After durable helper admission, requests bounded quiescence of the current core's worker, host, and sidecar trees and obtains current ProcessGenerationV1 cleanup facts; selector switching, relaunch watchdog, and rollback remain helper-owned",
+    "destination_external_id": "aworkit.trusted_core.process_supervisor",
+    "external_id": "rel.core_repair.supervisor",
+    "id": 83,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust current-generation quiescence port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fd1a8b6e-91ca-8e89-8195-5ffcb88e4078",
+  "schemaVersion": 1
+}

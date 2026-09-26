@@ -1,0 +1,49 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-08-21 14:12:43",
+    "completion_memo": "Accepted refined Option A and completed the v1 repair activation/rollback ADR. V1 implements only ManagedLocalBuildProfileV1 for locally compiled whole bundles explicitly enrolled into a helper-controlled, per-user, unprivileged, same-volume immutable slot installation. Embedded BuildProvenanceV1, independent LocalBuildEnrollmentV1, runtime PlatformCapabilityReportV1, and a shared single-flight enrollment/activation journal gate every operation; direct development output returns EnrollmentRequired, while unsigned installer, packaged, unknown, conflicting, mismatched, elevated, cross-volume, non-durable, or rollback-incompatible layouts return Unsupported before quiescence. Packaged/unknown builds retain diagnosis, editing, compilation, testing, export, rebuild instructions, and manual update/reinstall. The fixed enrollment command path now runs from Management Repair through the Core Repair Orchestrator and BootstrapProtocolPortV1 to the helper coordinator and slot verifier, returns durable EnrollmentPreparedV1, and requires explicit restart through the stable launcher. Whole-bundle hashing and SameUserHashAndOwnership integrity are disclosed without a publisher-authentication claim or force bypass. Candidate activation preserves a previous-known-good slot, uses independent monotonic cleanup/startup/focused-verification/rollback deadlines, forbids forward-only migration in the rollback window, and emits ActivatedVerified, RolledBack, Unsupported, or ManualRecoveryRequired receipts. When neither core can launch, the stable launcher displays a bounded native ManualRecoveryNoticeV1 with fixed diagnostic/recovery actions only. Windows, macOS, and Linux supported/Unsupported and fault/power-loss matrices, the accepted activation matrix, class/state/sequence/flow UML, helper/core relationships, Management UI contract, and accepted supported-state mockup disclosure were updated and independently audited PASS at Adashi revision 80.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 00:15:42",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Decide which application activation profiles the first release must support for Management Chat's explicit Activate and restart gate.\n",
+        "\n",
+        "Accepted decision — refined Option A:\n",
+        "- V1 supports only ManagedLocalBuildProfileV1: a locally compiled Aworkit whole bundle explicitly enrolled into helper-controlled, per-user, unprivileged, same-volume immutable slots with a stable launcher, helper, and activation journal outside the swapped slots.\n",
+        "- Eligibility combines embedded BuildProvenanceV1, independent LocalBuildEnrollmentV1, and authoritative runtime capability preflight. No path, missing signature, environment variable, editable setting, or force flag may upgrade eligibility.\n",
+        "- A direct development run or mutable target output returns EnrollmentRequired. The advanced-user enrollment workflow creates the managed installation and requires restart through its stable launcher.\n",
+        "- Unsigned installer, package-manager, sandboxed package, unknown, conflicting, mismatched, elevated, cross-volume, non-durable, or rollback-incompatible layouts return Unsupported before quiescence. They may still diagnose, edit, compile, test, export, and follow manual rebuild or reinstall instructions.\n",
+        "- The v1 trust claim is SameUserHashAndOwnership integrity, not publisher authentication and not resistance to malicious code already executing as the desktop user.\n",
+        "- Candidate creation uses the configured local source checkout and toolchain; the helper only verifies and materializes complete bundles and never compiles or updates itself during the activation it supervises.\n",
+        "- Rollback requires a preserved known-good whole-build slot, distinct plan-bound startup, focused-verification, cleanup, and rollback deadlines, and backward-compatible or deferred data changes. Loss of any guarantee fails closed with an exact reason.\n",
+        "- Windows, macOS, and Linux conformance matrices cover the managed-local success path, watchdog failure and rollback, helper restart and power-loss windows, provenance and enrollment mismatches, and every packaged or unknown Unsupported path.\n",
+        "\n",
+        "Rejected for v1:\n",
+        "- Packaged Windows, macOS, or Linux self-activation, including elevation, installer or package-manager ownership, updater integration, publisher signing policy, and privileged rollback. Any future packaged profile requires a separate ADR and protocol version.\n",
+        "- A platform-specific partial subset and any force-activation escape hatch.\n",
+        "\n",
+        "Required output is stored in the linked activation-profile matrix, helper contract structure, activation sequence and repair flow, plus the Platform Activation Profile Adapter, Repair Orchestrator, and Management Repair disclosure contracts.\n",
+        "\n",
+        "Completion verification:\n",
+        "- Enrollment ownership is end to end: Management Repair → Core Repair Orchestrator → BootstrapProtocolPortV1.PrepareManagedLocalEnrollment → fixed helper coordinator and slot verifier → durable EnrollmentPreparedV1 → explicit restart through the stable launcher. Enrollment and activation are mutually exclusive, accept only bounded provenance and whole-bundle artifact references, and never launch the prepared build automatically.\n",
+        "- If neither candidate nor previous core can launch, the helper journals ManualRecoveryNoticeV1. The stable launcher shows a minimal native notice with activation ID, exact reason, observed slot state, diagnostic ID, fixed recovery-folder/instruction actions, and exit; it never offers blind retry or arbitrary commands.\n",
+        "- Accepted Management Repair mockup version 3 is the Supported state and discloses Local source build, Activation: Available, unprivileged managed slots, and Same-user hash/ownership; not publisher verified. Unavailable states remain defined by the linked UI component contract."
+      ]
+    },
+    "id": 3,
+    "number": 3,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Discussion: v1 repair activation and rollback profiles",
+    "updated_at": "2026-09-21 14:54:30"
+  },
+  "deleted": false,
+  "identity": "a1deaac8-0727-84f5-a4f6-d8c40b184c5a",
+  "schemaVersion": 1
+}

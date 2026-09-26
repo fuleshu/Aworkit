@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:41",
+    "design_external_id": "uml.local_store.portable_runtime_journal_records",
+    "id": 336,
+    "sort_order": 3,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "9ad442be-9d04-82fa-a1ea-e1496dbbe888"
+    }
+  },
+  "deleted": false,
+  "identity": "372c6376-ba26-8b31-b536-1a7af28280b1",
+  "schemaVersion": 1
+}

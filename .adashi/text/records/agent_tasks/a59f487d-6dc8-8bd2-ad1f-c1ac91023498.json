@@ -1,0 +1,58 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/context_inspection.rs\",\"desktop/src-tauri/src/runtime/context_inspection/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/service/context_edit.rs\",\"desktop/src-tauri/src/runtime/service/tests/context_edit.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src/chat/activityProjection.ts\",\"docs/agent-prefix-cache.md\"]",
+    "completed_at": "2026-09-19 18:46:29",
+    "completion_memo": {
+      "lines": [
+        "Root cause: compaction/runtime.rs restore_context compared a checkpoint document's tool definitions with the acting node's current definitions by full equality. Task 106 made this build own every tool interface (frozen_tools::effective/complete_saved refresh descriptions/schemas and add the job-control tools implied by a bound host shell/Python capability; compile_graph_snapshot puts them on the agent node), so a checkpoint written before that interface can never match again. Every continuation of such a Chat failed before any provider call and returned before save_context, so the stale checkpoint was never replaced: a permanent stop that no later turn could clear. context_inspection::apply_edit rejected a saved edit the same way.\n",
+        "\n",
+        "Landed (tool definitions are interface, not history):\n",
+        "1. context_inspection.rs - ContextAdmissionV1 (Admitted | Unavailable(capabilities)) and admit_current_tools(exchanges, tools), which re-points every recorded call at the provider name this pass offers for the same capability_id; saved_edit()/SavedContextEditV1 so a caller decodes a revision once and decides admission before mutating. apply_edit takes that decoded revision, keeps the pass's own definitions, and leaves the caller's request untouched when a revision calls a capability the pass no longer selects. The \"Saved context tools differ from this node's frozen tools.\" error is gone.\n",
+        "2. compaction/runtime.rs - a restored checkpoint adopts the pass's frozen selection instead of erroring. Admission runs once over the complete restored exchange list, immediately before it is assigned, so it covers both the checkpoint's own exchanges and those appended from committed pipeline.model-tool-exchange records. A recorded call for a capability this pass does not select is declined with a committed context.selection-declined fact; the pass then continues on its own context and save_context writes a checkpoint of the current selection, so the Chat self-heals in that same turn. The edit branch admits the revision before it touches the request.\n",
+        "3. model_tool_loop.rs - new ModelToolLoopErrorV1::Context (\"context preparation failed: {0}\"); preparation, overflow-reduction and usage-record failures of the context port map to it instead of ToolAuthority, so a context condition is never reported as \"tool authority rejected the provider request\".\n",
+        "4. run_events.rs revise_model_context - decodes, admits, publishes context.selection-declined when a revision cannot be projected, otherwise applies it.\n",
+        "5. tool_loop/jobs.rs - start_process_job no longer refuses with \"Managed execution requires job_output, job_input, job_stop and job_list in this Chat's frozen tools. Enable them and create a new Chat.\"; job control is an invariant of the capability that launches work, per task 106's design.\n",
+        "6. service/context_edit.rs - the editor refusal no longer claims tools are frozen for a Chat.\n",
+        "7. desktop/src/chat/activityProjection.ts - renders context.selection-declined as a \"Recorded context not restored\" warning step.\n",
+        "8. docs/agent-prefix-cache.md - new section recording the interface rule and why comparing interfaces ended Agent nodes.\n",
+        "\n",
+        "Tests added: compaction/integration_tests.rs (commit_stale_checkpoint; older-interface restore; declined unselected capability; appended committed exchanges admitted), context_inspection/tests.rs (saved edit adopts the current interface and re-points recorded calls; saved edit declines unselected calls). Existing apply_edit callers updated.\n",
+        "\n",
+        "AUDIT (task.end): the first version admitted only the checkpoint's own exchanges, leaving exchanges appended from committed records un-admitted; that would have produced an invalid provider request for a record written by a build whose provider alias changed. Admission now runs once over the complete list and a regression test covers it. Re-checked against the design element: recorded history is never rewritten (the committed checkpoint/revision payload is byte-identical after the pass), unselected capabilities are never offered, no model-turn or tool-call cap was introduced, and \"frozen instructions and prior selected history unchanged between user turns\" still holds.\n",
+        "\n",
+        "VERIFICATION STATUS - INCOMPLETE, real blocker: no Rust test was executed. `cargo check --lib --tests` is clean after every step (no errors, no warnings), which proves the new tests compile but not that they pass; `cargo test --lib` cannot build in this environment because vswhom-sys' build script needs cl.exe (ToolNotFound) and no MSVC toolchain is installed - the same blocker task 106 recorded. `npx tsc --noEmit` is clean and `npx vitest run src/chat` passed 20 files / 112 tests, which only covers the desktop projection change. Runtime behaviour is therefore reasoned from source plus compile-time checking, not observed. ACTION NECESSARY before this can be called verified: run `cargo test --lib` from an MSVC (vcvars) environment, ideally filtered on runtime::compaction::integration_tests and runtime::context_inspection, then rebuild the desktop app and continue a Chat that previously failed to confirm the node proceeds; desktop/scripts/native-agent-prefix-smoke.mjs and native-compaction-smoke.mjs exercise the real path once a built app exists. Also still open from task 106 and untouched here: later passes take node/tool definitions from the saved snapshot (task 107), the four job-control tools remain user-facing Settings switches, and shell_start/python_start remain separate entry points.\n",
+        "\n",
+        "Design: adashi_design set_element_descriptions updated aworkit.workflow_worker.model_agent (revision 677) - the cross-turn prefix paragraph now states the offered definitions are always the acting pass's frozen selection, and a new \"Tool interface admission\" paragraph records the re-pointing/decline rule."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 18:39:23",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reproduction: after task 106 / commit 586313a every continuation of a Chat that already holds a durable context checkpoint fails with\n",
+        "\"agent node 'agent.1' failed: tool authority rejected the provider request: Context checkpoint tools differ from the frozen Agent selection\"\n",
+        "and never recovers, because the failed preparation returns before save_context, so the stale checkpoint is never replaced.\n",
+        "\n",
+        "Cause: compaction/runtime.rs restore_context compares the checkpoint document's tool definitions with the acting node's current definitions by full equality (name, description, input_schema, capability_id). Task 106 made this build own every tool interface: frozen_tools::effective/complete_saved re-resolve a Chat's bindings from the current build, refresh descriptions/schemas and add the job-control tools implied by a bound host shell/Python capability, and compile_graph_snapshot puts them on the agent node. The checkpoint predates that interface, so the equality can never hold again. context_inspection::apply_edit rejects a saved edit for the same reason.\n",
+        "\n",
+        "Fix: tool definitions are interface, not history. A pass's frozen selection supplies the tools; a durable checkpoint or saved edit supplies messages/exchanges/context. Adopt the current selection (re-pointing recorded calls at the current provider name for their capability_id), and when a recorded call refers to a capability the pass no longer selects, decline the recorded projection with a recorded warning instead of ending the node. Also stop labelling context-preparation failures as tool-authority rejections.\n",
+        "\n",
+        "Acceptance: continuing a Chat whose checkpoint carries an older interface restores its history under the current selection, no auxiliary or provider failure is required, original evidence stays untouched, and no context condition can end an Agent node merely because a tool interface changed."
+      ]
+    },
+    "id": 108,
+    "number": 107,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Stop ending Agent nodes when a durable context checkpoint or saved edit carries an older tool interface",
+    "updated_at": "2026-09-22 07:29:30"
+  },
+  "deleted": false,
+  "identity": "a59f487d-6dc8-8bd2-ad1f-c1ac91023498",
+  "schemaVersion": 1
+}

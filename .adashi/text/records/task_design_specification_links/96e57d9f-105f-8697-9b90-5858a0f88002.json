@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:22",
+    "design_external_id": "aworkit.workflow_worker.routing",
+    "id": 77,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b049d16e-f887-84ea-aac6-68ab1c851b6c"
+    }
+  },
+  "deleted": false,
+  "identity": "96e57d9f-105f-8697-9b90-5858a0f88002",
+  "schemaVersion": 1
+}

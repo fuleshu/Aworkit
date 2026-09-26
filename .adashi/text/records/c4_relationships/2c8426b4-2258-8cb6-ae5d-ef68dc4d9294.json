@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes immutable content-addressed segments/checkpoints via create-new temp-write, fsync, rename and directory fsync, and streams anchored verified reads",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.portable.segment.workspace_adapter",
+    "id": 248,
+    "source_external_id": "aworkit.portable_store.segment_repository",
+    "tags": "Relationship,Internal Portable Contract,Immutable",
+    "technology": "Anchored immutable-object filesystem operations",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2c8426b4-2258-8cb6-ae5d-ef68dc4d9294",
+  "schemaVersion": 1
+}

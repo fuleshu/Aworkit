@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Is the sole operational writer and two-store saga orchestrator for PortableProject Runs. It durably records PortableRuntimeJournalEntryV1 as PendingPortableCommit before portable head publication, finalizes HeadLinked only after exact portable CommitId/head/checkpoint verification, and releases acknowledgements or dispatch only after both states are durable. It never writes a local SemanticEvent stream",
+    "destination_external_id": "aworkit.local_store.portable_runtime_journal",
+    "external_id": "rel.core_committer.local_store.portable_runtime_journal",
+    "id": 283,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract,Noncanonical,Sole Write,Portable Runtime",
+    "technology": "Sealed PortableRuntimeJournalWritePort with Aworkit DTOs over Rust and SQLite transactions",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b3e6903f-7ff8-801f-b05b-e1a2cb85a261",
+  "schemaVersion": 1
+}

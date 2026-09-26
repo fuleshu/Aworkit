@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.bootstrap.watchdog.slots.reverify",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-21 14:03:42",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "7213b00d-8f95-8153-8a1e-a55287c91bec",
+  "schemaVersion": 1
+}

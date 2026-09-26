@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Encodes and decodes exact canonical header/event/trailer/checkpoint bytes and verifies schema versions, IDs, parent pointers, ordinals, and domain-separated hashes",
+    "destination_external_id": "aworkit.portable_store.semantic_codec",
+    "external_id": "rel.portable.segment.codec",
+    "id": 247,
+    "source_external_id": "aworkit.portable_store.segment_repository",
+    "tags": "Relationship,Internal Portable Contract,Deterministic",
+    "technology": "CanonicalEventCodecPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ce0c0d1b-2a0d-88e2-8616-8bdbdba999a6",
+  "schemaVersion": 1
+}

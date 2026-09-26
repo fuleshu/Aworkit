@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Coordinates lossless load/validate/import/export and atomic base-version saves of complete workflow JSON while preserving unknown nodes, fields, connections, and layout",
+    "destination_external_id": "aworkit.local_store.workflow_repository",
+    "external_id": "rel.core_project_config.local_store.workflow_repo",
+    "id": 210,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract,Canonical JSON",
+    "technology": "WorkflowDocumentRepository",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e181a0ba-cc73-867e-a77d-b0b846d977b6",
+  "schemaVersion": 1
+}

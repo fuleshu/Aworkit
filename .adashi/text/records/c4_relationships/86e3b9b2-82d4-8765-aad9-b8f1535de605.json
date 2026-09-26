@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Verifies/isolates rotation manifests and enforces bounded retention without treating diagnostic generations as recoverable canonical data",
+    "destination_external_id": "aworkit.local_store.diagnostic_logs",
+    "external_id": "rel.local_store.storage_coordinator.diagnostic_logs",
+    "id": 239,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "DiagnosticLogMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "86e3b9b2-82d4-8765-aad9-b8f1535de605",
+  "schemaVersion": 1
+}

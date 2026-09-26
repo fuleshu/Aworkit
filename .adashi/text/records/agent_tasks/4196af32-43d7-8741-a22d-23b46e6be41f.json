@@ -1,0 +1,48 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/openai_compatible.rs\",\"crates/aworkit-capability-host/src/provider_tools/mod.rs\",\"crates/aworkit-capability-host/src/provider_tools/openai.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-25 08:14:24",
+    "completion_memo": {
+      "lines": [
+        "Diagnosis first: the auxiliary summary prompt was already the live conversation's leading surface (surface[..cut] plus the directive) — the compaction request did not reshape the message list. What broke the reuse was the wire serialization. serde_json writes object keys in name order in this build (its map is a BTreeMap), so the auxiliary `max_tokens` cap was written before `messages`: the live body began `{\"messages\":...` and the summary body `{\"max_tokens\":...`, which is exactly the recorded `commonPrefixBytes` 3 (the shared run `{\"m`) against the preceding turn's 938,080 of 958,677 bytes. The prompt prefix itself was never resent; the leading parameter hid it from the sentBytes/commonPrefixBytes evidence and would defeat any provider that matches the raw request prefix.\n",
+        "\n",
+        "Fix\n",
+        "- provider_tools/openai.rs: new PromptFirstBody serializer plus prompt_first_body/openai_tool_request_body. The body is written once with `messages` first and every other key after it, whatever parameters a call adds, and that exact byte vector is what goes on the wire so the measured body is the sent body.\n",
+        "- openai_compatible.rs: both streaming paths (tool and text) now send those bytes via .body() with an explicit application/json content type instead of letting reqwest re-serialize a Value.\n",
+        "- The summary call keeps its output cap and its semantics (shadowed leading units + directive); only the serialization order changed.\n",
+        "\n",
+        "Verification\n",
+        "- New crates/aworkit-capability-host/src/provider_tools/prompt_prefix_tests.rs: (1) the prompt leads the body even when max_tokens would sort first, and the capped and uncapped bodies share the entire identical prompt; (2) a compaction-shaped request (leading exchanges + directive + maxOutputTokens) shares its whole prompt with the live request and is shorter than it; (3) a regression pinning the recorded artifact: the pre-fix sorted serialization of those two bodies shares exactly 3 bytes, while the shipped serialization shares the whole prompt. This ties the recorded commonPrefixBytes 3 to its cause.\n",
+        "- desktop runtime::tool_loop::workspace_instructions::tests::compaction_integration::the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive builds the real fixture history, runs a real manage_model_context compaction, captures the auxiliary request and asserts its unit sequence is the live prompt's prefix plus exactly the directive, and that the retained tail is not resent.\n",
+        "- cargo test -p aworkit-capability-host --lib: 174 passed, 2 ignored. Desktop cargo test --lib: 444 passed, 1 ignored, 0 failed.\n",
+        "\n",
+        "Not measured live: whether a provider bills the shared prefix as cached is its own prompt_cache_hit_tokens report, and repeated-compaction cost on a cached provider needs a recorded run. The local instrument now reports the true prompt prefix, so the follow-up measurement is task 135 (small-context benchmark with a cache-reporting provider). One full-suite desktop run showed a single flaky failure (successive_actual_compactions_rearm_missing_scopes_and_preserve_partial_survival) that passes alone and in a repeat of the full suite; no code path of this change is exercised by it."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:09:17",
+    "created_files": "[\"crates/aworkit-capability-host/src/provider_tools/prompt_prefix_tests.rs\"]",
+    "description": {
+      "lines": [
+        "The test1_qwen run (chat.3fdeab43b37ed6406ff6a62b53fa01bec2a3ca30, qwen3.8-flash-next, 262,144-token window) is the first run in the series where a real conversation compaction fired, and it worked: trigger pressure, strategy summary, through turn 85, 44 units shadowed, shadowedTokenCount 119,169; the provider-reported prompt fell from 210,046 to 68,452 (-141,594, -67%) with error null and workspace instructions re-emitted afterwards; the following 22 turns ran at ~70k instead of ~210k, avoiding ~3.1M prompt tokens (24% of the run's 13.08M). The compaction call itself cost 156,336 input + 5,959 output tokens (1.2% / 2.7% of the run) plus one cold turn. test1_1/test1_2/test1_3 never compacted, so this is the only measurement of the machinery on a live run.\n",
+        "\n",
+        "The finding to act on: the auxiliary compaction call is issued COLD. context.compacted.auxiliary reports sentBytes 540,125 with commonPrefixBytes 3, while the turn immediately before it sent 958,677 bytes with a 938,080-byte shared prefix. So the summarisation request re-sends the whole conversation in a different prompt shape and cannot reuse any of it. On DeepSeek Flash pricing that is $0.0469 uncached + $0.0072 output = $0.0541 for ONE compaction, about 19% of test1_3's entire $0.2890 run cost, and a long run compacting 2-3 times pays more for compaction than for the work itself. If the summarisation instruction were appended to the live conversation prefix (or the compaction request reused the previous prompt's shape) most of those 156k tokens would be a cache hit; the same class of fix as the chain-of-thought passback.\n",
+        "\n",
+        "Worth verifying alongside: whether repeated compactions on one run keep the same cold cost, and what a compaction costs on a cached provider in practice (one cold turn plus a cold summary call). Tool-result compression behaved correctly: 58 context.compression-skipped with the size/savings gate reason, 2 lossless reductions (tool.files.grep 1265->704 tokens, tool.job.list 1366->728)."
+      ]
+    },
+    "id": 132,
+    "number": 131,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Reuse the live conversation prefix for the compaction summary call instead of re-sending it cold",
+    "updated_at": "2026-09-25 08:14:24"
+  },
+  "deleted": false,
+  "identity": "4196af32-43d7-8741-a22d-23b46e6be41f",
+  "schemaVersion": 1
+}

@@ -1,0 +1,39 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns application-generation process mechanics for activation: waits for or forces bounded cleanup of the complete current application tree, launches a verified candidate or previous slot in bootstrap verification-only mode, authenticates the expected identity handshake, enforces startup and health deadlines, hands the focused verification plan to the launched core, validates the returned generation and plan-bound CapabilityOutcomeV1, guarantees complete candidate-tree cleanup before rollback, and produces a bounded ManualRecoveryNoticeV1 for the stable launcher when neither candidate nor previous core can be started safely.\n",
+        "\n",
+        "Owned state/files: Owns only ephemeral LaunchAttemptV1 records with ActivationId, verified open slot handle, launch nonce, role Candidate or Previous, expected ProcessGenerationV1, root process handle, process-group or Job handle, descendant census, start/health/verification deadlines, handshake identity/hash, heartbeat status, cleanup proof, and bounded redacted diagnostic references. Durable phase and outcome facts, including a bounded ManualRecoveryNoticeV1, are journaled through the coordinator; no logs, secrets, or process snapshots become canonical here.\n",
+        "\n",
+        "Ports/DTOs: ApplicationLaunchWatchdogPortV1 provides AwaitCurrentGenerationExit, CleanupProcessTree, LaunchGeneration, AwaitIdentityHandshake, HandoffFocusedVerification, AwaitFocusedVerification, HealthSnapshot, and ProveTreeEmpty. LaunchHandshakePortV1 accepts CandidateGenerationReady and FocusedVerificationCompleted BootstrapCommandV1 only after protocol-gateway authentication. Outputs are LaunchObservationV1, VerificationObservationV1, ProcessTreeCleanupV1, WatchdogFailureV1, or ManualRecoveryNoticeV1 to the coordinator. The stable launcher may render only the journaled notice through a minimal native notice port. LaunchIdentityPortV1 requests last-moment verified slot handles from the slot manager.\n",
+        "\n",
+        "Phase and generation invariants: No candidate launch occurs before durable baton, verified slots, supported activation plan, current-tree quiescence/cleanup proof, and candidate selector observation. PID alone is never identity. The handshake must echo ActivationId, installation ID, enrollment digest, capability-generation digest, launch nonce, executable or bundle hash, helper protocol, verification-plan digest, VerificationOnly mode, and the exact ProcessGenerationV1. Ready or heartbeat is not Verified. A passing CapabilityOutcomeV1 must bind the same activation, generation, plan digest, attempt, and deadline. Candidate and previous trees may not overlap as authoritative generations; rollback launch waits for proof the candidate tree is empty and receives a fresh rollback ProcessGenerationV1.\n",
+        "\n",
+        "Atomic and crash behavior: Spawn intent is durable before launch and the observed process handle/identity is durable before accepting a handshake. If the helper crashes, recovery enumerates only the journal-bound group/Job and validates executable, nonce, generation, and selector before adopting or killing it. Missing proof is treated conservatively: before selector switch, abort; after candidate switch or during verification, clean the candidate tree and roll back. A crash after a passing outcome but before its durable journal acceptance leaves the candidate unverified and rollback-safe. Cleanup uses cooperative shutdown followed by bounded forced tree termination and explicit orphan-risk reporting.\n",
+        "\n",
+        "Security, integrity, and privilege semantics: Launches by verified open handle or exact canonical bundle entry, with a minimal fixed argument vector, sanitized environment, closed inherited handles, no PATH lookup, shell, scripts, plugins, or general tools. It never receives credentials. Process groups/Jobs provide lifecycle isolation, not a security sandbox. The candidate core performs its own focused verification and normal capability authority; this module treats CapabilityOutcomeV1 only as a generation-bound and SameUserHashAndOwnership-integrity-bound result and grants no authority. Candidate bootstrap mode must not resume normal Runs or irreversible mediated work before a durable Verified result.\n",
+        "\n",
+        "Cross-platform degradation: Windows uses Job Objects/process handles and must account for kill-on-close inheritance and locked modules. macOS uses process groups/handles plus bundle identity rather than LaunchServices PID guesses. Linux uses process groups, pidfds where available, and descendant reconciliation. If complete-tree containment, stable helper and launcher survival, exact executable and enrollment identity, handle inheritance control, or deadline and cleanup proof cannot be guaranteed, activation is Unsupported before switching or ManualRecoveryRequired after a destructive phase. When ManualRecoveryRequired is terminal and no core launches, the next stable-launcher invocation shows the journaled native notice with activation ID, exact reason and observed slot state; its only actions are copy diagnostic ID, open the helper-controlled recovery folder or instructions, and exit.\n",
+        "\n",
+        "NFRs: Startup, heartbeat, focused-verification, graceful-stop, and forced-cleanup deadlines are independently bounded from baton policy; monotonic clocks survive wall-clock changes, with reboot/suspend handled by journal recovery policy; descendant scans and diagnostics are bounded; no zombies/orphans are acceptable for a successful result; and metrics expose launch latency, handshake or enrollment mismatch, timeout phase, cleanup duration, orphan risk, verification disposition, and manual-recovery notice delivery.\n",
+        "\n",
+        "Non-responsibilities: Does not select or mutate slots, decide rollback policy, perform the focused test itself, run worker/host tools, grant workflow authority, classify general capability side effects, commit Chat evidence, present general application UI, accept arbitrary recovery commands, recover application data, diagnose or build repairs, store secrets, update the helper, or supervise ordinary post-bootstrap Aworkit children after handoff."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "id": 93,
+    "name": "Application-Generation Launcher & Watchdog",
+    "parent_external_id": "aworkit.bootstrap_helper",
+    "tags": "Component,Trusted Bootstrap,Launcher,Watchdog,Process",
+    "technology": "Rust cross-platform launcher using process handles, Job Objects or process groups, deadlines, and authenticated health IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "76eebd45-f589-8b61-8cce-bd722a4eb58f",
+  "schemaVersion": 1
+}

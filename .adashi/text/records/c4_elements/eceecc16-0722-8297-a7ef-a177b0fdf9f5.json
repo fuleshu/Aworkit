@@ -1,0 +1,41 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements the persistent Tauri desktop frame, required left-navigation order (New Chat; pinned Management Chat; Workflows; optional tools; Projects and project Chats; non-project history; Settings/general controls), top-level routing, project/history expansion, docked split panes, shortcuts, connection status, and focus restoration when a large surface replaces Chat. It uses native OS window decorations, menus, caption controls, and platform editing conventions by default; a custom title area is permitted only when a platform integration requires it and then reserves at most 32 px.\n",
+        "\n",
+        "Desktop layout and density contract: fixed panes are flush and separated by 1 px dividers with a 6 px resize hit zone; they never look like floating web cards. Default navigation width is 208 px, user-resizable from 184–264 px and collapsible to a 44 px rail. Default inspector width is 320 px, user-resizable from 280–420 px. Chat/view header is 48 px; toolbars and inspector headers are 36–40 px; navigation rows are 28 px; section labels are 20 px; standard/compact controls are 28/24 px; timeline gutter is 16 px; pane padding is 10–12 px; the anchored composer is 76 px and may grow to 200 px. Below 1180 px the inspector becomes a drawer; below 900 px or when 200% zoom produces the equivalent space, navigation becomes the 44 px rail rather than causing horizontal page scrolling. Assistant transcript content is normally borderless; only actionable structures such as tools, approvals, plans, diffs, errors, and evidence receive compact containers. These constrained-width adaptations preserve desktop semantics and accessibility; they do not create a mobile product mode.\n",
+        "\n",
+        "Appearance contract: applies the resolved light or dark DesktopTokenSet before the webview is revealed, so startup and theme changes do not flash the wrong theme. System mode follows OS color-scheme changes; explicit Light and Dark modes remain stable. Native chrome, webview, menus, scrollbars, code/evidence surfaces, canvas, popovers, and dialogs must use the same effective appearance.\n",
+        "\n",
+        "Owned state: transient route, expanded groups, splitter sizes, collapsed-rail mode, inspector visibility/drawer state, and last-focused control. Persisted appearance and layout preferences are core projections.\n",
+        "\n",
+        "Contracts: consumes ShellProjection, ConnectionProjection, and EffectiveAppearance from the Projection Gateway/Design System; activates feature surfaces with immutable route/scope context; emits local NavigateIntent/ToggleInspectorIntent/ResizePaneIntent and typed preference commands through the gateway. React views consume only Aworkit workbench components. A narrow Tauri-native presentation adapter supplies application/global menus, platform file/folder or OS message dialogs, and desktop notifications where native convention matters; menu selections become typed Aworkit intents, chosen paths remain subject to core validation, and notifications derive from committed projections. In-workbench context menus, popovers, forms, splitters, trees, tabs, and dialogs use the Aworkit/Mantine component facade.\n",
+        "\n",
+        "Failure/degraded behavior: preserves readable last-consistent projections when IPC fails, labels them stale, disables privileged/persistent actions, preserves feature drafts, and offers resync; unknown routes fall back without data loss. If appearance resolution fails, uses the platform scheme and system-font neutral fallback without blocking application use. Failure of an optional native presentation facility degrades to an accessible in-workbench control and never bypasses the Projection Gateway.\n",
+        "\n",
+        "Performance/accessibility: targets 16 ms resize/navigation frames, no streaming layout shift, keyboard-adjustable splitters with announced size, platform shortcuts, landmarks/skip links, visible focus, reduced motion, forced-colors support, 200% zoom, and WCAG 2.2 AA.\n",
+        "\n",
+        "Non-responsibilities: no canonical preferences, Run state, workflow documents, evidence, secrets, domain authority, direct privileged OS operation, or privileged action.\n",
+        "\n",
+        "Notification and Settings return design (2026-09-05): Owns a NotificationStore and a permanent full-width bottom status row (32 logical px at default text size) below navigation, workspace, and inspector. Row space is reserved even when Ready; optional notification details dock above it and consume layout space. No notification may overlay content. Preserve min-height/min-width zero and overflow containment. All Settings entry points create one reversible route visit with a SettingsReturnContext; repeated Settings entry never overwrites its origin. Keep originating feature instances/drafts/undo state mounted. On verified close restore entity/selection/tabs/panes/sizes/scroll anchor/follow-latest mode/focus/caret without restarting Chat or replacing a workflow. Hidden features continue receiving facts but suppress visible-only focus/layout/autoscroll. Navigation out of Settings shares its leave guard. An actually deleted origin falls back to its containing view with recovery of local drafts. Current committed runtime/configuration changes are not rewound. Detailed behavior and native acceptance checks: docs/design-desktop-notifications-settings-return.md\n",
+        "\n",
+        "Concurrent desktop Chats (2026-09-15): History rows and New Chat remain available while any Chat executes. Every active Chat has a small accessible busy indicator with Running tooltip and reduced-motion support. Busy state comes from native command ownership. Disable deletion/fork of the busy target only; selection and pinning remain available. Completion removes busy status without stealing selection."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.app_shell",
+    "id": 16,
+    "name": "Desktop App Shell & Navigation",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Navigation,Desktop",
+    "technology": "React desktop workbench composition using Aworkit/Mantine primitives and a narrow Tauri-native presentation adapter",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "eceecc16-0722-8297-a7ef-a177b0fdf9f5",
+  "schemaVersion": 1
+}

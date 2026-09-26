@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-17 17:03:21",
+    "design_external_id": "aworkit.capability_host.process_runtime",
+    "id": 34,
+    "target": "crates/aworkit-capability-host/src/tools.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-17 17:03:21",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ae2be1b9-3b16-8413-a770-cfbf6ade35fa",
+  "schemaVersion": 1
+}

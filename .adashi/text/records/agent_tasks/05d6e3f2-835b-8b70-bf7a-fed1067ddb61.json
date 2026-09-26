@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\"]",
+    "completed_at": "2026-08-22 06:26:44",
+    "completion_memo": "Implemented configured exact external-agent negotiation, private generation-fenced native-session references, start/progress/continuation/cancellation/terminal handling, core-authenticated approval resolutions, workspace/lease/MCP scope fences, conservative peer outcomes, registration and pending-start reservations, response-source arbitration, atomic failure settlement, and a bounded 4,096-ID replay fence requiring explicit close. Critical and independent adversarial verification passed: 11 tests plus Adashi QA job #9 / run #25.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:09",
+    "created_files": "[\"crates/aworkit-capability-host/src/external_agent/mod.rs\",\"crates/aworkit-capability-host/src/external_agent/contracts.rs\",\"crates/aworkit-capability-host/src/external_agent/manager.rs\",\"crates/aworkit-capability-host/tests/milestone_09_external_agent.rs\"]",
+    "description": "Implement lifecycle adapters for configured external agents, including capability negotiation, start, progress, approval forwarding through core, native-session references, explicit continuation, cancellation, terminal settlement, and opacity disclosure. Keep agent-native history/session types private and never let an external agent grant Aworkit authority.",
+    "id": 59,
+    "number": 59,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.4 — Implement external-agent sessions and continuation",
+    "updated_at": "2026-09-22 07:17:18"
+  },
+  "deleted": false,
+  "identity": "05d6e3f2-835b-8b70-bf7a-fed1067ddb61",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Checks SQLite schema, contiguous sequence, foreign keys, checksums, and checkpoint hashes; migrates only under the exclusive maintenance generation and never fabricates canonical rows",
+    "destination_external_id": "aworkit.local_store.semantic_ledger",
+    "external_id": "rel.local_store.storage_coordinator.semantic_ledger",
+    "id": 230,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance",
+    "technology": "LedgerMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ef3262a3-e32c-8be9-8958-e22ce31b3df3",
+  "schemaVersion": 1
+}

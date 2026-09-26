@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-25 14:27:41",
+    "qa_job_id": {
+      "ref": "94148058-e081-8402-8f5b-10dfe03fb68b"
+    },
+    "tag": "actual-application"
+  },
+  "deleted": false,
+  "identity": "e0d926af-8981-8a43-8962-bd92284f3b76",
+  "schemaVersion": 1
+}

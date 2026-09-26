@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.trusted_core.process_supervisor",
+    "resource_kind": "design.element",
+    "updated_at": "2026-09-21 15:35:35",
+    "version": 5
+  },
+  "deleted": false,
+  "identity": "a3648545-6af8-8abc-a1d0-577992bbc3d5",
+  "schemaVersion": 1
+}

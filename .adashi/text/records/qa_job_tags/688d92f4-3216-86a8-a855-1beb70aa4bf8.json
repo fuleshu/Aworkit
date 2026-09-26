@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "tag": "native-core"
+  },
+  "deleted": false,
+  "identity": "688d92f4-3216-86a8-a855-1beb70aa4bf8",
+  "schemaVersion": 1
+}

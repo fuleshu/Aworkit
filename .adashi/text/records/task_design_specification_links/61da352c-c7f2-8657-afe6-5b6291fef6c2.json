@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:05",
+    "design_external_id": "uml.bootstrap_helper.activation_profile_v1_matrix",
+    "id": 361,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "3cc21a73-e992-81e6-8b81-df7eb8ab38af"
+    }
+  },
+  "deleted": false,
+  "identity": "61da352c-c7f2-8657-afe6-5b6291fef6c2",
+  "schemaVersion": 1
+}

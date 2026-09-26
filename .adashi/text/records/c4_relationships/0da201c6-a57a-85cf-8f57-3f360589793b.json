@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Sends schema-versioned UiCommandV1 and ProjectionQueryV1 envelopes with command IDs and expected target versions and never invokes capabilities",
+    "destination_external_id": "aworkit.trusted_core.desktop_api",
+    "external_id": "rel.ui_gateway.core_api.commands",
+    "id": 88,
+    "source_external_id": "aworkit.desktop_ui.projection_gateway",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Tauri IPC commands",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0da201c6-a57a-85cf-8f57-3f360589793b",
+  "schemaVersion": 1
+}

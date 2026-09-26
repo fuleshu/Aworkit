@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Materializes only explicitly leased plugin secret fields while stating that trusted code may retain or bypass brokered data",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.host_plugins.secrets",
+    "id": 175,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Authenticated invocation-secret port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "549e08b3-ad9b-84ae-a756-d7b751aa1456",
+  "schemaVersion": 1
+}

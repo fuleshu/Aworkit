@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Evaluates every proposal and resolves approval nonces against the pinned authority manifest before any dispatch",
+    "destination_external_id": "aworkit.trusted_core.authority",
+    "external_id": "rel.core_invocation.authority",
+    "id": 74,
+    "source_external_id": "aworkit.trusted_core.invocation_broker",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Rust authority-decision port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "80617acc-ab08-8ca6-a0aa-7d95cf91d65e",
+  "schemaVersion": 1
+}

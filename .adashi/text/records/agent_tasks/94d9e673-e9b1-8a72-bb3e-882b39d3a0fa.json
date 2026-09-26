@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-bootstrap-helper/src/journal/tests.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/tests.rs\",\"crates/aworkit-bootstrap-helper/src/slots/tests.rs\",\"crates/aworkit-bootstrap-helper/src/profile/tests.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/tests.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/tests.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/coordinator.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/model.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/hermetic.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/gateway.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Completed hermetic Milestone 11 QA across enrollment gates, journal durability/corruption/restart, slot integrity, selector drift/ambiguity, challenge and IPC fencing, cleanup/launch/identity/health/verification faults, verified activation, automatic rollback, rollback failure/manual recovery, every post-switch crash phase, interrupted open-effect reconciliation, shared receipt hashing, exact recipient import, and trusted-core commit-before-same-Chat-resume behavior. RUSTFLAGS=-D warnings cargo test --workspace --no-fail-fast passes; helper suite 60/60 and trusted-core repair suite 43/43.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:49",
+    "created_files": "[\"qa/milestone-11.sh\"]",
+    "description": "Create automated fault-injection tests for the complete Milestone 11 helper over hermetic filesystem, selector, clock, process, and IPC ports. Cover enrollment and explicit gates, every journal/slot/selector/launch crash boundary, identity and capability drift, candidate failure, verified activation, rollback and rollback failure, helper restart, Unsupported-before-quiescence, manual recovery, receipt import, and same-Chat resume. Native OS conformance belongs to M12.QA.",
+    "id": 73,
+    "number": 73,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.QA — Create hermetic QA tests for managed-local activation and rollback",
+    "updated_at": "2026-09-22 07:21:31"
+  },
+  "deleted": false,
+  "identity": "94d9e673-e9b1-8a72-bb3e-882b39d3a0fa",
+  "schemaVersion": 1
+}

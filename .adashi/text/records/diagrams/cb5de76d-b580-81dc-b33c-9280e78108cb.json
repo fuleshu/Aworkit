@@ -1,0 +1,51 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.portable_store.integrity_retention",
+    "created_at": "2026-08-20 23:11:41",
+    "diagram_type": "state",
+    "id": 28,
+    "key": "uml.portable_store.branch_integrity_retention",
+    "kind": "mermaid",
+    "sort_order": 28,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "    [*] --> StableHead\n",
+        "    StableHead --> PreparingCommit: expected head and version supplied\n",
+        "    PreparingCommit --> StableHead: immutable objects and atomic head ref durable\n",
+        "    PreparingCommit --> OrphanCandidate: crash or failure before durable head ref\n",
+        "    PreparingCommit --> ConflictDetected: expected head mismatch or sibling head claim\n",
+        "    ConflictDetected --> ExplicitAlternatives: verify common checkpoint and every tip\n",
+        "    ExplicitAlternatives --> StableHead: core creates distinct child Chat/session branch IDs\n",
+        "    StableHead --> ReadOnlyQuarantine: reachable hash, schema, path or lineage failure\n",
+        "    ReadOnlyQuarantine --> RepairPlanned: integrity scan lists exact verified alternatives\n",
+        "    RepairPlanned --> StableHead: core authorizes unambiguous expected-hash ref repair\n",
+        "    RepairPlanned --> ExplicitAlternatives: core authorizes new repair branch with lineage\n",
+        "    RepairPlanned --> ReadOnlyQuarantine: ambiguous, unsafe or unapproved\n",
+        "    OrphanCandidate --> RetentionGrace: remains unreachable across scan generations\n",
+        "    RetentionGrace --> StableHead: object becomes reachable before collection\n",
+        "    RetentionGrace --> Collected: final locked reachability check still unreachable\n",
+        "    Collected --> [*]\n",
+        "\n",
+        "    note right of ConflictDetected\n",
+        "      Parent hashes and branch ordinals define history.\n",
+        "      Filesystem and Git timestamps never choose a winner.\n",
+        "    end note\n",
+        "    note right of ReadOnlyQuarantine\n",
+        "      Published manifests, snapshots, segments, checkpoints,\n",
+        "      events and reachable artifacts are never rewritten,\n",
+        "      truncated, compacted or automatically deleted.\n",
+        "    end note"
+      ]
+    },
+    "title": "Concurrent continuation and non-destructive integrity/orphan lifecycle",
+    "updated_at": "2026-08-20 23:11:41",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cb5de76d-b580-81dc-b33c-9280e78108cb",
+  "schemaVersion": 1
+}

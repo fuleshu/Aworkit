@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-portable-store/src/artifact.rs\",\"crates/aworkit-portable-store/src/commit.rs\"]",
+    "completed_at": "2026-08-21 17:47:54",
+    "completion_memo": "Implemented permitted text/JSON artifact CAS admission and expected-generation branch-head prepare/publish/reread verification receipts.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:29:40",
+    "created_files": "[]",
+    "description": "Implement the permitted content-addressed artifact store and PortableHistoryCommitPort mechanics that prepare admitted artifacts, one bounded segment and checkpoint, publish only the expected explicit branch head, and freshly verify the published identity. Return a prepare/publish/verify receipt only; the core route must not acknowledge or dispatch until M06.5 durably links that receipt to the runtime journal.",
+    "id": 39,
+    "number": 39,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M06.4 — Implement portable artifact preparation and branch-head commit mechanics",
+    "updated_at": "2026-08-21 17:47:54"
+  },
+  "deleted": false,
+  "identity": "10a2a8e9-f35a-844b-b019-7a117195ed7c",
+  "schemaVersion": 1
+}

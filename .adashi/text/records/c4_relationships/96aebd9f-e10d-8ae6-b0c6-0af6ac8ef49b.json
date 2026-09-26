@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Scans immutable head claims/records and applies only core-authorized expected-hash ref repair or guarded orphan deletion; timestamps never choose a canonical tip",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.portable.integrity.workspace_adapter",
+    "id": 266,
+    "source_external_id": "aworkit.portable_store.integrity_retention",
+    "tags": "Relationship,Internal Portable Contract,Repair",
+    "technology": "GuardedMaintenanceFilesystemPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "96aebd9f-e10d-8ae6-b0c6-0af6ac8ef49b",
+  "schemaVersion": 1
+}

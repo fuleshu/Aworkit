@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:10:16",
+    "design_external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "id": 33,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "a1deaac8-0727-84f5-a4f6-d8c40b184c5a"
+    }
+  },
+  "deleted": false,
+  "identity": "0907f93c-c25f-8968-96cc-f629fb8cf818",
+  "schemaVersion": 1
+}

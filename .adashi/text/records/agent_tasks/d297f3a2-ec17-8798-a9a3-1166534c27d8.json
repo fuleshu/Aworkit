@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-process/Cargo.toml\",\"crates/aworkit-process/src/lib.rs\",\"crates/aworkit-portable-store/src/lib.rs\",\"crates/aworkit-portable-store/src/workspace.rs\",\"crates/aworkit-bootstrap-helper/src/profile/mod.rs\",\"crates/aworkit-bootstrap-helper/src/slots/mod.rs\"]",
+    "completed_at": "2026-08-23 11:22:37",
+    "completion_memo": "Implemented the shared M12 anchored native filesystem layer with stable handle/object identity, per-operation identity revalidation, canonical relative paths, symlink/reparse and case-alias denial, mount/volume containment, current-owner/access checks, local-volume capability reporting, advisory writer guards, bounded reads, same-directory durable create/expected-content replace, same-volume whole-directory publication, and explicit degraded/read-only behavior when guarantees cannot be proven. Portable-store now exposes native capability facts, gates durable writes, and retains read-only Git inspection only. Bootstrap-helper now has native immutable whole-build slot materialization/publication with sealed permissions and anchored revalidation plus a durable journal-fenced selector that observes, switches, restores, reopens, and reconciles exact outcomes without blind replay. Managed publication remains unavailable unless all OS-specific durability/ownership/volume guarantees pass; package-owned activation and Git writes remain absent. Verification passed with warnings denied across aworkit-process, portable-store, and bootstrap-helper (73 tests including new native path, slot, selector, alias, durability, and idempotency cases).",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:34:33",
+    "created_files": "[\"crates/aworkit-process/src/filesystem.rs\",\"crates/aworkit-bootstrap-helper/src/profile/native.rs\",\"crates/aworkit-bootstrap-helper/src/slots/native.rs\"]",
+    "description": "Implement the shared filesystem/durability platform ports on Windows, macOS, and Linux: anchored path and object identity, traversal/symlink/reparse/mount containment, atomic file and directory publication, durable sync, ownership/mode checks, local-volume proof, portable workspace operations, build-slot publication, and managed-local selector observe/switch/restore. Keep Git writes and unsupported package-owned activation paths disabled.",
+    "id": 74,
+    "number": 74,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M12.1 — Implement native filesystem, durability, and selector adapters",
+    "updated_at": "2026-09-22 07:21:38"
+  },
+  "deleted": false,
+  "identity": "d297f3a2-ec17-8798-a9a3-1166534c27d8",
+  "schemaVersion": 1
+}

@@ -1,0 +1,60 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.desktop_ui.composer",
+    "created_at": "2026-08-20 21:42:53",
+    "diagram_type": "state",
+    "id": 5,
+    "key": "uml.desktop_ui.composer_projection_state",
+    "kind": "mermaid",
+    "sort_order": 5,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        "[*] --> DraftChat\n",
+        "DraftChat: Workflow editable, local draft\n",
+        "DraftChat --> StartPending: first Send\n",
+        "StartPending --> DraftChat: rejected, retain draft\n",
+        "StartPending --> ActiveIdle: RunStarted, workflow locked\n",
+        "ActiveIdle --> Busy: OperationStarted\n",
+        "Busy --> QueuePending: Queue input\n",
+        "QueuePending --> BusyQueued: InputQueued\n",
+        "QueuePending --> Busy: rejected, retain draft\n",
+        "BusyQueued --> Busy: QueuedInputDequeued\n",
+        "Busy --> PausePending: Pause\n",
+        "PausePending --> Paused: RunPaused\n",
+        "PausePending --> Busy: rejected\n",
+        "Paused --> Busy: Resume and OperationStarted\n",
+        "Busy --> CancelPending: Cancel\n",
+        "BusyQueued --> CancelPending: Cancel\n",
+        "Paused --> CancelPending: Cancel\n",
+        "CancelPending --> Terminal: RunCancelled\n",
+        "ActiveIdle --> Terminal: Completed or Failed\n",
+        "Busy --> Terminal: Completed or Failed\n",
+        "BusyQueued --> Terminal: Completed or Failed\n",
+        "Terminal: ordinary input disabled, inspect, retry, fork, continue\n",
+        "DraftChat --> Stale: gap or disconnect\n",
+        "StartPending --> Stale: gap or disconnect\n",
+        "ActiveIdle --> Stale: gap or disconnect\n",
+        "Busy --> Stale: gap or disconnect\n",
+        "BusyQueued --> Stale: gap or disconnect\n",
+        "Paused --> Stale: gap or disconnect\n",
+        "Stale: preserve unsent draft, disable state changes\n",
+        "Stale --> DraftChat: resync not started\n",
+        "Stale --> ActiveIdle: resync waiting\n",
+        "Stale --> Busy: resync active\n",
+        "Stale --> BusyQueued: resync queued\n",
+        "Stale --> Paused: resync paused\n",
+        "Stale --> Terminal: resync terminal"
+      ]
+    },
+    "title": "Composer and Run-Control Projection-Derived State",
+    "updated_at": "2026-08-20 21:42:53",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2c3528bf-6801-8aec-a270-4517ecbc6e4f",
+  "schemaVersion": 1
+}

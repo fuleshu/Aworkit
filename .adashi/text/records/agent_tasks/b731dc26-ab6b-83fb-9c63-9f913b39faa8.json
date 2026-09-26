@@ -1,0 +1,59 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/desktop_snapshot.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/dto.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/history/feed.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_background.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/snapshot_page.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/frames.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/worker.rs\",\"desktop/src/App.tsx\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/chatLoading.css\",\"desktop/src/chat/corePort.ts\",\"desktop/src/chat/subagentCatalog.ts\",\"desktop/src/chat/subagentCatalog.test.ts\",\"desktop/src/chat/useChatRuntime.ts\",\"desktop/src/styles.css\",\"desktop/src/workbench/SettingsScreen.tsx\",\"desktop/src/workbench/configuration.ts\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-21 16:51:44",
+    "completion_memo": {
+      "lines": [
+        "Implemented subagent chat tabs in the Chat workspace.\n",
+        "\n",
+        "Core child surface. Every fact a delegated child commits now carries its durable `subagentChildId`: a detached child stream tags each committed draft, and inline children use the same detached evidence stream and child-owned model observer as background children, so one child's activity is attributable from the same canonical Run history without keeping a parent span open across passes. `RuntimeSnapshot` gained an authoritative `subagents` catalog read from the durable `pipeline.subagent-child` frames through `WorkflowPipelinePort::subagent_catalog`; a frame whose job is no longer live reports `interrupted` (verified by a restart test that reopens the runtime). `desktop_chat_events` accepts an optional `childId` and returns only that child's facts from a bounded raw window whose cursor still advances past pages that scanned only other scopes.\n",
+        "\n",
+        "Desktop. Chat Workspace owns a horizontal tab strip (`SubagentTabs`, bounded, overflow-scrolling, evicting the oldest non-active child), with the parent Chat as the permanent first tab and one closable tab per `childId`. Per-Chat tab sets are remembered for the session (`SubagentTabMemory`). The conversation center is a `tabpanel`: the active tab renders either the parent timeline or the read-only `SubagentConversation` (lineage header, status, task, assigned context, counters, child-scoped timeline via `useSubagentFeed`, no composer/steering/approvals). A `tool.subagent` block offers an \"Open subagent\" action resolved through the child's `parentCallId`, and the composer shows a subagents button beside the goal control, enabled only when the Chat owns a child, listing them running-first.\n",
+        "\n",
+        "Preference. `SubagentViewPreferenceV1` is a global Settings-document preference projected with its document version and committed through the dedicated `desktop_subagent_view_commit`; `autoOpen` opens a new child's tab in the background without focus theft and `autoClose` closes an open, inactive terminal tab. A generic full-document save that carries the default keeps the stored preference, and the section reverts to the latest projected values on a conflict or failure.\n",
+        "\n",
+        "Verification. Rust: 399 passed with only the pre-existing `compaction_integration::checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node` failure. TS: `tsc --noEmit` clean; 32 new tests pass (tab state machine, strip a11y/keyboard, picker, catalog merge incl. authoritative interruption, child-scoped feed paging, workspace flow, Settings preference) plus updated settings/config tests. Full vitest shows only the pre-existing failures (`systemTextScale` fixed font size in `chatLoading.css`, `app.integration` 10s budget timeouts and load-flaky `management`/`SettingsScreen` cases that pass in isolation). Design revision 745 records the tab set, child scope, composer control and preference; `docs/subagent-tool-inheritance.md` documents the feature."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 15:57:33",
+    "created_files": "[\"desktop/src-tauri/src/desktop_subagent_view.rs\",\"desktop/src/chat/subagentTabs.ts\",\"desktop/src/chat/subagentTabs.test.ts\",\"desktop/src/chat/SubagentTabs.tsx\",\"desktop/src/chat/SubagentTabs.test.tsx\",\"desktop/src/chat/SubagentDialog.tsx\",\"desktop/src/chat/SubagentDialog.test.tsx\",\"desktop/src/chat/SubagentConversation.tsx\",\"desktop/src/chat/useSubagentFeed.ts\",\"desktop/src/chat/useSubagentFeed.test.tsx\",\"desktop/src/chat/subagentViewPreference.ts\",\"desktop/src/chat/subagents.css\",\"desktop/src/chat/subagentWorkspace.test.tsx\",\"desktop/src/workbench/settings-v2/SubagentViewSection.tsx\",\"desktop/src/workbench/settings-v2/SubagentViewSection.test.tsx\"]",
+    "description": {
+      "lines": [
+        "Show a delegated subagent's run in its own horizontal chat tab inside the Chat workspace, with a tool-block open action, a composer subagents button and dialog, and two presentation preferences.\n",
+        "\n",
+        "Current state. Background and inline subagents already commit their evidence into the same Run history under a child evidence root carrying subagentChildId, and the durable ChildContextFrameV1 holds child identity, task, status, counters and lineage. The desktop UI only renders subagent activity as timeline cards; there is no tab, no child catalog, and no way to open a child conversation. There is also no core projection or command for children: subagent_list is a model-facing tool, and the child's task/input lives in the operational frame store, not in semantic events.\n",
+        "\n",
+        "Agreed behavior (decisions confirmed 2026-09-21).\n",
+        "- Tabs are UI-owned transient state over one Chat/one Run. The parent Chat is the first, permanent, non-closable tab; each subagent is a closable tab. A child's evidence is a filtered view of the same canonical history, never a second event source or Run. The tab set is bound to its Chat: switching Chats switches tab sets, and the open-tab set per Chat is remembered for the session and rebuilt on return the same way the main chat rebuilds history - a bounded recent range with older pages loaded while scrolling back, incremental live updates, preserving performance.\n",
+        "- The subagent tab renders like the main chat but is read-only: no composer input and no user steering. It shows a child header with lineage back to the parent, status and the assigned task, then the child's activity and answer through the existing timeline renderer with a child-scope filter.\n",
+        "- The tool.subagent / tool.subagent_fork activity block in the parent timeline has a button that opens (or activates) that child's tab.\n",
+        "- The composer shows a subagents icon button next to the goal control. It is enabled whenever this Chat has at least one child (running or settled); disabled otherwise. Clicking it opens a popup dialog listing this Chat's children, running first then settled, with status and task; choosing one opens its tab or activates the existing tab. Never open two tabs for the same child.\n",
+        "- Bounded tab strip with overflow scrolling; a cap on simultaneously open subagent tabs closes the oldest non-active tab rather than growing without limit.\n",
+        "- Two presentation preferences, stored as a global user preference (SubagentViewPreferenceV1) committed through a dedicated command and shown in Settings beside/below the subagent tool settings - never in the frozen per-Chat tool contract: auto-open and auto-close. Auto-open: each newly created child opens its tab at creation in the background without switching the active tab. Auto-close: when a child reaches any terminal state (completed, failed, interrupted or cancelled) and its tab is open and is not the active tab, the tab is closed. A manually closed tab stays closed.\n",
+        "- Accessibility: tablist/tab/tabpanel semantics, labelled close buttons, focus restoration on close, rate-limited live region for running counts, keyboard navigation, 200% zoom and WCAG 2.2 AA. The tab strip and dialog use the existing design-system primitives.\n",
+        "\n",
+        "Dependency to build first. A read-only core surface for children is required and does not exist yet: a subagent catalog projection for the current Chat (childId, kind, status, running, task, counters, timestamps, lineage), a read of one child's assigned task/prompt, and child-scoped event pages using the existing windowed-history semantics (bounded recent range, older pages on scroll back, exact fences). This is a projection/command addition owned by the Projection Gateway and the core, not a model tool.\n",
+        "\n",
+        "Design updates that precede the code: Chat Workspace gains the tab-set responsibility (parent and subagent tabs, per-Chat memory, active tab, close, dedupe, overflow); Conversation gains child-scope rendering and the child header; Composer gains the subagents button and dialog; Settings gains the SubagentViewPreferenceV1 section and command; Projection Gateway gains the child catalog and preference projections; the Local State/Evidence read path exposes the frame-derived catalog without putting child conversations into semantic history.\n",
+        "\n",
+        "Outputs. Core child catalog projection, child task read and child-scoped paged events; Chat Workspace tab set with per-Chat memory and windowed rebuild; read-only Conversation child view with lineage header; tool-block open action; composer subagents button and popup; Settings preference and command; auto-open and auto-close behavior; tests for tab dedupe, per-Chat tab memory, bounded overflow, auto-open without stealing focus, auto-close on every terminal state, button enablement, dialog ordering, child-scope filtering, windowed child paging, read-only enforcement and accessibility; documentation.\n",
+        "\n",
+        "Non-goals. No second Run, session or canonical history per child; no user steering or child approval from the tab; no change to the model-facing subagent or job tool contracts; no new child execution semantics."
+      ]
+    },
+    "id": 120,
+    "number": 119,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Subagent chat tabs in the Chat workspace",
+    "updated_at": "2026-09-21 20:13:25"
+  },
+  "deleted": false,
+  "identity": "b731dc26-ab6b-83fb-9c63-9f913b39faa8",
+  "schemaVersion": 1
+}

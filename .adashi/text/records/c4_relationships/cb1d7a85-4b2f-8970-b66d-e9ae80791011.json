@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies exact pinned node type/version/hash bindings, schemas, and capability references without live registration",
+    "destination_external_id": "aworkit.workflow_worker.node_runtime",
+    "external_id": "rel.worker_execution_plan.node_runtime",
+    "id": 111,
+    "source_external_id": "aworkit.workflow_worker.execution_plan",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Immutable executor descriptors",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cb1d7a85-4b2f-8970-b66d-e9ae80791011",
+  "schemaVersion": 1
+}

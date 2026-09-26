@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-17 16:44:29",
+    "design_external_id": "aworkit.trusted_core.invocation_broker",
+    "id": 28,
+    "target": "desktop/src-tauri/src/runtime/model_tool_loop/job_completion.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-17 16:44:29",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "04f5a8e7-12f7-8cfd-aff8-e83aea22df58",
+  "schemaVersion": 1
+}

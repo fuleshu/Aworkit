@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Transforms a frozen logical workflow/provenance candidate into PortableFrozenSnapshotV1, excluding local bindings, credential values, approvals, hidden reasoning, debug capture and executable code before lifecycle commit",
+    "destination_external_id": "aworkit.portable_store.export_policy",
+    "external_id": "rel.core_snapshot.portable.export_policy",
+    "id": 271,
+    "source_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "tags": "Relationship,Boundary Contract,Security",
+    "technology": "ScrubFrozenSnapshot DTO contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bcf1d984-dbab-8b56-9673-001aa4dcf90d",
+  "schemaVersion": 1
+}

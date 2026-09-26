@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Stores recurring-error indexes, immutable candidate, test and diff evidence, BuildProvenanceV1, enrollment and capability-report digests, previous-known-good references, and the crash-safe restart and rollback baton without secrets",
+    "destination_external_id": "aworkit.local_store",
+    "external_id": "rel.core_repair.local_store.candidates",
+    "id": 105,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "SQLite and atomic artifact files",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "42df6113-ad1f-8efe-9582-601036a37f41",
+  "schemaVersion": 1
+}

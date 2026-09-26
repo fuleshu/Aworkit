@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "For PortableProject Chats, appends immutable bounded hash-linked JSONL/CAS segments and atomically advances explicit branch heads. Canonical history is not duplicated locally",
+    "destination_external_id": "aworkit.portable_store",
+    "external_id": "rel.core_committer.portable_store",
+    "id": 99,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Atomic JSONL/CAS repository port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "cb456480-7c8f-8416-a799-2b3440f6fed4",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requires a positive versioned artifact classification and sanitized descriptor before accepting bytes; ambiguous, active, executable, debug, or secret-bearing candidates fail closed",
+    "destination_external_id": "aworkit.portable_store.export_policy",
+    "external_id": "rel.portable.artifact.export_policy",
+    "id": 249,
+    "source_external_id": "aworkit.portable_store.artifact_cas",
+    "tags": "Relationship,Internal Portable Contract,Security",
+    "technology": "ArtifactPolicyClassificationPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "76cf962f-4f9f-8abc-801f-d8e7de935d04",
+  "schemaVersion": 1
+}

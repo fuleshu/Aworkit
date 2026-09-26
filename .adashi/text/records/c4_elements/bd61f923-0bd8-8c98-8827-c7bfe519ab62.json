@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Interprets normalized node, classifier, evaluator, gate, model, tool, subagent, and external-agent outcomes against the frozen attempt policy and chooses the next legal same-Chat action. It distinguishes another attempt from a visible harness feedback edge, a fallback route, an approval wait, failure, completion, or user decision.\n",
+        "Owned runtime state: AttemptLedgerV1 keyed by operation and AttemptId, containing outcome class, policy clause, evaluator/gate result, remaining attempts, fallback position, no-resend marker, and decision ID. Invocation delivery state remains core broker state.\n",
+        "Input/output DTOs and ports: ClassifyOutcome(ExecutionOutcomeV1), DecideAttempt(AttemptPolicyInputV1), ApplyEvaluatorResult, ApplyGateResult, and RecordAttemptStart; returns AttemptDecisionV1 as Complete, RetryWithNewAttempt, FollowExistingEdge, SelectExistingFallback, AwaitApproval, RequireUserDecision, or Fail.\n",
+        "Algorithms and invariants: clauses are evaluated deterministically in frozen priority order after Limits admission. Only definite-not-started, idempotent contract failures, or other explicitly retry-eligible outcomes may create another attempt. OutcomeUncertain for a potentially side-effecting action never becomes a worker retry or fallback that repeats the effect. The Invocation Broker alone may reconcile or redeliver the same invocation ID when declared idempotency and host deduplication are guaranteed. Evaluator revision loops and gate escalation follow visible existing graph edges and cannot invent a stronger node, tier, or authority.\n",
+        "Failure, cancellation, and recovery: malformed outcomes fail closed. Cancellation is terminal for the cancelled scope and is never retried. Exhausted attempts produce an explicit failure or declared fallback. Checkpoints retain attempt IDs, decisions, no-resend facts, and completed evaluators, preventing duplicate attempts or gates after recovery.\n",
+        "Performance and NFRs: pure low-millisecond decisions, bounded policy depth, stable outcome/reason taxonomy, deterministic fixtures, complete attempt evidence, and no provider-native errors in persisted proposals.\n",
+        "Non-responsibilities: no invocation delivery reconciliation, capability execution, quality evaluation itself, graph mutation, budget creation, authority, approval decision, canonical commit, or side-effect compensation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.attempt_policy",
+    "id": 47,
+    "name": "Attempt, Retry, Fallback, Evaluator & Gate Policy",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Retry,Evaluation,Gates",
+    "technology": "Rust pure decision engine over immutable attempt policies",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bd61f923-0bd8-8c98-8827-c7bfe519ab62",
+  "schemaVersion": 1
+}

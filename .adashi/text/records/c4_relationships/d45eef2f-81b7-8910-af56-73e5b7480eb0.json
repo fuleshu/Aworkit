@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "May operate directly on the delegated workspace within the frozen target configuration and native agent authority",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.external_agents.workspace",
+    "id": 19,
+    "source_external_id": "ext.external_agents",
+    "tags": "Relationship",
+    "technology": "Native agent filesystem/tool access",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d45eef2f-81b7-8910-af56-73e5b7480eb0",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:28:43",
+    "design_external_id": "uml.trusted_core.invocation_authority_commit",
+    "id": 141,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "c82229b5-5ad7-8ed1-9dd6-7ae5e81acb82"
+    }
+  },
+  "deleted": false,
+  "identity": "983bfc33-d97b-8ce2-9333-8e079b13d290",
+  "schemaVersion": 1
+}

@@ -1,0 +1,35 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Creates, runs, terminates, and integrates temporary Aworkit subagent child contexts for frozen Subagent nodes. Delegation selects explicit parent material, gives the child independent instructions and working state, enforces nesting and limits, and returns only through a declared result contract and integration transform.\n",
+        "Owned runtime state: ChildContextFrameV1 with childId, parent node/token/revision, selected input projection hash, child root/head revisions, instructions, allowed capability references, inherited budget, depth, internal loop state reference, status, result contract, integration target, and provenance event IDs.\n",
+        "Input/output DTOs and ports: SpawnChild(ChildContextSpecV1), StartChild, ApplyChildStep, SpawnNestedChild, CancelChildTree, CompleteChild(ChildResultV1), and IntegrateChild(ChildResultIntegrationV1); returns ChildStartedV1, ChildOutcomeV1, IntegrationOutcomeV1, or typed limit/contract failure.\n",
+        "Algorithms and invariants: the initial child revision is built only from the workflow-declared parent selection, never the whole parent context by default. Parallel children share no mutable state. Nested delegation is admitted only when the frozen graph declares it and Limits permits inherited depth and budget. Completion validates the result schema, then an explicit map, summarize, evaluator, or aggregation step creates a new parent revision. The child's full conversation and scratch state are never merged wholesale, while inspectable lineage remains.\n",
+        "Failure, cancellation, and recovery: completion, failure, cancellation, deadline, or limit exhaustion terminates the child scope and descendants. Contract failure follows frozen Attempt Policy. Cancellation cannot undo child side effects. Checkpoints retain child lineage, completed invocation IDs, and integration status, so recovery cannot duplicate delegated calls or apply a result twice.\n",
+        "Performance and NFRs: hard depth, fan-out, concurrency, context-size, turn, and deadline bounds; isolated tracing; deterministic child IDs; bounded retained working state; and explicit opacity markers for unavailable provider detail.\n",
+        "Non-responsibilities: no temporary graph creation, parent graph mutation, authority or budget expansion, whole-context sharing, canonical history commit, provider execution, or direct host access.\n",
+        "\n",
+        "Native delegation tool contract (approved 2026-09-19): New tool snapshots default to the delegating Agent's exact frozen binding selection, including write/edit, shell/Python, MCP and managed job controls, excluding further delegation. The parent selection is committed once per Agent invocation before its provider request; the child never inherits the union of other graph nodes or newly enabled Settings tools. Optional readOnly=true narrows that selection to known read-only native tools and MCP tools whose frozen annotations explicitly declare readOnlyHint=true and destructiveHint=false. Legacy snapshots retain their original read-only child contract. Child tool descriptions, instructions and execution guard use the same filtered binding set; workspace instruction ownership stays child-specific.\n",
+        "Approval separation: Child calls use the existing durable broker, filesystem boundaries and standing grants. Operations already permitted by the selected policy may execute. A child needing a new human or model approval settles as parent_approval_required without dispatch or an approval-review model call; the child returns the exact blocked action and completed-work usage to the parent promptly. It does not impersonate a user denial, silently approve, or continue trying other mechanisms. The parent can invoke that action through normal approval policy. No new child approval-resume machine is introduced.\n",
+        "Lifecycle: Each child has an isolated conversation with explicit role, tool and permission guidance. Background jobs remain Chat-owned for parent recovery and Stop, with a durable originating Agent/child scope. Children list/control and complete only their own jobs, never a sibling's; root completion still accounts for every Chat job. Cancellation uses the existing process-tree token and no uncertain effect is replayed. No new model-turn or elapsed-time cap, full-history reconstruction, or provider/tool rebuild is added. Implementation and acceptance are documented in docs/subagent-tool-inheritance.md.\n",
+        "\n",
+        "Background child jobs (approved 2026-09-21): A delegation runs as a background job by default and inside the same Run. Spawn computes the child scope and frame, commits a running frame, registers the child run with aworkit.trusted_core.job_registry under the spawning invocation and the exact delegating Agent scope, and returns childId and jobId immediately; runInBackground=false keeps the inline path. The parent observes live state through job_output and job_list, steers a running child at its next step boundary or resumes a settled child with job_input (also exposed as subagent_message), stops and closes the scope with job_stop or subagent_cancel, and may finish its turn with job_keep. Children never inherit any delegation or control tool. A background child owns its evidence stream and its model observer so its committed model and tool spans are not children of the delegating pass's span tree; its span root carries the child identity and its durable frame keeps the lineage back to the delegating tool, so subagent actor attribution in the Conversation Presenter holds without keeping a parent span open across passes. On restart a running child job is interrupted and never replayed, and its frame is reported interrupted rather than running."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.subagent",
+    "id": 46,
+    "name": "Temporary Subagent Context Lifecycle",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Subagents,Delegation",
+    "technology": "Rust scoped child-context and result-contract state machine",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "25388eb7-c3b4-8679-ae9d-7c9272299a1d",
+  "schemaVersion": 1
+}

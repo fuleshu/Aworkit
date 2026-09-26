@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "design_external_id": "uml.desktop_ui.command_event_projection",
+    "id": 33,
+    "qa_job_id": {
+      "ref": "25bbbb06-7576-8bb8-a1e8-84a817cc751f"
+    },
+    "sort_order": 2,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "e7efcf40-a540-85b1-b739-8da32e92e6ad",
+  "schemaVersion": 1
+}

@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "DSH vs Aworkit cache gap is not an accounting artifact. Both read the same provider fields: Aworkit rows satisfy hit+miss==input on all 210 turns; DSH steps satisfy totalTokens==input+cacheRead+output on all 79. Side by side (uncached per step): DSH median 212, max 14,540 (its cold start), one step >2,000, total 36,540 of which 14,540 is the cold start, so steady state ~282/step. Aworkit new: median 629, 18 turns >2,000 summing 104,453 (64% of uncached), max 25,318. Aworkit old: median 695, 17 turns >2,000 summing 168,967 (75%), max 39,005. So DSH never breaks its prefix; Aworkit re-bills its whole context ~18 times per run. Aworkit also appends ~3x more novel tokens per turn. Note the reasoning replay flatters Aworkit: ~26% of its cached tokens are provider-added reasoning, so its 98.4% hit rate overstates its real prefix reuse. Fix target is prefix stability, not more caching.",
+    "created_at": "2026-09-24 18:13:41",
+    "id": 267,
+    "note_id": "dsh-vs-aworkit-cache-gap",
+    "operation_id": "dsh-vs-aworkit-cache-gap",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "dsh-vs-aworkit-cache-gap",
+    "task_id": {
+      "ref": "bd0fbb43-c6bc-8fa5-86b9-b7fb0f60b578"
+    }
+  },
+  "deleted": false,
+  "identity": "1933160f-8356-8666-85b5-6a415308be50",
+  "schemaVersion": 1
+}

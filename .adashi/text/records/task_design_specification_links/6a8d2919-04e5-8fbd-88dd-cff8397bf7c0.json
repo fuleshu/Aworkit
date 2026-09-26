@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:44:56",
+    "design_external_id": "mockup.desktop_ui.theme_reference_dark",
+    "id": 349,
+    "sort_order": 3,
+    "target_type": "mockup",
+    "task_id": {
+      "ref": "6191aca9-7b00-865f-8473-2b4db4519127"
+    }
+  },
+  "deleted": false,
+  "identity": "6a8d2919-04e5-8fbd-88dd-cff8397bf7c0",
+  "schemaVersion": 1
+}

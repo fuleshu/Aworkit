@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies and revalidates the exact configured workspace identity and portable relative root, consuming read-only filesystem/Git capability facts without treating branch names or working directories as authority",
+    "destination_external_id": "aworkit.portable_store.workspace_adapter",
+    "external_id": "rel.core_project_config.portable.workspace_adapter",
+    "id": 270,
+    "source_external_id": "aworkit.trusted_core.project_config",
+    "tags": "Relationship,Boundary Contract,Workspace",
+    "technology": "ResolvedPortableRootPort and read-only Git facts",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d60da677-7e8c-84cf-a1d5-3d0b3b6ee05f",
+  "schemaVersion": 1
+}

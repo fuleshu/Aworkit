@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.portable_store.artifact_cas",
+    "resource_kind": "design.element",
+    "updated_at": "2026-08-20 23:11:41",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "09c255ea-a4fb-8317-8a40-53e86c48c137",
+  "schemaVersion": 1
+}

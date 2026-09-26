@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Dispatches an approved tool, plugin, external-agent, or whole-workspace execution into an explicitly configured container, VM, OS sandbox, or remote backend and returns verifiable enforcement and lifecycle evidence. It is optional and never the default trusted-plugin contract.\n",
+        "Owned runtime state: backend sessions/handles, verified image/environment identity, mount and network realization, remote workspace mapping, resource limits, cancellation handle, and artifact transfer correlation. Isolation profiles and workspace selection are pinned core inputs.\n",
+        "Versioned ports and contracts: IsolationBackendManifestV1, IsolationProfileV1, EnforcementClaimV1, IsolatedExecutionV1, IsolationRawEventV1, ArtifactTransferV1, and IsolationCleanupV1. Claims enumerate what the backend actually enforces, including roots/mounts, network, user identity, process limits, and residual-state policy.\n",
+        "Failure and degraded behavior: unavailable backend, unverifiable mount/network policy, identity drift, remote disconnect, transfer corruption, or cleanup failure is explicit. A required profile fails closed and is never downgraded to host execution; a lost remote terminal after dispatch becomes uncertain.\n",
+        "Security truthfulness: only a verified backend may be called a sandbox/security boundary. It cannot make an unisolated trusted plugin safe retroactively, broaden authority, select another workspace, or expose lease material beyond declared channels.\n",
+        "Observability, performance, and cross-platform behavior: startup/transfer/execution/cleanup metrics, content hashes, bounded streams, enforcement evidence, backend-specific health, and a consistent Aworkit port across Windows, Linux, and macOS while clearly declaring unsupported host/backend combinations.\n",
+        "Non-responsibilities: no default plugin security policy, capability approval, backend provisioning marketplace, canonical artifact/history storage, workflow retry, or process-supervisor authority."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.isolation_backend",
+    "id": 58,
+    "name": "Optional Isolation Backend Adapter",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Isolation,Optional Security Boundary",
+    "technology": "Rust backend SPI for containers, VMs, OS sandboxes, and remote execution",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "9aa9eec6-d8b1-8328-9388-107fbd053540",
+  "schemaVersion": 1
+}

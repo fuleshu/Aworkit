@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses fixed-directory create-new, same-volume atomic publication, file and directory durability, owner ACL or mode, monotonic time, and anchored storage identity for the hash-chained journal, EnrollmentPreparedV1, BootstrapResultV1, and ManualRecoveryNoticeV1",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.bootstrap.journal.os.durability",
+    "id": 289,
+    "source_external_id": "aworkit.bootstrap_helper.activation_journal",
+    "tags": "Relationship,Platform Contract,Durability,Integrity",
+    "technology": "Platform atomic filesystem, ACL or mode, durable sync, clock, and storage-identity APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fc9f5c71-dfda-881b-bcfe-5f7f2b6d2ada",
+  "schemaVersion": 1
+}

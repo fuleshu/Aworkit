@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Routes bounded InspectPortableImport/ListImportDiagnostics commands and returns inert verified/inspect-only/quarantine DTOs; a transport receipt or import result cannot install, enable, run, authorize, or select canonical storage",
+    "destination_external_id": "aworkit.portable_store.import_quarantine",
+    "external_id": "rel.core_api.portable.import",
+    "id": 276,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Import,Inert",
+    "technology": "Typed inert import command/query DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "71efeaf7-c428-813c-93d1-38d8eda57ecf",
+  "schemaVersion": 1
+}

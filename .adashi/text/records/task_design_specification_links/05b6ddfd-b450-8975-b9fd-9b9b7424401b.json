@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:33:29",
+    "design_external_id": "aworkit.bootstrap_helper.activation_journal",
+    "id": 253,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "a7544139-df11-8e6a-ab6c-1699219a508a"
+    }
+  },
+  "deleted": false,
+  "identity": "05b6ddfd-b450-8975-b9fd-9b9b7424401b",
+  "schemaVersion": 1
+}

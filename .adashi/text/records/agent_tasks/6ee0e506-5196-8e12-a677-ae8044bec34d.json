@@ -1,0 +1,40 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:15:04",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Promoted from the \"To append next\" paragraph at the bottom of task 126 (number 125), which was recorded as investigation notes rather than commitments and so never became tracked work.\n",
+        "\n",
+        "Why: every run so far used a large window, so no benchmark could say anything about pruning behaviour, compaction frequency, re-read rates, or context-loss recovery. Evidence: test1_1/test1_2/test1_3 never compacted at all (peak context 187,624 / 155,274 / 175,572 prompt tokens against a 1,048,576 window), and only test1_qwen exercised compaction, once, at 210,046 reported tokens against a 262,144 window (context.compacted: 44 units, 119,169 tokens shadowed, trigger pressure, strategy summary).\n",
+        "\n",
+        "Deliverable: a small-context variant of the same Tetris prompt run under a model or binding whose declared window is about 32k, recorded the same way (project aworkit/test1_small, plus a qa/cache-usage-report.mjs read and the same independent conformance harness).\n",
+        "\n",
+        "What it must be able to answer:\n",
+        "- how often compaction fires and what one compaction costs in cold input tokens (the compaction auxiliary call is currently cold: test1_qwen reported sentBytes 540,125 with commonPrefixBytes 3 — see the compaction task for the fix);\n",
+        "- re-read rate: how often the model re-reads a file it already read because context was dropped, and whether the tool loop's read paging keeps those reads small;\n",
+        "- whether a compaction ever loses work that must be redone, measured by the number of turns after each compaction and by whether the deliverable still passes the conformance harness;\n",
+        "- whether the pressure threshold (compaction fired at ~80% of the reported window) is safe under a small window where the summarisation call's own 8k-token output is a much larger share.\n",
+        "\n",
+        "Note: usable only with a provider whose cache behaviour is also recorded, otherwise the cache cost of a compaction cannot be separated from the rest."
+      ]
+    },
+    "id": 135,
+    "number": 134,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Add a small-context (~32k) benchmark variant so pruning and compaction behaviour can be measured",
+    "updated_at": "2026-09-25 07:15:04"
+  },
+  "deleted": false,
+  "identity": "6ee0e506-5196-8e12-a677-ae8044bec34d",
+  "schemaVersion": 1
+}

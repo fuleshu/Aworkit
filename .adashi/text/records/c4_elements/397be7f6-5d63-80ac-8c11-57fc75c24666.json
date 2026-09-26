@@ -1,0 +1,32 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Presents pre-start workflow selection, attachment/context references, first send, active-Run locked workflow, queued-input preview, and contextual pause/cancel/retry/fork/continue controls. Send, Queue, Stop, and unavailable states derive from Run phase and declared adapter capabilities.\n",
+        "Owned state: unsent text, IME state, pre-submit attachment references, local validation, and pending command IDs. Accepted queue, workflow lock, and Run capabilities are core projections.\n",
+        "Contracts: consumes ComposerProjection and CommandStatusProjection from Chat Workspace; emits ComposerIntent with command ID, Chat/draft target, expected version, text, attachment references, and requested action. Workspace returns pending/rejected/confirmed outcomes.\n",
+        "Failure/degraded behavior: retains drafts on rejection, timeout, disconnect, or resync; prevents duplicate submission by command ID; distinguishes definite rejection from uncertain receipt; unresolved workflow requirements block first send while keeping the draft editable.\n",
+        "Performance/accessibility: keystrokes/IME stay local under streaming load; attachment enumeration is cancellable; queue lists are bounded; shortcuts do not override platform editing; disabled controls expose reasons.\n",
+        "Non-responsibilities: no direct file reads/uploads, capability resolution, process control, canonical queue, post-start workflow changes, or authority expansion.\n",
+        "\n",
+        "Subagents control (2026-09-21): Beside the goal control the composer shows a subagents icon button that reports this Chat's delegated children. It is disabled while the Chat has no child and enabled once any child exists. Activating it opens a keyboard-navigable dialog listing the Chat's children, running first then settled, each with status and task; choosing one opens that child's tab or activates the existing tab. The control only selects presentation state owned by the Chat Workspace; it never sends input, steers a child, or changes the Run. It exposes a disabled reason and an accessible name that includes the running count.\n",
+        "\n",
+        "Pending question (2026-09-21): While a question is unanswered the Run is awaiting_answer; the composer disables ordinary send and queue, keeps the unsent draft intact, and states that the Run is waiting for the dialog. The dialog, not the composer, owns the answer, so a question can never be answered by typing a normal message, and the composer re-enables when the answer or the cancellation commits."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.composer",
+    "id": 19,
+    "name": "Composer & Run Controls",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Input",
+    "technology": "TypeScript form controller and local intent model",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "397be7f6-5d63-80ac-8c11-57fc75c24666",
+  "schemaVersion": 1
+}

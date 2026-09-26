@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Extracts logical requirements from a verified portable frozen snapshot, compares them with core-supplied local capability facts, and prepares a non-authoritative continuation plan and complete unresolved-binding inventory for explicit user/core review.\n",
+        "Owned ephemeral DTOs: BindingRequirementV1 names stable logical tier/tool/node/plugin/MCP/external-agent identifiers, compatible versions/hashes/features, requested scopes/modes, workspace-reference needs, and whether a local CredentialRef is required; UnresolvedBindingInventoryV1 distinguishes missing, disabled, incompatible, ambiguous, and credential-needed; ContinuationRebindPlanV1 maps requirements to selected local candidate IDs and records the source snapshot/branch/checkpoint hashes. Draft persistence, if desired, belongs to the core configuration repository and is never portable history.\n",
+        "Ports: BuildInventory(VerifiedPortableBranchHandleV1, LocalCapabilityFactsV1), ProposeCandidates, ValidatePlanShape, and ReadPlan expose facts only. Exact logical-ID matches may be suggested but never accepted automatically. No credential value crosses this module.\n",
+        "Authority and continuation: imported bindings, provider endpoints, credential references, permits, approval responses, and authority manifests are discarded. The trusted core Project/Configuration Coordinator validates local candidates; the Authority Engine compiles a fresh manifest and user-visible summary; after explicit acceptance, the Snapshot Freezer creates a new immutable child continuation snapshot preserving the logical graph and source checkpoint lineage. The Canonical Event Committer alone creates/advances that portable child branch.\n",
+        "Degradation/NFRs: unresolved requirements leave the import inspectable/searchable but block continuation; diagnostics preserve every original logical reference and unknown field. Results are deterministic for the same verified snapshot and local facts, bounded/cancellable, schema-versioned, and auditable without sensitive values.\n",
+        "Non-responsibilities: no capability enabling/installing, credential access, authority grant, approval reuse, workspace-root expansion, snapshot mutation, branch/head write, worker launch, or execution."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.rebind_planner",
+    "id": 81,
+    "name": "Local Capability Rebind Plan & Unresolved Inventory",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Rebinding,Planning,Inert",
+    "technology": "Rust pure planning service over portable requirement DTOs and core-supplied local capability facts",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d6999d08-6a45-8483-88d7-523d18cd966e",
+  "schemaVersion": 1
+}

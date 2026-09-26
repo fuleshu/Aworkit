@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Provides only the immutable AuthorityManifestV1 reference embedded in the frozen snapshot; the worker may carry or narrow references but cannot evaluate or grant authority",
+    "destination_external_id": "aworkit.workflow_worker.execution_plan",
+    "external_id": "rel.core_authority.worker_execution_plan.manifest",
+    "id": 147,
+    "source_external_id": "aworkit.trusted_core.authority",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Embedded Aworkit authority contract, no direct decision IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "645142fa-e45c-8150-8594-909ac2367ca3",
+  "schemaVersion": 1
+}

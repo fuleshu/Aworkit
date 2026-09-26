@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:33:36",
+    "design_external_id": "aworkit.bootstrap_helper.build_slots",
+    "id": 258,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "5bcc470d-f889-8db6-95a8-31c31a99c13d"
+    }
+  },
+  "deleted": false,
+  "identity": "55790d4c-8e0d-8f67-9a0c-458da6da3751",
+  "schemaVersion": 1
+}

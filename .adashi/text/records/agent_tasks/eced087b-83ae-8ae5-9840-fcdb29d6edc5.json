@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/composer.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-08-21 18:25:59",
+    "completion_memo": "Implemented local composer text, IME, attachment-reference, workflow-selection, and queued-preview state. First send and later enqueue intents use stable IDs; drafts stay intact until core receipt; workflow locking, terminal states, and Run controls derive only from Chat projections with explicit disabled reasons.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:31:19",
+    "created_files": "[\"desktop/src/chat/composer.ts\"]",
+    "description": "Implement local text/IME state, pre-start workflow and attachment references, first send, queued-input preview, locked-workflow state, and projection-derived pause/cancel/retry/fork/continue controls. Use stable command IDs, retain drafts across rejection or uncertain receipt, and expose exact disabled reasons.",
+    "id": 52,
+    "number": 52,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M08.2 — Implement the composer and Run controls",
+    "updated_at": "2026-09-22 07:16:25"
+  },
+  "deleted": false,
+  "identity": "eced087b-83ae-8ae5-9840-fcdb29d6edc5",
+  "schemaVersion": 1
+}

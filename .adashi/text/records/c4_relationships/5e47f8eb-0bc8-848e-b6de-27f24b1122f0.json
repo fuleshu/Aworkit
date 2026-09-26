@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Atomically commits or rebuilds local configuration, canonical events, indexes, artifacts, and diagnostics",
+    "destination_external_id": "aworkit.local_store",
+    "external_id": "rel.core.local_store",
+    "id": 8,
+    "source_external_id": "aworkit.trusted_core",
+    "tags": "Relationship",
+    "technology": "SQLite transactions and atomic filesystem writes",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5e47f8eb-0bc8-848e-b6de-27f24b1122f0",
+  "schemaVersion": 1
+}

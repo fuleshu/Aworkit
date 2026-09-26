@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/model.rs\"]",
+    "completed_at": "2026-08-21 17:18:35",
+    "completion_memo": "Implemented provider-neutral model gateway contracts that admit only the frozen allowed binding and enforce output bounds while keeping provider-native details behind ModelProvider. cargo check -p aworkit-capability-host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:21",
+    "created_files": "[\"crates/aworkit-capability-host/src/model.rs\"]",
+    "description": "Implement Aworkit-owned model request, streaming, usage, error, cancellation, and provider-selection contracts with the replaceable private provider/Rig seam. Resolve only candidates allowed by the frozen approved binding and keep provider-native request, session, and result types inside the adapter.",
+    "id": 30,
+    "number": 30,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.3 — Implement the model and provider gateway",
+    "updated_at": "2026-09-22 07:12:01"
+  },
+  "deleted": false,
+  "identity": "60cbbb6f-3fa3-8508-b426-814bdd32e78a",
+  "schemaVersion": 1
+}

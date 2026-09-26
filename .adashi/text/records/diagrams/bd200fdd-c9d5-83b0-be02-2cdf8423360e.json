@@ -1,0 +1,63 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.trusted_core.repair",
+    "created_at": "2026-08-20 22:00:11",
+    "diagram_type": "flow",
+    "id": 9,
+    "key": "uml.trusted_core.repair_activation_rollback",
+    "kind": "mermaid",
+    "sort_order": 9,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "A[\"Recurring failure evidence is committed\"] --> B[\"Fingerprint and group occurrence in persistent ledger\"]\n",
+        "B --> C[\"Expose Management history diagnosis workaround and regression facts\"]\n",
+        "C --> D{\"User starts Investigate and fix?\"}\n",
+        "D -- \"No\" --> E[\"Remain recorded. No autonomous repair loop\"]\n",
+        "D -- \"Yes\" --> F[\"Bounded Management workflow investigates using frozen authority\"]\n",
+        "F --> G[\"Register candidate with complete diff tests consequences uncertainty build provenance hashes data compatibility and rollback point\"]\n",
+        "G --> H[\"Query BuildOriginV1 enrollment and runtime capability\"]\n",
+        "H --> I{\"ActivationEligibilityV1?\"}\n",
+        "I -- \"EnrollmentRequired\" --> J[\"Keep current build. User may choose Enable local repair activation\"]\n",
+        "J --> J1[\"Core commits RequestManagedLocalEnrollment with bounded local provenance and whole-bundle artifact\"]\n",
+        "J1 --> J2[\"Bootstrap helper prepares and verifies managed root initial slot stable helper launcher journal and selector\"]\n",
+        "J2 --> J3[\"Commit EnrollmentPreparedV1. User explicitly restarts through stable launcher\"]\n",
+        "I -- \"Unsupported packaged unknown conflicting or failed guarantee\" --> K[\"Keep current build. Allow diagnosis build test export rebuild instructions and manual update\"]\n",
+        "I -- \"Supported ManagedLocalBuildProfileV1\" --> L[\"Show local origin managed slots same-user integrity and complete candidate disclosure\"]\n",
+        "L --> M{\"User selects Activate and restart with candidate version and capability digest?\"}\n",
+        "M -- \"No or reject\" --> N[\"Keep current build. Record rejection or defer candidate\"]\n",
+        "M -- \"Yes\" --> O[\"Atomically commit activation decision capability digest ManagementCheckpointRefV1 previous build and RepairActivationBatonV1\"]\n",
+        "O --> P[\"Hand authenticated baton to Trusted Bootstrap and Rollback Helper\"]\n",
+        "P --> Q{\"Independent provenance enrollment slot and capability revalidation still Supported?\"}\n",
+        "Q -- \"No\" --> R[\"Helper durably returns BootstrapResultV1 Unsupported before quiescence. Current build remains active\"]\n",
+        "R --> S[\"Core commits exact unavailable reason and keeps Management Chat available\"]\n",
+        "Q -- \"Yes\" --> T[\"Core quiesces supervised children and exits. Helper proves complete current-generation cleanup\"]\n",
+        "T --> U[\"Helper atomically selects candidate and launches fresh verification-only ProcessGenerationV1 under bounded watchdog\"]\n",
+        "U --> V[\"Candidate performs generation and plan-bound focused verification without forward-only migration\"]\n",
+        "V --> W{\"Expected identity health and focused verification pass?\"}\n",
+        "W -- \"Yes\" --> X[\"Helper seals BootstrapResultV1 ActivatedVerified with journal and integrity proofs\"]\n",
+        "X --> Y[\"Candidate Core commits evidence and resumes the same Management Chat\"]\n",
+        "W -- \"No crash timeout mismatch unhealthy or failed check\" --> Z[\"Helper terminates candidate tree restores and reverifies previous slot and relaunches rollback generation\"]\n",
+        "Z --> ZA{\"Previous generation launches safely?\"}\n",
+        "ZA -- \"Yes\" --> AA[\"Helper seals BootstrapResultV1 RolledBack\"]\n",
+        "AA --> AB[\"Previous Core commits rollback evidence and resumes the same Management task\"]\n",
+        "ZA -- \"No\" --> MR[\"Helper seals ManualRecoveryRequired and ManualRecoveryNoticeV1\"]\n",
+        "MR --> MR2[\"Stable launcher shows native diagnostic ID observed slot state fixed recovery instructions and exit only\"]\n",
+        "MR2 --> MR3[\"A later successful Core imports the receipt into Management Chat\"]\n",
+        "Y --> AC[\"Later recurrence is a regression never automatic re-repair\"]\n",
+        "AB --> AC\n",
+        "MR3 --> AC\n",
+        "S --> AC"
+      ]
+    },
+    "title": "Managed-local repair eligibility, bounded activation, bootstrap restart, verification, and rollback",
+    "updated_at": "2026-08-21 14:03:42",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bd200fdd-c9d5-83b0-be02-2cdf8423360e",
+  "schemaVersion": 1
+}

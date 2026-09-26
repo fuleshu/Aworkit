@@ -1,0 +1,27 @@
+{
+  "collection": "rules",
+  "data": {
+    "created_at": "2026-08-20 18:13:17",
+    "enabled": 1,
+    "hook": "task.end",
+    "id": 1,
+    "intend": "design",
+    "name": "Audit design completeness and correctness",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "prompt": {
+      "lines": [
+        "# Audit implementation completeness and correctness\n",
+        "run a critical verification if the design is really 100% following the task or discuessed design or given references. Make sure, the ai agent did not leave out or simplified anything. we need a 100% match.\n",
+        "If verification is not passed:\n",
+        "Check if there is a real blocker why the design did not pass. In that case explain the issues in the chat and ask the user to resolve it.\n",
+        "If there is no valid blocker, restart the task with a prompt injected, explaining why validation failed and asked to fix it."
+      ]
+    },
+    "updated_at": "2026-08-22 07:58:47"
+  },
+  "deleted": false,
+  "identity": "00468ba8-5157-818f-8891-2bc63d0eddff",
+  "schemaVersion": 1
+}

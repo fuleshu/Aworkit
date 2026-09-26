@@ -1,0 +1,61 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/model_images.rs\",\"crates/aworkit-capability-host/src/model.rs\",\"crates/aworkit-capability-host/src/model_tools.rs\",\"crates/aworkit-capability-host/src/provider_tools/context_tests.rs\",\"crates/aworkit-capability-host/tests/provider_images.rs\",\"desktop/src-tauri/src/runtime/context_inspection.rs\",\"desktop/src-tauri/src/runtime/context_inspection/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/bound_recovery_tests.rs\",\"docs/chat-images.md\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-19 13:30:46",
+    "completion_memo": {
+      "lines": [
+        "Implemented and verified the fix for the reported fatal stop.\n",
+        "\n",
+        "Provider per-request image budget (20 images / 12 MiB) is now a dispatch budget instead of a request-shape rule:\n",
+        "- `validate_image_attachments` accepts one new batch of owner-supplied images and stays fail-closed per image.\n",
+        "- `fit_dispatch_images` / `fit_dispatch_input` fit only the dispatch copy (newest kept, oldest omitted) and add a model-visible \"Aworkit dispatch notice\".\n",
+        "- Durable history, tool results, checkpoints and compacted context keep every image.\n",
+        "\n",
+        "Provider failures inside the auxiliary compaction request now travel the same recovery channel as every other provider failure (`Preparation::provider_error` reported on the frozen route) instead of becoming a fatal `ToolAuthority` error. An explicit manual \"Compact context\" command still settles as its own node failure.\n",
+        "\n",
+        "Verification: capability-host suite fully green (110 lib tests + every integration target, incl. the new over-limit dispatch test); desktop lib suite 367 passed / 1 ignored (incl. new context-inspection and compaction-recovery tests). Desktop tests must run with TMP/TEMP outside the repository: an in-repo temp directory makes the skills-discovery ancestor walk find the repo `.git` and fail an unrelated test.\n",
+        "\n",
+        "Adashi design write failed: `set_element_descriptions` and `save`/`upsert_element` for `aworkit.capability_host.model_gateway` were rejected with `out_of_date` even when the readToken was copied from the immediately preceding complete read (the returned current token is identical), so the intended \"Image dispatch budget (2026-09-19)\" paragraph is NOT in the design model yet. Retry that write when the token guard is fixed."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 13:30:40",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Fatal stop reproduced: `agent node 'agent.1' failed: tool authority rejected the provider request: provider failed: Image context is limited to 20 images and 12 MiB; remove images or start a new Chat`.\n",
+        "\n",
+        "Root cause: the provider per-request image bound (20 images / 12 MiB) was enforced as a request-shape rule rather than a dispatch budget, and the failure reached the Agent loop through two fatal channels:\n",
+        "1. `model_tools::validate_context_request` / `normalize_messages` rejected any durable request whose accumulated images exceeded the bound, so `validate_tool_request` failed before dispatch. The desktop context authority runs that validator while building the durable checkpoint, so `manage_model_context` returned an error that the Agent loop turned into `ModelToolLoopErrorV1::ToolAuthority` -> \"tool authority rejected the provider request\" -> \"agent node 'agent.1' failed\".\n",
+        "2. `ContextDocument::validate` applied the same aggregate to the durable checkpoint.\n",
+        "3. `validate_image_attachments` inside `materialize_images` / `project_tool_images` re-applied the bound to the dispatch copy.\n",
+        "\n",
+        "Delivered:\n",
+        "- `validate_image_attachments` is now an acceptance rule for one new batch of owner-supplied images (Chat input, attachment command) and stays fail-closed per image.\n",
+        "- `model_images::fit_dispatch_images` / `fit_dispatch_input` fit the provider budget on the dispatch copy only: newest images kept, oldest omitted, with a model-visible \"Aworkit dispatch notice\" naming the count and the omission (positioned context for tool turns, appended user message for plain turns).\n",
+        "- Per-image structure, identity, size and hash verification remain fail-closed everywhere.\n",
+        "- Durable input, tool results, checkpoints and compacted context keep every image; `ContextDocument::validate` no longer applies the provider aggregate.\n",
+        "- A provider failure inside the auxiliary compaction request is typed (`Preparation::provider_error`) and reported through the same frozen-route recovery channel as every other provider failure instead of becoming a fatal ToolAuthority error. An explicit manual \"Compact context\" command still settles as its own node failure, since no model turn awaits it.\n",
+        "\n",
+        "Tests: capability-host `provider_images::an_over_limit_chat_dispatches_the_newest_images_and_reports_the_omission`, `provider_tools::context_tests::materialized_image_context_uses_image_budget_and_still_bounds_metadata`; desktop `context_inspection::tests::accumulated_image_context_stays_a_valid_durable_checkpoint`, `model_tool_loop::approval_turn::bound_recovery_tests::a_rejected_compaction_request_is_reported_to_the_model_instead_of_failing_the_node`.\n",
+        "\n",
+        "Docs: `docs/chat-images.md`, `docs/context-compaction.md`.\n",
+        "\n",
+        "Verification: `cargo test -p aworkit-capability-host` all green; desktop `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib` 367 passed / 1 ignored. Note: run desktop tests with TMP/TEMP outside the repository, otherwise the tempdir ancestor walk finds the repo `.git` and skills discovery fails on unrelated state."
+      ]
+    },
+    "id": 105,
+    "number": 104,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Over-limit image context and auxiliary-compaction provider failures must reach the model, not end the Run",
+    "updated_at": "2026-09-22 07:28:29"
+  },
+  "deleted": false,
+  "identity": "de9a8c30-692c-83ef-81e9-2f873c366778",
+  "schemaVersion": 1
+}

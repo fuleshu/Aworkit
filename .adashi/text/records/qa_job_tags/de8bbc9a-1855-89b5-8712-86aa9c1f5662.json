@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-23 12:08:05",
+    "qa_job_id": {
+      "ref": "8136ab71-2eeb-8fc6-8c16-b468fd82a8ad"
+    },
+    "tag": "provenance"
+  },
+  "deleted": false,
+  "identity": "de8bbc9a-1855-89b5-8712-86aa9c1f5662",
+  "schemaVersion": 1
+}

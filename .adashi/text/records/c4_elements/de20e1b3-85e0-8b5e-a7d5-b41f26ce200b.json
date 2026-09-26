@@ -1,0 +1,38 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Composes the selected Chat/Run header, semantic timeline, composer, contextual controls, and Run details selection. It shows project/non-project scope, locked workflow after first input, branch/worktree, lineage, and projection-derived status for the one-Chat/one-Run invariant. Every visible semantic timeline block can select its matching Run details context; clearing the selection returns to the whole-run summary and chronological execution log.\n",
+        "Owned state: scroll anchor, selected timeline item, Run details open state and width, locally expanded header detail, route handoff, and not-yet-submitted draft handoff. Timeline, queue, attempts, approvals, and status are projections.\n",
+        "Contracts: consumes ChatProjection, TimelineProjection, runtime events, and projected run records; provides view models to Conversation Presenter, Composer, and Run Details Inspector; accepts their typed intents; dispatches StartChat, EnqueueInput, PauseRun, CancelRun, RetryOperation, ForkChat, and ContinueInNewChat through the gateway; emits RunDetailsSelection and navigation intents.\n",
+        "Failure/degraded behavior: freezes the last contiguous projection on gap/disconnect, marks it stale, preserves unsent text, disables state-changing controls, and requests resync. Terminal Chats remain inspectable but reject ordinary input; uncertain commands remain visible until settled by core events.\n",
+        "Performance/accessibility: incremental selection avoids full-timeline renders, preserves scroll during streaming, targets under 100 ms input feedback, and rate-limits polite status announcements.\n",
+        "Non-responsibilities: no workflow scheduling, authority decisions, persistence, side-effect replay, or frozen-graph mutation.\n",
+        "\n",
+        "Concurrent desktop Chats (2026-09-15): New Chat and history selection remain available during execution or recovery. Scope busy controls, Stop, errors, maintenance queue and unsent drafts to each Chat. Returning hydrates current events and restores drafts without restarting execution. Approvals/recovery remain with their owner; uncertain commands retain original IDs.\n",
+        "\n",
+        "Responsive windowed Chat loading (2026-09-16): Open only a bounded recent contiguous range of canonical events; fetch older ranges on upward scrolling. A window states its first sequence, head, and older-page cursor. Exact supporting events hydrate spans crossing the range boundary and their ancestors; they are explicitly separate from the contiguous range and never imply that omitted history was loaded. Preserve canonical IDs, payloads, duplicate/conflict validation, cursor fences, and immutable evidence. Render only activities belonging to the loaded range. Live delivery extends its head; gaps recover the exact missing tail. Navigation immediately selects a Chat shell with a local busy indicator, independently of persistence and data loading. Fence every result by Chat and navigation generation; stale loads cannot replace selection. Preserve drafts and scroll anchors when prepending. Queries, loading, schema upgrades and database access run on workers; never wait on the native UI thread. Long queries release the shared command coordinator and use independent read connections. Keep navigation and other Chats usable during all loading.\n",
+        "\n",
+        "Chronological prepend correction (2026-09-16): Inspector projection retains hydrated supporting ancestors independently of feed visibility. Older loading continues through pages that only fill an already hydrated invocation until an earlier visible activity is available or history is exhausted. Prepending retains every existing activity ID and content; anchor restoration follows a visible activity row by ID and pixel offset through virtual measurement. A parent container is never used as the reading anchor in place of actual model/tool activity. Native verification must prove a real older activity appears before the previously first activity, not merely a decreasing raw-event cursor.\n",
+        "\n",
+        "Subagent chat tabs (2026-09-21): The conversation center is a horizontal tab set owned by the Chat Workspace. While the Chat owns no child the strip is not shown, so an ordinary Chat is unchanged; from the first child it stays present, with the parent Chat as the first, permanent, non-closable tab and each delegated subagent as an additional closable tab identified by its durable childId. The tab set is transient view state bound to one Chat and one Run: it never creates a second Run, session or canonical history, and switching Chats switches tab sets. The open-tab set per Chat is remembered for the session and rebuilt on return using the same bounded, back-scrollable windowed history as the main feed, with incremental live delivery. At most one tab exists per child; opening an already open child activates it. The strip is bounded and scrolls on overflow, evicting the oldest non-active subagent tab rather than growing without limit. Closing a tab only hides it and never cancels the child. A tab exposes the child's identity, status and lineage back to the parent. A child tab reads only its own facts from the same canonical history through a child-scoped window: the child's committed evidence carries its durable identity, a page that scanned only other scopes still advances the cursor toward the start of history, and the rendering is read-only with no composer, steering or approval. Per the Settings SubagentViewPreferenceV1, a newly created child may open its tab in the background without changing the active tab, and a child reaching a terminal state may close its non-active tab; a manually closed tab stays closed until reopened. Tool card actions and the Composer subagents control open or activate tabs. Tab selection, close and memory are local; Chat/Run identity, children and status remain projections.\n",
+        "\n",
+        "Interrupted reply recovery (2026-09-25): Show a compact, non-modal card immediately above the composer, with Continue reply and Stop reply actions. Keep the conversation readable and other Chats usable. Confirm stopping inline, explaining that existing changes are kept. Show progress and actionable failure feedback in the card, retaining it through an active recovery until the authoritative result arrives. Bind confirmation, commands and asynchronous feedback to the owning Chat; navigating cannot retarget a decision. Technical diagnostics belong in optional details, not the main action labels."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.chat_workspace",
+    "id": 17,
+    "name": "Chat Workspace",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Chat",
+    "technology": "TypeScript feature composition with immutable view models",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "de20e1b3-85e0-8b5e-a7d5-b41f26ce200b",
+  "schemaVersion": 1
+}

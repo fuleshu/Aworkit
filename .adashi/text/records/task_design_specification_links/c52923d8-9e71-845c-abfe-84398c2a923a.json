@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:27:40",
+    "design_external_id": "uml.local_store.atomic_commit_ack",
+    "id": 116,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "7653ae99-3c9b-8f6b-92ba-9f74310a9ed6"
+    }
+  },
+  "deleted": false,
+  "identity": "c52923d8-9e71-845c-abfe-84398c2a923a",
+  "schemaVersion": 1
+}

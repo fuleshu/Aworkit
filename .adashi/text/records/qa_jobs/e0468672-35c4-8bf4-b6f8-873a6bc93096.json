@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": "./qa/milestone-01.sh",
+    "created_at": "2026-08-21 15:53:57",
+    "created_by": "codex",
+    "description": "Complete Milestone 01 gate: whole-workspace all-target compilation/tests, dependency-boundary regression fixtures, exact six-process generation-aware handshakes and invalid-input rejection, canonical Rust/TypeScript V1 schema generation with five envelope families, bounded malformed/split/coalesced framing, strict TypeScript and production desktop builds, Tauri library tests, and a fresh native binary smoke probe.",
+    "enabled": 1,
+    "id": 1,
+    "name": "Milestone 01 boundary contracts",
+    "number": 1,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "bash",
+    "timeout_seconds": 900,
+    "updated_at": "2026-08-21 20:27:47",
+    "working_directory": "/home/timofl/src/Aworkit"
+  },
+  "deleted": false,
+  "identity": "e0468672-35c4-8bf4-b6f8-873a6bc93096",
+  "schemaVersion": 1
+}

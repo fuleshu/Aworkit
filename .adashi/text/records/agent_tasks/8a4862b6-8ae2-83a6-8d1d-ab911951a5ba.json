@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/lib.rs\"]",
+    "completed_at": "2026-08-22 09:11:16",
+    "completion_memo": "Implemented the durable recurring-error and repair-evidence ledger on SQLite. Stable normalized fingerprints resolve to one group, every mutation uses optimistic versions and operation idempotency, and immutable occurrences, diagnoses, workarounds, candidates, disclosures, decisions, activation batons, verification, rollback, regression, and tombstones retain exact evidence availability. Hashed request/response receipts, a durable transition head, full hash-chain replay, terminal live-evidence fences, forward-schema read-only mode, and per-write RedactionSet validation fail closed on corruption or secret material. Added an atomic opaque trusted-core event batch API with group/global contiguous sequences, CAS, bounded pages/batches, hash links, global operation identity, and receipt/table cross-verification for durable Management replay. Local-store validation passed 74/74 tests; Adashi QA job 10 run 28 passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:41",
+    "created_files": "[\"crates/aworkit-local-store/src/repair_ledger/activation.rs\",\"crates/aworkit-local-store/src/repair_ledger/candidate.rs\",\"crates/aworkit-local-store/src/repair_ledger/common.rs\",\"crates/aworkit-local-store/src/repair_ledger/core_events.rs\",\"crates/aworkit-local-store/src/repair_ledger/integrity.rs\",\"crates/aworkit-local-store/src/repair_ledger/lifecycle.rs\",\"crates/aworkit-local-store/src/repair_ledger/mod.rs\",\"crates/aworkit-local-store/src/repair_ledger/model.rs\",\"crates/aworkit-local-store/src/repair_ledger/notes.rs\",\"crates/aworkit-local-store/src/repair_ledger/occurrence.rs\",\"crates/aworkit-local-store/src/repair_ledger/outcomes.rs\",\"crates/aworkit-local-store/src/repair_ledger/query.rs\",\"crates/aworkit-local-store/src/repair_ledger/schema.rs\",\"crates/aworkit-local-store/src/repair_ledger/tests.rs\",\"crates/aworkit-local-store/src/repair_ledger/transition.rs\",\"crates/aworkit-local-store/src/repair_ledger/validation.rs\"]",
+    "description": "Implement stable recurring-failure grouping and the durable investigation, candidate, verification, rejection, activation-eligibility, and terminal evidence states required by Management repair. Store immutable evidence references and optimistic versions while leaving diagnosis and activation decisions to the core.",
+    "id": 63,
+    "number": 63,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M10.2 — Implement the recurring-error and repair evidence ledger",
+    "updated_at": "2026-08-22 09:11:16"
+  },
+  "deleted": false,
+  "identity": "8a4862b6-8ae2-83a6-8d1d-ab911951a5ba",
+  "schemaVersion": 1
+}

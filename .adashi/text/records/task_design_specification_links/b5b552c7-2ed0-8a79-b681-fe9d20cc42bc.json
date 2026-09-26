@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:47",
+    "design_external_id": "uml.system.crash_cancel_cleanup",
+    "id": 393,
+    "sort_order": 1,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "2c9b947c-0615-8be8-bc73-a8b9d6a9bd08"
+    }
+  },
+  "deleted": false,
+  "identity": "b5b552c7-2ed0-8a79-b681-fe9d20cc42bc",
+  "schemaVersion": 1
+}

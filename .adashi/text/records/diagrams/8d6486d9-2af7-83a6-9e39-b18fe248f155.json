@@ -1,0 +1,38 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.capability_host.process_runtime",
+    "created_at": "2026-09-17 16:10:59",
+    "diagram_type": "state",
+    "id": 75,
+    "key": "uml.tool_jobs.process_session",
+    "kind": "mermaid",
+    "sort_order": 49,
+    "source": {
+      "lines": [
+        "stateDiagram-v2\n",
+        " [*] --> Starting\n",
+        " Starting --> Running: contained spawn\n",
+        " Starting --> Failed: launch failure\n",
+        " Running --> Draining: root exit with descendants or open streams\n",
+        " Running --> Stopping: cancel or explicit resource limit\n",
+        " Draining --> Stopping: cancel or drain failure\n",
+        " Running --> Completed: tree empty and streams drained\n",
+        " Draining --> Completed: tree empty and streams drained\n",
+        " Stopping --> Cancelled: verified tree cleanup\n",
+        " Stopping --> Failed: cleanup uncertainty\n",
+        " Completed --> [*]\n",
+        " Cancelled --> [*]\n",
+        " Failed --> [*]"
+      ]
+    },
+    "title": "Process session supervision and bounded I/O",
+    "updated_at": "2026-09-17 16:10:59",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8d6486d9-2af7-83a6-9e39-b18fe248f155",
+  "schemaVersion": 1
+}

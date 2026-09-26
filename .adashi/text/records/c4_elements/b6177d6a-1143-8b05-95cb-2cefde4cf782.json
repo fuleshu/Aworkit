@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Explicitly installed and enabled subprocess extensions and configured MCP servers contributing nodes, tools, resources, prompts, providers, evaluators, or adapters. Discovery is inert. Enabled trusted extension code may use the desktop user's full OS authority; the process boundary provides lifecycle isolation, not security isolation.",
+    "element_type": "Software System",
+    "external_id": "ext.extensions_mcp",
+    "id": 6,
+    "name": "Trusted Extensions and MCP Servers",
+    "parent_external_id": null,
+    "tags": "External,Trusted Code,Capability Source",
+    "technology": "JSON manifests, local subprocess RPC, MCP stdio/HTTP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b6177d6a-1143-8b05-95cb-2cefde4cf782",
+  "schemaVersion": 1
+}

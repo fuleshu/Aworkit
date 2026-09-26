@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests an LLM classifier only when declared by the frozen router and accepts schema-valid structured classification rather than provider-native output",
+    "destination_external_id": "aworkit.workflow_worker.model_agent",
+    "external_id": "rel.worker_routing.model_agent",
+    "id": 125,
+    "source_external_id": "aworkit.workflow_worker.routing",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Typed classifier model-call port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "e0c9189b-7fa4-828c-96ee-ca7f0eaf3bdf",
+  "schemaVersion": 1
+}

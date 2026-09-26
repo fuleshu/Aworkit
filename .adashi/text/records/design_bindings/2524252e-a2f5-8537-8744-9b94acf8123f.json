@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-15 09:08:28",
+    "design_external_id": "aworkit.desktop_ui.chat_workspace",
+    "id": 12,
+    "target": "desktop/src/chat/ChatWorkspaceScreen.tsx",
+    "target_type": "file",
+    "updated_at": "2026-09-15 09:08:28",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2524252e-a2f5-8537-8744-9b94acf8123f",
+  "schemaVersion": 1
+}

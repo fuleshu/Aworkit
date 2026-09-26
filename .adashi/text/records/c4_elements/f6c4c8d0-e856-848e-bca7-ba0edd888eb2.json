@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements plan-declared single-choice and multi-choice branches, bounded parallel regions, deterministic for-each expansion, and explicit join barriers. It coordinates tokens and context lineage while leaving actual scheduling and reconciliation mechanics to the scheduler and Context Store.\n",
+        "Owned runtime state: BranchFrameV1, ParallelFrameV1, ForEachFrameV1, and JoinBarrierV1 keyed by plan construct and parent token, containing parent revision, deterministic child token IDs, item indexes, concurrency window, completion/failure/cancellation status, and frozen join contract.\n",
+        "Input/output DTOs and ports: OpenBranch(RouteSelectionV1), OpenParallel, OpenForEach(ForEachInputV1), RecordBranchOutcome, CancelBranchScope, and EvaluateJoin; returns BranchAdmissionV1, RunnableBranchV1, JoinReadyV1, JoinBlockedV1, or BranchRegionOutcomeV1.\n",
+        "Algorithms and invariants: every branch begins from the same named parent revision and receives an isolated fork. For-each items are assigned stable indexes from the frozen input snapshot, admitted through a bounded window, and aggregated in index order rather than completion order. A join fires exactly once when its declared completion rule is satisfied and produces a new parent-lineage revision only through explicit Context Store reconciliation. Fail-fast, collect-all, quorum, skipped-path, and sibling-cancellation behavior must be declared in the frozen graph. Nested regions retain ancestry and cannot escape their join. Harness-branch lineage and portable/session-history branch lineage use distinct DTO types and are never conflated.\n",
+        "Failure, cancellation, and recovery: failed or cancelled branches remain explicit barrier outcomes; cancellation propagates to descendants within scope and does not erase completed provenance. A missing branch result never becomes an empty success. All frames are checkpointable, and recovery restores completed indexes and barriers without rerunning acknowledged child work.\n",
+        "Performance and NFRs: hard fan-out and parallelism bounds, lazy for-each admission, bounded result queues, deterministic ordering, no shared mutable branch context, and metrics for queue time, skew, and blocked joins.\n",
+        "Non-responsibilities: no node execution, context conflict resolution by itself, limit creation, retry policy invention, authority, provider calls, canonical commits, or dynamic graph construction."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.branch_join",
+    "id": 42,
+    "name": "Branch, Parallel, For-Each & Join Coordinator",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Branching,Parallelism,Join",
+    "technology": "Rust deterministic structured-concurrency coordinator",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f6c4c8d0-e856-848e-bca7-ba0edd888eb2",
+  "schemaVersion": 1
+}

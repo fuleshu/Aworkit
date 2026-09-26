@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.local_store.storage_coordinator.error_repair_ledger",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:53:00",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "5089af14-5ef9-8a5c-84e5-5fe305e6f50c",
+  "schemaVersion": 1
+}

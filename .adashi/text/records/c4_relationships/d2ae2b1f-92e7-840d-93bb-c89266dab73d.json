@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Opens and advances frozen branch, parallel, for-each, and join regions and admits only returned runnable tokens",
+    "destination_external_id": "aworkit.workflow_worker.branch_join",
+    "external_id": "rel.worker_scheduler.branch_join",
+    "id": 116,
+    "source_external_id": "aworkit.workflow_worker.scheduler",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Structured-concurrency commands",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d2ae2b1f-92e7-840d-93bb-c89266dab73d",
+  "schemaVersion": 1
+}

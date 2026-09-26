@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Produces structured task classifications and evaluates the workflow's visible frozen route rules to select existing graph destinations and optional logical model tiers. It records considered routes, matched rule, fallback or escalation, and tier choice for inspection.\n",
+        "Owned runtime state: immutable compiled ClassificationSchemaV1 and RouteRuleTableV1 from the Execution Plan plus bounded in-flight ClassifierRequestV1 records and decision traces. Concrete model bindings remain pinned in the snapshot, not selected from live configuration.\n",
+        "Input/output DTOs and ports: BuildClassifierInput(ContextProjectionV1), ValidateClassification(ClassificationV1), EvaluateRules, and SelectRoute; returns RouteSelectionV1 containing selected destination node IDs, optional TierRefV1, matched rule ID, considered destinations, and rationale evidence. An LLM classifier is requested through Model & Agent Orchestration and returns only structured Aworkit classification data.\n",
+        "Algorithms and invariants: rule evaluation is deterministic in explicit priority and tie-break order over schema-validated JSON. Destinations, parallel selections, specialized subagents, External Agent paths, and tier references must already exist in the frozen plan and authority. Standard and custom tier references retain their exact frozen semantics. Classification cannot invent a node, tool, agent, external target, model tier, edge, or authority. External agents are selected only by explicit paths and never as provider fallback.\n",
+        "Failure, cancellation, and recovery: invalid or incomplete classifier output becomes a typed contract failure handled by frozen Attempt Policy. No silent default or substitution is allowed unless a named frozen rule declares it. Evaluation is cancellable, decisions are checkpointed with input and rule hashes, and recovery never reclassifies an already committed route decision.\n",
+        "Performance and NFRs: bounded rule count and expression depth, low-millisecond pure evaluation, deterministic fixtures, schema-validation limits, stable reason codes, and complete decision trace without hidden provider reasoning.\n",
+        "Non-responsibilities: no provider/model call, live model resolution, node execution, graph mutation, authority grant, context persistence, canonical evidence commit, or opaque external-agent selection."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.routing",
+    "id": 44,
+    "name": "Classifier & Frozen Route Rule Evaluator",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Routing,Classification",
+    "technology": "Rust deterministic JSON rule engine with typed classification schemas",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "71204f0b-aab4-8e17-9ddf-3ecf72dc0e12",
+  "schemaVersion": 1
+}

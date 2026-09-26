@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Platform services used for credential storage, filesystem and process operations, notifications, native dialogs, application lifecycle, and process-tree cleanup. Security properties differ by platform and must be implemented and tested on Windows, Linux, and macOS.",
+    "element_type": "Software System",
+    "external_id": "ext.os_services",
+    "id": 7,
+    "name": "Operating System Services",
+    "parent_external_id": null,
+    "tags": "External,Platform",
+    "technology": "OS credential store, filesystem, process, window and notification APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3d6f1006-c7f6-8850-92fe-3ca63887e2eb",
+  "schemaVersion": 1
+}

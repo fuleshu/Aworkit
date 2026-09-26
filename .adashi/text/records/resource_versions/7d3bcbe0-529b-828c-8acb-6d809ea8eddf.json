@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "rel.core_committer.local_store.atomic_commit",
+    "resource_kind": "design.relationship",
+    "updated_at": "2026-08-20 22:53:00",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7d3bcbe0-529b-828c-8acb-6d809ea8eddf",
+  "schemaVersion": 1
+}

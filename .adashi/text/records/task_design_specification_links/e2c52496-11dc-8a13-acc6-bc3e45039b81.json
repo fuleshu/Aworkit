@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-19 08:08:57",
+    "design_external_id": "aworkit.capability_host.mcp_sessions",
+    "id": 431,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "c691d5d5-1c2d-84af-9c48-4207d2588de3"
+    }
+  },
+  "deleted": false,
+  "identity": "e2c52496-11dc-8a13-acc6-bc3e45039b81",
+  "schemaVersion": 1
+}

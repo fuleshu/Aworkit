@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Is the sole EnrollmentPhaseV1 or BootstrapPhaseV1 writer under one mutually exclusive maintenance lock. Persists enrollment publication and activation selector or process intents before execution, exact observations after execution, recovery decisions, bounded retries, EnrollmentPreparedV1, ManualRecoveryNoticeV1, and the protected terminal BootstrapResultV1 before result availability",
+    "destination_external_id": "aworkit.bootstrap_helper.activation_journal",
+    "external_id": "rel.bootstrap.coordinator.journal",
+    "id": 298,
+    "source_external_id": "aworkit.bootstrap_helper.rollback_coordinator",
+    "tags": "Relationship,Internal,State Machine,Durability",
+    "technology": "ActivationJournalPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ba74b458-f817-83a5-a11c-29427ce3b999",
+  "schemaVersion": 1
+}

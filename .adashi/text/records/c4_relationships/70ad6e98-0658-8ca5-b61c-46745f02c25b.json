@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Queries cursor-paginated Chat, timeline, search, and evidence read models; stale/catching-up state is returned explicitly and no UI command can mutate persistence through this port",
+    "destination_external_id": "aworkit.local_store.query_projections",
+    "external_id": "rel.core_desktop_api.local_store.projection_read",
+    "id": 216,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Read Only",
+    "technology": "ProjectionReadPort and SearchPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "70ad6e98-0658-8ca5-b61c-46745f02c25b",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:43:20",
+    "design_external_id": "uml.system.boundary_contract_ownership",
+    "id": 301,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "94cd425a-bca9-8cd7-9051-a80746d11081"
+    }
+  },
+  "deleted": false,
+  "identity": "f21d9a66-0f27-86da-bdac-ba6ef6fcaf38",
+  "schemaVersion": 1
+}

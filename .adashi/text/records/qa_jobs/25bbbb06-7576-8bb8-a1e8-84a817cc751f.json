@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": "./qa/milestone-08.sh",
+    "created_at": "2026-08-21 18:27:48",
+    "created_by": "codex",
+    "description": "Complete Milestone 08 desktop Chat gate against typed local-core contracts: projected one-Chat/one-Run workspace, first send/workflow lock/attachment references, queued-input preview and stable uncertain retries, approval/pause/cancel/retry/fork/continue intents, virtual semantic activity cards and safe unknown content, explicit paged/redacted evidence states, projection gap freeze/resync, keyboard/accessibility behavior, accepted Chat mockup geometry, production browser rendering, and a fresh Tauri binary build/smoke.",
+    "enabled": 1,
+    "id": 8,
+    "name": "Milestone 08 desktop Chat and evidence experience",
+    "number": 8,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "bash",
+    "timeout_seconds": 900,
+    "updated_at": "2026-08-21 20:27:50",
+    "working_directory": "/home/timofl/src/Aworkit"
+  },
+  "deleted": false,
+  "identity": "25bbbb06-7576-8bb8-a1e8-84a817cc751f",
+  "schemaVersion": 1
+}

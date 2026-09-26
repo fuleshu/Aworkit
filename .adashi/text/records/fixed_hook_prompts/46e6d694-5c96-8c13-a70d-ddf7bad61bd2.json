@@ -1,0 +1,18 @@
+{
+  "collection": "fixed_hook_prompts",
+  "data": {
+    "created_at": "2026-08-20 07:52:43",
+    "hook": "run.start",
+    "intend": "design",
+    "key": "design.run.start.authoring",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "prompt": "",
+    "title": "Design Authoring Hook",
+    "updated_at": "2026-09-17 06:59:50"
+  },
+  "deleted": false,
+  "identity": "46e6d694-5c96-8c13-a70d-ddf7bad61bd2",
+  "schemaVersion": 1
+}

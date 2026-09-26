@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads bounded redacted diagnostic ranges and rotation metadata for health/evidence queries without treating logs as canonical history",
+    "destination_external_id": "aworkit.local_store.diagnostic_logs",
+    "external_id": "rel.core_desktop_api.local_store.log_read",
+    "id": 219,
+    "source_external_id": "aworkit.trusted_core.desktop_api",
+    "tags": "Relationship,Boundary Contract,Read Only",
+    "technology": "DiagnosticReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5eb18843-08d5-8184-a4a2-525b74a53ce4",
+  "schemaVersion": 1
+}

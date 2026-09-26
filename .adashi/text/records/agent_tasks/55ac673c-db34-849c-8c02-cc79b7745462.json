@@ -1,0 +1,44 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-09-25 07:40:46",
+    "completion_memo": {
+      "lines": [
+        "Implemented in 3615c96 and verified with the full desktop suite (442 passed, 0 failed). The failure was not in write_v1 at all: FileAccess::resolve canonicalised the immediate parent of a non-existent target and returned a bare `map_err(|e| e.to_string())`, so a missing parent produced \"No such file or directory (os error 2)\" before the tool ran and 1da66c8's parent creation was unreachable. That is why the fix for task 126 finding 2 passed its own tests - the shared fixture pre-creates workspace/src (workspace_instructions/tests.rs:29) - and still failed on both recorded runs (test1_3 seq 5229, test1_qwen seq 30310, each with the model's own `mkdir -p src` workaround).\n",
+        "\n",
+        "The resolver now walks up to the deepest existing ancestor, scopes the capability there, and keeps the missing components in the relative path so write_v1 creates exactly the tree that was named; a target with no existing ancestor names the path instead of leaking a platform message. New end-to-end regression test `a_write_creates_the_directories_it_names_before_the_tool_ever_runs` writes assets/sprites/hero.json (no existing ancestor below the workspace root) through the real broker.\n",
+        "\n",
+        "While running the full suite for this, one pre-existing failure surfaced from an earlier commit of mine and was fixed separately in 38100c6: b207144 mapped an absent frozen `imageInput` to Reference, which silently removed image input from every Chat frozen without that key. Only an explicit `imageInput: false` withholds bytes now. The deferred manifest note (\"missing parent directories are created\") is still open and optional."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 07:35:32",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "A write into a directory that does not exist yet fails before the write tool runs, so the first write of any scaffolded tree costs a failed call, a shell `mkdir -p` round-trip and a re-emitted file. Observed in two live runs: test1_3 chat.ef71761303be6ac41947a5a7954783d4ade0b614 seq 5229 -> 5233 (\"No such file or directory (os error 2)\" for test1_3/src/engine.js, then seq 5242 `mkdir -p .../src`, seq 5254 the same write succeeding) and test1_qwen chat.3fdeab43b37ed6406ff6a62b53fa01bec2a3ca30 seq 30310 -> 30314 for test1_qwen/src/engine.js plus .scratch/run.js.\n",
+        "\n",
+        "Root cause (not where task 126 fixed it). 1da66c8 made ProjectFiles::write_v1 create missing parents, and those tests pass, but they test write_v1 directly. The production path fails earlier, in FileAccess::resolve (desktop/src-tauri/src/runtime/tool_loop/file_access.rs): when the target does not exist it canonicalises the immediate parent and returns `map_err(|e| e.to_string())`, so a missing parent produces the bare io error and the request never reaches write_v1. The recorded error text confirms it: write_v1's own failure mode is the wrapped \"the parent directory 'X' could not be created (...)\".\n",
+        "\n",
+        "Why the tests missed it: the shared fixture creates the directory for you - workspace_instructions/tests.rs:29 does `std::fs::create_dir_all(workspace.join(\"src\"))` - so every existing write test targets `src/...`, and the missing-parent case was never exercised end to end.\n",
+        "\n",
+        "Fix implemented: resolve a not-yet-existing target through its nearest existing ancestor (walk up until canonicalize succeeds, then re-attach the missing components), and name the path when no ancestor exists at all instead of surfacing a bare platform message. Regression test added in file_access_tests.rs: a write to `assets/sprites/hero.json` (no existing ancestor below the workspace root) must succeed and land on disk.\n",
+        "\n",
+        "Optional follow-up, deferred deliberately: the tool-plugin manifest's write instructions say nothing about parent directories, so a model may still spend a turn on `mkdir -p` prophylactically. Adding \"missing parent directories are created\" is model-facing only and touches an attested, versioned plugin manifest, so it wants a version bump and a re-attestation check rather than a drive-by edit."
+      ]
+    },
+    "id": 137,
+    "number": 136,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Resolve a new file's target through its nearest existing ancestor so the first write of a tree succeeds",
+    "updated_at": "2026-09-25 07:40:46"
+  },
+  "deleted": false,
+  "identity": "55ac673c-db34-849c-8c02-cc79b7745462",
+  "schemaVersion": 1
+}

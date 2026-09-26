@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.tool_jobs.python",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-17 17:03:21",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "640ce983-4567-82ba-8c2f-38f4906aca93",
+  "schemaVersion": 1
+}

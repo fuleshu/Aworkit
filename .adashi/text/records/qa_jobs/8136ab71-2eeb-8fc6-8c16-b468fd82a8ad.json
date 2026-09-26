@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": "./qa/milestone-12.sh",
+    "created_at": "2026-08-23 12:08:05",
+    "created_by": "codex",
+    "description": "Release-candidate aggregate that preserves every stable M01–M11 QA command, then adds Windows/macOS/Linux native filesystem, process/IPC, credential, presentation, supported/degraded capability, complete-bundle packaging, protocol compatibility, provenance, upgrade/profile, smoke, and failure-boundary conformance.",
+    "enabled": 1,
+    "id": 12,
+    "name": "M12 QA — Cross-platform release conformance",
+    "number": 12,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "bash",
+    "timeout_seconds": 7200,
+    "updated_at": "2026-08-23 12:08:05",
+    "working_directory": "/home/timofl/src/Aworkit"
+  },
+  "deleted": false,
+  "identity": "8136ab71-2eeb-8fc6-8c16-b468fd82a8ad",
+  "schemaVersion": 1
+}

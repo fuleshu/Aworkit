@@ -1,0 +1,44 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-23 09:49:26",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Phase 3 of 3 of the workflow-revision rebinding design (aworkit.trusted_core.revision_rebind). Optional and unscheduled: record it so the idea is captured, not so it lands by default.\n",
+        "\n",
+        "Goal. Make Aworkit a fast research loop — edit a workflow, immediately test it in the same conversation — without weakening the freeze.\n",
+        "\n",
+        "Deliverable (research mode). At every settled turn boundary the Chat offers the adoption of the saved workflow revision instead of waiting for the user to press reload. The mode changes how often the user is asked, never whether adoption is explicit:\n",
+        "- the pending revision change, the authority delta and the recorded tool rounds the candidate cannot replay are shown before the next turn is submitted;\n",
+        "- declining keeps the incumbent revision and does not ask again until the workflow changes again;\n",
+        "- a visible banner states that this Chat follows the saved workflow, so nobody mistakes a research Chat for a reproducible one;\n",
+        "- every adopted revision is recorded exactly as in phase 1, so the Chat still reads as a revision chain afterwards.\n",
+        "\n",
+        "Non-goals. Silent re-read or automatic adoption without a shown diff; adopting while a turn, approval, suspension, loop frame or child frame is live; making the mode the default for ordinary Chats; extending a deadline or widening authority without consent; treating a research Chat as evidence of a production behaviour.\n",
+        "\n",
+        "Open questions to settle before implementing. Whether the offer is a composer affordance, a turn-boundary notification with an action, or both; whether the mode is per Chat, per project or a desktop preference; whether a research Chat should be visibly excluded from any comparison or benchmark view; and whether an accepted offer should also start a fresh context segment when the graph change is structural.\n",
+        "\n",
+        "Tests. Offer appears only at legal boundaries; decline is remembered per workflow revision; adoption inside the mode records the same evidence as a manual reload; the banner is present for the whole life of the mode; a boundary that becomes illegal while the offer is pending refuses cleanly.\n",
+        "\n",
+        "Depends on. Phases 1 and 2 (tasks 123 and 124)."
+      ]
+    },
+    "id": 125,
+    "number": 124,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Research mode: offer the workflow reload at every turn boundary (phase 3 of 3)",
+    "updated_at": "2026-09-23 09:49:26"
+  },
+  "deleted": false,
+  "identity": "10e11b33-138e-8f41-8361-f3a227c2482f",
+  "schemaVersion": 1
+}

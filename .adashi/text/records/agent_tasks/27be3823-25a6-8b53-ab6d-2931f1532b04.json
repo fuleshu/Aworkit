@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-trusted-core/src/lib.rs\"]",
+    "completed_at": "2026-08-22 09:11:16",
+    "completion_memo": "Implemented the trusted-core recurring-error aggregate and repair orchestrator without UI or platform switching. Failure recording is passive and resolves exactly one fingerprint group. Explicit investigations freeze a manifest subset and hard attempt/tool/token/deadline budget, require an authenticated exact execution receipt with frozen budget and observed usage, and delegate work through the investigation port. Candidate registration and every later handoff exact-read hash/size-bound artifacts; disclosures, user decisions, capability generations, enrollment, checkpoint, activation baton, safe quiescence, focused verification, bootstrap result reconciliation, rollback, regression, and same-Chat resume are typed and replay-validated. Event-driven idempotent redrives cover crash gaps without broadening authority or repeating uncertain effects; stale lifecycles, unsafe quiescence, displaced candidates/reports, wrong generations, and historical receipts fail closed. Independent strict verification passed 43/43 M10 and 70/70 trusted-core tests; Adashi QA job 10 run 28 passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:45",
+    "created_files": "[\"crates/aworkit-trusted-core/src/repair/aggregate.rs\",\"crates/aworkit-trusted-core/src/repair/mod.rs\",\"crates/aworkit-trusted-core/src/repair/model.rs\",\"crates/aworkit-trusted-core/src/repair/model/bootstrap.rs\",\"crates/aworkit-trusted-core/src/repair/model/commands.rs\",\"crates/aworkit-trusted-core/src/repair/model/events.rs\",\"crates/aworkit-trusted-core/src/repair/model/evidence.rs\",\"crates/aworkit-trusted-core/src/repair/model/investigation.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/activation.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/artifacts.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/commands.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/continuation.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/error.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/reconciliation.rs\",\"crates/aworkit-trusted-core/src/repair/orchestrator/service.rs\",\"crates/aworkit-trusted-core/src/repair/ports.rs\",\"crates/aworkit-trusted-core/src/repair/validation.rs\",\"crates/aworkit-trusted-core/src/repair/validation/bootstrap.rs\",\"crates/aworkit-trusted-core/src/repair/validation/candidate.rs\",\"crates/aworkit-trusted-core/src/repair/validation/hashing.rs\"]",
+    "description": "Implement the core repair aggregate for recurring-error selection, bounded diagnosis orchestration, candidate evidence, complete disclosure, user decisions, activation-capability queries, enrollment requests, durable Management checkpoints, typed activation-baton handoff, protected receipt import, and same-Chat resume. Delegate all build execution to approved capabilities and all restart/rollback mechanics to the Bootstrap Helper; do not implement UI or platform switching here.",
+    "id": 64,
+    "number": 64,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M10.3 — Implement the core repair aggregate and bootstrap handoff contract",
+    "updated_at": "2026-08-22 09:11:16"
+  },
+  "deleted": false,
+  "identity": "27be3823-25a6-8b53-ab6d-2931f1532b04",
+  "schemaVersion": 1
+}

@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/process.rs\"]",
+    "completed_at": "2026-08-21 17:18:10",
+    "completion_memo": "Implemented an argv-only hermetic process runner for approved shell/Python adapters with bounded arguments/output, explicit working directory, and pre-spawn deadline rejection. cargo test -p aworkit-capability-host passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:28:18",
+    "created_files": "[\"crates/aworkit-capability-host/src/process.rs\"]",
+    "description": "Implement the platform-neutral process lifecycle over an Aworkit PlatformProcessPort with a hermetic conformance adapter: bounded deadlines, sanitized spawn, cooperative cancellation, forced timeout, health, and descendant cleanup. Build approved shell and Python tool adapters on that substrate with exact authority modes and bounded I/O. Native Windows, macOS, and Linux process ports are owned by M12.2.",
+    "id": 29,
+    "number": 29,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M05.2 — Implement invocation process lifecycle, shell, and Python adapters",
+    "updated_at": "2026-09-21 14:57:29"
+  },
+  "deleted": false,
+  "identity": "d38101d3-09b5-85f7-bd7c-73c9f1a622b9",
+  "schemaVersion": 1
+}

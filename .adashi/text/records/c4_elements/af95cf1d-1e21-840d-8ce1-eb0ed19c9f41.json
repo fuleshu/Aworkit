@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Executes explicit External Agent invocations through specialized lifecycle adapters, led by rich Codex App Server over local stdio and a generic ACP path. It negotiates and reports actual progress, native session, continuation, cancellation, approval-request, steering, artifact, and selected-MCP-forwarding capabilities; unsupported behavior is exposed and never simulated.\n",
+        "Owned runtime state: per-target negotiated ExternalAgentCapabilitySetV1, active invocation-to-native-session correlation, stdio/ACP request IDs, continuation cursor, pending external approval request, progress window, cancellation evidence, and health. Native session IDs are returned to core for normalized history; the cache is not canonical.\n",
+        "Versioned ports and contracts: ExternalAgentManifestV1, ExternalAgentStartV1, ExternalAgentContinueV1, ExternalAgentControlV1, ExternalApprovalRequestV1, ExternalAgentRawEventV1, NativeSessionRefV1, and ForwardableMcpSetV1. Continuation requires an approved envelope naming a retained native session and a declared continuation capability.\n",
+        "Failure and degraded behavior: missing features, native-session loss, protocol drift, opaque remote state, disconnect, cancel refusal, or process death is stated exactly. Killing a local client does not prove remote work stopped; an unconfirmed terminal state becomes uncertain and is never silently restarted.\n",
+        "Security and authority: the adapter cannot choose itself as a model fallback or new graph path, grant external approval, add MCP servers, expand workspace scope, or mint credentials. Approval requests return to the core authority boundary and resume only from a generation-fenced resolution.\n",
+        "Observability, performance, and cross-platform behavior: bounded progress streams, native/protocol correlation, latency/session/cancel metrics, opacity markers, redacted transcripts, and tested UTF-8 framing, path, argument, environment, and process-tree behavior on Windows, Linux, and macOS.\n",
+        "Non-responsibilities: no Aworkit Agent loop, MCP server semantics, workflow routing, authority/approval decisions, canonical transcript/history, retry policy, or hidden-reasoning reconstruction."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.external_agents",
+    "id": 57,
+    "name": "External Agent Adapter & Session Manager",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,External Agents,Sessions",
+    "technology": "Rust adapter manager for Codex App Server stdio and ACP",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "af95cf1d-1e21-840d-8ce1-eb0ed19c9f41",
+  "schemaVersion": 1
+}

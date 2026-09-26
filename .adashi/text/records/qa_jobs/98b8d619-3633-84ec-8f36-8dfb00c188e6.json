@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": "./qa/milestone-10.sh",
+    "created_at": "2026-08-22 09:06:57",
+    "created_by": "codex",
+    "description": "Milestone 10 gate for bounded redacted diagnostic capture and retention, recurring-error and repair-evidence lifecycle integrity, authenticated bounded investigation, artifact readiness and idempotent crash redrive, safe helper-mediated activation/rollback, durable multi-group Management review persistence, exact candidate/version selection, fail-closed native capabilities, accessibility, TypeScript, and production desktop build.",
+    "enabled": 1,
+    "id": 10,
+    "name": "Milestone 10 diagnostics and repair review",
+    "number": 10,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "bash",
+    "timeout_seconds": 900,
+    "updated_at": "2026-08-22 09:06:57",
+    "working_directory": "/home/timofl/src/Aworkit"
+  },
+  "deleted": false,
+  "identity": "98b8d619-3633-84ec-8f36-8dfb00c188e6",
+  "schemaVersion": 1
+}

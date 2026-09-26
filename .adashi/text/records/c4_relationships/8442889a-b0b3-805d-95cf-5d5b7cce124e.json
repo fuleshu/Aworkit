@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies Run phase, locked workflow, queue, and command status",
+    "destination_external_id": "aworkit.desktop_ui.composer",
+    "external_id": "rel.ui.chat.composer",
+    "id": 30,
+    "source_external_id": "aworkit.desktop_ui.chat_workspace",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8442889a-b0b3-805d-95cf-5d5b7cce124e",
+  "schemaVersion": 1
+}

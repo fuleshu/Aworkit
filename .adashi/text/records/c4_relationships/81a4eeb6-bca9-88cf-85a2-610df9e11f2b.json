@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Passes only the approved resolved workspace/scope to the explicit external agent target and records that agent-mediated changes are immediate side effects",
+    "destination_external_id": "ext.project_workspaces",
+    "external_id": "rel.host_external_manager.workspace",
+    "id": 201,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Native agent workspace contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "81a4eeb6-bca9-88cf-85a2-610df9e11f2b",
+  "schemaVersion": 1
+}

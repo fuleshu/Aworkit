@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/settings.ts\",\"desktop/src/App.tsx\",\"desktop/src/workbench/workbench.test.ts\"]",
+    "completed_at": "2026-08-21 18:12:55",
+    "completion_memo": "Implemented versioned settings drafts and capability requirement resolution, rendered through accessible controls and an authority-safe typed-commit eligibility helper.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:30:42",
+    "created_files": "[]",
+    "description": "Implement projected settings for providers, model tiers, credentials, tools, extensions, MCP, external agents, data/portable sessions, projects, and appearance. Preserve unsaved drafts, resolve workflow logical requirements against configured capabilities, preview authority before acceptance, and commit only typed version-checked commands.",
+    "id": 47,
+    "number": 47,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M07.4 — Implement Settings and capability resolution",
+    "updated_at": "2026-09-22 07:14:43"
+  },
+  "deleted": false,
+  "identity": "3e880431-4541-8429-a375-0b8cbe96d07a",
+  "schemaVersion": 1
+}

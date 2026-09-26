@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Enforces frozen resource and structural execution bounds across visible harness loops, nested loops, model and tool usage, parallel regions, for-each work, and temporary subagent depth. It provides admission and reservation decisions before work starts and exact charging when committed usage arrives. Natural completion of an internal Agent model-tool cycle is not governed by an arbitrary turn or aggregate tool-call counter.\n",
+        "Owned runtime state: hierarchical BudgetLedgerV1, LoopFrameV1 stacks per token, ReservationV1 records, monotonic deadlines, consumed usage keyed by outcome ID, and inherited child envelopes for transitions, invocations, branches, and subagents.\n",
+        "Input/output DTOs and ports: AdmitTransition, EnterLoop, NextLoopIteration, ExitLoop, ReserveInvocation, ChargeUsage(UsageV1), AdmitParallelWork, EnterChildContext, ReleaseReservation, and CancelBudgetScope; returns LimitPermitV1 or LimitExceededV1 with stable reason and remaining resource counters.\n",
+        "Algorithms and invariants: integer accounting is overflow-safe and idempotent by charge ID. A child's effective resource allowance is the minimum of its configured allowance and remaining ancestor allowance. Reservations debit availability before dispatch, unused reservations may be released, and actual resource usage is charged once. Visible workflow feedback follows only a frozen edge and must stop before an iteration, nesting, deadline, cost, token, context, or declared action bound would be exceeded. Agent-internal turn, attempt, and tool-call counts remain inspectable telemetry but cannot terminate the model-tool loop. No route, retry, tier, child, or executor can mint resource budget or extend a deadline.\n",
+        "Failure, cancellation, and recovery: unknown or malformed resource usage follows the frozen conservative accounting rule and is visible. Cancellation releases only unused reservation capacity and never reverses consumed external effects. Checkpoints persist ledger counters, loop frames, deadlines as remaining durations, and charge IDs; recovery rebases monotonic deadlines without extending them.\n",
+        "Performance and NFRs: constant- or logarithmic-time admission, bounded frame depth and reservation count, clock-jump resistance, deterministic resource-limit reasons, configurable safety margins, and telemetry without secrets.\n",
+        "Non-responsibilities: no monetary billing, provider quota ownership, authority decisions, scheduling order, evaluator semantics, capability cancellation implementation, canonical usage commit, or arbitrary count-based termination of an internal Agent loop.\n",
+        "\n",
+        "Workflow revision rebinding (2026-09-23): A rebind is a ledger-scope transition, not a reset. The incumbent revision's scope closes with its consumed usage recorded, a fresh scope opens for the adopted revision, and no counter is reversed or minted. The invariant that no route, retry, tier, child or executor may extend a deadline still holds, because a longer run deadline is only ever the explicit, shown and recorded decision of the user at the rebind. An open loop frame — judged against the revision that opened it — must be closed before adoption, and recovery rebases each scope's remaining duration without extending it."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.limits",
+    "id": 43,
+    "name": "Nested Loop, Budget & Deadline Controller",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Limits,Budgets,Loops",
+    "technology": "Rust hierarchical quota ledger using monotonic clocks and overflow-safe counters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ed10e91b-e613-8444-8c0f-68c720b39392",
+  "schemaVersion": 1
+}

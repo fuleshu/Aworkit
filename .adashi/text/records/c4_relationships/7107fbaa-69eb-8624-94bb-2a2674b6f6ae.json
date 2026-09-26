@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requires a current VerifiedPortableBranchHandleV1 and stops or degrades explicitly when the source becomes quarantined, unsupported, changed, or concurrently ambiguous",
+    "destination_external_id": "aworkit.portable_store.import_quarantine",
+    "external_id": "rel.portable.projection.import",
+    "id": 260,
+    "source_external_id": "aworkit.portable_store.projection_feed",
+    "tags": "Relationship,Internal Portable Contract,Read Only",
+    "technology": "Verified branch status/read handle",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7107fbaa-69eb-8624-94bb-2a2674b6f6ae",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Makes the integrity-protected activation, watchdog, verification, rollback, Unsupported, or manual-recovery receipt available only to the expected new core generation so it can commit evidence and resume the same Management Chat",
+    "destination_external_id": "aworkit.trusted_core.repair",
+    "external_id": "rel.bootstrap.core_repair.result",
+    "id": 281,
+    "source_external_id": "aworkit.bootstrap_helper",
+    "tags": "Relationship,Boundary Contract,Repair",
+    "technology": "Authenticated local bootstrap protocol",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "98e5bba4-f8ad-8729-b9a7-350b29b6f441",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:43:32",
+    "design_external_id": "aworkit.workflow_worker.recovery",
+    "id": 313,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "3aa16540-cff6-8cce-939b-2908eeb87ecb"
+    }
+  },
+  "deleted": false,
+  "identity": "5e9082e9-7b50-8ad8-baab-926d68685359",
+  "schemaVersion": 1
+}

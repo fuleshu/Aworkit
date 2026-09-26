@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Loads the verified frozen-snapshot reference, checkpoint, attempts, waits/approvals/queues, and subsequent committed semantic events for pure reducer folding without effect replay",
+    "destination_external_id": "aworkit.local_store.semantic_ledger",
+    "external_id": "rel.core_recovery.local_store.history_read",
+    "id": 214,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Read Only,No Replay",
+    "technology": "LocalHistoryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "62edac31-0f33-80bc-949d-e512c4feac3d",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Delegates Model Call and Aworkit Agent node semantics through stable Aworkit DTOs and receives contract-checked node outcomes",
+    "destination_external_id": "aworkit.workflow_worker.model_agent",
+    "external_id": "rel.worker_node_runtime.model_agent",
+    "id": 122,
+    "source_external_id": "aworkit.workflow_worker.node_runtime",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Aworkit model/agent runtime port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "8c13f0fc-034d-8f32-af30-90c86c0aedc8",
+  "schemaVersion": 1
+}

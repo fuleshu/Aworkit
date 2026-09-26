@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Resolves only the exact pinned binding/hash and enforcement/capability descriptor before admission",
+    "destination_external_id": "aworkit.capability_host.capability_registry",
+    "external_id": "rel.host_gateway.registry",
+    "id": 154,
+    "source_external_id": "aworkit.capability_host.invocation_gateway",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "In-process Rust registry port with Aworkit DTOs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f045ba6b-63c9-883e-943d-13ddeb828ca6",
+  "schemaVersion": 1
+}

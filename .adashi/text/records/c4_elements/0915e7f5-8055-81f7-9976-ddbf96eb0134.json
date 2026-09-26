@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Owns the only secret brokerage contract: converts user-supplied credential values into opaque references, resolves those references only after an approved invocation, and delivers minimal short-lived leases to the intended capability-host audience.\n",
+        "Owned state: non-secret CredentialMetadataV1, opaque CredentialRefV1 mappings, and in-memory SecretLeaseV1 records bound to decisionId, invocationId, audience process generation, permitted fields, expiry, and use count; credential values remain in the operating-system credential store and are zeroized after use.\n",
+        "Public commands/events and ports: PutCredential, UpdateCredential, DeleteCredential, DescribeCredential, TestReferenceWithoutDisclosure, IssueInvocationLease, RedeemLeaseOnAuthenticatedChannel, RevokeLease, and RevokeRunOrProcessLeases; emits metadata-only CredentialChangedV1 and SecretLeaseAuditV1 facts.\n",
+        "Invariants: workflow/configuration JSON, events, portable history, logs, diagnostics, crash dumps, and DTOs never contain secret values. A lease cannot broaden an authority decision, cross process generations/audiences, survive expiry/revocation, or be reused beyond its allowance. The UI, worker, and extension registry never receive plaintext.\n",
+        "Transactional and failure behavior: credential mutations use the OS store first and publish metadata only after a verified result; partial failures retain the prior reference or report repair-required state. OS-store lock/unavailability fails closed. Leases are intentionally non-recoverable and are reissued only after authority and invocation reconciliation.\n",
+        "NFRs: platform-native protection, memory zeroization/redaction tests, short TTLs, constant-time token checks, least-secret delivery, auditability, and Windows/Linux/macOS adapters.\n",
+        "Non-responsibilities: no provider authentication protocol, user approval policy, capability dispatch, portable credential synchronization, or claim that trusted plugin code cannot access host resources independently."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.secret_broker",
+    "id": 32,
+    "name": "Credential Reference & Secret Lease Broker",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Secrets,Security",
+    "technology": "Rust memory-hardened service over OS credential-store adapters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0915e7f5-8055-81f7-9976-ddbf96eb0134",
+  "schemaVersion": 1
+}

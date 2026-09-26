@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "design_external_id": "uml.capability_host.approved_invocation_stream",
+    "id": 18,
+    "qa_job_id": {
+      "ref": "61217e4f-4e65-84a5-8e91-42829603dc96"
+    },
+    "sort_order": 1,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "cf66df3a-955c-88b4-819f-3c22db99588d",
+  "schemaVersion": 1
+}

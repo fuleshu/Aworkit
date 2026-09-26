@@ -1,0 +1,58 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/model_usage.rs\",\"docs/approval-cache-accounting.md\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/graph_pass/model_call.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/approval_control.rs\",\"desktop/src-tauri/src/runtime/service.rs\"]",
+    "completed_at": "2026-09-25 08:03:10",
+    "completion_memo": {
+      "lines": [
+        "Backend half done: the runtime now publishes whole-Run cached/uncached input totals on the same facts that already carry inputUnits/outputUnits.\n",
+        "\n",
+        "What changed\n",
+        "- crates/aworkit-capability-host/src/model_usage.rs: new ModelCacheTotalsV1 accumulator (add/merge/is_empty) that sums reported counters with saturation and keeps an unreported counter absent instead of turning it into a zero; exported from lib.rs.\n",
+        "- model_tool_loop.rs: ModelToolLoopOutcomeV1, ModelToolLoopFailureV1 and ModelToolLoopPendingV1 carry cached_input_tokens/cache_miss_input_tokens (#[serde(default)] on the pending checkpoint). The three loops (fresh, approval-aware, resumed) accumulate turn_output.cache per completed turn, the failure helper takes the aggregate, and cache_totals() lets a parent merge a loop's or a suspension's total.\n",
+        "- graph_pass.rs / graph_pass/model_call.rs: PassMachine holds a ModelCacheTotalsV1 and merges every turn projection (text-only and tool loop, success and failure, including approval resume). PendingGraphPassStateV1 and GraphPassOutcomeV1 carry the pair; pending restores it with #[serde(default)].\n",
+        "- pipeline.rs: WorkflowExecutionResultV1 and the durable ProviderOutcomeRecordV1 carry the pair and every construction site fills it (pending/outcome/next/pass/record, or None for the definitely-not-started failures); approval_control.rs copies it when replaying a stored outcome or suspension. compaction/runtime.rs documents that a compaction preparation pass has no cache counters of its own (the auxiliary call is published as context.compaction-ended).\n",
+        "- service.rs / history.rs: message_fact now takes a MessageUsageV1 (model, input/output units, cached/uncached units) and inserts cachedInputUnits/uncachedInputUnits only when a Run reported them, so an unknown split stays unknown. Success, context.manual-completed, context.manual-failed and execution.failed all receive the pair, and the evidence reconstruction in history.rs carries the keys through.\n",
+        "\n",
+        "Verification\n",
+        "- qa/cache-usage-report.mjs --chat chat.ef71761303be6ac41947a5a7954783d4ade0b614 reports total input 7,271,744, cached 7,207,552, uncached 64,192 (0.9% uncached, 99.1% hit). crates/aworkit-capability-host model_usage::tests::totals_reproduce_the_recorded_test1_3_run_aggregate pins all 65 recorded per-turn (cached, miss) pairs and asserts the accumulator reproduces exactly those three figures.\n",
+        "- model_usage::tests::totals_sum_reported_calls_and_keep_unreported_counters_absent pins the unknown-vs-zero rule; history::tests::message_fact_publishes_reported_run_cache_totals_and_omits_unknown_ones pins key presence/absence.\n",
+        "- runtime::pipeline::tests::simple_chat_crosses_authority_host_secret_and_durable_settlement_once now scripts a provider usage of cached 5 / miss 2 and asserts the WorkflowExecutionResultV1 built from the durable outcome record carries (Some(5), Some(2)) — the whole provider-to-summary path.\n",
+        "- cargo test -p aworkit-capability-host --lib: 171 passed, 2 ignored. Desktop cargo test --lib: 443 passed, 1 ignored, 0 failed.\n",
+        "\n",
+        "Caveat: the already-recorded test1_3 run cannot gain the keys retroactively (its summary event predates them), so the panel check is arithmetic plus the end-to-end scripted test; a new live Run is what will show the aggregate on the panel. Runs recorded before this change keep the labelled loaded-window figures. Also folded in an unrelated rustfmt-only fix to compaction/surface.rs that was already in the working tree."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-24 19:34:43",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "The Run details panel showed \"Cached input tokens 347,008 / Uncached input tokens 2,697 / Cache hit rate 99.2%\" for test1_3 next to a complete input total of 7,271,744. Those figures are exactly the LAST TWO model turns in the client's loaded event page; the true Run totals are cached 7,207,552 / uncached 64,192 / 99.1%.\n",
+        "\n",
+        "Cause: runDetails.ts reads input/output from the Run summary event (message.assistant carries inputUnits/outputUnits, complete) but built the cache fields from cacheUsageFields(runtime.events), and runtime.events is one page of a paged history (useChatRuntime exposes hasOlderEvents/loadOlder). So a windowed subset was presented as a Run total.\n",
+        "\n",
+        "Frontend half DONE (commit c77bfa4): cacheUsage.ts gained reportedCacheUnits/reportedCacheFields plus a scoped mode that labels per-span figures \"in loaded activity\" and prints the covered call count; runDetails.ts prefers a Run aggregate when the summary event carries one and otherwise uses the labelled window; tests in cacheUsage.test.ts cover both paths.\n",
+        "\n",
+        "REMAINING (backend aggregate): the runtime never publishes cached/uncached Run totals, so a live Run still falls back to the labelled window. Publish them on the same events that already carry inputUnits/outputUnits:\n",
+        "1. model_tool_loop.rs: add cached_input_tokens/cache_miss_input_tokens to ModelToolLoopOutcomeV1 and the failure type; sum turn_output.cache at the turn sites (the loops around lines 446, 844 and 1032 accumulate input/output there).\n",
+        "2. graph_pass.rs: add the pair to the accumulator (the struct with input_units at ~line 624), to PendingGraphPassStateV1 (serde, needs #[serde(default)]) and to GraphPassOutcomeV1 (~line 261); add them wherever the accumulator adds a turn projection or a loop outcome (lines ~1286, ~1330, ~1362, ~1596 and graph_pass/model_call.rs:88). Compaction preparation/recovery steps carry no cache fields; leaving them out is a documented, small omission (the auxiliary summary call is published separately as context.compaction-ended).\n",
+        "3. pipeline.rs: add the pair to WorkflowExecutionResultV1 (~line 309) and fill it from the outcome at the construction sites (737, 817, 1073, 1132).\n",
+        "4. service.rs: extend history::message_fact with the pair and pass result.cached_input_units/uncached_input_units at the Run summary sites (success ~1601, failure ~1721, model_call ~1964). history.rs message_fact (~1681) inserts the keys and the reconstruction copy (~2354) must carry them.\n",
+        "5. Verify against test1_3: the panel must read 7,207,552 / 64,192 / 99.1%, matching qa/cache-usage-report.mjs."
+      ]
+    },
+    "id": 131,
+    "number": 130,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Publish whole-Run cached/uncached input totals on the Run summary event",
+    "updated_at": "2026-09-25 08:03:10"
+  },
+  "deleted": false,
+  "identity": "da37e940-b6cc-89f3-8578-03c13bc6bcf4",
+  "schemaVersion": 1
+}

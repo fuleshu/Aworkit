@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies ordered semantic timeline view models and render policy",
+    "destination_external_id": "aworkit.desktop_ui.conversation",
+    "external_id": "rel.ui.chat.conversation",
+    "id": 28,
+    "source_external_id": "aworkit.desktop_ui.chat_workspace",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5132aee1-0056-83c1-b3ea-889785c2138a",
+  "schemaVersion": 1
+}

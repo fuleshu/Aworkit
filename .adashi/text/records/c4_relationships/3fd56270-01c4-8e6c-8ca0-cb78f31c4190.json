@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes immutable navigation metadata, appearance, connection, and resync projections",
+    "destination_external_id": "aworkit.desktop_ui.app_shell",
+    "external_id": "rel.ui.gateway.shell",
+    "id": 22,
+    "source_external_id": "aworkit.desktop_ui.projection_gateway",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3fd56270-01c4-8e6c-8ca0-cb78f31c4190",
+  "schemaVersion": 1
+}

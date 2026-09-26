@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Dispatches selected tools or workers into explicitly configured stronger execution boundaries",
+    "destination_external_id": "ext.isolation_environments",
+    "external_id": "rel.host.isolation",
+    "id": 18,
+    "source_external_id": "aworkit.capability_host",
+    "tags": "Relationship",
+    "technology": "Backend-specific RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f3108de8-a932-842c-85f1-7fc2ff251c2d",
+  "schemaVersion": 1
+}

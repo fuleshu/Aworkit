@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Is the sole canonical event committer and selects exactly one canonical history backend per Chat, providing ordered semantic streams, command/invocation deduplication, checkpoints, snapshots, and transactional outbox delivery.\n",
+        "Owned state: immutable ChatHistoryBindingV1(LocalSqlite or PortableProject), branch/head identity, next contiguous sequence, semantic event IDs, expected aggregate versions, command and invocation outcome keys, checkpoint/snapshot references, subscriber cursors, and pending/delivered outbox records. Physical bytes remain behind LocalHistoryPort or PortableHistoryPort.\n",
+        "Public commands/events and ports: CreateHistoryBinding, CommitBatch(CommitRequestV1), ReadStream, ReadSnapshot, ReadCheckpoint, VerifyEventIdentity, MarkOutboxDelivered, ListPendingOutbox, SubscribeCommitted, and ImportPortableBranchInert; publishes only committed CoreEventEnvelopeV1.\n",
+        "Normative incremental semantic streaming contract: Live UI, reconnect, history, and replay derive from the same committed CoreEventEnvelopeV1 records. Core services submit bounded semantic microbatches containing span lifecycle, source-supplied content deltas, tool request/result data, approval, usage, artifact, error, and outcome events. The committer assigns the sole contiguous Chat/Branch sequence and stable EventId, durably commits the batch, and only then publishes those exact envelopes in order. Pending content flushes before lifecycle/tool/approval/error/terminal boundaries. Only adjacent uncommitted content on the same span/channel may coalesce; a target maximum normal-load delay of 50 ms applies. Committed events are immutable and must never be replaced by a reduced activity snapshot as canonical history.\n",
+        "\n",
+        "Normative hierarchical span contract: Work uses stable SpanId, immutable ParentSpanId, SpanKind, and optional causationEventId. Normal ownership is Run -> GraphNode -> AgentLoop -> ModelCall, ToolCall, or ExternalAgent. A ToolCall caused by a completed ModelCall is a sibling under AgentLoop and cites the causing event; it is not falsely nested inside ongoing reasoning. SpanStarted contains normalized redacted input or an artifact reference. SpanContentDelta appends source-supplied content to a named channel. SpanCompleted, SpanFailed, or SpanCancelled contains normalized redacted output/error or a reference and is terminal exactly once. Parent start precedes children; a parent cannot terminate with an open child. Causation is distinct from ownership. Recovery derives open spans from committed history and reports interruption/uncertainty; it never invents completion. Projection snapshots contain throughSequence, reducerVersion, and stateHash, and are equivalent to replay through that sequence; delta recovery returns the exact subsequent envelopes.\n",
+        "\n",
+        "Invariants: one Chat is canonical in local SQLite or project-portable JSONL, never both; a disposable local index over portable history is not canonical. Only this component advances sequence/head. Canonical records use Aworkit-owned DTOs, exclude credentials/hidden reasoning/Rig/provider types, and never represent replay permission for side effects. Concurrent portable continuation becomes explicit parent-linked branches.\n",
+        "Transactional and failure behavior: local commits atomically write event batch, head, dedup result, checkpoint, and outbox in one SQLite transaction. Portable commits write a bounded content-hashed segment then atomically fsync/rename the branch head; machine-local delivery metadata references that canonical hash without becoming a second history. No durable commit means no acknowledgement, publication, or state transition. Ambiguous writes are verified by event ID/hash; disk-full/corruption enters inspectable read-only/quarantine mode, never a guessed retry.\n",
+        "NFRs: crash consistency, monotonic per-stream order, bounded segments/outbox, incremental reads, backpressure, integrity verification, configurable durability, and observable commit latency.\n",
+        "Non-responsibilities: no full-application event sourcing, side-effect execution/replay, Git commit/push, secret storage, view projection logic, or workflow decisions."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.event_committer",
+    "id": 33,
+    "name": "Canonical Event Commit & History Router",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Persistence,Events,Outbox",
+    "technology": "Rust transactional journal service over SQLite or immutable JSONL/CAS ports",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "94d636ac-24e6-8032-aeb9-90dbd5ad1c79",
+  "schemaVersion": 1
+}

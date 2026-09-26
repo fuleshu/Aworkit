@@ -1,0 +1,35 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Receives worker capability proposals, obtains the sole core authority decision, durably stages authorized dispatch, supplies invocation-scoped secret leases, and normalizes host progress/results into committed evidence and worker outcomes.\n",
+        "Owned state: InvocationLedgerV1 keyed by run/node/attempt/invocationId and stable idempotencyKey, with Proposed, AwaitingApproval, Authorized, Dispatching, Accepted, Settled, Failed, Cancelled, or OutcomeUncertain state; host execution token, delivery attempt, capability semantics, and correlation are recorded without provider-native payload types.\n",
+        "Public commands/events and ports: ProposeInvocation, ResolveInvocationApproval, DispatchApproved, AcceptHostProgress, SettleHostResult, CancelInvocation, and ReconcileDelivery; sends ApprovedInvocationEnvelopeV1 containing decisionId, pinned binding/hash, enforced scope, budget/deadline, cancellation token, and lease handles; returns CapabilityOutcomeV1.\n",
+        "Invariants: workers only propose and never contact the host; the host executes only a core-approved envelope. Authorization plus a secret-free dispatch outbox record commits before delivery. Semantic outcomes commit before acknowledgement to the worker. Non-idempotent or externally side-effecting work is never silently resent after an ambiguous send/ack/result.\n",
+        "Transactional and failure behavior: definite rejection/not-started failure may follow frozen retry policy. Ambiguous delivery is retried with the same invocationId only when the capability declares idempotency and the host guarantees deduplication; otherwise OutcomeUncertain is committed, leases are revoked, and control returns to the workflow/user. Late/duplicate results dedupe by invocationId and cannot overwrite a settled outcome.\n",
+        "NFRs: bounded concurrency/backpressure, cancellation propagation, lease minimization, monotonic deadlines, structured metrics/traces, streaming coalescing without semantic reordering, and crash-safe reconciliation.\n",
+        "Normative incremental commit bridge: AcceptHostProgress treats HostInvocationEventV1 as a span-correlated semantic proposal, not as a UI event. The broker maps the approved invocation to its immutable ToolCall, ModelCall, or ExternalAgent SpanId/ParentSpanId, preserves source classification, normalizes actual redacted request/result data, and submits bounded semantic microbatches to the Canonical Event Committer. Adjacent content may coalesce only before commit on the same span/channel and for at most 50 ms under normal load; lifecycle, tool, approval, usage/artifact/error, and terminal boundaries flush first. The broker waits for durable sequence acknowledgement before reporting committed progress or terminal outcome to the worker. A tool/result event carries causation separately from ownership; no host-local or best-effort event sequence becomes history.\n",
+        "\n",
+        "Non-responsibilities: no authority creation, provider/tool implementation, workflow retry selection, secret persistence, or canonical storage implementation.\n",
+        "\n",
+        "Concurrent Chat dispatch (2026-09-15): Live model and tool pipelines deliver exactly the outbox for their current invocationId, prepare only that invocation's secret leases, and reconcile only its persisted outcome. A sibling Chat's DispatchAttempted record is live work and must never be interpreted as crash recovery, drained, or settled by this worker. Use the existing deliver_pending_dispatch_for path for both root and nested tool invocations. Profile-wide recovery is not a live command's responsibility.\n",
+        "\n",
+        "Managed process job dispatch (approved 2026-09-17): Add shell_start, python_start, job_output, job_input, job_stop, job_list and an explicitly approved job_keep operation to the native catalog. The provider call settles once with either final process output or a durable job handle. The live job retains its separate lifecycle and originating invocation identity until settlement; later collection is a different provider call. Launch and stdin mutation use normal broker authority. Control tools operate only on jobs in the frozen Chat. Normal shell and Python automatically yield into this same registry after its bounded wait; existing frozen Chats without job controls retain bounded legacy execution. Forward terminal job notices on the next model step. Before all final-answer paths (including approval resume) accept completion, inspect jobs atomically and nudge the model to collect or dispose of outstanding work; bounded repeated refusal fails honestly without claiming Chat success. Deliberate user Stop bypasses this completion gate."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.trusted_core.invocation_broker",
+    "id": 31,
+    "name": "Capability Invocation Broker",
+    "parent_external_id": "aworkit.trusted_core",
+    "tags": "Component,Trusted Core,Capability,Idempotency",
+    "technology": "Rust async broker with durable invocation state machine and versioned local RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "20495ff6-1bba-88c7-9b2d-bd33092f87c5",
+  "schemaVersion": 1
+}

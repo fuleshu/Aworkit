@@ -1,0 +1,43 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Implements the closed v1 activation-profile decision and the unprivileged Windows, macOS, and Linux selector and restore operations for ManagedLocalBuildProfileV1. It classifies a build from embedded BuildProvenanceV1 plus OS observations, validates LocalBuildEnrollmentV1, and produces deterministic capability facts. PackagedDistribution, Unknown, Conflicting, and unenrolled local builds have reporting behavior only; v1 contains no packaged-install selector, package-manager command, elevation path, updater, or generic privileged adapter.\n",
+        "\n",
+        "Owned state/files: Owns no candidate bytes or mutable application configuration. It holds compiled profile implementations and ephemeral BuildOriginV1, LocalBuildEnrollmentStateV1, ActivationEligibilityV1, PlatformCapabilityReportV1, ActivationPlanV1, ActiveSelectorObservationV1, PrivilegeDispositionV1, and opened OS handles. BuildOriginV1 is LocalSourceBuild, PackagedDistribution, Unknown, or Conflicting. Enrollment state is Enrolled, NotEnrolled, or Mismatched. Eligibility is Supported, EnrollmentRequired, or Unsupported. A report includes an exact reason code, SameUserHashAndOwnership integrity strength, build and enrollment digests, installation and filesystem identities, helper, launcher and journal identities, ownership and write-access facts, current selector and slot hashes, atomic primitive, same-volume proof, previous-slot preservation, process-tree and verification-only support, data-compatibility disposition, and a capability-generation digest. Any durable intent or result is owned by the activation journal.\n",
+        "\n",
+        "Ports/DTOs: ProfilePreflightPortV1 exposes ClassifyBuildOrigin(BuildProvenanceV1), InspectEnrollment(LocalBuildEnrollmentV1), InspectCapabilities, BuildEnrollmentPlan(ManagedLocalEnrollmentRequestV1), and BuildActivationPlan. PlatformActivationPortV1 exposes ObserveActiveSelector, ApplyCandidateSelector, RestorePreviousSelector, and VerifySelector. Inputs are exact VerifiedBuildSlotV1 handles and the expected journal phase, capability generation, and ProcessGenerationV1; outputs are PlatformCapabilityReportV1, ActivationPlanV1, SelectorMutationReceiptV1, EnrollmentRequiredV1, or UnsupportedV1. There is no shell, PATH lookup, editable eligibility flag, force bypass, package-manager command, plugin callback, or generic privileged-operation port.\n",
+        "\n",
+        "Accepted v1 matrix:\n",
+        "- LocalSourceBuild plus NotEnrolled returns EnrollmentRequired before approval or quiescence and may offer the explicit advanced-user managed-local enrollment workflow.\n",
+        "- LocalSourceBuild plus Enrolled returns Supported only when the running full-bundle hash matches the enrollment and active selector; helper, launcher, journal, candidate, and previous slots are helper-controlled; all selector and slot state is on one durable local volume; the current user owns and can write the root without elevation; complete process-tree cleanup and verification-only launch are supported; and candidate data changes are backward-compatible or deferred.\n",
+        "- PackagedDistribution, Unknown, Conflicting, or Mismatched always returns Unsupported before quiescence. These classifications can diagnose, build, test, and export but cannot self-activate.\n",
+        "- Any loss of a runtime guarantee downgrades Supported to Unsupported. OS observations may downgrade declared provenance but never upgrade it.\n",
+        "\n",
+        "Phase, atomicity, and recovery invariants: Preflight and a durable effect intent precede every selector mutation. Source must match the current selector observation and destination the opened verified slot. Candidate and previous are never simultaneously authoritative. A mutation is idempotent only for the exact ActivationId, expected source hash, destination hash, capability generation, and journal intent. The helper, launcher, and journal stay outside swapped slots and the old application's kill scope. The adapter uses only a same-volume atomic selector replacement followed by reopen and verification. On an ambiguous result recovery observes the selector and both slots before continuing or restoring; it never repeats a selector action blindly. If rollback cannot be proven after switching, it stops in ManualRecoveryRequired rather than selecting by timestamp or ping-ponging slots.\n",
+        "\n",
+        "Security and privilege semantics: ManagedLocalBuildProfileV1 is strictly per-user and unprivileged. Missing publisher signing is neither a failure nor evidence of locality. Content hashes, owner modes or ACLs, anchored filesystem identities, and peer and process-generation binding detect corruption and bind disclosed bytes but do not resist a malicious same-user process. Environment inheritance, editable provenance, writable search paths, symlink or reparse traversal, and helper self-update are prohibited.\n",
+        "\n",
+        "Cross-platform and test matrix: Windows support requires a helper-controlled per-user local-volume root, stable launcher, owner ACLs, reparse-safe handles, process and Job identity, atomic selector replacement, and side-by-side bundles. macOS requires a per-user local-volume root, helper and launcher outside the selected application bundle, audit-token and bundle identity, atomic selector replacement, and durable directory sync. Linux requires a per-user local filesystem with no-follow identities, process-group or process-handle evidence, atomic rename and directory sync; package-manager, AppImage not enrolled into the managed root, Snap, Flatpak, read-only, network, removable, and cross-device layouts are Unsupported. Conformance tests on each OS cover successful activation, candidate crash, identity mismatch, health and focused-verification expiry, complete rollback, helper restart, power loss at every journal and selector boundary, provenance or enrollment mismatch, missing previous slot, forward-only data migration, cross-volume and read-only roots, and every packaged or unknown Unsupported path.\n",
+        "\n",
+        "NFRs: Capability reports are deterministic, reason-coded, generation-bound, and cacheable only for the verified filesystem and installation generation. Startup, focused verification, graceful cleanup, forced cleanup, and rollback health use separate monotonic, configuration-versioned deadlines carried in the activation plan; no wait is unbounded, expiry after switching is rollback-biased, and ambiguous effects are never automatically retried.\n",
+        "\n",
+        "Non-responsibilities: Does not build the application or own enrollment orchestration, decide repair acceptability, install or download builds, invoke general tools, edit source or workflows, grant authority, own the activation state machine, supervise process trees, interpret CapabilityOutcomeV1, commit history, restore application data, store secrets, load plugins, update the helper, or implement packaged self-update."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.bootstrap_helper.platform_profiles",
+    "id": 92,
+    "name": "Platform Activation Profile Adapter",
+    "parent_external_id": "aworkit.bootstrap_helper",
+    "tags": "Component,Trusted Bootstrap,Platform,Activation Profile,Privilege",
+    "technology": "Fixed Rust ManagedLocalBuildProfileV1 adapters for Windows, macOS, and Linux over helper-controlled same-volume selectors; packaged and unknown installations are capability-report-only",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dc25a0b6-8931-8145-b87a-eb08c8dba38b",
+  "schemaVersion": 1
+}

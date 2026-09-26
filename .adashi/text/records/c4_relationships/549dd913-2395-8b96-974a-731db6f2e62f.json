@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Parses manifests inertly and invokes only explicitly enabled exact extension subprocesses through the versioned plugin protocol; process isolation is not a security sandbox",
+    "destination_external_id": "ext.extensions_mcp",
+    "external_id": "rel.host_plugin_runtime.extensions",
+    "id": 199,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "JSON manifests and framed local plugin RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "549dd913-2395-8b96-974a-731db6f2e62f",
+  "schemaVersion": 1
+}

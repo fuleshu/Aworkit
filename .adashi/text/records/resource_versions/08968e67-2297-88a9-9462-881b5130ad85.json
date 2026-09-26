@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.portable_store.atomic_append_head_ack",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 23:45:05",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "08968e67-2297-88a9-9462-881b5130ad85",
+  "schemaVersion": 1
+}

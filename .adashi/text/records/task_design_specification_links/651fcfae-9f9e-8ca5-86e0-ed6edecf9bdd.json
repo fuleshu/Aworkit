@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:25:41",
+    "design_external_id": "aworkit.local_store.semantic_ledger",
+    "id": 57,
+    "sort_order": 0,
+    "target_type": "element",
+    "task_id": {
+      "ref": "b6f6b52c-3e0f-8a9c-ad65-c053868c8c61"
+    }
+  },
+  "deleted": false,
+  "identity": "651fcfae-9f9e-8ca5-86e0-ed6edecf9bdd",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Verifies only referenced permitted artifact descriptors, lengths, hashes and inert media classifications; artifact bytes are never launched, installed, or auto-materialized",
+    "destination_external_id": "aworkit.portable_store.artifact_cas",
+    "external_id": "rel.portable.import.artifact",
+    "id": 254,
+    "source_external_id": "aworkit.portable_store.import_quarantine",
+    "tags": "Relationship,Internal Portable Contract,Inert",
+    "technology": "VerifyArtifact and bounded ArtifactReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "bd7edc92-4d0e-89f2-b794-7b1b69b4543c",
+  "schemaVersion": 1
+}

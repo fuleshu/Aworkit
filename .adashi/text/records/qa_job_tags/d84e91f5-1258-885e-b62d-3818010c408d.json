@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-25 14:27:41",
+    "qa_job_id": {
+      "ref": "94148058-e081-8402-8f5b-10dfe03fb68b"
+    },
+    "tag": "live-model"
+  },
+  "deleted": false,
+  "identity": "d84e91f5-1258-885e-b62d-3818010c408d",
+  "schemaVersion": 1
+}

@@ -1,0 +1,40 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/mcp_tools/names.rs\",\"desktop/src-tauri/src/runtime/mcp_tools.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/mcp_definitions.rs\",\"desktop/src-tauri/src/runtime/service/mcp_selection/tests.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\"]",
+    "completed_at": "2026-09-13 13:43:35",
+    "completion_memo": {
+      "lines": [
+        "Phase 1 (readable MCP tool names) implemented and verified.\n",
+        "\n",
+        "DELIVERED: desktop/src-tauri/src/runtime/mcp_tools/names.rs — mcp_provider_name(server_id, provider_label, tool) now composes a readable alias: `adashi_design` when the function name already names its own server (label stripped at a separator boundary), otherwise `adashi_read`. No `mcp__` wrapper, no repeated label, digest only when folding/truncation discarded identity. mcp_fallback_label(server_id) derives a slug label (strips the generated `mcp.` scheme prefix) for servers with no configured name. portable_frozen_name and mcp_internal_id are unchanged, so frozen persisted aliases and internal identity are untouched.\n",
+        "\n",
+        "CALLERS pass the configured server display name: runtime/service.rs freeze_graph_bindings (via settings lookup, fallback to mcp_fallback_label) and discovery from_descriptor; service/mcp_definitions.rs from_descriptor + preview_mcp_definitions; tool_loop.rs freeze_mcp_binding fallback path uses mcp_fallback_label.\n",
+        "\n",
+        "DEVIATION FROM PLAN (user-approved in-session): the plan specified `mcp__<serverLabel>__<tool[..N]>`; the user chose the shorter form with no prefix and no repeated label. Also, because a configured display name is not injective, exact no-aliasing cannot hold for two configured labels that fold to the same text; that single boundary is recorded in an explicit test (`a_name_the_alias_cannot_carry_is_documented_rather_than_hidden`) rather than hidden. Dispatch is unaffected — tool_loop.rs matches binding by capability_id AND provider_name.\n",
+        "\n",
+        "PRE-EXISTING FAILURE FIXED (user requested): mcp_oversized_result_is_rejected_without_crashing_the_pass was stale after commit ccf8e6e \"Relax provider and workflow output limits\" (which updated ~20 sibling tests but missed this one). Renamed to mcp_oversized_result_becomes_a_bounded_output_without_crashing_the_pass; it now asserts the bounded-output contract (truncated notice, honest maximumBytes, preview survives, pass continues, activity completed).\n",
+        "\n",
+        "VERIFICATION: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib => 321 passed / 0 failed, exit 0 (was 319 passed / 1 failed). cargo build => exit 0, no warnings. cargo test -p aworkit-capability-host => ok.\n",
+        "\n",
+        "NOT VERIFIED (sandbox boundary, no code blocker): the live acceptance criterion \"Adashi tools appear with readable names in a live run's evidence (span.started -> input.tools)\". desktop/scripts/native-adashi-chat.mjs could not run because the WebView2 remote-debugging port never opened in the sandboxed shell (app and Adashi binary both start fine). Needs a user-run `pnpm desktop:dev` check or an unsandboxed shell. The label→alias wiring that this check would exercise is instead covered by the new test frozen_mcp_aliases_are_readable_and_derived_from_the_configured_server_name (preview and freeze agree on `adashi_read`)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-13 13:11:00",
+    "created_files": "[]",
+    "description": "Implement docs/plan-intent-scoped-agent-workflow.md Phase 1 in desktop/src-tauri/src/runtime/mcp_tools/names.rs. mcp_provider_name(server_id, provider_label, tool) composes mcp__<label>__<tool> from the MCP server's configured display name (fallback: sanitized server-id slug). Invariants preserved: <=64 bytes, [A-Za-z0-9_-] grammar, no aliasing after folding/truncating (strict byte budget with a digest suffix reserved for over-long names), frozen aliases unchanged (portable_frozen_name untouched), internal identity untouched (mcp_internal_id). Callers must pass the configured server name: service/mcp_definitions.rs from_descriptor + preview_mcp_definitions, runtime/service.rs freeze_graph_bindings.",
+    "id": 88,
+    "number": 87,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Phase 1 — readable MCP provider tool names",
+    "updated_at": "2026-09-22 07:25:41"
+  },
+  "deleted": false,
+  "identity": "ac44a479-c7c8-8830-8578-eb3020a4b85a",
+  "schemaVersion": 1
+}

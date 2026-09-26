@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.workflow_worker.suspension_recovery_state",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 22:14:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "67a9b37f-3e5e-8b29-8103-be35c0953be4",
+  "schemaVersion": 1
+}

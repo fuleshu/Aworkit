@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Exclusively appends recurring-error occurrences and governs diagnosis, candidate, disclosure, build-origin, enrollment, eligibility, activation decision, restart baton, verification, regression, rollback, and manual-recovery metadata through compare-and-swap transitions",
+    "destination_external_id": "aworkit.local_store.error_repair_ledger",
+    "external_id": "rel.core_repair.local_store.error_repair_repo",
+    "id": 212,
+    "source_external_id": "aworkit.trusted_core.repair",
+    "tags": "Relationship,Boundary Contract,Core Governed",
+    "technology": "ErrorRepairRepository and RestartBatonRepository",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7ee62704-ab30-80d5-89f9-6731897033a9",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Drops, migrates, or resumably rebuilds disposable schemas from verified canonical local/portable cursors; projection corruption never triggers canonical restore",
+    "destination_external_id": "aworkit.local_store.query_projections",
+    "external_id": "rel.local_store.storage_coordinator.query_projections",
+    "id": 232,
+    "source_external_id": "aworkit.local_store.storage_coordinator",
+    "tags": "Relationship,Internal,Maintenance,Disposable",
+    "technology": "ProjectionMaintenancePort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "17f2918a-5843-84b8-9cdf-734243d22e00",
+  "schemaVersion": 1
+}

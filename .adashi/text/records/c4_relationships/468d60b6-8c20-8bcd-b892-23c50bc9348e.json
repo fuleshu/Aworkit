@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads only verified inert artifact descriptors and explicitly bounded ranges for disposable evidence indexing; executable or quarantined bytes are never exposed",
+    "destination_external_id": "aworkit.portable_store.artifact_cas",
+    "external_id": "rel.portable.projection.artifact",
+    "id": 267,
+    "source_external_id": "aworkit.portable_store.projection_feed",
+    "tags": "Relationship,Internal Portable Contract,Read Only",
+    "technology": "Read-only ArtifactReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "468d60b6-8c20-8bcd-b892-23c50bc9348e",
+  "schemaVersion": 1
+}

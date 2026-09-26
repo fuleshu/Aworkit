@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.workspace_instructions|file|desktop/src-tauri/src/runtime/workspace_instructions/mod.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-08 09:39:03",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "a40359f5-d9ec-8369-bc24-2a968b51ba03",
+  "schemaVersion": 1
+}

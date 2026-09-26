@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Submits typed commands and immutable editing intents; never invokes privileged capabilities directly",
+    "destination_external_id": "aworkit.trusted_core",
+    "external_id": "rel.ui.core.commands",
+    "id": 2,
+    "source_external_id": "aworkit.desktop_ui",
+    "tags": "Relationship",
+    "technology": "Tauri IPC commands",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5eea53a9-6905-8358-bb43-95217d4f0802",
+  "schemaVersion": 1
+}

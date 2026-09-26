@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-bootstrap-helper/src/lib.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Implemented complete immutable managed-local build slots behind narrow artifact-read and anchored storage ports. Added bounded manifest/path/media validation, streamed SHA-256 whole-bundle verification and materialization, atomic immutable publication, ownership/volume/no-follow revalidation, and candidate/active/previous-known-good role fencing that retains rollback until verified.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:36",
+    "created_files": "[\"crates/aworkit-bootstrap-helper/src/slots/mod.rs\",\"crates/aworkit-bootstrap-helper/src/slots/error.rs\",\"crates/aworkit-bootstrap-helper/src/slots/model.rs\",\"crates/aworkit-bootstrap-helper/src/slots/ports.rs\",\"crates/aworkit-bootstrap-helper/src/slots/manager.rs\",\"crates/aworkit-bootstrap-helper/src/slots/storage.rs\",\"crates/aworkit-bootstrap-helper/src/slots/tests.rs\"]",
+    "description": "Implement helper-controlled active, candidate, and previous-known-good whole-bundle slots with content-addressed manifests, anchored no-follow handles, ownership and same-volume verification, atomic publication, preserved rollback content, and exact revalidation before launch. Read only the baton-named staged build artifact and never compile or update the helper during activation.",
+    "id": 69,
+    "number": 69,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.3 — Implement immutable managed-local build slots",
+    "updated_at": "2026-09-22 07:20:26"
+  },
+  "deleted": false,
+  "identity": "5bcc470d-f889-8db6-95a8-31c31a99c13d",
+  "schemaVersion": 1
+}

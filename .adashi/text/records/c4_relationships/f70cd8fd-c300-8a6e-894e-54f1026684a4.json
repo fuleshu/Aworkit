@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Activates a project or non-project Chat route with stable scope/focus context",
+    "destination_external_id": "aworkit.desktop_ui.chat_workspace",
+    "external_id": "rel.ui.shell.chat",
+    "id": 23,
+    "source_external_id": "aworkit.desktop_ui.app_shell",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f70cd8fd-c300-8a6e-894e-54f1026684a4",
+  "schemaVersion": 1
+}

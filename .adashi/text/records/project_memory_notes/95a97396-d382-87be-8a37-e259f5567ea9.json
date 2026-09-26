@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Correction to the task-116 completion memo: it claimed \"this codebase has no BudgetLedgerV1\", which is wrong. crates/aworkit-workflow-worker/src/limits.rs implements Budget/Usage/BudgetEnvelope/LimitLedger/LimitController, and pipeline.rs builds a LimitLedger for every run. What is missing is not the ledger but any non-sentinel ceiling in it: the desktop freezes tokens and cost to MAX_SAFE_WIRE_INTEGER and deadline (budget.deadline_ms and deadline_epoch_millis) to NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS, with comments stating there is no aggregate run deadline and that usage is reported without a ceiling. The small figures (turns/attempts/actions = 1, depth/fanout/parallel) describe one outer brokered execution and its delegation shape; agent-internal provider calls are explicitly not turn-capped (legacy_maximum_turns: None). The frozen run_deadline_millis is inert legacy data. Practical conclusion stands (nothing cumulative caps a run), but the reason was wrong.",
+    "created_at": "2026-09-23 13:43:25",
+    "id": 263,
+    "note_id": "2026-09-23-budget-ledger-correction",
+    "operation_id": "memory-budget-correction-002",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-budget-correction-002",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "95a97396-d382-87be-8a37-e259f5567ea9",
+  "schemaVersion": 1
+}

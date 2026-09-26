@@ -1,0 +1,35 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Drives dynamic execution through the immutable ExecutionPlanV1, admits runnable tokens, dispatches typed node work, applies committed outcomes, and selects only legal frozen transitions. It coordinates visible harness progress across conditions, routes, loops, parallel branches, joins, waits, evaluators, retries, and terminal nodes while preserving one Chat as one continuing Run.\n",
+        "Owned runtime state: RunMachineV1 containing logical tick, deterministic ready queue, token positions, active NodeExecutionId and AttemptId values, transition sequence, outcome-deduplication set, quiesce flag, and references to current context, branch, limit, attempt, suspension, and child frames. Canonical lifecycle and event history remain in the trusted core.\n",
+        "Input/output DTOs and ports: StartSchedule, RestoreSchedule, ApplyNodeOutcome(NodeOutcomeV1), ApplyCapabilityOutcome(CapabilityOutcomeV1), DeliverInput, Quiesce, and CancelScope; emits ExecuteNodeV1, TransitionProposalV1, SuspensionProposalV1, RunTerminalProposalV1, and CheckpointProposalV1.\n",
+        "Algorithms and invariants: orders ready work by logical tick, frozen plan ordinal, branch lineage, and token ID, so equivalent committed inputs produce equivalent scheduling choices independent of wall-clock completion order. It validates typed edge compatibility before each move and delegates fork/join, limit, retry, and suspension decisions to narrow services. Only plan-declared edges and destinations are reachable. An effect-producing node is not dispatched until the predecessor transition is acknowledged committed; speculative work, if permitted, is pure and discardable. Internal Agent turns never appear as harness transitions.\n",
+        "Failure, cancellation, and recovery: duplicate outcomes are ignored by stable outcome ID. Node errors are normalized and passed to Attempt Policy rather than improvised. Pause stops new admissions at safe points; cancellation propagates to active work and never claims to undo effects. On crash, Recovery restores the last committed logical cursor and checkpoint and discards unacknowledged speculative state instead of replaying operations.\n",
+        "Performance and NFRs: bounded per-Run queues and active concurrency, fair progress across hosted Runs, no busy polling, low-millisecond transition overhead, cooperative cancellation, structured trace correlation, and backpressure from limits and IPC.\n",
+        "Normative span-proposal ownership: At committed Run start the scheduler proposes the stable Run span. For each admitted NodeExecutionId/AttemptId it proposes exactly one GraphNode SpanStarted before dispatch, including the normalized redacted typed node input or an artifact reference and the workflow semantic role. It proposes the matching completed/failed/cancelled terminal with normalized redacted output/error only after child AgentLoop/capability spans are terminal. Proposal identity is stable across transport retransmission; only core commit establishes sequence and visibility. Input, Output, and Wait nodes remain semantically recorded even when normal Chat RenderPolicy hides them.\n",
+        "\n",
+        "Non-responsibilities: no node semantics, provider or tool calls, context merge policy, authority decisions, secret access, process supervision, canonical commit, or graph mutation.\n",
+        "\n",
+        "User Stop and steering (2026-09-18): Stopping an unfinished built-in workflow response preserves a durable continuation of that exact frozen graph pass: current node, completed node outputs and selected branches. The next accepted ordinary user message in that Chat steers the interrupted model/Agent node and then continues downstream; it must not rerun earlier planning or completed effects. Restore committed per-node model context and settled tool evidence, append the new user message once, and use fresh invocation identities. Stop cancels in-flight calls; cancelled or uncertain tools are not automatically replayed. Persist and validate continuation ownership against Chat, Run and frozen workflow; retain it across restart and repeated Stop. A normally completed pass consumes its continuation, so the following user message starts the workflow at its entry as before. A Stop racing completed work does not fabricate an unfinished continuation. Preserve canonical history, frozen authority and per-Chat concurrency. The v1 graph executes sequentially; a Stop during an Agent-owned tool resumes the owning Agent's model with the recorded tool outcome.\n",
+        "\n",
+        "Workflow revision rebinding (2026-09-23): The scheduler executes one adopted revision at a time and never mutates a graph. Adoption is legal only at a settled boundary — no in-flight turn, pending approval or suspension, open loop frame or live child frame — and the next segment is admitted from the adopted revision's entry, never part-way into it. A committed turn, its Stop/steering continuation and its child frames remain explained by the revision they ran under; a continuation whose revision was superseded is consumed or discarded at the boundary rather than executed under the new plan. This preserves the non-responsibility above: what changes at a rebind is which frozen plan the next segment is admitted from, not a running graph."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.scheduler",
+    "id": 39,
+    "name": "Deterministic Graph Scheduler & Transition Engine",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Scheduler,Transitions",
+    "technology": "Rust async per-Run state machine with deterministic ready queues",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "1d1cb501-83d6-8379-b106-4eff6c6d00be",
+  "schemaVersion": 1
+}

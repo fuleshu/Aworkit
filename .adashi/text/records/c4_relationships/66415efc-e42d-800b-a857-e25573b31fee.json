@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses exact executable handles, sanitized spawn, process handles, Windows Job Objects or POSIX process groups/pidfds, monotonic deadlines, descendant enumeration, cooperative shutdown, forced complete-tree cleanup, and detached-helper survival primitives",
+    "destination_external_id": "ext.os_services",
+    "external_id": "rel.bootstrap.watchdog.os.process",
+    "id": 292,
+    "source_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "tags": "Relationship,Platform Contract,Process,Watchdog,Cleanup",
+    "technology": "Platform process, job/group, signal, environment, handle, and lifecycle APIs",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "66415efc-e42d-800b-a857-e25573b31fee",
+  "schemaVersion": 1
+}

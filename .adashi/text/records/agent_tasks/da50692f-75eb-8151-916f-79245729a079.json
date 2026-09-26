@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-local-store/src/ledger.rs\",\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/recovery.rs\"]",
+    "completed_at": "2026-08-21 17:15:07",
+    "completion_memo": "Implemented LocalRecovery over committed local semantic records and delivery outboxes, returning only folded state/checkpoint facts with an explicit no-effect-replay result. Added ordered committed-event read support to the local store. cargo test -p aworkit-trusted-core -p aworkit-local-store passes.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:27:37",
+    "created_files": "[\"crates/aworkit-trusted-core/src/recovery.rs\"]",
+    "description": "Implement the core recovery coordinator over explicit canonical-history, operational-journal, delivery-outbox, and process-generation ports, and complete its LocalSqlite path. Rebuild aggregates by folding committed events and start replacement workers from validated checkpoints without replaying effects. The exact PortableProject adapter and reconciliation rules are added in M06.",
+    "id": 26,
+    "number": 26,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M04.6 — Implement core recovery and logical rehydration",
+    "updated_at": "2026-09-21 14:57:13"
+  },
+  "deleted": false,
+  "identity": "da50692f-75eb-8151-916f-79245729a079",
+  "schemaVersion": 1
+}

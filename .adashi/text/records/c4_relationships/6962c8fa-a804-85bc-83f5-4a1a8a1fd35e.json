@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "For LocalSqlite Chats, atomically commits ordered semantic events, head/dedup/checkpoint, and outbox and maintains disposable projections for portable Chats",
+    "destination_external_id": "aworkit.local_store",
+    "external_id": "rel.core_committer.local_store",
+    "id": 98,
+    "source_external_id": "aworkit.trusted_core.event_committer",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "SQLite transactions and atomic files",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6962c8fa-a804-85bc-83f5-4a1a8a1fd35e",
+  "schemaVersion": 1
+}

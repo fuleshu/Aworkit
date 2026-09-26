@@ -1,0 +1,31 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Converts every adapter's source events into ordered Aworkit-owned HostInvocationEventV1 and one CapabilityOutcomeV1. It preserves only source-supplied reasoning_raw, reasoning_summary, progress, and assistant_output categories, normalizes usage/artifacts/native-session/approval/error evidence, applies redaction, and classifies effect outcomes without inventing hidden reasoning or success.\n",
+        "Owned runtime state: per-invocation source sequence, bounded reorder/coalescing window, stream credits, dispatch/acceptance/effect milestones, redaction set, accumulated usage, artifact hashes/references, terminal fence, and duplicate-terminal suppression. It owns no canonical history.\n",
+        "Versioned ports and contracts: AdapterRawEventV1, NormalizedContentV1, UsageV1, ArtifactRefV1, ApprovalCapabilityFactV1, ErrorV1, EffectEvidenceV1, IdempotencyMetadataV1, OutcomeDispositionV1, RetrySafetyV1, HostInvocationEventV1, and CapabilityOutcomeV1.\n",
+        "Outcome invariants: dispositions distinguish Succeeded, FailedDefiniteNotStarted, FailedKnownStarted, CancelledWithEvidence, and OutcomeUncertain. Unknown dispatch/effect/terminal facts are never reported safe-to-retry. Same-ID retry metadata is emitted only when the descriptor guarantees idempotency/deduplication and evidence supports it; the core/worker policy still decides any retry.\n",
+        "Failure and degraded behavior: malformed ordering, buffer pressure, adapter crash, timeout, redaction failure, lost terminal, or conflicting duplicate evidence closes the terminal fence conservatively and reports opacity/uncertainty. Backpressure may coalesce progress but never reorder or drop terminal, approval, usage, artifact, or error semantics.\n",
+        "Observability, performance, and cross-platform behavior: bounded memory, reserved terminal/control lanes, stream lag/drop/coalescing metrics, source/correlation traces without secrets, optional detailed protocol evidence as noncanonical output, and platform-neutral DTO behavior across Windows, Linux, and macOS.\n",
+        "Normative incremental semantic stream contract: Each normalized item is a proposal correlated to the approved invocation and active SpanId. Raw provider/transport fragments may be merged only while adjacent and on the same span/content channel, before canonical commit. A span/channel change, tool request, approval, usage/artifact/error fact, lifecycle transition, terminal outcome, payload limit, or 50 ms maximum normal-load coalescing delay flushes pending content first. Tool requests expose actual normalized redacted arguments, and tool results expose actual normalized redacted results; large values use immutable artifact references. Raw frames remain optional noncanonical capture. This component neither assigns the Chat/Branch sequence nor publishes UI events.\n",
+        "\n",
+        "Non-responsibilities: no approval grant, workflow retry/fallback choice, authority evaluation, effect compensation, canonical commit, provider-native persistence, or direct event-committer connection; all output returns through the invocation gateway and core broker."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.result_pipeline",
+    "id": 60,
+    "name": "Stream, Result & Side-Effect Outcome Normalizer",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "Component,Capability Host,Normalization,Outcomes,Backpressure",
+    "technology": "Rust typed streaming normalization and conservative outcome classifier",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "c1ea495b-678c-8abf-b676-3b0519cf3b31",
+  "schemaVersion": 1
+}

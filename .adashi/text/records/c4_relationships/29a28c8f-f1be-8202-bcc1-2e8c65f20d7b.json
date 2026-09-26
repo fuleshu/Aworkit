@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Sends RehydrationEnvelopeV1 containing the exact snapshot, validated checkpoint, committed cursor, generation, and reconciled invocation facts without replay instructions",
+    "destination_external_id": "aworkit.workflow_worker.recovery",
+    "external_id": "rel.core_recovery.worker_rehydrator.restore",
+    "id": 152,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Versioned framed local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "29a28c8f-f1be-8202-bcc1-2e8c65f20d7b",
+  "schemaVersion": 1
+}

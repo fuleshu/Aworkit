@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses handle-safe path identity, normalized arguments/environment, descendant cleanup, and exact launch/effect milestones",
+    "destination_external_id": "aworkit.capability_host.process_runtime",
+    "external_id": "rel.host_tools.process_runtime",
+    "id": 169,
+    "source_external_id": "aworkit.capability_host.tool_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Cross-platform filesystem and process port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0b6a1144-ca06-82f5-8de5-4608f2d9b55a",
+  "schemaVersion": 1
+}

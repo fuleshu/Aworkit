@@ -1,0 +1,63 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.context_store",
+    "created_at": "2026-09-08 11:37:34",
+    "diagram_type": "sequence",
+    "id": 69,
+    "key": "uml.workflow_worker.context_compaction",
+    "kind": "mermaid",
+    "sort_order": 45,
+    "source": {
+      "lines": [
+        "sequenceDiagram\n",
+        " participant UI as Chat maintenance queue\n",
+        " participant Loop as Agent or model node\n",
+        " participant Context as Core context selection\n",
+        " participant Ledger as Semantic ledger\n",
+        " participant Summary as Frozen summary provider\n",
+        " participant Instructions as Workspace Instructions\n",
+        " participant Model as Acting provider\n",
+        " UI->>Context: Idle manual command with node and source version\n",
+        " Loop->>Context: Next request or canonical context overflow\n",
+        " Context->>Ledger: Restore Chat node branch child checkpoint plus settled delta\n",
+        " Context->>Instructions: Reconcile surviving typed references\n",
+        " Context->>Context: Measure pressure with compatible completed-turn usage anchor\n",
+        " alt Qualified pressure or canonical overflow\n",
+        "  Context->>Ledger: Commit pruning replacements and checkpoint atomically\n",
+        " end\n",
+        " alt Reduction required or useful manual range\n",
+        "  Context->>Context: Select balanced prefix and retained tail\n",
+        "  Context->>Ledger: Commit start and immutable source identities\n",
+        "  Context->>Summary: Isolated prefix with original system tools and exact directive\n",
+        "  Summary-->>Context: Raw output and usage or failure\n",
+        "  Context->>Context: Check cancellation source generation and framed strict shrink\n",
+        "  alt Accepted summary\n",
+        "   Context->>Ledger: Commit replacement and checkpoint atomically\n",
+        "  end\n",
+        "  Context->>Ledger: Settle lifecycle exactly once and retain auxiliary usage\n",
+        "  Context->>Instructions: Restore missing baseline and active nested scopes\n",
+        " end\n",
+        " Context->>Ledger: Commit admitted context\n",
+        " Context-->>UI: Settle maintenance without conversation messages\n",
+        " UI->>Loop: Admit queued prompts FIFO using each settled history fence\n",
+        " Context-->>Loop: Selection and changed generation\n",
+        " Loop->>Model: Admitted request\n",
+        " Model-->>Loop: Response or typed context overflow\n",
+        " Note over Loop,Model: Retry requires a committed reduction. Original evidence is immutable. Auxiliary calls never execute tools.\n",
+        " opt Explicit Chat fork\n",
+        "  UI->>Ledger: Copy selected document with source provenance and exact instruction owner-ID allowlist\n",
+        "  Ledger-->>Context: Independent child selection with no parent tool replay\n",
+        " end"
+      ]
+    },
+    "title": "Durable context compaction and admission",
+    "updated_at": "2026-09-08 12:20:50",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "342d0618-d974-893e-b0f8-46fb55c3b214",
+  "schemaVersion": 1
+}

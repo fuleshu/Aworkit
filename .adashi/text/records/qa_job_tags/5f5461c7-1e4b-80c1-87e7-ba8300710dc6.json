@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-23 12:08:05",
+    "qa_job_id": {
+      "ref": "8136ab71-2eeb-8fc6-8c16-b468fd82a8ad"
+    },
+    "tag": "packaging"
+  },
+  "deleted": false,
+  "identity": "5f5461c7-1e4b-80c1-87e7-ba8300710dc6",
+  "schemaVersion": 1
+}

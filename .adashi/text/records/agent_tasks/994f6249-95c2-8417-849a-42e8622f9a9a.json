@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-workflow-worker/Cargo.toml\",\"crates/aworkit-workflow-worker/src/lib.rs\",\"crates/aworkit-workflow-worker/src/agent.rs\"]",
+    "completed_at": "2026-08-21 17:02:10",
+    "completion_memo": "Implemented bounded model-agent broker proposals and temporary subagent context handling. Children carry explicit delegated material, obey depth limits, and integrate only through a declared new parent revision.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:26:31",
+    "created_files": "[\"crates/aworkit-workflow-worker/src/agent.rs\"]",
+    "description": "Implement model-call and internal Agent node semantics through Aworkit-owned broker proposal ports, including bounded model-tool cycles. Implement temporary subagent child contexts with explicit delegated material, independent state, depth limits, cancellation, and declared result integration only.",
+    "id": 19,
+    "number": 19,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M03.6 — Implement model-agent and temporary subagent orchestration",
+    "updated_at": "2026-09-22 07:11:55"
+  },
+  "deleted": false,
+  "identity": "994f6249-95c2-8417-849a-42e8622f9a9a",
+  "schemaVersion": 1
+}

@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-trusted-core/Cargo.toml\",\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/secrets.rs\",\"crates/aworkit-trusted-core/tests/milestone_05.rs\"]",
+    "completed_at": "2026-08-23 11:47:42",
+    "completion_memo": "Implemented the production PlatformCredentialStorePort over native Windows Credential Manager, macOS Keychain, and freedesktop Secret Service through the cross-platform keyring backend. The adapter stores a versioned opaque binary payload only in the OS credential store, verifies writes by protected read-back, maps locked versus unavailable/corrupt states explicitly, validates that a native backend initialized, and never falls back to files, configuration, or environment values. Credential references can now be generated from OS randomness; production SecretBroker::default uses the native store; metadata describe/update/delete behavior remains secret-free; and store retrieval requires a trusted-core-only authorization value constructed only after approved lease validation. All plaintext buffers, decoded payloads, keyring malformed-data errors, deliveries, and in-memory fixtures are zeroized on drop. Added M12 conformance coverage for opaque creation, field-minimal lease redemption, update revocation, delete, metadata non-disclosure, and supported/locked/unavailable native status. Warnings-denied trusted-core tests pass (74 tests across unit and integration targets), and git diff --check is clean.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:34:40",
+    "created_files": "[\"crates/aworkit-trusted-core/src/secrets/native.rs\",\"crates/aworkit-trusted-core/tests/milestone_12_native.rs\"]",
+    "description": "Implement PlatformCredentialStorePort on Windows, macOS, and Linux with opaque reference creation, retrieval only for approved lease issuance, update/delete, locked or unavailable states, access-control validation, and zeroization. Provide conformance behavior without introducing plaintext fallbacks, configuration-file secrets, log exposure, or transferable authority.",
+    "id": 76,
+    "number": 76,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M12.3 — Implement native credential-store adapters",
+    "updated_at": "2026-09-22 07:21:55"
+  },
+  "deleted": false,
+  "identity": "cbc7167a-4e9a-89f4-a15a-3ca2acc7cf36",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "design_workspaces",
+  "data": {
+    "created_at": "2026-08-20 07:52:43",
+    "description": "C4 and UML design workspace for Codex-driven project planning and execution.",
+    "id": 1,
+    "name": "Aworkit Architecture Workspace",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "structurizr_dsl": "",
+    "structurizr_json": "",
+    "updated_at": "2026-08-20 07:52:43"
+  },
+  "deleted": false,
+  "identity": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8",
+  "schemaVersion": 1
+}

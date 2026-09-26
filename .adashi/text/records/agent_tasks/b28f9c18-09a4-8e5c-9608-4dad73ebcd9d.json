@@ -1,0 +1,32 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compression/runtime.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/graph_pass/model_call.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\"]",
+    "completed_at": "2026-09-18 07:41:04",
+    "completion_memo": {
+      "lines": [
+        "Implemented durable Stop -> next-message steering at the interrupted graph model node. Standard Agent preserves planner output; interrupted planners themselves receive the steering input. The service records the continuation choice for command replay. The pipeline validates Chat/Run, frozen context and graph, restores completed values and selected edges, and issues fresh invocations with committed per-node context. Repeated stops and app restart retain the continuation. Normal completion has no continuation and a follow-up begins at workflow entry. Tool results that settle during Stop survive optional compression cancellation; undispatched batch calls receive explicit non-execution results. Approval snapshots now preserve branch edges. A Stop racing final graph bookkeeping does not create a continuation that would ignore the next input.\n",
+        "\n",
+        "Critical task.end audit: responsibilities align with updated lifecycle/scheduler/suspension design (revision 626, bindings through 630); no authority bypass, completed effect replay, or cross-Chat mutable continuation state. Older Stop records lacking checkpoints intentionally retain legacy fresh-pass behavior; new stops in existing Chats use the new behavior. No blockers remain.\n",
+        "\n",
+        "Validation: cargo check passed. Rust library suite: 354 passed, 0 failed, 1 ignored; focused steering tests rerun after final context adjustment: 2 passed. Native debug build passed. Real Windows WebView test with local fixture provider passed all 13 provider requests, covering Agent/planner steering, original plan and tool-result preservation, repeated Stop, app restart, completed follow-up replanning, tool-batch interruption and no undispatched-call execution. Evidence: desktop/src-tauri/target/native-steering-1789717181876/result.json, requests.json and steered-chat.png. Independent native concurrency regression passed all 10 checks, 6 requests: desktop/src-tauri/target/native-concurrency-1789717132767/result.json. git diff --check passed. Existing unrelated Adashi database changes preserved; no commit or merge requested."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-18 07:16:35",
+    "created_files": "[\"desktop/scripts/native-stop-steering.mjs\",\"desktop/src-tauri/src/runtime/graph_pass/steering.rs\",\"desktop/src-tauri/src/runtime/pipeline/steering.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/steering.rs\",\"desktop/src-tauri/src/runtime/service/steering.rs\",\"docs/chat-steering.md\"]",
+    "description": "Persist the interrupted graph pass and select it for the next accepted Chat message. Preserve earlier planner output, branch choices, committed per-node context and tool evidence; never automatically replay stopped effects. Use a fresh pass after normal completion. Verify first and repeated Stop, planner and Agent interruption, restart, frozen authority, concurrent Chats and native standard-workflow execution.",
+    "id": 96,
+    "number": 95,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Resume a user-stopped workflow at its interrupted model node",
+    "updated_at": "2026-09-22 07:26:35"
+  },
+  "deleted": false,
+  "identity": "b28f9c18-09a4-8e5c-9608-4dad73ebcd9d",
+  "schemaVersion": 1
+}

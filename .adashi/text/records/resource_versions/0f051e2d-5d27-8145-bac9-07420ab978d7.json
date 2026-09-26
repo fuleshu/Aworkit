@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.capability_registry",
+    "resource_kind": "design.element",
+    "updated_at": "2026-08-20 22:35:43",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "0f051e2d-5d27-8145-bac9-07420ab978d7",
+  "schemaVersion": 1
+}

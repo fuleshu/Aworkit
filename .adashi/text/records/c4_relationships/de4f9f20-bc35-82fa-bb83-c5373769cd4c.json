@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads verified immutable parent-linked portable segments and branch heads solely to build a machine-local disposable index; it never writes portable data, merges branches by timestamp, or becomes authority",
+    "destination_external_id": "aworkit.portable_store",
+    "external_id": "rel.local_store.query_projections.portable_store",
+    "id": 224,
+    "source_external_id": "aworkit.local_store.query_projections",
+    "tags": "Relationship,Boundary Contract,Read Only,Disposable",
+    "technology": "PortableHistoryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "de4f9f20-bc35-82fa-bb83-c5373769cd4c",
+  "schemaVersion": 1
+}

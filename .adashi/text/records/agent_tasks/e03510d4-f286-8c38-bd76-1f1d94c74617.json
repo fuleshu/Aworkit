@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/settings.ts\",\"desktop/src/workbench/SettingsScreen.tsx\"]",
+    "completed_at": "2026-08-22 06:27:26",
+    "completion_memo": "Created the executable Milestone 09 QA runner, protocol fakes, supervised Python subprocess fixture, Rust integration suites, and Settings resolution tests covering manifest/hash/version drift, missing/disabled/incompatible states, MCP negotiation and ambiguity, plugin crash/restart/disable, external-agent approval/continuation/concurrency, exact isolation/unavailable paths, cancellation, and no authority/secret widening. Registered Adashi QA job #9 linked to tasks #56–61 and the formal design branches; immutable QA run #25 passed with exit code 0.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:16",
+    "created_files": "[\"qa/milestone-09.sh\",\"desktop/src/workbench/milestone09.test.ts\",\"crates/aworkit-capability-host/tests/fixtures/plugin_protocol_fixture.py\",\"crates/aworkit-capability-host/tests/isolation.rs\",\"crates/aworkit-capability-host/tests/milestone_09_attestation.rs\",\"crates/aworkit-capability-host/tests/milestone_09_external_agent.rs\",\"crates/aworkit-capability-host/tests/milestone_09_mcp.rs\",\"crates/aworkit-capability-host/tests/milestone_09_plugin.rs\",\"crates/aworkit-trusted-core/tests/milestone_09_extensions.rs\"]",
+    "description": "Create automated QA tests for Milestone 09 with protocol fakes and supervised subprocess fixtures. Cover manifest/hash/version drift, missing and disabled requirements, MCP negotiation and ambiguous disconnects, plugin crash/restart/disable, external-agent approval and continuation, isolation-strength enforcement and unavailable paths, settings resolution, cancellation, and no authority or secret widening.",
+    "id": 61,
+    "number": 61,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.QA — Create QA tests for extensions and external integrations",
+    "updated_at": "2026-09-22 07:17:32"
+  },
+  "deleted": false,
+  "identity": "e03510d4-f286-8c38-bd76-1f1d94c74617",
+  "schemaVersion": 1
+}

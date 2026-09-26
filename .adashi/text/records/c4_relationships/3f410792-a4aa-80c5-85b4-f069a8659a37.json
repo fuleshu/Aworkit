@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Verifies prepared artifact hash/size/generation and atomically registers metadata/event references; promoted but uncommitted content remains an orphan eligible only for delayed GC",
+    "destination_external_id": "aworkit.local_store.artifact_store",
+    "external_id": "rel.local_store.commit_adapter.artifact_store",
+    "id": 221,
+    "source_external_id": "aworkit.local_store.commit_adapter",
+    "tags": "Relationship,Internal,Durability",
+    "technology": "PreparedArtifactRefPort and shared SQLite metadata transaction",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3f410792-a4aa-80c5-85b4-f069a8659a37",
+  "schemaVersion": 1
+}

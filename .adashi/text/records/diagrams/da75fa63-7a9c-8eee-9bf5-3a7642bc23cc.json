@@ -1,0 +1,52 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.context_store",
+    "created_at": "2026-09-08 08:06:04",
+    "diagram_type": "sequence",
+    "id": 67,
+    "key": "uml.workflow_worker.workspace_instructions_lifecycle",
+    "kind": "mermaid",
+    "sort_order": 43,
+    "source": {
+      "lines": [
+        "sequenceDiagram\n",
+        "  participant User\n",
+        "  participant Agent as Agent and instruction lifecycle\n",
+        "  participant Core as Trusted core via existing gateway\n",
+        "  participant Files as Authorized filesystem capability\n",
+        "  participant History as Existing history and context\n",
+        "  participant Model\n",
+        "  User->>Agent: Input for frozen selected Agent\n",
+        "  Agent->>History: Read visible context and admitted instruction metadata\n",
+        "  Agent->>Core: Request bounded baseline or reconciliation reads\n",
+        "  Core->>Files: Execute within frozen authority\n",
+        "  Files-->>Core: Present, absent or unavailable candidates\n",
+        "  Core-->>Agent: Approved observations\n",
+        "  Agent->>Agent: Deduplicate, scope and render within budget\n",
+        "  Agent->>Core: Propose instruction context delta\n",
+        "  Core->>History: Commit exact text and small typed metadata\n",
+        "  History-->>Core: Durable acknowledgement\n",
+        "  Core-->>Agent: Admitted context identities\n",
+        "  Agent->>Model: Prompt plus applicable instruction messages\n",
+        "  Model-->>Agent: File tool request, if available\n",
+        "  Agent->>Core: Invoke selected file tool\n",
+        "  Core->>Files: Approved read, write or edit\n",
+        "  Files-->>Core: Settled outcome\n",
+        "  Core->>History: Commit result and execution boundary\n",
+        "  Core-->>Agent: Successful structured touch and committed boundary\n",
+        "  Agent->>Agent: Coalesce pending scope changes\n",
+        "  Note over Agent,Model: Reconcile before next request. no redundant standalone model turn\n",
+        "  Note over Agent,History: Replay reuses prepared messages and settled outcomes. new requests may append file updates"
+      ]
+    },
+    "title": "Instruction baseline, file touches and durable request admission",
+    "updated_at": "2026-09-08 08:06:04",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "da75fa63-7a9c-8eee-9bf5-3a7642bc23cc",
+  "schemaVersion": 1
+}

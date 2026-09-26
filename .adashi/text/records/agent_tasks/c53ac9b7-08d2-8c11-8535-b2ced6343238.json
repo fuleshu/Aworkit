@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/approval_policy.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/tests.rs\",\"desktop/src-tauri/src/runtime/tool_loop/skills_tests.rs\",\"desktop/src-tauri/src/runtime/tool_registry.rs\",\"desktop/src-tauri/src/runtime/workspace_instructions/tests.rs\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\"]",
+    "completed_at": "2026-09-19 09:56:05",
+    "completion_memo": "Implemented docs/subagent-tool-inheritance.md and audited against the native delegation design. Children receive exactly the delegating node's frozen selected tools (excluding recursive delegation), retain real broker/workspace/standing-grant enforcement, and return parent_approval_required with exact blocked actions without dispatch, child review calls, or later batch effects. Explicit readOnly filters native effect tools and requires both safe MCP hints regardless of auto-approve. Chat-owned jobs persist originating scope; children only control/complete their own jobs; parent and Stop supervise all Chat jobs. Child prompt/tool prefixes are stable across turns. Legacy frozen authority round-trips unchanged; pre-upgrade Settings remain valid; new Chats acquire the new contract. Native child span ancestry fixes live/replay attribution. Verification: cargo test --lib: 362 passed, 1 existing ignored local-capture fixture; 10 chat activity projection tests passed; tsc --noEmit passed; Vite production build passed; optimized executable built as desktop/src-tauri/target/release/aworkit-subagent-update.exe alongside the running original. Pipeline tests use real write/edit/shell/Python hosts, scripted MCP peer and model (no API spending), approval handoff/resume, replay and stable child prefixes; native job tests exercise sibling isolation and Chat cancellation. Existing user process was not restarted; no new live GUI session or paid provider run was used. git diff --check passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 09:31:57",
+    "created_files": "[\"docs/subagent-tool-inheritance.md\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_tools.rs\"]",
+    "description": "Implement docs/subagent-tool-inheritance.md and the linked native delegation contract. Preserve frozen legacy Chats, isolate per-node capabilities and child jobs, add readOnly selection, return approval-required work to parent without extra review LLM calls, and label child output correctly. Validate real writes and subprocess/job cancellation plus broker/MCP and UI projection regressions. Do not interrupt the user's active Chat.",
+    "id": 102,
+    "number": 101,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Inherit parent tools for subagents with explicit approval handoff and actor ownership",
+    "updated_at": "2026-09-22 07:27:18"
+  },
+  "deleted": false,
+  "identity": "c53ac9b7-08d2-8c11-8535-b2ced6343238",
+  "schemaVersion": 1
+}

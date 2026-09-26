@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:47",
+    "qa_job_id": {
+      "ref": "e0468672-35c4-8bf4-b6f8-873a6bc93096"
+    },
+    "tag": "desktop"
+  },
+  "deleted": false,
+  "identity": "3cbeee56-ea17-8425-b39c-6a5a05e863da",
+  "schemaVersion": 1
+}

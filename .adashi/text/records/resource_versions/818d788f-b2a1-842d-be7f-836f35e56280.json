@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.evidence_inspector|file|desktop/src/chat/cacheUsage.ts",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-18 10:31:43",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "818d788f-b2a1-842d-be7f-836f35e56280",
+  "schemaVersion": 1
+}

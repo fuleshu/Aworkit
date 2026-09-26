@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Commits proposal/decision/approval/authorization plus dispatch outbox and commits settled or uncertain outcome before worker acknowledgement",
+    "destination_external_id": "aworkit.trusted_core.event_committer",
+    "external_id": "rel.core_invocation.committer",
+    "id": 76,
+    "source_external_id": "aworkit.trusted_core.invocation_broker",
+    "tags": "Relationship,Internal Core Contract",
+    "technology": "Canonical commit and outbox port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "63786319-7361-885b-9ab0-09a61f26dc9f",
+  "schemaVersion": 1
+}

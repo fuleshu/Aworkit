@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "User-selected local, mounted, worktree, container-backed, or prepared remote checkout locations operated on directly by project Chats. File changes take effect immediately and are not automatically undone with Chat cancellation or deletion. Opt-in portable session history may live inside the workspace and travel through ordinary version control.",
+    "element_type": "Software System",
+    "external_id": "ext.project_workspaces",
+    "id": 8,
+    "name": "Project Workspaces and Git",
+    "parent_external_id": null,
+    "tags": "External,Data and Side Effects",
+    "technology": "Filesystem directories, Git worktrees/repositories, mounted checkouts",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ee3e0be4-4518-8e05-b309-2776f419e8fe",
+  "schemaVersion": 1
+}

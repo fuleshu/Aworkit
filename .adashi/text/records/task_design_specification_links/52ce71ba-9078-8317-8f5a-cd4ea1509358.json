@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-21 07:47:46",
+    "design_external_id": "aworkit.workflow_worker.suspension",
+    "id": 457,
+    "sort_order": 2,
+    "target_type": "element",
+    "task_id": {
+      "ref": "5e909624-dfb2-88ea-8a27-5e30ce76203b"
+    }
+  },
+  "deleted": false,
+  "identity": "52ce71ba-9078-8317-8f5a-cd4ea1509358",
+  "schemaVersion": 1
+}

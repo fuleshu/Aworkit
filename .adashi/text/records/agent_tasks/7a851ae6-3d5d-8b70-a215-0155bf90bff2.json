@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-08-24 18:14:15",
+    "completion_memo": "W1 design extension complete via the documented fallback: docs/design-extension-standard-agent-v1.md records the v1 executable node catalog (input, model_call, agent, tool, condition, parallel, approval, output, wait, completion with typed ports and configuration contracts), the v1 built-in tool matrix with approval classes (read/search/list/grep/edit/write/shell/python/todo/web_search/web_fetch/subagent/MCP), the approval flow, the workflow library contract, and the standard agent workflow. WARNING: the Adashi design-write MCP surface returns -32602 from this session (reads and task CRUD work), so the stored UML artifacts uml.system.standard_agent_workflow_v1 / uml.system.executable_node_catalog_v1 and the tool_runtime/workflow_editor description updates could not be written to the design store; the canonical extension lives in the docs file and the implemented native catalog validator (desktop/src-tauri/src/runtime/documents.rs validate_v1_executable_catalog) and TS mirror (desktop/src/workbench/workflowExecution.ts assessNativeWorkflow) are the enforceable authorities.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-24 10:52:12",
+    "created_files": "[\"docs/design-extension-standard-agent-v1.md\"]",
+    "description": "Extend the Adashi formal design for the standard-agent-workflow goal based on docs/design-extension-standard-agent-v1.md and the read-only audits of deepseek-harness and chatshell-desktop/agent. Store the v1 executable node catalog (input, model_call, agent, tool, condition, parallel, approval, output, wait, completion with typed ports and configuration contracts), the v1 built-in tool matrix with approval classes (read/search/list/grep/edit/write/shell/python/todo/web_search/web_fetch/subagent/MCP), the approval flow (approval.requested → approval.resolved, single-use, durable), the workflow library contract (catalog CRUD, seeding, default), and the standard agent workflow UML (input → model_call → agent → output → wait with the inner turn/step loop). Record the v1 in-process execution note for the desktop runtime honestly. Output: stored UML artifacts uml.system.standard_agent_workflow_v1 and uml.system.executable_node_catalog_v1 plus updated descriptions for aworkit.capability_host.tool_runtime and aworkit.desktop_ui.workflow_editor, or the equivalent documented extension if the design-write surface is unavailable, with the document kept in docs/design-extension-standard-agent-v1.md.",
+    "id": 80,
+    "number": 79,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "W1 — Extend the formal design: v1 standard agent workflow, node catalog, tool matrix, and library",
+    "updated_at": "2026-09-22 07:22:32"
+  },
+  "deleted": false,
+  "identity": "7a851ae6-3d5d-8b70-a215-0155bf90bff2",
+  "schemaVersion": 1
+}

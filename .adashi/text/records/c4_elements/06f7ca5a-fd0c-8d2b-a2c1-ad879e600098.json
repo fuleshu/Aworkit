@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Streams verified portable manifests, branch-separated semantic events, omission/unsupported markers, and permitted artifact metadata into machine-local disposable projection builders without exposing any write or authority surface.\n",
+        "Owned state/contracts: no persistent canonical state. PortableProjectionEnvelopeV1 carries sourceKind=PortableProject, SessionId/ChatId, BranchId, SegmentHash, lineOrdinal, EventId, checkpoint/head hash, projection schema version, and a sanitized semantic payload or explicit Unsupported/Omitted marker. PortableProjectionCursorV1 is the tuple of verified parent-linked object identities, never a timestamp.\n",
+        "Ports: PortableProjectionFeedPort exposes ListVerifiedSessions, StreamBranch, ReadEvidenceDescriptor, and ResumeFromCursor only to aworkit.local_store.query_projections. It requires a current VerifiedPortableBranchHandleV1, streams through verified segment readers, and returns SourceChanged/Quarantined/Unsupported/CatchingUp status explicitly.\n",
+        "Ordering and degradation: each branch follows validated head-record, segment-parent, and line order. Concurrent branches remain distinct result sets; wall-clock and filesystem/Git times are display metadata only. Unknown optional records generate stable placeholders; required-unknown or corrupt records stop at the last verified cursor. Source disappearance or hash change invalidates affected cache rows, never infers history.\n",
+        "Security/performance/NFRs: only export-policy-sanitized fields and bounded inert artifact descriptors/content ranges are exposed; no raw quarantine bytes, secrets, approvals, debug capture, or executable payloads enter FTS. Reads are paginated, cancellable, backpressured, and target incremental p95 projection pages under 100 ms after verification.\n",
+        "Non-responsibilities: no SQLite write itself, canonical event/head write, branch selection/merge, repair, authority, rebinding, side-effect replay, artifact execution, worker/host access, or Git operation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.projection_feed",
+    "id": 82,
+    "name": "Verified Read-Only Disposable Projection Feed",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Read Only,Projection,Disposable",
+    "technology": "Rust read-only streaming adapter from verified portable objects to disposable local projections",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "06f7ca5a-fd0c-8d2b-a2c1-ad879e600098",
+  "schemaVersion": 1
+}

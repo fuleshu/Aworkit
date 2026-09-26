@@ -1,0 +1,51 @@
+{
+  "collection": "qa_job_runs",
+  "data": {
+    "command_snapshot": "{\"command\":\"./qa/milestone-04.sh\",\"designSpecificationLinks\":[{\"designExternalId\":\"uml.chat_run_lifecycle\",\"id\":13,\"qaJobId\":4,\"sortOrder\":0,\"targetType\":\"uml\",\"title\":\"Chat and Run lifecycle\"},{\"designExternalId\":\"uml.trusted_core.first_input_freeze_start\",\"id\":14,\"qaJobId\":4,\"sortOrder\":1,\"targetType\":\"uml\",\"title\":\"First Input Validation, Resolution, Freeze, and Start\"},{\"designExternalId\":\"uml.local_store.atomic_commit_ack\",\"id\":15,\"qaJobId\":4,\"sortOrder\":2,\"targetType\":\"uml\",\"title\":\"Atomic Semantic Event, Checkpoint, Outbox Commit and Acknowledgement\"},{\"designExternalId\":\"uml.system.crash_cancel_cleanup\",\"id\":16,\"qaJobId\":4,\"sortOrder\":3,\"targetType\":\"uml\",\"title\":\"Committed cancellation, process-tree cleanup, uncertainty, and crash recovery\"}],\"enabled\":true,\"name\":\"Milestone 04 headless local Chat runtime\",\"shell\":\"bash\",\"tags\":[\"authority\",\"chat\",\"milestone-04\",\"no-replay\",\"recovery\",\"supervision\",\"trusted-core\"],\"taskLinks\":[{\"id\":17,\"number\":21,\"qaJobId\":4,\"sortOrder\":0,\"state\":\"finished\",\"taskId\":21,\"title\":\"M04.1 — Implement project coordination and the typed desktop API\"},{\"id\":18,\"number\":22,\"qaJobId\":4,\"sortOrder\":1,\"state\":\"finished\",\"taskId\":22,\"title\":\"M04.2 — Implement authority manifests and first-input snapshot freezing\"},{\"id\":19,\"number\":23,\"qaJobId\":4,\"sortOrder\":2,\"state\":\"finished\",\"taskId\":23,\"title\":\"M04.3 — Implement the Chat and Run lifecycle aggregate\"},{\"id\":20,\"number\":24,\"qaJobId\":4,\"sortOrder\":3,\"state\":\"finished\",\"taskId\":24,\"title\":\"M04.4 — Implement canonical local event routing and delivery outboxes\"},{\"id\":21,\"number\":25,\"qaJobId\":4,\"sortOrder\":4,\"state\":\"finished\",\"taskId\":25,\"title\":\"M04.5 — Supervise and integrate the workflow worker\"},{\"id\":22,\"number\":26,\"qaJobId\":4,\"sortOrder\":5,\"state\":\"finished\",\"taskId\":26,\"title\":\"M04.6 — Implement core recovery and logical rehydration\"},{\"id\":23,\"number\":27,\"qaJobId\":4,\"sortOrder\":6,\"state\":\"finished\",\"taskId\":27,\"title\":\"M04.QA — Create QA tests for the headless local Chat runtime\"}],\"timeoutSeconds\":600,\"workingDirectory\":\"/home/timofl/src/Aworkit\"}",
+    "duration_ms": 652,
+    "exit_code": 0,
+    "finished_at": "2026-08-21 20:46:32",
+    "id": 27,
+    "output": {
+      "lines": [
+        "\n",
+        "running 3 tests\n",
+        "test project::tests::direct_secret_shapes_are_rejected_but_credential_refs_are_allowed ... ok\n",
+        "test lifecycle::tests::snapshot_is_set_exactly_once_and_waits_require_explicit_resume ... ok\n",
+        "test project::tests::workspace_revalidation_rejects_deleted_root ... ok\n",
+        "\n",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+        "\n",
+        "\n",
+        "running 13 tests\n",
+        "test approval_grants_are_exact_expiring_and_single_use ... ok\n",
+        "test ordered_join_branch_order_is_part_of_the_workflow_identity ... ok\n",
+        "test first_input_rejection_keeps_the_draft_editable_and_success_freezes_atomically ... ok\n",
+        "test desktop_transaction_is_atomic_idempotent_and_cursor_bounded ... ok\n",
+        "test project_documents_round_trip_and_reject_secret_material ... ok\n",
+        "test run_lifecycle_folds_exactly_and_recovery_requires_a_new_generation ... ok\n",
+        "test run_lifecycle_covers_queue_attempt_wait_pause_cancel_retry_fork_and_continue ... ok\n",
+        "test replacement_generation_restores_wait_pause_and_cancellation_positions ... ok\n",
+        "test trusted_core_binary_is_a_real_framed_service ... ok\n",
+        "test recovery_builds_only_a_fenced_logical_rehydration_envelope ... ok\n",
+        "test snapshot_freezing_discloses_authority_and_rejects_unresolved_or_drifting_inputs ... ok\n",
+        "test canonical_local_commit_routes_through_the_process_neutral_port ... ok\n",
+        "test supervisor_launches_validates_and_cleans_up_a_real_worker ... ok\n",
+        "\n",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n",
+        "\n"
+      ]
+    },
+    "qa_job_id": {
+      "ref": "377cc011-6cf9-8571-8b32-c5afffa9dd9c"
+    },
+    "qa_run_id": {
+      "ref": "98aec232-9f91-83c1-bbe8-733f0156d653"
+    },
+    "started_at": "2026-08-21 20:46:31",
+    "status": "passed"
+  },
+  "deleted": false,
+  "identity": "635403c7-ce22-836b-84a7-603915b67c9e",
+  "schemaVersion": 1
+}

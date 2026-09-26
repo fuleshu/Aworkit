@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads untrusted requirement and selected-local-candidate facts solely to compile a fresh local AuthorityManifest and user summary; imported permits, approvals, credentials and scopes never carry over",
+    "destination_external_id": "aworkit.portable_store.rebind_planner",
+    "external_id": "rel.core_authority.portable.rebind",
+    "id": 275,
+    "source_external_id": "aworkit.trusted_core.authority",
+    "tags": "Relationship,Boundary Contract,Authority,Read Only",
+    "technology": "Read-only ContinuationRebindPlanV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "84afdfec-fabc-8473-9fd9-7d9ad7a0ef83",
+  "schemaVersion": 1
+}

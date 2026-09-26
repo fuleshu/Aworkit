@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-23 12:08:05",
+    "qa_job_id": {
+      "ref": "8136ab71-2eeb-8fc6-8c16-b468fd82a8ad"
+    },
+    "tag": "ipc"
+  },
+  "deleted": false,
+  "identity": "f9f01ad7-6465-8dda-8543-6b054e8d6080",
+  "schemaVersion": 1
+}

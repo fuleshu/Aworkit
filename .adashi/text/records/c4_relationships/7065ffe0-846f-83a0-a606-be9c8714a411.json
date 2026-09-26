@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Consumes attempt, evaluator, gate, and visible feedback-iteration allowances before returning another legal action",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.worker_attempt_policy.limits",
+    "id": 137,
+    "source_external_id": "aworkit.workflow_worker.attempt_policy",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Attempt and iteration admission port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7065ffe0-846f-83a0-a606-be9c8714a411",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Reads the verified portable head, frozen snapshot reference, checkpoint, committed events and commit identities through a recovery-only port for pure reducer folding and ambiguous-write reconciliation without replaying effects",
+    "destination_external_id": "aworkit.portable_store.commit_coordinator",
+    "external_id": "rel.core_recovery.portable.commit_read",
+    "id": 273,
+    "source_external_id": "aworkit.trusted_core.recovery",
+    "tags": "Relationship,Boundary Contract,Read Only,No Replay",
+    "technology": "PortableRecoveryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "06eedd64-5cfd-860e-8a20-2a57c24f6a0c",
+  "schemaVersion": 1
+}

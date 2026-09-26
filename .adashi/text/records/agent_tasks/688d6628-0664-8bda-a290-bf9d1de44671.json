@@ -1,0 +1,50 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/bound_recovery_tests.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/tests.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/descriptor_upgrade.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/settingsV2Port.test.ts\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-21 10:24:14",
+    "completion_memo": {
+      "lines": [
+        "Implemented and committed as 7a09822 on top of 2ce34a6.\n",
+        "\n",
+        "Delivered: (1) tool.subagent_fork creates a child from a declared, bounded projection of the delegating Agent's committed conversation. The projection (forkMaximumItems/forkMaximumBytes) is frozen in the binding, captured once per model turn through ModelToolInvocationPortV1::observe_parent_turn into RunEventStream, and hashes deterministically, so the same parent revision and bounds yield the same child prefix. (2) Every child now owns a durable ChildContextFrameV1 in the Chat's operational record store (kind pipeline.subagent-child, keyed childId:headRevision) holding identity, lineage, depth, inherited identities, immutable prompt prefix, committed exchanges, status and counters. tool.subagent returns childId/status/headRevision. (3) tool.subagent_list, tool.subagent_message and tool.subagent_cancel are owner-isolated to the exact Chat, Run and delegating Agent (resolved from the frozen delegation scope, not dispatcher.context.node_id); message resumes the child at its committed head with a positioned context message and a seeded initial_exchanges vector; cancel closes the scope, stops the child's jobs and is idempotent; a cancelled child reports closed without error. Children never inherit any of the five subagent tools. (4) maximumDepth (default 1, keeps nesting unavailable per the approved contract) and maximumChildren (default 32) are admitted before any child context exists; a refused spawn is a failed tool result. (5) Manifest entries, frozen descriptions, adapters, scopes, approval classes, Settings validation and desktop subagent attribution were extended; docs/subagent-tool-inheritance.md documents the contract.\n",
+        "\n",
+        "Verification: 8 new pipeline tests cover continuation with a byte-stable prefix, fork inheritance/reproducibility, the frozen projection bound, list/cancel/messaging idempotency, unknown-child refusal, fan-out and depth exhaustion before child creation, and replay without re-execution. cargo test --lib: 388 passed, 1 pre-existing failure (compaction_integration::checkpoint_calling_an_unselected_capability_is_declined_without_ending_the_node) that was verified failing at 088445b before this work. tsc --noEmit clean; vitest 404 passed with only the pre-existing systemTextScale and app.integration-timeout failures.\n",
+        "\n",
+        "Two deliberate deviations, documented in the doc and memory: (a) no model-turn, elapsed-time, aggregate-call or request-size cap is reintroduced, because the standing 2026-09-14 user constraint makes the provider and model context window the only budgets; depth and fan-out are the structural admission bounds, and the fork projection is the context-byte bound. (b) A continuable child still settles synchronously (the parent waits for the child turn-set) and stays resumable afterwards; genuine concurrent background child turns are not introduced. No design change was required: the component already owns this lifecycle."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-21 07:47:57",
+    "created_files": "[\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_continuation.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/frames.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/fork.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/control.rs\"]",
+    "description": {
+      "lines": [
+        "Extend tool.subagent beyond the current one-shot child with fork, continuation, listing and cancellation, using the child-context lifecycle the design already owns.\n",
+        "\n",
+        "Current state. tool.subagent runs one bounded child turn with an isolated conversation, inherited read-only tools, a turn budget and no nested delegation; the child result returns to the parent loop. DSH standard additionally offers continuable background children and subagent_fork (a child that inherits selected history), plus list/control over children.\n",
+        "\n",
+        "Design fit. The design's Temporary Subagent Context Lifecycle already specifies the target model: spawn from a declared parent projection, isolated child root revision and lineage, declared result contract, integration only through a declared map/summary/evaluator transform, nested depth/fan-out/deadline/context/turn/budget admission before spawn, and no wholesale merge of child state.\n",
+        "- subagent_fork: create the child context from a declared, bounded projection of the parent revision set, with its own lineage and immutable head. The projection (which messages/evidence are inherited) is part of the frozen delegation contract, not a runtime heuristic, so the same fork yields the same child prefix.\n",
+        "- Continuable children: a settle-on-turn child that stays resumable inside the Run, with tool.subagent_list, tool.subagent_message and tool.subagent_cancel controls. Every control is owner-isolated to the parent Chat/Run, idempotent by command id, and brokered; a child turn is one brokered invocation with stable invocation/attempt/authority/budget references.\n",
+        "- Evidence and recovery: keep committing the existing subagent span/card facts; recovery restores child lineage and committed invocation ids and never re-runs an acknowledged child effect. An uncertain child outcome follows the frozen attempt policy, never an automatic retry.\n",
+        "- Limits: nested depth, fan-out, deadline, turns, context bytes and inherited budget are admitted before spawn and charged to the ancestor ledger.\n",
+        "\n",
+        "Non-goals. Long-lived agents outside the Run; children that approve their own side effects (they still return approval-dependent actions to the parent); automatic result merging.\n",
+        "\n",
+        "Outputs. Fork and continuation contracts and DTOs, three new tools in the manifest/frozen matrix/Settings, context projection and lineage handling, cancellation and cleanup, and tests for fork isolation and stable projection, continuation across turns, listing/messaging, cancellation, depth and budget exhaustion, and no-replay recovery."
+      ]
+    },
+    "id": 112,
+    "number": 111,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Continuable, forked, and controllable subagent delegation",
+    "updated_at": "2026-09-21 20:13:33"
+  },
+  "deleted": false,
+  "identity": "688d6628-0664-8bda-a290-bf9d1de44671",
+  "schemaVersion": 1
+}

@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:50",
+    "qa_job_id": {
+      "ref": "4cd7c20a-daa7-8a59-930d-d208ec1d79e5"
+    },
+    "tag": "workflow-editor"
+  },
+  "deleted": false,
+  "identity": "b1604a54-1662-8d73-80aa-3e34e16d513b",
+  "schemaVersion": 1
+}

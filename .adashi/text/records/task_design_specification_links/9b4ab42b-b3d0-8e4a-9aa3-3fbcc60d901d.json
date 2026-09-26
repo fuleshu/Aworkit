@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:33",
+    "design_external_id": "uml.workflow_worker.suspension_recovery_state",
+    "id": 92,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "ca9f81fa-ef4e-8ec0-8bc5-f4347386f607"
+    }
+  },
+  "deleted": false,
+  "identity": "9b4ab42b-b3d0-8e4a-9aa3-3fbcc60d901d",
+  "schemaVersion": 1
+}

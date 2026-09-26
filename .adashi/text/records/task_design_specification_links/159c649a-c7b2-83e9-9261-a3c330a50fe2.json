@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:53",
+    "design_external_id": "uml.local_store.capture_retention",
+    "id": 249,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "94e278e0-21e1-8ecf-ada5-5b8c625fee91"
+    }
+  },
+  "deleted": false,
+  "identity": "159c649a-c7b2-83e9-9261-a3c330a50fe2",
+  "schemaVersion": 1
+}

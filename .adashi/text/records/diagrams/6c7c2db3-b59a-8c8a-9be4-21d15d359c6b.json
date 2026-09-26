@@ -1,0 +1,52 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.local_store.storage_coordinator",
+    "created_at": "2026-08-20 22:53:00",
+    "diagram_type": "flow",
+    "id": 22,
+    "key": "uml.local_store.startup_integrity_recovery",
+    "kind": "mermaid",
+    "sort_order": 22,
+    "source": {
+      "lines": [
+        "flowchart TD\n",
+        "A[Core Recovery requests startup storage gate] --> B[Acquire exclusive maintenance generation]\n",
+        "B --> C[Read schema manifest and verify filesystem and SQLite identities]\n",
+        "C --> D{All store formats readable?}\n",
+        "D -->|Newer unsupported| E[Open affected stores inspectable read-only and block continuation]\n",
+        "D -->|Older supported| F[Create and hash last-known-good backup]\n",
+        "F --> G{Backup complete and verified?}\n",
+        "G -->|No| E\n",
+        "G -->|Yes| H[Run ordered restart-idempotent migrations]\n",
+        "H --> I[SQLite transaction plus staged fsync and rename JSON migration preserving unknown fields]\n",
+        "I --> J{Post-migration integrity valid?}\n",
+        "D -->|Current| J\n",
+        "J -->|No corruption| K[Release canonical reads and rebuild disposable projections]\n",
+        "J -->|Corruption| L[Quarantine affected original without overwrite]\n",
+        "L --> M{Core selected a validated backup?}\n",
+        "M -->|No| E\n",
+        "M -->|Yes| N[Restore into staging]\n",
+        "N --> O{Schema hashes sequences and referenced artifacts verify?}\n",
+        "O -->|No| E\n",
+        "O -->|Yes| P[Atomically promote restore and retain quarantined evidence]\n",
+        "P --> K\n",
+        "K --> Q[Rebuild local projections from committed sequence and portable cache from verified parent-linked segments]\n",
+        "Q --> R[Load frozen snapshot reference and latest committed logical checkpoint]\n",
+        "R --> S[Fold only subsequent committed semantic events through pure reducers]\n",
+        "S --> T[Reconcile dedup and outbox preserving waits approvals queues attempts and uncertain outcomes]\n",
+        "T --> U[Issue rehydration envelope and release startup gate]\n",
+        "U --> V[Resume logical scheduling from committed position]\n",
+        "V --> W[Never replay model tool shell file MCP plugin or external-agent calls]"
+      ]
+    },
+    "title": "Startup Integrity, Migration, Backup Recovery, Rebuild and No-Effect Rehydration",
+    "updated_at": "2026-08-20 22:53:00",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6c7c2db3-b59a-8c8a-9be4-21d15d359c6b",
+  "schemaVersion": 1
+}

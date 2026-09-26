@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-bootstrap-helper/src/lib.rs\"]",
+    "completed_at": "2026-08-23 10:55:59",
+    "completion_memo": "Implemented the platform-neutral application generation watchdog and hermetic process adapter. Cleanup is cooperative then forced and must prove the exact tree empty; launches are verification-only with fresh nonce, immutable slot/selector and prior-cleanup preconditions, exact generation handshake, independent health, and complete plan-bound focused verification evidence. Every post-spawn failure is rollback-biased and cleaned before return.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:33:42",
+    "created_files": "[\"crates/aworkit-bootstrap-helper/src/watchdog/mod.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/model.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/ports.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/watchdog.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/hermetic.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/tests.rs\"]",
+    "description": "Implement exact-identity candidate/rollback launch policy over the helper's PlatformProcessPort, startup/health/focused-verification deadlines, authenticated generation handshakes, cleanup ordering, detached-helper survival, stable-launcher ManualRecoveryNotice behavior, and a hermetic process adapter. Readiness is not verification and ambiguous proof is rollback-biased. Native process/IPC implementations are owned by M12.2.",
+    "id": 71,
+    "number": 71,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M11.5 — Implement platform-neutral generation launch and watchdog policy",
+    "updated_at": "2026-09-22 07:21:20"
+  },
+  "deleted": false,
+  "identity": "71fe39db-a238-8a35-80ed-9f521ffda096",
+  "schemaVersion": 1
+}

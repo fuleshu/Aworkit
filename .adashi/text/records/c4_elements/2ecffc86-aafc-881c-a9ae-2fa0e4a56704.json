@@ -1,0 +1,28 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Anchors all portable-repository IO inside the exact selected project workspace, supplies cross-platform durable file primitives and descriptive Git/worktree facts, and preserves ordinary user/Git ownership of the files.\n",
+        "Owned ephemeral facts: ResolvedPortableRootV1 contains WorkspaceIdentityV1, handle/file identity, relative repository path, filesystem capability/durability verdict, case-sensitivity mode, and optional Git repository/worktree/branch/HEAD identifiers as descriptive metadata only. AtomicWriteReceiptV1 reports file and parent-directory durability. The adapter owns no canonical event or Git index state.\n",
+        "Ports: OpenAnchoredRead, CreateNewAndFsync, AtomicReplaceExpected, FsyncDirectory, ListControlledDirectory, AcquireBranchGuard, RevalidateRootIdentity, and ReadGitFacts. Portable internal paths are fixed-layout and reject symlink/reparse components. Expected-content guards are rechecked immediately before atomic replacement; branch guards coordinate local writers but never substitute for immutable parent/head claims across machines.\n",
+        "Filesystem/Git behavior: same-volume temp/write/fsync/rename and directory fsync are used; Windows replacement and sharing semantics receive dedicated implementations. Unsupported atomicity, removable/network filesystem limitations, case collisions, root replacement, partial sync, or Git conflict markers yield explicit read-only/degraded diagnostics. History order comes solely from parent hashes, branch ordinals, and head claims—not mtimes, commit dates, checkout order, or Git log order.\n",
+        "Boundary and security: all files remain visible inside the user-chosen workspace and may be edited, ignored, committed, merged, or deleted by the user/Git. Aworkit may read status/identity to explain coexistence but never invokes stage, commit, merge, push, pull, checkout, reset, or remote operations, and never auto-creates a Git commit.\n",
+        "NFRs/non-responsibilities: bounded/cancellable IO, crash-injection tests, path and durability observability, and Windows/Linux/macOS parity. No workspace authority claim, path-policy bypass, canonical-backend selection, data scrubbing, branch merging, artifact execution, or user-version-control automation."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.portable_store.workspace_adapter",
+    "id": 84,
+    "name": "Filesystem & Git Coexistence Adapter",
+    "parent_external_id": "aworkit.portable_store",
+    "tags": "Component,Portable Store,Filesystem,Git,Boundary",
+    "technology": "Rust cross-platform anchored filesystem adapter with read-only Git/worktree inspection",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "2ecffc86-aafc-881c-a9ae-2fa0e4a56704",
+  "schemaVersion": 1
+}

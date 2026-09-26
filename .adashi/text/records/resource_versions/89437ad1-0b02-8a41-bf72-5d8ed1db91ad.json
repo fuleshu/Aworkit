@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.app_shell|file|desktop/src/shell/NavigationPane.tsx",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-15 09:08:28",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "89437ad1-0b02-8a41-bf72-5d8ed1db91ad",
+  "schemaVersion": 1
+}

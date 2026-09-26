@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests/cancels paginated evidence and typed artifact reveal actions",
+    "destination_external_id": "aworkit.desktop_ui.projection_gateway",
+    "external_id": "rel.ui.inspector.gateway",
+    "id": 40,
+    "source_external_id": "aworkit.desktop_ui.evidence_inspector",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "0c82da45-6eef-8727-96d4-fd72fdbcf0a5",
+  "schemaVersion": 1
+}

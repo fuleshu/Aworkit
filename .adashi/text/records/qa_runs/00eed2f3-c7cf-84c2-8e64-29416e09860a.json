@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-08-23 12:16:39",
+    "id": 37,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[12],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-08-23 12:14:05",
+    "status": "failed",
+    "summary": "0 passed, 1 failed, 0 timed out",
+    "trigger_source": "codex-m12-task-78-retry-after-diagnostics-conformance"
+  },
+  "deleted": false,
+  "identity": "00eed2f3-c7cf-84c2-8e64-29416e09860a",
+  "schemaVersion": 1
+}

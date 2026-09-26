@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Emits negotiated capability facts, native session IDs, progress, approval requests, artifacts, cancellation evidence, opacity, and terminal facts",
+    "destination_external_id": "aworkit.capability_host.result_pipeline",
+    "external_id": "rel.host_external.result",
+    "id": 184,
+    "source_external_id": "aworkit.capability_host.external_agents",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Bounded external-agent raw-event stream",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "711370ee-008f-8ed3-bf55-71cc43bf7c1d",
+  "schemaVersion": 1
+}

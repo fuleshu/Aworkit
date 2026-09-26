@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:26:15",
+    "design_external_id": "uml.workflow_worker.contract_structure",
+    "id": 72,
+    "sort_order": 2,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "dbdd8305-c462-8245-b3da-35852a433d7f"
+    }
+  },
+  "deleted": false,
+  "identity": "05576983-50c5-8097-8284-ad9ba82147aa",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.trusted_core.first_input_freeze_start",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-08-20 22:00:11",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "003515e5-21e3-8119-9dec-44536dc6a472",
+  "schemaVersion": 1
+}

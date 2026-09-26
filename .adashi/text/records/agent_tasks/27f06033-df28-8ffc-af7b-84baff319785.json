@@ -1,0 +1,39 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 07:11:29",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Review and either accept or revise the paired general Aworkit desktop reference templates before the three feature-specific mockups are changed.\n",
+        "\n",
+        "Decision scope:\n",
+        "1. Confirm that the flush-pane workbench, system typography, compact density, restrained cobalt accent, neutral surfaces, and reduced card usage read as a desktop application rather than a web dashboard.\n",
+        "2. Confirm the reference geometry: 208 px navigation (184–264 resizable, 44 px collapsed), 320 px inspector (280–420 resizable), 48 px content header, 28 px navigation rows, 24/28 px controls, 10–12 px pane padding, and 76 px composer growing to 200 px.\n",
+        "3. Confirm paired Light/Dark token palettes, theme parity, semantic status colors, high-contrast behavior, and System/Light/Dark preference semantics.\n",
+        "4. Confirm native OS window decorations as the default; custom 32 px chrome is only a fallback where platform integration requires it.\n",
+        "5. Identify any changes required before applying this baseline to Chat Shell, Workflow Editor, and Management Repair.\n",
+        "\n",
+        "Decision: Accepted by the user on 2026-08-21. The compact Light/Dark desktop baseline is the implementation-guiding visual contract. The three feature-specific mockups are authorized for revision against it.\n",
+        "\n",
+        "Required output satisfied: explicit acceptance recorded. This unlocks revision of Chat Shell, Workflow Editor, and Management Repair while leaving the separate framework/ChatShell reuse ADR open."
+      ]
+    },
+    "id": 4,
+    "number": 4,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Discussion: approve compact desktop light/dark UI baseline",
+    "updated_at": "2026-08-21 07:28:05"
+  },
+  "deleted": false,
+  "identity": "27f06033-df28-8ffc-af7b-84baff319785",
+  "schemaVersion": 1
+}

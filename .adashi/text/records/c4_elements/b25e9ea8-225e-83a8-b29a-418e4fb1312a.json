@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Executes Model Call and Aworkit Agent node semantics behind stable Aworkit-owned ports. It compiles each node's declared Harness Context projection into an inspectable provider request, proposes model and allowed tool invocations through the core, and runs the internal model-tool cycle until the model returns a final answer, the user cancels, or a real authority, deadline, context, token, transport, or contract failure is reached. Model-turn and aggregate tool-call counters are telemetry, not termination controls.\n",
+        "Owned runtime state: ModelCallFrameV1 and AgentLoopFrameV1 with node, attempt, selected context revision/projection hash, instruction-layer provenance, internal turn number, pending invocation IDs, allowed capability references, accumulated structured observations, repeat-tool reminder state, usage, deadline, and result-contract status.\n",
+        "Input/output DTOs and ports: ExecuteModelNode(ModelNodeInputV1), StartAgentNode(AgentNodeInputV1), ApplyCommittedCapabilityOutcome, CancelAgentLoop, and CompileProviderRequest; emits InvocationProposalV1, ModelNodeOutcomeV1, AgentNodeOutcomeV1, normalized usage, and transparency events labelled reasoning_raw, reasoning_summary, progress, or assistant_output only as supplied.\n",
+        "Algorithms and invariants: prompt compilation preserves ordered source layers, transformations, omissions, and redactions. Every model or internal tool step uses a stable invocation identity and an authority/resource-budget reference from the snapshot. The internal Agent loop is contained inside one harness node and never masquerades as a visible canvas loop. Tools not configured for that Agent cannot be requested. Consecutive calls with the same tool name and deeply key-sorted JSON arguments trigger model-visible advisory reminders after calls 3, 5, and 8; call IDs are ignored, argument changes reset the chain, and reminders never veto or rewrite a requested tool. Parent agents and subagents use the same policy. Rig may translate completions, streams, tool calls, MCP helpers, or an Agent implementation, but Aworkit DTOs remain the boundary.\n",
+        "Failure, cancellation, and recovery: provider and contract failures are normalized for Attempt Policy. OutcomeUncertain from a potentially side-effecting tool stops automatic internal retry and returns control to the harness or user. Cancellation propagates through the Core Gateway. Approval suspension checkpoints persist the repeat chain and pending reminder alongside committed exchanges, so resume neither loses the advisory state nor replays old work. Recovery uses only Aworkit loop frames and committed broker outcomes, never Rig AgentRun, provider snapshots, or replay of an old call.\n",
+        "Performance and NFRs: strict token, cost, deadline, context-byte, durable-history, and per-provider-response structural bounds; streaming backpressure and semantic coalescing; cancellable request compilation; usage reconciliation; bounded observations; and adapter conformance tests across Rig upgrades. There is no arbitrary total model-turn or aggregate tool-call cap.\n",
+        "Normative agent-span ownership and causality: For an Agent node, this component proposes one AgentLoop child of its GraphNode. Each actual provider request is a distinct ModelCall child with normalized redacted compiled input; its source-supplied reasoning/progress/assistant deltas retain that ModelCall SpanId. A model-emitted tool request terminates that ModelCall after the request event. The resulting ToolCall is a sibling child of AgentLoop and cites the request EventId as causation; any subsequent provider request creates a new ModelCall, so later reasoning cannot be appended to the prior call. Span terminal proposals contain actual normalized redacted output/error or immutable artifact references. It never publishes or commits these proposals itself.\n",
+        "Non-responsibilities: no provider adapter execution, host or MCP connection, secret access, authority, concrete tier rebinding, visible graph-loop scheduling, canonical history, or external-agent lifecycle emulation.\n",
+        "Stable cross-turn provider prefix: Agent upstream graph output is bounded contextual user-role data appended at the current invocation's exchange boundary, after the newly accepted user message. Frozen instructions and prior selected history remain unchanged between user turns, and the tool definitions a provider is offered are always the acting pass's frozen selection resolved from this build. Existing durable context checkpoints admit the new graph context once per node/invocation and retain its historical position through tool continuation, approval resume and restart; explicit edits and compaction retain their existing authority. This applies to callable-tool and text-only Agents. Original conversation and execution evidence are never rewritten or replayed. Specification: docs/agent-prefix-cache.md.\n",
+        "Tool interface admission: a durable context checkpoint or a saved context revision records the tool interface of the pass that wrote it, while the acting pass's frozen selection is the only interface a provider is offered. Recorded calls are re-pointed at the provider name this pass offers for the same capability id; a recorded call whose capability the pass no longer selects cannot be represented, and that recorded projection is declined with a committed context.selection-declined fact so the pass continues on its current context and its next checkpoint replaces the unrepresentable one. A tool interface therefore never ends an Agent node, and context preparation failures are reported distinctly from tool-authority refusals.\n",
+        "Text-only model/Agent context operations use node-scoped invocation identities so a planner and downstream text Agent cannot collide in compression-scope ownership. An explicit context edit within an invocation owns already-admitted context; resumption must not duplicate or resurrect its initial graph context."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.workflow_worker.model_agent",
+    "id": 45,
+    "name": "Model Call & Internal Agent Loop Orchestrator",
+    "parent_external_id": "aworkit.workflow_worker",
+    "tags": "Component,Workflow Worker,Models,Agents,Rig Boundary",
+    "technology": "Rust Aworkit orchestration ports with replaceable Rig adapters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b25e9ea8-225e-83a8-b29a-418e4fb1312a",
+  "schemaVersion": 1
+}

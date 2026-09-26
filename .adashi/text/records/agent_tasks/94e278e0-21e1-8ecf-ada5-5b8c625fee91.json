@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/app.integration.test.tsx\"]",
+    "completed_at": "2026-08-22 09:11:17",
+    "completion_memo": "Created and executed the complete Milestone 10 automated QA gate. Coverage includes redaction and physical retention bounds, crash recovery and exact unavailable states, stable recurring-error grouping/regression, transition and receipt integrity, bounded authority and token budgets, artifact exact-read gates, candidate/version conflicts, disclosure completeness, rejection/defer paths, capability/enrollment/unsupported presentation, helper-mediated activation/rollback, idempotent crash redrives, durable multi-group native replay, stale/cross-group/race rejection, keyboard focus, accessibility, TypeScript, and production build. The lazy route integration boundary was stress-run five times after increasing its asynchronous test wait to remove a CI-only one-second flake. qa/milestone-10.sh passed locally, and Adashi QA job 10 run group 28 / QA run 28 passed with exit code 0. The script uses RUSTFLAGS=-D warnings because Rust 1.97 Clippy currently stops on documented pre-existing pedantic debt in earlier protocol/local-store modules.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:32:53",
+    "created_files": "[\"qa/milestone-10.sh\",\"crates/aworkit-trusted-core/tests/milestone_10_repair.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/activation.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/artifacts.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/audit.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/policy.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/reconciliation.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/retries.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/support/mod.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/support/ports.rs\",\"desktop/src/management/management.integration.test.tsx\",\"desktop/src/management/repair.test.ts\"]",
+    "description": "Create automated QA tests for Milestone 10. Cover redaction and retention, recurring-error grouping and regression state, bounded investigation, artifact/evidence integrity, candidate version conflicts, complete disclosure, rejection, Supported/EnrollmentRequired/Unsupported presentation, keyboard/accessibility behavior, and proof that review cannot activate or broaden authority by itself.",
+    "id": 66,
+    "number": 66,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M10.QA — Create QA tests for diagnostics and repair review",
+    "updated_at": "2026-08-22 09:11:17"
+  },
+  "deleted": false,
+  "identity": "94e278e0-21e1-8ecf-ada5-5b8c625fee91",
+  "schemaVersion": 1
+}

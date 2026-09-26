@@ -1,0 +1,66 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src/App.tsx\",\"desktop/src/adapters/contracts.ts\",\"desktop/src/adapters/defaultAdapters.ts\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/MarkdownLink.tsx\",\"desktop/src/shell/NavigationPane.tsx\",\"desktop/src/workbench/SettingsScreen.tsx\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/settings-v2/settingsDraft.ts\",\"desktop/src/workbench/settingsV2Port.ts\",\"desktop/src/workbench/configuration.test.ts\",\"desktop/src/workbench/SettingsScreen.test.tsx\",\"desktop/src/workbench/settings-v2/settingsSavePostcondition.test.ts\"]",
+    "completed_at": "2026-09-22 21:33:57",
+    "completion_memo": {
+      "lines": [
+        "Implemented and pushed as b24e145, with the editor-unset fallback covered in e7fc079.\n",
+        "\n",
+        "Core\n",
+        "- runtime/path_actions.rs holds the whole feature: PathActionV1 (inspect, open_default, open_editor, reveal), PathActionRequestV1 { chatId, path, action } and PathActionOutcomeV1 { absolutePath, eligible, reason, performed }. resolve_in_workspace refuses an empty or oversized path, normalizes lexically so `..` is caught even when the target does not exist, then re-checks containment after canonicalization so a symlink inside the workspace cannot lead outside it; a missing target stays resolvable but ineligible, so the menu can explain rather than pretend the workspace rule failed. Only an eligible path reaches the OS, through one detached process that is reaped on a helper thread.\n",
+        "- service.path_action resolves the workspace from the Chat's frozen context (chat workspace, else project binding) and reads the editor from Settings; main.rs exposes chat_path_action and registers it.\n",
+        "\n",
+        "Presentation\n",
+        "- adapters/contracts.ts adds the path-action vocabulary and NativePresentationAdapter.pathAction; the default adapter invokes chat_path_action and, unlike the choosers, lets a failure reach the caller instead of turning it into \"unavailable\".\n",
+        "- App.tsx binds the port to the selected Chat's id and provides it to the conversation, so the screen never guesses which workspace a path belongs to.\n",
+        "- chat/PathMenuTarget.tsx + PathContextMenu.tsx: right-click on a markdown link whose target is a workspace path, or on the file tool card path (read, write, edit, list, search, grep, whose card now names the acted-on file instead of repeating the tool id), opens a viewport-fitted menu that first asks the core to inspect the path, names the resolved absolute location, and disables every entry with the core's own reason when the path is missing or outside the workspace. Left click stays inert; Escape, an outside pointer press, resize or scroll dismiss it; a refused or failed action is published through the existing Chat notification publisher with the path and the reason. Without the port, outside the desktop app, or for any non-path target, the element is returned untouched. Fake paths, schemes such as file:/javascript: and bare prose are never treated as paths.\n",
+        "- shell/menuPosition.ts extracts the existing fitMenuToViewport helper so the sidebar menu and the path menu share one viewport rule.\n",
+        "\n",
+        "Settings\n",
+        "- Desktop section with DesktopConfigurationV2.editor: one bare command from PATH or an absolute executable path, empty for the operating system's default application. The core validates the stored value and the TypeScript validation reports the same rule before Save, focusing desktop-editor; the section participates in the ordinary Save/Discard draft and is marked Unsaved while it differs. Open in editor starts that command with the resolved file as its single argument.\n",
+        "\n",
+        "Deliberate deviation from the task text: the editor preference is one command plus the file argument, not an executable plus a free-form argument template. An argument template would let a stored string choose arbitrary flags for an OS-launched process, and a template was not needed for the editors in question.\n",
+        "\n",
+        "Verification: Rust desktop lib 426 passed with one pre-existing unrelated compaction-integration failure; the 7 new path-action tests cover resolution, traversal, symlink, missing-file, action routing and the editor fallback. TypeScript 474-477 passed with tsc clean; one long-standing 5-second-timeout test in the Settings suite flakes only when the whole suite runs in parallel, and passes 50/50 in isolation. New tests: path menu behaviour (6), file tool card paths (3), desktop editor validation and settings focus, and the Settings save flow for the editor."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-22 20:55:51",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Make a file path the model mentions actionable, without letting model output drive the desktop shell.\n",
+        "\n",
+        "Current state. Assistant text renders as CommonMark/GFM, but link activation is restricted: only http(s) targets are clickable (opened in the OS browser through the Tauri opener), and every other target, including a relative path, renders as an inert label whose click is prevented by design. So a reply can name reports/summary.md and the user must find the file by hand, and the path shown on a file tool card is equally inert.\n",
+        "\n",
+        "Deliverable. A right-click context menu on a path-bearing element with three actions: open with the OS default application, open in the configured editor, and reveal in the file manager. A plain left click stays inert, so model-authored text still cannot navigate the desktop shell.\n",
+        "\n",
+        "Design fit.\n",
+        "- One core command performs every action: it resolves the requested path against the workspace root with the existing path rules (inside the root, no parent traversal or symlink escape), requires the path to exist, and only then performs the action natively. The webview never passes a model-authored string to an OS-opening API and gains no broad open-any-path permission; the opener capability keeps only external web URLs.\n",
+        "- Menu entries name the resolved absolute path and the action, and are disabled with a reason when the path is outside the workspace or the file is missing.\n",
+        "- Right-click targets are the elements that already carry a path: an explicit markdown link whose target is a path, and the path shown on file tool cards (read, write, edit, list, grep). Bare paths inside prose are not linkified.\n",
+        "- An optional Settings entry fixes the editor (executable plus an argument template). Unset, open-in-editor uses the OS default for the file's format.\n",
+        "- A failed action reports through the existing notification publisher, naming the path and the reason. Opening an executable file with the OS default may run it, so the menu names the resolved path and the choice is informed.\n",
+        "\n",
+        "Non-goals. Auto-opening anything when a Run finishes; a deliverable, upload or file-sharing surface; previews, thumbnails or content rendering inside the chat; linkifying arbitrary prose; granting the webview a general path-opening permission.\n",
+        "\n",
+        "Outputs. Core path-action command with workspace scoping and existence checks; markdown-link and file-tool-card context menu wiring; editor preference in Settings with schema, validation and UI; failure notifications; and tests for eligible and ineligible paths, traversal and symlink refusal, action routing, editor-unset fallback, and failure reporting.\n",
+        "\n",
+        "Supersedes task 115 (deliverable artifacts and a model-facing present tool): the useful part of that task is acting on a produced file where the path already appears, which this covers without the present tool, the artifact-store plumbing or previews."
+      ]
+    },
+    "id": 122,
+    "number": 121,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Path context menu: open, open in editor, reveal in folder",
+    "updated_at": "2026-09-22 21:33:57"
+  },
+  "deleted": false,
+  "identity": "1f9f3ea8-9eaf-870a-a8db-c2f8c03f6d9d",
+  "schemaVersion": 1
+}

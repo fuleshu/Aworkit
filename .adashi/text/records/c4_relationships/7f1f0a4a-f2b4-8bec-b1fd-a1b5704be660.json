@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Closes the incumbent revision's ledger scope and opens the next one, recording consumed usage and any user-authorized deadline change instead of reversing or minting budget.",
+    "destination_external_id": "aworkit.workflow_worker.limits",
+    "external_id": "rel.core.rebind.limits",
+    "id": 341,
+    "source_external_id": "aworkit.trusted_core.revision_rebind",
+    "tags": "Relationship,Internal Core Contract,Budgets",
+    "technology": "Hierarchical ledger scope transition",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7f1f0a4a-f2b4-8bec-b1fd-a1b5704be660",
+  "schemaVersion": 1
+}

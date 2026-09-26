@@ -1,0 +1,50 @@
+{
+  "collection": "diagrams",
+  "data": {
+    "attached_to_external_id": "aworkit.workflow_worker.context_store",
+    "created_at": "2026-09-08 12:53:52",
+    "diagram_type": "sequence",
+    "id": 71,
+    "key": "uml.workflow_worker.context_compression",
+    "kind": "mermaid",
+    "sort_order": 46,
+    "source": {
+      "lines": [
+        "sequenceDiagram\n",
+        " participant Loop as Frozen Agent loop\n",
+        " participant Broker as Trusted tool broker\n",
+        " participant Store as Canonical Chat evidence\n",
+        " participant Compress as Local compression pipeline\n",
+        " participant Model as Provider\n",
+        " Loop->>Store: Commit outer invocation node and child scope\n",
+        " Model-->>Loop: Tool call proposal\n",
+        " Loop->>Broker: Validate frozen binding and invoke\n",
+        " Broker->>Store: Settle original result\n",
+        " Loop->>Compress: Fresh result and frozen policy\n",
+        " Compress->>Compress: Lossless formats with reconstruction and savings gate\n",
+        " opt Adaptive mode and selected retrieval tool\n",
+        "  Compress->>Compress: Protected spans plus relevance diversity and anomalies\n",
+        " end\n",
+        " Compress->>Store: Commit scoped original reference and stable projection\n",
+        " Store-->>Loop: Durable projection\n",
+        " Loop->>Model: Admit result then balanced compaction at pressure\n",
+        " Note over Loop,Model: Previous projections remain unchanged across retries and requests\n",
+        " Model-->>Broker: Context read search or stats proposal\n",
+        " Broker->>Store: Resolve only within committed invocation scope\n",
+        " Store-->>Model: Bounded original page or ranked exact spans\n",
+        " Note over Store,Model: Retrieval bypasses compression\n",
+        " opt Explicit Chat fork\n",
+        "  Store->>Store: Copy scoped archive with parent provenance\n",
+        " end"
+      ]
+    },
+    "title": "Fresh observation compression and durable retrieval",
+    "updated_at": "2026-09-08 12:53:52",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "d32f645a-a92b-8e7b-8129-20cb896b15ed",
+  "schemaVersion": 1
+}

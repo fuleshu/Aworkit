@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "uml.desktop_ui.notification_lifecycle",
+    "resource_kind": "design.uml",
+    "updated_at": "2026-09-05 12:47:24",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "76486600-bc68-8410-b23a-9ad10815071b",
+  "schemaVersion": 1
+}

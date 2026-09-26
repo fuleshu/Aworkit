@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Forks all branch heads from one explicit parent and invokes the frozen reconciliation contract exactly once at join",
+    "destination_external_id": "aworkit.workflow_worker.context_store",
+    "external_id": "rel.worker_branch_join.context",
+    "id": 135,
+    "source_external_id": "aworkit.workflow_worker.branch_join",
+    "tags": "Relationship,Internal Worker Contract",
+    "technology": "Fork and explicit join-reconciliation port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "5d1b9f2b-6bb2-8e20-bb87-83361abdb1da",
+  "schemaVersion": 1
+}

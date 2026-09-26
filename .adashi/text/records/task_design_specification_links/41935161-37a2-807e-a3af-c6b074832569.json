@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:32:53",
+    "design_external_id": "mockup.desktop_ui.management_repair",
+    "id": 252,
+    "sort_order": 3,
+    "target_type": "mockup",
+    "task_id": {
+      "ref": "94e278e0-21e1-8ecf-ada5-5b8c625fee91"
+    }
+  },
+  "deleted": false,
+  "identity": "41935161-37a2-807e-a3af-c6b074832569",
+  "schemaVersion": 1
+}

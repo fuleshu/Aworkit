@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Redeems only server-declared authentication fields for the exact MCP binding and session generation",
+    "destination_external_id": "aworkit.capability_host.secret_materializer",
+    "external_id": "rel.host_mcp.secrets",
+    "id": 171,
+    "source_external_id": "aworkit.capability_host.mcp_sessions",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "Authenticated invocation-secret port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "f40047f0-66c9-88da-83f5-99ed911131e5",
+  "schemaVersion": 1
+}

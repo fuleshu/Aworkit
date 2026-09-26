@@ -1,0 +1,29 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Persists recurring-failure grouping and the durable evidence/state required for bounded, user-gated repair while leaving diagnosis, activation, restart, verification, and rollback decisions to the core Repair Orchestrator.\n",
+        "Owned records/files: ErrorGroupV1 keyed by normalized Fingerprint with version/status/count/first-last facts; immutable ErrorOccurrenceV1 keyed by OccurrenceId and semantic Event/Attempt/evidence references; diagnoses/workarounds; RepairCandidateV1 keyed by CandidateId/version/hash with complete diff/test/benchmark/consequence/removal/broadening/uncertainty references; VerificationV1, RegressionV1, RollbackPointV1, previous-working-build reference, and tamper-evident restart baton metadata. Large immutable evidence is stored by ArtifactId/hash.\n",
+        "Keys and ordering: occurrence and candidate IDs are stable; per-group ledgerVersion and candidateVersion use compare-and-swap. Occurrences/outcomes append and never rewrite; lifecycle transition records are ordered by ledger sequence, not timestamps. A matching post-repair failure appends a regression and reopens the group.\n",
+        "Ports: exposes ErrorRepairRepository and RestartBatonRepository only to the core Repair Orchestrator, immutable artifact evidence calls to Artifact Store, diagnostic correlation reads by DiagnosticRecordId, and read-only integrity/backup maintenance to the storage coordinator.\n",
+        "Durability/degraded behavior: group/candidate metadata, Management checkpoint reference, candidate hash, rollback point, explicit activation decision, and restart baton are fsynced before the core may quiesce. Baton/candidate mismatch, missing evidence, corruption, or failed integrity blocks activation and preserves the prior working pointer. Verification/rollback results append atomically; no failure triggers another repair automatically.\n",
+        "Retention/performance: compact fingerprints/summaries/outcomes remain long-lived to recognize regressions; bulky diagnostics/test artifacts follow explicit bounded evidence policy but leave hash/unavailable tombstones. Fingerprint lookup is indexed and intended to be sub-20 ms; writes are bounded and never block canonical event commits.\n",
+        "Security/non-responsibilities: secrets, credential values, lease material, unredacted protocol payloads, and hidden reasoning are prohibited. This repository does not investigate, modify source/configuration, compile, activate, restart, roll back, grant authority, or replace the Management Chat semantic event stream."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.local_store.error_repair_ledger",
+    "id": 69,
+    "name": "Recurring Error & Repair Evidence Ledger",
+    "parent_external_id": "aworkit.local_store",
+    "tags": "Component,Local Store,Management,Repair,Evidence",
+    "technology": "Rust SQLite repair ledger plus atomic restart-baton metadata",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "fc8e7c3b-d3fc-84a4-b4a4-e97ab988a6a0",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Sends only approved ModelRequestV1 projections to a concrete candidate in the frozen plan and retains exact outputs, visibility categories, usage, acceptance, and protocol evidence",
+    "destination_external_id": "ext.model_providers",
+    "external_id": "rel.host_model_gateway.providers",
+    "id": 196,
+    "source_external_id": "aworkit.capability_host.model_gateway",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Provider HTTPS APIs or local IPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "81312843-83bd-8661-9cdb-c96e07df7c53",
+  "schemaVersion": 1
+}

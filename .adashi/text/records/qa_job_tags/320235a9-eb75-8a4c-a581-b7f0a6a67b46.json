@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:12:33",
+    "qa_job_id": {
+      "ref": "a665aeea-d04b-8fcd-83cf-85bf3972d7e0"
+    },
+    "tag": "fault-injection"
+  },
+  "deleted": false,
+  "identity": "320235a9-eb75-8a4c-a581-b7f0a6a67b46",
+  "schemaVersion": 1
+}

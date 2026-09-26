@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-17 16:10:59",
+    "design_external_id": "uml.tool_supervision.soft_wait_proposal",
+    "id": 416,
+    "sort_order": 0,
+    "target_type": "uml",
+    "task_id": {
+      "ref": "a8cb860e-a304-8be6-b4da-6ead33392b8e"
+    }
+  },
+  "deleted": false,
+  "identity": "6bbe388f-f342-859f-8def-e112385f0071",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Requests new/fork/continue Chat navigation after core projection",
+    "destination_external_id": "aworkit.desktop_ui.app_shell",
+    "external_id": "rel.ui.chat.shell",
+    "id": 35,
+    "source_external_id": "aworkit.desktop_ui.chat_workspace",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "6f432093-bb5f-89a7-9ba5-f6f80843d13d",
+  "schemaVersion": 1
+}

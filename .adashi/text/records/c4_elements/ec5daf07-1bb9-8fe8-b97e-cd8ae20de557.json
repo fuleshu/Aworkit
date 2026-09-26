@@ -1,0 +1,33 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "Responsibilities: Supplies Management Chat scope, recurring-error ledger, bounded investigation progress, and repair-candidate review. Every candidate shows diagnosis, complete source and configuration diff, tests and benchmarks, consequences, uncertainty, removals, disables, broadenings and replacements, rollback point, build origin, activation profile and eligibility, integrity strength, and the decisive Activate and restart gate when supported.\n",
+        "\n",
+        "Owned state: selected issue or candidate, tabs, diff folds, filters, explicit review acknowledgement, and pending activation command ID. Candidate readiness, BuildOriginV1, LocalBuildEnrollmentStateV1, ActivationEligibilityV1, reason code, capability generation, checkpoint, build, restart, verification, regression, and rollback are core projections; the UI never infers eligibility from paths or signing.\n",
+        "\n",
+        "Contracts and exact disclosure: consumes Management scope, error ledger, repair task and candidate, PlatformCapabilityReportV1, and restart-recovery projections; accepts repair_candidate selection; emits InvestigateAndFix, CancelRepairTask, ExportPatch, ExportCandidate, OpenRebuildInstructions, RejectCandidate, RequestManagedLocalEnrollment, and ActivateRepairAndRestart(candidate ID, version, and capability digest) only after explicit user activation. Supported shows 'Build origin: Local source build', 'Repair activation: Available — unprivileged managed slots', and 'Integrity: Same-user hash/ownership; not publisher verified'. A local build that is not enrolled shows 'Local build is not enrolled. Set up a managed local installation, then restart from its launcher.' A packaged build shows 'Self-activation is unavailable for this packaged build. Export the candidate and update manually.' Unknown or conflicting origin shows 'Build origin could not be verified. Self-activation is disabled.'\n",
+        "\n",
+        "Gate behavior: Activate and restart is enabled only for a fresh Supported ManagedLocalBuildProfileV1 report and exact candidate version. EnrollmentRequired may offer the separate advanced-user 'Enable local repair activation' action but never a force-activate action. Packaged, unknown, conflicting, mismatched, stale-report, missing-checkout or toolchain, incompatible-data, and IPC-degraded states keep activation disabled while preserving diagnosis, editing, build and test evidence, export, rebuild instructions, and manual update options. An Unsupported result after the user's decision leaves the current build running and refreshes the exact reason. Restart shows checkpointed recovery; failure presents the core-reported rollback or manual-recovery instructions; recurrence is a regression, never auto-repair.\n",
+        "\n",
+        "Performance and accessibility: virtualized accessible diffs and logs, pass, fail and uncertainty with text and icons, non-color diff markers, accessible status text for every eligibility state, focus restoration after restart, explicit keyboard and screen-reader gate, and no status conveyed only by color. The accepted candidate-review mockup remains the Supported-state layout; unavailable states replace the activation action with the concise reason and relevant export, enrollment, or rebuild action without changing the desktop workbench grammar.\n",
+        "\n",
+        "Non-responsibilities: no eligibility inference, file modification, build or test execution, enrollment, activation, restart or rollback execution, privilege request, installer update, or continuous self-improvement."
+      ]
+    },
+    "element_type": "Component",
+    "external_id": "aworkit.desktop_ui.management_repair",
+    "id": 23,
+    "name": "Management Repair Review",
+    "parent_external_id": "aworkit.desktop_ui",
+    "tags": "Component,Presentation,Management",
+    "technology": "TypeScript Management Chat candidate, capability, diff, test, and activation-gate review",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "ec5daf07-1bb9-8fe8-b97e-cd8ae20de557",
+  "schemaVersion": 1
+}

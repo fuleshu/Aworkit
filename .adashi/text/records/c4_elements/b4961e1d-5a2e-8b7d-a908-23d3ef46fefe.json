@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Configured lifecycle-owning agents such as Codex App Server and ACP-compatible coding agents. Each adapter declares supported progress, continuation, cancellation, approval, session, and MCP-forwarding capabilities; unsupported behavior is surfaced rather than simulated.",
+    "element_type": "Software System",
+    "external_id": "ext.external_agents",
+    "id": 5,
+    "name": "External Agent Runtimes",
+    "parent_external_id": null,
+    "tags": "External,Capability Source",
+    "technology": "Codex App Server stdio, ACP, future explicit adapters",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b4961e1d-5a2e-8b7d-a908-23d3ef46fefe",
+  "schemaVersion": 1
+}

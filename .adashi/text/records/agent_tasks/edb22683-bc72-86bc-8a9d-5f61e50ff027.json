@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/graph_pass/context.rs\",\"desktop/src-tauri/src/runtime/graph_pass/model_call.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/tests.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/bound_recovery_tests.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\"]",
+    "completed_at": "2026-09-19 07:44:10",
+    "completion_memo": "Implemented docs/agent-prefix-cache.md. Upstream graph output now enters existing durable context at invocation boundary zero, after the current user message, preserving main-agent system/tool/history prefixes across user turns. Existing checkpoint rebasing admits it once on continuations/approval restart. Explicit edits neither duplicate nor resurrect already-admitted graph context. Native testing also found and fixed planner/text-only Agent compression-scope collisions by using node-scoped text context identities, preserving owner checks. Verification: desktop Rust library 358 passed, 1 ignored; isolated native WebView fixture passed nine exact provider message/tool prefix comparisons over three Shell/Python turns and two text-only turns, approval restart and between-turn restarts; exactly five planning calls and eleven main calls, no failures. Evidence: desktop/src-tauri/target/native-agent-prefix-1789803637966/proof.json. Release compilation/linking succeeded; Cargo final installation could not replace the active Windows executable (access denied). The fresh linked executable was copied and hash-verified at desktop/src-tauri/target/release/aworkit-desktop-cache-fix.exe; the running production app was not interrupted. Existing chats may warm their cache once after upgrading. Actual provider cache hit rate remains measurable only in subsequent DeepSeek runs. Adashi QA unchanged.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-19 07:31:37",
+    "created_files": "[\"docs/agent-prefix-cache.md\",\"desktop/scripts/native-agent-prefix-smoke.mjs\"]",
+    "description": "Implement docs/agent-prefix-cache.md. Move changing upstream planning output out of the system prefix into existing durable per-exchange context. Verify once-only admission on continuation/restart and text-only Agents; prove exact provider prefix preservation through native UI with an isolated local provider. Preserve authority/history and do not touch Adashi QA jobs.",
+    "id": 100,
+    "number": 99,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Preserve main-agent prompt cache across user turns",
+    "updated_at": "2026-09-22 07:27:04"
+  },
+  "deleted": false,
+  "identity": "edb22683-bc72-86bc-8a9d-5f61e50ff027",
+  "schemaVersion": 1
+}

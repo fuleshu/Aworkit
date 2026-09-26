@@ -1,0 +1,56 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\"]",
+    "completed_at": "2026-09-25 10:47:37",
+    "completion_memo": {
+      "lines": [
+        "User turns now survive compaction verbatim instead of existing only as summary prose.\n",
+        "\n",
+        "What changed\n",
+        "- New CHECKPOINT_PREAMBLE constant and is_checkpoint() in compaction/mod.rs; frame_summary uses the constant. The preamble doubles as the marker that distinguishes a prior checkpoint from a real user turn.\n",
+        "- New pinned_user_units(surface, cut) in surface.rs: real user-role messages from the shadowed span (no instruction_event_id, not a checkpoint) are carried across the boundary. The first user turn is kept unconditionally; later ones are kept newest-first while pinning still costs at most half of what the span frees, so a pasted specification cannot defeat the reduction. Units keep their original relative order, so the provider prefix survives to the first dropped unit.\n",
+        "- runtime.rs builds the replacement from the pinned units plus the checkpoint plus the retained tail, with a fallback: if carrying the user turns cannot shrink the span (one oversized direction and little else), the plain summary+tail replacement is used so compaction still makes progress. The shrink check now compares the whole replacement against the shadowed span, and context.compacted records pinnedUnits and pinnedTokenCount.\n",
+        "\n",
+        "Divergence from the task text worth recording: the task said a user message may only enter the shadowed range when nothing else is left, and the first prompt is pinned unconditionally. Unconditional pinning of a first turn that dominates the span makes any compaction unable to reduce, which the existing history() fixture exposed (a ~25k-token first turn against a 16k window). The implemented rule keeps the first turn unconditional whenever it still permits a reduction and otherwise falls back to the plain replacement. That preserves the invariant that a committed compaction always reduces, at the cost of summarising (never deleting without summary) a pathological oversized first turn.\n",
+        "\n",
+        "Verification\n",
+        "- Unit tests in compaction/tests.rs: user turns pinned in original order; an oversized late user turn cannot defeat the reduction; a prior checkpoint and instruction messages are not pinned as user turns.\n",
+        "- Integration tests through the real authority: a_compaction_keeps_the_user_direction_and_consolidates_prior_checkpoints asserts the first prompt survives verbatim and pinnedUnits/pinnedTokenCount are recorded; a_compaction_replaces_a_prior_checkpoint_instead_of_pinning_it asserts exactly one checkpoint remains after a surface that already carried one.\n",
+        "- Full desktop suite: 462 passed, 1 ignored, 0 failed. capability-host unaffected.\n",
+        "\n",
+        "One flake observed: successive_actual_compactions_rearm_missing_scopes_and_preserve_partial_survival failed once in a parallel run and then passed 8 consecutive runs (3 alone, 5 with the full compaction_integration filter). The same test flaked once during task 132 before this change; it is order/parallelism dependent, not caused by pinning."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-25 10:26:14",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Compaction shadows the leading span with no regard for message role, so the user's direction can be summarised away while bulk tool output is judged on token count alone.\n",
+        "\n",
+        "Current behaviour (desktop/src-tauri/src/runtime/compaction/surface.rs): `select_prefix` walks backwards accumulating `Unit::tokens()` and returns a cut; `Unit::tokens` prices a user message exactly like a tool exchange. `replace_units` keeps only the first ordinary user message as the request base, so everything before the cut — including the original first prompt — is replaced by the checkpoint.\n",
+        "\n",
+        "Measured evidence (chat.3fdeab43b37ed6406ff6a62b53fa01bec2a3ca30, test1_qwen, one compaction): the first request after compaction has input.messages = [system 13,425 chars, checkpoint summary 20,706 chars], one clock context message and 44 retained exchanges. The original prompt text (\"self-contained Tetris clone\") appears only inside the summary prose, in no verbatim message. DSH behaves identically because the first prompt is inside the shadowed range.\n",
+        "\n",
+        "Precedent to copy: Hermes protects the first 3 and last 20 messages by count (`protect_first_n=3`, `protect_last_n=20` in agent/context_compressor.py) on top of its 20% tail; Codex rebuilds the replacement history as every user message up to COMPACT_USER_MESSAGE_MAX_TOKENS = 20,000 tokens plus the summary (codex-rs/core/src/compact.rs, build_compacted_history).\n",
+        "\n",
+        "Change: make user-role messages unshadowable while any assistant/tool unit remains, and pin the first user message unconditionally. A user message may only enter the shadowed range when nothing else is left, and the cut must stay a balanced boundary. Keep the pinned messages at their original positions so the provider prefix stays stable.\n",
+        "\n",
+        "Tests: the first prompt survives repeated compactions byte-for-byte; a large tool result before a user message is shadowed first; the checkpoint summary never becomes the only copy of the prompt; existing balanced-boundary, shrink and prefix-stability tests are unchanged; a pinned head does not break cache-prefix accounting."
+      ]
+    },
+    "id": 138,
+    "number": 137,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Pin user messages, and the first prompt in particular, outside the compacted prefix",
+    "updated_at": "2026-09-25 10:47:37"
+  },
+  "deleted": false,
+  "identity": "3193d310-5d51-87bd-9b06-92ec86979841",
+  "schemaVersion": 1
+}

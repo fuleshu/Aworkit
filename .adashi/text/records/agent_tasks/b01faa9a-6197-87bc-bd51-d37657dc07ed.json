@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"Cargo.lock\",\"crates/aworkit-protocol/Cargo.toml\",\"crates/aworkit-protocol/src/lib.rs\",\"crates/aworkit-protocol/src/runtime.rs\",\"crates/aworkit-local-store/Cargo.toml\",\"crates/aworkit-local-store/src/lib.rs\",\"crates/aworkit-trusted-core/Cargo.toml\",\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/authority.rs\",\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"crates/aworkit-capability-host/src/gateway.rs\",\"crates/aworkit-workflow-worker/src/plan.rs\",\"crates/aworkit-workflow-worker/tests/milestone_03_runtime.rs\",\"desktop/src/workbench/settings.ts\",\"desktop/src/workbench/SettingsScreen.tsx\"]",
+    "completed_at": "2026-08-22 06:25:47",
+    "completion_memo": "Implemented persisted exact extension inventory and audit, core integrity/compatibility/enablement/quarantine/dependency attestation, exact capability-host and frozen-snapshot bindings, and distinct Settings states for ready, missing, disabled, incompatible, and drifted requirements. Critical cross-layer verification passed via Adashi QA job #9 / run #25.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:31:57",
+    "created_files": "[\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-local-store/src/extension_inventory.rs\",\"crates/aworkit-trusted-core/src/extensions.rs\",\"crates/aworkit-trusted-core/tests/milestone_09_extensions.rs\",\"crates/aworkit-capability-host/tests/milestone_09_attestation.rs\"]",
+    "description": "Implement persisted trusted-extension inventory plus the core registry for manifest identity, content hash, version, compatibility, enablement, contribution identity, and host-generation attestation. Distinguish missing, incompatible, disabled, and drifted requirements and never discover or execute code inside the persistence layer.",
+    "id": 56,
+    "number": 56,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "M09.1 — Implement extension inventory and core attestation",
+    "updated_at": "2026-09-22 07:17:01"
+  },
+  "deleted": false,
+  "identity": "b01faa9a-6197-87bc-bd51-d37657dc07ed",
+  "schemaVersion": 1
+}

@@ -1,0 +1,23 @@
+{
+  "collection": "qa_jobs",
+  "data": {
+    "command": "./qa/milestone-03.sh",
+    "created_at": "2026-08-21 17:02:34",
+    "created_by": "codex",
+    "description": "Complete Milestone 03 deterministic worker gate: frozen plan compilation, typed nodes and ports, immutable context lineage, branching and ordered joins, deterministic scheduling/routing and commit acknowledgements, hierarchical budgets and attempt policy, exact suspension/rehydration with no replay, model-agent settlement, temporary subagent isolation, warnings-as-errors, and architecture boundaries.",
+    "enabled": 1,
+    "id": 3,
+    "name": "Milestone 03 deterministic workflow execution",
+    "number": 3,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "shell": "bash",
+    "timeout_seconds": 600,
+    "updated_at": "2026-08-21 20:27:48",
+    "working_directory": "."
+  },
+  "deleted": false,
+  "identity": "a406a9ad-a25e-89fa-94c5-8f49b386eb92",
+  "schemaVersion": 1
+}

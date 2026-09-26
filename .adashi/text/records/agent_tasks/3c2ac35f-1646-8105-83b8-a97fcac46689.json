@@ -1,0 +1,24 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-portable-store/tests/milestone_06.rs\",\"crates/aworkit-trusted-core/tests/milestone_06.rs\",\"qa/milestone-06.sh\"]",
+    "completed_at": "2026-08-21 17:47:22",
+    "completion_memo": "Added portable milestone tests for canonical bytes, policy exclusions, branch conflicts, inert imports, rebinding/retention, and journal-linked recovery; qa/milestone-06.sh and cargo test --workspace pass.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 14:30:00",
+    "created_files": "[]",
+    "description": "Create automated QA tests for the complete Milestone 06 result. Cover canonical golden bytes, export omissions, filesystem escape attacks, immutable-object corruption, every prepare/journal/head/finalize crash point, branch conflicts, exact same-installation restart, missing or stale journals, hostile imports, fresh child rebinding, projection invalidation, and guarded orphan collection.",
+    "id": 43,
+    "number": 43,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "M06.QA — Create QA tests for portable history and recovery",
+    "updated_at": "2026-08-21 17:47:22"
+  },
+  "deleted": false,
+  "identity": "3c2ac35f-1646-8105-83b8-a97fcac46689",
+  "schemaVersion": 1
+}

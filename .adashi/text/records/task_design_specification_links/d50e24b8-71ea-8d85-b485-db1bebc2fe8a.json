@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-08-21 14:46:17",
+    "design_external_id": "aworkit.bootstrap_helper.launch_watchdog",
+    "id": 369,
+    "sort_order": 3,
+    "target_type": "element",
+    "task_id": {
+      "ref": "9a8be92f-101c-8d21-975b-165fc835a295"
+    }
+  },
+  "deleted": false,
+  "identity": "d50e24b8-71ea-8d85-b485-db1bebc2fe8a",
+  "schemaVersion": 1
+}

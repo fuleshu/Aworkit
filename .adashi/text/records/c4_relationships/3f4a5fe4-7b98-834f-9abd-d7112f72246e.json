@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Uses stronger isolation only when the approved binding explicitly selects a verified backend; ordinary plugin subprocesses remain trusted host-authority code",
+    "destination_external_id": "aworkit.capability_host.isolation_backend",
+    "external_id": "rel.host_plugins.isolation",
+    "id": 176,
+    "source_external_id": "aworkit.capability_host.plugin_runtime",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "IsolationBackendPortV1",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "3f4a5fe4-7b98-834f-9abd-d7112f72246e",
+  "schemaVersion": 1
+}

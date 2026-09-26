@@ -1,0 +1,25 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": {
+      "lines": [
+        "The opt-in project-local canonical history backend stores immutable bounded parent-linked JSONL segments, session branch metadata, frozen workflow/provenance records, and permitted content-addressed artifacts. It uses project-relative references and represents concurrent continuation from a common checkpoint as explicit branches.\n",
+        "\n",
+        "It never stores credential values, inherited approvals, hidden reasoning, executable plugin code, or implicit authority. Import is inert and requires local capability rebinding. A Chat using this backend is not also canonical in SQLite; any local SQLite projection is disposable. Aworkit does not automatically commit or push portable files."
+      ]
+    },
+    "element_type": "Container",
+    "external_id": "aworkit.portable_store",
+    "id": 15,
+    "name": "Portable Session Repository",
+    "parent_external_id": "1",
+    "tags": "Container,Database,Portable Data",
+    "technology": "Immutable JSONL segments and content-addressed files in the selected project",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "12ed2bee-305a-82f8-8de8-542ce56c0029",
+  "schemaVersion": 1
+}

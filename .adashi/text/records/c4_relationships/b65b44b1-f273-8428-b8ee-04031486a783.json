@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Supplies invocation-bound RedactionSetV1 plus metadata-only leak/cleanup failures; never supplies plaintext",
+    "destination_external_id": "aworkit.capability_host.result_pipeline",
+    "external_id": "rel.host_secrets.result",
+    "id": 186,
+    "source_external_id": "aworkit.capability_host.secret_materializer",
+    "tags": "Relationship,Internal Host Contract",
+    "technology": "In-memory redaction port",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b65b44b1-f273-8428-b8ee-04031486a783",
+  "schemaVersion": 1
+}

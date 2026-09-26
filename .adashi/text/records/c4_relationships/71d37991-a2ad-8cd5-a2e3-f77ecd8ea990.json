@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Publishes document, node catalog, validation, resolution, and authority projections",
+    "destination_external_id": "aworkit.desktop_ui.workflow_editor",
+    "external_id": "rel.ui.gateway.workflow",
+    "id": 39,
+    "source_external_id": "aworkit.desktop_ui.projection_gateway",
+    "tags": "Relationship,Internal UI Contract",
+    "technology": "In-process typed TypeScript contract",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "71d37991-a2ad-8cd5-a2e3-f77ecd8ea990",
+  "schemaVersion": 1
+}

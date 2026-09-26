@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Prepares and verifies immutable bounded parent-linked JSONL segment and checkpoint objects, then references their exact hashes from the atomic head record",
+    "destination_external_id": "aworkit.portable_store.segment_repository",
+    "external_id": "rel.portable.commit.segment_repository",
+    "id": 242,
+    "source_external_id": "aworkit.portable_store.commit_coordinator",
+    "tags": "Relationship,Internal Portable Contract,Canonical",
+    "technology": "ImmutableSegmentWritePort and PortableHistoryReadPort",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b15f6b0a-ffd8-8242-96f1-3bb80c641eec",
+  "schemaVersion": 1
+}

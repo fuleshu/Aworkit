@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-08-21 20:27:48",
+    "design_external_id": "uml.system.crash_cancel_cleanup",
+    "id": 16,
+    "qa_job_id": {
+      "ref": "377cc011-6cf9-8571-8b32-c5afffa9dd9c"
+    },
+    "sort_order": 3,
+    "target_type": "uml"
+  },
+  "deleted": false,
+  "identity": "3d7c0854-f138-8781-b191-94f2ad68e6c9",
+  "schemaVersion": 1
+}

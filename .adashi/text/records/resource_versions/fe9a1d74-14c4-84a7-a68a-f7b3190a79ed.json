@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.desktop_ui.chat_workspace",
+    "resource_kind": "design.element",
+    "updated_at": "2026-09-25 18:22:23",
+    "version": 8
+  },
+  "deleted": false,
+  "identity": "fe9a1d74-14c4-84a7-a68a-f7b3190a79ed",
+  "schemaVersion": 1
+}

@@ -1,0 +1,18 @@
+{
+  "collection": "c4_relationships",
+  "data": {
+    "description": "Creates and controls only explicitly selected isolation sessions, verifies declared mounts/network/identity/resource enforcement, and returns artifacts and cleanup evidence without silent host fallback",
+    "destination_external_id": "ext.isolation_environments",
+    "external_id": "rel.host_isolation_backend.environments",
+    "id": 204,
+    "source_external_id": "aworkit.capability_host.isolation_backend",
+    "tags": "Relationship,Boundary Contract",
+    "technology": "Backend-specific container, VM, sandbox, or remote RPC",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "628ca97e-09d0-8b64-8b04-1798b29aa2e8",
+  "schemaVersion": 1
+}

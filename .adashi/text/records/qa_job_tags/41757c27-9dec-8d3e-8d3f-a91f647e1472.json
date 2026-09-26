@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-08-21 20:27:49",
+    "qa_job_id": {
+      "ref": "190df8f1-fa82-887c-b04d-c026a1be484f"
+    },
+    "tag": "recovery"
+  },
+  "deleted": false,
+  "identity": "41757c27-9dec-8d3e-8d3f-a91f647e1472",
+  "schemaVersion": 1
+}

@@ -1,0 +1,69 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/MarkdownContent.tsx\",\"desktop/src/chat/MarkdownContent.test.tsx\",\"desktop/src/chat/RawJsonView.tsx\"]",
+    "completed_at": "2026-09-24 10:31:56",
+    "completion_memo": {
+      "lines": [
+        "Implemented in commit d8708e3, pushed to origin/main.\n",
+        "\n",
+        "**What shipped.** A `MarkdownCodeBlock` renderer (new file) mounted through the existing `MarkdownContent` component map as `pre`, so every fenced block in a message, tool card or reasoning card now shows a header with the fence's language tag and a small Copy button. New files: `MarkdownCodeBlock.tsx`, `clipboard.ts`, `markdownCode.css`.\n",
+        "\n",
+        "**Exact source, not the rendered form.** The copied text is read back recursively from the block's own `code` element props rather than from the DOM, so wrapping, highlighting or a future highlighter cannot change the payload. A test asserts the clipboard receives `\"const answer = 42;\\n\"` verbatim for a fenced block.\n",
+        "\n",
+        "**One clipboard implementation.** `clipboard.writeClipboard` prefers the async Clipboard API and falls back to the deprecated `execCommand('copy')` where it is missing, resolving false rather than throwing. `clipboard.useCopyFeedback` gives the one-second confirmation and clears its timer on unmount. `RawJsonView` (the Run details Raw tab) was moved onto the same helper, so the two inline `navigator.clipboard?.writeText` call sites became one.\n",
+        "\n",
+        "**Acceptance criteria.** (1) every fenced block gets the control, including one with no language tag; (2) exact source copied, no trailing content added by the control; (3) one-second \"Copied\" confirmation, and a refused write reports nothing rather than claiming success — both tested, including the `execCommand` path; (4) nothing is copied automatically and non-code content renders unchanged; (5) keyboard reachable with a tooltip, an accessible label that reflects the copied state, and a focus ring; (6) one shared helper, used here and by the Raw tab.\n",
+        "\n",
+        "**Judgement calls.** The header sits outside the scrolling `<pre>` so it stays visible on long blocks, and its own selector is deliberately more specific than `.bubble-markdown pre` so the parent's bubble styles cannot detach it. The confirmation swaps the button's accessible label as well as its text, so a screen reader hears the outcome.\n",
+        "\n",
+        "**Verification.** `npx vitest run src/chat src/workbench` 57 files / 446 tests passed (four new); `npx tsc --noEmit` clean; `npx vite build` succeeded; the three new files are Prettier-clean. `MarkdownContent.test.tsx` is already non-conforming at HEAD, so I formatted only the block I appended and confirmed Prettier no longer reports anything inside it, rather than reformatting the file."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-24 09:48:59",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "## What\n",
+        "\n",
+        "Add a small copy control at the top of every fenced code block rendered in a Chat message, matching what DSH does and what the operator finds handy there. Aworkit today renders code blocks with no way to copy them.\n",
+        "\n",
+        "## Why\n",
+        "\n",
+        "In the first DSH vs Aworkit benchmark the operator could copy a code or raw-text block straight from the message in DSH, and cannot in Aworkit. The only copy affordance Aworkit has anywhere is the \"Copy JSON\" button in the Run Details Raw tab (`desktop/src/chat/RawJsonView.tsx:23-27`), which is a different surface and is not reachable from a message.\n",
+        "\n",
+        "## Where\n",
+        "\n",
+        "* Renderer: `desktop/src/chat/MarkdownContent.tsx` (58 lines). It renders `ReactMarkdown` with `components={{ a: MarkdownLink }}` and an allow-list that already includes `code` and `pre`, so the change is a `pre` (or `code`) component override that wraps the block in a header plus the existing `<pre>` — no new dependency and no raw HTML (the module deliberately keeps raw HTML disabled).\n",
+        "* Styles: the message code-block rules live in `desktop/src/styles.css` (`.bubble-markdown pre` around line 921 and `code, pre` around line 114), so the header styling belongs beside them unless a small dedicated stylesheet is preferred.\n",
+        "* Pattern to follow from DSH: `packages/client/ui-primitives/src/markdown/CodeBlock.tsx` puts the copy button in the block header, `use-copy-feedback.ts` keeps a one-second \"copied\" confirmation, and `clipboard.ts` falls back to `execCommand('copy')` when the async Clipboard API is missing (insecure contexts, jsdom).\n",
+        "\n",
+        "## Acceptance criteria\n",
+        "\n",
+        "1. Every fenced code block in a message shows a small copy control in its header, including blocks without a language tag and blocks inside a tool or reasoning card.\n",
+        "2. Clicking it copies the block's exact text — the original source, not the rendered or highlighted form — with no trailing content added.\n",
+        "3. A short confirmation follows a successful write (DSH uses a one-second label swap), and a refused or unavailable clipboard is reported rather than silently ignored.\n",
+        "4. Nothing is copied automatically, and the control never appears when there is no code block.\n",
+        "5. The control is keyboard reachable with a tooltip and an accessible label, and stays usable at the narrow chat widths the bubble supports.\n",
+        "6. The copy behaviour lives in one place: extract the write plus feedback into a small shared helper or component and use it here and in `RawJsonView.tsx` instead of leaving two inline `navigator.clipboard?.writeText` calls.\n",
+        "\n",
+        "## Tests\n",
+        "\n",
+        "Extend `desktop/src/chat/MarkdownContent.test.tsx` to cover: the control renders for a fenced block, the copied payload is the exact block source, the confirmation appears and clears, and an unavailable clipboard does not throw. A jsdom test needs the `execCommand` fallback path, which is why the helper must not call `navigator.clipboard` unguarded."
+      ]
+    },
+    "id": 128,
+    "number": 127,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Add a copy control to message code blocks",
+    "updated_at": "2026-09-24 10:31:56"
+  },
+  "deleted": false,
+  "identity": "cf4996d1-ee63-865e-9627-8ad6fd66d774",
+  "schemaVersion": 1
+}

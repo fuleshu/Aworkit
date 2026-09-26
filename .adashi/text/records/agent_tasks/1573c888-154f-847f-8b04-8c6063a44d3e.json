@@ -1,0 +1,40 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": "2026-08-21 09:54:00",
+    "completion_memo": "User-approved frontend ADR recorded at design revision 65. Aworkit uses a bundled Tauri desktop presentation with React, strict TypeScript, Vite, and pnpm; Aworkit-owned compact workbench components backed primarily by Mantine Core/Hooks; React Flow only behind a replaceable graph-surface port over Aworkit's lossless WorkflowDraft/editor kernel; and TanStack Table/Virtual only behind collection adapters. Tauri-native menus, dialogs, and notifications remain narrow presentation adapters whose selections become typed intents. The pure projection/IPC kernel remains independent of React and all widget libraries. ChatShell is reference-only with no copied source, packages, assets, styles, state, build configuration, fork, submodule, or current donor obligations; any future leaf reuse requires a separate audit. Vue, Svelte, ChatShell-fork, and source-copied shadcn/Radix primary foundations were rejected for this product's long-term node-editor/desktop-control needs. Dependency versions are lockfile-owned and major upgrades must pass adapter contract, accessibility, real-WebView, and representative graph-performance gates. Updated aworkit.desktop_ui, app_shell, design_system, projection_gateway, workflow_editor, and uml.desktop_ui.component_structure. All three accepted feature mockups remain accepted revision/version 2 and required no changes. No source files were created or changed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-08-21 00:15:35",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Decision required before desktop scaffolding: select the concrete TypeScript UI framework/toolchain and verify the exact selective-reuse boundary for ChatShell Desktop.\n",
+        "\n",
+        "Agenda:\n",
+        "1. Choose the UI framework, build tooling, state/event projection approach, workflow-canvas library, styling/token system, accessibility baseline, component-test stack, and end-to-end test stack.\n",
+        "2. Audit ChatShell Desktop at the exact version considered for reuse: source files/components, dependencies, licenses/notices, security posture, maintenance status, platform behavior, and whether each candidate actually matches Aworkit's generic shell needs.\n",
+        "3. Record what will be reused, adapted, or independently implemented. Preserve Aworkit's own workflow runtime, routing, persistence, authority, evidence, identity, and visual product identity.\n",
+        "4. Verify that the three accepted mockups remain implementable without framework-specific authority or canonical state leaking into the webview.\n",
+        "\n",
+        "Required output: a short accepted ADR naming the framework/toolchain, exact reusable assets and obligations, rejected alternatives, upgrade policy, and any changes required to the UI  whether each candidate actually matches Aworkit's generic shell needs.\n",
+        "3. Record what will be reused, adapted, or independently implemented. Preserve Aworkit's own workflow runtime, routing, persistence, authority, evidence, identity, and visual product identity.\n",
+        "4. Verify that the three accepted mockups remain implementable without framework-specific authority or canonical state leaking into the webview.\n",
+        "\n",
+        "Required output: a short accepted ADR naming the framework/toolchain, exact reusable assets and obligations, rejected alternatives, upgrade policy, and any changes required to the UI module contracts or mockups. This blocks UI project scaffolding but not backend contract implementation.module contracts or mockups. This blocks UI project scaffolding but not backend contract implementation."
+      ]
+    },
+    "id": 1,
+    "number": 1,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "closed",
+    "title": "Discussion: frontend framework and ChatShell reuse boundary",
+    "updated_at": "2026-09-21 14:54:18"
+  },
+  "deleted": false,
+  "identity": "1573c888-154f-847f-8b04-8c6063a44d3e",
+  "schemaVersion": 1
+}
