@@ -2,12 +2,12 @@
   "collection": "project_memory",
   "data": {
     "created_at": "2026-08-20 07:52:43",
-    "memory_body": "Reviewed 2026-09-26: Workspace Instructions, context compaction and context compression are implemented; see docs/design-workspace-instructions.md, docs/context-compaction.md and docs/context-compression.md. Earlier absence-of-compaction claims are superseded. The compaction budget model (a quarter-window occupancy target with a floor derived from the measured fixed context) is a design specification: aworkit.workflow_worker.context_compaction_budget, bound to the compaction modules and run_events.rs; it supersedes the R/U/S budget model of c848df3. Keep original tool/conversation evidence immutable: never replay tools; preserve frozen authority and owner isolation. Restore instructions using surviving event references, not summary prose. The resolved handovers are dated history, not current status. Recheck source and design for later changes.",
+    "memory_body": "Reviewed 2026-09-26: Workspace Instructions, context compaction and context compression are implemented; see docs/design-workspace-instructions.md, docs/context-compaction.md and docs/context-compression.md. Earlier absence-of-compaction claims are superseded. The compaction budget model is a design specification: aworkit.workflow_worker.context_compaction_budget, bound to the compaction modules and run_events.rs. Every budget in it is a share of the effective window (target 0.25, floor 0.08, summary 0.382 of the replacement, tail the remainder) with the model's own declared output as the only non-context bound; it supersedes the R/U/S budget model of c848df3 and the absolute limits that briefly replaced it. Keep original tool/conversation evidence immutable: never replay tools; preserve frozen authority and owner isolation. Restore instructions using surviving event references, not summary prose. The resolved handovers are dated history, not current status. Recheck source and design for later changes.",
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
     "protocol_rule": "",
-    "updated_at": "2026-09-26 16:37:40"
+    "updated_at": "2026-09-26 17:00:47"
   },
   "deleted": false,
   "identity": "40ce470c-49b5-8dcd-b935-e16e360c2a53",

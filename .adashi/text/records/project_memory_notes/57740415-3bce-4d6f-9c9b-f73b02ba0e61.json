@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "CORRECTION to note compaction-budget-spec-recorded: the 8,000-token summary cap and the 2,512-token minimum replacement were absolute limits and are gone as of 1a0f8e6. Every budget is now a share of W: T = floor(0.25W); B = max(T - F, floor(0.08W)); S = min(floor(0.382 B), declared output reservation); R = B - S. The spec document was rewritten to match (title now \"Compaction budget model: every budget is a share of the window\"). At F = 12,400: 100k -> R 7,787 / S 4,813; 262k -> 32,839 / 20,297; 1M -> 154,342 / 95,402, ratio R:S constant at 0.618:0.382. minimum_window(F) = ceil(F/0.17) = 72,942 at F = 12,400 (was 59,648) and can_reduce is F + floor(0.08W) < 0.8W. The only non-context bound is the model's own declared output, so a local model declaring 8,000 output tokens bounds itself (1M -> R 241,744 / S 8,000). SUMMARY_BUDGET_SHARE = 0.382 is the one ratio with no derivation: prose against verbatim history.",
+    "created_at": "2026-09-26 17:00:37",
+    "id": 273,
+    "note_id": "compaction-budget-shares-correction",
+    "operation_id": "memory-compaction-shares-correction-001",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-compaction-shares-correction-001",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "57740415-3bce-4d6f-9c9b-f73b02ba0e61",
+  "schemaVersion": 1
+}

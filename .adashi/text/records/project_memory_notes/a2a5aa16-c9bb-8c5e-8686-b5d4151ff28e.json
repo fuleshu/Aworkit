@@ -1,23 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": {
-      "lines": [
-        "Task 116 slice A landed (4bff26e): the catalog accepts a `loop` header (exitCondition predicate + maximumIterations 1..=64; routes body/exit/fallback). analyze_loop_regions enforces a single-entry/single-exit region whose only leaving edge is the declared feedback edge, forbids wait/completion inside it, bounds nesting at 4, and only declared feedback edges may close a cycle; compile_graph_pass carries CompiledLoopV1 and skips feedback edges in the execution order. Rust lib 432 passed.\n",
-        "Next: executor (a work queue so a header runs its region inline per iteration; exit/fallback targets can currently precede region nodes; per-iteration activity with an `iteration` field; exhaustion routed to fallback); loop frames in pending state for resume; TS catalog + cycle mirror + editor panel + run-details iteration; tests; suites; finish 116. Until then a loop compiles but execute_node rejects the type."
-      ]
-    },
-    "created_at": "2026-09-23 10:11:58",
-    "id": 261,
-    "note_id": "2026-09-23-task116-loop-slice-a",
-    "operation_id": "memory-116-slice-a-002",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "memory-116-slice-a-002",
-    "task_id": null
+    "id": 261
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "a2a5aa16-c9bb-8c5e-8686-b5d4151ff28e",
   "schemaVersion": 1
 }

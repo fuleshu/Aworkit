@@ -10,18 +10,20 @@
     "created_files": "[]",
     "description": {
       "lines": [
-        "Follow-up from task 143 (number 142). Commit 3173c99 derives the retained tail from the window's target: budget = 0.25 W - fixed, summary = 38.2% of the budget capped at 8,000, tail = the rest. The \"Retained history budget\" field in desktop/src/workbench/settings-v2/CompactionSettings.tsx therefore no longer controls a windowed Chat:\n",
+        "Follow-up from task 143 (number 142). Commit 3173c99 derives the retained tail from the window's target instead of from the retention setting, so the \"Retained history budget\" field in desktop/src/workbench/settings-v2/CompactionSettings.tsx no longer controls a windowed Chat:\n",
         "\n",
-        "- retainRatio (default 0.16) is now inert for every Chat. With a declared window the tail comes from the target; without a declared window the runtime calls retention(window.unwrap_or_default()) with window 0, so the ratio multiplies a zero. Nothing in the token path reads the number a user types.\n",
+        "- retainRatio (default 0.16) is now inert for every Chat. With a declared window the tail comes from the window's budget; without a declared window the runtime calls retention(window.unwrap_or_default()) with window 0, so the ratio multiplies a zero. Nothing in the token path reads the number a user types.\n",
         "- retainTokens (absolute) is still honoured, but only for a Chat with no declared window, where it sets the tail for the legacy 512 KiB byte-pressure path.\n",
         "\n",
         "Measured: a Chat with contextWindow 100,000 and fixed 12,400 retains 7,787 tokens no matter what the field says, while the field's help text still promises \"Minimum recent history to preserve verbatim; must be below the trigger\".\n",
         "\n",
-        "Options: (a) relabel the field so it clearly applies only when the model declares no context window, and show the derived tail (window, target, summary cap) as read-only evidence in the same panel; (b) honour an explicitly set absolute retainTokens as a floor on the derived tail, spending the tail first and the summary only from what remains - this reintroduces an over-budget plan and a second meaning for \"target\", so it needs its own arithmetic and its own tests; (c) remove the field. Recommend (a): it is honest about the derived model, needs no policy change, and keeps a real knob for the no-window case.\n",
+        "Options: (a) relabel the field so it clearly applies only when the model declares no context window, and show the derived tail (window, target, replacement, summary) as read-only evidence in the same panel; (b) honour an explicitly set absolute retainTokens as a floor on the derived tail, spending the tail first and the summary only from what remains - this reintroduces an over-budget plan and a second meaning for \"target\", so it needs its own arithmetic and its own tests; (c) remove the field. Recommend (a): it is honest about the derived model, needs no policy change, and keeps a real knob for the no-window case.\n",
         "\n",
         "Acceptance: the setting panel does not promise behaviour the policy no longer implements; whatever remains configurable is honoured by policy and covered by a test; the desktop bundle is rebuilt and the running app verified after the change.\n",
         "\n",
-        "Also in scope here, discovered in the same review: docs/context-compaction.md still documents the R/2 derivation, the U = R/2 carried-user budget and the 64k floor from c848df3. Bring it in line with the target-0.25 model of 3173c99 (budget = 0.25 W - fixed, summary share 0.382 capped at 8,000, minimum_replacement = 2,512, minimum_window(fixed) = ceil((fixed + 2,512)/0.25)) and record the derived-floor numbers for fixed 12,400/12,300."
+        "Also in scope here, discovered in the same review: docs/context-compaction.md still documents the R/2 derivation, the U = R/2 carried-user budget and the 64k floor from c848df3. Bring it in line with the current model and record the derived-floor numbers for fixed 12,400 and 12,300.\n",
+        "\n",
+        "AMENDED 2026-09-26 (commit 1a0f8e6). Every budget is now a share of the effective window, so the shape to document is: budget = max(25% of W - fixed, 8% of W); summary = min(38.2% of that budget, the model's declared output); tail = the remainder, 61.8% of the replacement budget. The 7,787-token example at 100k still holds; at 262k the derived tail is now 32,839 and at 1M 154,342 (no declared output reservation), while a model declaring 8,000 output tokens bounds its own summary at 8,000 and keeps 241,744 verbatim. There is no \"capped at 8,000\" and no \"minimum_replacement = 2,512\": the floor is the 8% share, and minimum_window(fixed) = ceil(fixed / 0.17) - 72,942 at fixed 12,400, 72,353 at 12,300. The authoritative model is the specification aworkit.workflow_worker.context_compaction_budget."
       ]
     },
     "id": 145,
@@ -31,7 +33,7 @@
     },
     "state": "todo",
     "title": "The \"Retained history budget\" setting no longer controls a windowed tail, and docs still describe the R/U/S model",
-    "updated_at": "2026-09-26 16:36:55"
+    "updated_at": "2026-09-26 17:01:18"
   },
   "deleted": false,
   "identity": "ca5d8473-c47e-4072-a529-4cf22828839c",
