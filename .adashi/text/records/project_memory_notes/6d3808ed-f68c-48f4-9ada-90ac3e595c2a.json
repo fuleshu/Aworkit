@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Compaction budget model is now an Adashi design specification: aworkit.workflow_worker.context_compaction_budget, \"Compaction budget model: a quarter-window target and a derived floor\" (2026-09-26, commit 3173c99). Linked to the harness context element and the compaction sequence artifact, and bound to the compaction modules, run_events.rs and the policy symbols; design health reports it resolved with 0 broken bindings. It supersedes the R/U/S budget model of c848df3 and note compaction-64k-floor-provenance: the retained tail is no longer a ratio, there is no carried-user budget, and the 64k floor is now derived from the measured fixed context (59,648 at 12,400). Open follow-ups: task 144 (segmented summary or fitting lossy drop), task 145 (the retainRatio setting and docs/context-compaction.md still describe the superseded model).",
+    "created_at": "2026-09-26 16:37:29",
+    "id": 272,
+    "note_id": "compaction-budget-spec-recorded",
+    "operation_id": "memory-compaction-budget-spec-001",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-compaction-budget-spec-001",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "6d3808ed-f68c-48f4-9ada-90ac3e595c2a",
+  "schemaVersion": 1
+}

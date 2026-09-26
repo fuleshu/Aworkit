@@ -1,0 +1,17 @@
+{
+  "collection": "project_memory_note_resolutions",
+  "data": {
+    "note_id": {
+      "ref": "6d2d9aec-f4cc-46e8-bead-12924004d750"
+    },
+    "operation_id": "memory-summary-compaction-budget-spec",
+    "project_id": {
+      "ref": "6d2d9aec-f4cc-46e8-bead-12924004d750"
+    },
+    "resolved_at": "2026-09-26 16:37:40",
+    "summary_version": 3
+  },
+  "deleted": false,
+  "identity": "0c3de86c-7e87-4f09-ab21-1e779b3b1e3f",
+  "schemaVersion": 1
+}

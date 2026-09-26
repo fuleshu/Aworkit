@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-26 16:36:29",
+    "design_external_id": "aworkit.workflow_worker.context_compaction_budget",
+    "id": 94,
+    "target": "desktop/src-tauri/src/runtime/compaction/integration_tests.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-26 16:36:29",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "dcb83746-1158-4f13-ba93-212dfc16ba8d",
+  "schemaVersion": 1
+}

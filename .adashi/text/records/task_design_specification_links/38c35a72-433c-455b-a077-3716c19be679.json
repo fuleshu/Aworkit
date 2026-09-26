@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-26 16:36:55",
+    "design_external_id": "aworkit.workflow_worker.context_compaction_budget",
+    "id": 541,
+    "sort_order": 0,
+    "target_type": "markdown",
+    "task_id": {
+      "ref": "ca5d8473-c47e-4072-a529-4cf22828839c"
+    }
+  },
+  "deleted": false,
+  "identity": "38c35a72-433c-455b-a077-3716c19be679",
+  "schemaVersion": 1
+}

@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-26 16:36:29",
+    "design_external_id": "aworkit.workflow_worker.context_compaction_budget",
+    "id": 95,
+    "target": "replacement_plan",
+    "target_type": "symbol",
+    "updated_at": "2026-09-26 16:36:29",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "7d8d784c-3725-4b0f-b086-0f66712da6d0",
+  "schemaVersion": 1
+}

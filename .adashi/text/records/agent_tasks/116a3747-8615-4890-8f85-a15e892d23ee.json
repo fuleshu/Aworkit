@@ -54,7 +54,7 @@
     },
     "state": "finished",
     "title": "A declared 32k window is never enforced: the 64k compaction floor blocks it and nothing else acts",
-    "updated_at": "2026-09-26 09:17:58"
+    "updated_at": "2026-09-26 16:36:45"
   },
   "deleted": false,
   "identity": "116a3747-8615-4890-8f85-a15e892d23ee",

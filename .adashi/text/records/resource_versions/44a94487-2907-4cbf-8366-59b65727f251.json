@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.context_compaction_budget|symbol|minimum_window",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-26 16:36:29",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "44a94487-2907-4cbf-8366-59b65727f251",
+  "schemaVersion": 1
+}
