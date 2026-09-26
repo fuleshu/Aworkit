@@ -6,8 +6,8 @@
     },
     "resource_id": "aworkit.workflow_worker.context_compaction_budget",
     "resource_kind": "design.markdown",
-    "updated_at": "2026-09-26 16:59:20",
-    "version": 2
+    "updated_at": "2026-09-26 17:15:05",
+    "version": 3
   },
   "deleted": false,
   "identity": "04010908-407b-4fb4-a469-f2f3760e238c",

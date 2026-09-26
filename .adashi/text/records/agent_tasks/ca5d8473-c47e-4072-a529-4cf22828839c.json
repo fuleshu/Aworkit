@@ -1,13 +1,35 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src/styles.css\",\"desktop/src/workbench/settings-v2/CompactionSettings.tsx\",\"desktop/src/workbench/settings-v2/CompactionSettings.test.tsx\",\"desktop/src/workbench/settings-v2/compactionPlan.ts\",\"desktop/src/workbench/settings-v2/compactionPlan.test.ts\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-26 17:15:51",
+    "completion_memo": {
+      "lines": [
+        "Done in baf6410 (setting + panel + policy) and f080574 (docs). The summary share is now the Chat's setting instead of a constant, and the panel no longer promises anything the policy does not do.\n",
+        "\n",
+        "WHAT THE FIELD IS, AND WHY THAT FRAMING. `Policy.summaryShare` (frozen, camelCase) defaults to 0.382 and is the literal 0.382 of `min(floor(summaryShare * budget), declared output reservation)`. It is a share of the replacement budget, not of the window and not a token count, for one reason: that is the only framing honoured exactly at every window (`R + S = B`, no clamping). The two rejected framings are the two that failed in production: a share of the window is what `retainRatio` was, and at 32k it asked for more verbatim history than the window could hold once F was paid - which is what the 64,000-token floor was hiding; an absolute token count is the class of limit removed in 1a0f8e6.\n",
+        "\n",
+        "NAMING AND DESCRIPTION, as agreed. Label \"Summary share of compaction\", percent input, default 38.2 (the policy's exact default, so the field does not round a number the runtime uses), accepted 1-90, tooltip: \"How compaction divides what it keeps: this share becomes the written summary, the rest stays as the most recent messages, verbatim. Lower keeps more original history; higher keeps a fuller written account of what was dropped.\" Validation rejects 0 and 1: a share of 0 leaves no summary and a share of 1 leaves no verbatim history, so neither is a compaction.\n",
+        "\n",
+        "THE READ-OUT. Below the grid the panel now states the numbers the runtime will use, from a new pure mirror of the policy, `desktop/src/workbench/settings-v2/compactionPlan.ts`: \"A 262,144-token window targets 65,536 tokens after compaction: the summary gets 38% of what is replaced and the most recent messages keep 62%. Instructions and tool schemas are measured per request and budgeted before both.\" It adds the reservation sentence when the model declares output (\"This model reserves 32,768 tokens for its own output, so a summary longer than that is capped and the difference stays verbatim\"). It deliberately does not print exact summary/tail token counts, because F - the system instructions and tool schemas - is measured per request at runtime and cannot be known in Settings; printing a number that ignores F would be the same class of lie this task exists to remove.\n",
+        "\n",
+        "EXACTLY ONE CONTROL, ALWAYS HONOURED. The panel offers the summary share only for a model that declares a context window, and the absolute verbatim tail (`retainTokens`) only for one that does not, because a plan cannot be sized without a window. Before this change a no-window model displayed a 4096 default while the policy used 0; the field now shows the policy's real default.\n",
+        "\n",
+        "POLICY CHANGES. `retainRatio` became a legacy sink beside the removed `maxTokens`: the key still deserializes from a frozen Chat, `skip_serializing`, read into nothing, so no existing Chat changes behaviour (it was already inert for windowed Chats). `retention()` lost its capacity parameter, which it only multiplied to zero, and now reads `retainTokens` alone. Validation replaced the obsolete \"retention below trigger\" rule with the one structural rule the current model needs - `thresholdRatio` must stay above the 0.25 occupancy target or every request would compact - which also stops rejecting a frozen policy whose inert `retainTokens` exceeded a small declared window. The Settings trigger field's minimum moves to 26% for the same reason.\n",
+        "\n",
+        "TWO MORE LIES FIXED IN THE SAME PANEL. The section intro claimed the retained history budget was the only proportional knob and that a window below 64k cannot compact automatically; both are now false and both are gone. The prune fields displayed 81,920/73,728/4,096 while the policy defaults are 8,192/4,096/1,024, so a new Chat showed numbers the backend never used; they now match.\n",
+        "\n",
+        "VERIFICATION. Desktop lib suite 484 passed, 0 failed, 1 ignored. Frontend 511 passed across 68 files, including new `compactionPlan.test.ts` (5 tests: read-out arithmetic, the reservation clamp, a configured share, the no-window case) and `CompactionSettings.test.tsx` (3 tests: the share field and read-out at a declared window, the tail field and no read-out without one, the reservation sentence) plus the existing CompressionSettings test that pins a frozen policy's compaction object. `tsc --noEmit` clean and `vite build` succeeds (8.6 s), so the frontend bundle is rebuilt. The native bundle was not relaunched: the app was not running, and the running app picks this up on its next build.\n",
+        "\n",
+        "SPEC AND DOCS. The Adashi specification `aworkit.workflow_worker.context_compaction_budget` gained a \"The one quality knob, and where it lives\" section describing the setting, its framing and the exactly-one-control rule, and its non-responsibilities no longer list this task. `docs/context-compaction.md` gained the 2026-09-26 budget section, the share table, the three rationales and the current suite counts; it no longer documents R/U/S, the R/2 derivation or the 64k floor, and its closing pointer names the specification instead of a stale Adashi revision.\n",
+        "\n",
+        "REMAINING, NOT IN THIS TASK: task 144 (a prefix that no longer fits the window must still end in a fitting reduction). Nothing here changes how a summary call is shaped."
+      ]
+    },
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-09-26 09:18:20",
-    "created_files": "[]",
+    "created_files": "[\"desktop/src/workbench/settings-v2/compactionPlan.ts\",\"desktop/src/workbench/settings-v2/compactionPlan.test.ts\",\"desktop/src/workbench/settings-v2/CompactionSettings.test.tsx\"]",
     "description": {
       "lines": [
         "Follow-up from task 143 (number 142). Commit 3173c99 derives the retained tail from the window's target instead of from the retention setting, so the \"Retained history budget\" field in desktop/src/workbench/settings-v2/CompactionSettings.tsx no longer controls a windowed Chat:\n",
@@ -31,9 +53,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "The \"Retained history budget\" setting no longer controls a windowed tail, and docs still describe the R/U/S model",
-    "updated_at": "2026-09-26 17:01:18"
+    "updated_at": "2026-09-26 17:15:51"
   },
   "deleted": false,
   "identity": "ca5d8473-c47e-4072-a529-4cf22828839c",
