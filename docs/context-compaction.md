@@ -114,3 +114,7 @@ Validated on Windows using the actual Tauri/WebView2 application and a loopback 
 Native evidence directories under `desktop/src-tauri/target`: `native-compaction-1788869753292` (tool Agent), `native-compaction-1788869759124` (queue), `native-compaction-1788870054704` (text-only), and `native-compaction-1788870326025` (explicit model-call node, reproduced with `AWORKIT_QA_MODEL_CALL=1`). Each contains `report.json`, captured provider requests, native logs and a context-panel screenshot. These fixtures prove transport, authority, persistence and UI behavior; they do not claim a quality benchmark of a live model's summaries.
 
 The formal interaction contract is `uml.workflow_worker.context_compaction`, attached to `aworkit.workflow_worker.context_store` in Adashi, and the normative budget arithmetic is the specification `aworkit.workflow_worker.context_compaction_budget` bound to the compaction modules and their tests.
+
+## Research references
+
+The third-party evidence behind the checkpoint strategy - that observation masking matches LLM summarization at about half the cost, that a model-written summary is best used as a small capped enrichment layer, and that token-level compression destroys agent action grammar - is kept with its licences in [docs/papers/README.md](papers/README.md), together with what each result constrains in this implementation.
