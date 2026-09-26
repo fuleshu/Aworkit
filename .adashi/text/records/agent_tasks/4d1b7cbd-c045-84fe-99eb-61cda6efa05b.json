@@ -1,28 +1,27 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src/workbench/settings-v2/CompactionSettings.tsx\",\"docs/context-compaction.md\"]",
-    "completed_at": "2026-09-25 10:57:24",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"desktop/src-tauri/src/runtime/run_events.rs\"]",
+    "completed_at": "2026-09-26 09:18:05",
     "completion_memo": {
       "lines": [
-        "Every compaction budget is now a fraction of the effective window, with retention as the only proportional knob.\n",
+        "Reopened because the 32k failure showed the R/U/S model could not serve a small window. Commit 3173c99 replaces the budget arithmetic with the model agreed on 2026-09-26 (\"aim every compaction at a quarter of the window\"); everything this task delivered that is still load-bearing stayed, and the parts the new model supersedes are recorded here so the task does not describe arithmetic that is no longer in force.\n",
         "\n",
-        "Implemented\n",
-        "- Metadata carries maxOutputTokens (written at Chat freeze from the model snapshot) and Policy::effective_window subtracts it before any ratio applies. A context frozen before the key reserves nothing.\n",
-        "- Derived budgets on Policy: user_budget = retention ratio/2 = 0.08 W', summary_budget = min(user_budget, shadowed span/2), working_headroom = trigger - (R + U + S) - fixed. The summary cap is no longer configured: Policy.max_tokens is removed from the struct, validate and the Settings panel, with a legacy serde sink (`maxTokens`) so a frozen Chat still deserializes and the value is ignored. context.compacted.auxiliary reports the derived cap instead.\n",
-        "- The user-turn budget is derived from the retention *ratio*, not from retention() itself, because an absolute retainTokens override can legitimately be zero (manual and overflow reductions) and would otherwise zero the generated budgets.\n",
-        "- Fixed context (system + tool schemas + retry notice) is now priced separately by surface::fixed_tokens and used by the headroom check.\n",
-        "- automatic_compaction_available returns a diagnostic for a declared window below 64,000 tokens or when working_headroom * 4 < window, and the runtime disables automatic compaction while emitting one context.compaction-warning. Manual compaction and provider overflow recovery stay available. A Chat that declares no window keeps the legacy 512 KiB byte-pressure guard, which is model-free and not what the floor targets.\n",
-        "- docs/context-compaction.md gains the model, the R/2 derivation, the F estimate, the 64k floor derivation and the removed setting.\n",
+        "STILL IN FORCE FROM THIS TASK\n",
+        "- maxOutputTokens is frozen into model_context metadata and Policy::effective_window subtracts it before any ratio applies; a context frozen before the key reserves nothing.\n",
+        "- Policy.max_tokens is gone from the struct, validate and the Settings panel, with the legacy serde sink so a frozen Chat still deserializes; context.compacted.auxiliary reports the derived cap instead.\n",
+        "- Fixed context is priced separately by surface::fixed_tokens (now with a doc comment recording the measured 12,300 for the recorded 32k Chat and what it excludes).\n",
+        "- The trigger stays 0.80 and the no-window Chat keeps the legacy 512 KiB byte guard.\n",
         "\n",
-        "Deviation from the task text, recorded deliberately: the task asked for the freeze validation inside Policy::validate(capacity). Fixed context is only knowable from a request, not from the policy, so the headroom decision lives in Policy::automatic_compaction_available(window, fixed) called from the compaction runtime where the request exists, and the diagnostic is recorded like the existing no-window warning. validate(capacity) still checks retention < threshold on the effective window via the call site.\n",
+        "SUPERSEDED (this is now the authority)\n",
+        "- Retention is no longer the proportional knob. R = 0.16 W' with an absolute retainTokens alternative is replaced by a hard target: budget = 0.25 W' - fixed, summary = 38.2% of the budget capped at 8,000 tokens, retained tail = the rest. At fixed 12,400: 100k -> retain 7,787 / summary 4,813; 262k -> 45,136 / 8,000; 1M -> 241,744 / 8,000, all landing exactly on 0.25 W'. The tail therefore grows with the window while the summary stops at its cap, which is the property the reopen asked for.\n",
+        "- U = R/2 as a separate carried-user budget is deleted; user turns ride inside the retained tail at up to half of it (pinned_user_units is unchanged).\n",
+        "- S = min(R/2, span/2) is replaced by the capped 38.2% share, still never more than half the shadowed span (the .min(shadowed/2) clamp is kept in the runtime).\n",
+        "- The 64,000 floor and the \"headroom >= 0.25 W'\" freeze check are replaced by a derived floor, minimum_window(fixed) = ceil((fixed + 2,512) / 0.25), and by can_reduce(window, fixed): automatic compaction runs for every declared window and is disabled only when the fixed context already reaches the trigger. Below the floor the plan clamps to exactly both minima (retain 2,000, summary 512) and one advisory names the window that would reach the target; nothing refuses.\n",
+        "- The effective-window reservation is additionally clamped to 0.25 W' so a model declaring 393,216 output tokens against a 32,000-token window cannot collapse the window to zero.\n",
+        "- Documentation: the budget model is described in the code's doc comments; docs/context-compaction.md still carries the R/2 and 64k derivations from c848df3 and needs a follow-up pass.\n",
         "\n",
-        "Verification\n",
-        "- Unit tests: effective-window subtraction; U = R/2; S = R/2 clamped to span/2; working headroom; the zero-retention case still yields non-zero generated budgets; the below-floor and no-headroom diagnostics; a frozen policy carrying maxTokens deserializes and ignores it.\n",
-        "- Integration tests: the pressure retry loop adapted to a 65,536 window (the 16k fixture is now below the floor by design); a new test asserts a 32,768 window compacts nothing, pays for no summary call, and records the \"64000\" diagnostic.\n",
-        "- Full desktop suite 464 passed, 1 ignored, 0 failed. Frontend: tsc clean and vitest --changed 66 passed (3 files) after removing the Summary token limit field.\n",
-        "\n",
-        "Two pipeline tests regressed mid-task and were fixed rather than weakened: aggregate_tool_context_compacts_without_losing_original_evidence and mcp_oversized_result_become_a_bounded_output relied on byte-pressure compaction with no declared window, which the first version of the gate disabled. The gate now treats \"no window\" as legacy byte-pressure, and only a declared window below the floor disables automatic compaction."
+        "VERIFICATION: full desktop lib suite 484 passed, 0 failed, 1 ignored. The rewritten policy and integration tests pin the new arithmetic at 32k/100k/262k/1M, the reservation clamp, the clamped plan, the can_reduce boundary and the one-shot advisory. Task 143 (number 142) carries the full evidence and the follow-ups (segmented summary for a prefix that no longer fits; the retainRatio setting no longer controlling a windowed tail)."
       ]
     },
     "confirmation_commit_id": null,
@@ -81,7 +80,7 @@
     },
     "state": "finished",
     "title": "Scale every compaction budget with the window: derived summary cap, pinned-user budget and a validated minimum window",
-    "updated_at": "2026-09-25 10:57:24"
+    "updated_at": "2026-09-26 09:18:05"
   },
   "deleted": false,
   "identity": "4d1b7cbd-c045-84fe-99eb-61cda6efa05b",

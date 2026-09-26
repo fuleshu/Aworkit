@@ -1,0 +1,38 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-26 09:18:14",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Follow-up from task 143 (number 142) part 4, deliberately not attempted by commit 3173c99.\n",
+        "\n",
+        "The problem: the summary call sends the whole shadowed prefix in one request (measured 156,336 input tokens / 540 KB on the local qwen run), so it can only work while that prefix fits the model's window. A context already at 142k on a 32,000-token window cannot be summarised in one call, and no amount of budget arithmetic fixes that. Today the recovery path shrinks the prompt (prune_tool_results then c::shrink_summary) with a bounded retry budget (c::SUMMARY_SHRINK_RETRIES) and then gives up: it emits \"Context is still above the configured pressure threshold after the permitted reductions\" and leaves the selection unchanged. The provider-overflow path (Trigger::ContextOverflow, retain 0, one attempt, pruning) is the only lossy reduction, and it runs only once the provider itself reports overflow.\n",
+        "\n",
+        "What the always-run compaction of 3173c99 changed: with a declared 32k window the run now compacts at 0.8 W with the clamped plan (retain 2,000 / summary 512, fixed about 12,300) and lands at about 14,812 tokens, so it no longer grows past its declared window in the normal case. What is still uncovered is a context that is already far over the window when compaction first fires - for example a Chat frozen at 32k that already carries 142k of history - where the single summary call cannot be delivered.\n",
+        "\n",
+        "Options, in preference order: (a) segmented or map-reduce summary - summarise the shadowed span in window-sized chunks and fold the partial summaries into one checkpoint, which keeps the quality promise of the summary path; (b) when the summary cannot be produced, fall back to a fitting lossy reduction of the same span (drop the oldest units, keep user turns and a recent tail) rather than leaving the selection unchanged and warning; (c) both, with (b) as the terminal step of the existing recovery ladder.\n",
+        "\n",
+        "Acceptance: a run whose prefix exceeds its declared window either produces a checkpoint or degrades with a reduction that fits, never leaves the context above the declared window while warning; the existing balanced-boundary, shrink-refusal, retry and durable-replay guarantees still hold; no regression for large windows (test1_3 stays at 64,192 uncached and 9/9 conformance).\n",
+        "\n",
+        "Boundaries: this task owns the summary call shape and the terminal lossy reduction. Task 137 (id 138) owns which units may be shadowed; the trigger (0.80) and the budget arithmetic (target 0.25 W, summary capped at 8,000) are settled and out of scope."
+      ]
+    },
+    "id": 144,
+    "number": 143,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Summarise a prefix that no longer fits the window: segmented summary or a fitting lossy drop",
+    "updated_at": "2026-09-26 09:18:14"
+  },
+  "deleted": false,
+  "identity": "99344e53-a949-4f12-b06e-c23dc20c8c16",
+  "schemaVersion": 1
+}

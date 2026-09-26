@@ -1,0 +1,34 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-26 09:18:24",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Observed once while finishing task 143 (number 142), unrelated to the policy change and not reproduced since.\n",
+        "\n",
+        "With the whole desktop lib suite in parallel (484 tests), runtime::tool_loop::workspace_instructions::tests::compaction_integration::an_exhausted_summary_recovery_warns_once_and_keeps_the_selection failed at its first assertion, assert!(prepared.provider_error.is_some()), while its gateway unconditionally returns ProviderError::RequestTimedOut. It passes when run alone and passed on every full-suite rerun afterwards, including three consecutive runs of the whole compaction_integration module.\n",
+        "\n",
+        "Suspected cause: every test in desktop/src-tauri/src/runtime/compaction/integration_tests.rs builds its gateway with the same binding id \"model.compaction-test\" and version hash \"v1\" (see fn gateway in that file). If FrozenModelGateway installs into a process-wide registry keyed by binding id, a parallel sibling test registering the same id can serve the request instead, so a compaction that should have failed succeeds and provider_error stays None. A second candidate is the shared ToolRecordStore/committer path in Fixture, but each fixture uses its own tempfile directory.\n",
+        "\n",
+        "Work: give each test a distinct binding id (or version hash) so a registry collision cannot occur, or make registration assert on duplicate ids so the collision is loud, then run the whole lib suite repeatedly to show the flake is gone. Acceptance: 10 consecutive full-suite runs, no failure in that test; a duplicate binding id is an error rather than a silent override."
+      ]
+    },
+    "id": 146,
+    "number": 145,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Compaction tests flake under parallelism: every fixture registers the same gateway binding id",
+    "updated_at": "2026-09-26 09:18:24"
+  },
+  "deleted": false,
+  "identity": "4b22d28f-1f47-4e88-9323-fec18f5be093",
+  "schemaVersion": 1
+}
