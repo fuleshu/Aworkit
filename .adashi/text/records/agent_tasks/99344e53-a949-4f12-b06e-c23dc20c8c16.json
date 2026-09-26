@@ -1,9 +1,29 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/surface.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-26 18:06:41",
+    "completion_memo": {
+      "lines": [
+        "Done in cdd24ba, together with task 146's root cause (both live in the compaction tests; see that task's memo).\n",
+        "\n",
+        "WHAT SHIPS. Two helpers in surface.rs and one path in runtime.rs.\n",
+        "\n",
+        "1. `fit_summary(surface, budget) -> SummaryFit` sizes the summary prompt from the window *before* the call, dropping the oldest whole units the prompt can spare (`shrink_summary`, which protects the base user turn and the trailing directive). It is all or nothing on purpose: when the trimmed probe still exceeds the budget, nothing is dropped and the prompt is sent as it is. Two deliberate reversals of my first draft: (a) our estimate is a prediction about the provider, and the provider may accept more than it declares - the recorded 32k Chat's provider had a 1M real window - so skipping a call we predict will fail would throw away a working summary; (b) an unfittable prompt sent as it is stays a strict prefix of the acting request, which keeps the auxiliary prefix-cache property documented in docs/context-compaction.md. A prompt that *is* trimmed loses that property for that call; that only happens below roughly 57k of window at the recorded fixed context (prompt > W - F requires fixed > 0.2 W + R), where the prompt is small and a cold prefix is cheap.\n",
+        "\n",
+        "2. On failure, the existing warning is replaced by a fitting reduction when the context could not be sent as it stands: `over_limit` = the trigger was ContextOverflow or BytePressure, or pressure has reached the declared window. Then `fitting_suffix(surface, target - fixed - reserved)` keeps the newest whole units that fit (always at least the last), `pinned_user_units` keeps the user's own directions from the span that leaves, `DROPPED_SPAN_MARKER` says what happened, and the state block is re-derived from the same records a summary replacement uses. Committed evidence: `context.compacted` with `strategy: \"drop\"`, `removedUnits`, `removedTokenCount`, `pinnedUnits`, `pinnedTokenCount`, `keptTokenCount`, `summaryAttempts`. The summary path additionally records `trimmedUnits`, `trimmedTokenCount` and `promptFitsWindow`.\n",
+        "\n",
+        "3. A reduction is committed only if it really fits (`kept + fixed <= target`) and strictly shrinks the span. When the irreducible part - one oversized user turn, or a result no pruning gate may rewrite - already exceeds the window, nothing compaction can do makes the context sendable, so the failure is reported once and the provider's own refusal is the honest answer. That is the residual case the acceptance's \"never with an unchanged selection plus a warning\" cannot cover, and it is documented as such rather than silently dropping the user's own direction.\n",
+        "\n",
+        "VERIFICATION. Desktop lib suite 488 passed, 0 failed, 1 ignored, across 11 clean full-suite runs. New unit tests: `a_summary_prompt_is_fitted_to_its_window_in_whole_units` (one unit leaves, the base and directive survive, whole units only, an unfittable prompt is left untouched, an already-fitting prompt is never touched) and `the_fitting_suffix_keeps_the_newest_units_that_fit_and_never_nothing`. New integration tests: `an_oversized_summary_prompt_is_fitted_to_the_window_before_it_is_sent` (a 108k-token surface on a 40k window: exactly one summary call, the sent prompt estimates at or under the window, `trimmedUnits > 0`, `promptFitsWindow` true, the committed context fits) and `a_context_over_the_window_is_reduced_even_when_no_summary_arrives` (the provider never answers: one `strategy: \"drop\"` compaction, the committed context fits the window, the marker is in the context, the oldest results are gone, the user's direction survives). Both ran single-threaded and inside the parallel suite.\n",
+        "\n",
+        "NOT DONE, out of scope by the task's own boundary: segmented or map-reduce summarisation. With the trim in place the single call covers the newest part of the span and the oldest part is dropped with the marker and the evidence; the loss is bounded and stated. Recorded as the future quality option if a small window becomes a first-class target.\n",
+        "\n",
+        "DOCS. docs/context-compaction.md documents both behaviours: the prefix exception for a trimmed prompt, and the failed-summary path ending in a drop when the context is unsendable, including the irreducible case.\n",
+        "\n",
+        "ONE NEW OBSERVATION, not this task and not hidden: during the 10-run verification the full suite hung once (all 24 threads blocked on futexes for 15 minutes, killed; the thread names were runtime::servic*, runtime::pipeli* and runtime::tool_l*, none from compaction), and never again in 11 further clean runs. Recorded as its own task with that evidence."
+      ]
+    },
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-09-26 09:18:14",
@@ -37,9 +57,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Guarantee a fitting reduction when the prefix no longer fits the window",
-    "updated_at": "2026-09-26 17:01:12"
+    "updated_at": "2026-09-26 18:06:41"
   },
   "deleted": false,
   "identity": "99344e53-a949-4f12-b06e-c23dc20c8c16",

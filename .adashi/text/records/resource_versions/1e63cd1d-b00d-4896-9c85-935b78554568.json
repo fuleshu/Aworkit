@@ -4,12 +4,12 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "resource_id": "144",
+    "resource_id": "147",
     "resource_kind": "task",
-    "updated_at": "2026-09-26 18:06:41",
-    "version": 5
+    "updated_at": "2026-09-26 18:07:03",
+    "version": 1
   },
   "deleted": false,
-  "identity": "d8ba858c-e31c-4a30-b0df-773362bd4f7b",
+  "identity": "1e63cd1d-b00d-4896-9c85-935b78554568",
   "schemaVersion": 1
 }

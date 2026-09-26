@@ -1,0 +1,38 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-26 18:07:03",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Observed once while verifying task 144/146: the full desktop lib suite hung.\n",
+        "\n",
+        "Evidence. `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib` (488 tests, default parallel) was running in a loop of ten. Runs 1-8 passed in 24-27 s each. Run 9 never finished: after 15 minutes the process was alive at 26% CPU with all 24 threads blocked on futexes (`wchan` = futex_do_wait), 3:56 of CPU time over 14:52 elapsed. Killed it; eleven further full-suite runs (3 foreground with a 120 s timeout, 8 in the loop that followed) were clean, so the rate is roughly one in twelve.\n",
+        "\n",
+        "Attribution so far: the thread names of the blocked threads were `runtime::servic*` (many), `runtime::pipeli*` (2), `runtime::tool_l*` (4) and `aworkit-job-sup*` (3, one in hrtimer_nanosleep). No compaction test thread was in flight, and the compaction module passed ten consecutive parallel runs and every full-suite run. `gdb` could not attach (yama ptrace_scope), so no stack was captured; the next occurrence should be captured with `/proc/<pid>/task/*/wchan` plus `RUST_BACKTRACE` and, if ptrace can be enabled, a `thread apply all bt`.\n",
+        "\n",
+        "Hypotheses to test, in order: (1) a process-wide lock or registry shared by the service/pipeline tests - the fixtures reuse stable identities (`chat.instructions`, `run.instructions`, `request.instructions`, `agent.1`, `outer.compaction-integration`) and a job supervisor is running in the same process; (2) a SQLite lock contention between fixtures (each has its own tempdir, so this needs proving); (3) a test that waits on a job supervisor's timer with no upper bound, since `aworkit-job-sup` threads were sleeping in `hrtimer_nanosleep`.\n",
+        "\n",
+        "Work: capture a stack at the next occurrence, then either make the blocking wait bounded (a timeout that fails the test loudly) or remove the shared identity that lets two tests collide. Acceptance: 30 consecutive full-suite runs without a hang, and a test that waits on background work must fail with a message instead of blocking forever.\n",
+        "\n",
+        "Not related to compaction, to the share-based budget model, or to task 146 (which was an assertion contract problem, not a lock)."
+      ]
+    },
+    "id": 147,
+    "number": 146,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "The desktop lib suite can hang under parallelism: all threads blocked on futexes, no failing test",
+    "updated_at": "2026-09-26 18:07:03"
+  },
+  "deleted": false,
+  "identity": "d36523e2-14bb-445b-a542-d16ad85a5440",
+  "schemaVersion": 1
+}

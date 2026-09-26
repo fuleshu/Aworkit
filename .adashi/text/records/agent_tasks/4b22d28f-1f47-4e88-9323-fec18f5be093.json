@@ -1,9 +1,25 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\"]",
+    "completed_at": "2026-09-26 18:06:55",
+    "completion_memo": {
+      "lines": [
+        "Fixed in cdd24ba, together with task 144's implementation. The recorded diagnosis was wrong and the real cause is different, so both are recorded here.\n",
+        "\n",
+        "THE RECORDED HYPOTHESIS IS DISPROVEN. FrozenModelGateway owns its providers in a Vec (crates/aworkit-capability-host/src/model.rs) and the fixture builds one per test; there is no process-wide binding registry, and `ephemeral_semantic_event_committer()` returns a fresh Arc per call, so the fixtures do not share an event store either. Adding distinct binding ids would have changed nothing.\n",
+        "\n",
+        "WHAT ACTUALLY HAPPENS. Instrumented the failing tests with entry/exit probes. In a failing run `manage_model_context` left the request untouched (the hash at entry equalled the hash at both exits), while the test's `before` hash - taken before the call - differed. The difference is created by the pre-loop preparation: `restore_context` / `state_context` / `workspace_context`. A wider probe showed exactly what was gained: a fourth context message, `record.workspace-instructions.94c15ec4...`, 479 chars, \"\\\\n<system-reminder>\\\\nTrusted Aworkit host clock for the latest user turn...\" - the trusted host-clock reminder, injected per user turn. So the request legitimately changes during preparation, and a whole-request hash is simply not a valid change detector. That is also why it was intermittent and load-dependent: under parallel load the clock injection lands on the other side of the test's snapshot boundary. Single-threaded runs never failed; the module in parallel failed in roughly one run in five and always in the two tests that returned ProviderError::RequestTimedOut (their fixtures ran longest before the second preparation).\n",
+        "\n",
+        "THE FIX. The contract is now asserted through the committed evidence, with a shared helper `assert_no_reduction(f, changed, context)`: a failed or cancelled compaction must not mark the selection changed and must commit no `context.compacted` event. Applied to `failed_cancelled_and_nonshrinking_summaries_leave_the_selection_unchanged`, `an_exhausted_summary_recovery_warns_once_and_keeps_the_selection` and `cancellation_wins_over_summary_recovery`, replacing `assert_eq!(c::hash(&request), before)` and `assert_eq!(request, before)`. The provider-call-count and warning assertions are unchanged. No binding ids were touched, because they were never the problem.\n",
+        "\n",
+        "VERIFICATION. Ten consecutive parallel runs of the previously flaky filter (`-- recovery --test-threads=8`): all green, where the same command failed in roughly one run in five before. Eleven clean full-suite runs at 488 passed, 0 failed, 1 ignored.\n",
+        "\n",
+        "PRODUCTION NOTE, deliberately not changed here: the host-clock reminder being injected during preparation is by design (one reminder per user turn), so nothing in the runtime is wrong; what was wrong was a test asserting a whole-request identity across a boundary that is documented to add per-turn context. If the clock's injection point itself ever needs to be deterministic for another reason, that belongs to the workspace-instructions element, not here.\n",
+        "\n",
+        "ALSO RECORDED: a rare *hang* of the whole suite (once in twelve full-suite runs, all 24 threads blocked on futexes for 15 minutes with no compaction test in flight) is a separate observation with its own task."
+      ]
+    },
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-09-26 09:18:24",
@@ -24,9 +40,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Compaction tests flake under parallelism: every fixture registers the same gateway binding id",
-    "updated_at": "2026-09-26 09:18:24"
+    "updated_at": "2026-09-26 18:06:55"
   },
   "deleted": false,
   "identity": "4b22d28f-1f47-4e88-9323-fec18f5be093",
