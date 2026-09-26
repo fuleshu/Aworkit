@@ -161,8 +161,18 @@ pub(crate) struct Policy {
     pub auto: bool,
     #[serde(default = "threshold")]
     pub threshold_ratio: f64,
+    /// Share of the compacted replacement the summary takes; the retained tail
+    /// keeps the rest. The one number in this model with no derivation, and so
+    /// the one the Settings panel offers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retain_ratio: Option<f64>,
+    pub summary_share: Option<f64>,
+    /// Legacy sink for the removed proportional retention. The retained tail is
+    /// derived from the window now, so a frozen Chat that still carries
+    /// `retainRatio` deserializes and the value means nothing.
+    #[serde(default, rename = "retainRatio", skip_serializing)]
+    pub _legacy_retain_ratio: Option<f64>,
+    /// Verbatim tail for a Chat whose model declares no context window: the
+    /// legacy byte-pressure path, where there is no ratio to derive from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retain_tokens: Option<u64>,
     /// Legacy sink for the removed absolute summary budget. A frozen Chat may
@@ -232,13 +242,16 @@ impl Policy {
                     .into(),
             );
         }
-        let ratio = self.retain_ratio.unwrap_or(0.16);
+        let share = self.summary_share();
         if !self.threshold_ratio.is_finite()
             || !(0.0 < self.threshold_ratio && self.threshold_ratio <= 1.0)
-            || !ratio.is_finite()
-            || !(0.0 < ratio && ratio <= 1.0)
-            || (self.retain_ratio.is_some() && self.retain_tokens.is_some())
-            || (self.retain_tokens.is_none() && ratio >= self.threshold_ratio)
+            // A trigger at or below the occupancy target would leave the context
+            // above it after every compaction, so the run would compact on every
+            // request. This replaces the old retention-below-trigger check, which
+            // guarded a ratio that no longer exists.
+            || self.threshold_ratio <= COMPACTION_TARGET_RATIO
+            || !share.is_finite()
+            || !(0.0 < share && share < 1.0)
             || self.compaction_retries > 32
             || self.max_overflow_retries > 32
             || self.threshold_chars == 0
@@ -249,24 +262,24 @@ impl Policy {
                 .saturating_add(prune_marker_bound_chars())
                 > self.threshold_chars
         {
-            return Err("Invalid compaction policy: require a positive threshold at most 1, a smaller exclusive tail ratio/token budget and valid pruning budgets.".into());
+            return Err("Invalid compaction policy: require a trigger above the quarter-window occupancy target, a summary share strictly between 0 and 1, and valid pruning budgets.".into());
         }
-        if let Some(capacity) = capacity {
-            if capacity == 0 || self.retention(capacity) >= self.threshold(capacity) {
-                return Err(
-                    "Compaction retention must be smaller than the model pressure threshold."
-                        .into(),
-                );
-            }
+        if capacity == Some(0) {
+            return Err("Compaction requires a positive context window.".into());
         }
         Ok(())
     }
     pub(crate) fn threshold(&self, capacity: u64) -> u64 {
         (capacity as f64 * self.threshold_ratio).floor() as u64
     }
-    pub(crate) fn retention(&self, capacity: u64) -> u64 {
-        self.retain_tokens
-            .unwrap_or_else(|| (capacity as f64 * self.retain_ratio.unwrap_or(0.16)).floor() as u64)
+    pub(crate) fn retention(&self) -> u64 {
+        self.retain_tokens.unwrap_or(0)
+    }
+
+    /// Share of the replacement budget the summary takes. The retained tail
+    /// keeps the remainder, so the setting is honoured exactly at every window.
+    pub(crate) fn summary_share(&self) -> f64 {
+        self.summary_share.unwrap_or(SUMMARY_BUDGET_SHARE)
     }
 
     /// The provider output reservation, out of the declared window.
@@ -332,7 +345,7 @@ impl Policy {
         // the tail keeps the remainder, so a model that declares little output
         // shifts the whole budget into verbatim history rather than truncating
         // the plan.
-        let summary = ((budget as f64 * SUMMARY_BUDGET_SHARE).floor() as u64)
+        let summary = ((budget as f64 * self.summary_share()).floor() as u64)
             .min(output_reservation.unwrap_or(u64::MAX));
         ReplacementPlan {
             retain: budget.saturating_sub(summary),
@@ -386,9 +399,10 @@ pub(crate) const COMPACTION_TARGET_RATIO: f64 = 0.25;
 /// context of about 12,300 tokens a 100,000-token window is not clamped
 /// (12,600 > 8,000) while a 32,000-token one is.
 pub(crate) const COMPACTION_FLOOR_RATIO: f64 = 0.08;
-/// Share of the replacement budget spent on the summary; the retained tail takes
-/// the rest. The one quality ratio in the model - prose against verbatim history
-/// - so a larger window keeps more of both.
+/// Default share of the replacement budget spent on the summary; the retained
+/// tail takes the rest. The one quality ratio in the model - prose against
+/// verbatim history - so a larger window keeps more of both. A Chat may set its
+/// own `summaryShare`, and this is what it gets when it does not.
 pub(crate) const SUMMARY_BUDGET_SHARE: f64 = 0.382;
 
 /// What one compaction replaces: the verbatim tail and the summary it pays for.

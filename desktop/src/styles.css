@@ -2024,6 +2024,13 @@ pre {
   gap: 5px;
   min-width: 0;
 }
+/* A read-out that explains what the current policy implies, across the row. */
+.settings-field-note {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  grid-column: 1 / -1;
+  margin: 0;
+}
 /* Text controls fill their field; a checkbox or radio is its own control and
    must keep its intrinsic size instead of stretching across the row. */
 .settings-field > input:not([type="checkbox"]):not([type="radio"]),

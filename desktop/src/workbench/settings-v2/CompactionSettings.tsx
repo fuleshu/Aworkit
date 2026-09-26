@@ -1,5 +1,6 @@
 import type { ModelConfiguration, ProviderConfiguration } from "../configuration";
 import { CompressionSettings } from "./CompressionSettings";
+import { compactionReadout, describeCompaction } from "./compactionPlan";
 
 export function CompactionSettings({model,providers,onChange}:{model:ModelConfiguration;providers:readonly ProviderConfiguration[];onChange:(model:ModelConfiguration)=>void}) {
   const policy = model.compaction ?? {};
@@ -8,26 +9,31 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
     {label}<input type="number" title={title} min={min} max={max} step="1" value={Number(policy[key] ?? fallback)*scale}
       onChange={event=> { if(event.target.value!=="") set(key,Number(event.target.value)/scale); }} />
   </label>;
+  // Compaction sizes one plan from the model's declared window. A model that
+  // declares none has no ratio to derive from, so the panel offers exactly one
+  // of the two controls rather than one that would silently do nothing.
+  const readout = compactionReadout(model.contextWindow, model.maxOutputTokens, Number(policy.summaryShare ?? 0.382));
   return <><CompressionSettings model={model} onChange={onChange} /><details className="model-compaction-settings"><summary>Context compaction</summary>
-    <p className="section-intro">Summarize earlier work as this model approaches its context limit. The retained history budget is the only proportional knob: the summary and the carried user turns are derived from it, and a window below 64k tokens cannot compact automatically. The original Chat history remains available. Changes apply to new Chats.</p>
+    <p className="section-intro">Summarize earlier work as this model approaches its context limit. Every budget is a share of the model's declared window, so compaction aims to leave a quarter of it occupied - split between the written summary and the most recent messages kept verbatim. The original Chat history remains available. Changes apply to new Chats.</p>
     <label className="switch-label"><input type="checkbox" checked={policy.auto !== false} onChange={event=>set("auto",event.target.checked)} title="Automatically reduce context before model requests" />Automatic compaction</label>
     <div className="settings-grid two-columns">
       <label className="settings-field">Summary model<select title="Use the acting model or freeze a separate provider and model for summaries" value={policy.summarizationProvider ? JSON.stringify([policy.summarizationProvider,policy.summarizationModel]) : ""}
         onChange={event=>{const next={...policy};delete next.summarizationProvider;delete next.summarizationModel;if(event.target.value){const [providerId,modelId]=JSON.parse(event.target.value) as string[];next.summarizationProvider=providerId;next.summarizationModel=modelId;}onChange({...model,compaction:next});}}>
         <option value="">Acting model</option>{providers.filter(p=>p.enabled).flatMap(p=>p.models.filter(m=>m.enabled).map(m=><option key={`${p.id}/${m.id}`} value={JSON.stringify([p.id,m.id])}>{p.name} / {m.name}</option>))}
       </select></label>
-      {number("thresholdRatio","Compact at (%)",0.8,"Percentage of the model context window that triggers compaction",100,1,100)}
-      <label className="settings-field">Retained history budget<select value={policy.retainTokens == null ? "ratio":"tokens"} title="Keep a recent verbatim tail as a fraction of capacity or an absolute token budget"
-        onChange={event=> { const next={...policy}; delete next.retainTokens; delete next.retainRatio; if(event.target.value==="tokens")next.retainTokens=4096;onChange({...model,compaction:next}); }}><option value="ratio">Percentage</option><option value="tokens">Tokens</option></select></label>
-      {policy.retainTokens == null ? number("retainRatio","Retain recent history (%)",0.16,"Minimum recent history to preserve verbatim; must be below the trigger",100,1,99) : number("retainTokens","Retain recent tokens",4096,"Minimum recent history to preserve verbatim")}
+      {number("thresholdRatio","Compact at (%)",0.8,"Percentage of the model context window that triggers compaction; it must stay above the 25% occupancy target, or every request would compact",100,26,100)}
+      {model.contextWindow == null
+        ? number("retainTokens","Verbatim tail without a declared window (tokens)",0,"This model declares no context window, so compaction has no ratio to size a plan from; this is how many recent tokens it keeps verbatim on the legacy byte-pressure path")
+        : number("summaryShare","Summary share of compaction",0.382,"How compaction divides what it keeps: this share becomes the written summary, the rest stays as the most recent messages, verbatim. Lower keeps more original history; higher keeps a fuller written account of what was dropped.",100,1,90)}
       {number("compactionRetries","Additional pressure reductions",1,"Additional reductions if a valid checkpoint still leaves context above the threshold",1,0,32)}
       {number("maxOverflowRetries","Overflow recovery attempts",1,"Consecutive provider context-overflow retries; each requires a committed reduction",1,0,32)}
     </div>
+    {readout && <p className="settings-field-note">{describeCompaction(readout)}</p>}
     <label className="switch-label"><input type="checkbox" checked={policy.pruneToolResults !== false} onChange={event=>set("pruneToolResults",event.target.checked)} title="Before summarizing, reduce large tool outputs by preserving their beginning and end" />Prune large tool results first</label>
     <div className="settings-grid two-columns">
-      {number("thresholdChars","Tool result character threshold",81920,"Prune text exceeding this many Unicode characters",1,1,4*1024*1024)}
-      {number("headChars","Keep beginning characters",73728,"Characters preserved from the beginning of a large tool result")}
-      {number("tailChars","Keep ending characters",4096,"Characters preserved from the end of a large tool result")}
+      {number("thresholdChars","Tool result character threshold",8192,"Prune text exceeding this many Unicode characters",1,1,4*1024*1024)}
+      {number("headChars","Keep beginning characters",4096,"Characters preserved from the beginning of a large tool result")}
+      {number("tailChars","Keep ending characters",1024,"Characters preserved from the end of a large tool result")}
     </div>
   </details></>;
 }

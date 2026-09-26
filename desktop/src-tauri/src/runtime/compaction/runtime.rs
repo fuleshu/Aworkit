@@ -767,10 +767,7 @@ impl BoundFileToolAuthorityV1 {
             ) {
                 0
             } else {
-                replacement.map_or_else(
-                    || metadata.policy.retention(window.unwrap_or_default()),
-                    |plan| plan.retain,
-                )
+                replacement.map_or_else(|| metadata.policy.retention(), |plan| plan.retain)
             };
             if metadata.policy.prune_tool_results && trigger != c::Trigger::Manual {
                 let before = request.clone();

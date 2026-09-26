@@ -37,31 +37,52 @@ fn exchange(text: &str) -> ModelToolExchangeV1 {
     }
 }
 #[test]
-fn policy_defaults_exclusive_retention_and_capacity_validation() {
+fn policy_defaults_validate_the_trigger_and_the_summary_share() {
     let p = Policy::default();
-    p.validate(Some(128000)).unwrap();
-    assert_eq!(p.threshold(128000), 102400);
-    assert_eq!(p.retention(128000), 20480);
-    // The absolute summary budget is gone: a frozen policy that still carries
-    // maxTokens deserializes and ignores the value.
-    let legacy: Policy = serde_json::from_value(json!({"maxTokens": 4096})).unwrap();
-    legacy.validate(Some(128000)).unwrap();
+    p.validate(Some(128_000)).unwrap();
+    assert_eq!(p.threshold(128_000), 102_400);
+    assert_eq!(p.summary_share(), SUMMARY_BUDGET_SHARE);
+    // The removed absolute summary budget and the removed proportional
+    // retention still deserialize from a frozen Chat and mean nothing.
+    let legacy: Policy =
+        serde_json::from_value(json!({"maxTokens": 4096, "retainRatio": 0.9})).unwrap();
+    legacy.validate(Some(128_000)).unwrap();
+    assert_eq!(legacy.summary_share(), SUMMARY_BUDGET_SHARE);
     for value in [
+        // A trigger at or below the occupancy target cannot leave the context
+        // below itself, so compaction would run on every request.
         json!({"thresholdRatio":0}),
-        json!({"retainRatio":0.9}),
-        json!({"retainTokens":0,"retainRatio":0.1}),
+        json!({"thresholdRatio":0.25}),
+        // A summary share of 0 or 1 is not a compaction: it leaves no summary,
+        // or no verbatim history at all.
+        json!({"summaryShare":0}),
+        json!({"summaryShare":1.0}),
         json!({"headChars":81920}),
     ] {
-        assert!(serde_json::from_value::<Policy>(value)
-            .unwrap()
-            .validate(Some(128000))
-            .is_err());
+        assert!(
+            serde_json::from_value::<Policy>(value.clone())
+                .unwrap()
+                .validate(Some(128_000))
+                .is_err(),
+            "{value} must be rejected"
+        );
     }
     assert!(serde_json::from_value::<Policy>(json!({"typo":1})).is_err());
+    // A Chat whose model declares no window keeps the absolute tail it was
+    // frozen with, and the default is no tail at all there: the byte-pressure
+    // guard is what reduces such a Chat.
     let p: Policy = serde_json::from_value(json!({"retainTokens":0})).unwrap();
     p.validate(None).unwrap();
-    assert_eq!(p.retention(128000), 0);
+    assert_eq!(p.retention(), 0);
+    assert_eq!(Policy::default().retention(), 0);
+    assert!(
+        serde_json::from_value::<Policy>(json!({"retainTokens":4096}))
+            .unwrap()
+            .validate(None)
+            .is_ok()
+    );
 }
+
 #[test]
 fn surface_round_trip_keeps_input_injections_signatures_and_parallel_pairs() {
     let mut r = request();
@@ -507,11 +528,31 @@ fn every_budget_is_a_share_of_the_window() {
 
     // A manual zero retention must not zero the generated replacement.
     let manual: Policy = serde_json::from_value(json!({"retainTokens":0})).unwrap();
-    assert_eq!(manual.retention(262_144), 0);
+    assert_eq!(manual.retention(), 0);
     assert_eq!(
         manual.replacement_plan(262_144, 12_400, None),
         p.replacement_plan(262_144, 12_400, None)
     );
+
+    // The summary share is the one number a Chat may set, and it is honoured
+    // exactly: the tail takes whatever the summary does not, at every window.
+    let lean: Policy = serde_json::from_value(json!({"summaryShare":0.2})).unwrap();
+    assert_eq!(lean.summary_share(), 0.2);
+    assert_eq!(
+        lean.replacement_plan(1_048_576, 12_400, None),
+        ReplacementPlan {
+            retain: 199_796,
+            summary: 49_948
+        }
+    );
+    for window in [100_000, 262_144, 1_048_576] {
+        let plan = lean.replacement_plan(window, 12_400, None);
+        assert_eq!(
+            plan.retain + plan.summary,
+            lean.target(window) - 12_400,
+            "a configured share still spends the whole budget"
+        );
+    }
 }
 
 #[test]
