@@ -424,7 +424,11 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
     let fixed = c::fixed_tokens(&summary_requests[0]).unwrap();
     assert_eq!(
         summary_requests[0].parameters["maxOutputTokens"],
-        json!(c::Policy::default().replacement_plan(16_000, fixed).summary)
+        json!(
+            c::Policy::default()
+                .replacement_plan(16_000, fixed, None)
+                .summary
+        )
     );
     drop(summary_requests);
     let visible = c::units(&request).unwrap();
@@ -1192,7 +1196,7 @@ fn the_summary_prompt_is_the_live_prompt_prefix_plus_the_directive() {
         summary.parameters["maxOutputTokens"],
         json!(
             c::Policy::default()
-                .replacement_plan(16_000, c::fixed_tokens(&summary).unwrap())
+                .replacement_plan(16_000, c::fixed_tokens(&summary).unwrap(), None)
                 .summary
         )
     );

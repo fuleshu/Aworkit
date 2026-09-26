@@ -356,12 +356,14 @@ fn the_prune_gate_is_exclusive_and_never_grows_a_result() {
     );
 }
 #[test]
-fn budgets_are_derived_from_the_target_window() {
+fn every_budget_is_a_share_of_the_window() {
     let p = Policy::default();
     // The provider's own output reservation comes out of the window first, but
     // never more than the target: a model that declares more output than its
     // window (393,216 against 32,000) would otherwise collapse the window to
     // zero, and a zero window has no threshold to cross.
+    assert_eq!(p.output_reservation(32_768, Some(393_216)), 8_192);
+    assert_eq!(p.output_reservation(262_144, None), 0);
     assert_eq!(p.effective_window(262_144, Some(32_768)), 229_376);
     assert_eq!(p.effective_window(262_144, None), 262_144);
     assert_eq!(p.effective_window(32_768, Some(393_216)), 24_576);
@@ -373,64 +375,107 @@ fn budgets_are_derived_from_the_target_window() {
     assert_eq!(p.target(262_144), 65_536);
     assert_eq!(p.target(1_048_576), 262_144);
 
-    // With room to spare the plan lands exactly on the target, and what the
-    // capped summary does not take goes to the verbatim tail: a large context
-    // keeps proportionally more history instead of behaving like a small one.
+    // With room to spare the plan lands exactly on the target, and both parts
+    // keep the same share of it: nothing is clipped to a constant, so a large
+    // context keeps proportionally more summary and proportionally more history.
     for window in [100_000, 262_144, 1_048_576] {
-        let plan = p.replacement_plan(window, 12_400);
+        let plan = p.replacement_plan(window, 12_400, None);
         assert_eq!(
             12_400 + plan.retain + plan.summary,
             p.target(window),
             "one compaction lands exactly on the target in a {window}-token window"
         );
+        let budget = plan.retain + plan.summary;
+        assert_eq!(
+            plan.summary,
+            (budget as f64 * SUMMARY_BUDGET_SHARE).floor() as u64,
+            "the summary keeps its share in a {window}-token window"
+        );
     }
     assert_eq!(
-        p.replacement_plan(100_000, 12_400),
+        p.replacement_plan(100_000, 12_400, None),
         ReplacementPlan {
             retain: 7_787,
             summary: 4_813
         }
     );
     assert_eq!(
-        p.replacement_plan(262_144, 12_400),
+        p.replacement_plan(262_144, 12_400, None),
         ReplacementPlan {
-            retain: 45_136,
-            summary: 8_000
+            retain: 32_839,
+            summary: 20_297
         },
-        "the summary stops at its cap and the tail takes the rest"
+        "the summary grows with the window instead of stopping at a cap"
     );
     assert_eq!(
-        p.replacement_plan(1_048_576, 12_400),
+        p.replacement_plan(1_048_576, 12_400, None),
         ReplacementPlan {
-            retain: 241_744,
-            summary: 8_000
+            retain: 154_342,
+            summary: 95_402
+        },
+        "a 1M window gets a 1M summary and a 1M tail"
+    );
+    // The two parts keep the same ratio at every window - to within the token a
+    // floor rounds away - which is what makes this a share rather than a
+    // schedule of chosen numbers.
+    let small = p.replacement_plan(100_000, 12_400, None);
+    let large = p.replacement_plan(1_048_576, 12_400, None);
+    for plan in [small, large] {
+        let budget = (plan.retain + plan.summary) as f64;
+        assert!(
+            (plan.summary as f64 / budget - SUMMARY_BUDGET_SHARE).abs() < 0.001,
+            "the summary keeps its share of the budget: {plan:?}"
+        );
+    }
+
+    // The only bound left that is not a context share is the model's own
+    // declared output: a summary is never asked to be longer than that, and
+    // whatever the summary cannot use stays verbatim.
+    assert_eq!(
+        p.replacement_plan(1_048_576, 12_400, Some(64_000)),
+        ReplacementPlan {
+            retain: 185_744,
+            summary: 64_000
+        }
+    );
+    assert_eq!(
+        p.replacement_plan(1_048_576, 12_400, Some(1_000)),
+        ReplacementPlan {
+            retain: 248_744,
+            summary: 1_000
         }
     );
 
-    // Below the floor the budgets clamp to their minima, the target is missed,
-    // and the run compacts anyway - with a diagnostic that derives the window
-    // that would have reached the target instead of naming a constant.
+    // Below the target the replacement floor is still a share of the window, the
+    // target is missed, and the run compacts anyway - with a diagnostic that
+    // derives the window which would have reached the target instead of naming a
+    // constant.
     assert_eq!(
-        p.replacement_plan(32_768, 12_400),
+        p.replacement_plan(32_768, 12_400, None),
         ReplacementPlan {
-            retain: 2_000,
-            summary: 512
+            retain: 1_620,
+            summary: 1_001
         },
-        "at the floor the plan is exactly both minima"
+        "the floor plan is 8% of the window, split by the same ratio"
     );
     assert_eq!(
-        p.replacement_plan(32_768, 12_400).retain + p.replacement_plan(32_768, 12_400).summary,
-        minimum_replacement(),
+        p.replacement_plan(32_768, 12_400, None).retain
+            + p.replacement_plan(32_768, 12_400, None).summary,
+        p.minimum_replacement(32_768),
         "the promise the advisory and can_reduce make"
     );
     assert!(p.can_reduce(32_768, 12_400), "32k can still be reduced");
     assert_eq!(
         p.minimum_window(12_400),
-        59_648,
-        "the floor moves with the fixed context, not with a constant"
+        72_942,
+        "the smallest window that reaches the target is derived from the fixed context"
+    );
+    assert!(
+        p.target(72_941) >= 12_400 + p.minimum_replacement(72_941),
+        "and the window just below it already reaches it, floor effects aside"
     );
     let advisory = p.compaction_advisory(32_768, 12_400).unwrap();
-    for expected in ["25%", "8192", "12400", "2512", "59648", "still runs"] {
+    for expected in ["25%", "8192", "12400", "8%", "2621", "72942", "still runs"] {
         assert!(
             advisory.contains(expected),
             "the advisory explains {expected}: {advisory}"
@@ -443,23 +488,29 @@ fn budgets_are_derived_from_the_target_window() {
 
     // The one remaining stand-down is about headroom, not about a constant: a
     // fixed context that already reaches the trigger leaves nothing to gain, so
-    // compacting would only oscillate.
+    // compacting would only oscillate. The boundary is where the floor
+    // replacement no longer fits under the trigger.
     assert!(p.can_reduce(262_144, 12_400));
-    // 12_400 + 2_512 is 14_912, and 80% of 18_642 is 14_913: at 18_640 the
-    // fixed context already reaches the trigger, so there is nothing to gain.
-    assert!(!p.can_reduce(18_640, 12_400));
+    assert!(!p.can_reduce(17_222, 12_400));
     assert!(
-        p.can_reduce(18_642, 12_400),
+        p.can_reduce(17_223, 12_400),
         "one token over the boundary reduces"
     );
-    assert!(p.compaction_advisory(18_640, 12_400).is_some());
+    assert!(p.compaction_advisory(17_222, 12_400).is_some());
+    // Wherever it stands down, compacting could not have helped: the fixed
+    // context plus the smallest replacement already reaches the trigger.
+    for window in [17_222_u64, 20_000, 32_768, 262_144] {
+        if p.can_reduce(window, 12_400) {
+            assert!(12_400 + p.minimum_replacement(window) < p.threshold(window));
+        }
+    }
 
     // A manual zero retention must not zero the generated replacement.
     let manual: Policy = serde_json::from_value(json!({"retainTokens":0})).unwrap();
     assert_eq!(manual.retention(262_144), 0);
     assert_eq!(
-        manual.replacement_plan(262_144, 12_400),
-        p.replacement_plan(262_144, 12_400)
+        manual.replacement_plan(262_144, 12_400, None),
+        p.replacement_plan(262_144, 12_400, None)
     );
 }
 

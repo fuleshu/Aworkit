@@ -181,9 +181,10 @@ pub(crate) fn estimate(request: &ModelToolRequestV1) -> Result<u64, String> {
 /// makes a small window marginal: the recorded 32k Chat reported 12,426 input
 /// tokens on its third turn, of which about 12,300 was fixed - the workspace
 /// and per-tool instructions plus 31 advertised tool schemas. That is why the
-/// derived floor lands near 59,000 tokens for that Chat rather than at the
-/// 64,000 constant it replaced, and why the honest advice for a 32k window is a
-/// smaller tool selection as much as a smaller replacement budget.
+/// derived floor lands near 72,000 tokens for that Chat (fixed / (target -
+/// floor), i.e. fixed / 0.17) rather than at the 64,000 constant it replaced,
+/// and why the honest advice for a 32k window is a smaller tool selection as
+/// much as a smaller replacement budget.
 pub(crate) fn fixed_tokens(request: &ModelToolRequestV1) -> Result<u64, String> {
     let system: u64 = request.input["messages"]
         .as_array()

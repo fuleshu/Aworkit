@@ -692,7 +692,17 @@ impl BoundFileToolAuthorityV1 {
         let pressure = c::pressure(request, anchor.as_ref())?;
         mark("pressure", &mut since, &mut timings);
         // Every budget is a fraction of the window the provider leaves for
-        // input, so the model's own output reservation comes out first.
+        // input, so the model's own output reservation comes out first. The same
+        // reservation bounds how long a summary may be asked to be, so both are
+        // derived from one declared number.
+        let reservation = metadata
+            .context_window
+            .map(|capacity| {
+                metadata
+                    .policy
+                    .output_reservation(capacity, metadata.max_output_tokens)
+            })
+            .filter(|reservation| *reservation > 0);
         let window = metadata.context_window.map(|capacity| {
             metadata
                 .policy
@@ -721,7 +731,8 @@ impl BoundFileToolAuthorityV1 {
                 }
             };
         // What one compaction replaces, from the same measured fixed context.
-        let replacement = window.map(|window| metadata.policy.replacement_plan(window, fixed));
+        let replacement =
+            window.map(|window| metadata.policy.replacement_plan(window, fixed, reservation));
         // Align the byte-pressure trigger with the token threshold so a token
         // count below the configured 80% threshold cannot trip byte pressure
         // first. JSON context averages about four bytes per token; without a
@@ -926,8 +937,7 @@ impl BoundFileToolAuthorityV1 {
                         // cannot shrink the span — one oversized direction with
                         // little other content — fall back to the plain summary so
                         // compaction still makes progress.
-                        let user_budget = replacement
-                            .map_or(shadowed_tokens / 2, |plan| plan.retain / 2);
+                        let user_budget = replacement.map_or(shadowed_tokens / 2, |plan| plan.retain / 2);
                         let pinned = c::pinned_user_units(&surface, cut, user_budget);
                         let pinned_units = pinned.len();
                         let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
