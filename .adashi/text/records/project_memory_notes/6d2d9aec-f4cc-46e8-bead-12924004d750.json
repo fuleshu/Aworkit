@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Provenance of the 32k compaction refusal: c848df3 \"Scale every compaction budget with the effective window\" added the percentage budgets AND MINIMUM_COMPACT_CONTEXT_WINDOW=64_000 together, deliberately, with a test asserting a 32k window compacts nothing. So it is not legacy debt: the budgets are proportional, but this one guard is not, and its justification (\"the derived check fails below ~64k\") is false for a small fixed context - its own test passes the headroom check at 32,768 with fixed 3,000. The second gate (headroom >= W/4) is proportional and genuinely refuses the operator's 32k run: fixed ~12.3k plus the 32%-of-window replacement exceeds a quarter of the window. Not a regression and not the old absolute era (maxTokens was inert above 51,200 and now deserialises into a legacy sink). Levers: drop the constant; make retention/user/summary adaptive below ~64k; or shrink the fixed context (~37 tool schemas + 13 KB prompt).",
+    "created_at": "2026-09-26 07:58:31",
+    "id": 271,
+    "note_id": "compaction-64k-floor-provenance",
+    "operation_id": "compaction-64k-floor-provenance",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "compaction-64k-floor-provenance",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "6d2d9aec-f4cc-46e8-bead-12924004d750",
+  "schemaVersion": 1
+}

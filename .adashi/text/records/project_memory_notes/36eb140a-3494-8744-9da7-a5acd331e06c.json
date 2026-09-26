@@ -1,25 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": {
-      "lines": [
-        "117 and 122 finished and pushed.\n",
-        "122 (b24e145): core chat_path_action + runtime/path_actions.rs resolves a conversation path inside the Chat's frozen workspace (lexical + canonical containment, existence check) before any OS call; the opener still allows URLs only. chat/PathMenuTarget.tsx + PathContextMenu.tsx add a right-click menu on path links and on the file tool card path (read/write/edit/list/search/grep, now showing the acted-on file). Left click stays inert; the menu names the resolved path and disables actions with the core's reason; failures publish through the Chat notification publisher. Settings Desktop section stores desktop.editor (bare PATH command or absolute path, empty = OS default), validated in TS and Rust. No editor argument template by design.\n",
-        "117 (52eef35): per-Agent-node compaction overlay.\n",
-        "Known red: one pre-existing Rust compaction test; one 5s Settings timeout under full-suite parallelism."
-      ]
-    },
-    "created_at": "2026-09-22 21:34:11",
-    "id": 259,
-    "note_id": "2026-09-22-path-actions-and-desktop-editor-3",
-    "operation_id": "memory-path-actions-003",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "memory-path-actions-003",
-    "task_id": null
+    "id": 259
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "36eb140a-3494-8744-9da7-a5acd331e06c",
   "schemaVersion": 1
 }
