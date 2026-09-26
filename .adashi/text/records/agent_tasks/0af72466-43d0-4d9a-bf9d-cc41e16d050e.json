@@ -1,9 +1,27 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/state_context.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-09-26 20:40:44",
+    "completion_memo": {
+      "lines": [
+        "Implemented in 4e9f8b5. STATUS: the code change is complete and verified by tests; the acceptance numbers (uncached below 80,000 and cost below $0.20 on the same benchmark) need one live run, which only the operator can do - the dev binary is rebuilt and waiting. Please send the next run id and I will verify or reopen.\n",
+        "\n",
+        "WHAT CHANGED. The state emission now has two modes, chosen by the caller:\n",
+        "- `StateEmission::Consolidate` (the two compaction replacement sites): unchanged behaviour - every copy is collapsed into one block where the first copy stood. A compaction is rebuilding the selection anyway, so this costs nothing extra.\n",
+        "- `StateEmission::Append` (the restore refresh at runtime.rs:678): only the parts whose value is not already in the selection are added, at the tail, each carrying \"(Supersedes the earlier copy of this state in this context.)\". Existing copies are never rewritten or removed, so the prompt stays append-only and the provider's cached prefix survives the change. A part the Run no longer has (a cleared goal) is superseded by a small tombstone rather than by removing bytes, which would re-bill the suffix for the same reason. The emission is idempotent: an unchanged refresh appends nothing.\n",
+        "\n",
+        "WHY THE CURRENT VALUE IS ALWAYS THE LAST COPY. `restore_context` pushes this pass's own context messages - including the live head goal - after the restored document's messages, and `units()` emits same-position messages in list order, so the fresh copy always follows the restored (possibly stale) one. That is what makes leaving the stale copy in place safe rather than sloppy, and it is asserted by the updated restore test.\n",
+        "\n",
+        "BOUNDING. A superseded copy is not free, so once the copies that are no longer current pass a 4 KiB budget the emission falls back to a consolidation: one rewrite per budget instead of one per change, and the block cannot grow without bound in a long run that never compacts.\n",
+        "\n",
+        "TESTS. Three integration tests through the real authority: `a_state_change_is_appended_at_the_tail_instead_of_rewriting_the_context` (after a compaction, a task-list change leaves every unit the previous prompt carried byte-identical - `after[..before.len()] == before` - appends the new copy after every exchange with the note, and a further unchanged refresh appends nothing); `a_block_of_superseded_copies_is_consolidated_instead_of_appended_to_again` (60 superseded copies collapse back to one and the stale text is gone); `a_restore_refreshes_the_state_block_without_rewriting_the_selection` (rewritten from the old \"exactly one copy\" contract: the restored copy is left where it stood, the live goal is the last copy, and no duplicate is appended). Full desktop suite 490 passed, 0 failed, 1 ignored, three consecutive runs; `cargo build` of the desktop binary succeeds.\n",
+        "\n",
+        "DOCS. `docs/context-compaction.md` gains the rule next to the state-block bullet: a compaction collapses, a refresh appends, a removed part gets a tombstone, superseded copies are collapsed by the next compaction or by the 4 KiB budget, and the measured reason (about 50k uncached tokens for a 60-character mid-context edit) is recorded. The module documentation of `state_context.rs` states the same trade and why position decides the cost.\n",
+        "\n",
+        "OPEN, HONESTLY. Two things this change does not settle. (1) The live acceptance numbers are unmeasured, as above. (2) The stale copies are visible to the model; the mitigation is that the current value is the later copy, the appended copy says so explicitly, and a compaction or the budget removes them - but whether a transitional stale goal ever misleads the model is not measured either. The benchmark's selfcheck (53/53 in the measured run) is the first signal; if quality drops, the fallback is the task's option (c): keep the volatile parts only at the tail boundary, or shorten the tolerance by lowering the budget so consolidation happens sooner at a small cache cost."
+      ]
+    },
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-09-26 20:10:46",
@@ -52,9 +70,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "A mid-context state-block refresh re-bills the whole suffix: 21% of a benchmark run's cost",
-    "updated_at": "2026-09-26 20:11:33"
+    "updated_at": "2026-09-26 20:40:44"
   },
   "deleted": false,
   "identity": "0af72466-43d0-4d9a-bf9d-cc41e16d050e",
