@@ -205,18 +205,29 @@ fn openai_anthropic_and_gemini_discover_and_complete_with_exact_usage() {
             .expect("OpenAI discovery")
             .configured_model_available
     );
+    // The OpenAI-compatible adapter writes the prompt first and measures the
+    // body it sent, so its usage reports how much a prefix cache could reuse.
+    // This is the first request on this provider, so nothing could.
+    let events = execute(Box::new(openai), "binding.openai", "version.openai");
     assert_eq!(
-        execute(Box::new(openai), "binding.openai", "version.openai"),
-        vec![
+        &events[..2],
+        [
             ModelEventV1::AssistantOutput("hello ".to_owned()),
             ModelEventV1::AssistantOutput("openai".to_owned()),
-            ModelEventV1::Usage {
-                input_tokens: 7,
-                output_tokens: 3,
-                cache: Default::default(),
-            }
         ]
     );
+    let ModelEventV1::Usage {
+        input_tokens,
+        output_tokens,
+        cache,
+    } = &events[2]
+    else {
+        panic!("last event is not usage: {:?}", events[2]);
+    };
+    assert_eq!((*input_tokens, *output_tokens), (7, 3));
+    assert!(cache.sent_bytes.is_some_and(|bytes| bytes > 0));
+    assert_eq!(cache.common_prefix_bytes, Some(0));
+    assert_eq!(events.len(), 3);
     openai_server.join().expect("OpenAI fixture");
 
     let (anthropic_origin, anthropic_server) = start_fixture(2, |request| {
