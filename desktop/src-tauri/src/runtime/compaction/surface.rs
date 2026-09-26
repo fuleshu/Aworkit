@@ -262,6 +262,66 @@ pub(crate) fn pinned_user_units(surface: &[Unit], cut: usize, budget: u64) -> Ve
         .collect()
 }
 
+/// What fitting a summary prompt to its window did.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SummaryFit {
+    pub dropped_units: usize,
+    pub dropped_tokens: u64,
+    /// Whether the prompt now fits. False means nothing was dropped, because
+    /// dropping could not make it fit either.
+    pub fits: bool,
+}
+
+/// Drops the oldest whole units a summary prompt can spare so that it fits the
+/// window it will be sent in.
+///
+/// All or nothing: a span that cannot fit even after every unit it can spare is
+/// gone is sent as it is, because dropping units would lose history and still
+/// not fit - and the untrimmed prompt is the one that extends the acting
+/// request's prefix. When the trim does reach the budget it happens before the
+/// call, so an oversized prefix costs one fitting call instead of one failed
+/// round trip per dropped unit.
+pub(crate) fn fit_summary(surface: &mut Vec<Unit>, budget: u64) -> SummaryFit {
+    let mut probe = surface.clone();
+    let mut dropped_units = 0;
+    let mut dropped_tokens = 0;
+    while probe.iter().map(Unit::tokens).sum::<u64>() > budget {
+        let before: u64 = probe.iter().map(Unit::tokens).sum();
+        if !shrink_summary(&mut probe) {
+            break;
+        }
+        dropped_units += 1;
+        dropped_tokens += before - probe.iter().map(Unit::tokens).sum::<u64>();
+    }
+    let fits = probe.iter().map(Unit::tokens).sum::<u64>() <= budget;
+    if fits {
+        *surface = probe;
+    }
+    SummaryFit {
+        dropped_units: if fits { dropped_units } else { 0 },
+        dropped_tokens: if fits { dropped_tokens } else { 0 },
+        fits,
+    }
+}
+
+/// Index of the largest suffix of `surface` whose tokens fit `budget`.
+///
+/// The last unit is always kept even when it alone exceeds the budget: a
+/// replacement with nothing in it cannot be sent, and the caller's strict-shrink
+/// check still refuses a reduction that grew. Whole units only, so no tool
+/// boundary is ever split.
+pub(crate) fn fitting_suffix(surface: &[Unit], budget: u64) -> usize {
+    let last = surface.len().saturating_sub(1);
+    let mut total = 0;
+    for index in (0..surface.len()).rev() {
+        total += surface[index].tokens();
+        if total > budget {
+            return (index + 1).min(last);
+        }
+    }
+    0
+}
+
 /// Removes the oldest unit a summary prompt can spare.
 ///
 /// Used when an auxiliary summary failed and the same span is retried against a

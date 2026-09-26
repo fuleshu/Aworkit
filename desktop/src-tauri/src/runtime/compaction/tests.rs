@@ -556,6 +556,96 @@ fn every_budget_is_a_share_of_the_window() {
 }
 
 #[test]
+fn a_summary_prompt_is_fitted_to_its_window_in_whole_units() {
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first direction"}
+    ]);
+    for text in ["oldest ", "middle ", "newest "] {
+        r.exchanges.push(exchange(&text.repeat(3_000)));
+    }
+    r.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 3,
+        content: "directive".into(),
+        ..Default::default()
+    });
+    let surface = units(&r).unwrap();
+    let tokens: Vec<u64> = surface.iter().map(Unit::tokens).collect();
+    let full: u64 = tokens.iter().sum();
+
+    // A budget that only the oldest exchange has to leave.
+    let mut fitted = surface.clone();
+    let fit = fit_summary(&mut fitted, full - tokens[1]);
+    assert!(fit.fits);
+    assert_eq!(fit.dropped_units, 1);
+    assert_eq!(fit.dropped_tokens, tokens[1]);
+    assert_eq!(fitted.len(), surface.len() - 1);
+    assert!(
+        fitted.iter().map(Unit::tokens).sum::<u64>() <= full - tokens[1],
+        "the fitted prompt is inside its window"
+    );
+    // The first user turn and the trailing directive are never candidates, and
+    // whole units only: no tool boundary is ever split.
+    assert!(matches!(&fitted[0], Unit::Message(m) if m.content == "first direction"));
+    assert!(matches!(
+        fitted.last(),
+        Some(Unit::Message(m)) if m.content == "directive"
+    ));
+    let text = serde_json::to_string(&fitted).unwrap();
+    assert!(!text.contains("oldest"));
+    assert!(
+        text.contains("newest"),
+        "the newer history stays in the prompt"
+    );
+
+    // A prompt that cannot fit even with every unit it can spare is sent as it
+    // is: dropping units would lose history and still not fit.
+    let irreducible = tokens[0] + tokens[tokens.len() - 1];
+    let mut untouched = surface.clone();
+    let fit = fit_summary(&mut untouched, irreducible - 1);
+    assert!(!fit.fits);
+    assert_eq!((fit.dropped_units, fit.dropped_tokens), (0, 0));
+    assert_eq!(untouched, surface, "an unfittable prompt is left alone");
+    // And a prompt that already fits is never touched.
+    let mut already = surface.clone();
+    let fit = fit_summary(&mut already, full);
+    assert!(fit.fits);
+    assert_eq!(fit.dropped_units, 0);
+    assert_eq!(already, surface);
+}
+
+#[test]
+fn the_fitting_suffix_keeps_the_newest_units_that_fit_and_never_nothing() {
+    let mut r = request();
+    r.input["messages"] = json!([
+        {"role":"system","content":"system"},
+        {"role":"user","content":"first"}
+    ]);
+    r.exchanges.push(exchange("small"));
+    r.exchanges.push(exchange(&"large ".repeat(4_000)));
+    r.context_messages.push(ModelToolContextV1 {
+        after_exchanges: 2,
+        content: "directive".into(),
+        ..Default::default()
+    });
+    let surface = units(&r).unwrap();
+    let tokens: Vec<u64> = surface.iter().map(Unit::tokens).collect();
+    let last = surface.len() - 1;
+
+    // No budget at all still leaves the newest unit: a replacement with nothing
+    // in it cannot be sent, and the caller's shrink check refuses one that grew.
+    assert_eq!(fitting_suffix(&surface, 0), last);
+    // A budget for the newest two units starts exactly there.
+    assert_eq!(
+        fitting_suffix(&surface, tokens[last] + tokens[last - 1]),
+        last - 1
+    );
+    // Everything fits: nothing is dropped.
+    assert_eq!(fitting_suffix(&surface, tokens.iter().sum::<u64>()), 0);
+}
+
+#[test]
 fn usage_anchor_tracks_reductions_and_is_invalidated_by_a_header_change() {
     let mut r = request();
     r.exchanges.push(exchange(&"x".repeat(200_000)));

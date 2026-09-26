@@ -856,6 +856,18 @@ impl BoundFileToolAuthorityV1 {
                     content: c::INSTRUCTION.trim_end().into(),
                     ..Default::default()
                 }));
+                // The prompt is sized from the window before it is sent, so an
+                // oversized prefix costs one fitting call instead of one failed
+                // round trip per dropped unit. The units this drops are the
+                // oldest of the shadowed span: they leave the selection without
+                // being summarised, which the committed evidence records. A span
+                // that cannot fit at all is sent as it is - the provider may
+                // accept more than it declares, and dropping units that still
+                // leave it over the window would only lose history.
+                let prompt_budget = window.map_or(u64::MAX, |window| window.saturating_sub(fixed));
+                let fit = c::fit_summary(&mut summary_surface, prompt_budget);
+                let trimmed_units = fit.dropped_units;
+                let trimmed_tokens = fit.dropped_tokens;
                 let stream = self.run_events.context_events_shared()?;
                 let source_events: Vec<_> = stream
                     .iter()
@@ -960,7 +972,7 @@ impl BoundFileToolAuthorityV1 {
                         self.state_context(&mut replacement).map_err(|error| error.to_string())?;
                         let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
                         if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
-                        self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"summaryAttempts":summary_attempt,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":"Context compacted. Earlier history remains available in this Chat."})),("context.checkpoint",checkpoint)])?;
+                        self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"summaryAttempts":summary_attempt,"trimmedUnits":trimmed_units,"trimmedTokenCount":trimmed_tokens,"promptFitsWindow":fit.fits,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":if trimmed_units>0{"Context compacted. The oldest part of the compacted span was too large to send to the summary model and was dropped; earlier history remains available in Run details."}else{"Context compacted. Earlier history remains available in this Chat."}})),("context.checkpoint",checkpoint)])?;
                         *request = replacement;
                         Ok(())
                     });
@@ -1011,7 +1023,120 @@ impl BoundFileToolAuthorityV1 {
                         if provider_error.is_some() {
                             outcome.provider_error = provider_error;
                         }
-                        self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":error}))?;
+                        // A context the provider cannot accept has to shrink even
+                        // when no summary can be produced, so the oldest units
+                        // that fit leave the selection rather than the run left
+                        // over its own declared window. A context the provider
+                        // can still send — one that stopped at a trigger rather
+                        // than at a limit — keeps its selection and reports the
+                        // failure once.
+                        let over_limit = match effective_trigger {
+                            c::Trigger::ContextOverflow | c::Trigger::BytePressure => true,
+                            _ => window.is_some_and(|window| {
+                                c::pressure(request, anchor.as_ref()).unwrap_or(u64::MAX) >= window
+                            }),
+                        };
+                        if !over_limit {
+                            self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":error}))?;
+                            break;
+                        }
+                        let surface = c::units(request)?;
+                        let user_budget =
+                            replacement.map_or(shadowed_tokens / 2, |plan| plan.retain / 2);
+                        // The marker is built before the fitting suffix is chosen,
+                        // because its own size is part of that choice.
+                        let marker = c::Unit::Message(ModelToolContextV1 {
+                            content: c::DROPPED_SPAN_MARKER.into(),
+                            ..Default::default()
+                        });
+                        // Budget for the replacement: the declared window, or the
+                        // model-free byte guard priced at the four bytes per token
+                        // the guard itself uses.
+                        let target = match window {
+                            Some(window) => window,
+                            None => (byte_limit / 4) as u64,
+                        };
+                        let fitting = target.saturating_sub(fixed);
+                        // The user's own directions are kept from the span that
+                        // leaves, so a drop never silently loses the task.
+                        let reserved = user_budget.saturating_add(marker.tokens());
+                        let fit = c::fitting_suffix(&surface, fitting.saturating_sub(reserved));
+                        let pinned = c::pinned_user_units(&surface, fit, user_budget);
+                        let pinned_units = pinned.len();
+                        let pinned_tokens: u64 = pinned.iter().map(c::Unit::tokens).sum();
+                        let removed_units = fit.saturating_sub(pinned_units);
+                        let removed_tokens = surface[..fit]
+                            .iter()
+                            .map(c::Unit::tokens)
+                            .sum::<u64>()
+                            .saturating_sub(pinned_tokens);
+                        let mut dropped: Vec<c::Unit> = pinned;
+                        dropped.push(marker);
+                        dropped.extend_from_slice(&surface[fit..]);
+                        let kept_tokens: u64 = dropped.iter().map(c::Unit::tokens).sum();
+                        // Only a reduction that really fits is committed: when
+                        // the irreducible part of the context - one oversized
+                        // user turn or a result no pruning gate may rewrite -
+                        // exceeds the window, nothing compaction can do makes it
+                        // sendable, and the provider's own refusal is the honest
+                        // answer rather than a silently shortened selection.
+                        let fits = kept_tokens.saturating_add(fixed) <= target;
+                        if !fits || kept_tokens >= shadowed_tokens {
+                            self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":error}))?;
+                            break;
+                        }
+                        if c::hash(request) != before_hash
+                            || self.selection_generation(&owner)? != source_generation
+                        {
+                            self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":"Context changed during compaction"}))?;
+                            break;
+                        }
+                        let mut replacement_request = request.clone();
+                        c::replace_units(&mut replacement_request, &dropped)?;
+                        // The Run's goal, task list and touched files are
+                        // re-derived from their records, exactly as a summary
+                        // replacement does, so a drop does not lose them either.
+                        self.state_context(&mut replacement_request)
+                            .map_err(|error| error.to_string())?;
+                        let checkpoint = self.snapshot_payload(
+                            &owner,
+                            outer,
+                            through,
+                            &replacement_request,
+                            anchor.clone(),
+                        )?;
+                        if cancellation.is_cancelled() {
+                            return Err("Context compaction cancelled".into());
+                        }
+                        self.run_events.context_batch(vec![
+                            (
+                                "context.compacted",
+                                json!({
+                                    "ownerKey": self.context_key(),
+                                    "nodeId": owner.node_id,
+                                    "child": owner.child,
+                                    "compactionId": id,
+                                    "trigger": effective_trigger,
+                                    "strategy": "drop",
+                                    "beforeHash": before_hash,
+                                    "afterHash": c::hash(&replacement_request),
+                                    "shadowedUnits": cut,
+                                    "shadowedTokenCount": shadowed_tokens,
+                                    "removedUnits": removed_units,
+                                    "removedTokenCount": removed_tokens,
+                                    "pinnedUnits": pinned_units,
+                                    "pinnedTokenCount": pinned_tokens,
+                                    "keptTokenCount": kept_tokens,
+                                    "summaryAttempts": shrunk + 1,
+                                    "document": ContextDocument::from_request(&replacement_request),
+                                    "auxiliary": auxiliary,
+                                    "body": "No summary could be produced for a context over this model's window, so the oldest history was dropped. The original conversation and tool results remain in Run details."
+                                }),
+                            ),
+                            ("context.checkpoint", checkpoint),
+                        ])?;
+                        *request = replacement_request;
+                        outcome.changed = true;
                         break;
                     }
                 }

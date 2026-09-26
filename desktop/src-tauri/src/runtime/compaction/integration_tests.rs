@@ -135,6 +135,25 @@ fn new_turn_context_preserves_prefix_and_is_admitted_once_after_reopen() {
     }
 }
 
+/// A compaction that produced no reduction commits no reduction.
+///
+/// The request itself is not a valid witness: preparation injects the trusted
+/// host clock and any newly reconciled workspace instruction for the current
+/// turn, so a hash taken before `manage_model_context` legitimately changes even
+/// when compaction does nothing. The contract is therefore asserted through the
+/// committed evidence.
+fn assert_no_reduction(f: &Fixture, changed: bool, context: &str) {
+    assert!(!changed, "{context}: a failed compaction must not reduce");
+    assert!(
+        !f.committer
+            .committed_events()
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "context.compacted"),
+        "{context}: a failed compaction must commit no reduction"
+    );
+}
+
 fn history(f: &mut Fixture) -> (StableId, ModelToolRequestV1) {
     f.authority.context.review_messages[0].content =
         "Established requirements and implementation history. ".repeat(1800);
@@ -1229,11 +1248,164 @@ fn actual_compaction_does_not_restore_deleted_nested_rules_from_warm_cache() {
 }
 
 #[test]
+fn an_oversized_summary_prompt_is_fitted_to_the_window_before_it_is_sent() {
+    // Task 144's case: the context is already over the declared window when
+    // compaction first fires, so the prompt the summary would need does not fit
+    // the window it must be sent in. The prompt is sized before the call, so an
+    // oversized prefix costs one fitting call instead of one failed round trip
+    // per dropped unit.
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    let window = 40_000_u64;
+    f.authority.context.model_context =
+        json!({"contextWindow":window,"policy":{"auto":true,"pruneToolResults":false}});
+    // A small user direction and a lot of accumulated history: the recorded
+    // shape of the failure, not an oversized instruction.
+    request.input["messages"][0]["content"] = json!("Build the Tetris game.");
+    for index in 0..4 {
+        request.exchanges.push(tool_exchange(
+            &format!("read.{index}"),
+            json!(format!("result-{index}-").repeat(12_000)),
+        ));
+    }
+    let fixed = c::fixed_tokens(&request).unwrap();
+    let full: u64 = c::units(&request)
+        .unwrap()
+        .iter()
+        .map(c::Unit::tokens)
+        .sum();
+    assert!(
+        full + fixed > window,
+        "the fixture must not fit its window: {full} + {fixed} > {window}"
+    );
+    let (gateway, requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(
+        prepared.changed && prepared.error.is_none(),
+        "{:?}",
+        prepared.error
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "one fitting call, not one failed round trip per dropped unit"
+    );
+    let sent = c::estimate(&requests.lock().unwrap()[0]).unwrap();
+    assert!(
+        sent <= window,
+        "the summary prompt fits the window it is sent in: {sent} > {window}"
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "context.compacted")
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    assert!(
+        compacted[0].payload["trimmedUnits"].as_u64().unwrap() > 0,
+        "the evidence records that history left without being summarised: {}",
+        compacted[0].payload
+    );
+    assert_eq!(compacted[0].payload["promptFitsWindow"], json!(true));
+    assert!(
+        c::estimate(&request).unwrap() <= window,
+        "the committed context fits its window"
+    );
+}
+
+#[test]
+fn a_context_over_the_window_is_reduced_even_when_no_summary_arrives() {
+    // The provider never delivers the summary and the context cannot be sent as
+    // it stands, so the oldest history leaves the selection instead of the run
+    // being left over its own declared window. The user's own direction and a
+    // marker naming the loss survive.
+    let mut f = Fixture::new();
+    let (outer, mut request) = history(&mut f);
+    let window = 40_000_u64;
+    f.authority.context.model_context =
+        json!({"contextWindow":window,"policy":{"auto":true,"pruneToolResults":false}});
+    request.input["messages"][0]["content"] = json!("Build the Tetris game.");
+    for index in 0..4 {
+        request.exchanges.push(tool_exchange(
+            &format!("read.{index}"),
+            json!(format!("result-{index}-").repeat(12_000)),
+        ));
+    }
+    let (gateway, requests, plan) = gateway(|_| Err(ProviderError::RequestTimedOut));
+    let prepared = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            request.exchanges.len(),
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::ContextOverflow,
+        )
+        .unwrap();
+    assert!(
+        prepared.changed,
+        "an unsendable context is reduced, not left as it is"
+    );
+    assert!(
+        prepared.provider_error.is_some(),
+        "the failed summary is still reported to the model"
+    );
+    // One bounded recovery ladder, and then the reduction commits anyway.
+    assert!(
+        requests.lock().unwrap().len() <= 1 + c::SUMMARY_SHRINK_RETRIES as usize,
+        "the recovery budget is bounded"
+    );
+    let events = f.committer.committed_events().unwrap();
+    let compacted: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "context.compacted")
+        .collect();
+    assert_eq!(compacted.len(), 1);
+    assert_eq!(compacted[0].payload["strategy"], json!("drop"));
+    assert!(
+        compacted[0].payload["removedTokenCount"].as_u64().unwrap() > 0,
+        "the evidence names what left: {}",
+        compacted[0].payload
+    );
+    assert!(
+        c::estimate(&request).unwrap() <= window,
+        "the committed context fits its window"
+    );
+    let text = serde_json::to_string(&c::units(&request).unwrap()).unwrap();
+    assert!(
+        text.contains(c::DROPPED_SPAN_MARKER.trim()),
+        "the model is told that earlier history was dropped"
+    );
+    assert!(
+        !text.contains("result-0-"),
+        "the oldest history left the selection"
+    );
+    assert!(
+        text.contains("Build the Tetris game."),
+        "the user's own direction survives"
+    );
+}
+
+#[test]
 fn failed_cancelled_and_nonshrinking_summaries_leave_the_selection_unchanged() {
     for mode in ["failure", "cancel", "large", "empty"] {
         let mut f = Fixture::new();
         let (outer, mut request) = history(&mut f);
-        let before = request.clone();
         let (gateway, _, plan) = gateway(move |token| match mode {
             "failure" => Err(ProviderError::RequestTimedOut),
             "cancel" => {
@@ -1243,23 +1415,21 @@ fn failed_cancelled_and_nonshrinking_summaries_leave_the_selection_unchanged() {
             "large" => Ok("larger than original ".repeat(6000)),
             _ => Ok(String::new()),
         });
-        assert!(
-            f.authority
-                .manage_model_context(
-                    &gateway,
-                    &plan,
-                    &outer,
-                    1,
-                    Some(&f.agent),
-                    &mut request,
-                    &CancellationToken::default(),
-                    Trigger::Manual
-                )
-                .unwrap()
-                .error
-                .is_some()
-        );
-        assert_eq!(request, before, "{mode}");
+        let prepared = f
+            .authority
+            .manage_model_context(
+                &gateway,
+                &plan,
+                &outer,
+                1,
+                Some(&f.agent),
+                &mut request,
+                &CancellationToken::default(),
+                Trigger::Manual,
+            )
+            .unwrap();
+        assert!(prepared.error.is_some(), "{mode}");
+        assert_no_reduction(&f, prepared.changed, mode);
         let events = f.committer.committed_events().unwrap();
         assert_eq!(
             events
@@ -1389,7 +1559,6 @@ fn an_exhausted_summary_recovery_warns_once_and_keeps_the_selection() {
     request
         .exchanges
         .push(tool_exchange("read.big", json!("z".repeat(20_000))));
-    let before = c::hash(&request);
     let (gateway, requests, plan) = gateway(|_| Err(ProviderError::RequestTimedOut));
     let prepared = f
         .authority
@@ -1405,7 +1574,12 @@ fn an_exhausted_summary_recovery_warns_once_and_keeps_the_selection() {
         )
         .unwrap();
     assert!(prepared.provider_error.is_some());
-    assert_eq!(c::hash(&request), before, "the selection is unchanged");
+    assert_no_reduction(&f, prepared.changed, "exhausted recovery");
+    // This fixture's span cannot be fitted to its window - one user turn alone
+    // is nearly the whole window - so the prompt is sent as it is, every
+    // recovery is spent on a smaller one, and the selection is still unchanged
+    // because no reduction here could fit. The fitting prompt and the fitting
+    // reduction have their own tests.
     assert_eq!(
         requests.lock().unwrap().len(),
         1 + c::SUMMARY_SHRINK_RETRIES as usize,
@@ -1464,7 +1638,6 @@ fn cancellation_wins_over_summary_recovery() {
     request
         .exchanges
         .push(tool_exchange("read.big", json!("z".repeat(20_000))));
-    let before = c::hash(&request);
     let token = CancellationToken::default();
     let cancelling = token.clone();
     let (gateway, requests, plan) = gateway(move |_| {
@@ -1485,7 +1658,7 @@ fn cancellation_wins_over_summary_recovery() {
         )
         .unwrap();
     assert!(prepared.error.is_some());
-    assert_eq!(c::hash(&request), before);
+    assert_no_reduction(&f, prepared.changed, "cancelled attempt");
     assert_eq!(
         requests.lock().unwrap().len(),
         1,

@@ -434,6 +434,14 @@ pub(crate) fn prune_marker_bound_chars() -> usize {
     prune_marker(usize::MAX).chars().count()
 }
 pub(crate) const INSTRUCTION: &str = include_str!("instruction.txt");
+/// Notice a replacement carries when a span left the selection without being
+/// summarised, because the context no longer fitted the model's window and no
+/// summary could be delivered.
+///
+/// Deliberately free of counts: it is built before the oldest units that fit are
+/// chosen, so its own size is part of that choice. The counts belong in the
+/// `context.compacted` evidence, not in the prompt.
+pub(crate) const DROPPED_SPAN_MARKER: &str = "\n\n[... earlier history was dropped without a summary: this context exceeded the model's declared window, so the oldest exchanges were removed. The original conversation and tool results remain available in Run details - re-read or re-run anything you still need before relying on it ...]\n\n";
 /// Opening sentence of every generated checkpoint. It frames the summary for the
 /// model, and it is also the marker that tells a later compaction that a
 /// user-role unit is a prior checkpoint to be consolidated rather than a real
