@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useComposerDraft, type ComposerDrafts } from "./composerDrafts";
 import { ImageAttachmentMenu, ImageAttachments } from "./ImageAttachments";
 import { useChatImages } from "./useChatImages";
+import { pastedImageFiles } from "./pasteImages";
 import {
   canSubmit,
   emptyComposer,
@@ -185,7 +186,9 @@ export function ChatComposer({
       aria-label="Chat composer"
       onPaste={(event) => {
         if (chat.recoveryPending || commandPending) return;
-        const files = Array.from(event.clipboardData.files);
+        // Clipboard images are read from the item list as well as the file
+        // list, or a Linux WebKit paste of raw image data finds no file.
+        const files = pastedImageFiles(event.clipboardData);
         if (files.length === 0) return;
         event.preventDefault();
         const text = event.clipboardData.getData("text/plain");

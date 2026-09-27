@@ -122,6 +122,58 @@ describe("Chat image input", () => {
     );
   });
 
+  it("pastes Linux clipboard image data that arrives only in the item list", async () => {
+    const submit = vi.fn(async () => true);
+    render(
+      <ChatComposer
+        chat={{
+          ...chat,
+          phase: "waiting_input",
+          lockedWorkflow: true,
+          workflowId: "workflow.simple-chat",
+        }}
+        projects={[]}
+        stale={false}
+        pending={false}
+        nextCommandId={() => "linux-paste"}
+        onSubmit={submit}
+      />,
+    );
+    // WebKit on Linux exposes pasted image data as a file item named for the
+    // clipboard format it read, while the paste file list stays empty.
+    const consumed = fireEvent.paste(screen.getByLabelText("Chat input"), {
+      clipboardData: {
+        files: [],
+        items: [
+          { kind: "string", type: "text/html", getAsFile: () => null },
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => png("image.png"),
+          },
+        ],
+        getData: () => "",
+      },
+    });
+    expect(consumed).toBe(false);
+    await screen.findByRole("img", { name: "image.png" });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() =>
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueue",
+          input: "",
+          attachments: [
+            expect.objectContaining({
+              name: "image.png",
+              mimeType: "image/png",
+            }),
+          ],
+        }),
+      ),
+    );
+  });
+
   it("preserves ordinary text paste and reports import errors without losing the draft", async () => {
     vi.mocked(importChatImage).mockRejectedValueOnce(
       new Error("Image is corrupt"),

@@ -95,7 +95,8 @@ Wire contracts follow the official [OpenAI vision guide](https://developers.open
 and [Gemini image guide](https://ai.google.dev/gemini-api/docs/image-understanding).
 
 Regression coverage includes provider HTTP requests for all three protocols,
-image-only and multiple-image turns, UI paste/picker import, rejected-submit retry,
+image-only and multiple-image turns, UI paste/picker import (including the Linux
+clipboard image data WebKit reports only in the paste item list), rejected-submit retry,
 history reopen/fork, corrupt-image rejection, and an image larger than the history
 commit limit crossing the full native authority pipeline without embedding its
 bytes in durable records. `desktop/scripts/native-image-fixture.mjs` starts an
