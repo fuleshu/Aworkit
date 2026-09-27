@@ -955,7 +955,7 @@ describe("Chat native-port recovery contracts", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("reports a stopped Run in the workspace instead of only a transient notice", async () => {
+  it("reports a stopped Run as a notice card instead of only a transient notice", async () => {
     const user = userEvent.setup();
     const projected = snapshot(2, "Stopped Run", [
       canonicalEvent(1, "message.user", { body: "continue", status: "completed" }),
@@ -980,11 +980,16 @@ describe("Chat native-port recovery contracts", () => {
     };
     render(<ChatWorkspaceScreen corePort={port} pollIntervalMs={60_000} />);
 
-    const banner = await screen.findByRole("alert");
-    expect(banner).toHaveTextContent("Execution failed");
-    expect(banner).toHaveTextContent(/no conclusive terminal evidence/);
+    const notice = await screen.findByRole("alert");
+    expect(notice).toHaveTextContent("Execution failed");
+    expect(notice).toHaveTextContent(/no conclusive terminal evidence/);
+    // A terminal failure uses the same notice card as an interrupted reply,
+    // never the removed full-width recovery banner.
+    expect(notice).toHaveClass("chat-notice-card", "chat-notice-card--failure");
+    expect(document.querySelector(".recovery-banner")).toBeNull();
+    expect(within(notice).getByRole("button", { name: "Run details" })).toBeVisible();
     // The failure is reported until the user explicitly dismisses it.
-    await user.click(within(banner).getByRole("button", { name: "Dismiss" }));
+    await user.click(within(notice).getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

@@ -1,0 +1,48 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/ChatRecoveryCard.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/notice.css\",\"desktop/src/chat/recovery.test.tsx\",\"desktop/src/chat/runtime.integration.test.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-09-27 17:51:35",
+    "completion_memo": {
+      "lines": [
+        "Removed the Chat run-failure banner everywhere it was used and replaced it with the notice card commit 96c04c7 introduced for an interrupted reply.\n",
+        "\n",
+        "Change: added ChatNoticeCard (desktop/src/chat/ChatNoticeCard.tsx) with one shell, one copy block and one action row. Both the interrupted-reply decision (warning accent, \"Interrupted reply\", Continue/Stop) and a terminal Run failure (danger accent, role=alert, Run details/Dismiss) render it. Renamed recovery.css to notice.css with neutral .chat-notice-* classes. ChatWorkspaceScreen renders the failure through ChatNoticeCard instead of a full-width `<div class=\"recovery-banner run-failure-banner\">`, and the \"Review\" notification focuses the decision card explicitly instead of any first action row. Deleted the .recovery-banner/.recovery-actions CSS and the banner's grid-row rule from styles.css; no .recovery-banner, .run-failure-banner or .recovery-actions class remains under desktop/src.\n",
+        "\n",
+        "Design: aworkit.desktop_ui.chat_notice_card linked to aworkit.desktop_ui.chat_workspace; the element now binds ChatNoticeCard.tsx and notice.css, and the stale recovery.css binding is removed.\n",
+        "\n",
+        "Coverage: the stopped-Run test asserts the failure card (chat-notice-card--failure, role=alert, Run details, Dismiss) and that no .recovery-banner exists; the recovery test asserts the shared decision card. Verification: vitest src/chat 199 passed; full vitest run 524 passed across 70 files; tsc --noEmit clean."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-27 17:46:51",
+    "created_files": "[\"desktop/src/chat/ChatNoticeCard.tsx\"]",
+    "description": {
+      "lines": [
+        "Requirement (user, 2026-09-27): remove the run-failure banner everywhere it is used in the Chat and replace it with the card UI that commit 96c04c7 introduced for an interrupted reply.\n",
+        "\n",
+        "Evidence: `.recovery-banner run-failure-banner` is the last use of `.recovery-banner` (ChatWorkspaceScreen.tsx ~L648-663; CSS in styles.css L575-579, L649-659, L663-675). 96c04c7 replaced only the `chat.recoveryPending` block with ChatRecoveryCard and left the terminal `execution.failed` banner unchanged, so a hard stop still uses the old full-width warning bar.\n",
+        "\n",
+        "Acceptance:\n",
+        "1. No `.recovery-banner`, `.run-failure-banner` or `.recovery-actions` class remains anywhere under desktop/src (chat UI).\n",
+        "2. The terminal run failure renders through the same shared card as the interrupted reply, keeping title, body, Run details and Dismiss.\n",
+        "3. The hard stop is announced with role=alert; the interrupted-reply decision card keeps its region/aria-label semantics.\n",
+        "4. Existing recovery behaviour and its tests are unchanged.\n",
+        "5. A regression test asserts the failure card content and the absence of the old banner.\n",
+        "6. The design model states the Chat has one notice-card surface with decision and failure variants."
+      ]
+    },
+    "id": 154,
+    "number": 153,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Replace the Chat run-failure banner with the notice card used for an interrupted reply",
+    "updated_at": "2026-09-27 17:51:35"
+  },
+  "deleted": false,
+  "identity": "faa24647-52d4-4a62-ac9e-446b7a6a5dca",
+  "schemaVersion": 1
+}

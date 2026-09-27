@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChatBusy } from "./ChatBusy";
+import { ChatNoticeCard } from "./ChatNoticeCard";
 import { ChatRecoveryCard } from "./ChatRecoveryCard";
 import { conversationFeed } from "./conversationFeed";
 import "./chatLoading.css";
@@ -384,7 +385,7 @@ export function ChatWorkspaceScreen({
   });
   useProjectedNotification("Chat", "chat-recovery", "recovery", !projectedRecoveryPending ? null : {
     route: "chat", summary: "Your reply was interrupted.", severity: "action", lifetime: { kind: "condition", conditionId: `chat-recovery:${projectedChatId}` },
-    action: { label: "Review", run: () => { const reveal = () => chatLayoutRef.current?.querySelector<HTMLButtonElement>(".chat-recovery-actions button")?.focus(); if (onReveal) onReveal(reveal); else reveal(); } },
+    action: { label: "Review", run: () => { const reveal = () => chatLayoutRef.current?.querySelector<HTMLButtonElement>(".chat-notice-card--decision .chat-notice-actions button")?.focus(); if (onReveal) onReveal(reveal); else reveal(); } },
   });
   useProjectedNotification("Chat", `chat:${projectedChatId ?? "startup"}`, "command", runtime.stale || runtime.pendingCommandIds.size === 0 ? null : {
     route: "chat", summary: "Working on your request…", severity: "progress", lifetime: { kind: "operation", operationId: [...runtime.pendingCommandIds].join(":") },
@@ -646,20 +647,22 @@ export function ChatWorkspaceScreen({
           </div>
         </header>
         {runFailure !== null ? (
-          <div className="recovery-banner run-failure-banner" role="alert">
-            <div>
-              <strong>{runFailure.title}</strong>
-              <p>{runFailure.body}</p>
-            </div>
-            <div className="recovery-actions">
-              <button type="button" onClick={inspect}>
-                Run details
-              </button>
-              <button type="button" onClick={() => dismissRunFailure(runFailure.id)}>
-                Dismiss
-              </button>
-            </div>
-          </div>
+          <ChatNoticeCard
+            label="Run stopped"
+            severity="failure"
+            title={runFailure.title}
+            body={runFailure.body}
+            actions={
+              <>
+                <button type="button" onClick={inspect}>
+                  Run details
+                </button>
+                <button type="button" onClick={() => dismissRunFailure(runFailure.id)}>
+                  Dismiss
+                </button>
+              </>
+            }
+          />
         ) : null}
         {(subagentEntries.length > 0 || activeChild !== null) && (
           <SubagentTabs

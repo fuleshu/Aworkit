@@ -4,12 +4,12 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "resource_id": "aworkit.desktop_ui.chat_workspace|file|desktop/src/chat/recovery.css",
+    "resource_id": "aworkit.desktop_ui.chat_workspace|file|desktop/src/chat/notice.css",
     "resource_kind": "design.binding",
     "updated_at": "2026-09-27 17:49:14",
-    "version": 2
+    "version": 1
   },
   "deleted": false,
-  "identity": "b96b893b-7bd1-82ac-8d20-8f0a879863c7",
+  "identity": "03a4e963-82ac-4fec-a4ae-ee8e12f7ac46",
   "schemaVersion": 1
 }

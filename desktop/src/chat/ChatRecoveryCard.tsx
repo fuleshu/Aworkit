@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
+import { ChatNoticeCard } from "./ChatNoticeCard";
 import type { ChatIntent } from "./types";
 import type { ChatRuntimeState } from "./useChatRuntime";
-import "./recovery.css";
 
 interface Props {
   readonly chatId: string;
@@ -43,35 +43,35 @@ export function ChatRecoveryCard({ chatId, recoveryPending, runtime, nextCommand
   }
 
   return (
-    <section className="chat-recovery-card" aria-label="Interrupted reply" aria-busy={busy}>
-      <div className="chat-recovery-copy">
-        <strong>{confirmStop ? "Stop this reply?" : "Reply interrupted"}</strong>
-        <p aria-live="polite">{busy
-          ? action === "resume" ? "Continuing your reply…" : "Stopping this reply…"
-          : confirmStop ? "Changes already made will be kept. You can then send a new message."
-          : "Continue where you left off, or stop this reply to send a new message."}</p>
-      </div>
-      <div className="chat-recovery-actions">
-        {runtime.stale ? (
-          <button type="button" disabled={busy} title="Reconnect and refresh this Chat" onClick={() => void runtime.resynchronize()}>Reconnect</button>
-        ) : confirmStop ? (
-          <>
-            <button type="button" disabled={disabled} onClick={() => setConfirmStop(false)}>Go back</button>
-            <button type="button" className="danger-action" disabled={disabled} onClick={() => void submit("abandon_recovery")}>Stop reply</button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="primary-action" disabled={disabled} title="Continue the interrupted reply" onClick={() => void submit("resume")}>{action === "resume" ? "Continuing…" : "Continue reply"}</button>
-            <button type="button" disabled={disabled} title="Stop this reply and keep existing changes" onClick={() => setConfirmStop(true)}>{action === "abandon_recovery" ? "Stopping…" : "Stop reply"}</button>
-          </>
-        )}
-      </div>
-      {!busy && (failure || runtime.error) && (
-        <div className="chat-recovery-error" role="alert">
+    <ChatNoticeCard
+      label="Interrupted reply"
+      severity="decision"
+      busy={busy}
+      bodyLive
+      title={confirmStop ? "Stop this reply?" : "Reply interrupted"}
+      body={busy
+        ? action === "resume" ? "Continuing your reply…" : "Stopping this reply…"
+        : confirmStop ? "Changes already made will be kept. You can then send a new message."
+        : "Continue where you left off, or stop this reply to send a new message."}
+      actions={runtime.stale ? (
+        <button type="button" disabled={busy} title="Reconnect and refresh this Chat" onClick={() => void runtime.resynchronize()}>Reconnect</button>
+      ) : confirmStop ? (
+        <>
+          <button type="button" disabled={disabled} onClick={() => setConfirmStop(false)}>Go back</button>
+          <button type="button" className="danger-action" disabled={disabled} onClick={() => void submit("abandon_recovery")}>Stop reply</button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="primary-action" disabled={disabled} title="Continue the interrupted reply" onClick={() => void submit("resume")}>{action === "resume" ? "Continuing…" : "Continue reply"}</button>
+          <button type="button" disabled={disabled} title="Stop this reply and keep existing changes" onClick={() => setConfirmStop(true)}>{action === "abandon_recovery" ? "Stopping…" : "Stop reply"}</button>
+        </>
+      )}
+      detail={!busy && (failure || runtime.error) ? (
+        <div className="chat-notice-error" role="alert">
           <p>{failure ?? "This reply still needs your attention. Try again, or stop it to send a new message."}</p>
           {runtime.error && <details><summary>Show details</summary><p>{runtime.error.message}</p></details>}
         </div>
-      )}
-    </section>
+      ) : undefined}
+    />
   );
 }

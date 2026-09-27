@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.desktop_ui.chat_workspace",
+    "document_id": {
+      "ref": "f18c95ce-6d85-410b-acb7-d29cca8fca8c"
+    },
+    "id": 6,
+    "sort_order": 0,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "08d39dfa-eeac-4fef-aba5-1564400ea8ae",
+  "schemaVersion": 1
+}

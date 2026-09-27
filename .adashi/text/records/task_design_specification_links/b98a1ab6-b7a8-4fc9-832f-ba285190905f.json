@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-27 17:51:13",
+    "design_external_id": "aworkit.desktop_ui.chat_workspace",
+    "id": 546,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "faa24647-52d4-4a62-ac9e-446b7a6a5dca"
+    }
+  },
+  "deleted": false,
+  "identity": "b98a1ab6-b7a8-4fc9-832f-ba285190905f",
+  "schemaVersion": 1
+}

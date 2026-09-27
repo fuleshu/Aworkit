@@ -36,6 +36,8 @@ it("keeps recovery progress visible until the command settles and blocks duplica
     },
   };
   render(<Harness port={port} />);
+  const card = await screen.findByRole("region", { name: "Interrupted reply" });
+  expect(card).toHaveClass("chat-notice-card", "chat-notice-card--decision");
   await user.dblClick(await screen.findByRole("button", { name: "Continue reply" }));
   await user.click(screen.getByText("Refresh"));
   expect(screen.getByText("Continuing your reply…")).toBeVisible();

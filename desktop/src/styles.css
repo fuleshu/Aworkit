@@ -574,7 +574,7 @@ pre {
 }
 .chat-main > .stale-banner,
 .chat-main > .command-banner,
-.chat-main > .recovery-banner {
+.chat-main > .chat-notice-card--failure {
   grid-row: 2;
 }
 .chat-main > .subagent-tabs {
@@ -647,8 +647,7 @@ pre {
   z-index: 20;
 }
 .stale-banner,
-.command-banner,
-.recovery-banner {
+.command-banner {
   align-items: center;
   background: var(--aw-warning-surface);
   border-bottom: 1px solid var(--aw-warning);
@@ -658,19 +657,6 @@ pre {
   padding: 6px 14px;
 }
 .stale-banner button {
-  margin-left: auto;
-}
-.recovery-banner {
-  justify-content: space-between;
-}
-.recovery-banner > div:first-child {
-  display: grid;
-  gap: 2px;
-}
-.recovery-actions {
-  align-items: center;
-  display: flex;
-  gap: 8px;
   margin-left: auto;
 }
 .timeline-scroll {

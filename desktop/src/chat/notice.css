@@ -1,0 +1,29 @@
+.chat-compose-area { grid-row: 5; min-width: 0; }
+
+/* The one Chat-level notice card. A resumable interrupted reply and a terminal
+   Run failure share this shell, so a hard stop never falls back to a separate,
+   full-width banner. */
+.chat-notice-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 0 16px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--aw-divider);
+  border-left: 3px solid var(--aw-warning);
+  border-radius: 10px;
+  background: var(--aw-window);
+  font-size: var(--aw-font-ui);
+}
+.chat-notice-card--failure { border-left-color: var(--aw-danger); }
+.chat-notice-card--failure .chat-notice-copy strong { color: var(--aw-danger); }
+.chat-notice-copy { flex: 1 1 260px; min-width: 0; }
+.chat-notice-copy strong { display: block; margin-bottom: 3px; }
+.chat-notice-card p { margin: 0; line-height: 1.45; }
+.chat-notice-copy p { color: var(--aw-secondary); }
+.chat-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-notice-actions button { white-space: nowrap; min-height: 34px; }
+.chat-notice-error { flex-basis: 100%; color: var(--aw-danger); }
+.chat-notice-error details { margin-top: 4px; color: var(--aw-secondary); overflow-wrap: anywhere; }
+.chat-notice-error summary { cursor: pointer; }
