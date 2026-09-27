@@ -1,0 +1,60 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-27 11:59:47",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Symptom as reported by the user on the Workflow designer screen (Version 3, \"Simple Chat\" workflow):\n",
+        "- \"import JSON does not work. it loads a workflow and shows it, but the workflow is somehow not loaded correctly. it wont work, and after saving and then if you switch to another workflow and back, it is gone.\"\n",
+        "- \"export does nothing\"\n",
+        "- \"Run makes no sense here at all\"\n",
+        "- \"the complete ui interface is bad and makes no sense. it should be like a common file handling; New / Open / Save / Save As — all opening common file handling os dialogs.\"\n",
+        "\n",
+        "Current UI (transcribed from the screenshot the user supplied): toolbar row `Import JSON | ↶ Undo | ↷ Redo | Validate 0 | Save | Export | Run`; below it `Workflow [Simple Chat (default)] | New from [Blank] | Name [ ] | Create | Duplicate | Rename | Delete | Set default`; header shows Version 3 and an \"Executable workflow\" badge.\n",
+        "\n",
+        "Verified code evidence (read this session; the root cause of the Import defect is NOT established here):\n",
+        "- desktop/src/workbench/WorkflowToolbar.tsx — Import is a hidden `<input type=\"file\" accept=\"application/json,.json\" aria-label=\"Workflow JSON file\">` clicked programmatically, i.e. the webview file picker, not a native OS dialog; Export is a plain button with an `onExport` callback; Run renders only when the optional `onRun` prop is supplied.\n",
+        "- desktop/src/workbench/WorkflowEditorScreen.tsx — `importDocument(file)` (around line 295) does `parseWorkflow(await readFile(file))` and only calls `replaceWorkflowDocument(state, imported)` on local editor state; its notice reads \"Imported … locally. Import never installs or enables node implementations; validate, then Save or Export.\" `exportDocument()` (around line 312) builds a Blob URL and clicks a synthetic `<a download={`${fileSafeName(workflowName)}.aworkit.json`}>`. `save()` (around line 244) calls `port.commit({ commandId, expectedVersion, document, workflowId: activeWorkflowId ?? undefined })`, so Save writes to the currently selected library workflow, not to the file that was imported.\n",
+        "- desktop/src/workbench/WorkflowLibraryBar.tsx — the Name input is documented as \"Name used by Create, Duplicate, and Rename\"; the bar owns Create, Duplicate, Rename, Delete (disabled when the active entry is default or only one entry exists) and Set default.\n",
+        "- Persistence is the native workflow library, not files on disk: desktop/src-tauri/src/runtime/documents.rs (`load_or_create_workflow_library`, `workflow_library`, `save_workflow`, `save_workflow_document`) with bundled defaults from `workflows/default-workflows.json`, projected to the frontend via desktop/src/workbench/corePort.ts (`WorkflowLibrarySnapshot`). Read the current shapes before designing the file format.\n",
+        "- Native OS dialogs are already available and should be reused: `tauri-plugin-dialog = \"2.7.2\"` in desktop/src-tauri/Cargo.toml, used in desktop/src-tauri/src/presentation.rs (`app.dialog().file().set_title(...).add_filter(...)` / `blocking_pick_file()`), with desktop/src-tauri/src/main.rs exposing `native_pick_folder` (around line 145) and a pick-file command (around line 136).\n",
+        "\n",
+        "Required work:\n",
+        "1. Replace the file commands with standard file handling — New, Open, Save, Save As — with Open/Save As driven by native OS dialogs instead of Blob downloads and a hidden file input.\n",
+        "2. Semantics: Save writes to the currently bound file; Save As asks for a path, binds it afterwards and confirms before overwriting an existing file; Open loads, validates and activates the chosen file; New starts a blank or template document.\n",
+        "3. Fix the reported circle: a workflow that was loaded and saved must survive switching to another workflow and back. Decide and document whether Import/Open persists into the library under a stable identity or stays an unsaved draft until saved to a path, and make the state consistent either way.\n",
+        "4. Prompt about unsaved changes before New and Open.\n",
+        "5. Invalid or corrupt JSON must show a clear error and leave the current workflow completely untouched (no partially applied document).\n",
+        "6. Keep Undo, Redo and Validate as non-file commands; keep Delete and Set default; remove Rename (the Name property already renames the workflow) and remove Run from this surface.\n",
+        "7. Decide and document the file-name vs workflow-name rule. Recommendation: they may differ — the Name property stays the display name, Open/Save As only choose the path, a `name` stored inside the file wins on load, and the file basename is only offered as a suggestion for files that carry no name. No other surface may depend on the two matching.\n",
+        "\n",
+        "Acceptance criteria:\n",
+        "- New / Open / Save / Save As work through native OS dialogs in the real Linux desktop build (X11 and Wayland) and on the other supported platforms.\n",
+        "- Load, switch to another workflow, switch back: the same document is present, and nothing is lost after Save.\n",
+        "- Round-trip: save to a path, open that path again, get an identical document.\n",
+        "- Save As to a new path rebinds later saves to that path and confirms before overwrite.\n",
+        "- A syntactically invalid file leaves editor state and the library unchanged and shows a clear error.\n",
+        "- A button audit confirms no remaining Import JSON / Export / Run control; desktop/src/perf/appShell.test.tsx (which asserts the button name \"Import JSON\", around line 51) and the workflow tests under desktop/src/workbench must be updated for the new labels instead of weakened or deleted.\n",
+        "\n",
+        "Tests to add: load → switch away → switch back; save/open round-trip; Save As to a new path; invalid JSON leaves state untouched; unsaved-changes prompt before New/Open."
+      ]
+    },
+    "id": 152,
+    "number": 151,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "active",
+    "title": "Rework Workflow designer file handling: New / Open / Save / Save As instead of Import JSON / Export / Run",
+    "updated_at": "2026-09-27 18:03:53"
+  },
+  "deleted": false,
+  "identity": "fdbeed45-12a9-43f4-8b3c-b6131bbe3c59",
+  "schemaVersion": 1
+}

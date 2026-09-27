@@ -47,8 +47,9 @@ describe("desktop shell wall-clock gates", () => {
       await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait),
     ).toBeVisible();
     expect(screen.getByLabelText("Workflow graph")).toBeVisible();
+    expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: "Import JSON" }),
+      screen.getByRole("button", { name: "Open" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("button", {
@@ -61,8 +62,12 @@ describe("desktop shell wall-clock gates", () => {
       }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: /Validate/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
+    // A freshly opened workflow has nothing unsaved, and this surface has
+    // neither an Export nor a Run control any more.
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
     const inputNode = screen.getByRole("button", { name: "Input" });
     await user.click(inputNode);
     expect(
@@ -71,7 +76,10 @@ describe("desktop shell wall-clock gates", () => {
     expect(screen.getByLabelText("Node type")).toBeEnabled();
     fireEvent.keyDown(inputNode, { altKey: true, key: "ArrowRight" });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "title",
+      "Save this workflow with optimistic version checking",
+    );
 
     await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(

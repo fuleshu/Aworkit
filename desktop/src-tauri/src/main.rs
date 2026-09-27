@@ -146,6 +146,37 @@ async fn native_pick_folder(app: tauri::AppHandle) -> Option<tauri_plugin_dialog
     aworkit_desktop::presentation::pick_folder(&app)
 }
 
+/// The Workflow designer's own file chooser: one workflow document to open.
+#[tauri::command]
+async fn native_workflow_open_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    aworkit_desktop::workflow_files::pick_open_path(&app)
+}
+
+/// The Workflow designer's save chooser. `suggestedName` only seeds the dialog.
+#[tauri::command]
+async fn native_workflow_save_path(
+    app: tauri::AppHandle,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
+    aworkit_desktop::workflow_files::pick_save_path(&app, suggested_name.as_deref())
+}
+
+#[tauri::command]
+async fn native_workflow_read_file(path: String) -> Result<String, String> {
+    aworkit_desktop::workflow_files::read_document(&path)
+}
+
+/// Refuses an existing file unless the caller passes the `overwrite` it only
+/// sets after the user confirmed replacing it.
+#[tauri::command]
+async fn native_workflow_write_file(
+    path: String,
+    contents: String,
+    overwrite: bool,
+) -> Result<aworkit_desktop::workflow_files::WorkflowFileWriteOutcomeV1, String> {
+    aworkit_desktop::workflow_files::write_document(&path, &contents, overwrite)
+}
+
 /// Resolve the visible Chat's model capacity without changing its frozen context.
 #[tauri::command]
 async fn desktop_context_model(
@@ -805,7 +836,11 @@ fn main() {
                 native_confirm,
                 native_message,
                 native_pick_file,
-                native_pick_folder
+                native_pick_folder,
+                native_workflow_open_path,
+                native_workflow_save_path,
+                native_workflow_read_file,
+                native_workflow_write_file
             ];
             handler(invoke)
         })

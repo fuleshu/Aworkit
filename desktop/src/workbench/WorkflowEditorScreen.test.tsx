@@ -3,7 +3,7 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { render } from "../test/renderWithNotifications";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type {
   WorkbenchReceipt,
   WorkflowCommit,
@@ -11,16 +11,24 @@ import type {
   WorkflowSnapshot,
 } from "./corePort";
 import { WorkflowEditorScreen } from "./WorkflowEditorScreen";
+import { WorkflowFileDouble } from "../test/workflowFileDouble";
 import type { WorkflowDocument } from "./workflow";
 
 afterEach(cleanup);
 
 describe("lossless workflow editor", () => {
-  it("validates, saves, and runs an Agent after binding Skills", async () => {
+  it("validates and saves an Agent after binding Skills", async () => {
     const user = userEvent.setup();
-    const onRun = vi.fn();
     const port = new RecordingWorkflowPort(simpleChat());
-    render(<WorkflowEditorScreen document={simpleChat()} onRun={onRun} workflowPort={port} />);
+    const files = new WorkflowFileDouble();
+    files.savePath = "/tmp/skill-agent.aworkit.json";
+    render(
+      <WorkflowEditorScreen
+        document={simpleChat()}
+        filePort={files}
+        workflowPort={port}
+      />,
+    );
     await screen.findByText("Version 7");
     await user.click(screen.getByRole("button", { name: "Agent" }));
     fireEvent.change(screen.getByLabelText("Configuration JSON"), {
@@ -31,19 +39,19 @@ describe("lossless workflow editor", () => {
     expect(screen.getByText("Validation passed: this workflow document is executable.")).toBeVisible();
     expect(screen.queryByText(/no installed executor/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await waitFor(() => expect(port.commits).toHaveLength(1));
     expect(port.commits[0]?.document.nodes[1]?.configuration).toMatchObject({ toolIds: ["tool.skill"] });
-    await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onRun).toHaveBeenCalled();
+    // The file is a copy: the same document was committed to the library and
+    // written to the path the save dialog answered with.
+    expect(files.writes).toHaveLength(1);
+    expect(files.writes[0]?.path).toBe("/tmp/skill-agent.aworkit.json");
   });
 
   it("creates and deletes nodes and transitions without claiming they can run", async () => {
     const user = userEvent.setup();
-    const { container } = render(
-      <WorkflowEditorScreen document={simpleChat()} onRun={vi.fn()} />,
-    );
+    const { container } = render(<WorkflowEditorScreen document={simpleChat()} />);
     await screen.findByText("Version 1");
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    expect(screen.getByText("✓ Draft saved")).toBeVisible();
     const accessibility = await axe.run(container, {
       rules: { "color-contrast": { enabled: false } },
     });
@@ -51,31 +59,28 @@ describe("lossless workflow editor", () => {
 
     await user.click(screen.getByRole("button", { name: "Add Tool node" }));
     expect(screen.getByText("Editable · Not runnable")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Delete node" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Delete node" }));
     expect(screen.getByText("Executable workflow")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    expect(screen.getByText("✓ Draft saved")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Add transition" }));
     expect(screen.getByRole("button", { name: "Delete transition" })).toBeEnabled();
     // Extra edges stay executable under the v1 catalog contract as long as
-    // the graph remains acyclic and fully reachable, but Run opens a Chat
-    // with the saved document, so the dirty graph must be saved first.
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
-      "title",
-      "Save this workflow before starting a Run",
-    );
+    // the graph remains acyclic and fully reachable, but the graph is an
+    // unsaved draft until Save commits it to the workflow library.
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+    expect(screen.getByText("Executable workflow")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Delete transition" }));
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    expect(screen.getByText("✓ Draft saved")).toBeVisible();
   });
 
   it("edits type and configuration as undoable transactions", async () => {
     const user = userEvent.setup();
-    render(<WorkflowEditorScreen document={simpleChat()} onRun={vi.fn()} />);
+    render(<WorkflowEditorScreen document={simpleChat()} />);
     await screen.findByText("Version 1");
     await user.click(screen.getByRole("button", { name: "Agent" }));
 
@@ -101,38 +106,27 @@ describe("lossless workflow editor", () => {
     expect(screen.getByText("Executable workflow")).toBeVisible();
   });
 
-  it("does not let Run bypass interrupted-command recovery", async () => {
-    const onRun = vi.fn();
-    const reason =
-      "Resume or abandon the interrupted command before starting another Run";
-    render(
-      <WorkflowEditorScreen
-        document={simpleChat()}
-        onRun={onRun}
-        runBlockedReason={reason}
-      />,
-    );
+  it("offers no Import JSON, Export, Rename, or Run control on this surface", async () => {
+    render(<WorkflowEditorScreen document={simpleChat()} />);
     await screen.findByText("Version 1");
-    const run = screen.getByRole("button", { name: "Run" });
-    expect(run).toBeDisabled();
-    expect(run).toHaveAttribute("title", reason);
-    expect(onRun).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Import/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
+    expect(screen.queryByLabelText("Workflow JSON file")).toBeNull();
+    expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
   });
 
-  it("imports exact JSON losslessly, saves it, and gates a richer graph", async () => {
+  it("opens exact JSON losslessly, stores it, and gates a richer graph", async () => {
     const user = userEvent.setup();
     const port = new RecordingWorkflowPort(simpleChat());
-    render(
-      <WorkflowEditorScreen
-        document={simpleChat()}
-        onRun={vi.fn()}
-        workflowPort={port}
-      />,
-    );
-    await screen.findByText("Version 7");
-    const exactImport = {
+    const files = new WorkflowFileDouble();
+    const exactPath = "/tmp/exact.aworkit.json";
+    const exactOpen = {
       ...simpleChat(),
-      name: "Imported Simple Chat",
+      name: "Opened Simple Chat",
       futureRoot: { retained: true },
       nodes: simpleChat().nodes.map((node) =>
         node.id === "agent.1"
@@ -140,31 +134,36 @@ describe("lossless workflow editor", () => {
           : node,
       ),
     };
-    fireEvent.change(screen.getByLabelText("Workflow JSON file"), {
-      target: {
-        files: [
-          new File([JSON.stringify(exactImport)], "exact.json", {
-            type: "application/json",
-          }),
-        ],
-      },
-    });
+    files.openPath = exactPath;
+    files.seed(exactPath, JSON.stringify(exactOpen));
+    render(
+      <WorkflowEditorScreen
+        document={simpleChat()}
+        filePort={files}
+        workflowPort={port}
+      />,
+    );
+    await screen.findByText("Version 7");
+    await user.click(screen.getByRole("button", { name: "Open" }));
     expect(
-      await screen.findByRole("heading", { name: "Imported Simple Chat" }),
+      await screen.findByRole("heading", { name: "Opened Simple Chat" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Opening validates, activates, and commits the file through the same
+    // core-accepted save, and it preserves every unknown field verbatim.
     await waitFor(() => expect(port.commits).toHaveLength(1));
     expect(port.commits[0]?.document.futureRoot).toEqual({ retained: true });
     expect(port.commits[0]?.document.nodes[1]?.futureNode).toEqual({
       retained: true,
     });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
 
-    const richerImport = {
-      ...exactImport,
+    const advancedPath = "/tmp/advanced.aworkit.json";
+    const advancedOpen = {
+      ...exactOpen,
       name: "Advanced Harness",
       nodes: [
-        ...exactImport.nodes,
+        ...exactOpen.nodes,
         {
           id: "approval.5",
           type: "approval",
@@ -172,33 +171,25 @@ describe("lossless workflow editor", () => {
         },
       ],
     };
-    fireEvent.change(screen.getByLabelText("Workflow JSON file"), {
-      target: {
-        files: [
-          new File([JSON.stringify(richerImport)], "advanced.json", {
-            type: "application/json",
-          }),
-        ],
-      },
-    });
+    files.openPath = advancedPath;
+    files.seed(advancedPath, JSON.stringify(advancedOpen));
+    await user.click(screen.getByRole("button", { name: "Open" }));
     expect(
       await screen.findByRole("heading", { name: "Advanced Harness" }),
     ).toBeVisible();
     expect(screen.getByText("Editable · Not runnable")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
     await waitFor(() => expect(port.commits).toHaveLength(2));
     expect(port.commits[1]?.document.nodes[4]?.configuration).toEqual({
       futurePolicy: { retained: true },
     });
   });
 
-  it("keeps a malformed imported transition ID editable while gating native Run", async () => {
-    const onRun = vi.fn();
-    render(<WorkflowEditorScreen document={simpleChat()} onRun={onRun} />);
-    await screen.findByText("Version 1");
+  it("keeps a malformed opened transition identity editable while gating native execution", async () => {
+    const port = new RecordingWorkflowPort(simpleChat());
+    const files = new WorkflowFileDouble();
+    const malformedPath = "/tmp/malformed-edge.aworkit.json";
     const malformed = {
       ...simpleChat(),
       name: "Malformed transition identity",
@@ -212,16 +203,18 @@ describe("lossless workflow editor", () => {
           : edge,
       ),
     };
+    files.openPath = malformedPath;
+    files.seed(malformedPath, JSON.stringify(malformed));
+    render(
+      <WorkflowEditorScreen
+        document={simpleChat()}
+        filePort={files}
+        workflowPort={port}
+      />,
+    );
+    await screen.findByText("Version 7");
 
-    fireEvent.change(screen.getByLabelText("Workflow JSON file"), {
-      target: {
-        files: [
-          new File([JSON.stringify(malformed)], "malformed-edge.json", {
-            type: "application/json",
-          }),
-        ],
-      },
-    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open" }));
 
     expect(
       await screen.findByRole("heading", {
@@ -230,14 +223,47 @@ describe("lossless workflow editor", () => {
     ).toBeVisible();
     expect(screen.getByText("Editable · Not runnable")).toBeVisible();
     expect(
-      screen.getAllByText(
-        /Every transition ID must be a StableId/,
-      ),
+      screen.getAllByText(/Every transition ID must be a StableId/),
     ).not.toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
-    expect(onRun).not.toHaveBeenCalled();
+    // The library accepted the document, so it stays editable and writable and
+    // its unknown fields survive; only native execution is gated.
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]?.document.edges[0]?.futureEdge).toEqual({
+      retained: true,
+    });
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
+  });
+
+  it("refuses a file the workflow library would reject and leaves the editor untouched", async () => {
+    const port = new RecordingWorkflowPort(simpleChat());
+    const files = new WorkflowFileDouble();
+    const brokenPath = "/tmp/broken-transition.aworkit.json";
+    const broken = {
+      ...simpleChat(),
+      name: "Broken transition target",
+      edges: simpleChat().edges.map((edge, index) =>
+        index === 0 ? { ...edge, target: "missing.9" } : edge,
+      ),
+    };
+    files.openPath = brokenPath;
+    files.seed(brokenPath, JSON.stringify(broken));
+    render(
+      <WorkflowEditorScreen
+        document={simpleChat()}
+        filePort={files}
+        workflowPort={port}
+      />,
+    );
+    await screen.findByText("Version 7");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open" }));
+
+    expect(
+      await screen.findByText(/Open failed: .*missing\.9/),
+    ).toBeVisible();
+    // Neither the editor nor the workflow library changed.
+    expect(screen.getByRole("heading", { name: "Simple Chat" })).toBeVisible();
+    expect(port.commits).toHaveLength(0);
   });
 
   it("keeps future workflow schemas inspectable and losslessly read-only", async () => {
@@ -258,7 +284,6 @@ describe("lossless workflow editor", () => {
     render(
       <WorkflowEditorScreen
         document={simpleChat()}
-        onRun={vi.fn()}
         workflowPort={port}
       />,
     );
@@ -268,9 +293,10 @@ describe("lossless workflow editor", () => {
     expect(screen.getByText("Read-only schema")).toBeVisible();
     expect(screen.getByLabelText("Workflow name")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add Tool node" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeDisabled();
     expect(screen.getByText(/Complete preserved workflow JSON/)).toBeVisible();
   });
 });

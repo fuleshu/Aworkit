@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { workflowFileNameFromPath } from "./workflowFilePort";
 
 interface WorkflowToolbarProps {
   readonly workflowName: string;
@@ -6,44 +6,64 @@ interface WorkflowToolbarProps {
   readonly editable: boolean;
   readonly executable: boolean;
   readonly validationCount: number;
+  /** The file the next Save writes, or `null` when no file is bound yet. */
+  readonly boundFilePath: string | null;
+  /** Whether the workflow library already holds the document the editor shows. */
+  readonly draftSaved: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly saving: boolean;
+  readonly newDisabled: boolean;
+  readonly newTitle: string;
+  readonly openDisabled: boolean;
+  readonly openTitle: string;
   readonly saveDisabled: boolean;
   readonly saveTitle: string;
-  readonly runDisabled: boolean;
-  readonly runTitle: string;
-  readonly onImport: (file: File) => void;
+  readonly saveAsDisabled: boolean;
+  readonly saveAsTitle: string;
+  readonly onNew: () => void;
+  readonly onOpen: () => void;
+  readonly onSave: () => void;
+  readonly onSaveAs: () => void;
   readonly onUndo: () => void;
   readonly onRedo: () => void;
   readonly onValidate: () => void;
-  readonly onSave: () => void;
-  readonly onExport: () => void;
-  readonly onRun?: () => void;
 }
 
+/**
+ * Standard file handling for one workflow document: New, Open, Save, and Save
+ * As through operating-system dialogs, followed by the document commands that
+ * are not file operations. This surface deliberately has no Export and no Run
+ * control: it writes files and commits to the workflow library, and it never
+ * starts a Run or installs node implementations.
+ */
 export function WorkflowToolbar({
   workflowName,
   projectedVersion,
   editable,
   executable,
   validationCount,
+  boundFilePath,
+  draftSaved,
   canUndo,
   canRedo,
   saving,
+  newDisabled,
+  newTitle,
+  openDisabled,
+  openTitle,
   saveDisabled,
   saveTitle,
-  runDisabled,
-  runTitle,
-  onImport,
+  saveAsDisabled,
+  saveAsTitle,
+  onNew,
+  onOpen,
+  onSave,
+  onSaveAs,
   onUndo,
   onRedo,
   onValidate,
-  onSave,
-  onExport,
-  onRun,
 }: WorkflowToolbarProps): React.JSX.Element {
-  const importInput = useRef<HTMLInputElement>(null);
   return (
     <header className="surface-toolbar">
       <div>
@@ -61,25 +81,58 @@ export function WorkflowToolbar({
               ? "Executable workflow"
               : "Editable · Not runnable"}
         </span>
-        <input
-          accept="application/json,.json"
-          aria-label="Workflow JSON file"
-          hidden
-          ref={importInput}
-          title="Choose a workflow JSON document to import locally"
-          type="file"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file !== undefined) onImport(file);
-            event.target.value = "";
-          }}
-        />
-        <button
-          title="Import a workflow JSON document without installing or enabling code"
-          type="button"
-          onClick={() => importInput.current?.click()}
+        <span
+          className={`status ${draftSaved ? "ready" : "unconfigured"}`}
+          title={
+            draftSaved
+              ? "The stored workflow and this editor hold the same document"
+              : "The editor holds changes the workflow library has not accepted yet"
+          }
         >
-          Import JSON
+          {draftSaved ? "✓ Draft saved" : "Unsaved changes"}
+        </span>
+        <span
+          title={
+            boundFilePath ??
+            "No workflow file is bound yet: Save asks for a path first"
+          }
+        >
+          {boundFilePath === null
+            ? "No file"
+            : `File · ${workflowFileNameFromPath(boundFilePath)}`}
+        </span>
+        <button
+          disabled={newDisabled}
+          title={newTitle}
+          type="button"
+          onClick={onNew}
+        >
+          New
+        </button>
+        <button
+          disabled={openDisabled}
+          title={openTitle}
+          type="button"
+          onClick={onOpen}
+        >
+          Open
+        </button>
+        <button
+          className="primary-action"
+          disabled={saveDisabled}
+          title={saveTitle}
+          type="button"
+          onClick={onSave}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button
+          disabled={saveAsDisabled}
+          title={saveAsTitle}
+          type="button"
+          onClick={onSaveAs}
+        >
+          Save As
         </button>
         <button
           disabled={!canUndo}
@@ -108,30 +161,6 @@ export function WorkflowToolbar({
           >
             {validationCount}
           </span>
-        </button>
-        <button
-          className="primary-action"
-          disabled={saveDisabled}
-          title={saveTitle}
-          type="button"
-          onClick={onSave}
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-        <button
-          title="Export the complete lossless workflow JSON document"
-          type="button"
-          onClick={onExport}
-        >
-          Export
-        </button>
-        <button
-          disabled={runDisabled}
-          title={runTitle}
-          type="button"
-          onClick={onRun}
-        >
-          Run
         </button>
       </div>
     </header>

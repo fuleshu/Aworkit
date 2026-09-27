@@ -1,0 +1,64 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/question.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/question.rs\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/question.css\",\"desktop/src/chat/questionWorkspace.test.tsx\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-09-27 12:50:58",
+    "completion_memo": {
+      "lines": [
+        "Fixed and pushed as b7a36b0 (main -> origin/main).\n",
+        "\n",
+        "Diagnosis (the task's first question, answered from the stored evidence before changing anything): it is not (a) mojibake and not (b) literal escapes in the stored fact. A byte-level read of the committed question.asked payload for chat fb55e06b... sequence 1188 shows clean text — prompt 1997 chars with 10 real newlines, 0 backslashes, 0 U+FFFD; descriptions with 0 backslashes — so the `\\n` and `\\\"` the user pasted come from the JSON text of the tool output they quoted, not from the stored values. The gibberish was the wrong text being displayed: a question reuses the approval suspension, so the ask_user call carried the approval copy (title \"Allow ask user?\" built by tool_approval_copy, message \"The model wants to run ask_user (tool.ask_user) with these arguments:\\n\\n{pretty-printed arguments}\"), which is what the transcript's ask_user activity showed while the question waited and what the committed question.asked fact inherited as its title; and the durable question card rendered its prompt from `item.body` — a question fact carries no body, so the card showed an empty prompt — and listed option labels without their descriptions. The option descriptions therefore appeared in the chat only inside that argument JSON, which is exactly the \"gibberish description text\" that was reported.\n",
+        "\n",
+        "Fix: (1) a question suspension now carries the question's own copy — question::suspension_copy returns the model's title (or the plain label of the question kind when it gave none) and its prompt, bounded via bounded_activity_text like any other activity text — so the waiting activity, the notification and the committed question.asked fact (service.rs's suspension_facts takes the suspension title) all show the submitted wording; (2) the durable question card renders the question's own prompt (item.body stays only as a fallback for an event without a parseable question) and each offered option's label and its own description as plain text, matching the design in docs/subagent-tool-inheritance.md, which now states this explicitly.\n",
+        "\n",
+        "Coverage: a tool-loop test proves the copy is the question's own wording (em dashes and a literal `\\n` survive verbatim, no argument JSON, kind-label fallbacks for untitled choice/file/folder questions); the pipeline test asserts the ask_user suspension's title and message; the Chat workspace test asserts that the card and the dialog show the prompt and the option descriptions verbatim for escaped (literal `\\n`, `\\\"`), markdown-bearing (`\\*asterisks\\*`) and non-ASCII (em dash) descriptions and that the card never contains the tool arguments.\n",
+        "\n",
+        "Verification: cargo test --lib --manifest-path desktop/src-tauri/Cargo.toml (491 passed, +1); cargo test -p aworkit-trusted-core; pnpm vitest src/chat (199 passed); the QA gate's vitest slice (205 passed); tsc --noEmit; vite build; qa/desktop-browser-visual.sh and qa/desktop-native-smoke.sh pass. QA job 8 still stops at the pre-existing qa/rescue-simple-chat-e2e.sh failure recorded in task 150 (unchanged by this work).\n",
+        "\n",
+        "Disclosed limits: (1) committed facts are immutable, so the question already stored in chat fb55e06b keeps the title it was committed with — the corrected copy applies to questions asked from this build on; (2) the ask_user tool card still shows its Input JSON, which is the app's uniform evidence display for every tool call — a general tool-display redesign is not this task; (3) descriptions and labels are plain text, shown exactly as submitted, while the prompt stays markdown-rendered on card and dialog as before, so markdown syntax is formatted rather than printed raw; (4) option details share one un-branched plain-text render path, so a long detail is shown in full rather than through separate logic (the short escaped/non-ASCII/markdown-bearing cases are the ones tested)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-27 11:48:29",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported bug: the ask-question tool (tool.ask_user) produced gibberish description text in the previous Chat.\n",
+        "\n",
+        "Evidence (as supplied by the user):\n",
+        "- Chat: fb55e06b0e5c7d11bf2644e3c0e778d2793b84b1\n",
+        "- Question invocation: invoke.3f243fd9a6f1f1ce85b7cd77588837ba (metadata invocationId invoke.afe7d4d10c48e116ebb98ac593683e03)\n",
+        "- Timeline: scope timeline_item, sequence 1188, event kind question.asked, status answered\n",
+        "- Stored payload: kind \"choice\", title \"Allow ask user?\", three options (enable_tools, stdio_retry, draft_only), allowFreeText true, defaultOptionId enable_tools, createdAt \"1790509261\"\n",
+        "\n",
+        "Expected: the question card shows the option labels/descriptions and prompt exactly as the model submitted them, as clean readable text.\n",
+        "\n",
+        "Actual: gibberish description text was shown for the question instead of the submitted wording.\n",
+        "\n",
+        "Important observation to verify first: in the event payload supplied, the \"description\" fields of all three options are well-formed English sentences, and the prompt reads as ordinary prose. So the stored text is not obviously corrupted, which means the corruption is likely introduced on the path from tool arguments to what is displayed — or the stored payload the user saw is only part of the story. Determine whether the gibberish was (a) mojibake / encoding corruption, (b) literal escape sequences rendered instead of decoded, (c) mis-rendered markup, or (d) nonsensical-but-readable wording, and record which one before changing anything.\n",
+        "\n",
+        "Candidate area (files verified to exist, exact cause NOT established):\n",
+        "- desktop/src-tauri/src/runtime/tool_loop/question.rs — validate_ask_user bounds each option's optional \"description\" (MAXIMUM_OPTION_DESCRIPTION_BYTES) and accepts only id/label/description keys.\n",
+        "- desktop/src/chat/question.ts — questionFromMetadata parses \"description\" from the committed question.asked metadata into the typed QuestionModel.\n",
+        "- desktop/src/chat/QuestionDialog.tsx — renders the prompt and the option label/description.\n",
+        "- Existing coverage: desktop/src/chat/QuestionDialog.test.tsx and desktop/src/chat/questionWorkspace.test.tsx (both build question.asked events with option text); check whether any test covers long, escaped, non-ASCII or markdown-bearing description text.\n",
+        "\n",
+        "Reproduction: re-run an ask_user question whose options carry non-trivial description text (long sentences, escapes, non-ASCII characters such as em dashes) and inspect both the stored question.asked payload and the rendered card to locate where the text diverges. If it is no longer reproducible, capture the original rendering from chat fb55e06b0e5c7d11bf2644e3c0e778d2793b84b1 before making changes.\n",
+        "\n",
+        "Acceptance: the cause of the gibberish is identified and fixed, descriptions/prompt are displayed exactly as submitted for ASCII, escaped and non-ASCII text, and a regression test covers the failing case."
+      ]
+    },
+    "id": 151,
+    "number": 150,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix gibberish description text produced by the ask question tool",
+    "updated_at": "2026-09-27 12:50:58"
+  },
+  "deleted": false,
+  "identity": "1a823536-8f7a-4f1d-82de-039699727562",
+  "schemaVersion": 1
+}

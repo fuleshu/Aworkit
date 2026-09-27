@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "task-153-tool-card-rework",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-09-27 12:17:39",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "09cb6648-ba73-4516-9726-8bd661864136",
+  "schemaVersion": 1
+}

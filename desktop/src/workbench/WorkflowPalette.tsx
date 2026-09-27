@@ -55,7 +55,7 @@ export function WorkflowPalette({
       <p className="workflow-help-copy" role="note">
         {editable
           ? "Add or drag catalog nodes onto the canvas. Every catalog node has a native executor; executability follows the v1 catalog contract."
-          : "This future-schema workflow is preserved for inspection and lossless export; its graph cannot be edited by this build."}
+          : "This future-schema workflow is preserved for inspection and a lossless Save As; its graph cannot be edited by this build."}
       </p>
       <section className="node-type-grid" aria-label="Node types">
         <small>NODE TYPES</small>

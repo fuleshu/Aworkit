@@ -125,9 +125,6 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
     readonly stale: boolean;
     readonly pending: boolean;
   } | null>(null);
-  const [chatRecoveryPending, setChatRecoveryPending] = useState<
-    boolean | null
-  >(null);
   // Path actions are scoped to the Chat that owns the rendered conversation, so
   // the screen never has to guess which workspace a path belongs to.
   const selectedChatId = chatRuntimeState?.snapshot.chat.chatId;
@@ -342,7 +339,6 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                   historyActionRequest={historyActionRequest}
                   libraryPort={workflowLibraryPort}
                   libraryRevision={libraryRevision}
-                  onRecoveryPendingChange={setChatRecoveryPending}
                   onRuntimeSnapshotChange={updateChatRuntimeState}
                   subagentView={subagentView}
                   pickPath={async (kind, extensions) =>
@@ -368,14 +364,6 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 libraryPort={workflowLibraryPort}
                 onLibraryChange={noteWorkflowLibraryChange}
                 onOpenSettings={() => navigate("settings")}
-                onRun={openNewChat}
-                runBlockedReason={
-                  chatRecoveryPending === null
-                    ? "Checking interrupted-command recovery state before starting a Run"
-                    : chatRecoveryPending
-                      ? "Resume or abandon the interrupted command before starting another Run"
-                      : undefined
-                }
               />
             </div>
           )}

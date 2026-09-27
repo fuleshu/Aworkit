@@ -1,0 +1,50 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/images.integration.test.tsx\",\"docs/chat-images.md\"]",
+    "completed_at": "2026-09-27 12:38:27",
+    "completion_memo": {
+      "lines": [
+        "Fixed and pushed as c3b528a (main -> origin/main).\n",
+        "\n",
+        "Root cause: the composer's paste handler read only event.clipboardData.files. On Linux WebKitGTK fills that list from clipboard *file paths* only, so raw clipboard image data (a screenshot or an image copied out of another application) arrives as a kind:\"file\" item in the paste item list while .files stays empty. The handler saw no file, returned without consuming the paste, and the default paste inserted nothing because the clipboard held no text. Evidence that the platform does deliver the image and in which format: the installed webkit2gtk 2.52.3 contains the upstream fix for WebKit bug 218519, whose PasteboardGLib reads image/png, image/jpeg, image/gif, image/bmp, image/vnd.microsoft.icon and image/x-icon and names the pasted file image.png, image.jpeg, image.gif, image.bmp, image.ico (verified with `strings libwebkit2gtk-4.1.so.0.0.0 | grep -x image.*` on this machine); the fix's readBuffer goes to the web-content/DataTransferItem path, not the DataTransfer files path.\n",
+        "\n",
+        "Change: new desktop/src/chat/pasteImages.ts reads the file list first (Chromium, and no duplicate attachment) and falls back to the item list, reading synchronously because getAsFile() is voided once the handler returns. An item whose MIME type the shared import path cannot store still reaches it, so a GIF/BMP/icon paste now reports the documented \"Choose PNG, JPEG or WebP images.\" reason instead of doing nothing. ChatComposer uses the reader; docs/chat-images.md records the added regression coverage.\n",
+        "\n",
+        "Verification: `pnpm vitest run src/chat/pasteImages.test.ts src/chat/images.integration.test.tsx` 9 passed; `pnpm test:chat` 198 passed; the QA gate's own vitest slice `vitest run src/chat src/app.integration.test.tsx` 204 passed; `tsc --noEmit` clean; `vite build` ok; `qa/desktop-browser-visual.sh` and `qa/desktop-native-smoke.sh` pass; the new composer test fails on the pre-change handler, so it is a real regression test. QA job 8 (`./qa/milestone-08.sh`) reached its third step and stopped at `qa/rescue-simple-chat-e2e.sh`: \"Chat target 'chat.local' is stale; the selected Chat is 'chat.e...'\"; `qa/desktop-native-simple-chat-e2e.sh` stops in Settings before model discovery. Both fail identically with this change stashed (same rescue error; a pixel-identical Settings failure screenshot), so both are pre-existing failures of the native harness, not of this fix; the Rust suites the gate runs before that point (aworkit-trusted-core; 490 desktop lib tests) passed.\n",
+        "\n",
+        "Disclosed limits: (1) no display or OS clipboard exists in this environment, so the real OS paste was not exercised end to end — the evidence is the platform's own format-fix evidence plus the composer-level regression test; (2) a clipboard that exposes only GIF/BMP/icon is reported as unsupported rather than attached, because docs/chat-images.md and the whole durable/provider pipeline accept PNG, JPEG and WebP only, and widening that contract is outside this bug fix; (3) a clipboard holding only a file reference (text/uri-list) still pastes as text, as documented for the picker path."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-27 11:43:35",
+    "created_files": "[\"desktop/src/chat/pasteImages.ts\",\"desktop/src/chat/pasteImages.test.ts\"]",
+    "description": {
+      "lines": [
+        "Reported bug: pasting an image from the OS clipboard into the chat is not working on Linux.\n",
+        "\n",
+        "Platform: Linux (desktop app).\n",
+        "\n",
+        "Expected: with an image on the OS clipboard, pressing the normal paste shortcut in the chat composer attaches that image to the message, the same way it already works for image files chosen through the picker.\n",
+        "\n",
+        "Actual: pasting an image from the clipboard into the chat input does not work — nothing is inserted or attached.\n",
+        "\n",
+        "Scope note: reported symptom as observed by the user; root cause is not yet established and must be investigated. Candidate area: clipboard paste handling in the chat composer (desktop/src/chat/ChatComposer.tsx) and the shared image import path (desktop/src/chat/images.ts); expected behaviour is described in docs/chat-images.md. Note that on Linux the clipboard may expose image data in several formats, so verify which formats the paste path actually accepts.\n",
+        "\n",
+        "Acceptance: pasting an image copied to the clipboard attaches it in the chat composer on Linux, with a regression test covering the Linux clipboard formats actually reported by the platform."
+      ]
+    },
+    "id": 150,
+    "number": 149,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix pasting an image from the clipboard into the chat on Linux",
+    "updated_at": "2026-09-27 12:38:27"
+  },
+  "deleted": false,
+  "identity": "c96dee61-738f-47bc-a960-f2a9b8f04dfd",
+  "schemaVersion": 1
+}

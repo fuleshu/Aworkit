@@ -471,8 +471,8 @@ function WorkflowProperties({
       )}
       <p className="workflow-help-copy">
         {editable
-          ? "Unknown nodes and fields remain inspectable, editable, undoable, savable, and exportable. Native Run stays gated by the v1 executable catalog contract."
-          : "This unsupported or inert schema remains inspectable and losslessly exportable, but this build will not edit or overwrite it."}
+          ? "Unknown nodes and fields remain inspectable, editable, undoable, savable, and writable to a file with Save As. Native Run stays gated by the v1 executable catalog contract."
+          : "This unsupported or inert schema remains inspectable and losslessly writable to a file, but this build will not edit or overwrite it."}
       </p>
       <details className="raw-workflow-fields">
         <summary>Complete preserved workflow JSON</summary>

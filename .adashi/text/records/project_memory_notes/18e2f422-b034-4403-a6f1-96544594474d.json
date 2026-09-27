@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Task 153 (number 152, todo): rework the Chat tool-call card. Header keeps icon + status chip and the capability id plus a bracketed real tool name (tool.shell.host (bash)); input becomes a formatted one-line argument summary with a capped scrollable expand; output shows the tool's own text, streaming incrementally, 4 rows default / 10 expanded with auto-scroll; non-text output renders an image or a compact status. Grounding: ConversationTimeline.tsx TimelineCard + ActivityData (the raw <dl class=\"activity-data\"> JSON), activityProjection.ts spanItem/toolImageAttachments, styles.css. Streaming needs no new backend contract: ModelToolEventV1::Progress -> content_delta(\"progress\") in run_events.rs ~L1212 already reaches span.progress and the live card body. Linked to design element aworkit.desktop_ui.conversation. Decisions: static capabilityId->display-name map with fallback; Run details unchanged and still the home of exact redacted JSON.",
+    "created_at": "2026-09-27 12:17:39",
+    "id": 280,
+    "note_id": "task-153-tool-card-rework",
+    "operation_id": "mem-task-153-tool-card-rework",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-153-tool-card-rework",
+    "task_id": {
+      "ref": "91ff36f0-8b88-494c-8467-332537e04d3b"
+    }
+  },
+  "deleted": false,
+  "identity": "18e2f422-b034-4403-a6f1-96544594474d",
+  "schemaVersion": 1
+}

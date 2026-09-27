@@ -112,11 +112,15 @@ describe("honest JSON-workflow desktop slice", () => {
       screen.getByRole("button", { name: "Wait for input" }),
     ).toBeVisible();
     expect(screen.queryByText("Missing dependency")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(
-      await screen.findByRole("heading", { name: "New Chat" }, lazyRouteWait),
-    ).toBeVisible();
+    // This surface handles files only now: New/Open/Save/Save As replaced the
+    // Import JSON, Export, and Run controls entirely.
+    expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save As" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Import/ })).toBeNull();
   });
 
   it("preserves an unsent draft and inspector geometry across route handoff", async () => {

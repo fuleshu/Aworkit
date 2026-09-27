@@ -14,7 +14,6 @@ interface WorkflowLibraryBarProps {
   readonly onSelect: (id: string) => void;
   readonly onCreate: (template: string, name: string) => void;
   readonly onDuplicate: (workflowId: string, name: string) => void;
-  readonly onRename: (workflowId: string, name: string) => void;
   readonly onDelete: (workflowId: string) => void;
   readonly onSetDefault: (workflowId: string) => void;
 }
@@ -32,6 +31,9 @@ const DEFAULT_TEMPLATE =
  * Compact saved-workflow library strip. All mutations cross the versioned
  * native `workflow_library` surface; the active selection is reloaded from the
  * workflow document snapshot by the parent editor.
+ *
+ * This strip has no Rename control: the workflow's own Name property is the
+ * display name, and a save that changed it renames the stored entry.
  */
 export function WorkflowLibraryBar({
   library,
@@ -40,7 +42,6 @@ export function WorkflowLibraryBar({
   onSelect,
   onCreate,
   onDuplicate,
-  onRename,
   onDelete,
   onSetDefault,
 }: WorkflowLibraryBarProps): React.JSX.Element {
@@ -85,7 +86,7 @@ export function WorkflowLibraryBar({
         <input
           disabled={busy}
           placeholder="Workflow name"
-          title="Name used by Create, Duplicate, and Rename"
+          title="Name used by Create and Duplicate; the Name property renames a saved workflow"
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
@@ -105,14 +106,6 @@ export function WorkflowLibraryBar({
         onClick={() => onDuplicate(activeWorkflowId, name || `${active?.name ?? "Workflow"} copy`)}
       >
         Duplicate
-      </button>
-      <button
-        disabled={busy || active === undefined || name.trim() === ""}
-        title="Rename the active workflow"
-        type="button"
-        onClick={() => onRename(activeWorkflowId, name)}
-      >
-        Rename
       </button>
       <button
         className="danger-action"
