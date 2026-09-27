@@ -1,0 +1,46 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/external.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_background.rs\"]",
+    "completed_at": "2026-09-27 18:06:48",
+    "completion_memo": {
+      "lines": [
+        "Fixed the incident's root cause: a delegated child could not see, read or stop the background jobs it started.\n",
+        "\n",
+        "Change: added `job_owner_scope(delegation, outer_invocation_id)` in tool_loop/jobs.rs. It returns the acting agent's child id when it is a delegated child and the outer invocation id otherwise, so a job's record scope equals the scope the starter's job controls, completion notice and stop use. Applied at all four job-start sites: process jobs (jobs.rs `start_process_job`), in-process child jobs (subagent.rs `start_child_job` and `start_continuation_job`) and external-agent child jobs (subagent/external.rs). Previously every one recorded `self.record.outer_invocation_id`, so `list_scoped(child_id)` and `control_scoped(child_id)` matched nothing and 49 of the child's shell jobs were left uncollected under the parent, whose notice then enumerated them and overflowed the retry notice.\n",
+        "\n",
+        "Coverage: new pipeline test `a_child_lists_the_shell_job_it_started` (Plan::ChildShell) spawns a background child that starts a shell job and lists jobs with its own tools. It fails with `{\"jobs\":[]}` when the fix is reverted and passes with it. The existing `subagent_jobs_isolate_siblings_but_remain_owned_and_cancelled_by_the_chat` still proves a child cannot see a sibling's job and that the Chat-level notice and stop still cover every job.\n",
+        "\n",
+        "Verification: cargo test --lib --manifest-path desktop/src-tauri/Cargo.toml (500 passed, 1 ignored, 26.8 s)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-27 18:05:43",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Evidence (chat.e1608e3b0f642edccf7dcb59588deb2a61dbd0fb, 2026-09-27): three `tool.job.output` calls from a delegated child failed with \"job is not owned by this subagent; ask the parent to handle it\", and 49 of the child's own shell jobs were left uncollected under the delegating invocation. The parent's completion notice then enumerated all 49, which is the retry-notice overflow that ended the run.\n",
+        "\n",
+        "Root cause: a job's record scope and the child's control/notice/list scope disagree. A delegated child scopes its controls (jobs.rs), its completion notice and its stop (subagent/worker.rs) to its own child id, and lists jobs with that same id (subagent.rs). But every job start recorded the delegating invocation id instead: process jobs (jobs.rs), in-process child jobs (subagent.rs) and external child jobs (subagent/external.rs) all passed `self.record.outer_invocation_id` as the job scope. `list_scoped(child_id)` and `control_scoped(child_id)` therefore matched nothing, so a child could not see, read, or stop the background work it started.\n",
+        "\n",
+        "Fix: `job_owner_scope(delegation, outer_invocation_id)` returns the child id when the acting agent is a delegated child and the outer invocation id otherwise; all four job-start sites use it. The registry already treats a scope of `Some(child)` as the child's own (its test starts jobs with `Some(\"child.a\")`).\n",
+        "\n",
+        "Acceptance: a child lists and reads the shell job it started; a child cannot see a sibling's job (existing test); the top-level Agent's notice still sees every job of the Chat; full desktop lib suite green.\n",
+        "\n",
+        "Verification: new pipeline test `a_child_lists_the_shell_job_it_started` fails with `{\"jobs\":[]}` when the fix is reverted and passes with it; cargo test --lib green."
+      ]
+    },
+    "id": 155,
+    "number": 154,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "A delegated child cannot collect the background jobs it starts",
+    "updated_at": "2026-09-27 18:06:48"
+  },
+  "deleted": false,
+  "identity": "cca64ef2-ad8f-40f5-aa51-3946ab8610a0",
+  "schemaVersion": 1
+}

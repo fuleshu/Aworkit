@@ -16,6 +16,8 @@ enum Plan {
     Stop,
     /// Spawn, keep the running child, and finish the parent's turn.
     Keep,
+    /// Spawn a child that starts a shell job and collects it with its own tools.
+    ChildShell,
 }
 
 #[derive(Clone)]
@@ -158,6 +160,32 @@ impl ProviderEnginePortV1 for BackgroundProvider {
                     emit(text("parent-done"))?;
                 }
             }
+            Plan::ChildShell => {
+                if parent && exchanges == 0 {
+                    emit(spawn("delegate", json!({"task":"Child with its own shell job"})))?;
+                } else if parent && exchanges == 1 {
+                    emit(job_call(
+                        "collect",
+                        "tool.job.output",
+                        json!({"jobId":delegated_job(request),"waitMs":5000}),
+                    ))?;
+                } else if !parent && exchanges == 0 {
+                    // The child starts background work of its own, then uses its
+                    // own job tools to see it. Its record scope must match the
+                    // scope those tools use, or the work is invisible to it.
+                    emit(call(
+                        "child-shell",
+                        "tool.shell.host",
+                        json!({"command":"echo child-job"}),
+                    ))?;
+                } else if !parent && exchanges == 1 {
+                    emit(job_call("child-list", "tool.job.list", json!({})))?;
+                } else if !parent {
+                    emit(text("child-done"))?;
+                } else {
+                    emit(text("parent-done"))?;
+                }
+            }
         }
         emit(ModelToolEventV1::Usage {
             input_tokens: 5,
@@ -241,6 +269,7 @@ const TOOLS: &[&str] = &[
     "tool.job.keep",
     "tool.job.list",
     FILE_READ_CAPABILITY_ID,
+    "tool.shell.host",
 ];
 
 fn prepare(
@@ -443,4 +472,40 @@ fn a_child_left_running_by_a_restart_is_reported_interrupted_in_the_catalog() {
     scenario
         .release
         .store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[test]
+fn a_child_lists_the_shell_job_it_started() {
+    let root = TempDir::new().unwrap();
+    let (pipeline, request, scenario) = prepare(&root, Plan::ChildShell);
+    let result = pipeline.execute(request).unwrap();
+    assert_eq!(
+        result.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        result.error
+    );
+    let requests = scenario.requests.lock().unwrap();
+    let child = requests
+        .iter()
+        .find(|request| {
+            !request
+                .tools
+                .iter()
+                .any(|tool| is_subagent_tool(&tool.capability_id))
+                && request.exchanges.len() >= 2
+        })
+        .expect("the child turn that listed its jobs");
+    let listed = &child.exchanges.last().unwrap().results[0];
+    assert!(!listed.is_error, "{listed:?}");
+    let jobs = listed.content["jobs"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a job-list result: {listed:?}"));
+    assert_eq!(jobs.len(), 1, "{listed:?}");
+    assert_eq!(jobs[0]["kind"], "process", "{listed:?}");
+    assert!(
+        jobs[0]["jobId"].as_str().unwrap_or_default().starts_with("job."),
+        "the child sees the shell job it started instead of leaving it \
+         invisible and uncollected under the parent: {listed:?}"
+    );
 }

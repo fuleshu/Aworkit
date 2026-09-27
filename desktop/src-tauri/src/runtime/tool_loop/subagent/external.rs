@@ -22,6 +22,7 @@ use aworkit_protocol::StableId;
 use serde_json::{Value, json};
 
 use super::super::*;
+use super::super::jobs::job_owner_scope;
 use super::{ChildKindV1, ChildStatusV1, SubagentChildFrameV1, publish_child_fact};
 use crate::runtime::external_agent::build_delegation_backend;
 
@@ -133,7 +134,10 @@ impl FileToolDispatcherV1 {
             let job_id = self.runtime.jobs.clone().start_child_scoped(
                 &self.context.chat_id,
                 envelope.invocation_id.as_str(),
-                Some(self.record.outer_invocation_id.as_str()),
+                Some(job_owner_scope(
+                    self.context.delegation.as_ref(),
+                    self.record.outer_invocation_id.as_str(),
+                )),
                 &job_child_id,
                 cancellation.clone(),
                 move |_handle: Arc<crate::runtime::tool_loop::jobs::ChildJobHandle>,

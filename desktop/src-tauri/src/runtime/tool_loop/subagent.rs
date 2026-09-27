@@ -8,7 +8,7 @@
 //! The child's full transcript is never merged wholesale: it settles, its frame
 //! is committed to the Run's operational record store, and only a declared
 //! outcome returns to the parent loop.
-use super::jobs::ChildJobHandle;
+use super::jobs::{ChildJobHandle, job_owner_scope};
 use super::*;
 use crate::runtime::model_tool_loop;
 
@@ -711,7 +711,10 @@ impl FileToolDispatcherV1 {
         let job_id = self.runtime.jobs.clone().start_child_scoped(
             &self.context.chat_id,
             envelope.invocation_id.as_str(),
-            Some(self.record.outer_invocation_id.as_str()),
+            Some(job_owner_scope(
+                self.context.delegation.as_ref(),
+                self.record.outer_invocation_id.as_str(),
+            )),
             &child_id,
             self.context.cancellation.clone(),
             move |handle: Arc<ChildJobHandle>, child_token| {
@@ -766,7 +769,10 @@ impl FileToolDispatcherV1 {
         let job_id = self.runtime.jobs.clone().start_child_scoped(
             &self.context.chat_id,
             envelope.invocation_id.as_str(),
-            Some(self.record.outer_invocation_id.as_str()),
+            Some(job_owner_scope(
+                self.context.delegation.as_ref(),
+                self.record.outer_invocation_id.as_str(),
+            )),
             &child_id,
             self.context.cancellation.clone(),
             move |handle: Arc<ChildJobHandle>, child_token| {

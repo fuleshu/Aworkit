@@ -9,6 +9,23 @@ use aworkit_capability_host::ProcessSpecV1;
 pub(super) use contract::*;
 pub(super) use registry::{ChildJobHandle, ChildJobInfo, JobRegistry};
 
+/// The ownership scope of a job the acting Agent starts.
+///
+/// A job must be visible to the same scope its starter lists, reads and stops it
+/// with: a delegated child scopes those controls and its completion notice to its
+/// own child id, while a top-level Agent keeps its outer invocation id. Recording
+/// a child's job under the delegating invocation instead leaves the child unable
+/// to see its own background work, which then surfaces as uncollected jobs under
+/// the parent.
+pub(crate) fn job_owner_scope<'a>(
+    delegation: Option<&'a StableId>,
+    outer_invocation_id: &'a str,
+) -> &'a str {
+    delegation
+        .map(StableId::as_str)
+        .unwrap_or(outer_invocation_id)
+}
+
 impl FileToolDispatcherV1 {
     pub(super) fn execute_job(
         &self,
@@ -241,7 +258,10 @@ impl FileToolDispatcherV1 {
         let id = self.runtime.jobs.start_scoped(
             &self.context.chat_id,
             self.record.proposal.proposal_id.as_str(),
-            Some(self.record.outer_invocation_id.as_str()),
+            Some(job_owner_scope(
+                self.context.delegation.as_ref(),
+                self.record.outer_invocation_id.as_str(),
+            )),
             spec,
             interactive,
             self.context.cancellation.clone(),
