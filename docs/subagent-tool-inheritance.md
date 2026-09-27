@@ -293,8 +293,14 @@ default.
 
 Desktop. A committed question renders twice from one projection: a `question`
 timeline card that keeps the prompt, the offered options and the answer in
-chronology, and a modal `<dialog>` that is the focused answering surface. The
-dialog opens when an unanswered question arrives, can be dismissed with "Decide
+chronology, and a modal `<dialog>` that is the focused answering surface. Both
+show the wording the model submitted: the prompt and every offered option's label
+and its own description as plain text, never the approval copy of the tool call,
+which would print the raw `tool.ask_user` arguments as JSON. The suspension
+carries the question's own title (or the plain label of its kind when the model
+gave none) and prompt, so the waiting activity, the notification and the
+committed `question.asked` fact carry the same wording. The dialog opens when an
+unanswered question arrives, can be dismissed with "Decide
 later" without answering — the card stays answerable and is never re-opened on
 its own — and closes by itself once the answer commits. `tool.browse` renders the
 same dialog with the operating system's own chooser behind a "Choose file…" or

@@ -58,6 +58,18 @@ fn an_ask_user_call_suspends_the_run_with_a_typed_question() {
     assert_eq!(question.options.len(), 2);
     assert!(question.allow_free_text);
     assert!(suspension.filesystem.is_none());
+    // The suspension's notice, activity and committed fact carry the question the
+    // model wrote. Its approval copy would print the raw `tool.ask_user`
+    // arguments as JSON, which is not what the user is being asked.
+    assert_eq!(suspension.title, "Release channel");
+    assert_eq!(
+        suspension.message,
+        "Which release channel should this build target?"
+    );
+    assert!(
+        !suspension.message.contains("arguments"),
+        "the question is never displayed as the tool call's argument JSON"
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,

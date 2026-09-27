@@ -14,7 +14,7 @@ import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
 import { MarkdownContent } from "./MarkdownContent";
 import { PathMenuTarget } from "./PathMenuTarget";
-import { questionFromMetadata } from "./question";
+import { questionFromMetadata, type QuestionModel } from "./question";
 import type { ApprovalActionDetails } from "./approvals";
 import { useTimelineReturn } from "./useTimelineReturn";
 import { useTimelineFollow } from "./useTimelineFollow";
@@ -412,6 +412,10 @@ export function TimelineCard({
       </article>
     );
   if (item.kind === "question") {
+    // The card is the durable question surface, so it carries the question's own
+    // wording. `body` is only a fallback for an event without a parseable
+    // question; the committed fact carries the prompt the model submitted.
+    const question = questionFromMetadata(item.metadata, item.id);
     return (
       <article
         className={`activity-card question-card ${selected ? "selected" : ""}`}
@@ -428,9 +432,10 @@ export function TimelineCard({
           <span className={`status ${item.status ?? ""}`}>{item.status ?? "pending"}</span>
         </button>
         <div className="question-prompt">
-          <MarkdownContent>{item.body ?? ""}</MarkdownContent>
+          <MarkdownContent>{question?.prompt ?? item.body ?? ""}</MarkdownContent>
         </div>
         <QuestionCardActions
+          question={question}
           actionsDisabled={actionsDisabled}
           item={item}
           onAction={onAction}
@@ -723,20 +728,22 @@ function isBusy(status: string | undefined): boolean {
 }
 
 /**
- * The durable question card: the prompt, the options that were offered, and the
- * answer once there is one. Answering opens the modal dialog; the card keeps the
- * question inspectable after it is answered or skipped.
+ * The durable question card's offered options and answer. The prompt is rendered
+ * by the card itself; this part keeps the options that were offered — label and
+ * the model's own consequence detail — and the answer once there is one, so the
+ * card stays inspectable after it is answered or skipped.
  */
 function QuestionCardActions({
   item,
+  question,
   actionsDisabled,
   onAction,
 }: {
   readonly item: TimelineItem;
+  readonly question: QuestionModel | undefined;
   readonly actionsDisabled: boolean;
   readonly onAction: ConversationTimelineProps["onAction"];
 }): React.JSX.Element {
-  const question = questionFromMetadata(item.metadata, item.id);
   const fact = metadataOf(item);
   const answered =
     typeof fact.optionId === "string"
@@ -751,7 +758,12 @@ function QuestionCardActions({
       {question !== undefined && question.options.length > 0 && (
         <ul className="question-card-options">
           {question.options.map((option) => (
-            <li key={option.id}>{option.label}</li>
+            <li key={option.id}>
+              <strong>{option.label}</strong>
+              {option.description !== undefined && (
+                <small>{option.description}</small>
+              )}
+            </li>
           ))}
         </ul>
       )}

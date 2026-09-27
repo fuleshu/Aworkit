@@ -301,6 +301,27 @@ pub(crate) fn challenge(call: &ModelToolCallV1) -> Result<QuestionChallengeV1, S
     })
 }
 
+/// The user-facing wording a question suspension carries.
+///
+/// A question reuses the approval suspension, but the approval copy of a
+/// `tool.ask_user` call is the tool name plus its raw arguments as JSON — a
+/// description of the call, not of what the user is being asked. The question's
+/// own title (or the plain label of its kind when the model gave none) and its
+/// prompt are what the waiting activity, the notification and the committed
+/// `question.asked` fact show, so the submitted wording reaches every surface
+/// unchanged. The kind labels mirror the desktop's own `questionKindLabel`.
+pub(crate) fn suspension_copy(question: &QuestionChallengeV1) -> (String, String) {
+    let title = question.title.clone().unwrap_or_else(|| {
+        match question.kind {
+            QuestionKindV1::Choice => "Choose an answer",
+            QuestionKindV1::File => "Choose a file",
+            QuestionKindV1::Folder => "Choose a folder",
+        }
+        .to_owned()
+    });
+    (title, question.prompt.clone())
+}
+
 /// Validates one user answer against the question it answers, so a stale or
 /// malformed answer can never be delivered as a question result.
 pub(crate) fn validate_answer(
@@ -501,6 +522,46 @@ mod tests {
             .is_ok(),
             "a folder question without a filter stays valid"
         );
+    }
+
+    #[test]
+    fn a_question_suspension_carries_the_models_own_wording() {
+        // The suspension's user-facing copy is the question the model wrote. Its
+        // approval copy would be the `tool.ask_user` argument JSON, which
+        // describes the call rather than what the user is being asked.
+        let asked = challenge(&call(
+            ASK_USER_CAPABILITY_ID,
+            json!({
+                "prompt": "Which release — stable or beta — should I build?\\nReply with one.",
+                "title": "Release channel",
+                "options": [{
+                    "id": "stable",
+                    "label": "Stable",
+                    "description": "Early \"access\" — fewer surprises",
+                }],
+            }),
+        ))
+        .expect("challenge");
+        let (title, prompt) = suspension_copy(&asked);
+        assert_eq!(title, "Release channel");
+        assert_eq!(prompt, asked.prompt);
+        assert!(prompt.contains('—'), "non-ASCII text survives verbatim");
+        assert!(prompt.contains("\\n"), "an escaped sequence stays as written");
+        assert!(!prompt.contains("arguments"));
+
+        // A question without a model title falls back to its kind's plain label.
+        let untitled = challenge(&call(
+            ASK_USER_CAPABILITY_ID,
+            json!({"prompt": "Which one?"}),
+        ))
+        .expect("challenge");
+        assert_eq!(suspension_copy(&untitled).0, "Choose an answer");
+        let browse = challenge(&call(
+            BROWSE_CAPABILITY_ID,
+            json!({"prompt": "Which folder?", "kind": "folder"}),
+        ))
+        .expect("challenge");
+        assert_eq!(suspension_copy(&browse).0, "Choose a folder");
     }
 
     #[test]

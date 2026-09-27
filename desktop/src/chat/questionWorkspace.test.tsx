@@ -124,9 +124,11 @@ describe("a model question in the Chat workspace", () => {
     // The dialog opens by itself for a newly asked question.
     const dialog = await screen.findByRole("dialog", { name: "Release channel" });
     expect(dialog).toHaveAttribute("open");
-    expect(
-      screen.getByText("Which release channel should this build target?"),
-    ).toBeVisible();
+    // The prompt renders on the dialog and on the durable card, so this asserts
+    // the dialog's own surface instead of a unique text match.
+    expect(dialog.textContent).toContain(
+      "Which release channel should this build target?",
+    );
     // The Run is waiting for the answer, not for ordinary input.
     expect(
       screen.getByRole("button", { name: "Stop response" }),
@@ -305,6 +307,49 @@ describe("a model question in the Chat workspace", () => {
       questionId: "question.release-channel",
       optionId: "beta",
     });
+  });
+
+  it("keeps the submitted prompt and option descriptions on the card and in the dialog", async () => {
+    const user = userEvent.setup();
+    // Escaped and non-ASCII text as the model wrote it: the literal `\n` stays a
+    // literal sequence, the em dashes and quotes are not rewritten, and the
+    // option's own consequence detail is shown as plain text.
+    const prompt =
+      "Which release — stable or beta — should I build?\\nReply with one line.";
+    const description =
+      "Early access — fewer \"surprises\", no \\*asterisks\\* and no JSON.";
+    const wording = [
+      asked[0],
+      event(2, "question.asked", {
+        createdAt: "2",
+        commandId: "command.start",
+        questionId: "question.wording",
+        nodeId: "agent.1",
+        title: "Release channel",
+        prompt,
+        kind: "choice",
+        options: [{ id: "stable", label: "Stable", description }],
+        allowFreeText: false,
+        invocationId: "invoke.wording",
+      }),
+    ];
+    render(<ChatWorkspaceScreen corePort={port(wording, [])} pollIntervalMs={60_000} />);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Release channel",
+    });
+    expect(dialog.textContent).toContain(prompt);
+    expect(dialog.textContent).toContain(description);
+    await user.click(screen.getByRole("button", { name: "Decide later" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Release channel" })).toBeNull(),
+    );
+    // The durable card keeps the same wording, never the tool call's arguments.
+    const card = screen.getByRole("article", {
+      name: /Question: Release channel/,
+    });
+    expect(card.textContent).toContain(prompt);
+    expect(card.textContent).toContain(description);
+    expect(card.textContent).not.toContain("arguments");
   });
 
   it("raises the newest of several unanswered questions and keeps the older one on its card", async () => {

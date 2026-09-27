@@ -2446,6 +2446,12 @@ impl BoundFileToolAuthorityV1 {
                 json!({"question": asked}),
             );
             let mut pending = tool_approval_challenge(&challenge, call);
+            // A question is displayed as the question the model wrote, not as
+            // the approval copy of its tool call: the user answers the prompt,
+            // and the raw `tool.ask_user` arguments are not the question.
+            let (title, prompt) = question::suspension_copy(&asked);
+            pending.title = bounded_activity_text(title);
+            pending.summary = bounded_activity_text(prompt);
             pending.question = Some(asked);
             return Err(WorkflowPipelineError::ToolApproval(pending));
         };
