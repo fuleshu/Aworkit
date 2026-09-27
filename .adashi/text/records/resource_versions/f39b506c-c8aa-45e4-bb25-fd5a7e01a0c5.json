@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "build-hygiene-profiles-20260926",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-09-26 20:27:03",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "f39b506c-c8aa-45e4-bb25-fd5a7e01a0c5",
+  "schemaVersion": 1
+}
