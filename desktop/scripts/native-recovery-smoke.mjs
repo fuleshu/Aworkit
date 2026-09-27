@@ -1,11 +1,12 @@
 // Native recovery controls and stopped questions, using an isolated QA profile.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 import { connectNativeWebView } from "./native-webview.mjs";
+import { stageBinary } from "./native-binary.mjs";
 
 const mode = process.argv[2] ?? "recovery";
 assert.ok(["stop", "recovery"].includes(mode));
@@ -13,7 +14,7 @@ const root = resolve(`src-tauri/target/native-recovery-${Date.now()}`);
 const project = resolve(root, "project");
 await mkdir(project, { recursive: true });
 const executable = resolve(root, "aworkit-desktop.exe");
-await copyFile(resolve("src-tauri/target/debug/aworkit-desktop.exe"), executable);
+await stageBinary(resolve("src-tauri/target/debug/aworkit-desktop.exe"), executable);
 const requests = [];
 const server = createServer(async (request, response) => {
   response.setHeader("Content-Type", "application/json");

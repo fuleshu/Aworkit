@@ -43,3 +43,33 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+# Build hygiene. This manifest is its own workspace root (the repository workspace
+# excludes desktop/src-tauri), so it must carry the profile settings that the root
+# Cargo.toml already applies to crates/*.
+#
+#   debug = 1        line tables only: still gives file/line in backtraces, and keeps the
+#                    ~500 MB .pdb/.rlib artifacts of a full debug build an order of
+#                    magnitude smaller.
+#   incremental      stays ON, for fast edit/rebuild loops. It is the largest thing under
+#                    target/ though: roughly 150-500 MB per distinct unit flavour
+#                    (dominated by dep-graph.bin), and Cargo never reclaims a flavour it
+#                    no longer uses. Prune with `node scripts/trim-rust-incremental.mjs`
+#                    when target/ grows.
+#   build-override   build scripts and proc macros gain nothing from debug info or from
+#                    incremental state, and they are the bulk of target/debug/build.
+[profile.dev]
+debug = 1
+incremental = true
+
+[profile.dev.build-override]
+debug = false
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = true
+
+[profile.test.build-override]
+debug = false
+incremental = false

@@ -2,15 +2,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { connectNativeWebView } from './native-webview.mjs';
+import { stageBinary } from './native-binary.mjs';
 
 const root = resolve(`src-tauri/target/native-projectless-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, 'aworkit-desktop.exe');
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
 const failures = [], requests = [], checks = [];
 let scenario = 'standard', turn = 0;
 const provider = createServer(async (req, res) => {

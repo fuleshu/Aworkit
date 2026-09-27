@@ -2,16 +2,17 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {once} from "node:events";
-import {copyFile,mkdir,writeFile} from "node:fs/promises";
+import {mkdir,writeFile} from "node:fs/promises";
 import {createServer} from "node:http";
 import {resolve} from "node:path";
 import {connectNativeWebView} from "./native-webview.mjs";
+import { stageBinary } from "./native-binary.mjs";
 const root=resolve(`src-tauri/target/native-compression-${Date.now()}`),project=resolve(root,"project");
 await mkdir(project,{recursive:true});
 const source=Array.from({length:45},(_,i)=>`fn worker_${i}() {\n${Array.from({length:24},(_,j)=>`    let measurement_${i}_${j} = ${i*100+j};`).join("\n")}\n${i===17?'    // hidden_receipt_992 = exact-original-proof\n':''}}\n`).join("\n")+'fn target_739() { println!("TARGET MUST SURVIVE"); }\n';
 await writeFile(resolve(project,"source.rs"),source);await writeFile(resolve(project,"AGENTS.md"),"COMPRESSION WORKSPACE RULE");
 const executable=resolve(root,"aworkit-desktop.exe");
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY??"src-tauri/target/debug/aworkit-desktop.exe"),executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY??"src-tauri/target/debug/aworkit-desktop.exe"),executable);
 const requests=[],failures=[];let step=0,reference,firstProjection,summaries=0;
 function call(name,id,args){return {tool_calls:[{index:0,id,type:"function",function:{name,arguments:JSON.stringify(args)}}]};}
 const provider=createServer(async(req,res)=>{

@@ -2,15 +2,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { connectNativeWebView } from './native-webview.mjs';
+import { stageBinary } from './native-binary.mjs';
 
 const root = resolve(`src-tauri/target/native-agent-prefix-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, 'aworkit-desktop.exe');
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
 const python = process.env.AWORKIT_PYTHON_EXECUTABLE ?? 'C:/Python313/python.exe';
 const requests = [], failures = [], proof = { prefixComparisons: 0, approvalRestart: false };
 let child, view, logs = '', phase = 'tools', turn = 0, mainCalls = 0, previous;

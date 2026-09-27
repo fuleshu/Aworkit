@@ -3,14 +3,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { connectNativeWebView } from "./native-webview.mjs";
+import { stageBinary } from "./native-binary.mjs";
 
 const root = resolve(`src-tauri/target/native-run-details-resize-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, "aworkit-desktop.exe");
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
 const pause = (ms = 100) => new Promise(resolve => setTimeout(resolve, ms));
 let child, view, logs = "";
 let stage = "startup";

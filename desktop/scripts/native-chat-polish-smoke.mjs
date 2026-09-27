@@ -2,17 +2,18 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { connectNativeWebView } from "./native-webview.mjs";
+import { stageBinary } from "./native-binary.mjs";
 
 const root = resolve(`src-tauri/target/native-chat-polish-${Date.now()}`);
 const project = resolve(root, "project");
 await mkdir(project, { recursive: true });
 await writeFile(resolve(project, "AGENTS.md"), "POLISH WORKSPACE INSTRUCTIONS");
 const executable = resolve(root, "aworkit-desktop.exe");
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
 const requests = [], responses = [];
 let catalogs = 0, child, view, logs = "";
 const provider = createServer(async (request, response) => {

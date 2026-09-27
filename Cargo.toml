@@ -26,5 +26,22 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
+# Build hygiene: Cargo never prunes stale incremental flavours or superseded hashed
+# artifacts, so keep the profile bounded here and prune the cache periodically with
+# `node scripts/trim-rust-incremental.mjs`. See desktop/src-tauri/Cargo.toml for the
+# same policy applied to the desktop app (which is excluded from this workspace).
 [profile.dev]
 debug = 1
+incremental = true
+
+[profile.dev.build-override]
+debug = false
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = true
+
+[profile.test.build-override]
+debug = false
+incremental = false

@@ -3,15 +3,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { connectNativeWebView } from "./native-webview.mjs";
+import { stageBinary } from "./native-binary.mjs";
 
 const root = resolve(`src-tauri/target/native-text-scale-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, "aworkit-desktop.exe");
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? "src-tauri/target/debug/aworkit-desktop.exe"), executable);
 const content = "## Scalable text\n\nA paragraph with **bold text**, *emphasis*, and a [link](https://example.com).\n\n| Title | Date |\n| --- | --- |\n| Table text | September 6 |\n\n- First list entry\n- Second list entry\n\nInline `code` and a code block:\n\n```text\nconsole output\n```";
 const server = createServer(async (request, response) => {
   for await (const _chunk of request) { /* Drain local fixture input. */ }

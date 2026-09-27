@@ -242,7 +242,9 @@ Do not start a phase before the previous one is merged. Each phase ships with it
 - Desktop: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib`
 - **Clean-rebuild caveat:** a change to a `const` value is not reliably picked up by incremental
   builds (observed live: `PROVIDER_TIMEOUT_RECOVERIES_V1 = 1 → 5` kept behaving as `1`). Run
-  `cargo clean` before verifying any const-only change.
+  `cargo clean` before verifying any const-only change. The dev and test profiles now disable
+  incremental compilation (`desktop/src-tauri/Cargo.toml` and the root `Cargo.toml`), so a changed
+  const is recompiled without that step; the caveat applies only if incremental is re-enabled.
 - Live check: run the app and read the model's actual tool list from the run evidence
   (`span.started` → `input.tools`). The desktop app is a GUI process — it must be started by the
   user with `pnpm desktop:dev`, not from a sandboxed agent shell.

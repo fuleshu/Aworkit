@@ -3,16 +3,17 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { connectNativeWebView } from './native-webview.mjs';
+import { stageBinary } from './native-binary.mjs';
 
 assert.equal(process.platform, 'win32');
 const root = resolve(`src-tauri/target/native-console-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const executable = resolve(root, 'aworkit-desktop.exe');
-await copyFile(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
+await stageBinary(resolve(process.env.AWORKIT_QA_BINARY ?? 'src-tauri/target/debug/aworkit-desktop.exe'), executable);
 const python = process.env.AWORKIT_QA_PYTHON ?? 'C:/Python313/python.exe';
 const fixture = resolve('../crates/aworkit-capability-host/tests/fixtures/mcp_stdio_fixture.py');
 const audit = resolve(root, 'startup.jsonl'), launcher = resolve(root, 'MCP launcher.cmd');
