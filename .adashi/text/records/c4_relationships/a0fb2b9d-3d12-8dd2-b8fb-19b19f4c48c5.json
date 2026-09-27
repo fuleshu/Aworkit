@@ -1,7 +1,7 @@
 {
   "collection": "c4_relationships",
   "data": {
-    "description": "Dispatches validate/save/import/export/resolution intents with complete lossless JSON",
+    "description": "Dispatches validate/save/open/Save As/resolution intents with complete lossless JSON",
     "destination_external_id": "aworkit.desktop_ui.projection_gateway",
     "external_id": "rel.ui.workflow.gateway",
     "id": 38,

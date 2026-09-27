@@ -6,8 +6,8 @@
     },
     "resource_id": "rel.ui.workflow.gateway",
     "resource_kind": "design.relationship",
-    "updated_at": "2026-08-20 21:42:53",
-    "version": 1
+    "updated_at": "2026-09-27 12:56:30",
+    "version": 2
   },
   "deleted": false,
   "identity": "304caa98-4d05-8e95-be82-28360824c966",
