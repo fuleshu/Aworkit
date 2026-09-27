@@ -13,7 +13,8 @@ const INVALID_TOOL_REQUEST: &str = "provider tool request is invalid";
 const INVALID_TOOL_RESPONSE: &str = "provider tool response is invalid or unsupported";
 
 const MAX_TOOL_DEFINITIONS: usize = 128;
-const MAX_RETRY_NOTICE_BYTES: usize = 4 * 1024;
+/// Dispatch bound for advisory runtime text (provider recovery and job notices).
+pub const MAX_RETRY_NOTICE_BYTES: usize = 4 * 1024;
 const MAX_TEXT_MESSAGES: usize = 4096;
 const MAX_TEXT_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TOOL_NAME_BYTES: usize = 64;
@@ -22,6 +23,30 @@ const MAX_DESCRIPTION_BYTES: usize = 16 * 1024;
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 const MAX_CALL_ID_BYTES: usize = 256;
 const MAX_JSON_DEPTH: usize = 32;
+
+/// Clamp advisory runtime text to the dispatch bound, keeping the head and
+/// stating that detail was dropped.
+///
+/// A bound shapes what the model is told; it never fails a request and never
+/// ends a turn. Producers bound their own notices (a job notice summarizes its
+/// inventory), and this is the last clamp before dispatch, so no advisory text
+/// can make a request structurally invalid.
+#[must_use]
+pub fn bound_model_notice(text: &str) -> String {
+    if text.len() <= MAX_RETRY_NOTICE_BYTES {
+        return text.to_owned();
+    }
+    const MARKER: &str = "\n… Aworkit notice truncated to fit the model request; ask for the detail again if you need it.";
+    let budget = MAX_RETRY_NOTICE_BYTES.saturating_sub(MARKER.len());
+    let mut end = budget.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    let mut bounded = String::with_capacity(end.saturating_add(MARKER.len()));
+    bounded.push_str(&text[..end]);
+    bounded.push_str(MARKER);
+    bounded
+}
 
 /// One authority-bearing Aworkit capability exposed under a provider-safe name.
 ///

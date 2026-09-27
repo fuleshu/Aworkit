@@ -48,10 +48,27 @@ const MAXIMUM_NODE_OUTPUT_BYTES: usize = usize::MAX;
 // budget that governs a turn; oversize is reduced and retried, never fatal.
 const MAXIMUM_AGENT_CONTEXT_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
 const MAXIMUM_MODEL_CALL_INPUT_BYTES: usize = MAXIMUM_PROVIDER_REQUEST_BYTES;
-/// How many provider failures one text-only node reports to its model before the
-/// node surfaces the provider as unreachable. Every failure short of this is the
-/// model's next turn, so an ordinary repeated failure never ends the node.
+/// How many provider failures a text-only node reports in full before the notice
+/// becomes a compact repeat reminder. This is a wording threshold, never a stop:
+/// the node ends only on a final answer, cancellation, or an unrecoverable
+/// authority denial.
 const MAXIMUM_TEXT_ERROR_RECOVERIES: u32 = 32;
+
+/// Append one context-preparation condition to a text-only turn's advisory notice.
+///
+/// Context preparation owns no termination: the model is told, the frozen request
+/// is sent as it stands, and the node continues.
+fn append_context_condition(target: &mut Option<String>, error: &str) {
+    let condition = format!(
+        "Aworkit context notice: this turn's context could not be fully prepared ({error}). No \
+         history was discarded and no tool was replayed. Continue with the context already in this \
+         conversation."
+    );
+    *target = Some(match target.take() {
+        Some(existing) => format!("{existing}\n\n{condition}"),
+        None => condition,
+    });
+}
 
 fn agent_context(node: &CompiledGraphNodeV1) -> AgentContextV1 {
     AgentContextV1 {
@@ -1406,30 +1423,35 @@ impl<'a> PassMachine<'a> {
         context.context_messages.extend_from_slice(initial_context);
         context.parameters = request.parameters.clone();
         context.retry_notice = retry_notice.map(str::to_owned);
-        let preparation = self
-            .tool_authority
-            .manage_model_context(
-                self.gateway,
-                plan,
-                context_outer,
-                0,
-                agent,
-                &mut context,
-                cancellation,
-                super::compaction::Trigger::Pressure,
-            )
-            .map_err(ProviderError::Failed)?;
+        let preparation = match self.tool_authority.manage_model_context(
+            self.gateway,
+            plan,
+            context_outer,
+            0,
+            agent,
+            &mut context,
+            cancellation,
+            super::compaction::Trigger::Pressure,
+        ) {
+            Ok(preparation) => preparation,
+            Err(error) => {
+                // Context preparation owns no termination: report it and send the
+                // frozen request as it stands.
+                append_context_condition(&mut context.retry_notice, &error);
+                super::compaction::Preparation::default()
+            }
+        };
         self.input_units = self.input_units.saturating_add(preparation.input_tokens);
         self.output_units = self.output_units.saturating_add(preparation.output_tokens);
-        // An auxiliary compaction request the provider rejected is reported to
-        // the model on this turn; it does not prove the acting request fails, so
-        // it never ends the Agent node.
-        let compaction_notice = preparation
+        // An auxiliary compaction request the provider rejected, and any context
+        // condition, is reported to the model on this turn; neither proves the
+        // acting request fails, so neither ends the Agent node.
+        let mut compaction_notice = preparation
             .provider_error
             .as_ref()
             .map(|error| provider_recovery_notice(error).unwrap_or_else(|| error.to_string()));
         if let Some(error) = preparation.error {
-            return Err(ProviderError::Failed(error));
+            append_context_condition(&mut compaction_notice, &error);
         }
         if !context.exchanges.is_empty() || !context.tools.is_empty() {
             return Err(ProviderError::Failed(
@@ -1479,37 +1501,44 @@ impl<'a> PassMachine<'a> {
                     if is_context_overflow(&error)
                         && overflow_retries < preparation.max_overflow_retries =>
                 {
-                    let recovery = self
-                        .tool_authority
-                        .manage_model_context(
-                            self.gateway,
-                            plan,
-                            context_outer,
-                            0,
-                            agent,
-                            &mut recorded_context,
-                            cancellation,
-                            super::compaction::Trigger::ContextOverflow,
-                        )
-                        .map_err(ProviderError::Failed)?;
+                    let recovery = match self.tool_authority.manage_model_context(
+                        self.gateway,
+                        plan,
+                        context_outer,
+                        0,
+                        agent,
+                        &mut recorded_context,
+                        cancellation,
+                        super::compaction::Trigger::ContextOverflow,
+                    ) {
+                        Ok(recovery) => recovery,
+                        Err(error) => {
+                            append_context_condition(&mut recorded_context.retry_notice, &error);
+                            super::compaction::Preparation::default()
+                        }
+                    };
                     self.input_units = self.input_units.saturating_add(recovery.input_tokens);
                     self.output_units = self.output_units.saturating_add(recovery.output_tokens);
                     if let Some(error) = recovery.error {
-                        return Err(ProviderError::Failed(error));
+                        append_context_condition(&mut recorded_context.retry_notice, &error);
                     }
                     if cancellation.is_cancelled() {
                         return Err(ProviderError::Cancelled);
                     }
                     if !recovery.changed {
                         // The selection is already as small as the authority can
-                        // make it. Report the condition to the model rather than
-                        // ending the node.
+                        // make it. Report the condition to the model; a context
+                        // condition never ends the node, however often it repeats.
                         self.text_error_recoveries = self.text_error_recoveries.saturating_add(1);
-                        if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
-                            return Err(error);
-                        }
-                        let recovery_notice =
+                        let mut recovery_notice =
                             provider_recovery_notice(&error).unwrap_or_else(|| error.to_string());
+                        if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
+                            recovery_notice.push_str(&format!(
+                                "\n\nThis condition has repeated {} times. Continue with a different \
+                                 next step, or tell the user plainly what is blocking.",
+                                self.text_error_recoveries
+                            ));
+                        }
                         recorded_context.retry_notice = Some(match retry_notice {
                             Some(notice) => format!("{notice}\n\n{recovery_notice}"),
                             None => recovery_notice,
@@ -1520,11 +1549,15 @@ impl<'a> PassMachine<'a> {
                 }
                 Err(error) if provider_recovery_notice(&error).is_some() => {
                     self.text_error_recoveries = self.text_error_recoveries.saturating_add(1);
-                    if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
-                        return Err(error);
-                    }
-                    let recovery_notice =
+                    let mut recovery_notice =
                         provider_recovery_notice(&error).expect("recoverable error");
+                    if self.text_error_recoveries > MAXIMUM_TEXT_ERROR_RECOVERIES {
+                        recovery_notice.push_str(&format!(
+                            "\n\nThis failure has repeated {} times. Continue with a different next \
+                             step, or tell the user plainly what is blocking.",
+                            self.text_error_recoveries
+                        ));
+                    }
                     recorded_context.retry_notice = Some(match retry_notice {
                         Some(notice) => format!("{notice}\n\n{recovery_notice}"),
                         None => recovery_notice,
@@ -1532,16 +1565,16 @@ impl<'a> PassMachine<'a> {
                 }
                 Ok(evidence) => {
                     let output = project_model_events(&evidence.events);
-                    self.tool_authority
-                        .record_context_usage(
-                            context_outer,
-                            agent,
-                            &recorded_context,
-                            output.input_tokens,
-                            output.output_tokens,
-                            super::compaction::text_tokens(&output.assistant_text) + 8,
-                        )
-                        .map_err(ProviderError::Failed)?;
+                    // Usage accounting is telemetry: a failure to record it never
+                    // ends the node.
+                    let _ = self.tool_authority.record_context_usage(
+                        context_outer,
+                        agent,
+                        &recorded_context,
+                        output.input_tokens,
+                        output.output_tokens,
+                        super::compaction::text_tokens(&output.assistant_text) + 8,
+                    );
                     return Ok(evidence);
                 }
                 Err(error) => return Err(error),

@@ -4,12 +4,12 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "resource_id": "3",
-    "resource_kind": "rule",
-    "updated_at": "2026-09-27 16:39:22",
-    "version": 6
+    "resource_id": "15",
+    "resource_kind": "qa.job",
+    "updated_at": "2026-09-27 17:04:39",
+    "version": 1
   },
   "deleted": false,
-  "identity": "d7acb401-7824-8ec8-85bb-1870d0447524",
+  "identity": "fe0675a4-657a-47a1-81a2-01a2b11d1586",
   "schemaVersion": 1
 }

@@ -24,10 +24,11 @@
         "- Keep UI design clean and clear. No redundant info or comments in the UI.\n",
         "- Always create tooltips for input fields.\n",
         "- Always write performant code. Do no unnecessary updates or repeated data processing. Do updates/processing on demands and bundle updates/processing.\n",
-        "- Write algorithms that can handle big data loads, no simple implmentations that do not perform under load."
+        "- Write algorithms that can handle big data loads, no simple implmentations that do not perform under load.\n",
+        "\n"
       ]
     },
-    "updated_at": "2026-09-18 08:20:27"
+    "updated_at": "2026-09-27 16:39:22"
   },
   "deleted": false,
   "identity": "ed01f239-a928-83bf-ac2b-ba446867bbf9",

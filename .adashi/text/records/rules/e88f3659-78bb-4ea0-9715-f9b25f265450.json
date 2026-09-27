@@ -1,0 +1,34 @@
+{
+  "collection": "rules",
+  "data": {
+    "created_at": "2026-09-27 16:41:34",
+    "enabled": 1,
+    "hook": "task.start",
+    "id": 6,
+    "intend": "implementation",
+    "name": "Failure policy: no limit ends a run",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "prompt": {
+      "lines": [
+        "# Failure policy - NO HARD LIMITS, report everything\n",
+        "\n",
+        "Mandatory for every implementation task in this project:\n",
+        "\n",
+        "1. NEVER make a limit terminate a run. No cap on model turns, tool calls, provider retries, recoveries, notices, retries, bytes, tokens, counters or elapsed work may end an Agent node. Limits and budgets are telemetry; they may size a message, never stop the work.\n",
+        "2. EVERY error is reported to the LLM and the run continues: provider, transport, contract, context preparation, request validation, tool invocation, tool settlement, commit. Report it, then keep going.\n",
+        "3. Exactly three conditions may end an Agent node: the model returned its final answer, the user cancelled, or an authority denied the call unrecoverably. Nothing else.\n",
+        "4. A bound may only shape what the model is told. Truncate with an explicit omitted count and say how to get the rest (e.g. job_list). Never fail a request because a notice grew.\n",
+        "5. Structural validation has two roles: an editor validator may reject and explain; the dispatch path must degrade (bound, truncate, drop the advisory field) because a rejected dispatch is a dead run.\n",
+        "6. Never write `return Err(...)` / `?` on a context-preparation, notice, budget or validation condition in the model/tool loop. If you find one, convert it to a reported notice.\n",
+        "\n",
+        "Design authority: aworkit.workflow_worker.failure_policy (normative). A fatal return on any of these conditions is a design violation, not a provider error. Incident: chat.e1608e3b0f642edccf7dcb59588deb2a61dbd0fb ended after 61 minutes because a 5291-byte job notice crossed a 4 KiB request validation limit."
+      ]
+    },
+    "updated_at": "2026-09-27 16:41:34"
+  },
+  "deleted": false,
+  "identity": "e88f3659-78bb-4ea0-9715-f9b25f265450",
+  "schemaVersion": 1
+}

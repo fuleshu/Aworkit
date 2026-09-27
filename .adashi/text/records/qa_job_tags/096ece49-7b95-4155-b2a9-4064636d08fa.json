@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-09-27 17:04:39",
+    "qa_job_id": {
+      "ref": "7b4ccf2c-ec69-4d2d-bbd6-6ac5eae26529"
+    },
+    "tag": "failure-policy"
+  },
+  "deleted": false,
+  "identity": "096ece49-7b95-4155-b2a9-4064636d08fa",
+  "schemaVersion": 1
+}

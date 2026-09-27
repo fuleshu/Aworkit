@@ -4065,6 +4065,28 @@ mod tests {
                 return Err(ProviderError::RequestTimedOut);
             }
             if request.exchanges.is_empty() {
+                // A child cannot be offered the subagent capability, so its
+                // nested delegation is rejected by the gateway before any tool
+                // runs. That provider condition is reported to the child's model,
+                // which then answers instead of repeating a call it can never
+                // make: a bound reports, it never ends the node.
+                if matches!(self.script, ToolScriptV1::SubagentNest)
+                    && !request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.capability_id == SUBAGENT_CAPABILITY_ID)
+                    && request.retry_notice.is_some()
+                {
+                    emit(ModelToolEventV1::AssistantOutput {
+                        text: "tool loop complete".into(),
+                    })?;
+                    emit(ModelToolEventV1::Usage {
+                        input_tokens: 9,
+                        output_tokens: 4,
+                        cache: Default::default(),
+                    })?;
+                    return Ok(ProviderAcceptanceV1::Accepted);
+                }
                 match self.script {
                     ToolScriptV1::WebSearch => emit(tool_call(
                         "call.web-search",
@@ -4314,7 +4336,9 @@ mod tests {
                 })?;
                 return Ok(ProviderAcceptanceV1::Accepted);
             }
-            if matches!(self.script, ToolScriptV1::ReadThenProviderFailure) {
+            if matches!(self.script, ToolScriptV1::ReadThenProviderFailure) && call_index < 3 {
+                // The provider fails the first attempts and then answers. Every
+                // failure is reported to the model and none of them ends the node.
                 return Err(ProviderError::Failed(
                     "provider failed after one settled tool call".into(),
                 ));
@@ -4851,13 +4875,13 @@ mod tests {
                 &[FILE_READ_CAPABILITY_ID],
             ))
             .expect("later provider failure");
-        // The settled read is never replayed or discarded; the provider failure
-        // is reported to the model, which keeps getting turns until the recovery
-        // budget is spent, and only then does the Run end as a failure.
-        assert_eq!(result.status, WorkflowExecutionStatusV1::OutcomeUncertain);
+        // The settled read is never replayed or discarded. Each provider failure
+        // is reported to the model on the frozen route, and the run continues to
+        // a real answer instead of ending on the failure.
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
         assert_eq!(result.tool_activity.len(), 1, "{:?}", result.error);
         assert_eq!(result.tool_activity[0].status, "completed");
-        assert_eq!(result.tool_calls, 1);
+        assert_eq!(result.tool_calls, 1, "the settled read is executed exactly once");
         assert!(
             result.model_turns > 2,
             "the reported failure granted the model further turns"
@@ -6380,7 +6404,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_nesting_is_denied_and_the_failure_reaches_the_parent_loop() {
+    fn subagent_nesting_is_denied_and_the_child_finishes_instead_of_failing() {
         let root = TempDir::new().expect("temporary directory");
         let project = subagent_project(&root);
         let (pipeline, _store, metadata, calls, observed_results) =
@@ -6400,8 +6424,10 @@ mod tests {
         let resumed = pipeline
             .resume_approval(&approval.decision_id, true)
             .expect("resume approve");
-        // The child tried to delegate again; the depth guard failed its loop
-        // and the denied result flowed back without failing the parent pass.
+        // The child tried to delegate again, but a child is never offered the
+        // subagent capability, so the gateway rejected that turn. The rejection
+        // is reported to the child's model, which then answers; neither the
+        // child nor the parent pass ends on it.
         assert_eq!(
             resumed.status,
             WorkflowExecutionStatusV1::Succeeded,
@@ -6412,29 +6438,33 @@ mod tests {
             resumed.assistant_text.as_deref(),
             Some("tool loop complete")
         );
+        assert_eq!(
+            resumed.tool_calls, 1,
+            "only the parent's subagent call settles; the child's nested call is denied"
+        );
         let subagent = resumed
             .tool_activity
             .iter()
             .find(|activity| activity.capability_id == SUBAGENT_CAPABILITY_ID)
             .expect("subagent activity");
-        assert_eq!(subagent.status, "failed");
-        let observed = observed_results.lock().expect("tool results");
-        assert_eq!(observed.len(), 1);
-        // The child's provider turn referenced a tool outside its restricted
-        // definitions, so the gateway rejected the turn before the subagent
-        // port guard could see the call.
-        assert!(
-            observed[0]["error"].as_str().is_some_and(
-                |error| error.contains("provider tool response is invalid or unsupported")
-            ),
-            "{:?}",
-            observed[0]
+        assert_eq!(
+            subagent.status, "completed",
+            "a denied nested call is reported to the child instead of failing it"
         );
+        assert!(subagent.summary.contains("Subagent completed"));
+        let observed = observed_results.lock().expect("tool results");
+        assert_eq!(
+            observed.len(),
+            1,
+            "the denial is the child's own condition; only the parent observes the subagent result"
+        );
+        assert_eq!(observed[0]["finalText"], "tool loop complete");
         drop(observed);
-        assert!(
-            calls.load(Ordering::SeqCst) >= 3,
-            "the denied child turn is reported to its model and retried within \
-             the recovery budget before the parent continues"
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            4,
+            "parent call + denied child call + child answer + parent final: the \
+             denial is reported and the child takes a different next step"
         );
     }
 

@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-09-27 17:04:39",
+    "qa_job_id": {
+      "ref": "7b4ccf2c-ec69-4d2d-bbd6-6ac5eae26529"
+    },
+    "tag": "agent-loop"
+  },
+  "deleted": false,
+  "identity": "aa3e51e7-eee6-4078-977c-8d0b5e1d8c36",
+  "schemaVersion": 1
+}

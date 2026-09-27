@@ -1,7 +1,8 @@
 //! One Agent turn whose provider fails, and one whose exact request outgrew the
-//! frozen plan's input bound. A provider failure is reported to the model on the
-//! same frozen route; a failure that cannot change is surfaced instead of
-//! looping, so the turn always ends.
+//! frozen plan's input bound. Every provider, context and tool condition is
+//! reported to the model on the same frozen route and none of them ends the node:
+//! only a final answer, cancellation, or an unrecoverable authority denial ends
+//! an Agent node.
 
 use super::*;
 use super::super::super::compaction::{Preparation, Trigger};
@@ -131,18 +132,26 @@ impl ProviderEnginePortV1 for Provider {
     }
 }
 
-/// Always fails the same way, so no model turn can change the condition.
-struct StuckProvider {
+/// Fails the same way `failures` times, then answers. The condition cannot be
+/// changed by any model turn, so the loop must keep reporting it and let the
+/// model's eventual answer stand instead of ending the node.
+struct StuckUntilAnswering {
     observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
+    failures: usize,
+    dispatches: AtomicUsize,
 }
 
-impl StuckProvider {
-    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>) -> Self {
-        Self { observed }
+impl StuckUntilAnswering {
+    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>, failures: usize) -> Self {
+        Self {
+            observed,
+            failures,
+            dispatches: AtomicUsize::new(0),
+        }
     }
 }
 
-impl ProviderEnginePortV1 for StuckProvider {
+impl ProviderEnginePortV1 for StuckUntilAnswering {
     fn binding_id(&self) -> &str {
         "model"
     }
@@ -160,10 +169,21 @@ impl ProviderEnginePortV1 for StuckProvider {
         &self,
         request: &ModelToolRequestV1,
         _: &CancellationToken,
-        _: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+        emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
         self.observed.lock().unwrap().push(request.clone());
-        Err(ProviderError::Failed("quota exceeded".into()))
+        if self.dispatches.fetch_add(1, Ordering::SeqCst) < self.failures {
+            return Err(ProviderError::Failed("quota exceeded".into()));
+        }
+        emit(ModelToolEventV1::AssistantOutput {
+            text: "Stopping with what I have.".into(),
+        })?;
+        emit(ModelToolEventV1::Usage {
+            input_tokens: 10,
+            output_tokens: 10,
+            cache: Default::default(),
+        })?;
+        Ok(ProviderAcceptanceV1::Accepted)
     }
 }
 
@@ -357,49 +377,45 @@ fn a_provider_failure_is_reported_to_the_model_and_the_agent_finishes() {
 }
 
 #[test]
-fn a_failure_that_cannot_change_is_surfaced_instead_of_looping() {
+fn an_unchanged_failure_keeps_being_reported_and_never_ends_the_node() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let id = StableId::parse("outer.test").unwrap();
 
     // Every dispatch fails with the same condition, which no model turn can
-    // change. The first report is granted and the unchanged failure is then
-    // surfaced, so the invocation always ends instead of spinning with no
-    // durable activity while the runtime lock is held.
-    let failure = match execute_model_tool_loop_approval_v1(
-        &gateway(StuckProvider::new(observed.clone())),
+    // change. The report is never withheld and the node is never ended: the model
+    // keeps being told and the user's stop remains the exit.
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(StuckUntilAnswering::new(observed.clone(), 3)),
         tool_request(&id, user_input()),
         &Stuck,
         &CancellationToken::default(),
-    ) {
-        Ok(ModelToolLoopRunV1::Suspended { .. }) => panic!("no approval was requested"),
-        Ok(ModelToolLoopRunV1::Completed(outcome)) => {
-            panic!(
-                "an irreducible failure must be surfaced, not completed: {}",
-                outcome.assistant_text
-            )
-        }
-        Err(failure) => failure,
+    )
+    .unwrap_or_else(|failure| {
+        panic!("a repeated provider failure must not end the node: {failure}")
+    });
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion")
     };
-    assert!(
-        failure.error.to_string().contains("quota exceeded"),
-        "the surfaced failure names the real condition: {}",
-        failure.error
-    );
+    assert_eq!(outcome.assistant_text, "Stopping with what I have.");
 
     let turns = observed.lock().unwrap();
-    let reports = turns
-        .iter()
-        .filter(|turn| turn.retry_notice.is_some())
-        .count();
-    assert_eq!(
-        reports, 1,
-        "an unchanged failure is reported once, never repeatedly"
-    );
     assert_eq!(
         turns.len(),
-        2,
-        "one report and one surfaced failure, with no further turns"
+        4,
+        "three rejected attempts and the turn the model answered on"
     );
+    let notices: Vec<&str> = turns
+        .iter()
+        .filter_map(|turn| turn.retry_notice.as_deref())
+        .collect();
+    assert_eq!(notices.len(), 3, "every rejected attempt carries a notice");
+    assert!(notices[0].contains("quota exceeded"));
+    assert!(
+        notices[1].contains("same provider failure repeated"),
+        "a repeat is reported as a repeat instead of being withheld: {}",
+        notices[1]
+    );
+    assert!(notices[2].contains("same provider failure repeated"));
 }
 
 #[test]
@@ -440,7 +456,7 @@ fn a_rejected_compaction_request_is_reported_to_the_model_instead_of_failing_the
 }
 
 #[test]
-fn the_report_budget_is_finite_and_owns_the_whole_invocation() {
+fn every_failure_is_reported_and_no_report_budget_can_end_the_node() {
     let mut request = ModelToolRequestV1 {
         context_messages: Vec::new(),
         input: user_input(),
@@ -449,27 +465,240 @@ fn the_report_budget_is_finite_and_owns_the_whole_invocation() {
         exchanges: Vec::new(),
         retry_notice: None,
     };
-    let mut budget = ProviderRecoveryBudget::default();
+    let mut ledger = ProviderRecoveryBudget::default();
     let bound = ProviderError::InputBoundExceeded {
         input_bytes: 8,
         maximum_input_bytes: 4,
     };
+    let first = ledger.note(&bound, &mut request);
     assert!(
-        budget.note(&bound, &mut request).is_some(),
-        "the first report reaches the model"
+        first.contains("exceeds what this model accepts"),
+        "the first report carries the provider's own diagnostic: {first}"
     );
+    let repeat = ledger.note(&bound, &mut request);
     assert!(
-        budget.note(&bound, &mut request).is_none(),
-        "an identical failure is surfaced instead of reported again"
+        repeat.contains("same provider failure repeated"),
+        "an identical failure is reported as a repeat, not withheld: {repeat}"
     );
-    for index in 0..MAXIMUM_ERROR_RECOVERIES {
-        let _ = budget.note(&ProviderError::Failed(format!("failure {index}")), &mut request);
+    // No number of reports exhausts the ledger or removes the notice.
+    for index in 0..MAXIMUM_ERROR_RECOVERIES.saturating_add(8) {
+        let notice = ledger.note(&ProviderError::Failed(format!("failure {index}")), &mut request);
+        assert!(!notice.is_empty(), "a report is always available");
     }
-    assert!(budget.exhausted(), "the report budget is finite");
     assert!(
-        budget
-            .note(&ProviderError::Failed("one more".into()), &mut request)
-            .is_none(),
-        "an exhausted budget surfaces the failure"
+        request.retry_notice.is_some(),
+        "the frozen request always carries a notice"
+    );
+    assert!(
+        request.retry_notice.as_deref().unwrap_or_default().len()
+            <= aworkit_capability_host::MAX_RETRY_NOTICE_BYTES,
+        "a notice is bounded, so it can never make the request invalid"
+    );
+}
+
+/// A context authority that cannot prepare a turn at all.
+struct BrokenContext;
+
+impl ModelToolInvocationPortV1 for BrokenContext {
+    fn manage_model_context(
+        &self,
+        _: &FrozenModelGateway,
+        _: &ModelResolutionPlanV1,
+        _: &StableId,
+        _: usize,
+        _: Option<&AgentContextV1>,
+        _: &mut ModelToolRequestV1,
+        _: &CancellationToken,
+        _: Trigger,
+    ) -> Result<Preparation, String> {
+        Err("the context store is unavailable".into())
+    }
+    fn invoke(
+        &self,
+        _: &StableId,
+        _: u32,
+        call: &ModelToolCallV1,
+        _: &CancellationToken,
+    ) -> Result<SettledModelToolCallV1, String> {
+        Ok(SettledModelToolCallV1 {
+            result: ModelToolResultV1 {
+                images: Vec::new(),
+                call_id: call.call_id.clone(),
+                content: json!("settled"),
+                is_error: false,
+            },
+            activity: activity(call),
+        })
+    }
+    fn commit_exchange(
+        &self,
+        _: &StableId,
+        _: u32,
+        _: &ModelToolExchangeV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_context_preparation_failure_is_reported_instead_of_ending_the_node() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.test").unwrap();
+
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(Answering::new(observed.clone())),
+        tool_request(&id, user_input()),
+        &BrokenContext,
+        &CancellationToken::default(),
+    )
+    .unwrap_or_else(|failure| panic!("a context condition must not end the node: {failure}"));
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion")
+    };
+    assert_eq!(outcome.assistant_text, "Done with what I have.");
+
+    let turns = observed.lock().unwrap();
+    let notice = turns[0]
+        .retry_notice
+        .as_deref()
+        .expect("the model is told about the context condition");
+    assert!(notice.contains("Aworkit context notice"), "{notice}");
+    assert!(notice.contains("context store is unavailable"), "{notice}");
+}
+
+/// A tool authority whose every invocation fails to settle.
+struct FailingTool;
+
+impl ModelToolInvocationPortV1 for FailingTool {
+    fn invoke(
+        &self,
+        _: &StableId,
+        _: u32,
+        _: &ModelToolCallV1,
+        _: &CancellationToken,
+    ) -> Result<SettledModelToolCallV1, String> {
+        Err("the shell host is unavailable".into())
+    }
+    fn commit_exchange(
+        &self,
+        _: &StableId,
+        _: u32,
+        _: &ModelToolExchangeV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Asks for one tool, then answers once it has seen the result.
+struct ToolCallingThenAnswering {
+    observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
+    dispatches: AtomicUsize,
+}
+
+impl ToolCallingThenAnswering {
+    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>) -> Self {
+        Self {
+            observed,
+            dispatches: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ProviderEnginePortV1 for ToolCallingThenAnswering {
+    fn binding_id(&self) -> &str {
+        "model"
+    }
+    fn version_hash(&self) -> &str {
+        "v1"
+    }
+    fn execute(
+        &self,
+        _: &ModelRequestV1,
+        _: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        unreachable!()
+    }
+    fn execute_tool_turn_cancellable(
+        &self,
+        request: &ModelToolRequestV1,
+        _: &CancellationToken,
+        emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        self.observed.lock().unwrap().push(request.clone());
+        match self.dispatches.fetch_add(1, Ordering::SeqCst) {
+            0 => emit(ModelToolEventV1::ToolCall { call: call("read0") })?,
+            _ => emit(ModelToolEventV1::AssistantOutput {
+                text: "Recovered from the failed tool.".into(),
+            })?,
+        }
+        emit(ModelToolEventV1::Usage {
+            input_tokens: 10,
+            output_tokens: 10,
+            cache: Default::default(),
+        })?;
+        Ok(ProviderAcceptanceV1::Accepted)
+    }
+}
+
+#[test]
+fn a_tool_that_cannot_settle_is_reported_as_an_error_result_not_a_node_failure() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.test").unwrap();
+
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(ToolCallingThenAnswering::new(observed.clone())),
+        tool_request(&id, user_input()),
+        &FailingTool,
+        &CancellationToken::default(),
+    )
+    .unwrap_or_else(|failure| panic!("a tool error must not end the node: {failure}"));
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion")
+    };
+    assert_eq!(outcome.assistant_text, "Recovered from the failed tool.");
+
+    let turns = observed.lock().unwrap();
+    let last = turns.last().unwrap();
+    let exchange = last
+        .exchanges
+        .last()
+        .expect("the failed exchange is carried to the next turn");
+    assert_eq!(exchange.results.len(), 1);
+    assert!(exchange.results[0].is_error, "the error is a result");
+    assert!(
+        exchange.results[0]
+            .content
+            .to_string()
+            .contains("the shell host is unavailable"),
+        "the failure reaches the model as data: {}",
+        exchange.results[0].content
+    );
+    let notice = last
+        .retry_notice
+        .as_deref()
+        .expect("the model is told about the failed tool");
+    assert!(notice.contains("Aworkit tool notice"), "{notice}");
+}
+
+#[test]
+fn an_oversized_notice_is_clamped_to_the_dispatch_bound() {
+    let mut request = ModelToolRequestV1 {
+        context_messages: Vec::new(),
+        input: user_input(),
+        parameters: BTreeMap::new(),
+        tools: Vec::new(),
+        exchanges: Vec::new(),
+        retry_notice: Some("x".repeat(64 * 1024)),
+    };
+    bound_request_notices(&mut request);
+    let notice = request.retry_notice.expect("a notice survives the clamp");
+    assert!(
+        notice.len() <= aworkit_capability_host::MAX_RETRY_NOTICE_BYTES,
+        "a notice is clamped to the dispatch bound: {} bytes",
+        notice.len()
+    );
+    assert!(
+        notice.contains("truncated"),
+        "the clamp says the detail was dropped"
     );
 }

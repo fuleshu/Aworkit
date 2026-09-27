@@ -350,3 +350,34 @@ fn job_argument_rejections_name_the_offending_key() {
         "{unknown}"
     );
 }
+
+/// A thousand unresolved jobs must not produce a notice that grows with them. The
+/// dispatch bound is 4 KiB, so the notice summarizes and states what it omitted;
+/// no job count may fail a request or end a turn.
+#[test]
+fn the_completion_notice_is_bounded_and_states_what_it_omitted() {
+    let inventory: Vec<String> = (0..1000)
+        .map(|index| format!("job.{index:064x}: finished; output not collected"))
+        .collect();
+    let notice = super::registry::render_job_notice(&inventory);
+    assert!(
+        notice.len() <= aworkit_capability_host::MAX_RETRY_NOTICE_BYTES,
+        "the notice is bounded: {} bytes",
+        notice.len()
+    );
+    assert!(notice.starts_with("Before finishing this response"));
+    assert!(
+        notice.contains("more unresolved job(s) are not listed"),
+        "the omitted count is stated: {notice}"
+    );
+    assert!(
+        notice.contains("job_list"),
+        "the notice says how to retrieve the rest"
+    );
+
+    // A small inventory is listed in full, with no omission sentence.
+    let small = vec!["job.aa: still running".to_string()];
+    let notice = super::registry::render_job_notice(&small);
+    assert!(notice.contains("job.aa: still running"));
+    assert!(!notice.contains("are not listed"));
+}

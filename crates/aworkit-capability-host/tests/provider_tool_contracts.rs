@@ -137,3 +137,37 @@ fn accepted_tool_turn_requires_exact_usage() {
         Err(ProviderError::MissingOrDuplicateUsage)
     );
 }
+
+/// A bound may shorten what the model is told; it may never fail a request. The
+/// editor role still rejects a notice that cannot be sent, which is exactly why
+/// every producer bounds (or clamps) before dispatch.
+#[test]
+fn an_oversized_notice_is_clamped_for_dispatch_and_rejected_only_by_the_editor_validator() {
+    let notice = "jobs: ".to_owned() + &"job.abc: finished; output not collected; ".repeat(200);
+    assert!(notice.len() > aworkit_capability_host::MAX_RETRY_NOTICE_BYTES);
+
+    let mut tool_request = request(json!({"type":"object","properties":{}}));
+    tool_request.retry_notice = Some(notice);
+    assert!(
+        tool_request.validate().is_err(),
+        "the editor role rejects a notice that cannot be sent"
+    );
+
+    let bounded = aworkit_capability_host::bound_model_notice(
+        tool_request.retry_notice.as_deref().unwrap_or_default(),
+    );
+    tool_request.retry_notice = Some(bounded);
+    assert!(
+        tool_request.validate().is_ok(),
+        "the clamped notice is dispatchable: {:?}",
+        tool_request.retry_notice.as_deref().map(str::len)
+    );
+    assert!(
+        tool_request
+            .retry_notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("truncated"),
+        "the clamp says that detail was dropped"
+    );
+}

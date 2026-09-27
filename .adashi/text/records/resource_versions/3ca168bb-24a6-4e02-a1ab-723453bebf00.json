@@ -4,12 +4,12 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "resource_id": "aworkit.workflow_worker.model_agent",
-    "resource_kind": "design.element",
+    "resource_id": "aworkit.workflow_worker.failure_policy",
+    "resource_kind": "design.markdown",
     "updated_at": "2026-09-27 17:07:26",
-    "version": 8
+    "version": 2
   },
   "deleted": false,
-  "identity": "e8ea1e06-d333-8706-8ca0-39780a511aef",
+  "identity": "3ca168bb-24a6-4e02-a1ab-723453bebf00",
   "schemaVersion": 1
 }

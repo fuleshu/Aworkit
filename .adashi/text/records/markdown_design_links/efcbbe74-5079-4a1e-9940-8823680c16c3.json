@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.trusted_core.job_registry",
+    "document_id": {
+      "ref": "1b5224ad-4ade-4a28-a6e6-9298284fe0f5"
+    },
+    "id": 5,
+    "sort_order": 2,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "efcbbe74-5079-4a1e-9940-8823680c16c3",
+  "schemaVersion": 1
+}

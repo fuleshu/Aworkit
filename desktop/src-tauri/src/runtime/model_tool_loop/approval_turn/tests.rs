@@ -333,15 +333,21 @@ fn older_single_call_checkpoints_still_resume() {
 }
 
 #[test]
-fn completion_guard_survives_approval_resume_and_bounds_refusal() {
+fn completion_guard_survives_approval_resume_and_stops_unkept_jobs_without_ending_the_node() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let gateway = FrozenModelGateway::new(vec![Box::new(Provider(observed.clone()))]);
     let authority = Authority { unresolved_jobs: true, ..Default::default() };
     let id = StableId::parse("outer.job-resume").unwrap();
     let cancellation = CancellationToken::default();
     let checkpoint = pending(execute_model_tool_loop_approval_v1(&gateway, request(&id), &authority, &cancellation).unwrap());
-    let failure = resume_model_tool_loop_v1(&gateway, request(&id), &authority, &checkpoint, true, 1, &cancellation).err().expect("must reject completion");
-    assert!(failure.to_string().contains("unresolved shell jobs"), "{failure}");
+    // The barrier asks repeatedly and then stops the unkept jobs. It never ends
+    // the node: the model's answer stands after cleanup.
+    let run = resume_model_tool_loop_v1(&gateway, request(&id), &authority, &checkpoint, true, 1, &cancellation)
+        .expect("the completion barrier never ends the node");
+    let ModelToolLoopRunV1::Completed(outcome) = run else {
+        panic!("expected completion after the barrier gave up asking")
+    };
+    assert_eq!(outcome.assistant_text, "Adashi remains available.");
     assert!(*authority.cleanup_requested.lock().unwrap());
     assert_eq!(observed.lock().unwrap().len(), 6);
     assert_eq!(authority.committed.lock().unwrap().len(), 5);
@@ -349,12 +355,15 @@ fn completion_guard_survives_approval_resume_and_bounds_refusal() {
 }
 
 #[test]
-fn legacy_loop_also_cannot_finish_with_outstanding_jobs() {
+fn legacy_loop_stops_unkept_jobs_without_ending_the_node() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let gateway = FrozenModelGateway::new(vec![Box::new(Provider(observed))]);
     let authority = Authority { unresolved_jobs: true, ..Default::default() };
     let id = StableId::parse("outer.job-legacy").unwrap();
-    let failure = execute_model_tool_loop_v1(&gateway, request(&id), &authority, &CancellationToken::default()).unwrap_err();
-    assert!(failure.to_string().contains("unresolved shell jobs"), "{failure}");
+    // Repeated refusal stops the unkept jobs and lets the answer stand; it is
+    // never a node failure.
+    let outcome = execute_model_tool_loop_v1(&gateway, request(&id), &authority, &CancellationToken::default())
+        .expect("the completion barrier never ends the node");
+    assert_eq!(outcome.assistant_text, "Adashi remains available.");
     assert!(*authority.cleanup_requested.lock().unwrap());
 }

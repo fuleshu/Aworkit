@@ -38,17 +38,19 @@ const TOOL_CONTEXT_HEADROOM_BYTES: usize = 512 * 1024;
 /// brittle for flaky transports, so allow a generous bounded budget; the pass has
 /// no aggregate deadline, so the user remains the only hard stop.
 pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 32;
-/// How many provider failures one Agent invocation reports to the model before
-/// the Run surfaces the provider as unreachable.
+/// How many provider failures are reported in full before the notice switches to
+/// a compact repeat reminder. This is a wording threshold, never a stop: the
+/// Agent node ends only on a final answer, cancellation, or an unrecoverable
+/// authority denial, so a repeating failure keeps being reported to the model.
 const MAXIMUM_ERROR_RECOVERIES: u32 = 32;
 
-/// The provider-failure report budget for one Agent invocation.
+/// The provider-failure report ledger for one Agent invocation.
 ///
-/// The budget is owned by the invocation, not by a single provider turn, so a
-/// failure that cannot make progress cannot restart the budget on the next turn
-/// and loop forever. A failure that repeats *identically* is also never reported
-/// twice: the request had not changed, so the model could not have changed its
-/// answer either, and the condition is surfaced instead.
+/// Every failure produces a model-visible notice, whether or not it repeats. A
+/// failure that repeats *identically* still produces one: the notice says the
+/// request has not changed, which is the fact the model needs to decide to do
+/// something different. The ledger never gates the loop, because a report is
+/// always available and an unavailable report is never a reason to end a node.
 #[derive(Default)]
 struct ProviderRecoveryBudget {
     reports: u32,
@@ -56,65 +58,99 @@ struct ProviderRecoveryBudget {
 }
 
 impl ProviderRecoveryBudget {
-    fn exhausted(&self) -> bool {
-        self.reports >= MAXIMUM_ERROR_RECOVERIES
-    }
-
-    /// Returns the model-visible notice, or `None` when the failure must be
-    /// surfaced instead of reported again.
+    /// The model-visible notice for one provider failure, written onto the frozen
+    /// request. Bounded like every other advisory, so it can never make the
+    /// request invalid and can never end the turn.
     fn note(
         &mut self,
         error: &ProviderError,
         provider_request: &mut ModelToolRequestV1,
-    ) -> Option<String> {
-        let key = error.to_string();
-        if self.exhausted() || !self.reported.insert(key) {
-            return None;
-        }
+    ) -> String {
         self.reports = self.reports.saturating_add(1);
-        let notice = provider_report_notice(error, self.reports);
-        provider_request.retry_notice = Some(notice.clone());
-        Some(notice)
+        // The ledger exists only to tell a repeat from a new condition. It is
+        // bounded so a long run cannot grow it without limit; forgetting an old
+        // key costs one extra full notice, never a stop.
+        const MAXIMUM_REMEMBERED_FAILURES: usize = 256;
+        if self.reported.len() >= MAXIMUM_REMEMBERED_FAILURES {
+            self.reported.clear();
+        }
+        let repeated = !self.reported.insert(error.to_string());
+        let notice = if repeated {
+            format!(
+                "Aworkit recovery notice: the same provider failure repeated ({error}). The request \
+                 has not changed since the previous attempt, so the same outcome is expected. Take \
+                 a different next action, or tell the user plainly what could not be completed."
+            )
+        } else {
+            provider_report_notice(error, self.reports)
+        };
+        let merged = match provider_request.retry_notice.take() {
+            Some(pending) => format!("{pending}\n\n{notice}"),
+            None => notice,
+        };
+        let bounded = aworkit_capability_host::bound_model_notice(&merged);
+        provider_request.retry_notice = Some(bounded.clone());
+        bounded
     }
 }
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
 
-/// The model-visible notice for a reported provider failure. The last granted
-/// recovery says so plainly, so the model closes out instead of dying on it.
+/// The model-visible notice for a reported provider failure. The escalation is
+/// advice, never a stop: the model decides when the task is done.
 fn provider_report_notice(error: &ProviderError, recovery: u32) -> String {
     let notice = provider_recovery_notice(error).unwrap_or_else(|| format!("{error}"));
-    if recovery < MAXIMUM_ERROR_RECOVERIES {
+    if recovery <= MAXIMUM_ERROR_RECOVERIES {
         return notice;
     }
     format!(
-        "{notice}\n\nThis was recovery attempt {recovery} of {MAXIMUM_ERROR_RECOVERIES} for this \
-         turn: the provider rejected every attempt. Finish now with what you have, or state \
-         clearly in your answer what could not be completed and why."
+        "{notice}\n\nThis failure has repeated {recovery} times. The provider has not accepted this \
+         request; nothing was executed and no history was discarded. Continue with a different next \
+         step, or tell the user plainly what is blocking."
     )
 }
 
-/// Reports one provider failure on the frozen request as model-visible context,
-/// preserving any notice already pending for this turn. Returns whether a report
-/// was granted, so the caller can surface a failure that can never change.
+/// Reports one provider or context condition on the frozen request as
+/// model-visible context.
 ///
-/// Every failure the authority owns is reported here: the provider rejecting the
-/// acting request, and the provider rejecting the auxiliary compaction request.
-/// A limit or a provider error therefore does not end the Agent node on its own:
-/// the model is told and decides.
+/// Every condition the authority owns is reported here: the provider rejecting
+/// the acting request, a rejected auxiliary compaction request, and a condition
+/// raised by context preparation. Reporting is unconditional and never returns
+/// whether it was "granted", because no provider, transport, contract, budget or
+/// context condition may end an Agent node.
 fn report_provider_failure(
     recovery: &mut ProviderRecoveryBudget,
     error: &ProviderError,
     provider_request: &mut ModelToolRequestV1,
-) -> bool {
-    let pending = provider_request.retry_notice.take();
-    let reported = recovery.note(error, provider_request);
-    let granted = reported.is_some();
-    provider_request.retry_notice = match (pending, reported) {
-        (Some(pending), Some(notice)) => Some(format!("{pending}\n\n{notice}")),
-        (Some(pending), None) => Some(pending),
-        (None, reported) => reported,
-    };
-    granted
+) {
+    recovery.note(error, provider_request);
+}
+
+/// Report a context-preparation condition on the acting request.
+///
+/// Context preparation owns no termination: the model is told, the frozen
+/// request is dispatched as it stands, and the loop continues. The notice is
+/// bounded like every other advisory.
+fn report_context_condition(request: &mut ModelToolRequestV1, error: &str) {
+    append_runtime_notices(
+        &mut request.retry_notice,
+        vec![format!(
+            "Aworkit context notice: this turn's context could not be fully prepared ({error}). No \
+             history was discarded and no tool was replayed. Continue from the conversation and the \
+             completed tool results available here; if a result you need is missing, ask for it again."
+        )],
+    );
+}
+
+/// Clamp every advisory field before dispatch. A bound may shorten what the model
+/// is told; it can never fail the request or end the node.
+fn bound_request_notices(request: &mut ModelToolRequestV1) {
+    let bounded = request
+        .retry_notice
+        .as_deref()
+        .map(aworkit_capability_host::bound_model_notice);
+    if bounded.is_some() {
+        request.retry_notice = bounded;
+    }
 }
 
 /// Trusted-core boundary used by the provider loop. Implementations must
@@ -387,11 +423,6 @@ pub(crate) enum ModelToolLoopErrorV1 {
     /// The trusted core refused to settle or authorise a requested capability.
     #[error("tool authority rejected the provider request: {0}")]
     ToolAuthority(String),
-    /// The trusted core could not prepare the model-visible context. Context
-    /// preparation is not tool authority: a checkpoint or revision that cannot
-    /// be projected is a context condition, never an authority decision.
-    #[error("context preparation failed: {0}")]
-    Context(String),
     #[error("Agent model/tool budget is exhausted: {0}")]
     Budget(&'static str),
     #[error("provider accepted the Agent turn but returned no final assistant text")]
@@ -494,8 +525,7 @@ pub(crate) fn execute_model_tool_loop_v1(
         cache.add(turn_output.cache);
 
         if turn_output.calls.is_empty() {
-            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice) {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -528,20 +558,29 @@ pub(crate) fn execute_model_tool_loop_v1(
         let mut results = Vec::with_capacity(turn_output.calls.len());
         job_completion.progressed();
         for (index, call) in turn_output.calls.iter().enumerate() {
-            let settled = authority
-                .invoke(request.outer_invocation_id, turn, call, cancellation)
-                .map_err(|error| {
-                    failure(
-                        ModelToolLoopErrorV1::ToolAuthority(error),
-                        input_tokens,
-                        output_tokens,
-                        cache,
-                        attempted_model_turns,
-                        settled_tool_calls,
-                        &exchanges,
-                        &activities,
-                    )
-                })?;
+            let settled = match authority.invoke(
+                request.outer_invocation_id,
+                turn,
+                call,
+                cancellation,
+            ) {
+                Ok(settled) => settled,
+                Err(error) => {
+                    // A tool that cannot settle is reported to the model as an
+                    // error result it can act on; it never ends the node.
+                    let result = tool_failure_result(call, &error);
+                    results.push(model_facing_tool_result(
+                        &result,
+                        &call.capability_id,
+                        request.maximum_tool_output_bytes,
+                    ));
+                    append_runtime_notices(
+                        &mut pending_runtime_notice,
+                        vec![tool_failure_notice(call, &error)],
+                    );
+                    continue;
+                }
+            };
             results.push(model_facing_tool_result(
                 &settled.result,
                 &call.capability_id,
@@ -567,6 +606,9 @@ pub(crate) fn execute_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
+        // A failed durable commit is the trusted core refusing to record the
+        // exchange: that is an unrecoverable authority denial, one of the three
+        // conditions allowed to end the node. A tool error never lands here.
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {
@@ -657,17 +699,40 @@ fn execute_tool_turn_with_timeout_recovery(
     input_tokens: &mut u64,
     output_tokens: &mut u64,
 ) -> Result<ModelToolDispatchEvidenceV1, ModelToolLoopErrorV1> {
-    let context_messages = authority
-        .prepare_context(
-            request.outer_invocation_id,
-            through,
-            &request.definitions,
-            cancellation,
-        )
-        .map_err(ModelToolLoopErrorV1::ToolAuthority)?;
     let mut retry_notice = runtime_notice;
-    if let Some(jobs) = authority.outstanding_jobs().map_err(ModelToolLoopErrorV1::ToolAuthority)? {
-        append_runtime_notices(&mut retry_notice, vec![format!("Current shell jobs (other work may continue while they run): {jobs}")]);
+    // Context assembly and the job inventory are reports, not gates: a failure
+    // here becomes a model-visible notice and the frozen request still dispatches.
+    let context_messages = match authority.prepare_context(
+        request.outer_invocation_id,
+        through,
+        &request.definitions,
+        cancellation,
+    ) {
+        Ok(messages) => messages,
+        Err(error) => {
+            append_runtime_notices(
+                &mut retry_notice,
+                vec![format!(
+                    "Aworkit context notice: this turn's instruction context could not be prepared \
+                     ({error}). Continue with the context already in this conversation."
+                )],
+            );
+            Vec::new()
+        }
+    };
+    match authority.outstanding_jobs() {
+        Ok(Some(jobs)) => append_runtime_notices(
+            &mut retry_notice,
+            vec![format!("Current shell jobs (other work may continue while they run): {jobs}")],
+        ),
+        Ok(None) => {}
+        Err(error) => append_runtime_notices(
+            &mut retry_notice,
+            vec![format!(
+                "Aworkit job notice: the background-job inventory could not be read ({error}). Do \
+                 not assume there is no background work; call job_list if it matters."
+            )],
+        ),
     }
     let mut provider_request = ModelToolRequestV1 {
         context_messages: request
@@ -682,18 +747,24 @@ fn execute_tool_turn_with_timeout_recovery(
         exchanges: exchanges.clone(),
         retry_notice: retry_notice.clone(),
     };
-    let preparation = authority
-        .manage_model_context(
-            gateway,
-            plan,
-            request.outer_invocation_id,
-            through,
-            request.agent_context.as_ref(),
-            &mut provider_request,
-            cancellation,
-            super::compaction::Trigger::Pressure,
-        )
-        .map_err(ModelToolLoopErrorV1::Context)?;
+    let preparation = match authority.manage_model_context(
+        gateway,
+        plan,
+        request.outer_invocation_id,
+        through,
+        request.agent_context.as_ref(),
+        &mut provider_request,
+        cancellation,
+        super::compaction::Trigger::Pressure,
+    ) {
+        Ok(preparation) => preparation,
+        Err(error) => {
+            // Context preparation owns no termination: report it and dispatch the
+            // frozen request as it stands.
+            report_context_condition(&mut provider_request, &error);
+            super::compaction::Preparation::default()
+        }
+    };
     *input_tokens = input_tokens.saturating_add(preparation.input_tokens);
     *output_tokens = output_tokens.saturating_add(preparation.output_tokens);
     // A provider failure inside the auxiliary compaction request is reported on
@@ -703,8 +774,9 @@ fn execute_tool_turn_with_timeout_recovery(
         report_provider_failure(recovery, error, &mut provider_request);
     }
     if let Some(error) = preparation.error {
-        return Err(ModelToolLoopErrorV1::Context(error));
+        report_context_condition(&mut provider_request, &error);
     }
+    bound_request_notices(&mut provider_request);
     if preparation.durable {
         *exchanges = provider_request.exchanges.clone();
     }
@@ -733,36 +805,39 @@ fn execute_tool_turn_with_timeout_recovery(
             Err(error) if is_context_overflow(&error)
                 && overflow_retries < preparation.max_overflow_retries =>
             {
-                let reduction = authority
-                    .manage_model_context(
-                        gateway,
-                        plan,
-                        request.outer_invocation_id,
-                        through,
-                        request.agent_context.as_ref(),
-                        &mut provider_request,
-                        cancellation,
-                        super::compaction::Trigger::ContextOverflow,
-                    )
-                    .map_err(ModelToolLoopErrorV1::Context)?;
+                let reduction = match authority.manage_model_context(
+                    gateway,
+                    plan,
+                    request.outer_invocation_id,
+                    through,
+                    request.agent_context.as_ref(),
+                    &mut provider_request,
+                    cancellation,
+                    super::compaction::Trigger::ContextOverflow,
+                ) {
+                    Ok(reduction) => reduction,
+                    Err(error) => {
+                        report_context_condition(&mut provider_request, &error);
+                        super::compaction::Preparation::default()
+                    }
+                };
                 *input_tokens = input_tokens.saturating_add(reduction.input_tokens);
                 *output_tokens = output_tokens.saturating_add(reduction.output_tokens);
                 if let Some(error) = &reduction.provider_error {
                     report_provider_failure(recovery, error, &mut provider_request);
                 }
                 if let Some(error) = reduction.error {
-                    return Err(ModelToolLoopErrorV1::Context(error));
+                    report_context_condition(&mut provider_request, &error);
                 }
+                bound_request_notices(&mut provider_request);
                 if cancellation.is_cancelled() {
                     return Err(ProviderError::Cancelled.into());
                 }
                 if !reduction.changed {
-                    // The selection is already as small as the authority can
-                    // make it. Report the condition to the model instead of
-                    // ending the Run.
-                    if !report_provider_failure(recovery, &error, &mut provider_request) {
-                        return Err(error.into());
-                    }
+                    // The selection is already as small as the authority can make
+                    // it. Report the condition to the model; a context condition
+                    // never ends the node.
+                    report_provider_failure(recovery, &error, &mut provider_request);
                     continue;
                 }
                 if reduction.durable {
@@ -773,28 +848,29 @@ fn execute_tool_turn_with_timeout_recovery(
             Err(error) if provider_recovery_notice(&error).is_some() => {
                 // Every provider failure that is not cancellation becomes the
                 // model's next turn: the exact failure is reported on the same
-                // frozen route and the Agent decides what to do about it.
-                if !report_provider_failure(recovery, &error, &mut provider_request) {
-                    return Err(error.into());
-                }
+                // frozen route and the Agent decides what to do about it. There is
+                // no report budget that can end the node.
+                report_provider_failure(recovery, &error, &mut provider_request);
             }
             Err(error) => return Err(error.into()),
             Ok(evidence) => {
                 let output = project_model_tool_events(&evidence.events);
-                authority
-                    .record_context_usage(
-                        request.outer_invocation_id,
-                        request.agent_context.as_ref(),
-                        &provider_request,
-                        output.input_tokens,
-                        output.output_tokens,
-                        super::compaction::Unit::Exchange(ModelToolExchangeV1 {
-                            assistant_content: output.assistant_content.clone(),
-                            results: Vec::new(),
-                        })
-                        .tokens(),
-                    )
-                    .map_err(ModelToolLoopErrorV1::Context)?;
+                if let Err(error) = authority.record_context_usage(
+                    request.outer_invocation_id,
+                    request.agent_context.as_ref(),
+                    &provider_request,
+                    output.input_tokens,
+                    output.output_tokens,
+                    super::compaction::Unit::Exchange(ModelToolExchangeV1 {
+                        assistant_content: output.assistant_content.clone(),
+                        results: Vec::new(),
+                    })
+                    .tokens(),
+                ) {
+                    // Usage accounting is telemetry: a failure to record it is
+                    // reported and the dispatch result is still returned.
+                    report_context_condition(&mut provider_request, &error);
+                }
                 authority.note_child_turn(
                     through.saturating_add(1) as u32,
                     &output.assistant_text,
@@ -827,6 +903,14 @@ fn append_runtime_notices(target: &mut Option<String>, notices: Vec<String>) {
             None => *target = Some(notice),
         }
     }
+    // Advisory text is bounded here as well as at its producer, so no sequence of
+    // notices can make the frozen request structurally invalid.
+    let bounded = target
+        .as_deref()
+        .map(aworkit_capability_host::bound_model_notice);
+    if bounded.is_some() {
+        *target = bounded;
+    }
 }
 
 fn model_facing_tool_result(
@@ -840,6 +924,28 @@ fn model_facing_tool_result(
         content: content.unwrap_or_else(|| result.content.clone()),
         ..result
     }
+}
+
+/// The model-visible error result for a tool call the authority could not settle.
+///
+/// A failed call is a result the model reads and reacts to, never a node
+/// termination: the call id stays paired so the provider transcript is balanced.
+fn tool_failure_result(call: &ModelToolCallV1, error: &str) -> ModelToolResultV1 {
+    ModelToolResultV1 {
+        call_id: call.call_id.clone(),
+        content: serde_json::json!({"error": error}),
+        is_error: true,
+        images: Vec::new(),
+    }
+}
+
+/// The advisory that accompanies a tool call reported as an error result.
+fn tool_failure_notice(call: &ModelToolCallV1, error: &str) -> String {
+    format!(
+        "Aworkit tool notice: {} could not be settled ({error}). The call is reported to you as an \
+         error result; choose another action or tell the user what is blocked.",
+        call.name
+    )
 }
 
 /// Runs the frozen model/tool loop with approval awareness. A PerInvocation
@@ -911,8 +1017,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         cache.add(turn_output.cache);
         if turn_output.calls.is_empty() {
-            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice) {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -949,20 +1054,29 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 results.push(approval_turn::not_executed_after_stop(call));
                 continue;
             }
-            let settled = authority
-                .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
-                .map_err(|error| {
-                    failure(
-                        ModelToolLoopErrorV1::ToolAuthority(error),
-                        input_tokens,
-                        output_tokens,
-                        cache,
-                        attempted_model_turns,
-                        settled_tool_calls,
-                        &exchanges,
-                        &activities,
-                    )
-                })?;
+            let settled = match authority.invoke_extended(
+                request.outer_invocation_id,
+                turn,
+                call,
+                cancellation,
+            ) {
+                Ok(settled) => settled,
+                Err(error) => {
+                    // A tool that cannot settle is reported to the model as an
+                    // error result it can act on; it never ends the node.
+                    let result = tool_failure_result(call, &error);
+                    results.push(model_facing_tool_result(
+                        &result,
+                        &call.capability_id,
+                        request.maximum_tool_output_bytes,
+                    ));
+                    append_runtime_notices(
+                        &mut pending_runtime_notice,
+                        vec![tool_failure_notice(call, &error)],
+                    );
+                    continue;
+                }
+            };
             match settled {
                 ToolInvokeV1::Settled(settled) => {
                     results.push(model_facing_tool_result(
@@ -1006,6 +1120,9 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
+        // A failed durable commit is the trusted core refusing to record the
+        // exchange: that is an unrecoverable authority denial, one of the three
+        // conditions allowed to end the node. A tool error never lands here.
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {
@@ -1111,8 +1228,7 @@ pub(crate) fn resume_model_tool_loop_v1(
         output_tokens = output_tokens.saturating_add(turn_output.output_tokens);
         cache.add(turn_output.cache);
         if turn_output.calls.is_empty() {
-            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice)
-                .map_err(|error| failure(error, input_tokens, output_tokens, cache, attempted_model_turns, settled_tool_calls, &exchanges, &activities))? {
+            if job_completion.defer(authority, request.outer_invocation_id, turn, &turn_output.assistant_content, &mut exchanges, &mut pending_runtime_notice) {
                 turn = turn.saturating_add(1);
                 continue;
             }
@@ -1149,20 +1265,29 @@ pub(crate) fn resume_model_tool_loop_v1(
                 results.push(approval_turn::not_executed_after_stop(call));
                 continue;
             }
-            let settled = authority
-                .invoke_extended(request.outer_invocation_id, turn, call, cancellation)
-                .map_err(|error| {
-                    failure(
-                        ModelToolLoopErrorV1::ToolAuthority(error),
-                        input_tokens,
-                        output_tokens,
-                        cache,
-                        attempted_model_turns,
-                        settled_tool_calls,
-                        &exchanges,
-                        &activities,
-                    )
-                })?;
+            let settled = match authority.invoke_extended(
+                request.outer_invocation_id,
+                turn,
+                call,
+                cancellation,
+            ) {
+                Ok(settled) => settled,
+                Err(error) => {
+                    // A tool that cannot settle is reported to the model as an
+                    // error result it can act on; it never ends the node.
+                    let result = tool_failure_result(call, &error);
+                    results.push(model_facing_tool_result(
+                        &result,
+                        &call.capability_id,
+                        request.maximum_tool_output_bytes,
+                    ));
+                    append_runtime_notices(
+                        &mut pending_runtime_notice,
+                        vec![tool_failure_notice(call, &error)],
+                    );
+                    continue;
+                }
+            };
             match settled {
                 ToolInvokeV1::Settled(settled) => {
                     results.push(model_facing_tool_result(
@@ -1206,6 +1331,9 @@ pub(crate) fn resume_model_tool_loop_v1(
             assistant_content: turn_output.assistant_content,
             results,
         };
+        // A failed durable commit is the trusted core refusing to record the
+        // exchange: that is an unrecoverable authority denial, one of the three
+        // conditions allowed to end the node. A tool error never lands here.
         authority
             .commit_exchange(request.outer_invocation_id, turn, &exchange)
             .map_err(|error| {

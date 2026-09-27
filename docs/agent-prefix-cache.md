@@ -53,8 +53,10 @@ Comparing the checkpoint's definitions with the acting selection instead (and
 failing the pass on any difference) ended Agent nodes with "tool authority
 rejected the provider request: Context checkpoint tools differ from the frozen
 Agent selection" for every continuation once an interface changed — a context
-condition reported as an authority decision. Context preparation failures are now
-reported as `context preparation failed`, distinct from a tool-authority refusal.
+condition reported as an authority decision. A context-preparation condition is
+now reported to the model as a bounded notice and never ends the node: only the
+model's final answer, cancellation, or an unrecoverable authority denial
+terminates an Agent node. See `aworkit.workflow_worker.failure_policy`.
 
 ## Compatibility and proof
 

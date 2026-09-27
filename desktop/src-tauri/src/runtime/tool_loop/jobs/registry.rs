@@ -835,6 +835,12 @@ impl JobRegistry {
         self.completion_notice_scoped(owner, None)
     }
 
+    /// One bounded summary of the jobs this owner has not resolved.
+    ///
+    /// Jobs are listed in id order so the text is stable between turns; the
+    /// rendering itself is [`render_job_notice`], which caps the inventory and
+    /// states how many jobs it omitted. A notice never fails a request and never
+    /// ends a turn.
     pub fn completion_notice_scoped(
         &self,
         owner: &str,
@@ -842,7 +848,7 @@ impl JobRegistry {
     ) -> Result<Option<String>, String> {
         self.refresh()?;
         let state = self.state.lock().map_err(err)?;
-        let unresolved = state
+        let mut unresolved = state
             .entries
             .values()
             .filter(|e| {
@@ -866,8 +872,51 @@ impl JobRegistry {
                 )
             })
             .collect::<Vec<_>>();
-        Ok((!unresolved.is_empty()).then(|| format!("Before finishing this response, resolve these jobs: {}. Use job_output to read/wait, job_input to steer a running subagent or send stdin to a process, job_stop to cancel, or job_keep with an explicit reason if leaving background work running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.", unresolved.join("; "))))
+        if unresolved.is_empty() {
+            return Ok(None);
+        }
+        unresolved.sort_unstable();
+        Ok(Some(render_job_notice(&unresolved)))
     }
+}
+
+/// Byte budget for the listed job inventory. The dispatch bound is 4 KiB for the
+/// whole notice, which also carries the frame, the trailer and any other runtime
+/// notice, so the inventory stays well below it.
+const MAXIMUM_NOTICE_INVENTORY_BYTES: usize = 2048;
+/// Room for the omitted-count sentence, whose digits vary.
+const OMISSION_RESERVE: usize = 96;
+const NOTICE_FRAME: &str = "Before finishing this response, resolve these jobs: ";
+const NOTICE_TRAILER: &str = ". Use job_output to read/wait, job_input to steer a running subagent or send stdin to a process, job_stop to cancel, or job_keep with an explicit reason if leaving background work running is intended. Do not start a replacement for an existing job. A soft wait is not a failure.";
+
+/// Render one bounded job-inventory summary from already-rendered job lines.
+///
+/// The notice is a report, not an enumeration: the listed inventory is capped and
+/// the message states how many jobs it omitted, so a run with hundreds of
+/// uncollected jobs produces the same bounded text instead of one that grows with
+/// the job count. Pure so the bound is testable without starting processes.
+pub(crate) fn render_job_notice(unresolved: &[String]) -> String {
+    let budget = MAXIMUM_NOTICE_INVENTORY_BYTES
+        .saturating_sub(NOTICE_TRAILER.len().saturating_add(OMISSION_RESERVE));
+    let mut listed: Vec<&str> = Vec::new();
+    let mut used = 0usize;
+    let mut omitted = 0usize;
+    for (index, line) in unresolved.iter().enumerate() {
+        let separator = if index == 0 { 0 } else { 2 };
+        if used.saturating_add(separator).saturating_add(line.len()) > budget {
+            omitted = unresolved.len().saturating_sub(index);
+            break;
+        }
+        used = used.saturating_add(separator).saturating_add(line.len());
+        listed.push(line.as_str());
+    }
+    let mut notice = format!("{NOTICE_FRAME}{}{NOTICE_TRAILER}", listed.join("; "));
+    if omitted > 0 {
+        notice.push_str(&format!(
+            " {omitted} more unresolved job(s) are not listed; call job_list to see them all."
+        ));
+    }
+    notice
 }
 
 /// What a control operation should do with an entry's runner.

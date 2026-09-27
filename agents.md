@@ -32,6 +32,19 @@ For multi-task requests, call `task.start` and `task.end` for each task using th
 
 If a call fails because the MCP surface is not configured, continue without Adashi rule injection and mention the limitation only when it affects the requested outcome. Any other failure is a real failure: report it rather than working around it.
 
+## Failure policy (non-negotiable)
+
+A hard limit must never end a run, and every error must reach the model.
+
+- No cap on model turns, tool calls, provider retries, recoveries, notices, retries, bytes, tokens, counters or elapsed work may terminate an Agent node. Limits and budgets are telemetry: they may size a message, never stop the work.
+- Every error is reported to the LLM and the run continues — provider, transport, contract, context preparation, request validation, tool invocation, tool settlement, commit.
+- Exactly three conditions may end an Agent node: the model returned its final answer, the user cancelled, or an authority denied the call unrecoverably.
+- A bound may only shape what the model is told. Truncate with an explicit omitted count and say how to retrieve the rest; never fail a request because a notice grew.
+- Structural validation has two roles: an editor validator may reject and explain, while the dispatch path must degrade (bound, truncate, drop the advisory field) because a rejected dispatch is a dead run.
+- Never put `return Err(...)` or `?` on a context-preparation, notice, budget or validation condition in the model/tool loop. Convert it to a reported notice instead.
+
+Normative design: `aworkit.workflow_worker.failure_policy`. A fatal return on any of these conditions is a design violation, not a provider error.
+
 ## Project memory
 
 The injected prompt carries the current project summary within its own budget. Treat it as the project's current constraints, not as history: superseded handovers are excluded, and retrieved historical notes are dated evidence rather than current state. When the run needs a prior decision, constraint or blocker that the summary does not cover, retrieve it with the `adashi_memory` get operation using `query`, `runId`, or `taskId`.

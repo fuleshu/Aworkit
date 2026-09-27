@@ -6,8 +6,8 @@
     },
     "resource_id": "aworkit.trusted_core.job_registry",
     "resource_kind": "design.element",
-    "updated_at": "2026-09-21 15:35:17",
-    "version": 1
+    "updated_at": "2026-09-27 16:41:23",
+    "version": 2
   },
   "deleted": false,
   "identity": "54cd907f-d7ad-8095-a3ba-834cb91962c1",

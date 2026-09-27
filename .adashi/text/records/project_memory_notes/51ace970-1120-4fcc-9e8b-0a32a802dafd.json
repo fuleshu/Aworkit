@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "2026-09-27: chat.e1608e3b0f642edccf7dcb59588deb2a61dbd0fb died after 61m at \"context preparation failed: Invalid model context: provider failed: provider tool request is invalid\". The parent's retry_notice enumerated 49 uncollected subagent jobs; 5291B crossed the 4 KiB MAX_RETRY_NOTICE_BYTES and the loop made it node-fatal. Normative: aworkit.workflow_worker.failure_policy - no limit ends a run; report every condition to the model as a bounded notice; only the final answer, cancellation, or an unrecoverable authority denial terminate a node.",
+    "created_at": "2026-09-27 16:41:50",
+    "id": 281,
+    "note_id": "failure-policy-no-hard-limits-2026-09-27",
+    "operation_id": "memory-failure-policy-003",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-failure-policy-003",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "51ace970-1120-4fcc-9e8b-0a32a802dafd",
+  "schemaVersion": 1
+}
