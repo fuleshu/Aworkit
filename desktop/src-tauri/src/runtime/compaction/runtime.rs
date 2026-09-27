@@ -1,4 +1,5 @@
 //! Trusted admission/persistence adapter for context compaction.
+use super::state_context::StateEmission;
 use super::*;
 use crate::runtime::{
     compaction as c, context_inspection::ContextDocument, model_tool_loop::AgentContextV1,
@@ -675,7 +676,7 @@ impl BoundFileToolAuthorityV1 {
         // the block from its records so the model reads one current copy instead
         // of the same state twice, once of them stale.
         if restore && generated_state(request) > state_before_restore {
-            self.state_context(request)
+            self.state_context(request, StateEmission::Append)
                 .map_err(|error| error.to_string())?;
         }
         mark("restore", &mut since, &mut timings);
@@ -969,7 +970,8 @@ impl BoundFileToolAuthorityV1 {
                         // The summary is a projection; the Run's goal, task list and
                         // touched files are re-derived from their records and appended
                         // to the replacement, so they are part of the checkpoint too.
-                        self.state_context(&mut replacement).map_err(|error| error.to_string())?;
+                        self.state_context(&mut replacement, StateEmission::Consolidate)
+                            .map_err(|error| error.to_string())?;
                         let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
                         if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
                         self.run_events.context_batch(vec![("context.compacted", json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"compactionId":id,"startSequence":start.sequence,"trigger":effective_trigger,"strategy":"summary","beforeHash":before_hash,"afterHash":c::hash(&replacement),"shadowedUnits":cut,"shadowedTokenCount":shadowed_tokens,"pinnedUnits":pinned_units,"pinnedTokenCount":pinned_tokens,"summaryAttempts":summary_attempt,"trimmedUnits":trimmed_units,"trimmedTokenCount":trimmed_tokens,"promptFitsWindow":fit.fits,"document":ContextDocument::from_request(&replacement),"auxiliary":auxiliary,"body":if trimmed_units>0{"Context compacted. The oldest part of the compacted span was too large to send to the summary model and was dropped; earlier history remains available in Run details."}else{"Context compacted. Earlier history remains available in this Chat."}})),("context.checkpoint",checkpoint)])?;
@@ -1096,7 +1098,7 @@ impl BoundFileToolAuthorityV1 {
                         // The Run's goal, task list and touched files are
                         // re-derived from their records, exactly as a summary
                         // replacement does, so a drop does not lose them either.
-                        self.state_context(&mut replacement_request)
+                        self.state_context(&mut replacement_request, StateEmission::Consolidate)
                             .map_err(|error| error.to_string())?;
                         let checkpoint = self.snapshot_payload(
                             &owner,
