@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.workflow_worker.context_store",
+    "document_id": {
+      "ref": "bab3192f-9e7f-4842-a3c6-a6d62de4be4b"
+    },
+    "id": 1164461356,
+    "sort_order": 3,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "e4db5723-4a9e-479f-850e-be8e224d36da",
+  "schemaVersion": 1
+}

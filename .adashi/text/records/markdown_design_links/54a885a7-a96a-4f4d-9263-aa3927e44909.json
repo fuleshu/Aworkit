@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.workflow_worker.context_compaction_budget",
+    "document_id": {
+      "ref": "bab3192f-9e7f-4842-a3c6-a6d62de4be4b"
+    },
+    "id": 1164461361,
+    "sort_order": 8,
+    "target_type": "markdown"
+  },
+  "deleted": false,
+  "identity": "54a885a7-a96a-4f4d-9263-aa3927e44909",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.capability_host.model_gateway",
+    "document_id": {
+      "ref": "bab3192f-9e7f-4842-a3c6-a6d62de4be4b"
+    },
+    "id": 1164461354,
+    "sort_order": 1,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "31d9c1c6-a215-4184-b65e-663589ade463",
+  "schemaVersion": 1
+}

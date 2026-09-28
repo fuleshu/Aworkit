@@ -1,0 +1,42 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-28 18:31:59",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Backlog item. Not scheduled and not approved for implementation; recorded so the option and its shape are not lost.\n",
+        "\n",
+        "Subject: evaluate and, if it earns its place, integrate System One decision models (TypeSafe Jev, Contrastive-LM CLM, and an LLM-backed equivalent) as a typed-decision capability plus a workflow decision node, with optional consumers in tools and compaction.\n",
+        "\n",
+        "Specification: the linked markdown document records the API shapes, the decision contract, the workflow/tool/compaction integration, the commit-point framing, and the calibration loop. Read it completely before acting.\n",
+        "\n",
+        "Ordered increments if this is picked up (each independently useful, each stoppable):\n",
+        "1. Implement the decision contract once with the `llm` backend only, over providers Aworkit already supports. No new vendor dependency, no node type yet.\n",
+        "2. Use it for admission control: judge relevance/sufficiency before tool results and retrieved pages enter context, with the existing deterministic (BM25-style) ranking as fallback. Measure tokens saved and answer quality against the fallback.\n",
+        "3. Add the `decision` node type to the catalog and node runtime, plus ordered-comparison predicate kinds so condition nodes can threshold probability/confidence. Keep conditions deterministic.\n",
+        "4. Surface per-decision calibration in the workflow editor, keyed by (workflow revision, node id, question id, backend model version), and let each decision declare the downstream outcome that counts as it having been right.\n",
+        "5. Only then add native `jev` and `clm` backends, as optimisations on a proven design rather than as an architectural bet.\n",
+        "\n",
+        "Open questions before any decision, and the non-goals, are listed in the document. Key ones: single resolved binding versus per-node binding sets; credential leases and context capacity per candidate; the commit point per dimension; and whether the decision surfaces as a node type, a capability, or both.\n",
+        "\n",
+        "Evidence expectation: any increment is reported with measured cost/latency and outcome-labelled accuracy on Aworkit tasks, not with vendor benchmarks. Vendor performance, price and calibration claims are unverified."
+      ]
+    },
+    "id": 7371379899,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Backlog: System One decision models as a decision node, tool ranker and compaction judge",
+    "updated_at": "2026-09-28 18:31:59"
+  },
+  "deleted": false,
+  "identity": "53474905-b6de-43e9-bed0-1cd9fc7e57ff",
+  "schemaVersion": 1
+}

@@ -7,3 +7,4 @@ Agents retrieve canonical documents and readTokens through Adashi MCP before edi
 - [Chat notice card: one surface for an interrupted reply and a stopped Run](design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md) — `aworkit.desktop_ui.chat_notice_card`
 - [Compaction budget model: every budget is a share of the window](design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md) — `aworkit.workflow_worker.context_compaction_budget`
 - [Failure policy: no limit ends a run; every condition is reported](design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md) — `aworkit.workflow_worker.failure_policy`
+- [System One decision models: backlog design for a decision node, tool ranking and…](design-64fc5fb1786d384cbc7c50322f772af57aa659fca85631356c4305589350ca4e.md) — `aworkit.workflow_worker.system_one_decisions`

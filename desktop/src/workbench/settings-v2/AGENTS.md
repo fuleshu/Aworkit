@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1542650233899203 -->
+<!-- adashi:generated revision=7760422764294403 -->
 # Architecture — `desktop/src/workbench/settings-v2` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -8,7 +8,9 @@ These responsibilities are already owned here: extend them, do not duplicate.
 
 Boundaries crossing this folder:
 - Typed Command & Event Projection Gateway -> Settings & Capability Resolution: Publishes configuration, capability, health, diagnostics, and appearance projections
-- Settings & Capability Resolution -> Shared Design System & Accessibility: Uses schema-form/secret/status/disclosure/binding primitives
 
-[Showing 1 of 1 design element(s) bound here, 4 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+Markdown design specifications:
+
+
+- [System One decision models: backlog design for a decision node, tool ranking and…](../../../../docs/adashi/design-64fc5fb1786d384cbc7c50322f772af57aa659fca85631356c4305589350ca4e.md)
 <!-- adashi:architecture:end -->

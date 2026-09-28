@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1542650233899203 -->
+<!-- adashi:generated revision=7760422764294403 -->
 # Architecture — `docs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -16,5 +16,5 @@ Markdown design specifications:
 
 
 - [Compaction budget model: every budget is a share of the window](adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md)
-1 more Markdown design(s); see the root index.
+2 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

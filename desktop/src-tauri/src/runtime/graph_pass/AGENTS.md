@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1542650233899203 -->
+<!-- adashi:generated revision=7760422764294403 -->
 # Architecture — `desktop/src-tauri/src/runtime/graph_pass` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -8,10 +8,10 @@ These responsibilities are already owned here: extend them, do not duplicate.
 - **Input, Approval, Pause & Cancellation Suspension Controller** (Component) — Responsibilities: Preserves exact harness positions and context heads when a Wait for Inpu…
 
 Bound here:
-- file `desktop/src-tauri/src/runtime/graph_pass/context.rs`
 
 Markdown design specifications:
 
 
 - [Failure policy: no limit ends a run; every condition is reported](../../../../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
+1 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

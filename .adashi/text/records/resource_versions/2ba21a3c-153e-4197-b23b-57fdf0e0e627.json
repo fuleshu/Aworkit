@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.workflow_worker.system_one_decisions",
+    "resource_kind": "design.markdown",
+    "updated_at": "2026-09-28 18:31:51",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "2ba21a3c-153e-4197-b23b-57fdf0e0e627",
+  "schemaVersion": 1
+}
