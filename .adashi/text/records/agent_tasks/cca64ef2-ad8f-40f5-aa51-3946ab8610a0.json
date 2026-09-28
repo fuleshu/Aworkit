@@ -32,13 +32,12 @@
       ]
     },
     "id": 155,
-    "number": 154,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "A delegated child cannot collect the background jobs it starts",
-    "updated_at": "2026-09-27 18:06:48"
+    "updated_at": "2026-09-28 17:27:04"
   },
   "deleted": false,
   "identity": "cca64ef2-ad8f-40f5-aa51-3946ab8610a0",

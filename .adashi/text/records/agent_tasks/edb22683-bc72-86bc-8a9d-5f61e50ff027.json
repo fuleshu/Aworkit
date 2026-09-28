@@ -10,7 +10,6 @@
     "created_files": "[\"docs/agent-prefix-cache.md\",\"desktop/scripts/native-agent-prefix-smoke.mjs\"]",
     "description": "Implement docs/agent-prefix-cache.md. Move changing upstream planning output out of the system prefix into existing durable per-exchange context. Verify once-only admission on continuation/restart and text-only Agents; prove exact provider prefix preservation through native UI with an isolated local provider. Preserve authority/history and do not touch Adashi QA jobs.",
     "id": 100,
-    "number": 99,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

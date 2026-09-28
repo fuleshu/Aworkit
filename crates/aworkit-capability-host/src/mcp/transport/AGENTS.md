@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `crates/aworkit-capability-host/src/mcp/transport` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -10,7 +10,9 @@ Boundaries crossing this folder:
 - External Agent Adapter & Session Manager -> MCP Client & Session Manager: Forwards only the pinned selected MCP server set when both adapter and target negotiated t…
 
 Bound here:
-- file `crates/aworkit-capability-host/src/mcp/transport/stdio.rs`
 
-[Showing 1 of 1 design element(s) bound here, 5 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+Markdown design specifications:
+
+
+- [MCP session recovery: reconnect instead of requiring an application restart](../../../../../docs/adashi/design-42db389a49359edcd960831556a927367d75f04df00e4586d24baa9f92481a2f.md)
 <!-- adashi:architecture:end -->

@@ -7,11 +7,13 @@
     "description": "Standard Agent functional QA gate (W8): formatting, warnings-denied workspace + desktop tests, frontend typecheck/Vitest/Vite build, the stable M01-M12 release matrix, boundary and process smoke, native application smoke, and the packaged Simple Chat and project read-tool end-to-end runs.",
     "enabled": 1,
     "id": 13,
+    "kind": "unit",
     "name": "standard-agent-functional",
     "number": 13,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 7200,
     "updated_at": "2026-08-24 16:07:13",

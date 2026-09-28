@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"crates/aworkit-capability-host/src/registry.rs\",\"crates/aworkit-capability-host/src/gateway.rs\"]",
     "description": "Implement the Capability Host's sole core-facing invocation gateway and generation-frozen adapter descriptor registry. Admit only schema-valid core-approved envelopes bound to the authenticated host generation and exact adapter version; reject live substitution, stale bindings, or any worker-originated channel.",
     "id": 28,
-    "number": 28,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

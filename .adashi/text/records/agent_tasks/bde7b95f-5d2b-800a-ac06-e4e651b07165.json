@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-process-platform/Cargo.toml\",\"crates/aworkit-process-platform/src/lib.rs\",\"crates/aworkit-process-platform/src/windows.rs\",\"crates/aworkit-process-platform/src/unix.rs\",\"crates/aworkit-capability-host/src/process_session.rs\",\"crates/aworkit-capability-host/tests/process_sessions.rs\"]",
     "description": "Implement exact process-tree monitoring, bounded asynchronous output and stdin, resource limits, soft wait snapshots, cleanup after root exit, no console windows, and native lifecycle tests. Introduce a minimal audited OS boundary if required; preserve existing safe application code.",
     "id": 90,
-    "number": 89,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

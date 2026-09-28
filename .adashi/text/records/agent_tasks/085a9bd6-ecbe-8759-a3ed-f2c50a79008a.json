@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/committer.rs\"]",
     "description": "Implement the Canonical Event Committer's LocalSqlite path over the atomic commit adapter. Enforce exactly one history binding per Chat, stable event ordering, command/invocation deduplication, checkpoint identity, and durable worker/UI delivery outboxes before acknowledgement.",
     "id": 24,
-    "number": 24,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

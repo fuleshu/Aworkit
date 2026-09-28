@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `desktop/src-tauri/src/runtime/model_tool_loop` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -9,7 +9,9 @@ These responsibilities are already owned here: extend them, do not duplicate.
 
 Bound here:
 - file `desktop/src-tauri/src/runtime/model_tool_loop/approval_turn.rs`
-- file `desktop/src-tauri/src/runtime/model_tool_loop/job_completion.rs`
 
-[Showing 2 of 2 design element(s) bound here, 20 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+Markdown design specifications:
+
+
+- [Failure policy: no limit ends a run; every condition is reported](../../../../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
 <!-- adashi:architecture:end -->

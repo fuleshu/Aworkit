@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-capability-host/src/mcp/mod.rs\",\"crates/aworkit-capability-host/src/mcp/contracts.rs\",\"crates/aworkit-capability-host/src/mcp/session.rs\",\"crates/aworkit-capability-host/tests/milestone_09_mcp.rs\"]",
     "description": "Implement configured, core-attested MCP initialization and feature negotiation, tool/resource/prompt discovery, bounded session reuse, invocation, progress, cancellation, reconnect, and protocol evidence. Session loss or an ambiguous effect must produce a conservative outcome and must not trigger silent replay.",
     "id": 57,
-    "number": 57,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

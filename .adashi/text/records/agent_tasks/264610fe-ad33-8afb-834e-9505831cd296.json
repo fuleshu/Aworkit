@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement Aworkit-owned React workbench primitives over the approved component facade, exact Light/Dark token sets, System/Light/Dark resolution before reveal, compact density, focus/overlay services, forced-colors, reduced-motion, font scaling, and accessibility fixtures. Feature modules must consume semantic roles rather than raw toolkit state or colors.",
     "id": 44,
-    "number": 44,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

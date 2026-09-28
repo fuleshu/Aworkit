@@ -1,13 +1,21 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/src/chat/PathContextMenu.test.tsx\",\"desktop/src/chat/runtime.integration.test.tsx\"]",
+    "completed_at": "2026-09-28 10:40:57",
+    "completion_memo": {
+      "lines": [
+        "Reworked the Chat tool-call card; AC1-AC8 implemented, no backend/projection/Run details change.\n",
+        "\n",
+        "New presenter files: `toolCallPresentation.ts` (static capabilityId->display-name map plus host-platform shell dialect, id-only fallback; runtime call envelope `{callId,...,arguments}` unwrapped into labelled formatted arguments; tool text extracted from the canonical `{callId, content, isError}` result; compact statuses for text-free results; file-tool path lookup) and `ToolCallCard.tsx` + `toolCallCard.css` (header keeps icon and status chip and adds the real tool in brackets; Input is one formatted line with a 1->10 row expand; Output streams `channels.progress` while running, caps at 4 rows, expands to 10 with a scrollbar, auto-scrolls to the newest line, renders image attachments and shows a compact status instead of JSON; keeps the selectable Details path, path actions and Inspect source record). ConversationTimeline renders kind \"tool\" (non-web) through the new card, shares fileToolPath, and remeasures a virtual row when a card field expands (ACTIVITY_ROW_RESIZE_EVENT).\n",
+        "\n",
+        "Verification: `pnpm check` clean; `pnpm build` (tsc + vite build) succeeded; `npx vitest run src/chat` 34 files / 230 tests passed; `pnpm test` 72 files / 564 tests passed (one earlier full run reported one unnamed flake; the immediate repeat passed). Tests: activityProjection.test.ts +2 (progress folds into body/channels for a running tool, call envelope preserved), toolCallPresentation.test.ts 17, ToolCallCard.test.tsx 12 covering AC1-AC7; PathContextMenu and runtime integration tool-card assertions updated for the formatted card. No QA job is linked to aworkit.desktop_ui.conversation, so none was run."
+      ]
+    },
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-09-27 12:17:28",
-    "created_files": "[]",
+    "created_files": "[\"desktop/src/chat/ToolCallCard.tsx\",\"desktop/src/chat/ToolCallCard.test.tsx\",\"desktop/src/chat/toolCallCard.css\",\"desktop/src/chat/toolCallPresentation.ts\",\"desktop/src/chat/toolCallPresentation.test.ts\"]",
     "description": {
       "lines": [
         "## Goal\n",
@@ -51,13 +59,12 @@
       ]
     },
     "id": 153,
-    "number": 152,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "closed",
     "title": "Rework the Chat tool-call card: human-readable header, formatted arguments, and live output",
-    "updated_at": "2026-09-27 12:17:28"
+    "updated_at": "2026-09-28 17:26:54"
   },
   "deleted": false,
   "identity": "91ff36f0-8b88-494c-8467-332537e04d3b",

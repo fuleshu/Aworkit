@@ -7,11 +7,13 @@
     "description": "Complete Milestone 09 gate covering extension attestation, MCP ambiguity, supervised plugins, external agents, isolation, authority boundaries, secret boundaries, and no-replay behavior.",
     "enabled": 1,
     "id": 9,
+    "kind": "unit",
     "name": "Milestone 09 extensions and external integrations",
     "number": 9,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 900,
     "updated_at": "2026-08-22 06:24:26",

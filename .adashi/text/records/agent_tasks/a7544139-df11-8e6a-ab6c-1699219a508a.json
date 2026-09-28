@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-bootstrap-helper/Cargo.toml\",\"crates/aworkit-bootstrap-helper/src/lib.rs\",\"crates/aworkit-bootstrap-helper/src/journal/mod.rs\",\"crates/aworkit-bootstrap-helper/src/journal/model.rs\",\"crates/aworkit-bootstrap-helper/src/journal/phase.rs\",\"crates/aworkit-bootstrap-helper/src/journal/hashing.rs\",\"crates/aworkit-bootstrap-helper/src/journal/error.rs\",\"crates/aworkit-bootstrap-helper/src/journal/storage.rs\",\"crates/aworkit-bootstrap-helper/src/journal/journal.rs\",\"crates/aworkit-bootstrap-helper/src/journal/tests.rs\"]",
     "description": "Implement the helper's single-writer, append-only, hash-chained write-ahead journal and receipt vault for mutually exclusive enrollment or activation transactions. Persist intent before every effect, exact observation afterward, durable phase transitions, terminal receipts, and manual-recovery notices using owner-protected crash/power-safe files.",
     "id": 67,
-    "number": 67,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

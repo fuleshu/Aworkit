@@ -18,7 +18,6 @@
     "created_files": "[\"desktop/scripts/native-stop-steering.mjs\",\"desktop/src-tauri/src/runtime/graph_pass/steering.rs\",\"desktop/src-tauri/src/runtime/pipeline/steering.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/steering.rs\",\"desktop/src-tauri/src/runtime/service/steering.rs\",\"docs/chat-steering.md\"]",
     "description": "Persist the interrupted graph pass and select it for the next accepted Chat message. Preserve earlier planner output, branch choices, committed per-node context and tool evidence; never automatically replay stopped effects. Use a fresh pass after normal completion. Verify first and repeated Stop, planner and Agent interruption, restart, frozen authority, concurrent Chats and native standard-workflow execution.",
     "id": 96,
-    "number": 95,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

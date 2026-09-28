@@ -2,7 +2,7 @@
   "collection": "agent_tasks",
   "data": {
     "changed_files": "[\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/images.integration.test.tsx\",\"docs/chat-images.md\"]",
-    "completed_at": "2026-09-27 12:38:27",
+    "completed_at": null,
     "completion_memo": {
       "lines": [
         "Fixed and pushed as c3b528a (main -> origin/main).\n",
@@ -36,13 +36,12 @@
       ]
     },
     "id": 150,
-    "number": 149,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "active",
     "title": "Fix pasting an image from the clipboard into the chat on Linux",
-    "updated_at": "2026-09-27 12:38:27"
+    "updated_at": "2026-09-28 08:30:08"
   },
   "deleted": false,
   "identity": "c96dee61-738f-47bc-a960-f2a9b8f04dfd",

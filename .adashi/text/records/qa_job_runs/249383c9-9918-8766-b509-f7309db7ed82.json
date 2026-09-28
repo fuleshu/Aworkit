@@ -6,6 +6,7 @@
     "exit_code": 0,
     "finished_at": "2026-08-23 12:45:00",
     "id": 55,
+    "lease_expires_at": null,
     "output": {
       "lines": [
         "== Aworkit release matrix: milestone 01 ==\n",

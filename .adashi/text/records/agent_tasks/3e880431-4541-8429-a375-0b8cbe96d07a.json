@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement projected settings for providers, model tiers, credentials, tools, extensions, MCP, external agents, data/portable sessions, projects, and appearance. Preserve unsaved drafts, resolve workflow logical requirements against configured capabilities, preview authority before acceptance, and commit only typed version-checked commands.",
     "id": 47,
-    "number": 47,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

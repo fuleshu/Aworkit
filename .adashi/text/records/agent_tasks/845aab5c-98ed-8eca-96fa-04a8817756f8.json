@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement deterministic portable schemas and canonical byte encoding for scrubbed semantic events, segment framing, checkpoints, frozen snapshots, omission facts, and provenance. Apply the deny-by-default portability policy before serialization or hashing and reject any secret, local authority, hidden reasoning, debug capture, or executable content outside the admitted policy.",
     "id": 36,
-    "number": 36,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -10,7 +10,6 @@
     "created_files": "[\"qa/milestone-11.sh\"]",
     "description": "Create automated fault-injection tests for the complete Milestone 11 helper over hermetic filesystem, selector, clock, process, and IPC ports. Cover enrollment and explicit gates, every journal/slot/selector/launch crash boundary, identity and capability drift, candidate failure, verified activation, rollback and rollback failure, helper restart, Unsupported-before-quiescence, manual recovery, receipt import, and same-Chat resume. Native OS conformance belongs to M12.QA.",
     "id": 73,
-    "number": 73,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -16,7 +16,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/pipeline/frozen_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/frozen_tools.rs\"]",
     "description": "Confirmed on the user's saved Chat: original frozen context hash is unchanged; persisted shell/Python descriptions differ from the newly installed catalog and re-freezing descriptions changes the snapshot on follow-up. Preserve original descriptions for existing native bindings in follow-up and exact-request validation, without weakening schema/configuration/credential/permission checks or MCP definition checks. Add upgrade/Stop/restart regression coverage, read-only verification against the affected saved Chat, and real native Stop/continue proof. Preserve all user history; no database rewrite or forced new Chat.",
     "id": 94,
-    "number": 93,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

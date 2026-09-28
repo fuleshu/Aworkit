@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-process/src/identity.rs\",\"crates/aworkit-process/src/ipc.rs\",\"crates/aworkit-process/src/runtime.rs\",\"crates/aworkit-process/src/time.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/native.rs\"]",
     "description": "Implement the shared process and local-IPC ports on Windows, macOS, and Linux: authenticated peer/process/executable identity, named-pipe or Unix-channel primitives, sanitized spawning, exact process handles, Job Object or process-group/pidfd lifecycle, descendant enumeration, cooperative and forced cleanup, monotonic deadlines, detached-helper survival, and verification-only generation launch.",
     "id": 75,
-    "number": 75,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

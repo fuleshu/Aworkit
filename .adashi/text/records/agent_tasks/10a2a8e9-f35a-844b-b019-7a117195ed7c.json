@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement the permitted content-addressed artifact store and PortableHistoryCommitPort mechanics that prepare admitted artifacts, one bounded segment and checkpoint, publish only the expected explicit branch head, and freshly verify the published identity. Return a prepare/publish/verify receipt only; the core route must not acknowledge or dispatch until M06.5 durably links that receipt to the runtime journal.",
     "id": 39,
-    "number": 39,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

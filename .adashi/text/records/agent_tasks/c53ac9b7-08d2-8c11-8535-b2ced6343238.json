@@ -10,7 +10,6 @@
     "created_files": "[\"docs/subagent-tool-inheritance.md\",\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_tools.rs\"]",
     "description": "Implement docs/subagent-tool-inheritance.md and the linked native delegation contract. Preserve frozen legacy Chats, isolate per-node capabilities and child jobs, add readOnly selection, return approval-required work to parent without extra review LLM calls, and label child output correctly. Validate real writes and subprocess/job cancellation plus broker/MCP and UI projection regressions. Do not interrupt the user's active Chat.",
     "id": 102,
-    "number": 101,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

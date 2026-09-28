@@ -1,41 +1,42 @@
-import { workflowFileNameFromPath } from "./workflowFilePort";
-
 interface WorkflowToolbarProps {
   readonly workflowName: string;
   readonly projectedVersion: number;
   readonly editable: boolean;
   readonly executable: boolean;
   readonly validationCount: number;
-  /** The file the next Save writes, or `null` when no file is bound yet. */
-  readonly boundFilePath: string | null;
-  /** Whether the workflow library already holds the document the editor shows. */
+  /** Whether the editor and the stored workflow hold the same document. */
   readonly draftSaved: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly saving: boolean;
   readonly newDisabled: boolean;
   readonly newTitle: string;
-  readonly openDisabled: boolean;
-  readonly openTitle: string;
+  readonly importDisabled: boolean;
+  readonly importTitle: string;
   readonly saveDisabled: boolean;
   readonly saveTitle: string;
   readonly saveAsDisabled: boolean;
   readonly saveAsTitle: string;
+  readonly exportDisabled: boolean;
+  readonly exportTitle: string;
   readonly onNew: () => void;
-  readonly onOpen: () => void;
+  readonly onImport: () => void;
   readonly onSave: () => void;
   readonly onSaveAs: () => void;
+  readonly onExport: () => void;
   readonly onUndo: () => void;
   readonly onRedo: () => void;
   readonly onValidate: () => void;
 }
 
 /**
- * Standard file handling for one workflow document: New, Open, Save, and Save
- * As through operating-system dialogs, followed by the document commands that
- * are not file operations. This surface deliberately has no Export and no Run
- * control: it writes files and commits to the workflow library, and it never
- * starts a Run or installs node implementations.
+ * The Workflow designer's document commands.
+ *
+ * New, Save As and Import name or store a workflow inside the Aworkit workflow
+ * folder, so they never ask for a path; Import and Export are the only commands
+ * that open an operating-system file dialog. This surface has no Run control: it
+ * writes workflow documents and never starts a Run or installs node
+ * implementations.
  */
 export function WorkflowToolbar({
   workflowName,
@@ -43,23 +44,25 @@ export function WorkflowToolbar({
   editable,
   executable,
   validationCount,
-  boundFilePath,
   draftSaved,
   canUndo,
   canRedo,
   saving,
   newDisabled,
   newTitle,
-  openDisabled,
-  openTitle,
+  importDisabled,
+  importTitle,
   saveDisabled,
   saveTitle,
   saveAsDisabled,
   saveAsTitle,
+  exportDisabled,
+  exportTitle,
   onNew,
-  onOpen,
+  onImport,
   onSave,
   onSaveAs,
+  onExport,
   onUndo,
   onRedo,
   onValidate,
@@ -86,20 +89,10 @@ export function WorkflowToolbar({
           title={
             draftSaved
               ? "The stored workflow and this editor hold the same document"
-              : "The editor holds changes the workflow library has not accepted yet"
+              : "The editor holds changes the workflow folder has not accepted yet"
           }
         >
           {draftSaved ? "✓ Draft saved" : "Unsaved changes"}
-        </span>
-        <span
-          title={
-            boundFilePath ??
-            "No workflow file is bound yet: Save asks for a path first"
-          }
-        >
-          {boundFilePath === null
-            ? "No file"
-            : `File · ${workflowFileNameFromPath(boundFilePath)}`}
         </span>
         <button
           disabled={newDisabled}
@@ -110,12 +103,12 @@ export function WorkflowToolbar({
           New
         </button>
         <button
-          disabled={openDisabled}
-          title={openTitle}
+          disabled={importDisabled}
+          title={importTitle}
           type="button"
-          onClick={onOpen}
+          onClick={onImport}
         >
-          Open
+          Import
         </button>
         <button
           className="primary-action"
@@ -133,6 +126,14 @@ export function WorkflowToolbar({
           onClick={onSaveAs}
         >
           Save As
+        </button>
+        <button
+          disabled={exportDisabled}
+          title={exportTitle}
+          type="button"
+          onClick={onExport}
+        >
+          Export
         </button>
         <button
           disabled={!canUndo}

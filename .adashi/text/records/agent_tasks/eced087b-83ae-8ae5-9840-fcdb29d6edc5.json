@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src/chat/composer.ts\"]",
     "description": "Implement local text/IME state, pre-start workflow and attachment references, first send, queued-input preview, locked-workflow state, and projection-derived pause/cancel/retry/fork/continue controls. Use stable command IDs, retain drafts across rejection or uncertain receipt, and expose exact disabled reasons.",
     "id": 52,
-    "number": 52,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -1,7 +1,7 @@
 /**
  * In-memory stand-in for the native workflow-file port.
  *
- * Open and Save As cross the host boundary through this port, so a test can
+ * Import and Export cross the host boundary through this port, so a test can
  * decide which path a dialog answers with, which files exist, and whether the
  * user confirms replacing an existing file — without a real operating-system
  * dialog and without touching the test machine's filesystem.
@@ -26,15 +26,15 @@ export class WorkflowFileDouble implements WorkflowFilePort {
     readonly title: string;
     readonly body: string;
   }[] = [];
-  /** Names the designer proposed to the save dialog, in order. */
+  /** Names the designer proposed to the export dialog, in order. */
   public readonly suggestedNames: string[] = [];
-  /** How often the open dialog was asked for a path. */
-  public openCalls = 0;
-  /** How often the save dialog was asked for a path. */
-  public saveCalls = 0;
-  /** What the open dialog answers; `null` is the user cancelling it. */
+  /** How often the import dialog was asked for a path. */
+  public importCalls = 0;
+  /** How often the export dialog was asked for a path. */
+  public exportCalls = 0;
+  /** What the import dialog answers; `null` is the user cancelling it. */
   public openPath: string | null = null;
-  /** What the save dialog answers; `null` is the user cancelling it. */
+  /** What the export dialog answers; `null` is the user cancelling it. */
   public savePath: string | null = null;
 
   private answers: boolean[] = [];
@@ -49,13 +49,13 @@ export class WorkflowFileDouble implements WorkflowFilePort {
     this.answers = [...values];
   }
 
-  public async chooseOpenPath(): Promise<string | null> {
-    this.openCalls += 1;
+  public async chooseImportPath(): Promise<string | null> {
+    this.importCalls += 1;
     return this.openPath;
   }
 
-  public async chooseSavePath(suggestedName: string): Promise<string | null> {
-    this.saveCalls += 1;
+  public async chooseExportPath(suggestedName: string): Promise<string | null> {
+    this.exportCalls += 1;
     this.suggestedNames.push(suggestedName);
     return this.savePath;
   }

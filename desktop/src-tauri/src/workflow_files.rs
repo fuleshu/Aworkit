@@ -1,4 +1,4 @@
-//! Native file handling for the Workflow designer's New/Open/Save/Save As surface.
+//! Native file handling for the Workflow designer's Import and Export surface.
 //!
 //! The native workflow library remains the one canonical store, so a workflow
 //! file is only a copy the user chose: nothing here parses, validates, repairs,
@@ -39,13 +39,13 @@ pub enum WorkflowFileWriteOutcomeV1 {
     Exists,
 }
 
-/// Shows the operating system's open dialog for one workflow document.
+/// Shows the operating system's open dialog for one workflow document to import.
 ///
 /// Returns the chosen path as UTF-8 text, or `None` when the user cancelled.
 pub fn pick_open_path<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, String> {
     app.dialog()
         .file()
-        .set_title("Open workflow")
+        .set_title("Import workflow")
         .add_filter("Aworkit workflow", &["aworkit.json"])
         .add_filter("JSON", &["json"])
         .blocking_pick_file()
@@ -53,7 +53,7 @@ pub fn pick_open_path<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, 
         .transpose()
 }
 
-/// Shows the operating system's save dialog for one workflow document.
+/// Shows the operating system's save dialog for exporting one workflow document.
 ///
 /// `suggested_name` only seeds the dialog's file name; the chosen path is the
 /// only thing that matters, so a file name and a workflow name may differ.
@@ -64,7 +64,7 @@ pub fn pick_save_path<R: Runtime>(
     let mut dialog = app
         .dialog()
         .file()
-        .set_title("Save workflow")
+        .set_title("Export workflow")
         .add_filter("Aworkit workflow", &["aworkit.json"])
         .add_filter("JSON", &["json"]);
     if let Some(name) = suggested_name {

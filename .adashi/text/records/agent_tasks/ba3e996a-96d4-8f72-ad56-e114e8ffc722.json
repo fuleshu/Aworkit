@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-capability-host/src/files.rs\"]",
     "description": "Implement versioned project-file read, search, and edit tools exactly in the approved authority mode. Enforce configured roots with anchored handles, traversal and symlink/reparse escape protection, optimistic content identity for edits, bounded inputs/outputs, cancellation, and explicit side-effect descriptors. Shell and Python adapters are implemented separately in M05.2.",
     "id": 31,
-    "number": 31,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

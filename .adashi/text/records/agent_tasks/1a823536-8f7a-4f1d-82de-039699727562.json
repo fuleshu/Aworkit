@@ -46,17 +46,18 @@
         "\n",
         "Reproduction: re-run an ask_user question whose options carry non-trivial description text (long sentences, escapes, non-ASCII characters such as em dashes) and inspect both the stored question.asked payload and the rendered card to locate where the text diverges. If it is no longer reproducible, capture the original rendering from chat fb55e06b0e5c7d11bf2644e3c0e778d2793b84b1 before making changes.\n",
         "\n",
-        "Acceptance: the cause of the gibberish is identified and fixed, descriptions/prompt are displayed exactly as submitted for ASCII, escaped and non-ASCII text, and a regression test covers the failing case."
+        "Acceptance: the cause of the gibberish is identified and fixed, descriptions/prompt are displayed exactly as submitted for ASCII, escaped and non-ASCII text, and a regression test covers the failing case.\n",
+        "\n",
+        "Follow-up 2026-09-28 (user request: \"make the dialog window 50% wider, it is too narrow\") — done, validated at 780px. The question dialog's width is `.workbench-dialog.question-dialog { max-width: 780px }` in desktop/src/chat/question.css. Three findings from the work: (1) the `max-width: 520px` rule this task added was inert in the app — `.question-dialog` and `.workbench-dialog` are both one-class selectors, and Vite bundles the base `max-width: 440px` after question.css, so the later rule won and the dialog actually rendered at 440px; the width rule now names both classes, so it wins on specificity whatever the bundle order. (2) The width took two review steps: 660px (1.5x the 440px actually on screen) was built and the user judged it still too narrow, then 780px (1.5x the 520px this task originally specified) was accepted as correct. (3) Verified by rendering the built CSS in Firefox via geckodriver: 780px at a 1400px viewport with the prompt wrapper at 748px, and 528px (= viewport - 32px) at a 560px viewport with no horizontal overflow, so the wider dialog cannot exceed its window; tsc --noEmit clean, vitest src/chat 230 passed, pnpm build and a release rebuild of desktop/src-tauri/target/release/aworkit-desktop ok. No test, snapshot, story, doc or design/mockup asserted the dialog's width, so nothing else needed updating."
       ]
     },
     "id": 151,
-    "number": 150,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
     "state": "finished",
     "title": "Fix gibberish description text produced by the ask question tool",
-    "updated_at": "2026-09-27 12:50:58"
+    "updated_at": "2026-09-28 16:08:09"
   },
   "deleted": false,
   "identity": "1a823536-8f7a-4f1d-82de-039699727562",

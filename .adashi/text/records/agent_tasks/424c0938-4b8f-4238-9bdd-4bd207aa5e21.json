@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"/home/timofl/.local/share/com.aworkit.desktop/runtime/documents/workflows/manifest.json\",\"/home/timofl/.local/share/com.aworkit.desktop/runtime/documents/workflows/bodies/a20ea6135795c7d72098a1ae37478cd27525d5e54c39c35a555a5e9ac974ad58.json\",\"/home/timofl/.local/share/com.aworkit.desktop/runtime/documents/workflows/bodies/0041b925115873a5decd0512169d566c02ecc2f9cda7bb0906b66961b1e9c934.json\",\"/home/timofl/.local/share/com.aworkit.desktop/runtime/documents/workflows/bodies/9bf8bfaa3637f2e6bd1160a56250f612d9575e6945a20983e1a8c4e0328fe5fd.json\"]",
+    "completed_at": "2026-09-28 17:27:35",
+    "completion_memo": "Renamed the two plan-first workflows in the installed Aworkit workflow store to 'Planner Standard' (workflow.dsh-standard v15) and 'Planner Standard (Plan review)' (workflow.dsh-standard-plan-review v9), keeping their ids and graphs so existing chats still resolve. Added 'DSH Standard' (workflow.dsh-standard-agent v1), graph Chat Input -> Agent -> Chat Output -> Wait for Input, reusing the installed Agent node verbatim (33 tools incl. the configured MCP server, compaction overlay, reasoningEffort high) with the DSH standard persona adapted for Aworkit. Verified with Aworkit's own validators in Vitest: validateWorkflow returns no issues and assessNativeWorkflow reports executable for all three documents, plus the calibration baselines; the store manifest/bodies were read back and hash-verified. No Aworkit source files changed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-28 17:27:24",
+    "created_files": "[\"analysis/dsh-standard-rework/build_workflows.py\",\"/home/timofl/aworkit-workflows/planner-standard.aworkit.json\",\"/home/timofl/aworkit-workflows/planner-standard-plan-review.aworkit.json\",\"/home/timofl/aworkit-workflows/dsh-standard-agent.aworkit.json\"]",
+    "description": "The installed 'DSH Standard' and 'DSH Standard (Plan review)' workflows both run a tool-free Plan model call that DSH standard mode does not have. Rename them to 'Planner Standard' and 'Planner Standard (Plan review)' (ids unchanged: workflow.dsh-standard, workflow.dsh-standard-plan-review), and add a new faithful 'DSH Standard' (id workflow.dsh-standard-agent) whose graph is Chat Input -> Agent (same 33 tools + compaction overlay) -> Chat Output -> Wait for Input, with the DSH standard persona adapted for Aworkit in the Agent instructions. Installed into the runtime workflow store under the repository locks; no Aworkit source changed.",
+    "id": 1951401418,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Rework DSH Standard workflows: rename plan-first variants and add a faithful DSH Standard",
+    "updated_at": "2026-09-28 17:27:35"
+  },
+  "deleted": false,
+  "identity": "424c0938-4b8f-4238-9bdd-4bd207aa5e21",
+  "schemaVersion": 1
+}

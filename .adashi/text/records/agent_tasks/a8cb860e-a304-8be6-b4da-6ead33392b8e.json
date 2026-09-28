@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/model_tool_loop/job_completion.rs\",\"desktop/scripts/native-shell-jobs-smoke.mjs\"]",
     "description": "Integrate job notices and final-answer checks in all model loop paths, including resume; nudge collection, wait, stop or explicitly approved handover. User Stop remains responsive and cancels jobs. Verify actual native Windows Chat tool flow, long commands, interactive input, descendants, owner isolation, restart behavior, no popup and final-answer guard; document the user-facing contract.",
     "id": 92,
-    "number": 91,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

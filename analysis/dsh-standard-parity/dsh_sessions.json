@@ -1,0 +1,879 @@
+[
+  {
+    "session": "session-6f7e02ef-ae18-4183-a600-860e1ecc9ef0",
+    "preset": "standard",
+    "events": 375,
+    "user_msgs": 5,
+    "assistant_msgs": 37,
+    "tool_calls": 79,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 1,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        41
+      ],
+      [
+        "web_fetch",
+        18
+      ],
+      [
+        "web_search",
+        9
+      ],
+      [
+        "read",
+        3
+      ],
+      [
+        "write",
+        2
+      ],
+      [
+        "job_output",
+        2
+      ],
+      [
+        "create_goal",
+        1
+      ],
+      [
+        "get_goal",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-8f15edd3-58a1-4e3b-9bce-bab1e5c483de",
+    "preset": "standard",
+    "events": 2635,
+    "user_msgs": 12,
+    "assistant_msgs": 404,
+    "tool_calls": 472,
+    "todo_write": 4,
+    "todo_positions_pct": [
+      21,
+      65,
+      71,
+      91
+    ],
+    "goal_creates": 2,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        195
+      ],
+      [
+        "edit",
+        145
+      ],
+      [
+        "read",
+        92
+      ],
+      [
+        "job_output",
+        14
+      ],
+      [
+        "write",
+        12
+      ],
+      [
+        "todo_write",
+        4
+      ],
+      [
+        "mcp__adashi__adashi_help",
+        3
+      ],
+      [
+        "create_goal",
+        2
+      ]
+    ]
+  },
+  {
+    "session": "session-b8fa6a38-af8b-4859-b129-1068c0b111ad",
+    "preset": "standard",
+    "events": 3,
+    "user_msgs": 0,
+    "assistant_msgs": 0,
+    "tool_calls": 0,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": []
+  },
+  {
+    "session": "141cbac0-1a53-4f71-9d2e-312ed8f1d25e",
+    "preset": "standard",
+    "events": 510,
+    "user_msgs": 6,
+    "assistant_msgs": 68,
+    "tool_calls": 106,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        53
+      ],
+      [
+        "read",
+        52
+      ],
+      [
+        "send_message",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "82f6d3d1-4a02-4a3f-82e6-355f9b6241dc",
+    "preset": "standard",
+    "events": 84,
+    "user_msgs": 2,
+    "assistant_msgs": 12,
+    "tool_calls": 11,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "mcp__adashi__adashi_design",
+        10
+      ],
+      [
+        "send_message",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "8a5561d5-057f-43ce-8ee6-3cdc0bb56d0e",
+    "preset": "standard",
+    "events": 514,
+    "user_msgs": 6,
+    "assistant_msgs": 66,
+    "tool_calls": 112,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        55
+      ],
+      [
+        "read",
+        54
+      ],
+      [
+        "subagent",
+        2
+      ],
+      [
+        "send_message",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "e23320dd-1c87-40f9-bfae-2fd4526added",
+    "preset": "standard",
+    "events": 617,
+    "user_msgs": 3,
+    "assistant_msgs": 82,
+    "tool_calls": 136,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        135
+      ],
+      [
+        "read",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "e4a23749-2339-4890-a1e2-e98440b3bf45",
+    "preset": "standard",
+    "events": 277,
+    "user_msgs": 5,
+    "assistant_msgs": 35,
+    "tool_calls": 57,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "read",
+        30
+      ],
+      [
+        "bash",
+        24
+      ],
+      [
+        "grep",
+        2
+      ],
+      [
+        "send_message",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "ed455aa6-c168-4bdd-98ef-8bdc2b4b3315",
+    "preset": "standard",
+    "events": 48,
+    "user_msgs": 2,
+    "assistant_msgs": 6,
+    "tool_calls": 5,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "mcp__adashi__adashi_design",
+        3
+      ],
+      [
+        "bash",
+        1
+      ],
+      [
+        "send_message",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-3517c7a8-5380-4d77-9ecc-8619df812c00",
+    "preset": "standard",
+    "events": 315,
+    "user_msgs": 5,
+    "assistant_msgs": 42,
+    "tool_calls": 56,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        46
+      ],
+      [
+        "read",
+        8
+      ],
+      [
+        "edit",
+        1
+      ],
+      [
+        "present",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-42221544-6c12-4bce-9793-1f9efe1e2011",
+    "preset": "standard",
+    "events": 699,
+    "user_msgs": 13,
+    "assistant_msgs": 86,
+    "tool_calls": 135,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        65
+      ],
+      [
+        "job_output",
+        11
+      ],
+      [
+        "web_fetch",
+        11
+      ],
+      [
+        "read",
+        10
+      ],
+      [
+        "mcp__adashi__adashi_help",
+        8
+      ],
+      [
+        "web_search",
+        7
+      ],
+      [
+        "mcp__adashi__adashi_rules",
+        6
+      ],
+      [
+        "edit",
+        5
+      ]
+    ]
+  },
+  {
+    "session": "session-5a3a5bc7-5c9b-439b-859f-dc42944fec71",
+    "preset": "standard",
+    "events": 16700,
+    "user_msgs": 126,
+    "assistant_msgs": 2635,
+    "tool_calls": 2719,
+    "todo_write": 9,
+    "todo_positions_pct": [
+      3,
+      8,
+      11,
+      20,
+      22,
+      33,
+      36,
+      40,
+      46
+    ],
+    "goal_creates": 6,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1807
+      ],
+      [
+        "edit",
+        349
+      ],
+      [
+        "read",
+        247
+      ],
+      [
+        "write",
+        69
+      ],
+      [
+        "mcp__adashi__adashi_tasks",
+        56
+      ],
+      [
+        "mcp__adashi__adashi_design",
+        36
+      ],
+      [
+        "mcp__adashi__adashi_memory",
+        34
+      ],
+      [
+        "job_output",
+        34
+      ]
+    ]
+  },
+  {
+    "session": "session-60dbc890-ad2c-4327-8a83-750e6611f55e",
+    "preset": "standard",
+    "events": 320,
+    "user_msgs": 2,
+    "assistant_msgs": 44,
+    "tool_calls": 65,
+    "todo_write": 1,
+    "todo_positions_pct": [
+      25
+    ],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        56
+      ],
+      [
+        "read",
+        3
+      ],
+      [
+        "grep",
+        2
+      ],
+      [
+        "write",
+        2
+      ],
+      [
+        "todo_write",
+        1
+      ],
+      [
+        "edit",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-65bdd777-4a93-44b7-b67d-6f66e0ccc863",
+    "preset": "standard",
+    "events": 22,
+    "user_msgs": 2,
+    "assistant_msgs": 1,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-69448687-6246-478e-9ea1-4b49797cb16e",
+    "preset": "standard",
+    "events": 376,
+    "user_msgs": 5,
+    "assistant_msgs": 51,
+    "tool_calls": 68,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        49
+      ],
+      [
+        "mcp__adashi__adashi_tasks",
+        6
+      ],
+      [
+        "mcp__adashi__adashi_design",
+        3
+      ],
+      [
+        "mcp__adashi__adashi_grep",
+        2
+      ],
+      [
+        "mcp__adashi__adashi_help",
+        2
+      ],
+      [
+        "glob",
+        1
+      ],
+      [
+        "read",
+        1
+      ],
+      [
+        "mcp__adashi__adashi_memory",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-7d26a3ac-7f1b-43c4-a178-68bde8367248",
+    "preset": "standard",
+    "events": 6062,
+    "user_msgs": 39,
+    "assistant_msgs": 954,
+    "tool_calls": 997,
+    "todo_write": 9,
+    "todo_positions_pct": [
+      1,
+      19,
+      41,
+      42,
+      52,
+      81,
+      93,
+      94,
+      100
+    ],
+    "goal_creates": 1,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        589
+      ],
+      [
+        "read",
+        186
+      ],
+      [
+        "edit",
+        134
+      ],
+      [
+        "mcp__adashi__adashi_tasks",
+        41
+      ],
+      [
+        "mcp__adashi__adashi_rules",
+        12
+      ],
+      [
+        "todo_write",
+        9
+      ],
+      [
+        "job_output",
+        9
+      ],
+      [
+        "write",
+        5
+      ]
+    ]
+  },
+  {
+    "session": "session-8a4aea16-feba-4e7c-b638-ce6db4be88e6",
+    "preset": "standard",
+    "events": 21,
+    "user_msgs": 2,
+    "assistant_msgs": 1,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "glob",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-9ef5e1bb-25e6-4ee3-a174-994cb2749966",
+    "preset": "standard",
+    "events": 30,
+    "user_msgs": 3,
+    "assistant_msgs": 1,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-a657c878-d982-46ef-924b-dadcb9611481",
+    "preset": "standard",
+    "events": 30,
+    "user_msgs": 3,
+    "assistant_msgs": 1,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-c5fa7fb6-6770-4ece-bf92-6b18c916ec82",
+    "preset": "standard",
+    "events": 13811,
+    "user_msgs": 142,
+    "assistant_msgs": 2138,
+    "tool_calls": 2227,
+    "todo_write": 10,
+    "todo_positions_pct": [
+      3,
+      4,
+      4,
+      28,
+      30,
+      38,
+      39,
+      63,
+      68,
+      78
+    ],
+    "goal_creates": 2,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1385
+      ],
+      [
+        "read",
+        234
+      ],
+      [
+        "edit",
+        228
+      ],
+      [
+        "mcp__adashi__adashi_tasks",
+        106
+      ],
+      [
+        "job_output",
+        82
+      ],
+      [
+        "write",
+        47
+      ],
+      [
+        "mcp__adashi__adashi_rules",
+        32
+      ],
+      [
+        "mcp__adashi__adashi_memory",
+        24
+      ]
+    ]
+  },
+  {
+    "session": "session-dcd32372-f7a2-42bd-8882-7bc68585bfc5",
+    "preset": "standard",
+    "events": 2147,
+    "user_msgs": 29,
+    "assistant_msgs": 303,
+    "tool_calls": 401,
+    "todo_write": 5,
+    "todo_positions_pct": [
+      48,
+      53,
+      57,
+      87,
+      99
+    ],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        234
+      ],
+      [
+        "read",
+        52
+      ],
+      [
+        "edit",
+        41
+      ],
+      [
+        "job_output",
+        16
+      ],
+      [
+        "mcp__adashi__adashi_tasks",
+        10
+      ],
+      [
+        "mcp__adashi__adashi_rules",
+        10
+      ],
+      [
+        "grep",
+        8
+      ],
+      [
+        "mcp__adashi__adashi_design",
+        7
+      ]
+    ]
+  },
+  {
+    "session": "session-e4097902-b76a-400b-b5ed-6d15639dd3ca",
+    "preset": "standard",
+    "events": 37,
+    "user_msgs": 4,
+    "assistant_msgs": 1,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-ff697ee6-b5f5-4684-a750-8ec3a6d7690a",
+    "preset": "standard",
+    "events": 1369,
+    "user_msgs": 23,
+    "assistant_msgs": 183,
+    "tool_calls": 265,
+    "todo_write": 3,
+    "todo_positions_pct": [
+      36,
+      41,
+      75
+    ],
+    "goal_creates": 1,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        135
+      ],
+      [
+        "edit",
+        42
+      ],
+      [
+        "read",
+        39
+      ],
+      [
+        "job_output",
+        17
+      ],
+      [
+        "mcp__adashi__adashi_rules",
+        4
+      ],
+      [
+        "mcp__adashi__adashi_grep",
+        4
+      ],
+      [
+        "job_kill",
+        4
+      ],
+      [
+        "mcp__adashi__adashi_design",
+        3
+      ]
+    ]
+  },
+  {
+    "session": "session-e521226b-b32c-4793-bf02-3606f13e1143",
+    "preset": "standard",
+    "events": 499,
+    "user_msgs": 3,
+    "assistant_msgs": 79,
+    "tool_calls": 79,
+    "todo_write": 2,
+    "todo_positions_pct": [
+      6,
+      26
+    ],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "bash",
+        44
+      ],
+      [
+        "edit",
+        14
+      ],
+      [
+        "write",
+        9
+      ],
+      [
+        "read_image",
+        6
+      ],
+      [
+        "read",
+        3
+      ],
+      [
+        "todo_write",
+        2
+      ],
+      [
+        "present",
+        1
+      ]
+    ]
+  },
+  {
+    "session": "session-bd82f816-4046-44b5-b950-3ced5a7aa007",
+    "preset": null,
+    "events": 28,
+    "user_msgs": 4,
+    "assistant_msgs": 2,
+    "tool_calls": 1,
+    "todo_write": 0,
+    "todo_positions_pct": [],
+    "goal_creates": 0,
+    "plan_mode_system_messages": 0,
+    "planning_prompt_system_messages": 0,
+    "top_tools": [
+      [
+        "glob",
+        1
+      ]
+    ]
+  }
+]

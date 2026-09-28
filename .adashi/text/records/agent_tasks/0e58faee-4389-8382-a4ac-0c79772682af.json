@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement the non-authoritative local capability rebind planner and the branch/object integrity and retention engine. Explicit continuation must produce a new child Chat/branch with fresh bindings, snapshot, authority, and approvals. Integrity work may propose exact non-destructive repairs and collect only provably unreachable objects after grace; it must never rewrite published history or choose a tip by time.",
     "id": 42,
-    "number": 42,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `docs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -11,8 +11,10 @@ Also bound here:
 Desktop App Shell & Navigation, Settings & Capability Resolution, Chat/Run Lifecycle Service, …
 
 Bound here:
-- file `docs/agent-prefix-cache.md`
-- file `docs/approval-cache-accounting.md`
 
-[Showing 2 of 10 design element(s) bound here, 82 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+Markdown design specifications:
+
+
+- [Compaction budget model: every budget is a share of the window](adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md)
+1 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

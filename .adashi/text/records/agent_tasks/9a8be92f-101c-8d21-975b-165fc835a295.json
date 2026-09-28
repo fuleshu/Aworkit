@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-bootstrap-helper/src/coordinator/mod.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/error.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/model.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/ports.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/coordinator.rs\",\"crates/aworkit-bootstrap-helper/src/coordinator/tests.rs\"]",
     "description": "Implement the helper's single-flight coordinator for fixed nonactivating enrollment, admitted activation, selector switch, candidate verification, deterministic rollback/relaunch, terminal protected receipts, and ManualRecoveryRequired. Drive only the journal, slot, profile, and watchdog ports; expose immutable results through the existing bootstrap protocol. Core handoff and Management UI behavior are owned by M10.3 and M10.4.",
     "id": 72,
-    "number": 72,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

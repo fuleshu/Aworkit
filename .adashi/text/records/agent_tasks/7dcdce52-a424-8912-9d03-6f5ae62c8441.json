@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-local-store/src/bounded_codec.rs\",\"crates/aworkit-local-store/src/redaction.rs\",\"crates/aworkit-local-store/src/debug_capture/common.rs\",\"crates/aworkit-local-store/src/debug_capture/maintenance.rs\",\"crates/aworkit-local-store/src/debug_capture/mod.rs\",\"crates/aworkit-local-store/src/debug_capture/model.rs\",\"crates/aworkit-local-store/src/debug_capture/read.rs\",\"crates/aworkit-local-store/src/debug_capture/store.rs\",\"crates/aworkit-local-store/src/debug_capture/tests.rs\",\"crates/aworkit-local-store/src/debug_capture/write.rs\",\"crates/aworkit-local-store/src/diagnostics/mod.rs\",\"crates/aworkit-local-store/src/diagnostics/model.rs\",\"crates/aworkit-local-store/src/diagnostics/reader.rs\",\"crates/aworkit-local-store/src/diagnostics/tests.rs\",\"crates/aworkit-local-store/src/diagnostics/writer.rs\"]",
     "description": "Implement opt-in bounded detailed protocol/stream capture and rotating machine-local process/storage/IPC/health logs. Apply the invocation redaction set before persistence, keep capture independent from semantic history, enforce quotas and retention, and expose exact unavailable/expired states for evidence queries.",
     "id": 62,
-    "number": 62,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

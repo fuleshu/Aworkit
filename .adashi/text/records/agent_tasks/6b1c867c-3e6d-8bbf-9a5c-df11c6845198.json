@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/package.json\",\"desktop/pnpm-lock.yaml\",\"desktop/pnpm-workspace.yaml\",\"desktop/.npmrc\",\"desktop/tsconfig.json\",\"desktop/vite.config.ts\",\"desktop/index.html\",\"desktop/src/App.tsx\",\"desktop/src/main.tsx\",\"desktop/src/styles.css\",\"desktop/src/adapters/contracts.ts\",\"desktop/src/adapters/defaultAdapters.ts\",\"desktop/src-tauri/Cargo.toml\",\"desktop/src-tauri/Cargo.lock\",\"desktop/src-tauri/build.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/tauri.conf.json\",\"desktop/src-tauri/capabilities/default.json\",\"desktop/src-tauri/icons\"]",
     "description": "Create the bundled Tauri desktop shell and strict-TypeScript React/Vite/pnpm presentation package. Establish Aworkit-owned adapter seams for the component, graph, collection, and native-presentation dependencies without implementing feature screens. The result must build and open a local placeholder desktop window.",
     "id": 6,
-    "number": 6,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

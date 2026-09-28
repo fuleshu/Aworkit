@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement the strictly noncanonical Portable Runtime Journal plus the Canonical Event Committer's PortableProject route. Durably record PendingPortableCommit and operational fences before calling the portable coordinator, verify its published head receipt, durably finalize HeadLinked, and only then acknowledge or dispatch. Expose exact generation-fenced recovery facts to the generic core recovery coordinator; mismatch, loss, clone, or stale backup quarantines and never replays effects.",
     "id": 40,
-    "number": 40,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

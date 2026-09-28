@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `desktop/src/chat` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -11,9 +11,12 @@ Also bound here:
 Run Details Inspector, Typed Command & Event Projection Gateway.
 
 Bound here:
-- file `desktop/src/chat/ChatWorkspaceScreen.tsx`
-- file `desktop/src/chat/activityProjection.ts`
-- file `desktop/src/chat/cacheUsage.ts`
+- file `desktop/src/chat/ChatNoticeCard.tsx`
+- file `desktop/src/chat/ChatRecoveryCard.tsx`
 
-[Showing 2 of 4 design element(s) bound here, 32 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+
+Markdown design specifications:
+
+
+- [Chat notice card: one surface for an interrupted reply and a stopped Run](../../../docs/adashi/design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md)
 <!-- adashi:architecture:end -->

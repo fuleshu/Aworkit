@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-process/src/filesystem.rs\",\"crates/aworkit-bootstrap-helper/src/profile/native.rs\",\"crates/aworkit-bootstrap-helper/src/slots/native.rs\"]",
     "description": "Implement the shared filesystem/durability platform ports on Windows, macOS, and Linux: anchored path and object identity, traversal/symlink/reparse/mount containment, atomic file and directory publication, durable sync, ownership/mode checks, local-volume proof, portable workspace operations, build-slot publication, and managed-local selector observe/switch/restore. Keep Git writes and unsupported package-owned activation paths disabled.",
     "id": 74,
-    "number": 74,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

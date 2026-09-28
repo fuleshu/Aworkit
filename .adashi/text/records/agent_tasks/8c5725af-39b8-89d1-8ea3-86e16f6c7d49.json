@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement project-root-anchored portable filesystem and Git-coexistence ports, a hermetic filesystem conformance adapter, descriptive read-only Git/worktree facts, and traversal/symlink/reparse/case-safe project-file references. Aworkit must not stage, commit, merge, or push. Native filesystem and durability implementations are owned by M12.1; portable artifact CAS is implemented in M06.4.",
     "id": 37,
-    "number": 37,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

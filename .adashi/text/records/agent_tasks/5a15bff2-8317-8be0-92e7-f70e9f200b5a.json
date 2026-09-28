@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/management/dto.rs\",\"desktop/src-tauri/src/management/gateway.rs\",\"desktop/src-tauri/src/management/local_ledger.rs\",\"desktop/src-tauri/src/management/mod.rs\",\"desktop/src-tauri/src/management/ports.rs\",\"desktop/src-tauri/src/management/projection.rs\",\"desktop/src/management/CandidateEvidenceSections.tsx\",\"desktop/src/management/ManagementRepairScreen.tsx\",\"desktop/src/management/ManagementSidebar.tsx\",\"desktop/src/management/RepairActivationGate.tsx\",\"desktop/src/management/RepairCandidateReview.tsx\",\"desktop/src/management/SourceDiffViewer.tsx\",\"desktop/src/management/activation-gate.css\",\"desktop/src/management/candidate-review.css\",\"desktop/src/management/corePort.ts\",\"desktop/src/management/management-layout.css\",\"desktop/src/management/preview.ts\",\"desktop/src/management/repair.ts\",\"desktop/src/management/types.ts\",\"desktop/src/management/useManagementRepair.ts\"]",
     "description": "Implement the pinned Management Chat scope, recurring-error ledger, investigation progress, evidence selection, and complete repair-candidate review with exact diff, tests, benchmarks, consequences, uncertainty, rollback point, activation eligibility, and stale-version gates. Activation remains disabled unless a fresh core-projected Supported report and explicit user decision exist.",
     "id": 65,
-    "number": 65,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

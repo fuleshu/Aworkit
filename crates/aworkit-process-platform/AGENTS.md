@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `crates/aworkit-process-platform` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

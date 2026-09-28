@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Create automated QA tests for Milestone 07 at component and real-Tauri-WebView levels. Cover token contrast and theme parity, no-theme-flash, pane geometry and keyboard splitters, 200% zoom/forced colors/focus, projection gaps and conflicts, settings draft recovery, unknown-workflow round trips, undo transactions, canvas interactions, and the representative approximately 1,000-visible-node performance gate.",
     "id": 50,
-    "number": 50,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

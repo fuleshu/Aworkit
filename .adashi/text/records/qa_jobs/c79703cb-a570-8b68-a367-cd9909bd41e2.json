@@ -7,11 +7,13 @@
     "description": "Complete Milestone 11 hermetic gate covering explicit managed-local enrollment, tamper-evident journal durability and restart recovery, authenticated challenge/baton/command generation fencing, immutable whole-build slots, deterministic profile and selector drift handling, process-tree cleanup, verification-only launch and identity/health/focused-verification faults, verified activation, deterministic rollback and relaunch, manual recovery, shared receipt import, and commit-before-resuming the same Management Chat.",
     "enabled": 1,
     "id": 11,
+    "kind": "unit",
     "name": "M11 QA — Managed-local bootstrap and rollback",
     "number": 11,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 900,
     "updated_at": "2026-08-23 11:05:22",

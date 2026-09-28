@@ -10,6 +10,7 @@ import type {
   WorkflowLibraryPort,
   WorkflowLibrarySnapshot,
   WorkflowRenameCommand,
+  WorkflowSaveAsCommand,
   WorkflowTargetCommand,
   WorkbenchReceipt,
 } from "../workbench/corePort";
@@ -83,6 +84,9 @@ class ChangingLibrary implements WorkflowLibraryPort {
     };
   }
   public async create(_command: WorkflowCreateCommand): Promise<WorkflowCreateReceipt> {
+    throw new Error("not used");
+  }
+  public async saveAs(_command: WorkflowSaveAsCommand): Promise<WorkflowCreateReceipt> {
     throw new Error("not used");
   }
   public async duplicate(_command: WorkflowRenameCommand): Promise<WorkflowCreateReceipt> {

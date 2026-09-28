@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement repository format negotiation and immutable Chat/session/branch manifests plus bounded parent-linked JSONL segment and logical checkpoint storage. Readers must verify exact bytes, hashes, schema, bounds, ordinals, and parent linkage before exposing records; unsupported formats remain inspectable and inert.",
     "id": 38,
-    "number": 38,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

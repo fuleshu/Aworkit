@@ -10,7 +10,6 @@
     "created_files": "[\"qa/milestone-10.sh\",\"crates/aworkit-trusted-core/tests/milestone_10_repair.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/activation.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/artifacts.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/audit.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/policy.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/reconciliation.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/retries.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/support/mod.rs\",\"crates/aworkit-trusted-core/tests/milestone_10_repair/support/ports.rs\",\"desktop/src/management/management.integration.test.tsx\",\"desktop/src/management/repair.test.ts\"]",
     "description": "Create automated QA tests for Milestone 10. Cover redaction and retention, recurring-error grouping and regression state, bounded investigation, artifact/evidence integrity, candidate version conflicts, complete disclosure, rejection, Supported/EnrollmentRequired/Unsupported presentation, keyboard/accessibility behavior, and proof that review cannot activate or broaden authority by itself.",
     "id": 66,
-    "number": 66,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

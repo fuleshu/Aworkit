@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-capability-host/src/isolation/mod.rs\",\"crates/aworkit-capability-host/src/isolation/contract.rs\",\"crates/aworkit-capability-host/src/isolation/execution.rs\",\"crates/aworkit-capability-host/src/isolation/runtime.rs\",\"crates/aworkit-capability-host/src/isolation/hermetic.rs\",\"crates/aworkit-capability-host/src/isolation/gateway.rs\",\"crates/aworkit-capability-host/tests/isolation.rs\"]",
     "description": "Implement optional isolation backends behind the approved-envelope port with exact reported strength, limits, mounts, networking, deadlines, result transfer, cancellation, cleanup, and unavailable reasons. Never silently downgrade requested isolation or describe trusted plugin processes as sandboxed. Descriptor registration, Settings resolution, and snapshot binding use the already implemented registry, Settings, and freezer contracts.",
     "id": 60,
-    "number": 60,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

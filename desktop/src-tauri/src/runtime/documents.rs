@@ -340,6 +340,11 @@ impl CanonicalDocuments {
                 "workflow document id must remain '{workflow_id}' when saving this library entry"
             ));
         }
+        // The workflow's own Name property is what every dropdown shows, so a
+        // save may rename its entry but may not make two entries share a name.
+        if let Some(name) = workflow.get("name").and_then(Value::as_str) {
+            self.require_unused_workflow_name(name, Some(workflow_id))?;
+        }
         if validate_v1_executable_catalog(&workflow).is_ok()
             && serde_json::to_vec(&workflow)
                 .map_err(|error| format!("cannot encode workflow: {error}"))?
@@ -375,6 +380,7 @@ impl CanonicalDocuments {
         template: Option<&str>,
     ) -> Result<(String, u64), String> {
         validate_workflow_name(name)?;
+        self.require_unused_workflow_name(name, None)?;
         let workflow_id = self.next_custom_workflow_id()?;
         let bundled = bundled_workflow_library()?;
         let template_id = template.unwrap_or(&bundled.creation_default_template_id);
@@ -406,8 +412,54 @@ impl CanonicalDocuments {
         Ok((workflow_id, saved.version))
     }
 
+    /// Stores one complete document as a new named workflow: Save As and Import.
+    ///
+    /// The document becomes a new JSON document in the Aworkit workflow folder
+    /// under the entered name, so every workflow dropdown lists it and it can be
+    /// opened, saved, exported and deleted like any other entry. A name another
+    /// workflow already shows, a document that is not a JSON object, and a
+    /// document this build cannot store are each refused before anything is
+    /// written, so a refusal leaves the folder exactly as it was.
+    pub(crate) fn save_workflow_as(
+        &mut self,
+        name: &str,
+        document: Value,
+    ) -> Result<(String, u64), String> {
+        validate_workflow_name(name)?;
+        self.require_unused_workflow_name(name, None)?;
+        if document.get("schemaVersion").and_then(Value::as_u64)
+            != Some(SUPPORTED_WORKFLOW_SCHEMA_VERSION)
+        {
+            return Err(format!(
+                "only schema version {SUPPORTED_WORKFLOW_SCHEMA_VERSION} workflow documents can be stored as a new workflow"
+            ));
+        }
+        validate_editable_workflow_graph(&document)?;
+        let Value::Object(mut stored) = document else {
+            return Err("a workflow document must be a JSON object".into());
+        };
+        let workflow_id = self.next_custom_workflow_id()?;
+        stored.insert("id".to_owned(), Value::String(workflow_id.clone()));
+        stored.insert("name".to_owned(), Value::String(name.trim().to_owned()));
+        let stored = Value::Object(stored);
+        let saved = self
+            .repository
+            .save(DocumentKind::Workflow, &workflow_id, None, &json_document(&stored)?)
+            .map_err(|error| format!("cannot save workflow as '{}': {error}", name.trim()))?;
+        self.workflows.insert(
+            workflow_id.clone(),
+            StoredWorkflowState {
+                version: saved.version,
+                document: stored,
+                editable: true,
+            },
+        );
+        Ok((workflow_id, saved.version))
+    }
+
     pub(crate) fn rename_workflow(&mut self, workflow_id: &str, name: &str) -> Result<u64, String> {
         validate_workflow_name(name)?;
+        self.require_unused_workflow_name(name, Some(workflow_id))?;
         let state = self.workflows.get(workflow_id).ok_or_else(|| {
             format!("workflow '{workflow_id}' does not exist in the workflow library")
         })?;
@@ -442,6 +494,7 @@ impl CanonicalDocuments {
         name: &str,
     ) -> Result<(String, u64), String> {
         validate_workflow_name(name)?;
+        self.require_unused_workflow_name(name, None)?;
         let state = self.workflows.get(workflow_id).ok_or_else(|| {
             format!("workflow '{workflow_id}' does not exist in the workflow library")
         })?;
@@ -473,6 +526,9 @@ impl CanonicalDocuments {
     }
 
     pub(crate) fn delete_workflow(&mut self, workflow_id: &str) -> Result<(), String> {
+        if workflow_id == self.default_workflow_id {
+            return Err("the default workflow cannot be deleted".into());
+        }
         if self.workflows.len() <= 1 {
             return Err("at least one workflow must remain in the workflow library".into());
         }
@@ -483,15 +539,6 @@ impl CanonicalDocuments {
             .delete(DocumentKind::Workflow, workflow_id, Some(state.version))
             .map_err(|error| format!("cannot delete workflow: {error}"))?;
         self.workflows.remove(workflow_id);
-        if self.default_workflow_id == workflow_id {
-            let fallback = self
-                .workflows
-                .keys()
-                .next()
-                .expect("at least one workflow remains")
-                .clone();
-            self.persist_default_workflow(&fallback)?;
-        }
         Ok(())
     }
 
@@ -505,6 +552,30 @@ impl CanonicalDocuments {
             return Ok(self.library_version);
         }
         self.persist_default_workflow(workflow_id)
+    }
+
+    /// Refuses a name another stored workflow already shows.
+    ///
+    /// A workflow name is what every dropdown shows, so two entries with the
+    /// same name would be indistinguishable; the comparison ignores case and
+    /// surrounding whitespace. `except` names the entry that may keep the name.
+    fn require_unused_workflow_name(
+        &self,
+        name: &str,
+        except: Option<&str>,
+    ) -> Result<(), String> {
+        let wanted = name.trim().to_lowercase();
+        let taken = self.workflows.iter().any(|(id, state)| {
+            except != Some(id.as_str())
+                && workflow_display_name(&state.document, id).trim().to_lowercase() == wanted
+        });
+        if taken {
+            return Err(format!(
+                "a workflow named '{}' already exists in the workflow library",
+                name.trim()
+            ));
+        }
+        Ok(())
     }
 
     fn persist_default_workflow(&mut self, workflow_id: &str) -> Result<u64, String> {
@@ -2937,28 +3008,39 @@ mod tests {
             duplicate_id
         );
 
-        let expected_fallback = documents
-            .workflow_library()
-            .entries
-            .iter()
-            .map(|entry| entry.id.as_str())
-            .filter(|id| *id != duplicate_id)
-            .min()
-            .unwrap()
-            .to_owned();
-        documents.delete_workflow(&duplicate_id).unwrap();
+        // A name the library already shows is refused: the name is what every
+        // dropdown displays, so two entries may never share one.
+        assert!(
+            documents
+                .create_workflow("Research v2", Some("blank"))
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert!(
+            documents
+                .duplicate_workflow(&created_id, "research v2")
+                .unwrap_err()
+                .contains("already exists")
+        );
+
+        // The default workflow is refused, so another entry is deleted instead.
+        assert!(
+            documents
+                .delete_workflow(&duplicate_id)
+                .unwrap_err()
+                .contains("default workflow cannot be deleted")
+        );
+        documents.delete_workflow(&created_id).unwrap();
         assert!(
             !documents
                 .workflow_library()
                 .entries
                 .iter()
-                .any(|entry| entry.id == duplicate_id)
+                .any(|entry| entry.id == created_id)
         );
-        assert_eq!(
-            documents.workflow_library().default_workflow_id,
-            expected_fallback
-        );
-        assert_eq!(documents.workflow_library().version, library_version + 1);
+        assert_eq!(documents.workflow_library().default_workflow_id, duplicate_id);
+        // Deleting another workflow never rewrites the default marker.
+        assert_eq!(documents.workflow_library().version, library_version);
 
         drop(documents);
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
@@ -2968,24 +3050,85 @@ mod tests {
                 .workflow_library()
                 .entries
                 .iter()
-                .any(|entry| entry.id == duplicate_id)
+                .any(|entry| entry.id == created_id)
         );
     }
 
     #[test]
-    fn library_refuses_deleting_the_last_workflow_and_unknown_targets() {
+    fn save_as_stores_a_new_named_workflow_or_refuses_without_a_trace() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        while documents.workflow_library().entries.len() > 1 {
-            let id = documents.workflow_library().entries[0].id.clone();
-            documents.delete_workflow(&id).unwrap();
-        }
-        let last_id = documents.workflow_library().entries[0].id.clone();
+        let mut document = documents.workflow_snapshot().document;
+        document["id"] = Value::String("workflow.foreign".into());
+        document["name"] = Value::String("Imported Harness".into());
+
+        let (saved_id, version) = documents
+            .save_workflow_as("Imported Harness", document.clone())
+            .unwrap();
+        assert_eq!(saved_id, "workflow.custom.1");
+        assert_eq!(version, 1);
+        let stored = documents.workflow_snapshot_for(&saved_id).document;
+        // The stored document carries its new library identity and the entered
+        // name, and every other field of the saved document survives verbatim.
+        assert_eq!(stored["id"], "workflow.custom.1");
+        assert_eq!(stored["name"], "Imported Harness");
+        assert_eq!(stored["nodes"], document["nodes"]);
         assert!(
             documents
-                .delete_workflow(&last_id)
+                .workflow_library()
+                .entries
+                .iter()
+                .any(|entry| entry.id == saved_id && entry.name == "Imported Harness")
+        );
+
+        // A name the folder already shows is refused before anything is written.
+        let before = documents.workflow_library();
+        assert!(
+            documents
+                .save_workflow_as("imported harness", document.clone())
                 .unwrap_err()
-                .contains("at least one workflow")
+                .contains("already exists")
+        );
+        // A document this build cannot store is refused the same way.
+        let mut future = document.clone();
+        future["schemaVersion"] = Value::from(2);
+        assert!(
+            documents
+                .save_workflow_as("Future Harness", future)
+                .unwrap_err()
+                .contains("schema version 1")
+        );
+        assert!(
+            documents
+                .save_workflow_as("Not An Object", Value::Array(Vec::new()))
+                .is_err()
+        );
+        let after = documents.workflow_library();
+        assert_eq!(after.entries.len(), before.entries.len());
+        assert_eq!(after.version, before.version);
+    }
+
+    #[test]
+    fn library_refuses_deleting_the_default_workflow_and_unknown_targets() {
+        let root = TempDir::new().unwrap();
+        let mut documents = CanonicalDocuments::open(root.path()).unwrap();
+        // Keep the bundled default workflow and remove the other entry, so the
+        // library holds one workflow and it is the default one.
+        let default_id = documents.workflow_library().default_workflow_id.clone();
+        let other_id = documents
+            .workflow_library()
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .find(|id| *id != default_id)
+            .unwrap();
+        documents.delete_workflow(&other_id).unwrap();
+        assert_eq!(documents.workflow_library().entries.len(), 1);
+        assert!(
+            documents
+                .delete_workflow(&default_id)
+                .unwrap_err()
+                .contains("default workflow cannot be deleted")
         );
         assert!(
             documents

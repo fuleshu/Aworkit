@@ -25,7 +25,7 @@ use aworkit_desktop::runtime::{
     SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
     UiCommandInput, UiCommandReceipt, WorkflowCancellationController, WorkflowCommitInput,
     WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot,
-    WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
+    WorkflowRenameInput, WorkflowSaveAsInput, WorkflowSnapshot, WorkflowTargetInput,
 };
 use tauri::{Emitter, Manager};
 
@@ -600,6 +600,22 @@ async fn workflow_create(
 }
 
 #[tauri::command]
+async fn workflow_save_as(
+    runtime: tauri::State<'_, SharedRuntime>,
+    command: WorkflowSaveAsInput,
+) -> Result<WorkflowCreateReceipt, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .workflow_save_as(command)
+    })
+    .await
+    .map_err(|error| format!("workflow save as worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn workflow_duplicate(
     runtime: tauri::State<'_, SharedRuntime>,
     command: WorkflowDuplicateInput,
@@ -819,6 +835,7 @@ fn main() {
                 workflow_library,
                 workflow_commit,
                 workflow_create,
+                workflow_save_as,
                 workflow_duplicate,
                 workflow_delete,
                 workflow_rename,

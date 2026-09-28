@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/pipeline/continuation.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/descriptor_upgrade.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/compatibility.rs\"]",
     "description": "Use the persisted Chat snapshot directly for continued input and Stop/Continue. Remove the recompile/re-freeze and frozen-authority equality blocker. Echoed desktop metadata must not mutate saved authority or block continuation. Create only fresh pass state/message controls and retain action-level permissions, Chat ownership and effect deduplication. Reproduce and verify the user's saved Chat with no paid provider call or live-history modification. Preserve known legacy subagent dispatch and build an updated executable.",
     "id": 103,
-    "number": 102,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "2026-09-28, follow-up to task 150 (finished): the ask-question dialog is 660px wide, declared in desktop/src/chat/question.css as `.workbench-dialog.question-dialog { max-width: 660px }` — 1.5x the 440px it actually rendered at. Cascade trap worth remembering: task 150's `max-width: 520px` on the one-class `.question-dialog` never applied, because Vite bundles the base `.workbench-dialog` rule (max-width 440px, width calc(100% - 32px)) after question.css and an equal-specificity later rule wins; any per-dialog width override here must name both classes. The inherited `calc(100% - 32px)` still caps the dialog to the viewport. Measured against the production bundle in Firefox/geckodriver: 660px at 1400px viewport, 528px at 560px, no horizontal overflow. tsc --noEmit clean, vitest src/chat 230 passed, vite build ok; no test or mockup asserts this width. 1.5x of the authored 520px would have been 780px.",
+    "created_at": "2026-09-28 15:34:35",
+    "id": 3684892950,
+    "note_id": "question-dialog-width-20260928",
+    "operation_id": "mem-question-dialog-width-20260928",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-question-dialog-width-20260928",
+    "task_id": {
+      "ref": "c96dee61-738f-47bc-a960-f2a9b8f04dfd"
+    }
+  },
+  "deleted": false,
+  "identity": "9c31b8df-eeec-4e5e-96c3-423adc255616",
+  "schemaVersion": 1
+}

@@ -5,7 +5,7 @@
  * always derived from the stored document exactly as the trusted core derives
  * it, and a save through one port is visible through the other.
  */
-import { bundledDefaultWorkflowId, bundledWorkflowTemplates } from "../workbench/bundledWorkflows";
+import { bundledCreationDefaultTemplateId, bundledDefaultWorkflowId, bundledWorkflowTemplates } from "../workbench/bundledWorkflows";
 import type {
   WorkbenchReceipt,
   WorkflowCommit,
@@ -15,6 +15,7 @@ import type {
   WorkflowLibraryPort,
   WorkflowLibrarySnapshot,
   WorkflowRenameCommand,
+  WorkflowSaveAsCommand,
   WorkflowTargetCommand,
 } from "../workbench/corePort";
 import type { WorkflowDocument } from "../workbench/workflow";
@@ -59,15 +60,43 @@ export class WorkflowStore {
       command: WorkflowCreateCommand,
     ): Promise<WorkflowCreateReceipt> => {
       const template = bundledWorkflowTemplates.find(
-        ({ templateId }) => templateId === (command.template ?? ""),
+        ({ templateId }) =>
+          templateId === (command.template ?? bundledCreationDefaultTemplateId),
       );
       if (template === undefined)
         throw new Error(
           `unknown bundled workflow template '${command.template}'`,
         );
+      this.requireUnusedName(command.name);
       const id = `workflow.custom.${(this.customIds += 1)}`;
       this.stored.set(id, {
         document: { ...structuredClone(template.document), id, name: command.name },
+        version: 1,
+        editable: true,
+      });
+      this.libraryVersion += 1;
+      return {
+        commandId: command.commandId,
+        accepted: true,
+        currentVersion: 1,
+        workflowId: id,
+      };
+    },
+    saveAs: async (
+      command: WorkflowSaveAsCommand,
+    ): Promise<WorkflowCreateReceipt> => {
+      this.requireUnusedName(command.name);
+      if (command.document.schemaVersion !== 1)
+        throw new Error(
+          "only schema version 1 workflow documents can be stored as a new workflow",
+        );
+      const id = `workflow.custom.${(this.customIds += 1)}`;
+      this.stored.set(id, {
+        document: {
+          ...structuredClone(command.document),
+          id,
+          name: command.name,
+        },
         version: 1,
         editable: true,
       });
@@ -83,6 +112,7 @@ export class WorkflowStore {
       command: WorkflowRenameCommand,
     ): Promise<WorkflowCreateReceipt> => {
       const source = this.require(command.workflowId);
+      this.requireUnusedName(command.name);
       const id = `workflow.custom.${(this.customIds += 1)}`;
       this.stored.set(id, {
         document: { ...structuredClone(source.document), id, name: command.name },
@@ -113,14 +143,14 @@ export class WorkflowStore {
       };
     },
     remove: async (command: WorkflowTargetCommand): Promise<WorkbenchReceipt> => {
+      if (command.workflowId === this.defaultWorkflowId)
+        throw new Error("the default workflow cannot be deleted");
       if (this.stored.size <= 1)
         throw new Error(
           "at least one workflow must remain in the workflow library",
         );
       this.require(command.workflowId);
       this.stored.delete(command.workflowId);
-      if (this.defaultWorkflowId === command.workflowId)
-        this.defaultWorkflowId = [...this.stored.keys()][0]!;
       this.libraryVersion += 1;
       return {
         commandId: command.commandId,
@@ -187,6 +217,20 @@ export class WorkflowStore {
         `workflow '${workflowId}' does not exist in the workflow library`,
       );
     return entry;
+  }
+
+  /** A workflow name is what every dropdown shows, so it is never shared. */
+  private requireUnusedName(name: string): void {
+    const wanted = name.trim().toLowerCase();
+    if (
+      [...this.stored].some(
+        ([id, entry]) =>
+          displayName(entry.document, id).trim().toLowerCase() === wanted,
+      )
+    )
+      throw new Error(
+        `a workflow named '${name.trim()}' already exists in the workflow library`,
+      );
   }
 }
 

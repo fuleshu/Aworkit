@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-bootstrap-helper/src/protocol/mod.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/error.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/model.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/ports.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/gateway.rs\",\"crates/aworkit-bootstrap-helper/src/protocol/tests.rs\"]",
     "description": "Implement the helper's sole core-facing versioned local protocol with one-use challenges, OS peer and executable identity, bounded DTOs, command deduplication, capability-report digest, accepted-baton hash, and current/candidate/rollback ProcessGeneration fences. Journal bytes before acknowledgement and reject stale, replayed, changed, or illegal-phase commands.",
     "id": 68,
-    "number": 68,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -7,11 +7,13 @@
     "description": "Milestone 10 gate for bounded redacted diagnostic capture and retention, recurring-error and repair-evidence lifecycle integrity, authenticated bounded investigation, artifact readiness and idempotent crash redrive, safe helper-mediated activation/rollback, durable multi-group Management review persistence, exact candidate/version selection, fail-closed native capabilities, accessibility, TypeScript, and production desktop build.",
     "enabled": 1,
     "id": 10,
+    "kind": "unit",
     "name": "Milestone 10 diagnostics and repair review",
     "number": 10,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 900,
     "updated_at": "2026-08-22 09:06:57",

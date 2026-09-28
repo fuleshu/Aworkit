@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-protocol/src/extension.rs\",\"crates/aworkit-local-store/src/extension_inventory.rs\",\"crates/aworkit-trusted-core/src/extensions.rs\",\"crates/aworkit-trusted-core/tests/milestone_09_extensions.rs\",\"crates/aworkit-capability-host/tests/milestone_09_attestation.rs\"]",
     "description": "Implement persisted trusted-extension inventory plus the core registry for manifest identity, content hash, version, compatibility, enablement, contribution identity, and host-generation attestation. Distinguish missing, incompatible, disabled, and drifted requirements and never discover or execute code inside the persistence layer.",
     "id": 56,
-    "number": 56,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

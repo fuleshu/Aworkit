@@ -1,23 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useProjectedNotification } from "../notifications/NotificationContext";
 import { useNotificationMessage } from "../notifications/useNotificationMessage";
-import {
-  bundledCreationDefaultTemplateId,
-  bundledWorkflowTemplates,
-} from "./bundledWorkflows";
 import type { SettingsV2Snapshot } from "./configuration";
 import { createSettingsV2CorePort } from "./settingsV2Port";
 import {
   createWorkflowCorePort,
-  createWorkflowLibraryPort,
   nextWorkbenchCommandId,
   type WorkflowCorePort,
+  type WorkflowCreateReceipt,
   type WorkflowLibraryPort,
   type WorkflowLibrarySnapshot,
   type WorkflowSnapshot,
 } from "./corePort";
 import { WorkflowGraphSurfaceAdapter } from "./graphSurface";
 import { WorkflowLibraryBar } from "./WorkflowLibraryBar";
+import { WorkflowNameDialog } from "./WorkflowNameDialog";
 import { WorkflowPalette } from "./WorkflowPalette";
 import { WorkflowPropertiesPane } from "./WorkflowPropertiesPane";
 import { WorkflowToolbar } from "./WorkflowToolbar";
@@ -61,7 +58,7 @@ interface WorkflowEditorScreenProps {
   readonly document: WorkflowDocument;
   readonly workflowPort?: WorkflowCorePort;
   readonly libraryPort?: WorkflowLibraryPort;
-  /** Native New/Open/Save/Save As file handling; tests inject their own. */
+  /** Native Import/Export file handling; tests inject their own. */
   readonly filePort?: WorkflowFilePort;
   readonly settings?: SettingsV2Snapshot;
   readonly runFacts?: readonly NodeRunFact[];
@@ -70,17 +67,10 @@ interface WorkflowEditorScreenProps {
   readonly onLibraryChange?: () => void;
 }
 
-/**
- * One workflow file belongs to the workflow library entry its document was
- * loaded into, so switching to another workflow can never write one entry's
- * document over another entry's file.
- */
-interface WorkflowFileBinding {
-  readonly workflowId: string | null;
-  readonly path: string;
-}
+/** Which text-input dialog is open: naming a new workflow, or Saving As. */
+type WorkflowNameDialogKind = "new" | "save-as";
 
-/** Lossless visual document editor with standard New/Open/Save/Save As handling. */
+/** Lossless visual document editor for the workflows in the workflow folder. */
 export function WorkflowEditorScreen({
   document,
   workflowPort,
@@ -123,12 +113,11 @@ export function WorkflowEditorScreen({
   const [storedEditable, setStoredEditable] = useState(
     document.schemaVersion === 1,
   );
-  const [storedDocumentId, setStoredDocumentId] = useState<string | null>(
-    typeof document.id === "string" ? document.id : null,
-  );
-  const [fileBinding, setFileBinding] = useState<WorkflowFileBinding | null>(
+  const [nameDialog, setNameDialog] = useState<WorkflowNameDialogKind | null>(
     null,
   );
+  const [nameDialogError, setNameDialogError] = useState<string | null>(null);
+  const [nameDialogBusy, setNameDialogBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingPropertyDraft, setPendingPropertyDraft] = useState(false);
@@ -145,9 +134,6 @@ export function WorkflowEditorScreen({
   const applySnapshot = (snapshot: WorkflowSnapshot): void => {
     setProjectedVersion(snapshot.version);
     setStoredEditable(snapshot.editable);
-    setStoredDocumentId(
-      typeof snapshot.document.id === "string" ? snapshot.document.id : null,
-    );
     setEditor(createSelectedEditor(snapshot.document));
     setSavedFingerprint(serializeWorkflow(snapshot.document));
     setError(null);
@@ -230,19 +216,14 @@ export function WorkflowEditorScreen({
     storedEditable && editor.document.schemaVersion === 1;
   const fingerprint = serializeWorkflow(editor.document);
   const dirty = fingerprint !== savedFingerprint;
-  /** The workflow library entry this editor edits; it is the document identity. */
-  const documentIdentity = activeWorkflowId ?? storedDocumentId;
-  const boundFilePath =
-    fileBinding !== null && fileBinding.workflowId === activeWorkflowId
-      ? fileBinding.path
-      : null;
-  const fileControlsDisabled = saving || fileBusy;
+  /** Every control is unavailable while another workflow operation runs. */
+  const controlsBusy = saving || fileBusy || libraryBusy || nameDialogBusy;
   const saveAsDisabled =
     !documentEditable ||
     saveBlockingIssues.length > 0 ||
     pendingPropertyDraft ||
-    fileControlsDisabled;
-  const notificationScope = `workflow:${activeWorkflowId ?? "draft"}`;
+    controlsBusy;
+  const notificationScope = `workflow:${activeWorkflowId ?? "unloaded"}`;
   useProjectedNotification("Workflows", notificationScope, "error", error === null ? null : {
     route: "workflows", summary: error, detail: "The complete local document remains available for Undo or Save As.", severity: "error", lifetime: { kind: "transient" },
   }, true, errorOccurrence);
@@ -252,13 +233,15 @@ export function WorkflowEditorScreen({
   useProjectedNotification("Workflows", notificationScope, "notice", error !== null || notice === null ? null : {
     route: "workflows", summary: notice, severity: "success", lifetime: { kind: "transient" },
   }, true, noticeOccurrence);
-  useProjectedNotification("Workflows", notificationScope, "saving", !saving && !libraryBusy && !fileBusy ? null : {
+  useProjectedNotification("Workflows", notificationScope, "saving", !saving && !libraryBusy && !fileBusy && !nameDialogBusy ? null : {
     route: "workflows",
     summary: saving
       ? "Saving workflow…"
-      : libraryBusy
-        ? "Updating workflow library…"
-        : "Reading workflow file…",
+      : nameDialogBusy
+        ? "Storing the workflow in the workflow folder…"
+        : libraryBusy
+          ? "Updating the workflow folder…"
+          : "Reading or writing a workflow file…",
     severity: "progress",
     lifetime: { kind: "operation", operationId: retryCommandId ?? "library" },
   });
@@ -329,69 +312,10 @@ export function WorkflowEditorScreen({
   };
 
   /**
-   * Writes one complete document to a file and, once it is written, commits it
-   * through the same core-accepted save the workflow library uses, so a file
-   * never becomes a second source of truth.
-   *
-   * A `"chosen"` path was chosen in this operation (Save As, or Save with no
-   * file bound), so an existing file is replaced only after the user confirmed
-   * it. The file is written before the commit, so declining the replacement
-   * leaves the workflow library unchanged as well. A `"bound"` path is the file
-   * Save already writes, and replacing it is what Save means.
-   *
-   * A library rejection after a successful write is reported as exactly that,
-   * and no path is bound.
+   * Save writes the open workflow back to the same workflow JSON file it was
+   * loaded from: the workflow folder entry this editor edits. It opens no file
+   * dialog, and the active workflow and every dropdown stay as they are.
    */
-  const persistDocument = async (
-    document: WorkflowDocument,
-    path: string,
-    mode: "bound" | "chosen",
-  ): Promise<void> => {
-    if (saving) return;
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const contents = JSON.stringify(document, null, 2);
-      if (mode === "chosen") {
-        const first = await files.writeDocument({
-          path,
-          contents,
-          overwrite: false,
-        });
-        if (first === "exists") {
-          const replace = await files.confirm(
-            "Replace existing workflow file?",
-            `${path} already exists. Replacing it overwrites the workflow document that file holds.`,
-          );
-          if (!replace) {
-            setNotice(
-              `Left ${workflowFileNameFromPath(path)} unchanged; the workflow library was not changed either.`,
-            );
-            return;
-          }
-          await files.writeDocument({ path, contents, overwrite: true });
-        }
-      } else {
-        await files.writeDocument({ path, contents, overwrite: true });
-      }
-      if (!(await commitDocument(document))) return;
-      setSavedFingerprint(serializeWorkflow(document));
-      if (mode === "chosen")
-        setFileBinding({ workflowId: activeWorkflowId, path });
-      setNotice(
-        `Saved ${workflowFileNameFromPath(path)}. The file is a copy: the workflow library remains the one canonical store.`,
-      );
-      await refreshLibraryQuietly();
-    } catch (failure) {
-      setError(
-        `${workflowFileNameFromPath(path)} could not be written: ${failureMessageOf(failure)}`,
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const save = async (): Promise<void> => {
     if (
       saveBlockingIssues.length > 0 ||
@@ -401,100 +325,184 @@ export function WorkflowEditorScreen({
       saving
     )
       return;
-    // Save writes the bound file; with no file bound it is exactly Save As.
-    if (boundFilePath === null) {
-      await saveAs();
-      return;
-    }
-    await persistDocument(editor.document, boundFilePath, "bound");
-  };
-
-  const saveAs = async (): Promise<void> => {
-    if (saveAsDisabled) return;
-    let path: string | null;
-    try {
-      path = await files.chooseSavePath(
-        boundFilePath === null
-          ? suggestedWorkflowFileName(workflowName)
-          : workflowFileNameFromPath(boundFilePath),
-      );
-    } catch (failure) {
-      setError(`Save As failed: ${failureMessageOf(failure)}`);
-      return;
-    }
-    if (path === null) return;
-    await persistDocument(editor.document, path, "chosen");
-  };
-
-  /**
-   * Starts a new workflow document as an unsaved draft. The draft has no bound
-   * file, so its first Save asks for a path, and nothing is stored until the
-   * core accepts it.
-   */
-  const newDocument = async (): Promise<void> => {
-    if (fileControlsDisabled) return;
-    if (dirty && !(await requestDiscard(
-      "Start a new workflow?",
-      `Starting a new workflow discards the unsaved changes of ${workflowName}.`,
-    )))
-      return;
-    const template = bundledWorkflowTemplates.find(
-      ({ templateId }) => templateId === bundledCreationDefaultTemplateId,
-    );
-    if (template === undefined) {
-      setError("No bundled workflow template is available for a new document.");
-      return;
-    }
-    const draft = bindToLibraryIdentity(
-      parseWorkflow(JSON.stringify(template.document)),
-      documentIdentity,
-    );
-    setEditor(createSelectedEditor(draft));
-    setSavedFingerprint(serializeWorkflow(editor.document));
-    setFileBinding(null);
+    setSaving(true);
     setError(null);
-    setNotice(
-      `Started a new ${template.name} draft. It is not stored yet: Save asks for a path and keeps the workflow library canonical.`,
-    );
+    setNotice(null);
+    try {
+      if (!(await commitDocument(editor.document))) return;
+      setSavedFingerprint(serializeWorkflow(editor.document));
+      setNotice(`Saved ${workflowName}.`);
+      await refreshLibraryQuietly();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Opens the one text-input dialog; Save As and New differ in what confirm does. */
+  const openNameDialog = (kind: WorkflowNameDialogKind): void => {
+    if (controlsBusy) return;
+    setNameDialogError(null);
+    setNameDialog(kind);
+  };
+
+  const closeNameDialog = (): void => {
+    if (nameDialogBusy) return;
+    setNameDialog(null);
+    setNameDialogError(null);
   };
 
   /**
-   * Opens one workflow file through the operating system's dialog, parses and
-   * validates it, and activates it only as the core-accepted save accepts it.
-   * An unreadable, unparseable, or unstorable file leaves the editor and the
-   * workflow library exactly as they were.
+   * Stores the entered name in the workflow folder. Save As stores the open
+   * document as a new workflow; New stores a blank one. Either becomes the
+   * active workflow in this editor and appears in every workflow dropdown. A
+   * name another workflow already shows is refused with the dialog still open,
+   * so nothing is overwritten and nothing the user typed is lost.
    */
-  const openDocument = async (): Promise<void> => {
-    if (fileControlsDisabled) return;
-    if (dirty && !(await requestDiscard(
-      "Open another workflow?",
-      `Opening another workflow document discards the unsaved changes of ${workflowName}.`,
-    )))
+  const confirmNameDialog = async (name: string): Promise<void> => {
+    if (libraryPort === undefined || nameDialog === null) return;
+    const kind = nameDialog;
+    setNameDialogBusy(true);
+    setNameDialogError(null);
+    let receipt: WorkflowCreateReceipt;
+    try {
+      receipt =
+        kind === "save-as"
+          ? await libraryPort.saveAs({
+              commandId: nextWorkbenchCommandId("workflow"),
+              name,
+              document: editor.document,
+            })
+          : await libraryPort.create({
+              commandId: nextWorkbenchCommandId("workflow"),
+              name,
+            });
+    } catch (failure) {
+      // The dialog stays open, so the name can be corrected without losing
+      // what was typed, and nothing was stored.
+      setNameDialogError(failureMessageOf(failure));
+      setNameDialogBusy(false);
+      return;
+    }
+    setNameDialog(null);
+    setNameDialogBusy(false);
+    setActiveWorkflowId(receipt.workflowId);
+    setNotice(
+      kind === "save-as"
+        ? `Saved ${name} as a new workflow in the workflow folder.`
+        : `Created the blank workflow ${name} in the workflow folder.`,
+    );
+    // The accepted create opens its workflow even if the follow-up read of the
+    // folder fails; that failure is reported, never silently ignored.
+    await refreshLibraryQuietly();
+  };
+
+  /**
+   * New asks for a name and then creates a blank workflow JSON document in the
+   * workflow folder that becomes the active workflow in this editor.
+   */
+  const newWorkflow = async (): Promise<void> => {
+    if (controlsBusy || !documentEditable) return;
+    if (
+      dirty &&
+      !(await requestDiscard(
+        "Start a new workflow?",
+        `Starting a new workflow discards the unsaved changes of ${workflowName}.`,
+      ))
+    )
+      return;
+    openNameDialog("new");
+  };
+
+  /**
+   * Import reads one workflow document from any location through the operating
+   * system's own file dialog, validates it first, and only then copies it into
+   * the workflow folder as a new workflow that becomes the active one. An
+   * unreadable, unparseable, invalid, or already-taken-name file leaves the
+   * editor, the workflow folder and every dropdown exactly as they were.
+   */
+  const importWorkflow = async (): Promise<void> => {
+    if (controlsBusy || !documentEditable || libraryPort === undefined) return;
+    if (
+      dirty &&
+      !(await requestDiscard(
+        "Import another workflow?",
+        `Importing another workflow discards the unsaved changes of ${workflowName}.`,
+      ))
+    )
       return;
     setFileBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      const path = await files.chooseOpenPath();
+      const path = await files.chooseImportPath();
       if (path === null) return;
       const loaded = await readWorkflowFile(files, path);
       const refusal = storeRefusal(loaded);
       if (refusal !== null) {
-        setError(`Open failed: ${refusal}`);
+        setError(`Import failed: ${refusal}`);
         return;
       }
-      const opened = nameFromFile(
-        bindToLibraryIdentity(loaded, documentIdentity),
-        path,
-      );
-      if (!(await commitDocument(opened))) return;
-      setEditor(createSelectedEditor(opened));
-      setSavedFingerprint(serializeWorkflow(opened));
-      setFileBinding({ workflowId: activeWorkflowId, path });
+      const name = workflowNameOf(loaded, path);
+      const receipt = await libraryPort.saveAs({
+        commandId: nextWorkbenchCommandId("workflow"),
+        name,
+        document: loaded,
+      });
+      setActiveWorkflowId(receipt.workflowId);
       setNotice(
-        `Opened ${workflowFileNameFromPath(path)} and stored it in the workflow library. File operations never install or enable node implementations.`,
+        `Imported ${workflowFileNameFromPath(path)} as ${name} in the workflow folder.`,
       );
       await refreshLibraryQuietly();
     } catch (failure) {
-      setError(`Open failed: ${failureMessageOf(failure)}`);
+      setError(`Import failed: ${failureMessageOf(failure)}`);
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
+  /**
+   * Export writes the open workflow document to any path the user chooses in the
+   * operating system's save dialog. It is a copy: the active workflow, the
+   * workflow folder and every dropdown stay exactly as they were.
+   */
+  const exportWorkflow = async (): Promise<void> => {
+    if (controlsBusy) return;
+    let path: string | null;
+    try {
+      path = await files.chooseExportPath(
+        suggestedWorkflowFileName(workflowName),
+      );
+    } catch (failure) {
+      setError(`Export failed: ${failureMessageOf(failure)}`);
+      return;
+    }
+    if (path === null) return;
+    setFileBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const contents = JSON.stringify(editor.document, null, 2);
+      const first = await files.writeDocument({
+        path,
+        contents,
+        overwrite: false,
+      });
+      if (first === "exists") {
+        const replace = await files.confirm(
+          "Replace existing workflow file?",
+          `${path} already exists. Replacing it overwrites the document that file holds.`,
+        );
+        if (!replace) {
+          setNotice(`Left ${workflowFileNameFromPath(path)} unchanged.`);
+          return;
+        }
+        await files.writeDocument({ path, contents, overwrite: true });
+      }
+      setNotice(
+        `Exported ${workflowName} to ${workflowFileNameFromPath(path)}. The workflow folder is unchanged.`,
+      );
+    } catch (failure) {
+      setError(`Export failed: ${failureMessageOf(failure)}`);
     } finally {
       setFileBusy(false);
     }
@@ -569,47 +577,14 @@ export function WorkflowEditorScreen({
     }
   };
 
-  const createWorkflow = (template: string, name: string): void => {
-    if (libraryPort === undefined) return;
-    setLibraryBusy(true);
-    setLibraryError(null);
-    void libraryPort
-      .create({
-        commandId: nextWorkbenchCommandId("workflow"),
-        name: name.trim(),
-        template,
-      })
-      .then(async (receipt) => {
-        // The accepted create opens its workflow even if the follow-up read of
-        // the library fails; the failure is reported, never silently ignored.
-        setActiveWorkflowId(receipt.workflowId);
-        await refreshLibrary();
-      })
-      .catch((failure: unknown) =>
-        setLibraryError(
-          failure instanceof Error ? failure.message : String(failure),
-        ),
-      )
-      .finally(() => setLibraryBusy(false));
-  };
-
-  const duplicateWorkflow = (workflowId: string, name: string): void => {
-    void runLibraryAction(async () => {
-      const receipt = await libraryPort!.duplicate({
-        commandId: nextWorkbenchCommandId("workflow"),
-        workflowId,
-        name: name.trim(),
-      });
-      setActiveWorkflowId(receipt.workflowId);
-    });
-  };
-
   const deleteWorkflow = (workflowId: string): void => {
     void runLibraryAction(async () => {
       await libraryPort!.remove({
         commandId: nextWorkbenchCommandId("workflow"),
         workflowId,
       });
+      // The deleted workflow was never the default one, so the default is
+      // always a safe document to select next.
       const snapshot = await libraryPort!.snapshot();
       setActiveWorkflowId(snapshot.defaultWorkflowId);
     });
@@ -634,23 +609,24 @@ export function WorkflowEditorScreen({
       className={`workflow-editor ${libraryPort !== undefined ? "with-library" : ""}`}
     >
       <WorkflowToolbar
-        boundFilePath={boundFilePath}
         canRedo={editor.redo.length > 0}
         canUndo={editor.undo.length > 0}
         draftSaved={!dirty}
         editable={documentEditable}
         executable={compatibility.executable}
-        newDisabled={!documentEditable || fileControlsDisabled}
-        newTitle={newDocumentTitle(documentEditable)}
-        openDisabled={!documentEditable || fileControlsDisabled}
-        openTitle={openDocumentTitle(documentEditable)}
+        exportDisabled={controlsBusy}
+        exportTitle={exportTitle(controlsBusy)}
+        importDisabled={!documentEditable || controlsBusy || libraryPort === undefined}
+        importTitle={importTitle(documentEditable, libraryPort !== undefined)}
+        newDisabled={!documentEditable || controlsBusy || libraryPort === undefined}
+        newTitle={newTitle(documentEditable, libraryPort !== undefined)}
         projectedVersion={projectedVersion}
-        saveAsDisabled={saveAsDisabled}
+        saveAsDisabled={saveAsDisabled || libraryPort === undefined}
         saveAsTitle={saveAsTitleFor(
           saveBlockingIssues.length,
           documentEditable,
           pendingPropertyDraft,
-          fileControlsDisabled,
+          controlsBusy || libraryPort === undefined,
         )}
         saveDisabled={
           saving ||
@@ -668,11 +644,12 @@ export function WorkflowEditorScreen({
         saving={saving}
         validationCount={validationCount}
         workflowName={workflowName}
-        onNew={() => void newDocument()}
-        onOpen={() => void openDocument()}
+        onExport={() => void exportWorkflow()}
+        onImport={() => void importWorkflow()}
+        onNew={() => void newWorkflow()}
         onRedo={() => setEditor(redoWorkflow)}
         onSave={() => void save()}
-        onSaveAs={() => void saveAs()}
+        onSaveAs={() => openNameDialog("save-as")}
         onUndo={() => setEditor(undoWorkflow)}
         onValidate={selectValidationResult}
       />
@@ -681,11 +658,27 @@ export function WorkflowEditorScreen({
           activeWorkflowId={activeWorkflowId}
           busy={libraryBusy}
           library={library}
-          onCreate={createWorkflow}
           onDelete={deleteWorkflow}
-          onDuplicate={duplicateWorkflow}
           onSelect={setActiveWorkflowId}
           onSetDefault={setDefaultWorkflow}
+        />
+      )}
+      {nameDialog !== null && (
+        <WorkflowNameDialog
+          busy={nameDialogBusy}
+          confirmLabel={nameDialog === "save-as" ? "Save copy" : "Create"}
+          error={nameDialogError}
+          initialName={nameDialog === "save-as" ? workflowName : undefined}
+          inputLabel={
+            nameDialog === "save-as" ? "Save as workflow name" : "New workflow name"
+          }
+          title={
+            nameDialog === "save-as"
+              ? "Save this workflow under a new name"
+              : "Name the new workflow"
+          }
+          onCancel={closeNameDialog}
+          onConfirm={(name) => void confirmNameDialog(name)}
         />
       )}
       <div className="workflow-body">
@@ -793,28 +786,14 @@ function createSelectedEditor(document: WorkflowDocument) {
 }
 
 /**
- * Rebinds a document loaded from a file or a template to the workflow library
- * entry this editor edits: the core requires a stored document to keep its
- * library identity, and the library stays the one canonical store. Every other
- * field of the loaded document — including unknown nodes, unknown fields,
- * transition positions, and requirement metadata — is kept verbatim.
+ * The name an imported workflow is stored under: a document that carries its own
+ * name keeps it, and a file basename is only the fallback for one that does not.
+ * Nothing in the workflow folder ever depends on the two matching.
  */
-function bindToLibraryIdentity(
-  document: WorkflowDocument,
-  identity: string | null,
-): WorkflowDocument {
-  if (identity === null || document.id === identity) return document;
-  return { ...document, id: identity };
-}
-
-/** A file's basename is only a suggestion for a document that carries no name. */
-function nameFromFile(
-  document: WorkflowDocument,
-  path: string,
-): WorkflowDocument {
+function workflowNameOf(document: WorkflowDocument, path: string): string {
   const name = document.name;
-  if (typeof name === "string" && name.trim() !== "") return document;
-  return { ...document, name: workflowNameFromPath(path) };
+  if (typeof name === "string" && name.trim() !== "") return name.trim();
+  return workflowNameFromPath(path);
 }
 
 /** Reads and parses one chosen file, naming the file in every failure. */
@@ -833,9 +812,9 @@ async function readWorkflowFile(
 }
 
 /**
- * Reasons this build will not store a document in the workflow library. The
- * same rule gates Save, so a file that could never be stored is refused before
- * the editor adopts it instead of being lost on the next library switch.
+ * Reasons this build will not store a document in the workflow folder. The same
+ * rule gates Save, so a file that could never be stored is refused before the
+ * folder adopts it — an invalid import changes nothing at all.
  */
 function storeRefusal(document: WorkflowDocument): string | null {
   if (document.schemaVersion !== 1)
@@ -870,27 +849,36 @@ function saveAsTitleFor(
   blockingIssueCount: number,
   editable: boolean,
   pendingPropertyDraft: boolean,
-  fileControlsDisabled: boolean,
+  unavailable: boolean,
 ): string {
   if (!editable)
     return "This stored or future workflow schema is inspectable but read-only; Save and Save As would overwrite it";
   if (blockingIssueCount > 0)
-    return "Resolve structural validation errors before writing a workflow file";
+    return "Resolve structural validation errors before saving a copy";
   if (pendingPropertyDraft)
-    return "Apply or discard the pending node ID or configuration draft before writing a workflow file";
-  if (fileControlsDisabled)
-    return "A workflow file operation is already in progress";
-  return "Choose a workflow file, write the complete JSON document, and rebind later saves to it";
+    return "Apply or discard the pending node ID or configuration draft before saving a copy";
+  if (unavailable) return "A workflow operation is already in progress";
+  return "Ask for a name and save a copy as a new workflow in the workflow folder";
 }
 
-function newDocumentTitle(editable: boolean): string {
-  return editable
-    ? "Start a new workflow document as an unsaved draft, asking about unsaved changes first"
-    : "This stored or future workflow schema is read-only and cannot be replaced by a new document";
+function newTitle(editable: boolean, libraryAvailable: boolean): string {
+  if (!editable)
+    return "This stored or future workflow schema is read-only and cannot be replaced by a new document";
+  if (!libraryAvailable)
+    return "Creating a workflow needs the native workflow folder";
+  return "Ask for a name and create a blank workflow in the workflow folder, asking about unsaved changes first";
 }
 
-function openDocumentTitle(editable: boolean): string {
-  return editable
-    ? "Open a workflow JSON document through the operating system's own file chooser"
-    : "This stored or future workflow schema is read-only and cannot be replaced by an opened file";
+function importTitle(editable: boolean, libraryAvailable: boolean): string {
+  if (!editable)
+    return "This stored or future workflow schema is read-only and cannot be replaced by an imported file";
+  if (!libraryAvailable)
+    return "Importing a workflow needs the native workflow folder";
+  return "Validate a workflow JSON document chosen in the operating system's own file chooser and copy it into the workflow folder";
+}
+
+function exportTitle(busy: boolean): string {
+  return busy
+    ? "A workflow operation is already in progress"
+    : "Write this workflow JSON document to any location chosen in the operating system's own file chooser";
 }

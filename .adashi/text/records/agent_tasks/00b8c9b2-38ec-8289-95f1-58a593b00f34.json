@@ -10,7 +10,6 @@
     "created_files": "[\"docs/design-extension-standard-agent-v1.md\"]",
     "description": "Native workflow library and generalized v1 executability. Replace the single stored workflow with a catalog of schema-versioned workflow documents (list/create/rename/duplicate/delete/set-default, version-checked commits, lossless preservation). Seed workflow.simple-chat and workflow.standard-agent (input → model_call plan → agent with the full tool set → output → wait) on first open; keep the existing defaultWorkflowId setting honored. Generalize the native validator from the exact 4-node Simple Chat check to the full v1 executable node catalog (node types, typed ports, cycle detection, condition route labels, per-node configuration contracts, tool binding rules including approval classes). The chat start command must accept any saved executable workflow id, freezing the selected document at first input. Keep Simple Chat behavior byte-compatible for existing tests. Output: working catalog CRUD, seeding, generalized validation, chat start by workflow id, and Rust tests.",
     "id": 81,
-    "number": 80,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-workflow-worker/tests/milestone_03.rs\",\"qa/milestone-03.sh\"]",
     "description": "Create automated QA tests for the complete Milestone 03 worker using simulated core and capability ports. Cover graph validation, deterministic traces, context lineage, branch/parallel/for-each/join behavior, nested budgets, routing, retry/fallback/gates, waits and cancellation, checkpoint replacement, no-effect replay, and subagent result isolation.",
     "id": 20,
-    "number": 20,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -1,0 +1,108 @@
+{
+  "comments": "DSH Standard: mirrors the DeepSeek Harness shipped 'standard' agent preset as it behaves by default - a full coding agent with file editing, shell, file and web search, skills, goals, subagents and background jobs, and no plan step. Chat Input -> Agent (all configured native tools) -> Chat Output -> Wait for Input. DSH standard mode does not plan before acting: it starts work immediately, grounding itself with reads and searches, and tracks multi-step work with the todo and goal tools. Use 'Planner Standard' when a plan-first pass is wanted instead. The Agent mirrors DSH's compaction-basic plus tool-result-pruner policy (thresholdChars 81920, headChars 73728, tailChars 4096) so one bounded 64 KiB file read survives pruning intact. Codex and Claude Code delegation are omitted until an enabled external agent exists in Settings (DSH disables those rows by default too).",
+  "schemaVersion": 1,
+  "edges": [
+    {
+      "id": "input-agent",
+      "source": "input.1",
+      "target": "agent.1"
+    },
+    {
+      "id": "agent-output",
+      "source": "agent.1",
+      "target": "output.1"
+    },
+    {
+      "id": "output-wait",
+      "source": "output.1",
+      "target": "wait.1"
+    }
+  ],
+  "id": "workflow.dsh-standard-agent",
+  "name": "DSH Standard",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Chat Input",
+      "position": {
+        "x": 36,
+        "y": 205
+      },
+      "type": "input"
+    },
+    {
+      "configuration": {
+        "compaction": {
+          "auto": true,
+          "headChars": 73728,
+          "pruneToolResults": true,
+          "tailChars": 4096,
+          "thresholdChars": 81920
+        },
+        "instructions": "You are an AI agent powered by Aworkit.\n\nYou are a coding agent powered by the selected model.\n\nYour working directory is the current Chat project workspace.",
+        "modelTierId": "tier:balanced",
+        "reasoningEffort": "high",
+        "toolIds": [
+          "tool.files.read",
+          "tool.files.search",
+          "tool.files.edit",
+          "tool.files.list",
+          "tool.files.grep",
+          "tool.files.write",
+          "tool.shell.host",
+          "tool.python.host",
+          "tool.todo",
+          "tool.goal",
+          "tool.ask_user",
+          "tool.browse",
+          "tool.web_search",
+          "tool.web_fetch",
+          "tool.web_extract",
+          "tool.subagent",
+          "tool.subagent_fork",
+          "tool.subagent_list",
+          "tool.subagent_message",
+          "tool.subagent_cancel",
+          "tool.skill",
+          "tool.workspace_instructions",
+          "tool.context",
+          "tool.image.read",
+          "tool.screenshot",
+          "tool.shell.start",
+          "tool.job.output",
+          "tool.job.input",
+          "tool.job.stop",
+          "tool.job.list",
+          "tool.job.keep",
+          "tool.python.start",
+          "mcp:mcp.f8a8cadbbebf48f1b7adaf0e8098bcbc"
+        ]
+      },
+      "id": "agent.1",
+      "label": "Agent",
+      "position": {
+        "x": 245,
+        "y": 205
+      },
+      "type": "agent"
+    },
+    {
+      "id": "output.1",
+      "label": "Chat Output",
+      "position": {
+        "x": 470,
+        "y": 205
+      },
+      "type": "output"
+    },
+    {
+      "id": "wait.1",
+      "label": "Wait for Input",
+      "position": {
+        "x": 695,
+        "y": 205
+      },
+      "type": "wait"
+    }
+  ]
+}

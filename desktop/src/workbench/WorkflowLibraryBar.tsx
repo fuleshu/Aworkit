@@ -1,53 +1,32 @@
-import { useState } from "react";
-import {
-  bundledCreationDefaultTemplateId,
-  bundledWorkflowTemplates,
-} from "./bundledWorkflows";
-import type {
-  WorkflowLibrarySnapshot,
-} from "./corePort";
+import type { WorkflowLibrarySnapshot } from "./corePort";
 
 interface WorkflowLibraryBarProps {
   readonly library: WorkflowLibrarySnapshot;
   readonly activeWorkflowId: string;
   readonly busy: boolean;
   readonly onSelect: (id: string) => void;
-  readonly onCreate: (template: string, name: string) => void;
-  readonly onDuplicate: (workflowId: string, name: string) => void;
   readonly onDelete: (workflowId: string) => void;
   readonly onSetDefault: (workflowId: string) => void;
 }
 
-const TEMPLATES = bundledWorkflowTemplates.map(({ templateId, name }) => ({
-  value: templateId,
-  label: name,
-}));
-const DEFAULT_TEMPLATE =
-  bundledWorkflowTemplates.find(
-    ({ templateId }) => templateId === bundledCreationDefaultTemplateId,
-  )?.templateId ?? TEMPLATES[0]?.value ?? "";
-
 /**
- * Compact saved-workflow library strip. All mutations cross the versioned
- * native `workflow_library` surface; the active selection is reloaded from the
- * workflow document snapshot by the parent editor.
+ * The saved-workflow strip: choose the workflow to edit, delete it, or make it
+ * the profile default.
  *
- * This strip has no Rename control: the workflow's own Name property is the
- * display name, and a save that changed it renames the stored entry.
+ * The dropdown lists exactly the workflows the Aworkit workflow folder holds, so
+ * every surface that names a workflow — this strip, the Chat workflow selector,
+ * the editor title — is looking at the same list. Delete removes the workflow's
+ * JSON document from that folder; the default workflow is never deleted.
  */
 export function WorkflowLibraryBar({
   library,
   activeWorkflowId,
   busy,
   onSelect,
-  onCreate,
-  onDuplicate,
   onDelete,
   onSetDefault,
 }: WorkflowLibraryBarProps): React.JSX.Element {
   const active = library.entries.find((entry) => entry.id === activeWorkflowId);
-  const [template, setTemplate] = useState<string>(DEFAULT_TEMPLATE);
-  const [name, setName] = useState("");
   return (
     <section className="workflow-library-bar" aria-label="Workflow library">
       <label>
@@ -66,54 +45,13 @@ export function WorkflowLibraryBar({
           ))}
         </select>
       </label>
-      <label>
-        New from
-        <select
-          disabled={busy}
-          title="Choose the template for a new workflow"
-          value={template}
-          onChange={(event) => setTemplate(event.target.value)}
-        >
-          {TEMPLATES.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Name
-        <input
-          disabled={busy}
-          placeholder="Workflow name"
-          title="Name used by Create and Duplicate; the Name property renames a saved workflow"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </label>
-      <button
-        disabled={busy || name.trim() === ""}
-        title="Create a new workflow from the selected template"
-        type="button"
-        onClick={() => onCreate(template, name)}
-      >
-        Create
-      </button>
-      <button
-        disabled={busy || active === undefined}
-        title="Duplicate the active workflow under the entered name"
-        type="button"
-        onClick={() => onDuplicate(activeWorkflowId, name || `${active?.name ?? "Workflow"} copy`)}
-      >
-        Duplicate
-      </button>
       <button
         className="danger-action"
-        disabled={busy || active === undefined || active.default || library.entries.length <= 1}
+        disabled={busy || active === undefined || active.default}
         title={
           active?.default
             ? "The default workflow cannot be deleted"
-            : "Delete the active workflow"
+            : "Delete the active workflow and its workflow JSON file"
         }
         type="button"
         onClick={() => onDelete(activeWorkflowId)}

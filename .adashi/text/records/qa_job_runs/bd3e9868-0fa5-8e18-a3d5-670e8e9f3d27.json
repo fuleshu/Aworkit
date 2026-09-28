@@ -6,6 +6,7 @@
     "exit_code": 0,
     "finished_at": "2026-08-25 18:01:24",
     "id": 58,
+    "lease_expires_at": null,
     "output": {
       "lines": [
         "== Build the actual Aworkit desktop application ==\n",

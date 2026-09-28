@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/secrets/native.rs\",\"crates/aworkit-trusted-core/tests/milestone_12_native.rs\"]",
     "description": "Implement PlatformCredentialStorePort on Windows, macOS, and Linux with opaque reference creation, retrieval only for approved lease issuance, update/delete, locked or unavailable states, access-control validation, and zeroization. Provide conformance behavior without introducing plaintext fallbacks, configuration-file secrets, log exposure, or transferable authority.",
     "id": 76,
-    "number": 76,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

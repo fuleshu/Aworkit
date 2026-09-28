@@ -7,11 +7,13 @@
     "description": "Complete Milestone 07 desktop gate: pre-reveal core-projected appearance, exact light/dark tokens, contrast/accessibility and 200% scale, persistent responsive pane geometry and keyboard/focus behavior, ordered projection gap recovery, versioned Settings drafts and capability/authority resolution, lossless workflow JSON/transactions/unknown fields, React Flow typed ports/cycles/groups/drag-drop/culling, production browser visual conformance, and a fresh Tauri binary build/smoke.",
     "enabled": 1,
     "id": 7,
+    "kind": "unit",
     "name": "Milestone 07 desktop workbench and workflow editor",
     "number": 7,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 900,
     "updated_at": "2026-08-21 20:27:50",

@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/recovery.rs\"]",
     "description": "Implement the core recovery coordinator over explicit canonical-history, operational-journal, delivery-outbox, and process-generation ports, and complete its LocalSqlite path. Rebuild aggregates by folding committed events and start replacement workers from validated checkpoints without replaying effects. The exact PortableProject adapter and reconciliation rules are added in M06.",
     "id": 26,
-    "number": 26,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

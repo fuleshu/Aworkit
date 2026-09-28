@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement the tool.subagent delegation tool: the model delegates a bounded subtask to a fresh child agent run with an isolated context (task prompt plus a bounded relevant-context slice), a restricted read-only tool subset (read/search/list/grep/web_search/web_fetch/todo), a small turn budget (default 4, max 8), no approval tools, and its own usage accounting charged to the parent run. The child runs through the same frozen model gateway and durable broker; its activity commits as subagent.started/subagent.completed(subagent.failed) events and renders as a collapsible timeline card; the final text returns to the parent model loop as the tool result. Depth is capped (no nested subagents in v1), deadlines are enforced, and uncertain child outcomes are never silently retried. Output: working delegation with Rust integration tests (result return, budget exhaustion, deadline, denied tools, failure propagation).",
     "id": 84,
-    "number": 83,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

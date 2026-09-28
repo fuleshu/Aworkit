@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "id": "workflow.dsh-standard-plan-review",
+  "name": "DSH Standard (Plan review)",
+  "comments": "DSH Standard with a plan-review gate: Chat Input -> Plan -> Approve plan -> Agent (all configured native tools) -> Chat Output -> Wait for Input. The plan model call's structured plan is shown on the approval card, and approving lets the agent execute it; rejecting stops the pass. The frozen tool catalog is identical during planning and execution.",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Chat Input",
+      "type": "input",
+      "position": {
+        "x": 36,
+        "y": 205
+      }
+    },
+    {
+      "id": "plan.1",
+      "label": "Plan",
+      "type": "model_call",
+      "position": {
+        "x": 245,
+        "y": 205
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "instructions": "You are planning the request that follows; produce the plan, do not execute it. Imperative language to implement changes means plan the implementation, not carry it out. A user's conversational agreement approves nothing by itself; fold any confirmed decision into the plan. This step cannot call tools: the downstream Agent performs every read, search, static analysis, and check.\n\nGround the plan in the actual repository: name the files, symbols, and evidence the Agent must inspect, and state what each step should verify. Never assume a file, API, or command output. Prefer existing functions and patterns over new machinery, and keep the change inside the requested scope.\n\nThe tool catalog is identical during planning and execution for request-cache stability, and this step calls none of it. Do not use the task list to track this planning phase: it tracks implementation after the plan is accepted, while the plan itself is this step's output.\n\nAsk the user only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask where code lives or how current behavior works; the Agent can find out.\n\nMake the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.\n\nWhen ready, return the plan in the structured form this step requires: it is presented for approval, and implementation begins only in a later step after approval. Name only tools that the downstream Agent actually has, taken from the tool inventory supplied with this request.",
+        "outputContract": "plan",
+        "maximumTokens": 2048
+      }
+    },
+    {
+      "id": "approval.1",
+      "label": "Approve plan",
+      "type": "approval",
+      "position": {
+        "x": 425,
+        "y": 205
+      },
+      "configuration": {
+        "title": "Approve plan",
+        "message": "Review the plan, then approve to let the agent execute it."
+      }
+    },
+    {
+      "id": "agent.1",
+      "label": "Agent",
+      "type": "agent",
+      "position": {
+        "x": 640,
+        "y": 205
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "toolIds": [
+          "tool.files.read",
+          "tool.files.search",
+          "tool.files.edit",
+          "tool.files.list",
+          "tool.files.grep",
+          "tool.files.write",
+          "tool.shell.host",
+          "tool.python.host",
+          "tool.todo",
+          "tool.goal",
+          "tool.ask_user",
+          "tool.browse",
+          "tool.web_search",
+          "tool.web_fetch",
+          "tool.web_extract",
+          "tool.subagent",
+          "tool.subagent_fork",
+          "tool.subagent_list",
+          "tool.subagent_message",
+          "tool.subagent_cancel",
+          "tool.skill",
+          "tool.workspace_instructions",
+          "tool.context",
+          "tool.image.read",
+          "tool.screenshot",
+          "tool.shell.start",
+          "tool.job.output",
+          "tool.job.input",
+          "tool.job.stop",
+          "tool.job.list",
+          "tool.job.keep",
+          "tool.python.start"
+        ],
+        "instructions": "You are a coding agent powered by the selected model.\n\nYour working directory is the current Chat project workspace.",
+        "compaction": {
+          "auto": true,
+          "pruneToolResults": true,
+          "thresholdChars": 81920,
+          "headChars": 73728,
+          "tailChars": 4096
+        }
+      }
+    },
+    {
+      "id": "output.1",
+      "label": "Chat Output",
+      "type": "output",
+      "position": {
+        "x": 860,
+        "y": 205
+      }
+    },
+    {
+      "id": "wait.1",
+      "label": "Wait for Input",
+      "type": "wait",
+      "position": {
+        "x": 1065,
+        "y": 205
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "input-plan",
+      "source": "input.1",
+      "target": "plan.1"
+    },
+    {
+      "id": "plan-approval",
+      "source": "plan.1",
+      "target": "approval.1"
+    },
+    {
+      "id": "approval-agent",
+      "source": "approval.1",
+      "target": "agent.1"
+    },
+    {
+      "id": "agent-output",
+      "source": "agent.1",
+      "target": "output.1"
+    },
+    {
+      "id": "output-wait",
+      "source": "output.1",
+      "target": "wait.1"
+    }
+  ]
+}

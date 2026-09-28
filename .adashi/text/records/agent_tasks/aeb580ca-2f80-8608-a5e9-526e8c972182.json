@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src/chat/evidence.ts\"]",
     "description": "Implement stable evidence selection, summary/detail queries, pagination, filters, redacted JSON inspection, provenance, usage/cost, routing, approvals, artifacts, retries, opacity, retention, and debug-capture availability. Missing, expired, unsupported, redacted, or source-opaque evidence must remain explicit and never be inferred.",
     "id": 54,
-    "number": 54,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

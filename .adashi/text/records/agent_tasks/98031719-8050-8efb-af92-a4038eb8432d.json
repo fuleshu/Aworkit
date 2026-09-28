@@ -10,7 +10,6 @@
     "created_files": "[\"qa/standard-agent-functional.sh\"]",
     "description": "End-to-end functional QA gate for the standard agent workflow goal. Verify the complete user story: the workflow editor opens the seeded Standard Agent workflow (input → model_call plan → agent with tools → output → wait), edits are typed and validated (ports, conditions, cycles), the library CRUD and default selection work, Run starts a Chat frozen to the edited workflow, the chat executes the graph with per-node status visible in the editor, the agent loop uses read/search/list/grep/todo/web_search/web_fetch without approvals, edit/write/shell/python/subagent pause the Run with an approval card and resume on the user decision, subagent and MCP cards render, and results are committed to durable history with no effect replay. Gates: cargo workspace warnings-denied tests, frontend typecheck + Vitest, Vite build, existing milestone QA scripts, a new qa/standard-agent-functional.sh gate, and native smoke. Report every failing gate; do not mark complete until the goal is demonstrably functional end to end with no demo components.",
     "id": 87,
-    "number": 86,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

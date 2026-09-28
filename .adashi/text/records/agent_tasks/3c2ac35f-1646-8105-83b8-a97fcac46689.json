@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Create automated QA tests for the complete Milestone 06 result. Cover canonical golden bytes, export omissions, filesystem escape attacks, immutable-object corruption, every prepare/journal/head/finalize crash point, branch conflicts, exact same-installation restart, missing or stale journals, hostile imports, fresh child rebinding, projection invalidation, and guarded orphan collection.",
     "id": 43,
-    "number": 43,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

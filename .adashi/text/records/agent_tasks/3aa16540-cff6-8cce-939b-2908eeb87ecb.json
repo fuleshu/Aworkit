@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-workflow-worker/src/suspension.rs\"]",
     "description": "Implement exact-position suspension for input, approval, pause, cancellation, and controlled quiescence plus logical checkpoint proposals and replacement-generation rehydration behind an abstract trusted-core port. Resume only from the frozen snapshot, a core-validated checkpoint, and committed cursor; completed effects must never be replayed. Concrete process IPC is implemented in M04.5.",
     "id": 18,
-    "number": 18,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

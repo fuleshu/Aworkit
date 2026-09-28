@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "2026-09-28, follow-up to task 150 (finished): the ask-question dialog is 780px wide, declared in desktop/src/chat/question.css as `.workbench-dialog.question-dialog { max-width: 780px }` — 1.5x the 520px task 150 specified, and 1.77x the 440px it actually rendered at. 660px was the first pass (1.5x of the on-screen 440px); review judged it still too narrow and the user confirmed 780px as correct on 2026-09-28. Cascade trap worth keeping: the base `.workbench-dialog` rule (max-width 440px, width calc(100% - 32px)) is bundled after question.css, so a one-class override loses the tie — name both classes. Verified 780px at a 1400px viewport and 528px at 560px, no overflow; tsc clean, 230 chat tests pass. The app embeds dist at compile time (devUrl is null), so a width change needs a frontend build plus a release rebuild before a restart shows it. This note corrects and supersedes question-dialog-width-20260928, which recorded 660px.",
+    "created_at": "2026-09-28 16:07:49",
+    "id": 5220464451,
+    "note_id": "question-dialog-width-780-20260928",
+    "operation_id": "mem-question-dialog-width-780-20260928",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-question-dialog-width-780-20260928",
+    "task_id": {
+      "ref": "c96dee61-738f-47bc-a960-f2a9b8f04dfd"
+    }
+  },
+  "deleted": false,
+  "identity": "f8543873-1259-411f-bac4-d61e14f0bab4",
+  "schemaVersion": 1
+}

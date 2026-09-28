@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-capability-host/src/plugin/mod.rs\",\"crates/aworkit-capability-host/src/plugin/manifest.rs\",\"crates/aworkit-capability-host/src/plugin/protocol.rs\",\"crates/aworkit-capability-host/src/plugin/lifecycle.rs\",\"crates/aworkit-capability-host/src/plugin/process.rs\",\"crates/aworkit-capability-host/tests/milestone_09_plugin.rs\",\"crates/aworkit-capability-host/tests/fixtures/plugin_protocol_fixture.py\"]",
     "description": "Implement parse-before-execution manifests and the language-neutral trusted plugin subprocess protocol for explicitly enabled, compatible, exact-version contributions. Add bounded handshake, invocation, health, crash, restart, disable, update/drift handling, and truthful disclosure that same-user trusted plugins are not security sandboxes.",
     "id": 58,
-    "number": 58,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

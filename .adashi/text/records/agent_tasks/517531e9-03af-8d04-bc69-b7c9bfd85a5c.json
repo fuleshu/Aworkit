@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/tool_loop/jobs.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs\",\"desktop/src-tauri/src/runtime/tool_loop/jobs/tests.rs\",\"docs/shell-jobs.md\"]",
     "description": "Implement shell_start, job_output, job_input, job_stop, job_list and approval-protected job_keep; ordinary shell yields into the shared engine. Persist job identity/state/output cursors and recover without replay. Enforce owner isolation, normal authorization, projectless execution, capacity and shutdown cleanup. Exclude Adashi QA.",
     "id": 91,
-    "number": 90,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

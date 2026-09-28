@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/history/stream_cache.rs\",\"desktop/src-tauri/src/runtime/record_cache.rs\",\"desktop/scripts/native-continuation-performance.mjs\",\"desktop/scripts/seed-continuation-history.py\",\"desktop/scripts/measure-continuation-history.py\",\"docs/context-continuation-performance.md\"]",
     "description": "Remove repeated decoding/copying of Chat history and whole operational stream scans. Preserve durable evidence, owner isolation, Stop/restart recovery, context edits and compaction. Audit provider prompt prefix stability and cache usage. Verify release tool completion to HTTP model request below one second with the affected large Chat fixture; keep live user history untouched. Design document: docs/context-continuation-performance.md.",
     "id": 95,
-    "number": 94,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

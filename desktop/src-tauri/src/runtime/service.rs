@@ -51,6 +51,7 @@ use super::{
         ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
         SettingsV2CommitInput, SettingsV2Snapshot, UiCommandInput, UiCommandReceipt,
         WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
+        WorkflowSaveAsInput,
         WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
     },
     extension_registration::{register_extension_installation_v2, verify_registered_extension_v2},
@@ -3495,6 +3496,34 @@ impl DesktopRuntime {
         let (workflow_id, version) = self
             .documents
             .create_workflow(&input.name, input.template.as_deref())?;
+        let receipt = WorkflowCreateReceipt {
+            command_id: input.command_id.clone(),
+            accepted: true,
+            current_version: version,
+            workflow_id,
+        };
+        self.processed.insert(
+            input.command_id,
+            ProcessedCommand {
+                fingerprint,
+                receipt: create_receipt_into_ui(&receipt),
+            },
+        );
+        Ok(receipt)
+    }
+
+    pub fn workflow_save_as(
+        &mut self,
+        input: WorkflowSaveAsInput,
+    ) -> Result<WorkflowCreateReceipt, String> {
+        validate_command_id(&input.command_id)?;
+        let fingerprint = command_fingerprint(&input)?;
+        if let Some(processed) = self.processed.get(&input.command_id) {
+            return replay_create_receipt(processed, &fingerprint);
+        }
+        let (workflow_id, version) = self
+            .documents
+            .save_workflow_as(&input.name, input.document)?;
         let receipt = WorkflowCreateReceipt {
             command_id: input.command_id.clone(),
             accepted: true,

@@ -6,6 +6,7 @@
     "exit_code": 0,
     "finished_at": "2026-09-27 17:28:00",
     "id": 60,
+    "lease_expires_at": null,
     "output": {
       "lines": [
         "\n",

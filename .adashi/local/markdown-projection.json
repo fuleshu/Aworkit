@@ -1,3 +1,18 @@
 {
-  "files": {}
+  "files": {
+    "docs/adashi/agent-workflow.md": "1e925d4aa63795dad875b3a381cae9907aa76742e48cafeb29f21b72a8d1682d",
+    "docs/adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md": "324f6d28ff5a4077a17314acb1d15326ed7885dd52748d3c4f93960e0d28b88f",
+    "docs/adashi/design-42db389a49359edcd960831556a927367d75f04df00e4586d24baa9f92481a2f.md": "8d1cdc03f8daa8c183d9da56e8904d858404c98b9a2e9cbf64305248b5bbf85d",
+    "docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md": "578613e4f772d022daa455fc67d86b73198b46d657901bb504b1c1eb0c477732",
+    "docs/adashi/design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md": "169154f2a32b5e1023235274193bc21293ad80c444827f9f8d236c39032071ce",
+    "docs/adashi/index.md": "ba486f0705499711c219c2be1c0d3bc1d5cf40bcb8b9886df7f72a17cffc5215",
+    "docs/adashi/skills/design-authoring.md": "8dea4625e202d5b0e7497c730d4832aced0543a961d30932999e0693974a1af1",
+    "docs/adashi/skills/index.md": "a2765e4fcfd5b7cb62e53e5b412abca10123533fd1ba75cc6e45f3d7e373a6fa",
+    "docs/adashi/skills/markdown-documents.md": "87e8c586a81dd89fa9f9c4c25f460b5beeed19da3901cb9ba975e85ba7a2f9b0",
+    "docs/adashi/skills/memory.md": "320b04a1185f371ee697a410c9f3e3bc4419de8962f8806c491902157b383fe1",
+    "docs/adashi/skills/qa-jobs.md": "23599cdfa0fddf412f368e3dc459b778ca6c57db20b2ebda2d67b96fa43dace1",
+    "docs/adashi/skills/retrieval.md": "8c974ce820b13cbe49d4c7ab5a945553476d597191a1232951a9ca6066d1d95f",
+    "docs/adashi/skills/task-workflow.md": "c81d395183b845652b977e9c59b89978bb392f38af2a44dbcda7d5fe72678a28",
+    "docs/adashi/skills/write-recovery.md": "cd64bd3a4ea09ae0ddbe665ae21b745009a44625c1259cf5dd31708c2ed31d38"
+  }
 }

@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/broker.rs\"]",
     "description": "Implement the sole worker-proposal-to-host-dispatch path: evaluate frozen authority and approval, durably stage an approved invocation and lease, dispatch through the supervised host, commit progress/evidence/outcome, and deliver only committed results to the worker. Preserve uncertain-effect state and forbid automatic replay.",
     "id": 34,
-    "number": 34,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

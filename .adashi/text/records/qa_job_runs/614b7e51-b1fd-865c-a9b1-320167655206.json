@@ -6,6 +6,7 @@
     "exit_code": 1,
     "finished_at": "2026-08-23 11:14:44",
     "id": 47,
+    "lease_expires_at": null,
     "output": {
       "lines": [
         "Diff in /home/timofl/src/Aworkit/crates/aworkit-bootstrap-helper/src/profile/native.rs:62:\n",

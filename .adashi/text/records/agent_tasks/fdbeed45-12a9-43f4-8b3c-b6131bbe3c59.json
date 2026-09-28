@@ -2,7 +2,7 @@
   "collection": "agent_tasks",
   "data": {
     "changed_files": "[]",
-    "completed_at": null,
+    "completed_at": "2026-09-28 10:22:22",
     "completion_memo": "",
     "confirmation_commit_id": null,
     "confirmed_at": null,
@@ -46,13 +46,12 @@
       ]
     },
     "id": 152,
-    "number": 151,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "active",
+    "state": "closed",
     "title": "Rework Workflow designer file handling: New / Open / Save / Save As instead of Import JSON / Export / Run",
-    "updated_at": "2026-09-27 18:03:53"
+    "updated_at": "2026-09-28 10:22:29"
   },
   "deleted": false,
   "identity": "fdbeed45-12a9-43f4-8b3c-b6131bbe3c59",

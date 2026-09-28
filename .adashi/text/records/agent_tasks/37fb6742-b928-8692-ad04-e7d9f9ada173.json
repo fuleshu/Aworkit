@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/mcp_tools.rs\"]",
     "description": "Wire MCP tools into the agent loop for enabled, core-attested MCP servers: at freeze, open bounded sessions for the workflow's enabled MCP servers and register their tool definitions as mcp://<server>/<tool> names with declared schemas; model calls to MCP tools settle through the durable broker (approval-free, bounded inputs/outputs, session-scoped cancellation) and activity renders as mcp timeline cards with evidence. Sessions are frozen per Run (no hot replacement), failures fail that call without crashing the loop, and no secret values enter the model loop or history. Output: working MCP tool execution in chat with Rust integration tests (tool listing, call, failure, bounds).",
     "id": 85,
-    "number": 84,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

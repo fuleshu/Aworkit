@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { render } from "../test/renderWithNotifications";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bundledDefaultWorkflowId,
   bundledWorkflowTemplates,
@@ -13,6 +13,13 @@ import { WorkflowFileDouble } from "../test/workflowFileDouble";
 import { WorkflowStore } from "../test/workflowLibraryStore";
 
 afterEach(cleanup);
+
+// jsdom does not run a real modal, so the dialog only has to be visible.
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function showModal() {
+    this.setAttribute("open", "");
+  };
+});
 
 /** Library dropdown labels without the default marker the bar appends. */
 function optionLabels(bar: HTMLElement): readonly string[] {
@@ -26,30 +33,32 @@ const starterName =
     ({ workflowId }) => workflowId === bundledDefaultWorkflowId,
   )?.name ?? "";
 
+/** Creates a workflow through the same New dialog the user sees. */
+async function createWorkflow(name: string): Promise<void> {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.type(screen.getByRole("textbox", { name: "New workflow name" }), name);
+  await user.click(screen.getByRole("button", { name: "Create" }));
+}
+
 describe("saved-workflow library projection", () => {
-  it("names the library dropdown from stored documents after create and a saved name change", async () => {
+  it("names the library dropdown from stored documents after New and a saved name change", async () => {
     const user = userEvent.setup();
     const store = new WorkflowStore();
-    const files = new WorkflowFileDouble();
-    files.savePath = "/tmp/saved-name.aworkit.json";
     render(
       <WorkflowEditorScreen
         document={bundledWorkflowTemplates[0]!.document}
-        filePort={files}
+        filePort={new WorkflowFileDouble()}
         libraryPort={store.libraryPort}
         workflowPort={store.documentPort}
       />,
     );
     const bar = await screen.findByRole("region", { name: "Workflow library" });
-    const name = within(bar).getByPlaceholderText("Workflow name");
     await screen.findByRole("heading", { name: starterName });
 
-    // Creating from a template adds a selectable entry immediately.
-    await user.type(name, "Research Agent");
-    await user.click(within(bar).getByRole("button", { name: "Create" }));
-    await waitFor(() =>
-      expect(optionLabels(bar)).toContain("Research Agent"),
-    );
+    // New stores a workflow in the folder and lists it immediately.
+    await createWorkflow("Research Agent");
+    await waitFor(() => expect(optionLabels(bar)).toContain("Research Agent"));
     await screen.findByRole("heading", { name: "Research Agent" });
 
     // This strip has no Rename control: the workflow's own Name property
@@ -66,12 +75,10 @@ describe("saved-workflow library projection", () => {
   it("keeps unsaved edits usable while the Name property renames the workflow", async () => {
     const user = userEvent.setup();
     const store = new WorkflowStore();
-    const files = new WorkflowFileDouble();
-    files.savePath = "/tmp/renamed-under-edit.aworkit.json";
     render(
       <WorkflowEditorScreen
         document={bundledWorkflowTemplates[0]!.document}
-        filePort={files}
+        filePort={new WorkflowFileDouble()}
         libraryPort={store.libraryPort}
         workflowPort={store.documentPort}
       />,
@@ -107,14 +114,13 @@ describe("saved-workflow library projection", () => {
   });
 
   it("keeps the last library projection when the store accepts but reread fails", async () => {
-    const user = userEvent.setup();
     const store = new WorkflowStore();
     const flaky: WorkflowLibraryPort = {
       ...store.libraryPort,
       snapshot: async () => {
         const snapshot = await store.libraryPort.snapshot();
         if (snapshot.entries.length > 2)
-          throw new Error("the workflow library is temporarily unavailable");
+          throw new Error("the workflow folder is temporarily unavailable");
         return snapshot;
       },
     };
@@ -127,12 +133,11 @@ describe("saved-workflow library projection", () => {
     );
     const bar = await screen.findByRole("region", { name: "Workflow library" });
     expect(optionLabels(bar)).toHaveLength(2);
-    await user.type(
-      within(bar).getByPlaceholderText("Workflow name"),
-      "Research Agent",
-    );
-    await user.click(within(bar).getByRole("button", { name: "Create" }));
-    // The accepted create stands even though the follow-up read failed.
+
+    await createWorkflow("Research Agent");
+
+    // The accepted create stands even though the follow-up read failed: the
+    // stale projection is kept and the failure is reported instead of hidden.
     expect(optionLabels(bar)).toHaveLength(2);
     await screen.findByRole("heading", { name: "Research Agent" });
   });

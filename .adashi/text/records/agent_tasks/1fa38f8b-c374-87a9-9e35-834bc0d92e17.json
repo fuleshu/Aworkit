@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/approvals/permission_identity.rs\",\"desktop/src-tauri/src/runtime/approvals/permission_migration.rs\",\"desktop/src-tauri/src/runtime/approvals/permission_migration_tests.rs\"]",
     "description": "Third implementation step. Version execution-relevant permission identity; descriptions/instructions do not invalidate grants. Recover extant compatible grants using trusted stored binding evidence; preserve revocation, project isolation and fail-closed behavior on authority changes. Native upgrade proof must show zero reviewer calls for existing compatible grants. Design: docs/approval-cache-accounting.md.",
     "id": 99,
-    "number": 98,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

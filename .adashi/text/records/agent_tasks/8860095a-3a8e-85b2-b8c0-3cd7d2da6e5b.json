@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/lifecycle.rs\"]",
     "description": "Implement the event-sourced one-Chat/one-Run lifecycle with legal commands and transitions for creation, first-input start, queued input, attempts, waits, approvals, pause, cancellation, retry, fork, continuation, and terminal inspection. Frozen workflow, binding, and authority identity must remain immutable after start.",
     "id": 23,
-    "number": 23,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

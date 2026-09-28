@@ -33,17 +33,18 @@
         "2. Production Run MCP calls get a multi-minute request ceiling (600 s) instead of 30 s, so an ordinary QA script finishes inside the call; a longer call is still reported and the session recovers on the next call. The one-shot discovery probe keeps its short bound.\n",
         "3. A typed reconnect command: McpToolRuntimeV1::reconnect reconnects the degraded sessions for one server across every live Run, McpSessionManager::is_degraded reports the state, the pipeline port exposes it, and the Settings probe path calls it so the Settings reconnect button recovers a live Chat.\n",
         "\n",
-        "Acceptance: a degraded session is reconnected before the next call and the call succeeds; an explicit reconnect recovers a degraded session once and is a no-op on a healthy one; the production request timeout is not a 30 s bound; full desktop lib suite and capability-host tests green."
+        "Acceptance: a degraded session is reconnected before the next call and the call succeeds; an explicit reconnect recovers a degraded session once and is a no-op on a healthy one; the production request timeout is not a 30 s bound; full desktop lib suite and capability-host tests green.\n",
+        "\n",
+        "Follow-up 2026-09-28 (user report: the MCP connection is broken again after an app restart) — a second, sibling gap, not a regression of this fix. A question answered in a new application generation resumed the pass without reconnecting the Chat's frozen MCP endpoints, so the resumed Run had no transport peer at all and every mcp:// call failed with \"no MCP transport peer is installed for this application generation\" (McpToolRuntimeV1::open_frozen) until a fresh turn rebuilt its request — the same user-visible shape this task fixed for approvals, one resume path over. Evidence: chat.4ccbad85039605676f9060e84667061d69959311 spans 3021-3115 (2026-09-28 17:46:16-17:46:53) failed in the turn started right after the 17:37:59 app start and immediately after a question answer, while the next fresh turn at 17:49 succeeded; the Chat's frozen context carried one MCP configuration and one manifest, so a reconnect would have prepared the transport. Fix: DesktopRuntime::complete_question now calls self.restore_frozen_mcp(&frozen.context) before staging the answer, mirroring complete_approval's reconnect for a persisted decision in a new generation (\"A persisted approval may be resolved in a new app generation\"). Coverage: service::tests::question::answering_a_question_reconnects_the_chats_frozen_mcp_endpoints fails without that call and passes with it; cargo test --lib (505 passed, 0 failed). Validated live: after restarting the app on the rebuilt binary, an MCP write issued on the question-resume path succeeded. Disclosed gap left in place: a denied approval still resumes without the reconnect, because complete_approval gates its call on `approved`."
       ]
     },
     "id": 156,
-    "number": 155,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Recover a degraded MCP session instead of requiring an application restart",
-    "updated_at": "2026-09-28 08:11:23"
+    "updated_at": "2026-09-28 17:27:12"
   },
   "deleted": false,
   "identity": "ff7476fa-0fc0-4812-9b0b-842378a3a130",

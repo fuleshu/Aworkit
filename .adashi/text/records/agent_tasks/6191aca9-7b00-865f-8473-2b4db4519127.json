@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement the persistent desktop navigation order, routing, resizable/collapsible panes, inspector drawer breakpoints, shortcuts, connection/stale banners, and focus restoration to the accepted geometry. Define the narrow Aworkit native-presentation port and accessible in-workbench fallbacks for menus, dialogs, and notifications; native OS bindings are owned by M12.4.",
     "id": 46,
-    "number": 46,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

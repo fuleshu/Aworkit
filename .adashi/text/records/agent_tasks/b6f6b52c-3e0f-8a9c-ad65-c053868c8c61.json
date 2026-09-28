@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-local-store/src/ledger.rs\"]",
     "description": "Implement the LocalSqlite semantic Chat/Run ledger and LocalHistoryCommitPort transaction. A commit must atomically enforce the expected stream head and persist semantic events, attempt/head state, optional checkpoint, command and invocation deduplication, and delivery outbox rows before acknowledgement.",
     "id": 10,
-    "number": 10,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

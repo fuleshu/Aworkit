@@ -1,111 +1,21 @@
-# Adashi Rule Injection
+# Project instructions
 
-This workspace is configured as an Adashi project. Adashi holds the project's formal design, its memory, its tasks and its rules, and exposes them to you over MCP. Follow this file as the project's standing workflow. Do not spend time weighing whether Adashi is present or worth consulting: calling `adashi_rules` settles that faster than reasoning about it does.
+This project uses Adashi. Read `docs/adashi/agent-workflow.md` before starting work; it carries the
+lifecycle hooks and write discipline and indexes the on-demand skills. Read a skill with
+`adashi_help` (`skill` = `design-authoring`, `markdown-documents`, `task-workflow`, `qa-jobs`,
+`retrieval`, `memory`, `write-recovery`) when the work matches it. If the Adashi MCP server is not
+available, the same skills are mirrored under `docs/adashi/skills/`.
 
-Before starting work on a user request, classify the request intend as exactly one of:
+Project-specific rules for this repository go here; Adashi preserves everything outside its managed
+block. Cross-cutting rules that should arrive at a lifecycle hook belong in Adashi rules instead.
 
-- `general`: discussion, explanation, investigation, or operational help where no design deliverable or code edit is expected.
-- `design`: architecture, planning, review of an approach, or discussion-only technical design where code should not be changed unless the user explicitly switches to implementation.
-- `implementation`: code creation, code modification, tests, builds, migrations, generated files, or any task expected to change the project.
-
-Use these lifecycle hooks:
-
-- `run.start`: before beginning the overall user request.
-- `task.start`: before beginning each concrete task in the run. If there is no explicit task list, treat the whole request as one implicit task.
-- `task.end`: before marking each concrete task complete.
-- `run.end`: before the final response for the overall user request.
-
-At each hook, call the Adashi MCP tool `adashi_rules` with operation `get_rule_injections`:
-
-```json
-{
-  "projectName": "<configured project name>",
-  "operation": "get_rule_injections",
-  "intend": "general | design | implementation",
-  "hook": "run.start | task.start | task.end | run.end"
-}
-```
-
-Treat every nonempty `injectionPrompt` as active instructions for that hook, even when `rules` is empty: required generated sections are independent of optional rules. Apply the prompt once before continuing. In contract v2, `rules` and `sections` contain metadata only; `status: "empty"` explicitly means no instructions apply. Clients may cache sections by projectName, intend, hook, section id and contentVersion, but must still call every required lifecycle hook and apply changed sections.
-
-For multi-task requests, call `task.start` and `task.end` for each task using the same run-level intend unless the user clearly changes the nature of a specific task. Do not invent new intend or hook names.
-
-If a call fails because the MCP surface is not configured, continue without Adashi rule injection and mention the limitation only when it affects the requested outcome. Any other failure is a real failure: report it rather than working around it.
-
-## Failure policy (non-negotiable)
-
-A hard limit must never end a run, and every error must reach the model.
-
-- No cap on model turns, tool calls, provider retries, recoveries, notices, retries, bytes, tokens, counters or elapsed work may terminate an Agent node. Limits and budgets are telemetry: they may size a message, never stop the work.
-- Every error is reported to the LLM and the run continues — provider, transport, contract, context preparation, request validation, tool invocation, tool settlement, commit.
-- Exactly three conditions may end an Agent node: the model returned its final answer, the user cancelled, or an authority denied the call unrecoverably.
-- A bound may only shape what the model is told. Truncate with an explicit omitted count and say how to retrieve the rest; never fail a request because a notice grew.
-- Structural validation has two roles: an editor validator may reject and explain, while the dispatch path must degrade (bound, truncate, drop the advisory field) because a rejected dispatch is a dead run.
-- Never put `return Err(...)` or `?` on a context-preparation, notice, budget or validation condition in the model/tool loop. Convert it to a reported notice instead.
-
-Normative design: `aworkit.workflow_worker.failure_policy`. A fatal return on any of these conditions is a design violation, not a provider error.
-
-## Project memory
-
-The injected prompt carries the current project summary within its own budget. Treat it as the project's current constraints, not as history: superseded handovers are excluded, and retrieved historical notes are dated evidence rather than current state. When the run needs a prior decision, constraint or blocker that the summary does not cover, retrieve it with the `adashi_memory` get operation using `query`, `runId`, or `taskId`.
-
-## Formal design
-
-The injected prompt carries a bounded design index: ids, names, element types and versions, without descriptions, relationships, artifacts or bindings. It is a list of retrieval entry points, not implementation guidance.
-
-- Retrieve the design bound to the files and symbols you are about to change with the `adashi_design` get_bindings operation, then the relevant scope with get_scope or explicit ids with get_by_ids.
-- Align the change with the responsibilities and relationships you retrieve. If the implementation needs a different structure, report the mismatch or raise it with the user instead of drifting away from the model.
-- If the design itself must change, persist the coherent change through the `adashi_design` save operation. Design conclusions do not belong in chat notes or memory.
-
-Generated architecture blocks may also appear in instruction files such as this one, between the raw marker `adashi:architecture:begin` and its matching `adashi:architecture:end`. Adashi renders them from the design model, so a hand edit there is transient and will be overwritten:
-
-- Treat the generated block as the model's own statement of what this folder is responsible for. Extend those responsibilities; do not build a parallel mechanism for something already owned.
-- Change the model, never the block. When a task genuinely changes the architecture, use the `adashi_design` save operation; the block catches up when the project is next loaded.
-
-## Searching project context
-
-Agents reach for the codebase by grepping it. Adashi is addressable the same way, so reach for it the same way.
-
-- `adashi_grep` searches project content across design, tasks and memory at once. Its pattern is case-insensitive; whitespace-separated terms are AND; a quoted phrase is an exact substring; `in:`, `file:`, `type:`, `state:` and `limit:` narrow the search, and anything else is searched as text. An empty pattern returns the top-layer overview with counts, which is the cheapest way to find out what a project contains.
-- Each result line begins with a drillable locator. `design:<externalId>` opens the design get_scope operation, `task:<id>` opens the tasks get operation, and `memory:<noteId>` opens the memory get operation with its `noteId` filter.
-- `file:<path>` scopes a search to a file instead of the whole project: it keeps the design elements bound to that path and the tasks whose file lists contain it, so the results are the things that own or touched the file you are editing. It is a scope, not a query of its own — a `file:` clause with nothing to search for returns the overview, so always pair it with at least one term (`concurrency file:src-tauri/src/concurrency.rs`).
-- The output is bounded and reports `showing N of M — narrow the query` when it is. Narrow with the pattern or the clauses rather than raising the limit.
-
-Do not treat a grep result as the artifact. Drill into the locator before acting on it; the line is a window around the match, not the stored text.
-
-## Verification budget
-
-Test runs are the most expensive thing in this repository, so they are chosen, not habitually repeated. Follow this without asking, and say in the final message exactly what you ran.
-
-Run only what can observe your change:
-
-- TypeScript: `pnpm test:changed` (git-diff based) for the files you touched, or the slice that owns them — `pnpm test:chat`, `pnpm test:workbench`. `pnpm check` is `tsc` only and costs seconds.
-- Rust: `cargo test --lib <module::filter>` while iterating.
-- Documentation, CSS, styling or copy changes: run no tests at all. State what you inspected instead.
-
-Escalate only when it is earned:
-
-- One full suite (`pnpm test`, `cargo test --lib`) per *feature completion* or before a push that finishes one — never per edit, never per fix, and never "to check for fallout" from a local change.
-- A change to shared core behaviour (events, projections, job registry, tool freezing, persistence) earns the full Rust suite. A widget, style or copy change does not.
-- Batch every known failure into one edit and run once. Do not fix-and-rerun one test at a time.
-- Start a long run as a background job and keep working; never block on it when the next edit does not need its result.
-
-Wall-clock gates are opt-in:
-
-- `src/perf` holds the tests that assert timings (whole-App shell interactions, the 1,000-node kernel frame budget). They are excluded from the default run and are run deliberately with `pnpm test:perf`, or in CI.
-- Never add a timing assertion to the default suite. If a test needs a multi-second budget to pass, it belongs in `src/perf` unless the assertion itself is about behaviour rather than time.
-
-When a full run is red, attribute before reacting:
-
-- A failure in a file you did not touch, on a test with an explicit time budget or a wall-clock assertion, is an environment failure until proven otherwise. Say so instead of silently re-running it or "fixing" unrelated code.
-- Never weaken or delete an assertion to make a run green. Report it instead.
-
+Do not create release versions and installer bundles for testing new/changed code. Keep testing focused to the actual task.
 
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture (generated)
 Generated from the Adashi design model; do not edit, change the model.
-Top layer: 14 of 97 elements, 2 of 311 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.
+Top layer: 14 of 98 elements, 2 of 316 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.
 
 These responsibilities are already owned: extend them, do not duplicate.
 
@@ -117,7 +27,12 @@ These responsibilities are already owned: extend them, do not duplicate.
 
 Boundaries:
 - Desktop Presentation -> Trusted Application Core: Submits typed commands and immutable editing intents; never invokes privileged capabilities directly
-- Trusted Application Core -> Desktop Presentation: Publishes ordered lifecycle, streaming, evidence, approval, and configuration projection events
 
-[Dropped 9 element line(s) and 18 relationship line(s) to fit the projection budget; retrieve them by id.]
+Markdown design specifications:
+
+
+Adashi skills: [on-demand index](docs/adashi/skills/index.md)
+Shared Adashi workflow: [current instructions](docs/adashi/agent-workflow.md)
+Markdown designs: [complete index](docs/adashi/index.md)
+4 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-bootstrap-helper/src/profile/mod.rs\",\"crates/aworkit-bootstrap-helper/src/profile/error.rs\",\"crates/aworkit-bootstrap-helper/src/profile/model.rs\",\"crates/aworkit-bootstrap-helper/src/profile/ports.rs\",\"crates/aworkit-bootstrap-helper/src/profile/adapter.rs\",\"crates/aworkit-bootstrap-helper/src/profile/selector.rs\",\"crates/aworkit-bootstrap-helper/src/profile/tests.rs\"]",
     "description": "Implement platform-neutral build-origin/enrollment classification, deterministic capability reports, fixed per-user unprivileged enrollment plans, selector observation/switch/restore/verify contracts, rollback-compatible data checks, and a hermetic profile adapter for fault testing. Unsupported classifications fail before quiescence with no force bypass. Native Windows, macOS, and Linux filesystem/selector ports are owned by M12.1.",
     "id": 70,
-    "number": 70,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

@@ -147,6 +147,12 @@ export interface WorkflowRenameCommand {
   readonly workflowId: string;
   readonly name: string;
 }
+/** One complete document stored as a new named workflow: Save As and Import. */
+export interface WorkflowSaveAsCommand {
+  readonly commandId: string;
+  readonly name: string;
+  readonly document: WorkflowDocument;
+}
 export interface WorkflowCreateReceipt {
   readonly commandId: string;
   readonly accepted: boolean;
@@ -158,6 +164,7 @@ export interface WorkflowCreateReceipt {
 export interface WorkflowLibraryPort {
   snapshot(): Promise<WorkflowLibrarySnapshot>;
   create(command: WorkflowCreateCommand): Promise<WorkflowCreateReceipt>;
+  saveAs(command: WorkflowSaveAsCommand): Promise<WorkflowCreateReceipt>;
   duplicate(command: WorkflowRenameCommand): Promise<WorkflowCreateReceipt>;
   rename(command: WorkflowRenameCommand): Promise<WorkbenchReceipt>;
   remove(command: WorkflowTargetCommand): Promise<WorkbenchReceipt>;
@@ -409,6 +416,13 @@ export class TauriWorkflowLibraryPort implements WorkflowLibraryPort {
       await invoke("workflow_create", { command }),
     );
   }
+  public async saveAs(
+    command: WorkflowSaveAsCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    return workflowCreateReceiptSchema.parse(
+      await invoke("workflow_save_as", { command }),
+    );
+  }
   public async duplicate(
     command: WorkflowRenameCommand,
   ): Promise<WorkflowCreateReceipt> {
@@ -459,9 +473,26 @@ export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
   public async create(
     command: WorkflowCreateCommand,
   ): Promise<WorkflowCreateReceipt> {
+    this.requireUnusedName(command.name);
     return this.createReceipt(command, (id) => ({
       id,
-      name: command.name,
+      name: command.name.trim(),
+      version: 1,
+      editable: true,
+      default: false,
+    }));
+  }
+  public async saveAs(
+    command: WorkflowSaveAsCommand,
+  ): Promise<WorkflowCreateReceipt> {
+    this.requireUnusedName(command.name);
+    if (command.document.schemaVersion !== 1)
+      throw new Error(
+        "only schema version 1 workflow documents can be stored as a new workflow",
+      );
+    return this.createReceipt(command, (id) => ({
+      id,
+      name: command.name.trim(),
       version: 1,
       editable: true,
       default: false,
@@ -473,9 +504,10 @@ export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
     const source = this.entries.find((entry) => entry.id === command.workflowId);
     if (source === undefined)
       throw new Error(`workflow '${command.workflowId}' does not exist`);
+    this.requireUnusedName(command.name);
     return this.createReceipt(command, (id) => ({
       id,
-      name: command.name,
+      name: command.name.trim(),
       version: source.version,
       editable: source.editable,
       default: false,
@@ -503,11 +535,11 @@ export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
     const fingerprint = JSON.stringify(command);
     const seen = this.receipts.get(command.commandId);
     if (seen !== undefined) return seen.receipt as WorkbenchReceipt;
+    if (command.workflowId === this.defaultWorkflowId)
+      throw new Error("the default workflow cannot be deleted");
     if (this.entries.length <= 1)
-      throw new Error("the workflow library requires at least one workflow");
+      throw new Error("at least one workflow must remain in the workflow library");
     this.entries = this.entries.filter((entry) => entry.id !== command.workflowId);
-    if (this.defaultWorkflowId === command.workflowId)
-      this.defaultWorkflowId = this.entries[0]?.id ?? command.workflowId;
     this.version += 1;
     const receipt = {
       commandId: command.commandId,
@@ -543,7 +575,7 @@ export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
   }
 
   private createReceipt(
-    command: WorkflowCreateCommand | WorkflowRenameCommand,
+    command: WorkflowCreateCommand | WorkflowRenameCommand | WorkflowSaveAsCommand,
     seed: (id: string) => WorkflowLibraryEntry,
   ): WorkflowCreateReceipt {
     const fingerprint = JSON.stringify(command);
@@ -560,6 +592,17 @@ export class PreviewWorkflowLibraryPort implements WorkflowLibraryPort {
     };
     this.receipts.set(command.commandId, { fingerprint, receipt });
     return receipt;
+  }
+
+  /** A workflow name is what every dropdown shows, so it is never shared. */
+  private requireUnusedName(name: string): void {
+    const wanted = name.trim().toLowerCase();
+    if (
+      this.entries.some((entry) => entry.name.trim().toLowerCase() === wanted)
+    )
+      throw new Error(
+        `a workflow named '${name.trim()}' already exists in the workflow library`,
+      );
   }
 
   private mutateEntry(

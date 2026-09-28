@@ -70,17 +70,74 @@ describe("preview workflow library", () => {
     );
   });
 
-  it("refuses to delete the final workflow", async () => {
+  it("stores a copy under a new name and refuses a name that is taken", async () => {
     const port = new PreviewWorkflowLibraryPort();
-    await port.remove({
-      commandId: "workflow.delete.1",
-      workflowId: "workflow.standard-agent",
+    const document = bundledWorkflowTemplates[0]!.document;
+
+    const saved = await port.saveAs({
+      commandId: "workflow.save-as.1",
+      name: "Imported Harness",
+      document,
     });
+    expect(saved.workflowId).toBe("workflow.imported-harness");
+    const snapshot = await port.snapshot();
+    expect(
+      snapshot.entries.some(
+        ({ id, name }) => id === saved.workflowId && name === "Imported Harness",
+      ),
+    ).toBe(true);
+
+    // A name another workflow already shows is refused, in any case.
+    await expect(
+      port.saveAs({
+        commandId: "workflow.save-as.2",
+        name: "imported harness",
+        document,
+      }),
+    ).rejects.toThrow("already exists");
+    await expect(
+      port.create({
+        commandId: "workflow.create.1",
+        name: "Simple Chat",
+        template: "blank",
+      }),
+    ).rejects.toThrow("already exists");
+    // A document this build cannot store is refused as well.
+    await expect(
+      port.saveAs({
+        commandId: "workflow.save-as.3",
+        name: "Future Harness",
+        document: { ...document, schemaVersion: 2 },
+      }),
+    ).rejects.toThrow("schema version 1");
+  });
+
+  it("refuses to delete the default workflow and the final workflow", async () => {
+    const port = new PreviewWorkflowLibraryPort();
     await expect(
       port.remove({
-        commandId: "workflow.delete.2",
+        commandId: "workflow.delete.1",
+        workflowId: bundledDefaultWorkflowId,
+      }),
+    ).rejects.toThrow("default workflow cannot be deleted");
+
+    // The former default can be deleted once another workflow is the default.
+    await port.setDefault({
+      commandId: "workflow.default.1",
+      workflowId: "workflow.simple-chat",
+    });
+    await port.remove({
+      commandId: "workflow.delete.2",
+      workflowId: bundledDefaultWorkflowId,
+    });
+    expect((await port.snapshot()).entries).toHaveLength(1);
+
+    // What remains is the default, so it cannot be deleted either.
+    await expect(
+      port.remove({
+        commandId: "workflow.delete.3",
         workflowId: "workflow.simple-chat",
       }),
-    ).rejects.toThrow("at least one workflow");
+    ).rejects.toThrow("default workflow cannot be deleted");
   });
 });

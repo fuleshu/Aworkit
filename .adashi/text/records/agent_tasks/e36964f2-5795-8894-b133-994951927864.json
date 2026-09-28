@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/lib.rs\",\"crates/aworkit-trusted-core/src/project.rs\",\"crates/aworkit-trusted-core/src/desktop.rs\"]",
     "description": "Implement project/workspace/configuration coordination over the canonical repositories and the sole versioned Tauri command/query/event boundary. Revalidate selected workspace identities, use optimistic versions, return transport receipts separately from domain completion, and stream snapshots plus ordered committed events.",
     "id": 21,
-    "number": 21,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

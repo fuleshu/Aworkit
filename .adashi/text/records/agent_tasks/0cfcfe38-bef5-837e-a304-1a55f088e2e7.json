@@ -10,7 +10,6 @@
     "created_files": "[]",
     "description": "Implement hostile-input validation/quarantine and verified read-only pages for branch-separated events, omission markers, and permitted artifact metadata. Imported history and artifacts remain inert, unsupported/corrupt branches remain diagnosable, and disposable projection builders receive no write, execution, binding, or authority surface.",
     "id": 41,
-    "number": 41,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

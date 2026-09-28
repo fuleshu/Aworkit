@@ -10,7 +10,6 @@
     "created_files": "[\"qa/milestone-09.sh\",\"desktop/src/workbench/milestone09.test.ts\",\"crates/aworkit-capability-host/tests/fixtures/plugin_protocol_fixture.py\",\"crates/aworkit-capability-host/tests/isolation.rs\",\"crates/aworkit-capability-host/tests/milestone_09_attestation.rs\",\"crates/aworkit-capability-host/tests/milestone_09_external_agent.rs\",\"crates/aworkit-capability-host/tests/milestone_09_mcp.rs\",\"crates/aworkit-capability-host/tests/milestone_09_plugin.rs\",\"crates/aworkit-trusted-core/tests/milestone_09_extensions.rs\"]",
     "description": "Create automated QA tests for Milestone 09 with protocol fakes and supervised subprocess fixtures. Cover manifest/hash/version drift, missing and disabled requirements, MCP negotiation and ambiguous disconnects, plugin crash/restart/disable, external-agent approval and continuation, isolation-strength enforcement and unavailable paths, settings resolution, cancellation, and no authority or secret widening.",
     "id": 61,
-    "number": 61,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

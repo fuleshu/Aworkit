@@ -7,11 +7,13 @@
     "description": "Failure policy regression: every provider, context and tool condition is reported to the model and never ends an Agent node; the completion barrier stops unkept jobs instead of failing; the job notice stays bounded.",
     "enabled": 1,
     "id": 15,
+    "kind": "unit",
     "name": "Failure policy regression (report-and-continue)",
     "number": 15,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
+    "scope": "",
     "shell": "bash",
     "timeout_seconds": 1800,
     "updated_at": "2026-09-27 17:04:39",

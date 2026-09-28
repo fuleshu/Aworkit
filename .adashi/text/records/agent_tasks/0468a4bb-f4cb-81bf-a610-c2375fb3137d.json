@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src-tauri/src/runtime/graph_pass.rs\"]",
     "description": "General workflow graph compiler and interpreter in the desktop runtime. Replace compile_simple_chat_graph with a generic compiler that maps any validated v1 workflow document onto the worker scheduler/node machinery: input (Pure), agent (Agent loop), model_call (single no-tool model completion), tool (brokered capability invocation), condition (Router predicates with true/false/fallback edge routes), parallel (fork; nodes run when all predecessors settle), approval (Run gate via the approval flow), output (final text collection), wait (pass end), completion (terminal). One graph pass per user input with the accumulated conversation; per-node lifecycle events (node.started/node.completed/node.failed with nodeId) committed to history so the editor and timeline can show status. Deterministic topological ordering, cycle rejection, budget limits per node and per pass, honest error settlement (no replay of uncertain effects). Keep the existing Simple Chat path passing its tests (it becomes the 4-node instance of the general interpreter). Output: working generic execution with Rust integration tests covering multi-node graphs, condition routing, parallel fan-out, per-node events, and failure semantics.",
     "id": 82,
-    "number": 81,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

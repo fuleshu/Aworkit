@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-trusted-core/src/secrets.rs\"]",
     "description": "Implement the core-only secret broker, PlatformCredentialStorePort, and hermetic credential-store conformance adapter with opaque references, audience-bound short-lived leases, single-purpose redemption, expiry, revocation, and zeroization. Secret values must never enter canonical or portable data. Native Windows, macOS, and Linux credential stores are owned by M12.3.",
     "id": 33,
-    "number": 33,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

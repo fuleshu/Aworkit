@@ -26,7 +26,6 @@
     "created_files": "[]",
     "description": "Implement docs/plan-intent-scoped-agent-workflow.md Phase 1 in desktop/src-tauri/src/runtime/mcp_tools/names.rs. mcp_provider_name(server_id, provider_label, tool) composes mcp__<label>__<tool> from the MCP server's configured display name (fallback: sanitized server-id slug). Invariants preserved: <=64 bytes, [A-Za-z0-9_-] grammar, no aliasing after folding/truncating (strict byte budget with a digest suffix reserved for over-long names), frozen aliases unchanged (portable_frozen_name untouched), internal identity untouched (mcp_internal_id). Callers must pass the configured server name: service/mcp_definitions.rs from_descriptor + preview_mcp_definitions, runtime/service.rs freeze_graph_bindings.",
     "id": 88,
-    "number": 87,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

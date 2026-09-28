@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=835 -->
+<!-- adashi:generated revision=6563380812679254 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop/jobs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -7,8 +7,11 @@ These responsibilities are already owned here: extend them, do not duplicate.
 - **Capability Invocation Broker** (Component) — Responsibilities: Receives worker capability proposals, obtains the sole core authority de…
 - **Chat Job Registry & Completion Barrier** (Component) — Responsibilities: Owns Chat-scoped job identity and lifecycle for every asynchronous capab…
 
-Boundaries crossing this folder:
-- Desktop Command & Event API -> Capability Invocation Broker: Routes approval responses and invocation cancellation by opaque invocation/approval identi…
+Bound here:
+- file `desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs`
 
-[Showing 2 of 2 design element(s) bound here, 16 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+Markdown design specifications:
+
+
+- [Failure policy: no limit ends a run; every condition is reported](../../../../../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
 <!-- adashi:architecture:end -->

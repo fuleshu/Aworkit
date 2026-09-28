@@ -1,13 +1,14 @@
 /**
  * Workflow document file handling for the Workflow designer.
  *
- * The native workflow library stays the one canonical store, so a file is only
- * a copy the user chose. Open and Save As cross the host boundary for exactly
- * the three things a webview must not do itself: ask the operating system for a
- * path, read one chosen document, and write one atomically. Replacing an
- * existing file is a two-step protocol — the host refuses an unconfirmed
- * overwrite, so the designer asks through the application's own confirmation
- * dialog and only then writes again.
+ * The native workflow library is the one canonical store — the Aworkit workflow
+ * folder — so a file is only a copy the user chose. Import and Export are the
+ * only operations that cross the host boundary, for exactly the three things a
+ * webview must not do itself: ask the operating system for a path, read one
+ * chosen document, and write one atomically. Replacing an existing export target
+ * is a two-step protocol — the host refuses an unconfirmed overwrite, so the
+ * designer asks through the application's own confirmation dialog and only then
+ * writes again.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
@@ -29,10 +30,10 @@ export type WorkflowFileWriteOutcome = "written" | "exists";
 
 /** Native workflow-file surface: operating-system dialogs plus document IO. */
 export interface WorkflowFilePort {
-  /** Asks the operating system for a workflow document to open. */
-  chooseOpenPath(): Promise<string | null>;
-  /** Asks the operating system where a workflow document is saved. */
-  chooseSavePath(suggestedName: string): Promise<string | null>;
+  /** Asks the operating system for a workflow document to import. */
+  chooseImportPath(): Promise<string | null>;
+  /** Asks the operating system where the current workflow is exported to. */
+  chooseExportPath(suggestedName: string): Promise<string | null>;
   /** Reads one chosen workflow document as bounded UTF-8 text. */
   readDocument(path: string): Promise<string>;
   /** Writes one complete document; an existing file needs `overwrite`. */
@@ -42,10 +43,10 @@ export interface WorkflowFilePort {
 }
 
 export class TauriWorkflowFilePort implements WorkflowFilePort {
-  public async chooseOpenPath(): Promise<string | null> {
+  public async chooseImportPath(): Promise<string | null> {
     return pathSchema.nullable().parse(await invoke("native_workflow_open_path"));
   }
-  public async chooseSavePath(suggestedName: string): Promise<string | null> {
+  public async chooseExportPath(suggestedName: string): Promise<string | null> {
     return pathSchema
       .nullable()
       .parse(await invoke("native_workflow_save_path", { suggestedName }));
@@ -71,11 +72,11 @@ export class TauriWorkflowFilePort implements WorkflowFilePort {
  * native desktop runtime instead of pretending to have performed one.
  */
 export class PreviewWorkflowFilePort implements WorkflowFilePort {
-  public async chooseOpenPath(): Promise<string | null> {
-    throw new Error(nativeOnly("Opening a workflow file"));
+  public async chooseImportPath(): Promise<string | null> {
+    throw new Error(nativeOnly("Importing a workflow file"));
   }
-  public async chooseSavePath(_suggestedName: string): Promise<string | null> {
-    throw new Error(nativeOnly("Writing a workflow file"));
+  public async chooseExportPath(_suggestedName: string): Promise<string | null> {
+    throw new Error(nativeOnly("Exporting a workflow file"));
   }
   public async readDocument(_path: string): Promise<string> {
     throw new Error(nativeOnly("Reading a workflow file"));
@@ -118,7 +119,7 @@ export function workflowFileNameFromPath(path: string): string {
 
 /**
  * Display-name suggestion for a document that carries no name of its own: a
- * file basename is only a suggestion, and a stored name always wins on load.
+ * file basename is only a suggestion, and a stored name always wins on import.
  */
 export function workflowNameFromPath(path: string): string {
   const base = workflowFileNameFromPath(path)

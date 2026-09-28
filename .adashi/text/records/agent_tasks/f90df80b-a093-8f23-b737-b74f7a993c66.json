@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-local-store/src/artifacts.rs\",\"crates/aworkit-local-store/src/projections.rs\"]",
     "description": "Implement durable artifact prepare/reference/finalize semantics and replaceable query projections for Chat lists, timelines, evidence, search, and artifact joins. Projection rebuilds must consume canonical records, tolerate interruption, and never become evidence or history authority.",
     "id": 11,
-    "number": 11,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

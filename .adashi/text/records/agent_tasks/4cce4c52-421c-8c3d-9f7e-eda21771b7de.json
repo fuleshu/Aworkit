@@ -10,7 +10,6 @@
     "created_files": "[\"desktop/src/chat/chat.test.ts\",\"qa/milestone-08.sh\"]",
     "description": "Create automated QA tests for the complete Milestone 08 desktop vertical slice against a real local core. Cover first send and workflow lock, queued input, approvals, pause/cancel/retry/fork/continue, IME and draft retention, streaming scroll/virtualization, projection disconnect/resync, malformed and unknown cards, evidence paging/redaction, keyboard navigation, and accepted Chat mockup conformance.",
     "id": 55,
-    "number": 55,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

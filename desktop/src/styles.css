@@ -177,6 +177,24 @@ pre {
   justify-content: flex-end;
   margin-top: 16px;
 }
+.workflow-name-dialog label {
+  display: block;
+  font-size: var(--aw-font-caption);
+  margin-top: 12px;
+}
+.workflow-name-dialog input {
+  margin-top: 5px;
+  width: 100%;
+}
+.workflow-name-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.workflow-name-error {
+  color: var(--aw-danger);
+}
 
 /* Persistent desktop shell */
 .desktop-shell {

@@ -10,7 +10,6 @@
     "created_files": "[\"crates/aworkit-bootstrap-helper/src/watchdog/mod.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/model.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/ports.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/watchdog.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/hermetic.rs\",\"crates/aworkit-bootstrap-helper/src/watchdog/tests.rs\"]",
     "description": "Implement exact-identity candidate/rollback launch policy over the helper's PlatformProcessPort, startup/health/focused-verification deadlines, authenticated generation handshakes, cleanup ordering, detached-helper survival, stable-launcher ManualRecoveryNotice behavior, and a hermetic process adapter. Readiness is not verification and ambiguous proof is rollback-biased. Native process/IPC implementations are owned by M12.2.",
     "id": 71,
-    "number": 71,
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },

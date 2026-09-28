@@ -457,6 +457,15 @@ pub struct WorkflowCreateInput {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowSaveAsInput {
+    pub command_id: String,
+    pub name: String,
+    /// The complete document to store as a new named workflow.
+    pub document: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowTargetInput {
     pub command_id: String,
     pub workflow_id: String,
