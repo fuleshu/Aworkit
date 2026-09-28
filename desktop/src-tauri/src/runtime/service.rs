@@ -1658,6 +1658,12 @@ impl DesktopRuntime {
                 &serde_json::to_value(&answer).map_err(|error| error.to_string())?,
             )?;
         }
+        // A question answered in a new application generation resumes the pass
+        // in a process that never opened this Chat's frozen endpoints — exactly
+        // the case complete_approval already handles. The resumed pass can call
+        // any tool, so reconnect the frozen MCP transport before accepting work;
+        // a Chat without frozen MCP connections is untouched.
+        self.restore_frozen_mcp(&frozen.context)?;
         self.history.stage_effect_command(PendingChatCommandV1 {
             schema_version: 1,
             frozen_context_hash: frozen.context_hash.clone(),

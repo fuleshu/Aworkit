@@ -6,12 +6,7 @@ fn setup() -> (TempDir, DesktopRuntime, Arc<QuestionPipeline>) {
     let provider = Arc::new(FixtureProvider::new());
     let mut core = runtime(&root, provider.clone());
     configure(&mut core);
-    let pipeline = Arc::new(QuestionPipeline {
-        provider,
-        result: Mutex::new(None),
-        answers: Mutex::new(Vec::new()),
-        fail_resume: AtomicBool::new(false),
-    });
+    let pipeline = Arc::new(QuestionPipeline::new(provider));
     core.pipeline = pipeline.clone();
     core.command(send("question.start", 0, "Ask me")).unwrap();
     (root, core, pipeline)
@@ -174,6 +169,21 @@ struct QuestionPipeline {
     result: Mutex<Option<WorkflowExecutionResultV1>>,
     answers: Mutex<Vec<Value>>,
     fail_resume: AtomicBool,
+    /// One entry per frozen-endpoint preparation, so a test can prove the Chat's
+    /// MCP transport was reconnected before a resumed pass accepted work.
+    mcp_preparations: Mutex<Vec<String>>,
+}
+
+impl QuestionPipeline {
+    fn new(provider: Arc<FixtureProvider>) -> Self {
+        Self {
+            provider,
+            result: Mutex::new(None),
+            answers: Mutex::new(Vec::new()),
+            fail_resume: AtomicBool::new(false),
+            mcp_preparations: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 impl WorkflowPipelinePort for QuestionPipeline {
@@ -203,6 +213,23 @@ impl WorkflowPipelinePort for QuestionPipeline {
             .unwrap(),
         );
         Ok(result)
+    }
+
+    /// Records every frozen-endpoint preparation for this Run and answers with
+    /// the exact discovery snapshot the fixture server would hand back.
+    fn prepare_mcp_sessions(
+        &self,
+        run_id: &StableId,
+        servers: &mut [McpRunServerPreparationV1],
+    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+        self.mcp_preparations
+            .lock()
+            .unwrap()
+            .push(run_id.as_str().to_owned());
+        Ok(servers
+            .iter()
+            .map(|server| frozen_mcp_snapshot(&server.manifest))
+            .collect())
     }
 
     fn validate_question_target(
@@ -242,12 +269,7 @@ fn stale_question_answer_commits_once_and_resumes_its_chat() {
     let provider = Arc::new(FixtureProvider::new());
     let mut core = runtime(&root, provider.clone());
     configure(&mut core);
-    let pipeline = Arc::new(QuestionPipeline {
-        provider,
-        result: Mutex::new(None),
-        answers: Mutex::new(Vec::new()),
-        fail_resume: AtomicBool::new(false),
-    });
+    let pipeline = Arc::new(QuestionPipeline::new(provider));
     core.pipeline = pipeline.clone();
     core.command(send("question.start", 0, "Ask me")).unwrap();
     let waiting = core.snapshot(0).unwrap();
@@ -276,4 +298,131 @@ fn stale_question_answer_commits_once_and_resumes_its_chat() {
             .count(),
         1
     );
+}
+
+use aworkit_capability_host::{McpCatalogV1, McpFeatureSetV1, McpServerManifestV1, McpToolDescriptorV1};
+
+/// The discovery snapshot the fixture MCP server hands back: one read-only tool
+/// whose schema the service compares against the frozen Chat's tool binding.
+fn frozen_mcp_snapshot(manifest: &McpServerManifestV1) -> McpCapabilitySnapshotV1 {
+    McpCapabilitySnapshotV1 {
+        server_id: manifest.server_id.clone(),
+        host_generation: manifest.host_generation,
+        binding_hash: manifest.binding_hash.clone(),
+        protocol_version: 1,
+        features: McpFeatureSetV1 {
+            tools: true,
+            resources: false,
+            prompts: false,
+            progress: false,
+            cancellation: false,
+        },
+        catalog: McpCatalogV1 {
+            tools: vec![McpToolDescriptorV1 {
+                name: "echo".into(),
+                input_schema_hash: "sha256:question-fixture-echo".into(),
+                side_effect_known_read_only: true,
+                annotations: None,
+                description: "Echo".into(),
+                input_schema: json!({"type":"object","properties":{"text":{"type":"string"}}}),
+            }],
+            resources: Vec::new(),
+            prompts: Vec::new(),
+        },
+        catalog_hash: "sha256:question-fixture-catalog".into(),
+    }
+}
+
+/// Saves one MCP server and binds one of its tools in the default workflow, so a
+/// Chat freezes a real MCP transport configuration, manifest and tool binding.
+fn configure_mcp_chat(core: &mut DesktopRuntime) {
+    core.documents
+        .set_default_workflow("workflow.simple-chat")
+        .unwrap();
+    let mut settings = core.settings_v2_snapshot().settings;
+    for provider in &mut settings.providers {
+        for model in &mut provider.models {
+            model.capabilities = vec!["text".into(), "tools".into()];
+        }
+    }
+    settings.mcp_servers.push(McpServerConfigurationV2 {
+        id: "mcp.question-fixture".into(),
+        name: "Question fixture".into(),
+        enabled: true,
+        auto_connect: false,
+        plugin: None,
+        transport: IntegrationTransportV2::Stdio {
+            command: "/bin/sh".into(),
+            args: vec![],
+            cwd: None,
+            env: vec![],
+        },
+        tools: vec![crate::runtime::tool_registry::McpToolConfiguration {
+            annotations: None,
+            name: "echo".into(),
+            description: "Echo".into(),
+            input_schema: json!({"type":"object"}),
+            enabled: true,
+            options: Default::default(),
+        }],
+    });
+    core.settings_v2_commit(SettingsV2CommitInput {
+        command_id: "settings.question-fixture".into(),
+        expected_version: core.settings_v2_snapshot().version,
+        settings,
+    })
+    .unwrap();
+    let mut workflow = core.workflow_snapshot_for("workflow.simple-chat".into());
+    workflow.document["nodes"][1]["configuration"]["toolIds"] =
+        json!(["mcp://mcp.question-fixture/echo"]);
+    core.workflow_commit(WorkflowCommitInput {
+        command_id: "workflow.question-fixture".into(),
+        expected_version: workflow.version,
+        document: workflow.document,
+        workflow_id: Some("workflow.simple-chat".into()),
+    })
+    .unwrap();
+}
+
+/// Regression: an answer delivered in a new application generation resumes the
+/// pass in a process that never opened the Chat's frozen MCP endpoints. That
+/// resume used to accept work without reconnecting them, so every MCP call in
+/// the resumed Run failed with "no MCP transport peer is installed for this
+/// application generation" until a fresh turn rebuilt the request.
+#[test]
+fn answering_a_question_reconnects_the_chats_frozen_mcp_endpoints() {
+    let root = TempDir::new().unwrap();
+    let provider = Arc::new(FixtureProvider::new());
+    let mut core = runtime(&root, provider.clone());
+    configure(&mut core);
+    let pipeline = Arc::new(QuestionPipeline::new(provider));
+    core.pipeline = pipeline.clone();
+    configure_mcp_chat(&mut core);
+    core.command(send("question.mcp-start", 0, "Ask me"))
+        .unwrap();
+    assert!(
+        !pipeline.mcp_preparations.lock().unwrap().is_empty(),
+        "starting the Chat opens its frozen MCP endpoints"
+    );
+    assert_eq!(core.snapshot(0).unwrap().chat.phase, "awaiting_answer");
+    drop(core);
+
+    // A new application generation: this process has no sessions for the Chat.
+    let mut reopened = runtime(&root, pipeline.provider.clone());
+    reopened.pipeline = pipeline.clone();
+    pipeline.mcp_preparations.lock().unwrap().clear();
+    let receipt = reopened
+        .command(action(
+            &reopened,
+            "question.mcp-answer",
+            "question",
+            json!({"questionId": "question.fixture", "optionId": "beta"}),
+        ))
+        .expect("the answer must be accepted and resume the pass");
+    assert!(receipt.accepted);
+    assert!(
+        !pipeline.mcp_preparations.lock().unwrap().is_empty(),
+        "answering a question must reconnect the Chat's frozen MCP endpoints before the pass resumes"
+    );
+    assert_eq!(reopened.snapshot(0).unwrap().chat.phase, "waiting_input");
 }
