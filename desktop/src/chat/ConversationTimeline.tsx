@@ -2,6 +2,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
 import { ActorBubble } from "./ActorBubble";
 import { ImageAttachments } from "./ImageAttachments";
+import { ACTIVITY_ROW_RESIZE_EVENT, ToolCallCard } from "./ToolCallCard";
+import { fileToolPath } from "./toolCallPresentation";
 import { toConversationCard } from "./conversation";
 import {
   isModelCallSpan,
@@ -122,15 +124,20 @@ export function ConversationTimeline({
     const pendingRows = new Set<HTMLElement>();
     let measurementFrame: number | null = null;
     let scrollFrame: number | null = null;
-    const remeasureExpandedDetails = (event: Event) => {
-      if (!(event.target instanceof HTMLDetailsElement)) return;
-      const row = event.target.closest<HTMLElement>(".virtual-row");
+    const remeasureChangedRow = (event: Event) => {
+      const target = event.target;
+      if (event.type === "toggle" && !(target instanceof HTMLDetailsElement))
+        return;
+      const row =
+        target instanceof Element
+          ? target.closest<HTMLElement>(".virtual-row")
+          : null;
       if (row === null || !scroll.contains(row)) return;
       pendingRows.add(row);
       if (measurementFrame !== null) return;
-      // The toggle event follows the `open` state change, but its layout can
-      // still be pending. Measure on the next frame, then preserve bottom pin
-      // only after the virtual extent has incorporated the exact new height.
+      // The disclosed content has already changed, but its layout can still be
+      // pending. Measure on the next frame, then preserve bottom pin only after
+      // the virtual extent has incorporated the exact new height.
       measurementFrame = window.requestAnimationFrame(() => {
         measurementFrame = null;
         for (const pendingRow of pendingRows) {
@@ -154,9 +161,11 @@ export function ConversationTimeline({
         }
       });
     };
-    scroll.addEventListener("toggle", remeasureExpandedDetails, true);
+    scroll.addEventListener("toggle", remeasureChangedRow, true);
+    scroll.addEventListener(ACTIVITY_ROW_RESIZE_EVENT, remeasureChangedRow);
     return () => {
-      scroll.removeEventListener("toggle", remeasureExpandedDetails, true);
+      scroll.removeEventListener("toggle", remeasureChangedRow, true);
+      scroll.removeEventListener(ACTIVITY_ROW_RESIZE_EVENT, remeasureChangedRow);
       if (measurementFrame !== null)
         window.cancelAnimationFrame(measurementFrame);
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
@@ -507,6 +516,15 @@ export function TimelineCard({
         )}
       </ActorBubble>
     );
+  if (item.kind === "tool")
+    return (
+      <ToolCallCard
+        card={card}
+        item={item}
+        selected={selected}
+        onSelect={onSelect}
+      />
+    );
   if (metadataOf(item).live === true)
     return (
       <article
@@ -796,35 +814,6 @@ function metadataOf(item: TimelineItem): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-/**
- * The workspace path one file tool acted on, exactly as the model passed it.
- * Only the tools whose only location argument is a path qualify, so the card
- * never offers an action for a pattern, a command or a web address.
- */
-function fileToolPath(item: TimelineItem): string | undefined {
-  if (item.kind !== "tool") return undefined;
-  const capability = metadataOf(item).capabilityId;
-  if (
-    typeof capability !== "string" ||
-    ![
-      "tool.files.read",
-      "tool.files.write",
-      "tool.files.edit",
-      "tool.files.list",
-      "tool.files.search",
-      "tool.files.grep",
-    ].includes(capability)
-  )
-    return undefined;
-  const input = item.input;
-  if (typeof input !== "object" || input === null || Array.isArray(input))
-    return undefined;
-  const path = (input as Record<string, unknown>).path;
-  return typeof path === "string" && path.length > 0 && path.length <= 4_096
-    ? path
-    : undefined;
 }
 
 /**

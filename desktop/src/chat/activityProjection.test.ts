@@ -392,6 +392,92 @@ describe("canonical semantic timeline projection", () => {
     ]).find((item) => item.kind === "goal");
     expect(cleared).toMatchObject({ title: "Goal cleared", body: undefined });
   });
+
+  it("folds a running tool's progress so its card can stream the tool's own text", () => {
+    const started = span(1, "span.started", "span.tool.stream", {
+      spanKind: "tool_call",
+      semanticRole: "tool",
+      title: "tool.shell.host",
+      capabilityId: "tool.shell.host",
+      hasInput: true,
+      input: { command: "make check" },
+    });
+    const compiling = span(2, "span.content_delta", "span.tool.stream", {
+      channel: "progress",
+      append: "compiling\n",
+    });
+    const linking = span(3, "span.content_delta", "span.tool.stream", {
+      channel: "progress",
+      append: "linking\n",
+    });
+
+    // The same canonical events the live stream delivers keep growing one card;
+    // no additional backend contract is implied by streaming tool output.
+    const running = projectSemanticTimeline([started, compiling])[0]!;
+    expect(running).toMatchObject({
+      kind: "tool",
+      status: "running",
+      body: "compiling\n",
+      metadata: {
+        capabilityId: "tool.shell.host",
+        live: true,
+        channels: { progress: "compiling\n" },
+      },
+    });
+    expect(
+      projectSemanticTimeline([started, compiling, linking])[0],
+    ).toMatchObject({ body: "compiling\nlinking\n" });
+
+    const settled = projectSemanticTimeline([
+      started,
+      compiling,
+      linking,
+      span(4, "span.completed", "span.tool.stream", {
+        status: "completed",
+        hasOutput: true,
+        output: {
+          callId: "call.1",
+          content: { stdout: "ok\n", exitCode: 0 },
+          isError: false,
+        },
+      }),
+    ])[0]!;
+    expect(settled).toMatchObject({
+      status: "completed",
+      output: {
+        callId: "call.1",
+        content: { stdout: "ok\n", exitCode: 0 },
+        isError: false,
+      },
+      metadata: { live: false },
+    });
+  });
+
+  it("keeps the recorded call envelope so the card formats real arguments", () => {
+    const items = projectSemanticTimeline([
+      span(1, "span.started", "span.tool.envelope", {
+        spanKind: "tool_call",
+        semanticRole: "tool",
+        title: "tool.files.read",
+        capabilityId: "tool.files.read",
+        hasInput: true,
+        input: {
+          callId: "call.1",
+          providerCallId: "call.1",
+          capabilityId: "tool.files.read",
+          name: "read_file",
+          arguments: { path: "reports/summary.md" },
+        },
+      }),
+    ]);
+
+    expect(items[0]).toMatchObject({
+      kind: "tool",
+      title: "tool.files.read",
+      input: { arguments: { path: "reports/summary.md" } },
+      metadata: { capabilityId: "tool.files.read" },
+    });
+  });
 });
 
 function event(

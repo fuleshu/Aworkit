@@ -230,9 +230,9 @@ describe("file tool card paths", () => {
     const item = toolItem("tool.shell.run", { command: "ls" });
     renderToolCard(item, run);
 
-    // The card keeps showing the tool's own content, and a right-click on it
+    // The card keeps showing the tool's own identity, and a right-click on it
     // must not offer to open a command as if it were a file.
-    const content = screen.getAllByText("tool.shell.run")[1]!;
+    const content = screen.getByText("tool.shell.run");
     expect(fireEvent.contextMenu(content)).toBe(true);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(run).not.toHaveBeenCalled();

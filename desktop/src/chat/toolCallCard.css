@@ -1,0 +1,78 @@
+/* Tool-call card: formatted arguments and the tool's own result.
+   The fields cap themselves in code rows, so a cap follows the current code
+   line height (OS text size and application scaling) instead of fixed pixels. */
+.tool-card .activity-main {
+  min-height: 56px;
+}
+
+.tool-io {
+  border-top: 1px solid var(--aw-divider);
+  display: grid;
+  gap: 4px;
+  padding: 6px 10px 8px;
+}
+
+.tool-io-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.tool-io-label {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tool-io-expand {
+  background: transparent;
+  border-color: var(--aw-divider);
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  min-height: 24px;
+  padding: 1px 7px;
+}
+.tool-io-expand:hover:not(:disabled) {
+  color: var(--aw-text);
+}
+
+.tool-io-field {
+  --aw-tool-row: calc(var(--aw-font-ui) * 1.5);
+  background: var(--aw-inset);
+  border-radius: 3px;
+  font-family:
+    ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--aw-font-ui);
+  line-height: 1.5;
+  margin: 0;
+  max-height: calc(var(--aw-tool-rows, 4) * var(--aw-tool-row) + 14px);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  padding: 7px 8px;
+  white-space: pre-wrap;
+}
+/* The expanded field is the one the user scrolls to read the rest. */
+.tool-io-field[data-expanded="true"] {
+  overflow: auto;
+}
+
+.tool-io-status {
+  color: var(--aw-secondary);
+  font-style: italic;
+}
+
+.tool-argument-label {
+  color: var(--aw-secondary);
+}
+
+.tool-argument-separator {
+  color: var(--aw-muted);
+}
+
+.tool-argument-path {
+  color: var(--aw-accent);
+}

@@ -1441,11 +1441,13 @@ describe("Chat native-port recovery contracts", () => {
     const toolCard = await screen.findByRole("article", {
       name: "Tool: tool.files.list",
     });
-    expect(within(toolCard).getByText("tool.files.list")).toBeVisible();
+    expect(within(toolCard).getByText("tool.files.list (File list)")).toBeVisible();
     expect(within(toolCard).getByText("Input")).toBeVisible();
     expect(within(toolCard).getByText("Output")).toBeVisible();
-    expect(within(toolCard).getAllByText(/"path": "\."/)[0]).toBeVisible();
-    expect(within(toolCard).getAllByText(/"notes.txt"/)[0]).toBeVisible();
+    // The card formats the arguments and shows the tool's own text; the exact
+    // payload stays in Run details.
+    expect(toolCard.querySelector('[data-role="tool-input"]')?.textContent).toBe("path: .");
+    expect(toolCard.querySelector('[data-role="tool-output"]')?.textContent).toBe("notes.txt");
     expect(screen.getByText("Inspecting the project")).toBeVisible();
     const terminal = [
       canonicalEvent(7, "span.content_delta", {
