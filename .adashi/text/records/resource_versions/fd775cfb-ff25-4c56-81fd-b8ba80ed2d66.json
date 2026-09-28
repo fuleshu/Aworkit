@@ -4,12 +4,12 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "resource_id": "aworkit.capability_host.mcp_sessions",
-    "resource_kind": "design.element",
+    "resource_id": "aworkit.capability_host.mcp_session_recovery",
+    "resource_kind": "design.markdown",
     "updated_at": "2026-09-28 08:11:14",
-    "version": 2
+    "version": 1
   },
   "deleted": false,
-  "identity": "64c626ff-84bf-8754-99fd-71e5eb2eab46",
+  "identity": "fd775cfb-ff25-4c56-81fd-b8ba80ed2d66",
   "schemaVersion": 1
 }

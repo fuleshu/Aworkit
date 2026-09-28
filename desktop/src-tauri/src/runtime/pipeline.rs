@@ -1173,6 +1173,13 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority.mcp.install_scripted_peer(peer)
     }
 
+    /// Reconnects a degraded MCP session for one server across every live Run.
+    /// Used by a Settings reconnect; the tool path recovers itself on the next
+    /// call, so this only helps a Chat that is idle while its session is down.
+    pub(crate) fn reconnect_mcp_sessions(&self, server_id: &StableId) -> Result<usize, String> {
+        self.file_tool_authority.mcp.reconnect(server_id)
+    }
+
     /// Prepares production MCP sessions for one frozen Run: installs that
     /// Run's production peer on first use, stages every server's materialized
     /// credential slots, opens the exact core-attested sessions, and returns

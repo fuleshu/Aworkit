@@ -196,6 +196,12 @@ trait WorkflowPipelinePort: Send + Sync {
     ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
         Err("MCP session preparation is not available from this pipeline".into())
     }
+
+    /// Reconnects a degraded MCP session for one server across every live Run.
+    /// Pipelines that own no MCP sessions report zero.
+    fn reconnect_mcp_sessions(&self, _server_id: &StableId) -> Result<usize, String> {
+        Ok(0)
+    }
 }
 
 impl WorkflowPipelinePort for WorkflowExecutionPipeline {
@@ -291,6 +297,10 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
         servers: &mut [McpRunServerPreparationV1],
     ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
         WorkflowExecutionPipeline::prepare_mcp_sessions(self, run_id, servers)
+    }
+
+    fn reconnect_mcp_sessions(&self, server_id: &StableId) -> Result<usize, String> {
+        WorkflowExecutionPipeline::reconnect_mcp_sessions(self, server_id)
     }
 }
 
@@ -3198,11 +3208,17 @@ impl DesktopRuntime {
         &mut self,
         request: McpProbeRequestV2,
     ) -> Result<McpProbeResultV2, String> {
-        probe_mcp_server(
+        let server_id = StableId::parse(request.server.id.clone())
+            .map_err(|_| format!("MCP server id '{}' is invalid", request.server.id))?;
+        let result = probe_mcp_server(
             &mut self.credentials,
             &self.documents.settings().credentials,
             request,
-        )
+        )?;
+        // A reconnect from Settings also recovers a live Chat session that a
+        // transport loss degraded, instead of requiring an application restart.
+        self.pipeline.reconnect_mcp_sessions(&server_id)?;
+        Ok(result)
     }
 
     /// Resolves and acts on one file path shown in a conversation.

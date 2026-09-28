@@ -1,0 +1,51 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/mcp/session.rs\",\"desktop/src-tauri/src/runtime/mcp.rs\",\"desktop/src-tauri/src/runtime/mcp_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/service.rs\"]",
+    "completed_at": "2026-09-28 08:11:23",
+    "completion_memo": {
+      "lines": [
+        "Implemented all three recommendations for the degraded-MCP-session incident.\n",
+        "\n",
+        "1. Automatic recovery. `McpToolRuntimeV1::invoke` now matches `McpSessionError::SessionDegraded`, calls `McpSessionManager::reconnect(server_id)` once, and dispatches that call. The call had not started (a degraded session refuses before dispatch), so this is not a replay; the call that lost its transport keeps its uncertain outcome.\n",
+        "\n",
+        "2. Timeout policy. `production_peer_limits().request_timeout` is now a named `RUN_REQUEST_TIMEOUT` of 600 s instead of 30 s, so an ordinary multi-minute `adashi_qa run_jobs` finishes inside the call. The one-shot discovery probe keeps its own short bound. A call that still outlives the ceiling is reported as uncertain and the session recovers on the next call, so a QA job with a longer ceiling can be polled.\n",
+        "\n",
+        "3. Explicit reconnect. Added `McpSessionManager::is_degraded`, `McpToolRuntimeV1::reconnect` (reconnects the degraded sessions for one server across every live Run and leaves healthy/unknown ones untouched), a `WorkflowPipelinePort::reconnect_mcp_sessions` default plus the concrete pipeline method, and a call from `settings_v2_probe_mcp`, so the Settings \"Reconnect and refresh the function catalog\" button recovers a live Chat without an app restart.\n",
+        "\n",
+        "Coverage: `mcp_tools::tests::a_degraded_session_is_reconnected_before_the_next_call` and `an_explicit_reconnect_recovers_a_degraded_session_once` drive a scripted peer that loses the transport on its first call; the first proves the next call reconnects and succeeds (initialize runs twice), the second proves an explicit reconnect recovers once and is a no-op on a healthy session. `mcp::tests::a_run_call_allows_a_multi_minute_tool_result` pins the run ceiling and keeps discovery short.\n",
+        "\n",
+        "Verification: cargo test --lib --manifest-path desktop/src-tauri/Cargo.toml (503 passed, 1 ignored); cargo test -p aworkit-capability-host (all suites ok).\n",
+        "\n",
+        "Design: aworkit.capability_host.mcp_session_recovery added and linked to aworkit.capability_host.mcp_sessions, whose failure/non-responsibility prose now states that the transport is recovered and the not-started call is dispatched, while a dispatched call is never retried."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-28 08:09:05",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Incident (chat.3b9627d1..., 2026-09-27): the model ran `adashi_qa run_jobs` for a multi-minute QA script. The production MCP request timeout was 30 s (desktop/src-tauri/src/runtime/mcp.rs), so the call lost its transport, the MCP session was marked degraded, and every later `adashi_*` call failed instantly with \"MCP session is degraded and requires explicit reconnect\" (McpSessionError::SessionDegraded). The Adashi MCP server was alive the whole time (I probed /usr/bin/adashi-mcp over stdio: initialize -> rmcp 2.1.0, tools/list -> all 8 tools). `McpSessionManager::reconnect` existed but had no production caller, and the Settings \"Reconnect and refresh the function catalog\" button only ran a catalog probe, so the only recovery was restarting Aworkit. The model finished task 152 but could not write its Adashi state.\n",
+        "\n",
+        "Three fixes:\n",
+        "1. The production MCP invoke path recovers a degraded session automatically: on SessionDegraded it reconnects once and retries the call, which never started, so a transport loss cannot brick the Run. The interrupted call is never replayed.\n",
+        "2. Production Run MCP calls get a multi-minute request ceiling (600 s) instead of 30 s, so an ordinary QA script finishes inside the call; a longer call is still reported and the session recovers on the next call. The one-shot discovery probe keeps its short bound.\n",
+        "3. A typed reconnect command: McpToolRuntimeV1::reconnect reconnects the degraded sessions for one server across every live Run, McpSessionManager::is_degraded reports the state, the pipeline port exposes it, and the Settings probe path calls it so the Settings reconnect button recovers a live Chat.\n",
+        "\n",
+        "Acceptance: a degraded session is reconnected before the next call and the call succeeds; an explicit reconnect recovers a degraded session once and is a no-op on a healthy one; the production request timeout is not a 30 s bound; full desktop lib suite and capability-host tests green."
+      ]
+    },
+    "id": 156,
+    "number": 155,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Recover a degraded MCP session instead of requiring an application restart",
+    "updated_at": "2026-09-28 08:11:23"
+  },
+  "deleted": false,
+  "identity": "ff7476fa-0fc0-4812-9b0b-842378a3a130",
+  "schemaVersion": 1
+}

@@ -1,0 +1,32 @@
+{
+  "collection": "markdown_design_documents",
+  "data": {
+    "body": {
+      "lines": [
+        "# MCP session recovery: reconnect instead of requiring an application restart\n",
+        "\n",
+        "A transport loss marks an MCP session degraded. A degraded session refuses every later call before dispatch, so without recovery one slow or flaky call disables that server for the rest of the application run.\n",
+        "\n",
+        "## Policy\n",
+        "\n",
+        "- **Recover before the next call.** When a Run's MCP call returns `SessionDegraded`, the runtime reconnects once with `McpSessionManager::reconnect` and then dispatches that call. The call had not started, so this is not a replay.\n",
+        "- **Never replay a dispatched call.** A timed-out or interrupted call keeps its uncertain or definitely-not-started outcome; only the transport is recovered. The call that lost its transport is never replayed.\n",
+        "- **A Run call may take minutes.** A production Run call gets a multi-minute request ceiling because a tool such as `adashi_qa run_jobs` blocks until its QA script finishes. The one-shot discovery probe keeps its short bound. A call that still outlives the ceiling is reported as uncertain and the session recovers on the next call, so a long job can be polled instead of bricking the server.\n",
+        "- **An explicit reconnect reaches live sessions.** A Settings reconnect reconnects the degraded sessions for one server across every live Run without restarting the application.\n",
+        "\n",
+        "## Not decided here\n",
+        "\n",
+        "This does not decide which condition degrades a session, how a QA tool should schedule long work, or whether a dispatched effect happened; those remain the session manager's dispatch milestones and the tool's own contract."
+      ]
+    },
+    "external_id": "aworkit.capability_host.mcp_session_recovery",
+    "id": 4,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "title": "MCP session recovery: reconnect instead of requiring an application restart"
+  },
+  "deleted": false,
+  "identity": "5578bbb7-d9aa-4652-ac10-43c52ec45e71",
+  "schemaVersion": 1
+}

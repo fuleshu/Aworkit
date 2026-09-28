@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 use aworkit_capability_host::{
     CancellationToken, McpCallOutcomeV1, McpCallV1, McpCancellationReceiptV1,
-    McpCapabilitySnapshotV1, McpPeerPort, McpServerManifestV1, McpSessionManager,
+    McpCapabilitySnapshotV1, McpPeerPort, McpServerManifestV1, McpSessionError, McpSessionManager,
     McpTransportEndpointV1, ProductionMcpPeer, SecretMaterializationV1,
 };
 use aworkit_protocol::{ProcessGeneration, StableId};
@@ -211,9 +211,56 @@ impl McpToolRuntimeV1 {
             .cloned()
             .ok_or("no MCP transport peer is installed for this Run")?;
         drop(state);
-        manager
-            .invoke(server_id, call)
-            .map_err(|error| format!("MCP call failed: {error}"))
+        match manager.invoke(server_id, call) {
+            Ok(outcome) => Ok(outcome),
+            // A transport loss degrades the session, and a degraded session
+            // refuses every later call before dispatch. Recover it once here
+            // and retry this call, which had not started, so one slow or flaky
+            // server cannot brick the Run until the application restarts. The
+            // call that lost the transport is never replayed.
+            Err(McpSessionError::SessionDegraded) => {
+                manager
+                    .reconnect(server_id)
+                    .map_err(|error| format!("MCP reconnect failed: {error}"))?;
+                manager
+                    .invoke(server_id, call)
+                    .map_err(|error| format!("MCP call failed: {error}"))
+            }
+            Err(error) => Err(format!("MCP call failed: {error}")),
+        }
+    }
+
+    /// Reconnects the degraded sessions for one server across every live Run,
+    /// so a Settings reconnect recovers a Chat without restarting the app.
+    /// Healthy sessions, and Runs that never opened this server, are untouched.
+    /// Returns how many sessions were reconnected.
+    pub(crate) fn reconnect(&self, server_id: &StableId) -> Result<usize, String> {
+        let managers: Vec<Arc<McpSessionManager>> = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "MCP tool runtime lock poisoned".to_owned())?;
+            state
+                .production_runs
+                .values()
+                .cloned()
+                .chain(state.manager.iter().cloned())
+                .collect()
+        };
+        let mut reconnected = 0usize;
+        for manager in managers {
+            match manager.is_degraded(server_id) {
+                Ok(true) => {
+                    manager
+                        .reconnect(server_id)
+                        .map_err(|error| format!("MCP reconnect failed: {error}"))?;
+                    reconnected = reconnected.saturating_add(1);
+                }
+                Ok(false) => {}
+                Err(error) => return Err(format!("MCP reconnect failed: {error}")),
+            }
+        }
+        Ok(reconnected)
     }
 
     /// Registers the dispatch-scoped cancellation token for one admitted MCP
@@ -279,5 +326,203 @@ impl McpToolRuntimeV1 {
         manager
             .cancel(server_id, invocation_id)
             .map_err(|error| format!("MCP cancellation failed: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aworkit_capability_host::{
+        McpCallKindV1, McpCatalogV1, McpCancellationEvidenceV1, McpDispatchMilestoneV1,
+        McpFeatureSetV1, McpInitializeRequestV1, McpInitializeResponseV1, McpPeerCallResultV1,
+        McpPeerErrorV1, McpToolDescriptorV1, McpTransportKindV1,
+    };
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const SERVER: &str = "serv.fixture";
+    const TOOL: &str = "echo";
+
+    fn echo_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"]
+        })
+    }
+
+    fn manifest(generation: ProcessGeneration) -> McpServerManifestV1 {
+        McpServerManifestV1 {
+            server_id: StableId::parse(SERVER.to_owned()).expect("server id"),
+            adapter_version: "test".to_owned(),
+            binding_hash: format!("sha256:{}", "c".repeat(64)),
+            host_generation: generation,
+            configured: true,
+            enabled: true,
+            core_attested: true,
+            transport: McpTransportKindV1::Stdio,
+            minimum_protocol_version: 1,
+            maximum_protocol_version: 5,
+            maximum_in_flight: 1,
+            maximum_progress_events: 16,
+            secret_slots: Vec::new(),
+            workspace_roots: Vec::new(),
+        }
+    }
+
+    fn call(snapshot: &McpCapabilitySnapshotV1, invocation_id: &str) -> McpCallV1 {
+        McpCallV1 {
+            invocation_id: StableId::parse(invocation_id.to_owned()).expect("invocation id"),
+            kind: McpCallKindV1::Tool,
+            name: TOOL.to_owned(),
+            expected_schema_hash: Some(snapshot.catalog.tools[0].input_schema_hash.clone()),
+            arguments: json!({"text": "hello"}),
+        }
+    }
+
+    /// Echoes every call but reports the transport lost on the first one, so the
+    /// session degrades exactly as it does after a real request timeout.
+    struct LossOncePeer {
+        initializations: AtomicUsize,
+        calls: AtomicUsize,
+    }
+
+    impl LossOncePeer {
+        fn new() -> Self {
+            Self {
+                initializations: AtomicUsize::new(0),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl McpPeerPort for LossOncePeer {
+        fn initialize(
+            &self,
+            _manifest: &McpServerManifestV1,
+            _request: &McpInitializeRequestV1,
+        ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+            self.initializations.fetch_add(1, Ordering::SeqCst);
+            let encoded = serde_json::to_vec(&echo_schema()).unwrap_or_default();
+            Ok(McpInitializeResponseV1 {
+                server_id: StableId::parse(SERVER.to_owned()).expect("server id"),
+                protocol_version: 2,
+                features: McpFeatureSetV1 {
+                    tools: true,
+                    resources: false,
+                    prompts: false,
+                    progress: false,
+                    cancellation: false,
+                },
+                catalog: McpCatalogV1 {
+                    tools: vec![McpToolDescriptorV1 {
+                        name: TOOL.to_owned(),
+                        input_schema_hash: format!("sha256:{:x}", Sha256::digest(encoded)),
+                        side_effect_known_read_only: false,
+                        annotations: None,
+                        description: "Echo the given text.".to_owned(),
+                        input_schema: echo_schema(),
+                    }],
+                    resources: Vec::new(),
+                    prompts: Vec::new(),
+                },
+            })
+        }
+
+        fn invoke(
+            &self,
+            _manifest: &McpServerManifestV1,
+            call: &McpCallV1,
+        ) -> Result<McpPeerCallResultV1, McpPeerErrorV1> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(McpPeerErrorV1 {
+                    code: "transport_lost".to_owned(),
+                    message: "scripted transport loss".to_owned(),
+                    dispatch: McpDispatchMilestoneV1::Started,
+                    transport_lost: true,
+                });
+            }
+            Ok(McpPeerCallResultV1 {
+                result: json!({"echo": call.arguments["text"]}),
+                progress: Vec::new(),
+            })
+        }
+
+        fn cancel(
+            &self,
+            _manifest: &McpServerManifestV1,
+            _invocation_id: &StableId,
+        ) -> Result<McpCancellationEvidenceV1, McpPeerErrorV1> {
+            Ok(McpCancellationEvidenceV1::Unknown)
+        }
+
+        fn close(&self, _manifest: &McpServerManifestV1) -> Result<(), McpPeerErrorV1> {
+            Ok(())
+        }
+    }
+
+    /// A runtime whose only session is degraded by one lost transport.
+    fn degraded_runtime() -> (
+        McpToolRuntimeV1,
+        StableId,
+        StableId,
+        McpCapabilitySnapshotV1,
+        Arc<LossOncePeer>,
+    ) {
+        let generation = ProcessGeneration(7);
+        let runtime = McpToolRuntimeV1::new(generation);
+        let peer = Arc::new(LossOncePeer::new());
+        runtime
+            .install_scripted_peer(peer.clone())
+            .expect("scripted peer");
+        let run_id = StableId::parse("run.mcp-reconnect".to_owned()).expect("run id");
+        let manifest = manifest(generation);
+        let server_id = manifest.server_id.clone();
+        let snapshot = runtime.open_frozen(&run_id, &manifest).expect("open session");
+        let lost_call = call(&snapshot, "invoke.mcp-reconnect.1");
+        let lost = runtime
+            .invoke(&run_id, &server_id, &lost_call)
+            .expect("call settles");
+        assert!(
+            lost.result.is_none(),
+            "a lost transport returns no result for the interrupted call"
+        );
+        (runtime, run_id, server_id, snapshot, peer)
+    }
+
+    #[test]
+    fn a_degraded_session_is_reconnected_before_the_next_call() {
+        let (runtime, run_id, server_id, snapshot, peer) = degraded_runtime();
+        let next = call(&snapshot, "invoke.mcp-reconnect.2");
+        let recovered = runtime
+            .invoke(&run_id, &server_id, &next)
+            .expect("the next call recovers the session");
+        assert_eq!(recovered.result, Some(json!({"echo": "hello"})));
+        assert_eq!(
+            peer.initializations.load(Ordering::SeqCst),
+            2,
+            "initialize runs once to open and once to reconnect"
+        );
+    }
+
+    #[test]
+    fn an_explicit_reconnect_recovers_a_degraded_session_once() {
+        let (runtime, run_id, server_id, snapshot, peer) = degraded_runtime();
+        assert_eq!(runtime.reconnect(&server_id).expect("reconnect"), 1);
+        let next = call(&snapshot, "invoke.mcp-reconnect.2");
+        assert_eq!(
+            runtime
+                .invoke(&run_id, &server_id, &next)
+                .expect("call after reconnect")
+                .result,
+            Some(json!({"echo": "hello"}))
+        );
+        assert_eq!(peer.initializations.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            runtime.reconnect(&server_id).expect("healthy reconnect"),
+            0,
+            "a healthy session is never reconnected again"
+        );
     }
 }

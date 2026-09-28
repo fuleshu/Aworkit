@@ -40,12 +40,21 @@ const MAX_ARGUMENTS: usize = 512;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 const MAX_PROBE_CATALOG_ENTRIES: usize = 2_048;
 const ADAPTER_VERSION: &str = "rmcp-3.1.4";
+/// How long one MCP tool call in a Run may run before Aworkit gives up on it.
+///
+/// A tool such as `adashi_qa run_jobs` blocks until its QA script finishes, and
+/// those scripts run for minutes; a short bound cut a healthy call off and lost
+/// the transport. This ceiling covers an ordinary call, while the runtime also
+/// recovers a session that a longer call still outlives, so a slow server never
+/// requires restarting the application. The one-shot probe keeps its own short
+/// discovery bound and does not use this value.
+const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Production limits shared by the one-shot probe and frozen Run sessions.
 pub(crate) fn production_peer_limits() -> ProductionMcpPeerLimitsV1 {
     ProductionMcpPeerLimitsV1 {
         initialization_timeout: Duration::from_secs(30),
-        request_timeout: Duration::from_secs(30),
+        request_timeout: RUN_REQUEST_TIMEOUT,
         close_timeout: Duration::from_secs(5),
         maximum_catalog_entries: MAX_PROBE_CATALOG_ENTRIES,
         maximum_catalog_bytes: 2 * 1024 * 1024,
@@ -666,4 +675,25 @@ fn reserved_header_name(value: &str) -> bool {
             | "mcp-method"
             | "mcp-name"
     ) || name.starts_with("mcp-param-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Run call must outlast an ordinary multi-minute MCP tool call. A short
+    /// bound cut a healthy `adashi_qa run_jobs` call off and lost the transport.
+    #[test]
+    fn a_run_call_allows_a_multi_minute_tool_result() {
+        let limits = production_peer_limits();
+        assert!(
+            limits.request_timeout >= Duration::from_secs(600),
+            "run MCP calls need a multi-minute ceiling: {:?}",
+            limits.request_timeout
+        );
+        assert!(
+            limits.initialization_timeout < limits.request_timeout,
+            "discovery stays short while a tool call may run long"
+        );
+    }
 }

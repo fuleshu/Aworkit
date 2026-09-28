@@ -214,6 +214,19 @@ impl McpSessionManager {
         Ok(snapshot)
     }
 
+    /// Whether a transport loss left this session degraded and waiting for a
+    /// reconnect. An unknown server reports `false`, so a caller recovering
+    /// several sessions can skip the ones that never opened this server.
+    pub fn is_degraded(&self, server_id: &StableId) -> Result<bool, McpSessionError> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| McpSessionError::Poisoned)?;
+        Ok(sessions
+            .get(server_id.as_str())
+            .is_some_and(|session| session.degraded))
+    }
+
     /// Invokes exactly one discovered operation. Every error is settled once;
     /// transport loss only degrades the session for a later explicit reconnect.
     pub fn invoke(
