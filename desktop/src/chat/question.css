@@ -10,8 +10,20 @@
   margin: 6px 0 0;
 }
 
-.question-dialog {
-  max-width: 520px;
+/* The question dialog is deliberately wider than the shared dialog: its
+   prompt and option details are prose. The selector names both classes
+   because a single class here ties with `.workbench-dialog`'s own
+   `max-width: 440px` and loses that tie wherever the base rule is bundled
+   after this file — which is the case in the production bundle, so the
+   one-class rule this replaced never took effect. Two classes win on
+   specificity whatever the order.
+   780px is 1.5x the 520px this dialog was originally specified at. That
+   rule lost the cascade (the dialog rendered at 440px instead), so a
+   first pass set 660px — 1.5x of what was actually on screen — which
+   review judged still too narrow. The inherited
+   `width: calc(100% - 32px)` still caps the dialog to the viewport. */
+.workbench-dialog.question-dialog {
+  max-width: 780px;
 }
 .question-dialog-heading h2 {
   font-size: var(--aw-font-ui);
