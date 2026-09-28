@@ -1233,7 +1233,16 @@ impl DesktopRuntime {
             None => &context.tools,
         };
         execution_request.tools = request_tool_bindings(pass_tools)?;
-        execution_request.mcp_servers = self.restore_frozen_mcp(context)?;
+        let mcp = self.restore_frozen_mcp(context)?;
+        // The Chat keeps the MCP capabilities it holds; each tool's interface is
+        // whatever the reconnected session advertises, so an edited server
+        // reaches this pass instead of rejecting the Chat over changed metadata.
+        for tool in &mut execution_request.tools {
+            if let Some(definition) = mcp.definitions.get(&tool.capability_id) {
+                tool.definition = Some(definition.clone());
+            }
+        }
+        execution_request.mcp_servers = mcp.manifests;
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = match &pass {
             Some(pass) => pass.document.clone(),

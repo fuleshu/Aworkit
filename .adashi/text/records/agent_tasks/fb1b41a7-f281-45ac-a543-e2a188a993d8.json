@@ -1,0 +1,57 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/service/tool_plugins.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/tests/question.rs\"]",
+    "completed_at": "2026-09-28 17:49:59",
+    "completion_memo": {
+      "lines": [
+        "IMPLEMENTED.\n",
+        "\n",
+        "`restore_frozen_mcp` (service/tool_plugins.rs) now returns `RestoredFrozenMcpV1` { manifests, definitions }: after opening the Chat's frozen endpoints it builds each bound MCP tool's model-facing definition from the live session catalog — capability id, provider alias rebuilt via `mcp_provider_name` from the Chat's own frozen server label, live description and `input_schema`. The schema-equality rejection is removed.\n",
+        "\n",
+        "`complete_workflow_input` (service.rs) applies those definitions onto `execution_request.tools` for the pass, so `freeze_mcp_binding` re-derives the MCP limit's `schema_hash` from the live schema and the provider is offered the current interface, while authority (server set, tool ids, configuration, approval class, credential binding) stays frozen. The separate `restore_frozen_mcp` reconnect calls on approval/question resume keep working and no longer reject on metadata drift.\n",
+        "\n",
+        "Boundary kept: a tool the server no longer advertises is a missing capability, so it fails closed with an accurate reason (\"MCP tool '<id>' is no longer provided by server '<server>'\") instead of the conflated schema message.\n",
+        "\n",
+        "Out of scope (unchanged): binding a brand-new MCP tool or server mid-Chat; that still needs a New Chat and belongs to a separate task with live discovery for unattested capabilities.\n",
+        "\n",
+        "Tests added in service/tests/question.rs, sharing the MCP fixture: `a_changed_mcp_tool_interface_is_adopted_for_the_chat` (live schema adopted, provider alias and manifests kept), `an_mcp_tool_the_server_no_longer_provides_still_fails_closed`, and `a_changed_mcp_interface_reaches_the_next_pass_without_a_new_chat` (an enqueue after the server edit is accepted and its preflighted request carries the live schema).\n",
+        "\n",
+        "VERIFICATION\n",
+        "cargo test --lib: 508 passed, 0 failed, 1 ignored. The `question::` filter run: 17 passed (14 pre-existing + 3 new), including the existing `answering_a_question_reconnects_the_chats_frozen_mcp_endpoints`.\n",
+        "rustfmt --edition 2024 --check on tool_plugins.rs and tests/question.rs: clean.\n",
+        "Note: this sandbox shells out without HOME, so the fixture runtime needed HOME=/tmp/aworkit-test-home for skill-home resolution; that is environmental, not a code change.\n",
+        "\n",
+        "Not verified: the native desktop smoke (needs a rebuilt Tauri binary + WebView), and the in-process case where a server is edited while the same application generation keeps a cached MCP snapshot — with a reused cached snapshot the frozen and live schema already agree, so no lockout occurred there either."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-28 17:49:47",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "A resumed Chat failed with \"MCP schema changed for 'mcp://.../adashi_help'; start a New Chat to use the new definition\" after the MCP server was edited. `restore_frozen_mcp` compared every bound MCP tool's frozen `input_schema` with the live catalog and failed the whole pass on any difference, which contradicts the snapshot_freezer \"Existing Chat continuation\" rule: an improved tool replaces its previous behaviour for existing Chats, and installed metadata differences must not lock a Chat out.\n",
+        "\n",
+        "Task 107 flagged this as an explicit follow-up (its memo item 2: \"restore_frozen_mcp still rejects an MCP schema change for an existing Chat, which the design says must not lock a Chat out because installed metadata differs\").\n",
+        "\n",
+        "Scope:\n",
+        "1. `restore_frozen_mcp` reconnects the Chat's frozen endpoints and returns both the manifests and the live model-facing definition of every bound MCP tool (capability id, provider alias rebuilt from the Chat's frozen server label, live description and input_schema).\n",
+        "2. `complete_workflow_input` applies those definitions to the pass's tool bindings, so the re-derived schema hash and provider-visible interface come from this generation's session while authority (server set, tool ids, approval/credential binding) stays frozen.\n",
+        "3. A tool the server no longer advertises is a missing capability, not metadata drift, so it still fails closed with an accurate reason.\n",
+        "\n",
+        "Out of scope: binding a brand-new MCP tool or server mid-Chat (still refused; needs its own task and live discovery for unattested capabilities)."
+      ]
+    },
+    "id": 5047719028,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Adopt a changed MCP tool interface for an existing Chat instead of locking it out",
+    "updated_at": "2026-09-28 17:49:59"
+  },
+  "deleted": false,
+  "identity": "fb1b41a7-f281-45ac-a543-e2a188a993d8",
+  "schemaVersion": 1
+}

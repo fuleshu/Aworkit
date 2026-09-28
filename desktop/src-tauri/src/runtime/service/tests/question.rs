@@ -172,6 +172,13 @@ struct QuestionPipeline {
     /// One entry per frozen-endpoint preparation, so a test can prove the Chat's
     /// MCP transport was reconnected before a resumed pass accepted work.
     mcp_preparations: Mutex<Vec<String>>,
+    /// The tool name and schema the fixture server advertises, so a test can
+    /// edit the server between two application generations.
+    mcp_tool_name: Mutex<String>,
+    mcp_input_schema: Mutex<Value>,
+    /// Every preflighted request, so a test can inspect the interface the pass
+    /// was actually offered.
+    preflight_requests: Mutex<Vec<WorkflowExecutionRequestV1>>,
 }
 
 impl QuestionPipeline {
@@ -182,11 +189,22 @@ impl QuestionPipeline {
             answers: Mutex::new(Vec::new()),
             fail_resume: AtomicBool::new(false),
             mcp_preparations: Mutex::new(Vec::new()),
+            mcp_tool_name: Mutex::new("echo".into()),
+            mcp_input_schema: Mutex::new(fixture_mcp_input_schema()),
+            preflight_requests: Mutex::new(Vec::new()),
         }
     }
 }
 
 impl WorkflowPipelinePort for QuestionPipeline {
+    fn preflight(&self, request: &WorkflowExecutionRequestV1) -> Result<(), String> {
+        self.preflight_requests
+            .lock()
+            .unwrap()
+            .push(request.clone());
+        Ok(())
+    }
+
     fn execute(
         &self,
         request: WorkflowExecutionRequestV1,
@@ -226,9 +244,11 @@ impl WorkflowPipelinePort for QuestionPipeline {
             .lock()
             .unwrap()
             .push(run_id.as_str().to_owned());
+        let tool_name = self.mcp_tool_name.lock().unwrap().clone();
+        let input_schema = self.mcp_input_schema.lock().unwrap().clone();
         Ok(servers
             .iter()
-            .map(|server| frozen_mcp_snapshot(&server.manifest))
+            .map(|server| frozen_mcp_snapshot(&server.manifest, &tool_name, &input_schema))
             .collect())
     }
 
@@ -300,11 +320,23 @@ fn stale_question_answer_commits_once_and_resumes_its_chat() {
     );
 }
 
-use aworkit_capability_host::{McpCatalogV1, McpFeatureSetV1, McpServerManifestV1, McpToolDescriptorV1};
+use aworkit_capability_host::{
+    McpCatalogV1, McpFeatureSetV1, McpServerManifestV1, McpToolDescriptorV1,
+};
+
+/// The schema the fixture MCP server's `echo` tool starts with. A test edits
+/// [`QuestionPipeline::mcp_input_schema`] to stand in for a server change.
+fn fixture_mcp_input_schema() -> Value {
+    json!({"type":"object","properties":{"text":{"type":"string"}}})
+}
 
 /// The discovery snapshot the fixture MCP server hands back: one read-only tool
-/// whose schema the service compares against the frozen Chat's tool binding.
-fn frozen_mcp_snapshot(manifest: &McpServerManifestV1) -> McpCapabilitySnapshotV1 {
+/// whose interface the service resolves into the Chat's pass.
+fn frozen_mcp_snapshot(
+    manifest: &McpServerManifestV1,
+    tool_name: &str,
+    input_schema: &Value,
+) -> McpCapabilitySnapshotV1 {
     McpCapabilitySnapshotV1 {
         server_id: manifest.server_id.clone(),
         host_generation: manifest.host_generation,
@@ -319,12 +351,12 @@ fn frozen_mcp_snapshot(manifest: &McpServerManifestV1) -> McpCapabilitySnapshotV
         },
         catalog: McpCatalogV1 {
             tools: vec![McpToolDescriptorV1 {
-                name: "echo".into(),
-                input_schema_hash: "sha256:question-fixture-echo".into(),
+                name: tool_name.into(),
+                input_schema_hash: format!("sha256:question-fixture-{tool_name}"),
                 side_effect_known_read_only: true,
                 annotations: None,
                 description: "Echo".into(),
-                input_schema: json!({"type":"object","properties":{"text":{"type":"string"}}}),
+                input_schema: input_schema.clone(),
             }],
             resources: Vec::new(),
             prompts: Vec::new(),
@@ -425,4 +457,129 @@ fn answering_a_question_reconnects_the_chats_frozen_mcp_endpoints() {
         "answering a question must reconnect the Chat's frozen MCP endpoints before the pass resumes"
     );
     assert_eq!(reopened.snapshot(0).unwrap().chat.phase, "waiting_input");
+}
+
+/// Configures an MCP-bound Chat and starts it, returning the runtime, the
+/// fixture pipeline and the `mcp://` capability the Chat holds.
+fn started_mcp_chat(
+    root: &TempDir,
+) -> (
+    DesktopRuntime,
+    Arc<QuestionPipeline>,
+    FrozenChatExecutionRecordV1,
+    String,
+) {
+    let provider = Arc::new(FixtureProvider::new());
+    let mut core = runtime(root, provider.clone());
+    configure(&mut core);
+    let pipeline = Arc::new(QuestionPipeline::new(provider));
+    core.pipeline = pipeline.clone();
+    configure_mcp_chat(&mut core);
+    core.command(send("mcp.metadata-start", 0, "Ask me"))
+        .unwrap();
+    let frozen = core.history.current_frozen_context().unwrap().unwrap();
+    (
+        core,
+        pipeline,
+        frozen,
+        "mcp://mcp.question-fixture/echo".into(),
+    )
+}
+
+/// The frozen Chat's schema is metadata, not authority: a server edit reaches
+/// the Chat instead of failing it with the removed lockout
+/// ("MCP schema changed ... start a New Chat").
+#[test]
+fn a_changed_mcp_tool_interface_is_adopted_for_the_chat() {
+    let root = TempDir::new().unwrap();
+    let (mut core, pipeline, frozen, capability) = started_mcp_chat(&root);
+    let frozen_definition = frozen
+        .context
+        .tools
+        .iter()
+        .find(|tool| tool.tool_id == capability)
+        .and_then(|tool| tool.definition.clone())
+        .expect("the Chat froze the MCP tool definition");
+    assert_eq!(frozen_definition.input_schema, fixture_mcp_input_schema());
+
+    // The server now advertises the same tool with an added parameter.
+    let live = json!({
+        "type": "object",
+        "properties": {"text": {"type": "string"}, "loud": {"type": "boolean"}},
+        "required": ["text"]
+    });
+    *pipeline.mcp_input_schema.lock().unwrap() = live.clone();
+
+    let restored = core
+        .restore_frozen_mcp(&frozen.context)
+        .expect("changed MCP metadata must not lock the Chat out");
+    assert_eq!(restored.definitions[&capability].input_schema, live);
+    assert_eq!(
+        restored.definitions[&capability].name, frozen_definition.name,
+        "the Chat keeps the tool identity it was frozen with"
+    );
+    assert_eq!(restored.manifests.len(), frozen.context.mcp_manifests.len());
+}
+
+/// A tool the server no longer advertises is a missing capability, not metadata
+/// drift, so it still fails closed with an accurate reason.
+#[test]
+fn an_mcp_tool_the_server_no_longer_provides_still_fails_closed() {
+    let root = TempDir::new().unwrap();
+    let (mut core, pipeline, frozen, _) = started_mcp_chat(&root);
+    *pipeline.mcp_tool_name.lock().unwrap() = "echo.renamed".into();
+
+    let error = core
+        .restore_frozen_mcp(&frozen.context)
+        .expect_err("a vanished MCP tool must block execution");
+    assert!(error.contains("no longer provided"), "{error}");
+}
+
+/// The whole point: after the server changes, the next pass of the same Chat is
+/// accepted and offered the live interface, without a New Chat.
+#[test]
+fn a_changed_mcp_interface_reaches_the_next_pass_without_a_new_chat() {
+    let root = TempDir::new().unwrap();
+    let (mut core, pipeline, _, capability) = started_mcp_chat(&root);
+    core.command(action(
+        &core,
+        "mcp.interface-answer",
+        "question",
+        json!({"questionId":"question.fixture","optionId":"beta"}),
+    ))
+    .unwrap();
+    assert_eq!(core.snapshot(0).unwrap().chat.phase, "waiting_input");
+    drop(core);
+
+    // The server is edited between application generations.
+    let live = json!({
+        "type": "object",
+        "properties": {"text": {"type": "string"}, "loud": {"type": "boolean"}}
+    });
+    *pipeline.mcp_input_schema.lock().unwrap() = live.clone();
+    pipeline.preflight_requests.lock().unwrap().clear();
+    let mut reopened = runtime(&root, pipeline.provider.clone());
+    reopened.pipeline = pipeline.clone();
+    let receipt = reopened
+        .command(send(
+            "mcp.interface-continue",
+            reopened.history.head().unwrap(),
+            "Continue",
+        ))
+        .expect("a changed MCP interface must not reject the next pass");
+    assert!(receipt.accepted);
+
+    let requests = pipeline.preflight_requests.lock().unwrap();
+    let advertised = requests
+        .last()
+        .expect("the pass was preflighted")
+        .tools
+        .iter()
+        .find(|tool| tool.capability_id == capability)
+        .expect("the Chat still binds its MCP tool");
+    assert_eq!(
+        advertised.definition.as_ref().unwrap().input_schema,
+        live,
+        "the pass is offered the server's current interface"
+    );
 }

@@ -1,13 +1,36 @@
 //! Reconnect persisted MCP Chats using their own immutable connection snapshots.
 use super::*;
 
+/// One frozen Chat's MCP connections plus the live model-facing definitions for
+/// the MCP capabilities it holds.
+#[derive(Debug)]
+pub(super) struct RestoredFrozenMcpV1 {
+    /// The core-attested manifests opened for this Run.
+    pub manifests: Vec<aworkit_capability_host::McpServerManifestV1>,
+    /// The interface each bound MCP tool actually advertises in the session this
+    /// application generation opened, keyed by `mcp://<server>/<tool>` id.
+    pub definitions: BTreeMap<String, ModelToolDefinitionV1>,
+}
+
 impl DesktopRuntime {
+    /// Reconnects the Chat's frozen MCP endpoints and resolves the live
+    /// interface of every MCP tool it holds.
+    ///
+    /// Authority stays frozen: only the servers and tool identities the Chat was
+    /// authorised with are reconnected. Their metadata comes from this
+    /// generation's session, so an improved server reaches the very next pass
+    /// instead of locking the Chat out (`snapshot_freezer`, "Existing Chat
+    /// continuation"). A tool the server no longer advertises is a missing
+    /// capability, so it still fails closed.
     pub(super) fn restore_frozen_mcp(
         &mut self,
         context: &FrozenChatExecutionContextV1,
-    ) -> Result<Vec<aworkit_capability_host::McpServerManifestV1>, String> {
+    ) -> Result<RestoredFrozenMcpV1, String> {
         if context.mcp_configurations.is_empty() {
-            return Ok(context.mcp_manifests.values().cloned().collect());
+            return Ok(RestoredFrozenMcpV1 {
+                manifests: context.mcp_manifests.values().cloned().collect(),
+                definitions: BTreeMap::new(),
+            });
         }
         let mut preparations = Vec::new();
         for frozen in &context.mcp_configurations {
@@ -34,31 +57,53 @@ impl DesktopRuntime {
         let snapshots = self
             .pipeline
             .prepare_mcp_sessions(&context.identity.run_id, &mut preparations)?;
+        let mut definitions = BTreeMap::new();
         for tool in context
             .tools
             .iter()
             .filter(|tool| tool.tool_id.starts_with(MCP_CAPABILITY_PREFIX))
         {
             let (server, name) = split_mcp_capability(&tool.tool_id)?;
-            let definition = tool
-                .definition
-                .as_ref()
-                .ok_or("Frozen MCP tool definition is missing")?;
-            let current = snapshots
+            let descriptor = snapshots
                 .iter()
                 .find(|snapshot| snapshot.server_id.as_str() == server)
-                .and_then(|snapshot| snapshot.catalog.tools.iter().find(|tool| tool.name == name));
-            if current.is_none_or(|tool| tool.input_schema != definition.input_schema) {
-                return Err(format!(
-                    "MCP schema changed for '{}'; start a New Chat to use the new definition",
-                    tool.tool_id
-                ));
-            }
+                .and_then(|snapshot| snapshot.catalog.tools.iter().find(|tool| tool.name == name))
+                .ok_or_else(|| {
+                    format!(
+                        "MCP tool '{}' is no longer provided by server '{server}'",
+                        tool.tool_id
+                    )
+                })?;
+            // The alias is rebuilt from the Chat's own frozen server label, so
+            // this build's provider naming reaches the model without letting an
+            // echoed server field rename the tool.
+            let label = context
+                .mcp_configurations
+                .iter()
+                .find(|frozen| frozen.server.id.as_str() == server)
+                .map(|frozen| frozen.server.name.clone())
+                .unwrap_or_else(|| mcp_fallback_label(server));
+            definitions.insert(
+                tool.tool_id.clone(),
+                ModelToolDefinitionV1 {
+                    capability_id: tool.tool_id.clone(),
+                    name: mcp_provider_name(server, &label, name),
+                    description: if descriptor.description.is_empty() {
+                        format!("Call MCP tool '{name}' on server '{server}'.")
+                    } else {
+                        descriptor.description.clone()
+                    },
+                    input_schema: descriptor.input_schema.clone(),
+                },
+            );
         }
-        Ok(preparations
-            .into_iter()
-            .map(|prepared| prepared.manifest)
-            .collect())
+        Ok(RestoredFrozenMcpV1 {
+            manifests: preparations
+                .into_iter()
+                .map(|prepared| prepared.manifest)
+                .collect(),
+            definitions,
+        })
     }
 }
 
