@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "wayland-position-decision",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-09-29 17:29:40",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "0b3a76c5-38d1-42bd-9074-d46ebc4d875e",
+  "schemaVersion": 1
+}
