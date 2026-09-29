@@ -2178,10 +2178,13 @@ impl ChatDefaultsConfigurationV2 {
 
 /// Persisted desktop window placement and panel separator layout.
 ///
-/// `x`/`y`/`width`/`height` are the outer window frame in physical pixels,
-/// exactly as the operating system reports them. Restoring them preserves the
-/// frame the user actually positioned, so a framed window is never re-seated
-/// with its client size and does not drift smaller on every restart. Panel
+/// `x`/`y` are the outer window frame origin in physical pixels, exactly as the
+/// operating system reports it, and are restored as the frame origin. `width`
+/// and `height` are the size the restore applies, in physical pixels: the Win32
+/// outer rectangle on Windows and the client size on the platforms whose
+/// `set_size` takes a client size. Capturing exactly what restore applies keeps
+/// the round trip a bijection, so a framed window never drifts smaller or
+/// larger on every restart. Panel
 /// separators are persisted separately because they are logical, not physical.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

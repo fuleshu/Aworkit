@@ -101,9 +101,21 @@ fn measure(window: &tauri::Window, session: &LayoutSession) -> Result<(), String
     let frame = if maximized || fullscreen {
         None
     } else {
+        // Windows restores the Win32 outer rectangle, so its measurement is the
+        // outer size. Everywhere else `set_size` applies a client size, so the
+        // client size is what is captured: restoring never re-derives the
+        // decoration from the live window, whose platform insets are unreliable
+        // (on Linux `tao` only refreshes them from `_NET_FRAME_EXTENTS`, which
+        // is empty for client-side decorations). Reading them used to grow the
+        // window by its decoration on every restart, or collapse it when the
+        // reported inset degenerated.
+        #[cfg(target_os = "windows")]
+        let size = window.outer_size().map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "windows"))]
+        let size = window.inner_size().map_err(|e| e.to_string())?;
         Some((
             window.outer_position().map_err(|e| e.to_string())?,
-            window.outer_size().map_err(|e| e.to_string())?,
+            size,
             window.scale_factor().map_err(|e| e.to_string())?,
         ))
     };
@@ -115,13 +127,41 @@ fn measure(window: &tauri::Window, session: &LayoutSession) -> Result<(), String
         layout.maximized = maximized;
     }
     if let Some((position, size, scale)) = frame {
-        layout.x = Some(position.x);
-        layout.y = Some(position.y);
-        layout.width = Some(size.width);
-        layout.height = Some(size.height);
-        layout.scale_factor = Some(scale);
+        store_frame(
+            &mut layout,
+            (position.x, position.y),
+            (size.width, size.height),
+            scale,
+        );
     }
     Ok(())
+}
+
+/// Stores one measured frame, unless it would not survive validation.
+///
+/// A frame read before the window is realized, or from a platform cache that
+/// reports a zero size or an impossible scale factor, must never replace a
+/// usable one. The persisted record is validated on write, and a rejected
+/// record silently keeps an older frame — which is exactly how a single bad
+/// sample turns into "the window opens at the wrong size after a restart".
+/// Returns whether the frame was stored.
+fn store_frame(
+    layout: &mut LayoutConfigurationV2,
+    position: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+) -> bool {
+    let mut candidate = layout.clone();
+    candidate.x = Some(position.0);
+    candidate.y = Some(position.1);
+    candidate.width = Some(size.0);
+    candidate.height = Some(size.1);
+    candidate.scale_factor = Some(scale);
+    if candidate.validate().is_err() {
+        return false;
+    }
+    *layout = candidate;
+    true
 }
 
 /// Native close is held only until the final document write completes. Waiting
@@ -181,9 +221,13 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     }
 }
 
-/// Restores physical outer bounds; Tauri set_size accepts a client size.
-/// Windows uses the actual outer rectangle directly, including custom menu
-/// height and DPI-dependent decorations. Other platforms subtract native insets.
+/// Restores the persisted placement; on Windows that is the physical outer
+/// rectangle through `SetWindowPos`, which is the shape the Win32 frame is
+/// captured in. Windows uses the actual outer rectangle directly, including
+/// custom menu height and DPI-dependent decorations. Everywhere else the
+/// position is the outer frame origin and the size is the client size, which is
+/// exactly what `set_size` applies, so no decoration inset is re-derived from
+/// the live window.
 pub fn restore_window_layout<R: Runtime>(
     app: &AppHandle<R>,
     layout: &LayoutConfigurationV2,
@@ -231,16 +275,13 @@ pub fn restore_window_layout<R: Runtime>(
                 .map_err(|e| e.to_string())?;
         }
         if let (Some(width), Some(height)) = (layout.width, layout.height) {
-            let outer = window.outer_size().map_err(|e| e.to_string())?;
-            let inner = window.inner_size().map_err(|e| e.to_string())?;
+            // `measure` captured the client size on these platforms, so it is
+            // applied as-is. A Wayland compositor owns window placement and may
+            // ignore the position above; the size always applies.
             window
                 .set_size(tauri::PhysicalSize::new(
-                    width
-                        .saturating_sub(outer.width.saturating_sub(inner.width))
-                        .max(1),
-                    height
-                        .saturating_sub(outer.height.saturating_sub(inner.height))
-                        .max(1),
+                    width.max(1),
+                    height.max(1),
                 ))
                 .map_err(|e| e.to_string())?;
         }
@@ -285,4 +326,51 @@ fn stored_position_is_reachable<R: Runtime>(
         let bottom = top + i64::from(monitor.size().height);
         probe_x >= left && probe_x < right && probe_y >= top && probe_y < bottom
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A measurement that cannot be persisted must never replace a usable frame.
+    /// The persisted record is validated on write, and a rejected record keeps
+    /// an older frame silently — the "wrong size after a restart" this guards.
+    #[test]
+    fn keeps_the_last_usable_frame_when_a_measurement_is_unusable() {
+        let mut layout = LayoutConfigurationV2::default();
+        assert!(store_frame(&mut layout, (120, 64), (1600, 1000), 1.0));
+        assert_eq!(
+            (layout.x, layout.y, layout.width, layout.height),
+            (Some(120), Some(64), Some(1600), Some(1000))
+        );
+
+        // A size read before the window was realized.
+        assert!(!store_frame(&mut layout, (0, 0), (0, 0), 1.0));
+        // A scale factor outside its persisted range.
+        assert!(!store_frame(&mut layout, (0, 0), (1600, 1000), 0.0));
+        assert!(!store_frame(&mut layout, (0, 0), (1600, 1000), f64::NAN));
+        // A coordinate outside its persisted range.
+        assert!(!store_frame(&mut layout, (i32::MAX, 0), (1600, 1000), 1.0));
+
+        assert_eq!(
+            (layout.x, layout.y, layout.width, layout.height, layout.scale_factor),
+            (Some(120), Some(64), Some(1600), Some(1000), Some(1.0))
+        );
+
+        // A later usable frame still replaces the stored one.
+        assert!(store_frame(&mut layout, (-1280, 40), (1440, 940), 1.5));
+        assert_eq!(
+            (layout.x, layout.y, layout.width, layout.height, layout.scale_factor),
+            (Some(-1280), Some(40), Some(1440), Some(940), Some(1.5))
+        );
+    }
+
+    /// A frame is stored exactly as measured; nothing scales or re-seats it.
+    #[test]
+    fn stores_a_usable_frame_verbatim() {
+        let mut layout = LayoutConfigurationV2::default();
+        assert!(store_frame(&mut layout, (0, 0), (1, 1), 0.5));
+        assert_eq!(layout.width, Some(1));
+        assert_eq!(layout.scale_factor, Some(0.5));
+    }
 }
