@@ -236,6 +236,31 @@ async fn chat_image_import(
         .map_err(|e| e.to_string())?
 }
 
+/// The Chat composer's own image chooser.
+///
+/// It goes through the operating system's dialog like every other browse, so it
+/// opens in the folder this session last chose (a webview file input cannot be
+/// steered) and filters to the formats the image store accepts.
+#[tauri::command]
+async fn native_pick_images(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
+) -> Result<Vec<aworkit_capability_host::model_images::ImageAttachmentV1>, String> {
+    let store = store.inner().clone();
+    let extensions = ["png", "jpg", "jpeg", "webp"].map(str::to_owned).to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = aworkit_desktop::presentation::pick_images(&app, &extensions)?;
+        let mut attachments = Vec::with_capacity(paths.len());
+        for path in paths {
+            let path = path.into_path().map_err(|error| error.to_string())?;
+            attachments.push(store.import_path(&path)?);
+        }
+        Ok(attachments)
+    })
+    .await
+    .map_err(|error| format!("image picker worker failed: {error}"))?
+}
+
 #[tauri::command]
 async fn chat_image_preview(
     store: tauri::State<'_, aworkit_desktop::runtime::ChatImageStore>,
@@ -801,6 +826,7 @@ fn main() {
             }
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 chat_image_import,
+                native_pick_images,
                 chat_image_preview,
                 chat_image_thumbnail,
                 desktop_snapshot::desktop_snapshot,

@@ -33,6 +33,21 @@ impl ChatImageStore {
         }
     }
 
+    /// Imports one local image file the operating system's chooser already
+    /// resolved to an absolute path.
+    ///
+    /// The path never comes from the renderer: only the native dialog supplies
+    /// it, which is why this is separate from the base64 import the webview uses.
+    pub fn import_path(&self, path: &Path) -> Result<ImageAttachmentV1, String> {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Picked image".to_owned());
+        let bytes = fs::read(path)
+            .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+        self.import_bytes(name, &bytes)
+    }
+
     /// Validates actual image bytes before atomically publishing a local blob.
     pub fn import(&self, name: String, data: String) -> Result<ImageAttachmentV1, String> {
         if data.len() > MAX_IMAGE_BYTES.div_ceil(3) * 4 {

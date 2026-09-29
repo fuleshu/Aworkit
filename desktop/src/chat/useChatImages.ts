@@ -44,5 +44,32 @@ export function useChatImages(
       if (mounted.current) setImporting(false);
     }
   }
-  return { addFiles, importing, error };
+  /**
+   * Adds attachments the native image chooser already imported.
+   *
+   * The chooser hands back stored records instead of files, so nothing is read
+   * or imported twice; the same serialization and validation apply.
+   */
+  function addAttachments(attachments: readonly ImageAttachment[]): void {
+    if (busy.current || attachments.length === 0) return;
+    busy.current = true;
+    setImporting(true);
+    setError(null);
+    try {
+      const next = [...images, ...attachments];
+      validateImageSelection(next);
+      if (mounted.current) onChange(next);
+    } catch (failure) {
+      if (mounted.current)
+        setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      busy.current = false;
+      if (mounted.current) setImporting(false);
+    }
+  }
+  /** Reports a failure the chooser itself raised, next to the composer. */
+  function reportError(message: string): void {
+    setError(message);
+  }
+  return { addFiles, addAttachments, reportError, importing, error };
 }

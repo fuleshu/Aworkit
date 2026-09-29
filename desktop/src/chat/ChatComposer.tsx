@@ -167,6 +167,8 @@ export function ChatComposer({
   }, [chat.lockedWorkflow, state.workflowId, fallbackWorkflowId]);
   const {
     addFiles,
+    addAttachments,
+    reportError,
     importing,
     error: imageError,
   } = useChatImages(state.attachments, (attachments) => edit({ attachments }));
@@ -413,6 +415,8 @@ export function ChatComposer({
           <ImageAttachmentMenu
             disabled={chat.recoveryPending || commandPending}
             onFiles={(files) => void addFiles(files)}
+            onImages={addAttachments}
+            onError={reportError}
           />
           {approvalControl}
           <div className="composer-submit-controls">

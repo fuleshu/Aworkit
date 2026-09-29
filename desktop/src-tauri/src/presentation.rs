@@ -206,20 +206,54 @@ pub const MAXIMUM_PICK_EXTENSIONS: usize = 16;
 
 /// Opens the operating system's file chooser. `extensions` narrows the visible
 /// files when the caller knows what it needs; an empty list offers everything.
+///
+/// The chooser opens in the folder this session last browsed to, so a dialog
+/// does not restart at the application's own directory.
 pub fn pick_file<R: Runtime>(app: &AppHandle<R>, extensions: &[String]) -> Option<FilePath> {
-    let mut dialog = app.dialog().file().set_title("Open Aworkit file");
+    let mut dialog = crate::dialog_session::seed(app.dialog().file().set_title("Open Aworkit file"));
     if !extensions.is_empty() {
         let filters = extensions.iter().map(String::as_str).collect::<Vec<_>>();
         dialog = dialog.add_filter("Requested files", &filters);
     }
-    dialog.blocking_pick_file()
+    let chosen = dialog.blocking_pick_file();
+    if let Some(path) = chosen.as_ref() {
+        crate::dialog_session::remember_chosen_file(path);
+    }
+    chosen
 }
 
 pub fn pick_folder<R: Runtime>(app: &AppHandle<R>) -> Option<FilePath> {
-    app.dialog()
-        .file()
-        .set_title("Choose workspace folder")
-        .blocking_pick_folder()
+    let chosen = crate::dialog_session::seed(
+        app.dialog().file().set_title("Choose workspace folder"),
+    )
+    .blocking_pick_folder();
+    if let Some(path) = chosen.as_ref() {
+        crate::dialog_session::remember_chosen_folder(path);
+    }
+    chosen
+}
+
+/// Shows the operating system's image chooser for the Chat composer.
+///
+/// Multi-select, filtered to the formats the image store accepts, and seeded
+/// from the same session folder as every other chooser. Returns the chosen
+/// paths in the order the user sees them, or an empty list when cancelled.
+pub fn pick_images<R: Runtime>(
+    app: &AppHandle<R>,
+    extensions: &[String],
+) -> Result<Vec<FilePath>, String> {
+    let mut dialog = crate::dialog_session::seed(app.dialog().file().set_title("Add images"));
+    if !extensions.is_empty() {
+        let filters = extensions.iter().map(String::as_str).collect::<Vec<_>>();
+        dialog = dialog.add_filter("Images", &filters);
+    }
+    let Some(chosen) = dialog.blocking_pick_files() else {
+        return Ok(Vec::new());
+    };
+    if let Some(first) = chosen.first() {
+        crate::dialog_session::remember_chosen_file(first);
+    }
+    Ok(chosen)
 }
 
 fn validate_text(title: &str, body: &str) -> Result<(), String> {

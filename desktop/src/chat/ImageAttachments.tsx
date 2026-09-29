@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { chatImagePreview, type ImageAttachment } from "./images";
+import { chatImagePreview, pickChatImages, type ImageAttachment } from "./images";
 import "./images.css";
 
 export function ImageAttachmentMenu({
   disabled,
   onFiles,
+  onImages,
+  onError,
 }: {
   readonly disabled: boolean;
   readonly onFiles: (files: readonly File[]) => void;
+  /** Adds records the native image chooser already stored. */
+  readonly onImages?: (images: readonly ImageAttachment[]) => void;
+  /** Reports a chooser failure next to the composer. */
+  readonly onError?: (message: string) => void;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
@@ -23,6 +29,26 @@ export function ImageAttachmentMenu({
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
+  /**
+   * Prefers the operating system's own chooser, which shares the folder this
+   * session last browsed to; the webview input is the browser-preview fallback
+   * (and the one a browser can steer at all).
+   */
+  const choose = async () => {
+    if (onImages !== undefined) {
+      try {
+        const images = await pickChatImages();
+        if (images !== null) {
+          onImages(images);
+          return;
+        }
+      } catch (failure) {
+        onError?.(failure instanceof Error ? failure.message : String(failure));
+        return;
+      }
+    }
+    picker.current?.click();
+  };
   return (
     <div
       className="image-attachment-menu"
@@ -59,7 +85,7 @@ export function ImageAttachmentMenu({
             type="button"
             title="Browse for one or more PNG, JPEG or WebP images"
             onClick={() => {
-              picker.current?.click();
+              void choose();
               setOpen(false);
             }}
           >

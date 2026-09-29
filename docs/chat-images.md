@@ -56,6 +56,13 @@ onto the composer from the file manager. Attachments appear as removable
 thumbnails before sending and remain visible in the submitted user message. Click
 a thumbnail to open its preview. Image-only messages are supported.
 
+**Add image** opens the operating system's own chooser through the native
+runtime, so it starts in the folder this session last browsed to (a webview
+`<input type="file">` cannot be told where to start and always opens in the
+application's directory). The browser Preview keeps the webview input, which is
+the only chooser a browser has. The chosen files are validated and stored
+natively, so nothing is read twice.
+
 Paste and drop are two different platform problems:
 
 - **Paste.** Chromium and Windows WebView2 expose a pasted image through

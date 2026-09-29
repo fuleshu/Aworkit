@@ -1,5 +1,6 @@
 //! Native desktop boundary for the bundled Aworkit presentation.
 
+pub mod dialog_session;
 pub mod live_qa;
 pub mod management;
 pub mod menu_typography;

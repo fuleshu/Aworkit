@@ -43,14 +43,18 @@ pub enum WorkflowFileWriteOutcomeV1 {
 ///
 /// Returns the chosen path as UTF-8 text, or `None` when the user cancelled.
 pub fn pick_open_path<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, String> {
-    app.dialog()
-        .file()
-        .set_title("Import workflow")
-        .add_filter("Aworkit workflow", &["aworkit.json"])
-        .add_filter("JSON", &["json"])
-        .blocking_pick_file()
-        .map(path_text)
-        .transpose()
+    let chosen = crate::dialog_session::seed(
+        app.dialog()
+            .file()
+            .set_title("Import workflow")
+            .add_filter("Aworkit workflow", &["aworkit.json"])
+            .add_filter("JSON", &["json"]),
+    )
+    .blocking_pick_file();
+    if let Some(path) = chosen.as_ref() {
+        crate::dialog_session::remember_chosen_file(path);
+    }
+    chosen.map(path_text).transpose()
 }
 
 /// Shows the operating system's save dialog for exporting one workflow document.
@@ -61,16 +65,21 @@ pub fn pick_save_path<R: Runtime>(
     app: &AppHandle<R>,
     suggested_name: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let mut dialog = app
-        .dialog()
-        .file()
-        .set_title("Export workflow")
-        .add_filter("Aworkit workflow", &["aworkit.json"])
-        .add_filter("JSON", &["json"]);
+    let mut dialog = crate::dialog_session::seed(
+        app.dialog()
+            .file()
+            .set_title("Export workflow")
+            .add_filter("Aworkit workflow", &["aworkit.json"])
+            .add_filter("JSON", &["json"]),
+    );
     if let Some(name) = suggested_name {
         dialog = dialog.set_file_name(suggested_file_name(name));
     }
-    dialog.blocking_save_file().map(path_text).transpose()
+    let chosen = dialog.blocking_save_file();
+    if let Some(path) = chosen.as_ref() {
+        crate::dialog_session::remember_chosen_file(path);
+    }
+    chosen.map(path_text).transpose()
 }
 
 /// Reads one workflow document from `path` as bounded UTF-8 text.

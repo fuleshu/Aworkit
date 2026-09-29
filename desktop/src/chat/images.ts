@@ -82,3 +82,17 @@ export async function chatImagePreview(
   if (preview === undefined) throw new Error("Image preview is unavailable");
   return preview;
 }
+
+/**
+ * Opens the operating system's image chooser through the native dialog.
+ *
+ * A webview `<input type="file">` cannot be told where to start, so it always
+ * opens in the application's own directory. The native chooser shares the
+ * folder the session last browsed to and filters to the accepted formats, so
+ * the composer prefers it wherever the native runtime exists; the browser
+ * preview keeps the input and this returns null.
+ */
+export async function pickChatImages(): Promise<readonly ImageAttachment[] | null> {
+  if (!("__TAURI_INTERNALS__" in window)) return null;
+  return imageAttachmentsSchema.parse(await invoke("native_pick_images"));
+}
