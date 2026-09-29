@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/SubagentTabs.tsx\",\"desktop/src/chat/SubagentTabs.test.tsx\",\"desktop/src/chat/subagentWorkspace.test.tsx\"]",
+    "completed_at": "2026-09-29 17:27:01",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 605edae (main -> origin/main).\n",
+        "\n",
+        "Delivered: `SubagentTabs` returns null when none of the remembered open tabs resolves to a catalog entry, so the strip exists only for delegated children and the parent Chat is the whole workspace again. The behaviour is unchanged whenever at least one child tab is open (the permanent Chat tab plus one closable tab per child, with the same keyboard roving focus).\n",
+        "\n",
+        "Verification: `vitest run src/chat src/shell src/app.integration.test.tsx` 263 passed; the full desktop suite 79 files / 593 tests green. The existing workspace test that asserted \"the parent tab is permanent\" after auto-closing the last child was rewritten to the new expectation (no strip at all, composer available) — that assertion was the old behaviour the user reported. Two new SubagentTabs cases cover \"settled children in the catalog but no open tab\" and \"remembered tab whose child left the catalog\"."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 17:26:46",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: the \"Chat\" tab in the Chat workspace now shows all the time; before it appeared only when there were additional background agent tabs.\n",
+        "\n",
+        "Expected: the strip is not rendered while no delegated child tab is open.\n",
+        "\n",
+        "Cause: the strip's condition was `subagentEntries.length > 0 || activeChild !== null`, and the catalog keeps settled children, so a lone permanent \"Chat\" tab stayed on screen after every delegated tab was closed (the condition predates this work; commit 4a956ee).\n",
+        "\n",
+        "Fix: SubagentTabs renders nothing when none of the remembered open tabs resolves to a catalog entry, so the Chat is the whole workspace again. Closing, auto-closing and dropping unknown children all lead back to a strip-less workspace."
+      ]
+    },
+    "id": 22020855350,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Render the Chat tab strip only when a delegated child tab is open",
+    "updated_at": "2026-09-29 17:27:01"
+  },
+  "deleted": false,
+  "identity": "b5c799aa-305e-44e8-90b7-da0642362500",
+  "schemaVersion": 1
+}

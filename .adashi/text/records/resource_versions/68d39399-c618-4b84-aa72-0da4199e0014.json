@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "linux-window-position-wayland",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-09-29 17:26:36",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "68d39399-c618-4b84-aa72-0da4199e0014",
+  "schemaVersion": 1
+}

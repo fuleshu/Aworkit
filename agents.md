@@ -12,7 +12,7 @@ block. Cross-cutting rules that should arrive at a lifecycle hook belong in Adas
 Do not create release versions and installer bundles for testing new/changed code. Keep testing focused to the actual task.
 
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=244827747457420 -->
+<!-- adashi:generated revision=6387476785633898 -->
 # Architecture (generated)
 Generated from the Adashi design model; do not edit, change the model.
 Top layer: 14 of 98 elements, 2 of 316 relationships. Deeper detail: the adashi_design get_scope and get_bindings operations.

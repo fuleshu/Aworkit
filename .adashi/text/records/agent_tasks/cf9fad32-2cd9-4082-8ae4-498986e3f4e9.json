@@ -1,0 +1,43 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/desktop_layout.rs\",\"docs/desktop-layout.md\"]",
+    "completed_at": "2026-09-29 17:27:03",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 0040fa2 (main -> origin/main).\n",
+        "\n",
+        "Finding (from the reporter's own machine, not inference): the session is Wayland and every persisted layout record holds x:0 y:0. That is not a stale value but the platform's only answer — a Wayland compositor owns placement, xdg-shell has no position request, `gtk_window_move` (what tao calls from `set_outer_position`) is a no-op, and `gtk_window_get_position` always reports the origin. No application can restore its own position there; the earlier size fix (a7371de) is what made size correct.\n",
+        "\n",
+        "Delivered: `session_places_windows()` (Linux: an explicit GDK_BACKEND wins, otherwise the presence of WAYLAND_DISPLAY decides; cached once) gates both directions. `measure` clears the stored x/y instead of recording the meaningless origin, and `restore_window_layout` never asks a session that cannot place windows to move one. X11 — including XWayland via GDK_BACKEND=x11 — keeps storing and restoring the position, and Windows is untouched.\n",
+        "\n",
+        "Verification: `cargo test --bin aworkit-desktop desktop_layout` 4 passed (new: clearing the position when the session cannot report one; the x11/wayland/GDK_BACKEND decision including a comma-separated list); `cargo check --release --all-targets` clean; frontend 79 files / 593 tests green. Also recorded in project memory. Not verifiable here: a real repositioning on a Wayland desktop cannot be exercised in this environment, and on Wayland the expectation itself must change."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 17:26:48",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: the window position is still not restored after reopening Aworkit on Linux.\n",
+        "\n",
+        "Investigated on the reporting machine: the session is Wayland (`loginctl` reports Type=wayland, WAYLAND_DISPLAY is set) and every persisted layout record — dozens of versions — holds `x: 0, y: 0`. That is the platform's answer, not a stale value: a Wayland compositor owns window placement, `xdg-shell` has no position request, `gtk_window_move` (what tao calls from `set_outer_position`) does nothing, and `gtk_window_get_position` always reports the origin. No application can restore its position on Wayland; Firefox/Thunderbird behave the same way.\n",
+        "\n",
+        "Delivered: a session that cannot place windows stores no position and is never asked to move one, so the record is honest and a later X11 session is not misled by a (0,0) read from Wayland. X11 keeps recording and restoring the position (which the existing post-map `set_position` handles), including XWayland via `GDK_BACKEND=x11`. Size restore is unaffected on every platform.\n",
+        "\n",
+        "Acceptance evidence: `cargo test --bin aworkit-desktop desktop_layout` 4 passed (new tests for clearing the position and for the x11/wayland/GDK_BACKEND decision); `cargo check --release --all-targets` clean; frontend suite 79 files / 593 tests green; commits 0040fa2 (this) and a7371de (the earlier size fix)."
+      ]
+    },
+    "id": 25688430491,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Store no window position on Wayland and keep X11 position restore",
+    "updated_at": "2026-09-29 17:27:03"
+  },
+  "deleted": false,
+  "identity": "cf9fad32-2cd9-4082-8ae4-498986e3f4e9",
+  "schemaVersion": 1
+}

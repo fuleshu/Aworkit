@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Window position cannot be restored on Wayland: the user's session is Wayland (loginctl Type=wayland; WAYLAND_DISPLAY set) and EVERY persisted layout record held x:0 y:0, because gtk_window_get_position / tao outer_position report the origin there, xdg-shell has no position request and gtk_window_move is a no-op. Fixed in 0040fa2: a Wayland session stores no x/y and is never asked to move the window (X11 and XWayland via GDK_BACKEND=x11 keep working); size restore is unaffected. If a user reports \"position not restored on Linux\", check the session type and the persisted layout first — an X11 session recording x:0 y:0 means something else is wrong.",
+    "created_at": "2026-09-29 17:26:36",
+    "id": 16356192542,
+    "note_id": "linux-window-position-wayland",
+    "operation_id": "memory-append-wayland-position-1",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-append-wayland-position-1",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "b9366ece-cc23-4b0c-bd1c-de74976e9b06",
+  "schemaVersion": 1
+}
