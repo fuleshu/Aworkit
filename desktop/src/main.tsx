@@ -18,6 +18,12 @@ const root = document.getElementById("root");
 if (root === null) {
   throw new Error("Aworkit presentation root is missing");
 }
+// The window's native drag-drop interception is disabled so the composer can
+// receive HTML5 file drops. Without this guard a file dropped anywhere else
+// would navigate the webview to the dropped file. The composer's own handlers
+// run first and stop propagation for the drops they accept.
+window.addEventListener("dragover", (event) => event.preventDefault());
+window.addEventListener("drop", (event) => event.preventDefault());
 async function revealDesktop(): Promise<void> {
   try {
     await initializeSystemTextScale();

@@ -50,10 +50,28 @@ copy and sends it only to its local test provider.
 
 ## Attachments
 
-Use **+ → Add image** in the Chat composer to select one or more files, or paste
-an image from the OS clipboard with the normal paste shortcut. Attachments appear
-as removable thumbnails before sending and remain visible in the submitted user
-message. Click a thumbnail to open its preview. Image-only messages are supported.
+Use **+ → Add image** in the Chat composer to select one or more files, paste an
+image from the OS clipboard with the normal paste shortcut, or drop image files
+onto the composer from the file manager. Attachments appear as removable
+thumbnails before sending and remain visible in the submitted user message. Click
+a thumbnail to open its preview. Image-only messages are supported.
+
+Paste and drop are two different platform problems:
+
+- **Paste.** Chromium and Windows WebView2 expose a pasted image through
+  `clipboardData.files` and, for raw clipboard image data, through the
+  `clipboardData.items` file list; the composer reads both. Linux WebKitGTK
+  delivers a completely empty `DataTransfer` for a clipboard image — no files,
+  no items and not even a populated `types` list — even though the OS clipboard
+  holds the image. A paste that offers the webview nothing at all is therefore
+  read from the OS clipboard through the native clipboard plugin and re-encoded
+  as a PNG attachment. Text pastes and copied files never take that path.
+- **Drop.** The main window disables the native drag-drop interception
+  (`dragDropEnabled: false`) so the webview receives ordinary HTML5 drop events
+  on Linux and Windows; the composer accepts the transported image files and
+  reports the same "Choose PNG, JPEG or WebP images." reason for a dropped file
+  the import path cannot store. A file dropped anywhere else is ignored instead
+  of navigating the webview.
 
 In **Settings → Providers**, enable **Vision (image input)** for the chosen model
 and save. Use a model that actually supports vision, then start a new Chat: model
@@ -95,8 +113,9 @@ Wire contracts follow the official [OpenAI vision guide](https://developers.open
 and [Gemini image guide](https://ai.google.dev/gemini-api/docs/image-understanding).
 
 Regression coverage includes provider HTTP requests for all three protocols,
-image-only and multiple-image turns, UI paste/picker import (including the Linux
-clipboard image data WebKit reports only in the paste item list), rejected-submit retry,
+image-only and multiple-image turns, UI paste/picker/drop import (including the
+Linux paste that offers the webview no `DataTransfer` at all and therefore reads
+the OS clipboard), rejected-submit retry,
 history reopen/fork, corrupt-image rejection, and an image larger than the history
 commit limit crossing the full native authority pipeline without embedding its
 bytes in durable records. `desktop/scripts/native-image-fixture.mjs` starts an

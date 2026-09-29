@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { pastedImageFiles, type PasteItem } from "./pasteImages";
+import { pastedImageFiles, pasteIntent, type PasteItem } from "./pasteImages";
 
 const image = (name: string, type: string) =>
   new File([new Uint8Array([1, 2, 3, 4])], name, { type });
@@ -66,4 +66,38 @@ it("accepts an untitled item by its stored image extension and ignores other fil
     }),
   ).toEqual([]);
   expect(pastedImageFiles(null)).toEqual([]);
+});
+
+it("asks for the native clipboard when the webview offers nothing at all", () => {
+  // WebKitGTK 2.52 hands the page an empty DataTransfer for a clipboard image:
+  // no files, no items, and no type list. Nothing here can produce the image,
+  // so the composer must read the OS clipboard.
+  expect(pasteIntent({ files: [], items: [], types: [] })).toEqual({
+    kind: "native",
+  });
+});
+
+it("leaves text, copied files and an absent clipboard to the default paste", () => {
+  expect(pasteIntent(null)).toEqual({ kind: "ignore" });
+  expect(
+    pasteIntent({ files: [], types: ["text/plain"], getData: () => "hello" }),
+  ).toEqual({ kind: "ignore" });
+  // A copied non-image file advertises Files; the default paste owns it.
+  expect(
+    pasteIntent({
+      files: [image("notes.txt", "text/plain")],
+      types: ["Files", "text/uri-list"],
+      getData: () => "",
+    }),
+  ).toEqual({ kind: "ignore" });
+});
+
+it("hands over image files together with any plain text the paste also carried", () => {
+  const pasted = image("image.png", "image/png");
+  const intent = pasteIntent({
+    files: [pasted],
+    types: ["Files"],
+    getData: () => "caption",
+  });
+  expect(intent).toEqual({ kind: "files", files: [pasted], text: "caption" });
 });

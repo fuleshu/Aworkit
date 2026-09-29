@@ -1,8 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useComposerDraft, type ComposerDrafts } from "./composerDrafts";
 import { ImageAttachmentMenu, ImageAttachments } from "./ImageAttachments";
 import { useChatImages } from "./useChatImages";
-import { pastedImageFiles } from "./pasteImages";
+import { pasteIntent } from "./pasteImages";
+import {
+  nativeClipboardImageAvailable,
+  readNativeClipboardImage,
+} from "./clipboardImage";
+import { dragCarriesFiles, droppedImageFiles } from "./dropImages";
 import {
   canSubmit,
   emptyComposer,
@@ -146,6 +151,14 @@ export function ChatComposer({
     importing,
     error: imageError,
   } = useChatImages(state.attachments, (attachments) => edit({ attachments }));
+  // A native clipboard image read is asynchronous, so the paste handler runs
+  // this after claiming the paste; a paste with no image on the OS clipboard is
+  // an ordinary no-op.
+  const addNativeClipboardImage = async () => {
+    const file = await readNativeClipboardImage();
+    if (file !== null) await addFiles([file]);
+  };
+  const [dropping, setDropping] = useState(false);
   const commandPending = pending || submitting || importing;
   const disabledReason = stale
     ? "Reconnect and resynchronize before sending."
@@ -189,20 +202,57 @@ export function ChatComposer({
     : null;
   return (
     <section
-      className="composer-shell"
+      className={`composer-shell${dropping ? " composer-dropping" : ""}`}
       aria-label="Chat composer"
       onPaste={(event) => {
         if (chat.recoveryPending || commandPending) return;
-        // Clipboard images are read from the item list as well as the file
-        // list, or a Linux WebKit paste of raw image data finds no file.
-        const files = pastedImageFiles(event.clipboardData);
+        const intent = pasteIntent(event.clipboardData);
+        if (intent.kind === "ignore") return;
+        // The native clipboard read is the only path left when WebKitGTK hands
+        // the webview an empty data transfer; it is unavailable in a browser.
+        if (
+          intent.kind === "native" &&
+          !nativeClipboardImageAvailable()
+        ) {
+          return;
+        }
+        // Claim the paste synchronously: WebKit and Chromium neuter the data
+        // transfer, and the native read is asynchronous, once this returns.
+        event.preventDefault();
+        if (intent.kind === "files") {
+          if (intent.text !== "") edit({ draft: state.draft + intent.text });
+          void addFiles(intent.files);
+          return;
+        }
+        void addNativeClipboardImage();
+      }}
+      onDragOver={(event) => {
+        if (chat.recoveryPending || commandPending) return;
+        if (!dragCarriesFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        if (!dropping) setDropping(true);
+      }}
+      onDragLeave={(event) => {
+        // Moving onto a child of the composer is not leaving it.
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) return;
+        setDropping(false);
+      }}
+      onDrop={(event) => {
+        setDropping(false);
+        const files = droppedImageFiles(event.dataTransfer);
         if (files.length === 0) return;
         event.preventDefault();
-        const text = event.clipboardData.getData("text/plain");
-        if (text) edit({ draft: state.draft + text });
+        if (chat.recoveryPending || commandPending) return;
         void addFiles(files);
       }}
     >
+      {dropping && (
+        <div className="composer-drop-hint" aria-hidden="true">
+          Drop images to attach
+        </div>
+      )}
       <div className="composer-meta">
         <label>
           Workflow

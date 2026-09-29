@@ -1294,6 +1294,21 @@ pre {
   display: grid;
   gap: 5px;
   padding: 7px 10px 6px;
+  position: relative;
+}
+.composer-shell.composer-dropping {
+  border-top-color: var(--aw-accent);
+  outline: 2px dashed var(--aw-accent);
+  outline-offset: -3px;
+}
+.composer-drop-hint {
+  background: var(--aw-inset);
+  border: 1px dashed var(--aw-accent);
+  border-radius: 10px;
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  padding: 4px 10px;
+  text-align: center;
 }
 .composer-meta,
 .composer-footer {

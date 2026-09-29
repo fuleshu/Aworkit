@@ -10,6 +10,10 @@ export interface PasteClipboard {
   readonly files: ArrayLike<File>;
   /** The clipboard's item list, which is where WebKit puts pasted images. */
   readonly items?: ArrayLike<PasteItem> | undefined;
+  /** The offered formats; a WebKitGTK image paste offers none of them at all. */
+  readonly types?: ArrayLike<string> | undefined;
+  /** Present on a real paste event; absent in plain-object tests. */
+  getData?(type: string): string;
 }
 
 /** One clipboard item; only its kind, type and file are ever needed. */
@@ -73,4 +77,63 @@ export function pastedImageFiles(clipboard: PasteClipboard | null): File[] {
     }
   }
   return fromItems;
+}
+
+/** What the composer must do with one paste event. */
+export type PasteIntent =
+  /** The default paste handles it (text, or a copied non-image file). */
+  | { readonly kind: "ignore" }
+  /** The webview exposed the pasted image files. */
+  | {
+      readonly kind: "files";
+      readonly files: readonly File[];
+      readonly text: string;
+    }
+  /**
+   * The webview exposed nothing at all: on Linux WebKitGTK a clipboard image
+   * arrives as a completely empty `DataTransfer` (no files, no items, not even
+   * a `types` entry), so the image can only be read from the OS clipboard.
+   */
+  | { readonly kind: "native" };
+
+function plainText(clipboard: PasteClipboard): string {
+  if (clipboard.getData === undefined) return "";
+  try {
+    return clipboard.getData("text/plain");
+  } catch {
+    return "";
+  }
+}
+
+/** A copied file or a text flavour that the default paste already consumes. */
+function offersOtherContent(clipboard: PasteClipboard): boolean {
+  if (plainText(clipboard) !== "") return true;
+  const types = clipboard.types;
+  if (types === undefined) return false;
+  for (let index = 0; index < types.length; index += 1) {
+    const type = types[index];
+    if (
+      type !== undefined &&
+      (type.toLowerCase() === "files" || type.toLowerCase() === "text/uri-list")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Classify a paste so the composer claims exactly the pastes it can serve.
+ *
+ * An empty clipboard is reported as `native` so the caller can try the OS
+ * clipboard once; a text-only paste is left to the default paste so typing and
+ * IME behaviour is untouched.
+ */
+export function pasteIntent(clipboard: PasteClipboard | null): PasteIntent {
+  if (clipboard === null) return { kind: "ignore" };
+  const files = pastedImageFiles(clipboard);
+  if (files.length > 0)
+    return { kind: "files", files, text: plainText(clipboard) };
+  if (offersOtherContent(clipboard)) return { kind: "ignore" };
+  return { kind: "native" };
 }
