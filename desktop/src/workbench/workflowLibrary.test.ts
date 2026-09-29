@@ -122,21 +122,35 @@ describe("preview workflow library", () => {
     ).rejects.toThrow("default workflow cannot be deleted");
 
     // The former default can be deleted once another workflow is the default.
+    const survivor = "workflow.simple-chat";
     await port.setDefault({
       commandId: "workflow.default.1",
-      workflowId: "workflow.simple-chat",
+      workflowId: survivor,
     });
     await port.remove({
       commandId: "workflow.delete.2",
       workflowId: bundledDefaultWorkflowId,
     });
-    expect((await port.snapshot()).entries).toHaveLength(1);
+
+    // Reduce the library to exactly the default, whatever the bundle seeds.
+    const others = (await port.snapshot()).entries
+      .map(({ id }) => id)
+      .filter((id) => id !== survivor);
+    for (const [index, workflowId] of others.entries()) {
+      await port.remove({
+        commandId: `workflow.delete.seeded.${index}`,
+        workflowId,
+      });
+    }
+    expect((await port.snapshot()).entries.map(({ id }) => id)).toEqual([
+      survivor,
+    ]);
 
     // What remains is the default, so it cannot be deleted either.
     await expect(
       port.remove({
         commandId: "workflow.delete.3",
-        workflowId: "workflow.simple-chat",
+        workflowId: survivor,
       }),
     ).rejects.toThrow("default workflow cannot be deleted");
   });

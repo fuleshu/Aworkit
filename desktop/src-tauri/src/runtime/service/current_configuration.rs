@@ -8,6 +8,8 @@
 //! evidence carry over — see `DesktopRuntime::complete_workflow_input`.
 use super::*;
 
+use crate::runtime::documents::validate_executable_snapshot;
+
 /// The workflow document and tool bindings one later pass runs with.
 pub(super) struct CurrentPassConfigurationV1 {
     pub document: Value,
@@ -17,6 +19,12 @@ pub(super) struct CurrentPassConfigurationV1 {
 impl DesktopRuntime {
     /// Resolves the current documents for a later pass of the identified Chat.
     ///
+    /// A saved workflow that still exists is the current revision and feeds the
+    /// pass, so a mid-Chat edit reaches the same Chat. A library entry the user
+    /// renamed or deleted after the first input froze it no longer identifies
+    /// that graph; the Chat then keeps the snapshot it froze rather than ending
+    /// or silently adopting a different workflow that happens to reuse the id.
+    ///
     /// Built-in capabilities resolve through the same path as a first-input
     /// freeze, so a tool the user enabled is bound and offered immediately. An
     /// MCP capability must already belong to the Run's frozen connections: a
@@ -25,22 +33,39 @@ impl DesktopRuntime {
         &self,
         context: &FrozenChatExecutionContextV1,
     ) -> Result<CurrentPassConfigurationV1, String> {
-        let mut workflow = self.documents.workflow_snapshot_for(&context.workflow_id);
-        if workflow.document.is_null() {
-            return Err(format!(
-                "workflow '{}' no longer exists in the workflow library",
-                context.workflow_id
-            ));
-        }
-        if !workflow.editable {
-            return Err(format!(
-                "workflow '{}' uses a read-only schema and cannot run",
-                context.workflow_id
-            ));
-        }
-        self.documents
-            .require_executable_workflow(&context.workflow_id)
-            .map_err(|error| format!("workflow '{}' is not executable: {error}", context.workflow_id))?;
+        let stored = self.documents.workflow_snapshot_for(&context.workflow_id);
+        let mut workflow = if stored.document.is_null() {
+            // The frozen snapshot was validated when the Chat froze it; every
+            // later pass re-validates it because the frozen record is evidence,
+            // not a trusted input of this process.
+            validate_executable_snapshot(&context.workflow_snapshot).map_err(|error| {
+                format!(
+                    "frozen workflow '{}' is no longer executable: {error}",
+                    context.workflow_id
+                )
+            })?;
+            WorkflowSnapshot {
+                version: context.workflow_version,
+                document: context.workflow_snapshot.clone(),
+                editable: true,
+            }
+        } else {
+            if !stored.editable {
+                return Err(format!(
+                    "workflow '{}' uses a read-only schema and cannot run",
+                    context.workflow_id
+                ));
+            }
+            self.documents
+                .require_executable_workflow(&context.workflow_id)
+                .map_err(|error| {
+                    format!(
+                        "workflow '{}' is not executable: {error}",
+                        context.workflow_id
+                    )
+                })?;
+            stored
+        };
         workflow.document = mcp_selection::expand_server_selections(
             &workflow.document,
             self.documents.settings(),

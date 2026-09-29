@@ -437,6 +437,14 @@ export function ChatWorkspaceScreen({
   }, [active, runtime.resynchronize]);
   useEffect(() => {
     if (!active) return;
+    // A locked Chat runs the workflow it froze; the library entry that id may
+    // point at now (renamed, edited, or deleted) cannot make that Chat
+    // unrunnable, so readiness is a first-input concern only.
+    if (snapshot?.chat.lockedWorkflow) {
+      setWorkflowChecking(false);
+      setWorkflowReadinessError(null);
+      return;
+    }
     if (nativeWorkflowPort === null || selectedWorkflowId === null) {
       setWorkflowChecking(false);
       setWorkflowReadinessError(null);
@@ -469,7 +477,7 @@ export function ChatWorkspaceScreen({
     return () => {
       current = false;
     };
-  }, [active, nativeWorkflowPort, selectedWorkflowId]);
+  }, [active, nativeWorkflowPort, selectedWorkflowId, snapshot?.chat.lockedWorkflow]);
   useEffect(() => {
     if (projectedRecoveryPending !== undefined)
       onRecoveryPendingChange?.(projectedRecoveryPending);

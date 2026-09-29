@@ -115,11 +115,14 @@ describe("saved-workflow library projection", () => {
 
   it("keeps the last library projection when the store accepts but reread fails", async () => {
     const store = new WorkflowStore();
+    // The bundle seeds more than one workflow; measure whatever it ships
+    // instead of assuming a fixed library size.
+    const baseline = (await store.libraryPort.snapshot()).entries.length;
     const flaky: WorkflowLibraryPort = {
       ...store.libraryPort,
       snapshot: async () => {
         const snapshot = await store.libraryPort.snapshot();
-        if (snapshot.entries.length > 2)
+        if (snapshot.entries.length > baseline)
           throw new Error("the workflow folder is temporarily unavailable");
         return snapshot;
       },
@@ -132,13 +135,13 @@ describe("saved-workflow library projection", () => {
       />,
     );
     const bar = await screen.findByRole("region", { name: "Workflow library" });
-    expect(optionLabels(bar)).toHaveLength(2);
+    expect(optionLabels(bar)).toHaveLength(baseline);
 
     await createWorkflow("Research Agent");
 
     // The accepted create stands even though the follow-up read failed: the
     // stale projection is kept and the failure is reported instead of hidden.
-    expect(optionLabels(bar)).toHaveLength(2);
+    expect(optionLabels(bar)).toHaveLength(baseline);
     await screen.findByRole("heading", { name: "Research Agent" });
   });
 });

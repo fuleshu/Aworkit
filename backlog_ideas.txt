@@ -1,9 +1,10 @@
 todos:
-- fix mcp names, remove mcp_hash
-provider_name mcp__62af506f…__adashi_get_memory — this one is shown to the model, and the mcp__<hash>__ part is dead weight. It tells the model nothing useful and actively confuses it (hence mcp__ai__write_file).
-
-Your question #3 — can compaction run on the running LLM line instead of a parallel one?
-Short answer: it isn't actually parallel — it's sequential, and it's already using the same model. The slowness you're feeling is a different (real) cost.
+- increase chat input size and resizer to horizontal line
+- add projects in projects dropdown
+- working chat animated icon wrong vertical alignment
+- add image should remember folder for session
+- export import workflow should remember folder for session
+- restore position / size? not working on linux
 
 What the code actually does (SummaryProvider in compaction/provider.rs, and the selectedBinding: None in your log):
 

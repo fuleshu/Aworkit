@@ -78,16 +78,23 @@ export function ChatComposer({
     bundledWorkflowTemplates
       .filter(({ seedOnFreshProfile }) => seedOnFreshProfile)
       .map(({ workflowId, name }) => ({ id: workflowId, name }));
-  const visibleWorkflowOptions: readonly WorkflowOption[] = chat.lockedWorkflow
-    ? chat.workflowId === null
+  // A locked Chat shows the workflow it froze, not the library entry that
+  // currently carries that id: the entry may have been renamed since, and a
+  // deleted entry leaves no library name at all. The frozen option comes first
+  // so the disabled selector presents the name of that time; the rest of the
+  // library stays listed for context.
+  const frozenWorkflow: WorkflowOption | null =
+    chat.lockedWorkflow && chat.workflowId !== null
+      ? { id: chat.workflowId, name: chat.workflowName ?? chat.workflowId }
+      : null;
+  const visibleWorkflowOptions: readonly WorkflowOption[] = frozenWorkflow
+    ? [
+        frozenWorkflow,
+        ...workflowOptions.filter(({ id }) => id !== frozenWorkflow.id),
+      ]
+    : chat.lockedWorkflow
       ? [{ id: "", name: chat.workflowName ?? "Unavailable workflow" }]
-      : workflowOptions.some(({ id }) => id === chat.workflowId)
-        ? workflowOptions
-        : [
-            ...workflowOptions,
-            { id: chat.workflowId, name: chat.workflowName ?? chat.workflowId },
-          ]
-    : workflowOptions;
+      : workflowOptions;
   const { state, setState, retryIntent, setRetryIntent, submitting, setSubmitting, confirmSubmission } = useComposerDraft(chat.chatId, {
     ...emptyComposer,
     workflowId: chat.lockedWorkflow

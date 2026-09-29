@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "id": "workflow.triage-router",
+  "name": "Triage Router",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Input",
+      "type": "input",
+      "position": {
+        "x": 36,
+        "y": 240
+      }
+    },
+    {
+      "id": "classify.1",
+      "label": "Classify request",
+      "type": "model_call",
+      "position": {
+        "x": 245,
+        "y": 240
+      },
+      "configuration": {
+        "modelTierId": "tier:simple",
+        "instructions": "Classify the user's request. Reply with exactly one word and nothing else: SIMPLE when it can be answered from general knowledge in a single short reply, or COMPLEX when it needs tools, current information, or project evidence.",
+        "maximumTokens": 16
+      }
+    },
+    {
+      "id": "route.1",
+      "label": "Simple?",
+      "type": "condition",
+      "position": {
+        "x": 470,
+        "y": 240
+      },
+      "configuration": {
+        "predicate": {
+          "kind": "eq",
+          "path": "value",
+          "value": "SIMPLE"
+        }
+      }
+    },
+    {
+      "id": "quick.1",
+      "label": "Direct answer",
+      "type": "agent",
+      "position": {
+        "x": 695,
+        "y": 130
+      },
+      "configuration": {
+        "modelTierId": "tier:simple",
+        "toolIds": [],
+        "instructions": "Answer the user's request directly and concisely. No tools are needed and none are available."
+      }
+    },
+    {
+      "id": "gate.1",
+      "label": "Approve tool use",
+      "type": "approval",
+      "position": {
+        "x": 695,
+        "y": 340
+      },
+      "configuration": {
+        "title": "Approve grounded work",
+        "message": "This request looks like it needs tools or current information. Approve to run the tool-enabled agent, or reject to stop the run."
+      }
+    },
+    {
+      "id": "deep.1",
+      "label": "Grounded answer",
+      "type": "agent",
+      "position": {
+        "x": 920,
+        "y": 340
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "toolIds": [
+          "tool.files.read",
+          "tool.files.search",
+          "tool.files.list",
+          "tool.files.grep",
+          "tool.todo",
+          "tool.web_search",
+          "tool.web_extract"
+        ],
+        "instructions": "Answer the user's request using the registered tools. Inspect project evidence with the file tools and use the web tools for current information. Cite the sources you actually used and do not claim tool results you did not receive."
+      }
+    },
+    {
+      "id": "output.1",
+      "label": "Output",
+      "type": "output",
+      "position": {
+        "x": 1150,
+        "y": 240
+      }
+    },
+    {
+      "id": "wait.1",
+      "label": "Wait for input",
+      "type": "wait",
+      "position": {
+        "x": 1360,
+        "y": 240
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e.input.classify",
+      "source": "input.1",
+      "target": "classify.1"
+    },
+    {
+      "id": "e.classify.route",
+      "source": "classify.1",
+      "target": "route.1"
+    },
+    {
+      "id": "e.route.quick",
+      "source": "route.1",
+      "target": "quick.1",
+      "sourcePort": "true",
+      "configuration": {
+        "route": "true"
+      }
+    },
+    {
+      "id": "e.route.gate",
+      "source": "route.1",
+      "target": "gate.1",
+      "sourcePort": "false",
+      "configuration": {
+        "route": "false"
+      }
+    },
+    {
+      "id": "e.quick.output",
+      "source": "quick.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.gate.deep",
+      "source": "gate.1",
+      "target": "deep.1"
+    },
+    {
+      "id": "e.deep.output",
+      "source": "deep.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.output.wait",
+      "source": "output.1",
+      "target": "wait.1"
+    }
+  ],
+  "comments": "Triage Router: Chat Input \u2192 Classify (Model Call) \u2192 Condition (simple?) \u2192 direct Agent, or Approval \u2192 tool-enabled Agent \u2192 Chat Output \u2192 Wait. Cost/latency routing with an explicit gate before tool use."
+}

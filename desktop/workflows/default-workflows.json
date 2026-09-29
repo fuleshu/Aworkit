@@ -96,6 +96,300 @@
         "nodes": [],
         "edges": []
       }
+    },
+    {
+      "templateId": "triage-router",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.triage-router",
+        "name": "Triage Router",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 240 } },
+          {
+            "id": "classify.1",
+            "label": "Classify request",
+            "type": "model_call",
+            "position": { "x": 245, "y": 240 },
+            "configuration": {
+              "modelTierId": "tier:simple",
+              "instructions": "Classify the user's request. Reply with exactly one word and nothing else: SIMPLE when it can be answered from general knowledge in a single short reply, or COMPLEX when it needs tools, current information, or project evidence.",
+              "maximumTokens": 16
+            }
+          },
+          {
+            "id": "route.1",
+            "label": "Simple?",
+            "type": "condition",
+            "position": { "x": 470, "y": 240 },
+            "configuration": { "predicate": { "kind": "eq", "path": "value", "value": "SIMPLE" } }
+          },
+          {
+            "id": "quick.1",
+            "label": "Direct answer",
+            "type": "agent",
+            "position": { "x": 695, "y": 130 },
+            "configuration": {
+              "modelTierId": "tier:simple",
+              "toolIds": [],
+              "instructions": "Answer the user's request directly and concisely. No tools are needed and none are available."
+            }
+          },
+          {
+            "id": "gate.1",
+            "label": "Approve tool use",
+            "type": "approval",
+            "position": { "x": 695, "y": 340 },
+            "configuration": {
+              "title": "Approve grounded work",
+              "message": "This request looks like it needs tools or current information. Approve to run the tool-enabled agent, or reject to stop the run."
+            }
+          },
+          {
+            "id": "deep.1",
+            "label": "Grounded answer",
+            "type": "agent",
+            "position": { "x": 920, "y": 340 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "toolIds": [
+                "tool.files.read",
+                "tool.files.search",
+                "tool.files.list",
+                "tool.files.grep",
+                "tool.todo",
+                "tool.web_search",
+                "tool.web_extract"
+              ],
+              "instructions": "Answer the user's request using the registered tools. Inspect project evidence with the file tools and use the web tools for current information. Cite the sources you actually used and do not claim tool results you did not receive."
+            }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1150, "y": 240 } },
+          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 1360, "y": 240 } }
+        ],
+        "edges": [
+          { "id": "e.input.classify", "source": "input.1", "target": "classify.1" },
+          { "id": "e.classify.route", "source": "classify.1", "target": "route.1" },
+          { "id": "e.route.quick", "source": "route.1", "target": "quick.1", "sourcePort": "true", "configuration": { "route": "true" } },
+          { "id": "e.route.gate", "source": "route.1", "target": "gate.1", "sourcePort": "false", "configuration": { "route": "false" } },
+          { "id": "e.quick.output", "source": "quick.1", "target": "output.1" },
+          { "id": "e.gate.deep", "source": "gate.1", "target": "deep.1" },
+          { "id": "e.deep.output", "source": "deep.1", "target": "output.1" },
+          { "id": "e.output.wait", "source": "output.1", "target": "wait.1" }
+        ],
+        "comments": "Triage Router: Chat Input → Classify (Model Call) → Condition (simple?) → direct Agent, or Approval → tool-enabled Agent → Chat Output → Wait. Cost/latency routing with an explicit gate before tool use."
+      }
+    },
+    {
+      "templateId": "evidence-brief",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.evidence-brief",
+        "name": "Evidence Brief",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 260 } },
+          { "id": "fan.1", "label": "Fan out", "type": "parallel", "position": { "x": 245, "y": 260 } },
+          {
+            "id": "web.1",
+            "label": "Web search",
+            "type": "tool",
+            "position": { "x": 480, "y": 110 },
+            "configuration": { "toolId": "tool.web_search", "parameters": { "query": "{input}" } }
+          },
+          {
+            "id": "plan.1",
+            "label": "Plan evidence",
+            "type": "model_call",
+            "position": { "x": 480, "y": 410 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "instructions": "Plan the answer to the user's request. List in evidenceNeeded every external or project fact the answer must verify; leave evidenceNeeded empty only when the request can be answered safely from general knowledge.",
+              "outputContract": "plan",
+              "maximumTokens": 1024
+            }
+          },
+          {
+            "id": "need.1",
+            "label": "Evidence needed?",
+            "type": "condition",
+            "position": { "x": 710, "y": 410 },
+            "configuration": { "predicate": { "kind": "exists", "path": "evidenceNeeded.0" } }
+          },
+          {
+            "id": "agent.1",
+            "label": "Grounded brief",
+            "type": "agent",
+            "position": { "x": 950, "y": 220 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "toolIds": [
+                "tool.web_extract",
+                "tool.web_search",
+                "tool.files.read",
+                "tool.files.grep",
+                "tool.todo"
+              ],
+              "instructions": "Write a concise brief that answers the user's request. Verify every time-sensitive claim against an extracted page before making it. Cite the sources you actually used as markdown links."
+            }
+          },
+          {
+            "id": "quick.1",
+            "label": "Direct brief",
+            "type": "agent",
+            "position": { "x": 950, "y": 570 },
+            "configuration": {
+              "modelTierId": "tier:simple",
+              "toolIds": [],
+              "instructions": "Answer the user's request directly and concisely. No evidence gathering is required."
+            }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1190, "y": 300 } },
+          { "id": "completion.1", "label": "Completion", "type": "completion", "position": { "x": 1390, "y": 300 } }
+        ],
+        "edges": [
+          { "id": "e.input.fan", "source": "input.1", "target": "fan.1" },
+          { "id": "e.fan.web", "source": "fan.1", "target": "web.1" },
+          { "id": "e.fan.plan", "source": "fan.1", "target": "plan.1" },
+          { "id": "e.plan.need", "source": "plan.1", "target": "need.1" },
+          { "id": "e.need.agent", "source": "need.1", "target": "agent.1", "sourcePort": "true", "configuration": { "route": "true" } },
+          { "id": "e.need.quick", "source": "need.1", "target": "quick.1", "sourcePort": "false", "configuration": { "route": "false" } },
+          { "id": "e.web.agent", "source": "web.1", "target": "agent.1" },
+          { "id": "e.agent.output", "source": "agent.1", "target": "output.1" },
+          { "id": "e.quick.output", "source": "quick.1", "target": "output.1" },
+          { "id": "e.output.completion", "source": "output.1", "target": "completion.1" }
+        ],
+        "comments": "Evidence Brief: Chat Input → Parallel → (Tool: web_search running with Model Call: plan) → Condition (evidence needed?) → grounded Agent or direct Agent → Chat Output → Completion."
+      }
+    },
+    {
+      "templateId": "iterative-planning",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.iterative-planning",
+        "name": "Iterative Planning",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 260 } },
+          {
+            "id": "seed.1",
+            "label": "Draft plan",
+            "type": "model_call",
+            "position": { "x": 245, "y": 260 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "instructions": "Produce an initial plan for answering the user's request. List every genuinely unresolved question in openQuestions; leave it empty when nothing is unresolved.",
+              "outputContract": "plan",
+              "maximumTokens": 1024
+            }
+          },
+          {
+            "id": "loop.1",
+            "label": "Until plan is settled",
+            "type": "loop",
+            "position": { "x": 490, "y": 260 },
+            "configuration": {
+              "exitCondition": { "kind": "not", "operand": { "kind": "exists", "path": "openQuestions.0" } },
+              "maximumIterations": 3
+            }
+          },
+          {
+            "id": "refine.1",
+            "label": "Refine plan",
+            "type": "model_call",
+            "position": { "x": 740, "y": 130 },
+            "configuration": {
+              "modelTierId": "tier:quality",
+              "instructions": "Refine the plan from the additional context. Resolve each open question that the conversation or general knowledge already answers; keep in openQuestions only what is still genuinely unresolved, and keep toolOrder as concrete, non-empty steps.",
+              "outputContract": "plan",
+              "maximumTokens": 1024
+            }
+          },
+          {
+            "id": "execute.1",
+            "label": "Execute plan",
+            "type": "agent",
+            "position": { "x": 990, "y": 260 },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "toolIds": [
+                "tool.files.read",
+                "tool.files.grep",
+                "tool.todo",
+                "tool.web_search",
+                "tool.web_extract"
+              ],
+              "instructions": "Execute the settled plan and produce the final answer for the user. Use the registered tools where the plan calls for evidence, and state clearly when the applied iteration bound stopped further planning."
+            }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1220, "y": 260 } },
+          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 1430, "y": 260 } }
+        ],
+        "edges": [
+          { "id": "e.input.seed", "source": "input.1", "target": "seed.1" },
+          { "id": "e.seed.loop", "source": "seed.1", "target": "loop.1" },
+          { "id": "e.loop.refine", "source": "loop.1", "target": "refine.1", "sourcePort": "body", "configuration": { "route": "body" } },
+          { "id": "e.refine.loop", "source": "refine.1", "target": "loop.1", "configuration": { "route": "feedback" } },
+          { "id": "e.loop.execute", "source": "loop.1", "target": "execute.1", "sourcePort": "exit", "configuration": { "route": "exit" } },
+          { "id": "e.loop.execute.fallback", "source": "loop.1", "target": "execute.1", "sourcePort": "fallback", "configuration": { "route": "fallback" } },
+          { "id": "e.execute.output", "source": "execute.1", "target": "output.1" },
+          { "id": "e.output.wait", "source": "output.1", "target": "wait.1" }
+        ],
+        "comments": "Iterative Planning: Chat Input → draft Plan → bounded Loop (refine Plan until openQuestions is empty) → Agent executes the settled plan → Chat Output → Wait. The declared maximumIterations caps planning cost, and the fallback route still executes."
+      }
+    },
+    {
+      "templateId": "delegated-code-review",
+      "seedOnFreshProfile": true,
+      "document": {
+        "schemaVersion": 1,
+        "id": "workflow.delegated-code-review",
+        "name": "Delegated Code Review",
+        "nodes": [
+          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 240 } },
+          {
+            "id": "scan.1",
+            "label": "Scan markers",
+            "type": "tool",
+            "position": { "x": 255, "y": 240 },
+            "configuration": {
+              "toolId": "tool.files.grep",
+              "parameters": { "pattern": "TODO|FIXME|HACK", "path": "." }
+            }
+          },
+          {
+            "id": "gate.1",
+            "label": "Approve delegation",
+            "type": "approval",
+            "position": { "x": 500, "y": 240 },
+            "configuration": {
+              "title": "Delegate this review?",
+              "message": "Approve to send the scan findings to the configured Codex or Claude Code agent for an independent review. Configure an external agent target in Settings before running this workflow."
+            }
+          },
+          {
+            "id": "review.1",
+            "label": "External review",
+            "type": "external_agent",
+            "position": { "x": 750, "y": 240 },
+            "configuration": {
+              "toolId": "tool.subagent_codex",
+              "reasoningEffort": "high",
+              "instructions": "Review this repository. The additional context lists outstanding TODO, FIXME and HACK markers found by a workspace scan. Inspect the referenced files and report concrete risks, real defects, and missing tests, each with its file path. Be concise and do not restate the markers verbatim."
+            }
+          },
+          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1010, "y": 240 } },
+          { "id": "completion.1", "label": "Completion", "type": "completion", "position": { "x": 1210, "y": 240 } }
+        ],
+        "edges": [
+          { "id": "e.input.scan", "source": "input.1", "target": "scan.1" },
+          { "id": "e.scan.gate", "source": "scan.1", "target": "gate.1" },
+          { "id": "e.gate.review", "source": "gate.1", "target": "review.1" },
+          { "id": "e.review.output", "source": "review.1", "target": "output.1" },
+          { "id": "e.output.completion", "source": "output.1", "target": "completion.1" }
+        ],
+        "comments": "Delegated Code Review: Chat Input → Tool (files.grep for TODO/FIXME/HACK) → Approval → External Agent (Codex/Claude Code) → Chat Output → Completion. Requires a configured external agent target in Settings."
+      }
     }
   ]
 }

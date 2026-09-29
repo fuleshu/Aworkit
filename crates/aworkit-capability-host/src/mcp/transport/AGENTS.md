@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=7760422764294403 -->
+<!-- adashi:generated revision=136651618474838 -->
 # Architecture — `crates/aworkit-capability-host/src/mcp/transport` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -10,6 +10,7 @@ Boundaries crossing this folder:
 - External Agent Adapter & Session Manager -> MCP Client & Session Manager: Forwards only the pinned selected MCP server set when both adapter and target negotiated t…
 
 Bound here:
+- file `crates/aworkit-capability-host/src/mcp/transport/stdio.rs`
 
 Markdown design specifications:
 

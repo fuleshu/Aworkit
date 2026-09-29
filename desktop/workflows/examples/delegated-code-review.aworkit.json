@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "workflow.delegated-code-review",
+  "name": "Delegated Code Review",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Input",
+      "type": "input",
+      "position": {
+        "x": 36,
+        "y": 240
+      }
+    },
+    {
+      "id": "scan.1",
+      "label": "Scan markers",
+      "type": "tool",
+      "position": {
+        "x": 255,
+        "y": 240
+      },
+      "configuration": {
+        "toolId": "tool.files.grep",
+        "parameters": {
+          "pattern": "TODO|FIXME|HACK",
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "gate.1",
+      "label": "Approve delegation",
+      "type": "approval",
+      "position": {
+        "x": 500,
+        "y": 240
+      },
+      "configuration": {
+        "title": "Delegate this review?",
+        "message": "Approve to send the scan findings to the configured Codex or Claude Code agent for an independent review. Configure an external agent target in Settings before running this workflow."
+      }
+    },
+    {
+      "id": "review.1",
+      "label": "External review",
+      "type": "external_agent",
+      "position": {
+        "x": 750,
+        "y": 240
+      },
+      "configuration": {
+        "toolId": "tool.subagent_codex",
+        "reasoningEffort": "high",
+        "instructions": "Review this repository. The additional context lists outstanding TODO, FIXME and HACK markers found by a workspace scan. Inspect the referenced files and report concrete risks, real defects, and missing tests, each with its file path. Be concise and do not restate the markers verbatim."
+      }
+    },
+    {
+      "id": "output.1",
+      "label": "Output",
+      "type": "output",
+      "position": {
+        "x": 1010,
+        "y": 240
+      }
+    },
+    {
+      "id": "completion.1",
+      "label": "Completion",
+      "type": "completion",
+      "position": {
+        "x": 1210,
+        "y": 240
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e.input.scan",
+      "source": "input.1",
+      "target": "scan.1"
+    },
+    {
+      "id": "e.scan.gate",
+      "source": "scan.1",
+      "target": "gate.1"
+    },
+    {
+      "id": "e.gate.review",
+      "source": "gate.1",
+      "target": "review.1"
+    },
+    {
+      "id": "e.review.output",
+      "source": "review.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.output.completion",
+      "source": "output.1",
+      "target": "completion.1"
+    }
+  ],
+  "comments": "Delegated Code Review: Chat Input \u2192 Tool (files.grep for TODO/FIXME/HACK) \u2192 Approval \u2192 External Agent (Codex/Claude Code) \u2192 Chat Output \u2192 Completion. Requires a configured external agent target in Settings."
+}

@@ -9046,6 +9046,84 @@ mod tests {
         );
     }
 
+    /// Deleting the saved workflow a Chat started from must not end that Chat:
+    /// the next pass keeps the graph the first input froze, and the projection
+    /// keeps the workflow identity of that time. The custom id is freed for
+    /// reuse on delete, so this also pins that a later workflow cannot silently
+    /// replace the frozen graph merely by reusing the identifier.
+    #[test]
+    fn later_pass_keeps_the_frozen_workflow_after_its_library_entry_is_deleted() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+        let created = runtime
+            .workflow_duplicate(WorkflowDuplicateInput {
+                command_id: "workflow.deletable.create".into(),
+                workflow_id: "workflow.simple-chat".into(),
+                name: "Deletable workflow".into(),
+            })
+            .unwrap();
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.deletable.start".into(),
+                expected_version: 0,
+                action: "start".into(),
+                target_id: None,
+                payload: json!({
+                    "workflowId": created.workflow_id.clone(),
+                    "input": "hello",
+                    "attachments": [],
+                }),
+            })
+            .unwrap();
+        let first = runtime.snapshot(0).unwrap().chat;
+        assert_eq!(
+            first.workflow_id.as_deref(),
+            Some(created.workflow_id.as_str())
+        );
+        assert_eq!(first.workflow_name.as_deref(), Some("Deletable workflow"));
+        let frozen_snapshot = provider.execution_requests.lock().unwrap()[0]
+            .workflow_snapshot
+            .clone();
+
+        runtime
+            .workflow_delete(WorkflowTargetInput {
+                command_id: "workflow.deletable.delete".into(),
+                workflow_id: created.workflow_id.clone(),
+            })
+            .unwrap();
+        assert!(
+            runtime
+                .workflow_snapshot_for(created.workflow_id.clone())
+                .document
+                .is_null()
+        );
+
+        runtime
+            .command(send(
+                "chat.deletable.follow-up",
+                runtime.snapshot(0).unwrap().version,
+                "again",
+            ))
+            .unwrap();
+
+        let requests = provider.execution_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].chat_id.to_string(), first.chat_id);
+        assert_eq!(requests[1].run_id.to_string(), first.run_id);
+        assert_eq!(requests[1].workflow_snapshot, frozen_snapshot);
+        drop(requests);
+        let projection = runtime.snapshot(0).unwrap().chat;
+        assert_eq!(projection.workflow_id, first.workflow_id);
+        assert_eq!(
+            projection.workflow_name.as_deref(),
+            Some("Deletable workflow")
+        );
+        assert!(projection.locked_workflow);
+    }
+
     #[test]
     fn selected_project_scope_is_native_frozen_and_later_edits_feed_only_new_chats() {
         let root = TempDir::new().unwrap();

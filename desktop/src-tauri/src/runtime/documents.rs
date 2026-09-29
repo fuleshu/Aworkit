@@ -615,15 +615,7 @@ impl CanonicalDocuments {
             .get(workflow_id)
             .map(|state| state.document.clone())
             .unwrap_or(Value::Null);
-        validate_v1_executable_catalog(&workflow)?;
-        if serde_json::to_vec(&workflow)
-            .map_err(|error| format!("cannot encode workflow: {error}"))?
-            .len()
-            > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES
-        {
-            return Err("workflow exceeds the executable 128 KiB persistence bound".into());
-        }
-        Ok(())
+        validate_executable_snapshot(&workflow)
     }
 
     pub(crate) fn legacy_provider(&self) -> ProviderDocument {
@@ -1369,6 +1361,23 @@ fn migrate_agent_aggregate_limits(document: &mut Value) -> bool {
         }
     }
     changed
+}
+
+/// Validates one complete executable workflow document — a saved library entry
+/// or a Chat's frozen snapshot — against the catalog and size a Run requires.
+///
+/// A deleted library entry does not end the Chat that froze it, so the frozen
+/// snapshot is validated through this same rule instead of the live entry.
+pub(crate) fn validate_executable_snapshot(document: &Value) -> Result<(), String> {
+    validate_v1_executable_catalog(document)?;
+    if serde_json::to_vec(document)
+        .map_err(|error| format!("cannot encode workflow: {error}"))?
+        .len()
+        > MAXIMUM_WORKFLOW_SNAPSHOT_BYTES
+    {
+        return Err("workflow exceeds the executable 128 KiB persistence bound".into());
+    }
+    Ok(())
 }
 
 /// The closed v1 executable catalog: known node types, per-type configuration

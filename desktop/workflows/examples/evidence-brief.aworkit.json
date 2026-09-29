@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "id": "workflow.evidence-brief",
+  "name": "Evidence Brief",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Input",
+      "type": "input",
+      "position": {
+        "x": 36,
+        "y": 260
+      }
+    },
+    {
+      "id": "fan.1",
+      "label": "Fan out",
+      "type": "parallel",
+      "position": {
+        "x": 245,
+        "y": 260
+      }
+    },
+    {
+      "id": "web.1",
+      "label": "Web search",
+      "type": "tool",
+      "position": {
+        "x": 480,
+        "y": 110
+      },
+      "configuration": {
+        "toolId": "tool.web_search",
+        "parameters": {
+          "query": "{input}"
+        }
+      }
+    },
+    {
+      "id": "plan.1",
+      "label": "Plan evidence",
+      "type": "model_call",
+      "position": {
+        "x": 480,
+        "y": 410
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "instructions": "Plan the answer to the user's request. List in evidenceNeeded every external or project fact the answer must verify; leave evidenceNeeded empty only when the request can be answered safely from general knowledge.",
+        "outputContract": "plan",
+        "maximumTokens": 1024
+      }
+    },
+    {
+      "id": "need.1",
+      "label": "Evidence needed?",
+      "type": "condition",
+      "position": {
+        "x": 710,
+        "y": 410
+      },
+      "configuration": {
+        "predicate": {
+          "kind": "exists",
+          "path": "evidenceNeeded.0"
+        }
+      }
+    },
+    {
+      "id": "agent.1",
+      "label": "Grounded brief",
+      "type": "agent",
+      "position": {
+        "x": 950,
+        "y": 220
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "toolIds": [
+          "tool.web_extract",
+          "tool.web_search",
+          "tool.files.read",
+          "tool.files.grep",
+          "tool.todo"
+        ],
+        "instructions": "Write a concise brief that answers the user's request. Verify every time-sensitive claim against an extracted page before making it. Cite the sources you actually used as markdown links."
+      }
+    },
+    {
+      "id": "quick.1",
+      "label": "Direct brief",
+      "type": "agent",
+      "position": {
+        "x": 950,
+        "y": 570
+      },
+      "configuration": {
+        "modelTierId": "tier:simple",
+        "toolIds": [],
+        "instructions": "Answer the user's request directly and concisely. No evidence gathering is required."
+      }
+    },
+    {
+      "id": "output.1",
+      "label": "Output",
+      "type": "output",
+      "position": {
+        "x": 1190,
+        "y": 300
+      }
+    },
+    {
+      "id": "completion.1",
+      "label": "Completion",
+      "type": "completion",
+      "position": {
+        "x": 1390,
+        "y": 300
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e.input.fan",
+      "source": "input.1",
+      "target": "fan.1"
+    },
+    {
+      "id": "e.fan.web",
+      "source": "fan.1",
+      "target": "web.1"
+    },
+    {
+      "id": "e.fan.plan",
+      "source": "fan.1",
+      "target": "plan.1"
+    },
+    {
+      "id": "e.plan.need",
+      "source": "plan.1",
+      "target": "need.1"
+    },
+    {
+      "id": "e.need.agent",
+      "source": "need.1",
+      "target": "agent.1",
+      "sourcePort": "true",
+      "configuration": {
+        "route": "true"
+      }
+    },
+    {
+      "id": "e.need.quick",
+      "source": "need.1",
+      "target": "quick.1",
+      "sourcePort": "false",
+      "configuration": {
+        "route": "false"
+      }
+    },
+    {
+      "id": "e.web.agent",
+      "source": "web.1",
+      "target": "agent.1"
+    },
+    {
+      "id": "e.agent.output",
+      "source": "agent.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.quick.output",
+      "source": "quick.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.output.completion",
+      "source": "output.1",
+      "target": "completion.1"
+    }
+  ],
+  "comments": "Evidence Brief: Chat Input \u2192 Parallel \u2192 (Tool: web_search running with Model Call: plan) \u2192 Condition (evidence needed?) \u2192 grounded Agent or direct Agent \u2192 Chat Output \u2192 Completion."
+}

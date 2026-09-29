@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "id": "workflow.iterative-planning",
+  "name": "Iterative Planning",
+  "nodes": [
+    {
+      "id": "input.1",
+      "label": "Input",
+      "type": "input",
+      "position": {
+        "x": 36,
+        "y": 260
+      }
+    },
+    {
+      "id": "seed.1",
+      "label": "Draft plan",
+      "type": "model_call",
+      "position": {
+        "x": 245,
+        "y": 260
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "instructions": "Produce an initial plan for answering the user's request. List every genuinely unresolved question in openQuestions; leave it empty when nothing is unresolved.",
+        "outputContract": "plan",
+        "maximumTokens": 1024
+      }
+    },
+    {
+      "id": "loop.1",
+      "label": "Until plan is settled",
+      "type": "loop",
+      "position": {
+        "x": 490,
+        "y": 260
+      },
+      "configuration": {
+        "exitCondition": {
+          "kind": "not",
+          "operand": {
+            "kind": "exists",
+            "path": "openQuestions.0"
+          }
+        },
+        "maximumIterations": 3
+      }
+    },
+    {
+      "id": "refine.1",
+      "label": "Refine plan",
+      "type": "model_call",
+      "position": {
+        "x": 740,
+        "y": 130
+      },
+      "configuration": {
+        "modelTierId": "tier:quality",
+        "instructions": "Refine the plan from the additional context. Resolve each open question that the conversation or general knowledge already answers; keep in openQuestions only what is still genuinely unresolved, and keep toolOrder as concrete, non-empty steps.",
+        "outputContract": "plan",
+        "maximumTokens": 1024
+      }
+    },
+    {
+      "id": "execute.1",
+      "label": "Execute plan",
+      "type": "agent",
+      "position": {
+        "x": 990,
+        "y": 260
+      },
+      "configuration": {
+        "modelTierId": "tier:balanced",
+        "toolIds": [
+          "tool.files.read",
+          "tool.files.grep",
+          "tool.todo",
+          "tool.web_search",
+          "tool.web_extract"
+        ],
+        "instructions": "Execute the settled plan and produce the final answer for the user. Use the registered tools where the plan calls for evidence, and state clearly when the applied iteration bound stopped further planning."
+      }
+    },
+    {
+      "id": "output.1",
+      "label": "Output",
+      "type": "output",
+      "position": {
+        "x": 1220,
+        "y": 260
+      }
+    },
+    {
+      "id": "wait.1",
+      "label": "Wait for input",
+      "type": "wait",
+      "position": {
+        "x": 1430,
+        "y": 260
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e.input.seed",
+      "source": "input.1",
+      "target": "seed.1"
+    },
+    {
+      "id": "e.seed.loop",
+      "source": "seed.1",
+      "target": "loop.1"
+    },
+    {
+      "id": "e.loop.refine",
+      "source": "loop.1",
+      "target": "refine.1",
+      "sourcePort": "body",
+      "configuration": {
+        "route": "body"
+      }
+    },
+    {
+      "id": "e.refine.loop",
+      "source": "refine.1",
+      "target": "loop.1",
+      "configuration": {
+        "route": "feedback"
+      }
+    },
+    {
+      "id": "e.loop.execute",
+      "source": "loop.1",
+      "target": "execute.1",
+      "sourcePort": "exit",
+      "configuration": {
+        "route": "exit"
+      }
+    },
+    {
+      "id": "e.loop.execute.fallback",
+      "source": "loop.1",
+      "target": "execute.1",
+      "sourcePort": "fallback",
+      "configuration": {
+        "route": "fallback"
+      }
+    },
+    {
+      "id": "e.execute.output",
+      "source": "execute.1",
+      "target": "output.1"
+    },
+    {
+      "id": "e.output.wait",
+      "source": "output.1",
+      "target": "wait.1"
+    }
+  ],
+  "comments": "Iterative Planning: Chat Input \u2192 draft Plan \u2192 bounded Loop (refine Plan until openQuestions is empty) \u2192 Agent executes the settled plan \u2192 Chat Output \u2192 Wait. The declared maximumIterations caps planning cost, and the fallback route still executes."
+}

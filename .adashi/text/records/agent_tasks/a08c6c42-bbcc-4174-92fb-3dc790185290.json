@@ -1,0 +1,53 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/current_configuration.rs\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
+    "completed_at": "2026-09-29 06:49:44",
+    "completion_memo": {
+      "lines": [
+        "Landed the frozen-workflow fix.\n",
+        "\n",
+        "1. current_configuration.rs — resolve_current_pass now resolves the saved entry first and, when it still exists, keeps the existing behaviour (a mid-Chat edit reaches the same Chat). When the entry is gone it re-validates and runs context.workflow_snapshot instead of returning \"workflow '<id>' no longer exists in the workflow library\". Because a deleted custom id is reused by the next create (workflow.custom.N), this also stops a continuing Chat from silently running an unrelated graph that happens to hold the same id.\n",
+        "\n",
+        "2. documents.rs — extracted validate_executable_snapshot (catalog + 128 KiB bound) from require_executable_workflow so a frozen snapshot is validated by exactly the rule a saved entry gets.\n",
+        "\n",
+        "3. ChatComposer.tsx — a locked Chat now presents the workflow it froze (chat.workflowName) as the selected option, ahead of the remaining library entries, so a rename shows the name of that time and a delete shows the frozen name. The previous code used the library entry's name when the id was still present and only appended the frozen option when it was absent.\n",
+        "\n",
+        "4. ChatWorkspaceScreen.tsx — the first-input workflow readiness probe is skipped for a locked Chat, so a deleted/renamed/edited entry can no longer mark a frozen Chat unrunnable.\n",
+        "\n",
+        "Regression tests. Rust: later_pass_keeps_the_frozen_workflow_after_its_library_entry_is_deleted (service.rs) deletes a duplicated custom workflow mid-Chat and asserts the follow-up pass runs the frozen snapshot, keeps chat/run identity, and the projection keeps the frozen id, name and locked flag. New desktop/src/chat/frozenWorkflow.test.tsx covers deleted-entry and renamed-entry display plus \"no visible read-only-schema failure\" through ChatWorkspaceScreen.\n",
+        "\n",
+        "Verification. cargo test --lib: 509 passed / 0 failed / 1 ignored (full run before the final comment-only reorder; the 5 later_pass_* tests re-run green after it). npx tsc --noEmit: clean. vitest run src/chat: 42 passed across frozenWorkflow.test.tsx, runtime.integration.test.tsx, workflowLibraryRefresh.test.tsx. vitest run src/chat src/workbench: 518 passed, 1 pre-existing timing flake (SettingsScreen.test.tsx \"resets legacy capabilities...\" exceeds its 5 s default; it passes with --testTimeout=30000 and does not import any changed file).\n",
+        "\n",
+        "Design boundary (not a silent omission): aworkit.trusted_core.revision_rebind states \"no silent re-read or automatic adoption at each turn\". This task deliberately keeps the pre-existing, separately tested mid-Chat adoption for an entry that still exists (later_pass_adopts_the_current_document_while_chat_identity_stays_frozen) and only closes the renamed/deleted case. Full explicit RebindHistory/ValidateRebind/AdoptRevision is phase 1, still todo as task #122, and is not required for this fix."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 06:48:28",
+    "created_files": "[\"desktop/src/chat/frozenWorkflow.test.tsx\"]",
+    "description": {
+      "lines": [
+        "Reproduction. Start a Chat from a saved custom workflow, then rename or delete that workflow. The Chat history entry still shows the locked workflow, but the composer's Workflow dropdown no longer presents the workflow the Chat froze: after a delete the native workflow snapshot returns a null document and editable:false, and continuing the Chat fails in DesktopRuntime::resolve_current_pass with \"workflow '<id>' no longer exists in the workflow library\". After a rename the locked selector shows the library's current name instead of the name the Chat froze. A deleted custom id is also reused by the next created workflow (next_custom_workflow_id picks the lowest free workflow.custom.N), so a continuing Chat could silently run an unrelated graph that happens to hold the same id.\n",
+        "\n",
+        "Fix (the freeze belongs to the Chat, not the library entry):\n",
+        "- desktop/src-tauri/src/runtime/service/current_configuration.rs: resolve_current_pass keeps the current library entry when it still exists (a mid-Chat edit still reaches the same Chat), and otherwise runs and re-validates context.workflow_snapshot instead of returning an error. An id that was deleted and reused no longer silently replaces the frozen graph.\n",
+        "- desktop/src-tauri/src/runtime/documents.rs: extract validate_executable_snapshot from require_executable_workflow so a frozen snapshot is validated by the same catalog and 128 KiB rule as a saved entry.\n",
+        "- desktop/src/chat/ChatComposer.tsx: a locked Chat presents the workflow it froze (chat.workflowName) as the selected option, so a rename shows the name of that time and a delete shows the frozen name rather than a library fallback.\n",
+        "- desktop/src/chat/ChatWorkspaceScreen.tsx: skip the first-input workflow readiness probe for a locked Chat; the library entry that id may point at now cannot make the Chat unrunnable.\n",
+        "\n",
+        "Acceptance. A deleted workflow's Chat continues and its next pass runs the frozen snapshot; the projection keeps the frozen workflow id, name and locked flag; a locked composer shows the frozen name for both rename and delete; the deliberate \"later pass adopts the current document\" behaviour for an existing entry is unchanged."
+      ]
+    },
+    "id": 7710485363,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Keep a Chat runnable on the workflow it froze after that library entry is renamed or deleted",
+    "updated_at": "2026-09-29 06:49:44"
+  },
+  "deleted": false,
+  "identity": "a08c6c42-bbcc-4174-92fb-3dc790185290",
+  "schemaVersion": 1
+}
