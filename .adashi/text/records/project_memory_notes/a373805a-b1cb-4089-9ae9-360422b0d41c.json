@@ -1,18 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": "2026-09-26 (2nd) desktop/src-tauri/target cleanup: removed compaction-build (14.669 GB) + codex-fixed (2.227 GB), full cargo caches referenced by nothing, plus 163 copied aworkit-desktop.exe files (13.057 GB) from per-run dirs; target went 40.8 -> 10.85 GB (304 dirs, 36,771 files). KEPT deliberately: release/ (live target, holds the running app), the 8 non-rebuildable debug snapshot exes, target-root QA binaries that scripts actually read (native-mcp-approval.mjs defaults to target/aworkit-mcp-approval-qa.exe; docs cite target/performance/aworkit-qa.exe), and all ~300 native-*/web-*-qa-* run dirs - their reports/screenshots are cited evidence in docs (context-compression.md, context-continuation-performance.md, agent-prefix-cache.md, background-process-windows.md, desktop-layout.md, workspace-instructions.md). Do not blanket-delete those. Prevention: the smoke scripts copyFile the ~85 MB app binary into every run dir; hardlink or clean it up instead.",
-    "created_at": "2026-09-26 20:16:12",
-    "id": 275,
-    "note_id": "disk-target-cleanup-2-20260926",
-    "operation_id": "mem-disk-cleanup-20260926-3",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "mem-disk-cleanup-20260926-3",
-    "task_id": null
+    "id": 275
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "a373805a-b1cb-4089-9ae9-360422b0d41c",
   "schemaVersion": 1
 }

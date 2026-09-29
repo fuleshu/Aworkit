@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Tauri plugin versions must match on both sides: `tauri build` refuses to start when the JS package and the Rust crate differ in major/minor. tauri-plugin-clipboard-manager is pinned to 2.3.3 on both sides (desktop/package.json exactly \"2.3.3\", Cargo.toml \"2.3.3\") because the Rust 2.4.0 requires tauri ^2.12 while the app locks tauri 2.11.5 and @tauri-apps/api 2.11.1 — so bumping that crate alone also means bumping tauri, wry and tao. The same trap applies to every other @tauri-apps/plugin-* dependency that carries a caret range while its Rust crate is pinned (currently plugin-opener). Repair a mismatch by naming one release on both sides, never by widening a range. Fixed in a3bb0ff after the 2.4.0/2.3.3 mismatch broke the build.",
+    "created_at": "2026-09-29 14:48:46",
+    "id": 14944784922,
+    "note_id": "tauri-plugin-version-pairing",
+    "operation_id": "memory-append-tauri-plugin-versions-1",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory-append-tauri-plugin-versions-1",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "0dc875b1-a78d-466a-9052-3157ec08e60f",
+  "schemaVersion": 1
+}

@@ -1,0 +1,43 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/package.json\",\"desktop/pnpm-lock.yaml\",\"desktop/src-tauri/Cargo.toml\"]",
+    "completed_at": "2026-09-29 14:49:00",
+    "completion_memo": {
+      "lines": [
+        "Fixed and pushed as a3bb0ff (main -> origin/main).\n",
+        "\n",
+        "Cause: desktop/package.json asked for ^2.4.0, so pnpm installed the JS 2.4.0, but the Rust crate 2.4.0 depends on tauri ^2.12 while this app locks tauri 2.11.5 (and @tauri-apps/api 2.11.1). Cargo therefore kept tauri-plugin-clipboard-manager at 2.3.3 — the newest release compatible with the locked tauri — and the Tauri CLI's gate refused the build because the JS and Rust minors differed.\n",
+        "\n",
+        "Fix: one release named on both sides. package.json now pins exactly \"2.3.3\" (no caret, so a later pnpm install cannot drift the JS ahead of the crate) and Cargo.toml requires \"2.3.3\" like the other pinned plugin crates. pnpm-lock.yaml is updated and its diff is confined to that one package (specifier, resolution, snapshot).\n",
+        "\n",
+        "Verification: `pnpm tauri info` now exits 0 with no mismatched-package line, reporting tauri-plugin-clipboard-manager 2.3.3 (Rust) and @tauri-apps/plugin-clipboard-manager 2.3.3 (JS); `cargo check --release --all-targets` compiles the lib, bin and tests cleanly (pre-existing warnings only), so the release compile behind `tauri build` is covered; `tsc --noEmit` clean; `vitest run src/chat` 253 passed with the 2.3.3 JS (its `readImage` API is unchanged). Not run: a full `pnpm desktop:build`, because project rules forbid producing installer bundles for testing, and the CLI gate was the only reported blocker. The same caret-vs-pinned trap is noted in project memory for the other @tauri-apps/plugin-* dependencies."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 14:48:49",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: `pnpm desktop:build` fails before compiling with \"Found version mismatched Tauri packages. tauri-plugin-clipboard-manager (v2.3.3) : @tauri-apps/plugin-clipboard-manager (v2.4.0)\" — a regression introduced by the clipboard-manager dependency added for the Linux image paste fix.\n",
+        "\n",
+        "Expected: the desktop build passes the Tauri CLI's version gate.\n",
+        "\n",
+        "Cause: desktop/package.json requested ^2.4.0 (pnpm installed 2.4.0), but the Rust crate 2.4.0 requires tauri ^2.12 while the app locks tauri 2.11.5, so cargo kept tauri-plugin-clipboard-manager at 2.3.3. The CLI requires same major/minor on both sides.\n",
+        "\n",
+        "Fix: name exactly 2.3.3 on both sides (exact version in package.json, pinned requirement in Cargo.toml), matching the project's convention of pinning Tauri plugin crates."
+      ]
+    },
+    "id": 20061664827,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix the Tauri plugin version mismatch that blocks the desktop build",
+    "updated_at": "2026-09-29 14:49:00"
+  },
+  "deleted": false,
+  "identity": "3dd01df1-c4d9-4851-85fb-690e5aff8e30",
+  "schemaVersion": 1
+}
