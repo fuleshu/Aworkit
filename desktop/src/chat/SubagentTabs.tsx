@@ -27,6 +27,10 @@ export function subagentStatusLabel(status: SubagentStatus): string {
  * The Chat Workspace tab strip: the parent Chat plus one closable tab per open
  * delegated child. It is presentation only — closing a tab hides it and never
  * cancels the child, and each tab is a filtered view of the same Run history.
+ *
+ * The strip exists only for delegated children. With no open child tab the
+ * parent Chat is the whole workspace, so a lone "Chat" tab is not rendered —
+ * a settled child that left the catalog must not leave an empty strip behind.
  */
 export function SubagentTabs({
   entries,
@@ -34,11 +38,12 @@ export function SubagentTabs({
   panelId,
   onActivate,
   onClose,
-}: SubagentTabsProps): React.JSX.Element {
+}: SubagentTabsProps): React.JSX.Element | null {
   const strip = useRef<HTMLDivElement>(null);
   const open = state.open
     .map((childId) => entries.find((entry) => entry.childId === childId))
     .filter((entry): entry is SubagentCatalogEntry => entry !== undefined);
+  if (open.length === 0) return null;
   const active = state.active;
   const parentSelected = active === null || !open.some((entry) => entry.childId === active);
   // Roving focus follows the rendered order, so arrow navigation can move the

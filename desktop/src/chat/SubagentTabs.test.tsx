@@ -94,6 +94,35 @@ describe("subagent tab strip", () => {
     expect(onClose).toHaveBeenCalledWith("child.a");
   });
 
+  it("renders no strip while no delegated child tab is open", () => {
+    // Settled children stay in the catalog, so their entries must not keep an
+    // empty strip with a lone "Chat" tab on screen.
+    render(
+      <SubagentTabs
+        entries={[entry("child.a", { status: "completed" })]}
+        state={{ open: [], active: null }}
+        panelId="panel"
+        onActivate={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
+  });
+
+  it("renders no strip once every remembered tab left the catalog", () => {
+    render(
+      <SubagentTabs
+        entries={[]}
+        state={{ open: ["child.gone"], active: "child.gone" }}
+        panelId="panel"
+        onActivate={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+
   it("truncates long tasks and labels every status", () => {
     const long = entry("child.long", { task: "x".repeat(80) });
     expect(subagentTabLabel(long)).toHaveLength(48);

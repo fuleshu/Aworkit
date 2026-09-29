@@ -411,8 +411,15 @@ describe("subagent tabs in the Chat workspace", () => {
         screen.queryByRole("tab", { name: /Research VR headsets/ }),
       ).toBeNull(),
     );
-    // The parent tab is permanent and the composer is available again.
-    expect(screen.getByRole("tab", { name: "Chat" })).toBeVisible();
+    // With no child tab left open the workspace strip disappears again: the
+    // Chat is the whole workspace, so no lone "Chat" tab is shown, and the
+    // composer is available again.
+    expect(
+      screen.queryByRole("tablist", {
+        name: "Chat and subagent conversations",
+      }),
+    ).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
     expect(screen.getByLabelText("Chat composer")).toBeVisible();
   });
 
