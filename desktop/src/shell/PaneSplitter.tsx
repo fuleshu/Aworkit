@@ -8,12 +8,18 @@ interface PaneSplitterProps {
   readonly onPreview?: (value: number) => void;
   readonly label?: string;
   readonly direction?: 1 | -1;
+  /**
+   * `vertical` is a column separator that resizes a side pane by width.
+   * `horizontal` is a row separator that resizes a panel by height; dragging
+   * upwards increases the value.
+   */
+  readonly orientation?: "vertical" | "horizontal";
   readonly className?: string;
 }
 
 interface ActiveDrag {
   readonly pointerId: number;
-  readonly startX: number;
+  readonly start: number;
   readonly startValue: number;
   latestValue: number;
   previewFrame: number | null;
@@ -32,13 +38,17 @@ export function PaneSplitter({
   onPreview,
   label = "Resize navigation pane",
   direction = 1,
+  orientation = "vertical",
   className = "",
 }: PaneSplitterProps): React.JSX.Element {
   const separatorRef = useRef<HTMLDivElement>(null);
   const activeDrag = useRef<ActiveDrag | null>(null);
+  const horizontal = orientation === "horizontal";
   const clamp = (candidate: number) => Math.min(max, Math.max(min, candidate));
-  const adjust = (delta: number) =>
-    onChange(clamp(value + delta));
+  /** Pointer travel that grows the value: right for a column, up for a row. */
+  const growth = (event: { clientX: number; clientY: number }, start: number) =>
+    direction * (horizontal ? start - event.clientY : event.clientX - start);
+  const adjust = (delta: number) => onChange(clamp(value + delta));
   const applyPreview = (next: number) => {
     separatorRef.current?.setAttribute("aria-valuenow", String(next));
     (onPreview ?? onChange)(next);
@@ -81,16 +91,21 @@ export function PaneSplitter({
     <div
       ref={separatorRef}
       aria-label={label}
-      aria-orientation="vertical"
+      aria-orientation={horizontal ? "horizontal" : "vertical"}
       aria-valuemax={max}
       aria-valuemin={min}
       aria-valuenow={value}
-      className={`pane-splitter ${className}`.trim()}
+      className={`pane-splitter ${horizontal ? "horizontal" : "vertical"} ${className}`.trim()}
       role="separator"
       tabIndex={0}
       onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") adjust(-8 * direction);
-        if (event.key === "ArrowRight") adjust(8 * direction);
+        if (horizontal) {
+          if (event.key === "ArrowUp") adjust(8 * direction);
+          if (event.key === "ArrowDown") adjust(-8 * direction);
+        } else {
+          if (event.key === "ArrowLeft") adjust(-8 * direction);
+          if (event.key === "ArrowRight") adjust(8 * direction);
+        }
         if (event.key === "Home") onChange(min);
         if (event.key === "End") onChange(max);
       }}
@@ -100,7 +115,7 @@ export function PaneSplitter({
         event.currentTarget.setPointerCapture?.(event.pointerId);
         activeDrag.current = {
           pointerId: event.pointerId,
-          startX: event.clientX,
+          start: horizontal ? event.clientY : event.clientX,
           startValue: value,
           latestValue: value,
           previewFrame: null,
@@ -110,11 +125,7 @@ export function PaneSplitter({
       onPointerMove={(event) => {
         const drag = activeDrag.current;
         if (drag === null || drag.pointerId !== event.pointerId) return;
-        schedulePreview(
-          clamp(
-            drag.startValue + direction * (event.clientX - drag.startX),
-          ),
-        );
+        schedulePreview(clamp(drag.startValue + growth(event, drag.start)));
       }}
       onPointerUp={(event) => {
         if (activeDrag.current?.pointerId !== event.pointerId) return;

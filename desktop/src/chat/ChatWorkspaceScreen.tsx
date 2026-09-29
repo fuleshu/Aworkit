@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChatBusy } from "./ChatBusy";
 import { ChatNoticeCard } from "./ChatNoticeCard";
 import { ChatRecoveryCard } from "./ChatRecoveryCard";
@@ -63,6 +63,23 @@ import {
   type WorkflowLibraryPort,
 } from "../workbench/corePort";
 
+/**
+ * The Chat input panel opens at this height in logical pixels; the horizontal
+ * separator at its top grows or shrinks it from here.
+ */
+const DEFAULT_COMPOSER_HEIGHT = 200;
+/**
+ * The panel stays usable even when the separator is dragged to the floor. Below
+ * roughly this height the toolbar and the meta row would stop fitting.
+ */
+const MINIMUM_COMPOSER_HEIGHT = 168;
+/**
+ * Space the conversation always keeps above the panel. The separator may grow
+ * the input to most of the Chat column, but never so far that the timeline
+ * disappears.
+ */
+const COMPOSER_TIMELINE_RESERVE = 180;
+
 interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;
   readonly pollIntervalMs?: number;
@@ -126,6 +143,25 @@ export function ChatWorkspaceScreen({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const inspector = usePaneWidth(320, 280, 420, storedInspectorWidth);
   const { width: inspectorWidth, setWidth: setInspectorWidth } = inspector;
+  // The Chat input panel's height is set by the horizontal separator at its
+  // top. It opens at a comfortable default and can grow to nearly the whole
+  // Chat column; the timeline always keeps a usable strip above it.
+  const [chatMainElement, setChatMainElement] = useState<HTMLElement | null>(null);
+  const [chatMainHeight, setChatMainHeight] = useState(0);
+  useLayoutEffect(() => {
+    if (chatMainElement === null) return;
+    const measure = () => setChatMainHeight(chatMainElement.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(chatMainElement);
+    return () => observer.disconnect();
+  }, [chatMainElement]);
+  const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
+  const composerMaxHeight = Math.max(
+    MINIMUM_COMPOSER_HEIGHT,
+    chatMainHeight - COMPOSER_TIMELINE_RESERVE,
+  );
+  const effectiveComposerHeight = Math.min(composerHeight, composerMaxHeight);
   const chatLayoutRef = useRef<HTMLElement>(null);
   const inspectorRef = inspector.ref;
   const attachChatLayout = useCallback((element: HTMLElement | null) => {
@@ -634,7 +670,7 @@ export function ChatWorkspaceScreen({
           : undefined
       }
     >
-      <main className="chat-main">
+      <main className="chat-main" ref={setChatMainElement}>
         <header className="chat-view-header">
           <div>
             <p className="eyebrow">{chat.scope.toUpperCase()}</p>
@@ -729,7 +765,23 @@ export function ChatWorkspaceScreen({
             />
           )}
         </div>
-        <div className="chat-compose-area">
+        <div
+          className="chat-compose-area"
+          style={
+            {
+              "--aw-composer-height": `${effectiveComposerHeight}px`,
+            } as React.CSSProperties
+          }
+        >
+          <PaneSplitter
+            className="composer-splitter"
+            label="Resize chat input"
+            max={composerMaxHeight}
+            min={MINIMUM_COMPOSER_HEIGHT}
+            orientation="horizontal"
+            value={effectiveComposerHeight}
+            onChange={setComposerHeight}
+          />
           <ChatRecoveryCard key={chat.chatId} chatId={chat.chatId} recoveryPending={chat.recoveryPending}
             runtime={runtime} nextCommandId={() => commandIds.createIntent("resume").commandId} />
         {activeChild === null && (

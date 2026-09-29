@@ -477,6 +477,23 @@ pre {
   background: var(--aw-accent);
   width: 2px;
 }
+/* A row separator resizes the panel below it by height. */
+.pane-splitter.horizontal {
+  cursor: row-resize;
+  height: 6px;
+  width: 100%;
+}
+.pane-splitter.horizontal::after {
+  height: 1px;
+  left: 0;
+  top: 2px;
+  width: 100%;
+}
+.pane-splitter.horizontal:hover::after,
+.pane-splitter.horizontal:focus::after {
+  height: 2px;
+  width: 100%;
+}
 
 /* Shared route chrome */
 .surface-toolbar,
@@ -608,6 +625,14 @@ pre {
 }
 .chat-main > .composer-shell {
   grid-row: 5;
+}
+.chat-compose-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.composer-splitter {
+  flex: 0 0 auto;
 }
 .chat-title-line {
   align-items: baseline;
@@ -1291,10 +1316,27 @@ pre {
 .composer-shell {
   background: var(--aw-panel);
   border-top: 1px solid var(--aw-divider);
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 5px;
+  /* The draggable separator above the panel owns this height. */
+  height: var(--aw-composer-height, auto);
+  min-height: 0;
+  overflow: hidden;
   padding: 7px 10px 6px;
   position: relative;
+}
+.composer-shell > * {
+  flex: 0 0 auto;
+}
+/* The attachment strip yields before the input itself when the panel is tight. */
+.composer-shell > .chat-image-list {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+.composer-shell > .composer-input {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .composer-shell.composer-dropping {
   border-top-color: var(--aw-accent);
@@ -1357,15 +1399,18 @@ pre {
   display: grid;
   gap: 6px;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
   padding: 8px;
 }
 .composer-input textarea {
   border: 0;
-  max-height: 120px;
+  height: 100%;
   min-height: 42px;
   outline: 0;
   padding: 6px;
-  resize: vertical;
+  /* The horizontal separator replaces the native textarea resize widget. */
+  resize: none;
 }
 .composer-toolbar, .composer-submit-controls {
   display: flex;

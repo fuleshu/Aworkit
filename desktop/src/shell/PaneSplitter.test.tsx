@@ -51,4 +51,43 @@ describe("PaneSplitter", () => {
     expect(onChange).toHaveBeenCalledWith(365);
     expect(document.body).not.toHaveClass("pane-resizing");
   });
+
+  it("grows a row panel when dragged up and shrinks it with the down arrow", () => {
+    const onChange = vi.fn();
+    render(
+      <PaneSplitter
+        label="Resize chat input"
+        max={720}
+        min={168}
+        orientation="horizontal"
+        value={200}
+        onChange={onChange}
+      />,
+    );
+    const splitter = screen.getByRole("separator", {
+      name: "Resize chat input",
+    });
+    expect(splitter).toHaveAttribute("aria-orientation", "horizontal");
+    expect(splitter).toHaveClass("horizontal");
+
+    // Moving the pointer up (a smaller clientY) makes the panel taller.
+    fireEvent.pointerDown(splitter, {
+      button: 0,
+      clientY: 500,
+      isPrimary: true,
+      pointerId: 3,
+    });
+    fireEvent.pointerMove(splitter, { clientY: 380, pointerId: 3 });
+    fireEvent.pointerUp(splitter, { pointerId: 3 });
+    expect(onChange).toHaveBeenLastCalledWith(320);
+
+    fireEvent.keyDown(splitter, { key: "ArrowUp" });
+    expect(onChange).toHaveBeenLastCalledWith(208);
+    fireEvent.keyDown(splitter, { key: "ArrowDown" });
+    expect(onChange).toHaveBeenLastCalledWith(192);
+    fireEvent.keyDown(splitter, { key: "End" });
+    expect(onChange).toHaveBeenLastCalledWith(720);
+    fireEvent.keyDown(splitter, { key: "Home" });
+    expect(onChange).toHaveBeenLastCalledWith(168);
+  });
 });
