@@ -8,6 +8,8 @@ import {
   readNativeClipboardImage,
 } from "./clipboardImage";
 import { dragCarriesFiles, droppedImageFiles } from "./dropImages";
+import { CreateProjectDialog } from "./CreateProjectDialog";
+import type { ProjectDraft } from "./createProject";
 import {
   canSubmit,
   emptyComposer,
@@ -25,6 +27,12 @@ export interface WorkflowOption {
   readonly id: string;
   readonly name: string;
 }
+
+/**
+ * The Project dropdown entry that opens the create-project dialog. A space is
+ * not allowed in a StableId, so this can never collide with a saved project id.
+ */
+const createProjectOptionValue = "new project";
 
 interface ChatComposerProps {
   readonly drafts?: ComposerDrafts;
@@ -48,6 +56,15 @@ interface ChatComposerProps {
   readonly workflowReadinessError?: string | null;
   readonly nextCommandId: () => string;
   readonly onWorkflowChange?: (workflowId: string) => void;
+  /**
+   * Saves a project created from the composer's Project dropdown and returns
+   * its selectable choice. Without it the dropdown offers no create entry.
+   */
+  readonly onCreateProject?: (
+    draft: ProjectDraft,
+  ) => Promise<ChatProjectChoice>;
+  /** Opens the operating system's own folder chooser for that dialog. */
+  readonly pickFolder?: () => Promise<string | null>;
   readonly onSubmit: (
     intent: ReturnType<typeof submitIntent>,
   ) => Promise<boolean>;
@@ -76,6 +93,8 @@ export function ChatComposer({
   workflowReadinessError = null,
   nextCommandId,
   onWorkflowChange,
+  onCreateProject,
+  pickFolder,
   onSubmit,
 }: ChatComposerProps): React.JSX.Element {
   const workflowOptions: readonly WorkflowOption[] =
@@ -159,6 +178,13 @@ export function ChatComposer({
     if (file !== null) await addFiles([file]);
   };
   const [dropping, setDropping] = useState(false);
+  // The Project dropdown's create entry opens the create-project dialog; a
+  // project just created here is listed immediately, before the next snapshot
+  // carries it, so the selection can never point at a missing option.
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [createdProjects, setCreatedProjects] = useState<
+    readonly ChatProjectChoice[]
+  >([]);
   const commandPending = pending || submitting || importing;
   const disabledReason = stale
     ? "Reconnect and resynchronize before sending."
@@ -294,22 +320,43 @@ export function ChatComposer({
             disabled={
               chat.lockedWorkflow || chat.recoveryPending || commandPending
             }
-            onChange={(event) =>
+            onChange={(event) => {
+              if (event.target.value === createProjectOptionValue) {
+                setCreateProjectOpen(true);
+                return;
+              }
               edit({
                 projectId:
                   event.target.value === "" ? null : event.target.value,
-              })
-            }
+              });
+            }}
           >
             <option value="">No project</option>
             {frozenProjectMissing && chat.projectId !== null && (
               <option value={chat.projectId}>{chat.scope}</option>
             )}
+            {createdProjects
+              .filter(
+                (created) =>
+                  !projects.some(
+                    (project) => project.projectId === created.projectId,
+                  ),
+              )
+              .map((created) => (
+                <option key={created.projectId} value={created.projectId}>
+                  {created.name}
+                </option>
+              ))}
             {projects.map((project) => (
               <option key={project.projectId} value={project.projectId}>
                 {project.name}
               </option>
             ))}
+            {onCreateProject !== undefined && (
+              <option value={createProjectOptionValue}>
+                Create New Project…
+              </option>
+            )}
           </select>
         </label>
         {chat.lockedWorkflow && (
@@ -406,6 +453,18 @@ export function ChatComposer({
         {status}
         <span>{state.draft.length} characters</span>
       </div>
+      {createProjectOpen && onCreateProject !== undefined && (
+        <CreateProjectDialog
+          pickFolder={pickFolder}
+          create={onCreateProject}
+          onCreated={(created) => {
+            setCreatedProjects((current) => [...current, created]);
+            setCreateProjectOpen(false);
+            edit({ projectId: created.projectId });
+          }}
+          onCancel={() => setCreateProjectOpen(false)}
+        />
+      )}
     </section>
   );
 }

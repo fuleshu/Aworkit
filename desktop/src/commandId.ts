@@ -27,3 +27,16 @@ function randomHex(crypto: Crypto): string {
     "",
   );
 }
+
+/**
+ * Creates an id for a locally created collection record (a project, an MCP
+ * server, …).
+ *
+ * Unlike a durable command id this may fall back to a weaker source: such a
+ * record only has to be unique inside the settings document that holds it, and
+ * a missing Web Crypto must not stop the user from adding one.
+ */
+export function createLocalId(scope: string): string {
+  const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "");
+  return `${scope}.${random ?? `${Date.now()}${Math.random().toString(16).slice(2)}`}`;
+}

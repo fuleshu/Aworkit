@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createLocalId } from "../../commandId";
 import type {
   DataConfiguration,
   ProjectConfiguration,
@@ -108,7 +109,7 @@ export function ProjectsSection({
       const location = await pickFolder();
       if (location === null) return;
       const leaf = location.replace(/[\\/]+$/u, "").split(/[\\/]/u).at(-1);
-      const id = localId("project");
+      const id = createLocalId("project");
       onChange((current) => [
         ...current,
         {
@@ -361,9 +362,4 @@ function OptionalDaysField({
       />
     </label>
   );
-}
-
-function localId(scope: string): string {
-  const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "");
-  return `${scope}.${random ?? `${Date.now()}${Math.random().toString(16).slice(2)}`}`;
 }

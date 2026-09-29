@@ -1,0 +1,34 @@
+/* The Chat's create-project dialog: the shared workbench dialog chrome with the
+   same fields Settings → Projects uses, so both surfaces collect one record. */
+.workbench-dialog.create-project-dialog {
+  /* Two classes, like the question dialog: a one-class max-width would tie with
+     `.workbench-dialog`'s own rule and lose the cascade in the built bundle. */
+  max-width: 520px;
+}
+.create-project-dialog form {
+  display: grid;
+  gap: 10px;
+}
+.create-project-heading h2 {
+  font-size: var(--aw-font-ui);
+  margin: 2px 0 0;
+}
+.create-project-intro {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  margin: 0;
+}
+.create-project-browse {
+  display: flex;
+  justify-content: flex-end;
+}
+.create-project-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.create-project-actions > button {
+  border-radius: 7px;
+  padding: 7px 12px;
+}

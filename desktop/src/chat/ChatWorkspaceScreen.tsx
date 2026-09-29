@@ -54,8 +54,13 @@ import { RunDetailsInspector } from "./RunDetailsInspector";
 import { ChatWorkspaceController } from "./workspace";
 import { useChatRuntime } from "./useChatRuntime";
 import { ComposerDrafts } from "./composerDrafts";
+import {
+  projectFromDraft,
+  saveProject,
+  type ProjectDraft,
+} from "./createProject";
 import { useChatErrorNotices } from "./useChatErrorNotices";
-import type { ChatIntent, TimelineItem } from "./types";
+import type { ChatIntent, ChatProjectChoice, TimelineItem } from "./types";
 import {
   createWorkflowLibraryPort,
   TauriWorkflowCorePort,
@@ -162,6 +167,21 @@ export function ChatWorkspaceScreen({
     chatMainHeight - COMPOSER_TIMELINE_RESERVE,
   );
   const effectiveComposerHeight = Math.min(composerHeight, composerMaxHeight);
+  // A project created from the composer's Project dropdown is saved through the
+  // same settings document Settings edits; the projection is then refreshed so
+  // the dropdown carries the new project before the composer selects it.
+  const createProjectFromComposer = useCallback(
+    async (draft: ProjectDraft): Promise<ChatProjectChoice> => {
+      const project = await saveProject(projectFromDraft(draft));
+      await runtime.resynchronize();
+      return {
+        projectId: project.id,
+        name: project.name,
+        workspaceKind: project.workspace.kind,
+      };
+    },
+    [runtime],
+  );
   const chatLayoutRef = useRef<HTMLElement>(null);
   const inspectorRef = inspector.ref;
   const attachChatLayout = useCallback((element: HTMLElement | null) => {
@@ -836,6 +856,12 @@ export function ChatWorkspaceScreen({
           workflowReadinessError={workflowReadinessError}
           nextCommandId={() => commandIds.createIntent("enqueue").commandId}
           onWorkflowChange={setSelectedWorkflowId}
+          onCreateProject={createProjectFromComposer}
+          pickFolder={
+            pickPath === undefined
+              ? undefined
+              : async () => await pickPath("folder", [])
+          }
           onSubmit={runtime.dispatch}
         />
         )}
