@@ -1,0 +1,43 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/lib.rs\",\"desktop/src-tauri/src/presentation.rs\",\"desktop/src-tauri/src/workflow_files.rs\",\"desktop/src-tauri/src/runtime/images.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src/chat/images.ts\",\"desktop/src/chat/useChatImages.ts\",\"desktop/src/chat/ImageAttachments.tsx\",\"desktop/src/chat/ChatComposer.tsx\",\"docs/chat-images.md\"]",
+    "completed_at": "2026-09-29 13:20:50",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 92484ef (main -> origin/main), with its Add-image prerequisite in dfeeb56.\n",
+        "\n",
+        "Delivered: `dialog_session` holds one process-wide \"folder this session last browsed to\". Every chooser is seeded with it — `native_pick_file`, `native_pick_folder`, the workflow Open/Export dialogs and the new `native_pick_images`. A chosen file remembers the folder holding it, a chosen folder remembers itself, a cancelled dialog remembers nothing, and an empty parent is never stored. The memory is deliberately not persisted; it lasts for one run, matching a file manager's own recent-folder behaviour.\n",
+        "\n",
+        "Add image moved to the native chooser because a webview `<input type=\"file\">` cannot be told where to start: `native_pick_images` opens the multi-select dialog (PNG/JPEG/WebP), remembers the folder and imports each chosen file through `ChatImageStore::import_path`, so the composer receives stored attachment records and nothing is read twice. The webview input remains the browser-Preview fallback (and is still what the jsdom tests drive). `cargo check --all-targets` needed no new capability: the dialog plugin was already configured.\n",
+        "\n",
+        "Verification: new Rust test `dialog_session::tests::remembers_the_folder_each_kind_of_choice_implies` green (cargo test --lib); `cargo check --all-targets` clean for the lib, bin and tests; new frontend test imagePicker.test.tsx green (native records attach without re-reading, a chooser failure is reported, the input still works when no native chooser exists); `vitest run src/chat src/shell src/app.integration.test.tsx` 261 passed. Disclosed limit: no display here, so the real dialog's starting folder was not exercised end to end; the behaviour is unit-tested at the seeding/memory level. Note that two Chat `...` core library tests (runtime::documents::tests::library_*, runtime::service::tests::projectless::every_bundled_executable_workflow_starts_with_no_saved_projects) fail on this checkout, verified identical at HEAD without these changes."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 13:19:53",
+    "created_files": "[\"desktop/src-tauri/src/dialog_session.rs\",\"docs/desktop-file-dialogs.md\",\"desktop/src/chat/imagePicker.test.tsx\"]",
+    "description": {
+      "lines": [
+        "Reported: file browser operations (add image, workflow import/export) always start in the Aworkit executable's folder instead of where the user last browsed.\n",
+        "\n",
+        "Expected: during a session every browse starts in the folder the user last chose, including the composer's Add image.\n",
+        "\n",
+        "Delivered: a process-wide session folder (`dialog_session` in desktop/src-tauri/src) seeds all choosers — native_pick_file, native_pick_folder, the workflow import/export dialogs and the new native_pick_images — with the remembered directory; a chosen file remembers its parent, a chosen folder remembers itself, a cancelled dialog remembers nothing. Add image moved to the native chooser (a webview file input cannot be steered), so the composer receives stored attachments; the webview input remains the browser-Preview fallback. Documented in docs/desktop-file-dialogs.md.\n",
+        "\n",
+        "Acceptance evidence: new Rust unit test `dialog_session::tests::remembers_the_folder_each_kind_of_choice_implies` green; new frontend test imagePicker.test.tsx green; `cargo check --all-targets` clean; commits dfeeb56 (Add image prerequisite) and 92484ef pushed."
+      ]
+    },
+    "id": 13551929795,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Remember the session's last browse folder in every file dialog",
+    "updated_at": "2026-09-29 13:20:50"
+  },
+  "deleted": false,
+  "identity": "02df0c67-8332-46f0-9aaa-832140acdfd1",
+  "schemaVersion": 1
+}

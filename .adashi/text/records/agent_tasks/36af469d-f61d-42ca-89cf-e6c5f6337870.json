@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/shell/PaneSplitter.tsx\",\"desktop/src/shell/PaneSplitter.test.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-09-29 13:20:46",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 26a9c18 (main -> origin/main).\n",
+        "\n",
+        "Delivered: the native textarea resize widget is gone (`resize: none`, no 120px cap). PaneSplitter gained an `orientation=\"horizontal\"` mode — `aria-orientation: horizontal`, row-resize cursor, dragging up grows the value, ArrowUp/ArrowDown adjust and Home/End jump to the bounds — reusing its frame-coalesced preview and commit-on-release behaviour. ChatWorkspaceScreen measures `.chat-main` with a ResizeObserver and renders the separator at the top of `.chat-compose-area`, setting `--aw-composer-height` on it: the panel opens at 200 logical pixels, shrinks no further than 168, and can grow to the Chat column height minus 180 pixels (the timeline always keeps a usable strip). `.composer-shell` became a flex column whose `.composer-input` takes the remaining space, with the attachment strip the first thing to yield; the textarea fills the panel instead of being capped.\n",
+        "\n",
+        "Verification: `tsc --noEmit` clean; `pnpm test:chat` 238 passed and `vitest run src/shell src/chat src/app.integration.test.tsx` 246 passed including the new horizontal-splitter test (drag up grows, ArrowUp/ArrowDown/Home/End); `pnpm build` ok. The composer height is session state by design (like the pane widths it is not persisted, and the task did not ask for that). `qa/desktop-browser-visual.sh` could not be used as a gate: it is stale relative to this app (it asserts `.evidence-inspector`, an \"Add attachment references\" label and \"Attachments are unsupported in this build\", none of which exist in the source), so it fails while interacting with the Chat, unchanged by this work."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 13:19:49",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: the Chat input panel is small and can only be grown by the tiny native textarea resize widget under the scrollbar (CSS `resize: vertical`, capped at 120px).\n",
+        "\n",
+        "Expected: resizing the input panel is a first-class drag on a horizontal separator at the top of the input panel, keyboard accessible, and the panel can grow much larger than 120px while the conversation keeps a usable strip.\n",
+        "\n",
+        "Delivered: PaneSplitter gained an `orientation=\"horizontal\"` mode (aria-orientation horizontal, row-resize cursor, drag up grows, ArrowUp/ArrowDown/Home/End). The composer's native textarea resize is removed; `.chat-compose-area` renders the separator above the panel and sets `--aw-composer-height`, the panel opens at 200px and may grow to (chat column height - 180px), and the textarea fills the panel instead of being capped.\n",
+        "\n",
+        "Acceptance evidence: tsc clean; `pnpm test:chat` and `vitest run src/shell` green including the new PaneSplitter horizontal test; commit 26a9c18 pushed."
+      ]
+    },
+    "id": 9104435275,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Resize the Chat input panel with a draggable horizontal separator",
+    "updated_at": "2026-09-29 13:20:46"
+  },
+  "deleted": false,
+  "identity": "36af469d-f61d-42ca-89cf-e6c5f6337870",
+  "schemaVersion": 1
+}

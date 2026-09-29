@@ -1,0 +1,45 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/desktop_layout.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"docs/desktop-layout.md\"]",
+    "completed_at": "2026-09-29 13:20:51",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as a7371de (main -> origin/main).\n",
+        "\n",
+        "Root cause (size, the reliable defect): on non-Windows platforms restore called `set_size`, which takes a *client* size, with the captured *outer* size minus the decoration re-read from the freshly created window. `tao` derives those insets from `_NET_FRAME_EXTENTS`, which is empty for client-side decorations, so the subtraction was zero (the frame grew by its decoration on every restart) or degenerated to a position-shaped value that collapsed the window to its minimum. Second cause: `measure` wrote unvalidated frames into the session; the persisted record is validated on write and a rejected record silently keeps an older frame, so one bad sample blocked the final close-time save and left the startup frame (or the pre-restore frame) on disk.\n",
+        "\n",
+        "Fix: non-Windows capture now stores the client size (Windows keeps the Win32 outer rectangle, restored by `SetWindowPos`) and restore applies it unchanged — capture and restore are a bijection and no inset is ever re-derived from the live window. A measured frame is stored only when the whole candidate record passes `LayoutConfigurationV2::validate()`; a zero size, an impossible scale factor or an out-of-range coordinate leaves the last usable frame in place. `LayoutConfigurationV2`'s doc comment and docs/desktop-layout.md now state the contract, the one-time normalisation of records written by earlier builds (their outer size is applied once as a client size, then re-saved correctly), and that a Wayland compositor owns window position (`gtk_window_move` cannot move a Wayland surface and `gtk_window_get_position` always reports 0,0), so position is best-effort while the size always applies.\n",
+        "\n",
+        "Verification: new bin unit tests `desktop_layout::tests::keeps_the_last_usable_frame_when_a_measurement_is_unusable` and `stores_a_usable_frame_verbatim` green; `cargo check --all-targets` clean; the lib round-trip test `runtime::service::tests::desktop_layout_round_trips_through_a_reopen_and_leaves_settings_editable` green (needs HOME set in this environment). Not exercised end to end: this environment has no display, so the restart was not observed. The Windows path is untouched."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 13:19:55",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: after closing and restarting Aworkit on Linux the window position and size are not restored correctly.\n",
+        "\n",
+        "Expected: the window reopens at the frame the user left, on Linux as on Windows.\n",
+        "\n",
+        "Root cause: on non-Windows platforms restore called `set_size` (a client size) with the captured **outer** size minus the decoration re-read from the freshly created window. tao only refreshes those insets from `_NET_FRAME_EXTENTS`, which is empty for client-side decorations, so the frame grew by its decoration on every restart, or collapsed when the read degenerated. Separately, `measure` wrote unvalidated frames into the session; a rejected record silently keeps an older frame, so one bad sample blocked the final write and left the startup frame on disk.\n",
+        "\n",
+        "Delivered: non-Windows capture stores the client size (Windows keeps the Win32 outer rectangle) and restore applies it unchanged, making capture and restore a bijection; a measured frame is stored only when it passes `LayoutConfigurationV2::validate()`, so a zero size / impossible scale factor / out-of-range coordinate never replaces a usable frame. docs/desktop-layout.md records the contract, the one-time normalisation of records written by earlier builds, and that Wayland compositors own window position (gtk_window_move cannot move a Wayland surface), so position restoration is best-effort there while size always applies.\n",
+        "\n",
+        "Acceptance evidence: new bin unit tests in desktop_layout.rs green; `cargo check --all-targets` clean; the lib layout round-trip test green with HOME set; commit a7371de pushed. Not exercised end to end: this environment has no display."
+      ]
+    },
+    "id": 15813296220,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Restore the Linux window size correctly after a restart",
+    "updated_at": "2026-09-29 13:20:51"
+  },
+  "deleted": false,
+  "identity": "0878b53b-3907-489e-8ed0-671228ea4a1c",
+  "schemaVersion": 1
+}

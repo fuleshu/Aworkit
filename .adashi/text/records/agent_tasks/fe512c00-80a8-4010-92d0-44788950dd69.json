@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/commandId.ts\",\"desktop/src/workbench/settings-v2/DataProjectsSection.tsx\"]",
+    "completed_at": "2026-09-29 13:20:48",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as cfded04 (main -> origin/main). No Rust change was needed.\n",
+        "\n",
+        "Delivered: the composer's Project select now renders \"Create New Project…\" as its last entry (sentinel value contains a space, so it can never collide with a StableId) and opens a modal create-project dialog instead of selecting an id. The dialog collects exactly what Settings → Projects stores — project name (seeded from the chosen folder's leaf until the user types), workspace kind (local directory / git worktree / container mount; `remote` stays Settings-only and is not selectable in the composer anyway) and workspace folder, with the operating system's folder chooser — and cancelling writes nothing. `saveProject` reads the settings v2 snapshot, appends the record, commits under the same version fence and durable command-id rules as Settings, verifies the receipt (commandId, accepted, expectedVersion + 1) and retries once with a fresh command id on a version conflict; the record literal is validated by the settings schema. `createLocalId` moved to `commandId.ts` and Settings → Projects now shares it, so the two surfaces cannot generate different id shapes. On success the chat projection is resynchronized and the new project is selected, with a local option rendered until the next snapshot carries it.\n",
+        "\n",
+        "Verification: `tsc --noEmit` clean; `pnpm test:chat` 238 passed (before this change) and the new suites pass — createProject.test.ts (folder-leaf naming for POSIX/Windows/root, the stored record shape, append + expectedVersion, one retry on a version conflict, a refused save reported), CreateProjectDialog.test.tsx (folder seeds the name, a typed name and the chosen kind survive, a refused save shows the reason and keeps the input, cancel creates nothing), createProjectComposer.test.tsx (the entry opens the dialog and the created project becomes the selection, cancel leaves it, no entry without a save path); the full desktop suite is 79 files / 591 tests green."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-29 13:19:52",
+    "created_files": "[\"desktop/src/chat/createProject.ts\",\"desktop/src/chat/createProject.css\",\"desktop/src/chat/CreateProjectDialog.tsx\",\"desktop/src/chat/createProject.test.ts\",\"desktop/src/chat/CreateProjectDialog.test.tsx\",\"desktop/src/chat/createProjectComposer.test.tsx\"]",
+    "description": {
+      "lines": [
+        "Reported: the Chat composer's Project dropdown lists existing projects only; creating one requires going to Settings.\n",
+        "\n",
+        "Expected: the dropdown offers a \"Create New Project…\" entry that opens a create-project dialog with the same fields Settings → Projects stores; cancelling writes nothing, and a created project is selected in the dropdown immediately.\n",
+        "\n",
+        "Delivered: the composer's Project select renders the entry when the workspace can save a project; a modal create-project dialog collects name / workspace kind / workspace folder (with the OS folder chooser and the folder-name default); the record is saved through the settings v2 snapshot+commit contract under the same version fence and command-id rules as Settings (read, append, commit, verify the receipt, retry once on a version conflict) and shared `createLocalId`; the chat projection is resynchronized and the new project selected, with a local option rendered until the next snapshot carries it.\n",
+        "\n",
+        "Acceptance evidence: tsc clean; new unit/integration tests (createProject.test.ts, CreateProjectDialog.test.tsx, createProjectComposer.test.tsx) plus the full chat/shell/app slice green; commit cfded04 pushed."
+      ]
+    },
+    "id": 11144507486,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Create a project from the Chat's Project dropdown",
+    "updated_at": "2026-09-29 13:20:48"
+  },
+  "deleted": false,
+  "identity": "fe512c00-80a8-4010-92d0-44788950dd69",
+  "schemaVersion": 1
+}
