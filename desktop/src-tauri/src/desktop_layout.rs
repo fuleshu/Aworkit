@@ -127,14 +127,58 @@ fn measure(window: &tauri::Window, session: &LayoutSession) -> Result<(), String
         layout.maximized = maximized;
     }
     if let Some((position, size, scale)) = frame {
+        // A session that cannot place windows cannot report where this one is
+        // either, so the stored position is cleared rather than filled with the
+        // meaningless origin the platform hands back.
+        let stored_position = session_places_windows().then_some((position.x, position.y));
         store_frame(
             &mut layout,
-            (position.x, position.y),
+            stored_position,
             (size.width, size.height),
             scale,
         );
     }
     Ok(())
+}
+
+/// Whether this desktop session lets an application place its own windows.
+///
+/// An X11 window manager honours a move request for a mapped window, so a
+/// stored position is meaningful there. A Wayland compositor owns placement
+/// outright: `xdg-shell` has no position request, `gtk_window_move` does
+/// nothing, and `gtk_window_get_position` always reports the origin. Reading
+/// the position on Wayland therefore yields `(0, 0)` — writing that as if the
+/// user had chosen it would also misplace the window in a later X11 session.
+#[cfg(target_os = "linux")]
+fn session_places_windows() -> bool {
+    static PLACES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PLACES.get_or_init(|| {
+        session_places_windows_for(
+            std::env::var("GDK_BACKEND").ok().as_deref(),
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        )
+    })
+}
+
+/// The decision itself, with the environment passed in so it stays testable.
+#[cfg(target_os = "linux")]
+fn session_places_windows_for(gdk_backend: Option<&str>, wayland_display: bool) -> bool {
+    // An explicit GDK_BACKEND decides which backend GDK actually uses, so it
+    // wins over the session's own type (GTK4 accepts a comma-separated list).
+    let requested = gdk_backend
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+    match requested.as_deref() {
+        Some("x11") => true,
+        Some("wayland") => false,
+        _ => !wayland_display,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn session_places_windows() -> bool {
+    true
 }
 
 /// Stores one measured frame, unless it would not survive validation.
@@ -144,16 +188,27 @@ fn measure(window: &tauri::Window, session: &LayoutSession) -> Result<(), String
 /// usable one. The persisted record is validated on write, and a rejected
 /// record silently keeps an older frame — which is exactly how a single bad
 /// sample turns into "the window opens at the wrong size after a restart".
+///
+/// `position` is `None` on a session that cannot express a window position;
+/// the stored one is then cleared instead of keeping a stale value.
 /// Returns whether the frame was stored.
 fn store_frame(
     layout: &mut LayoutConfigurationV2,
-    position: (i32, i32),
+    position: Option<(i32, i32)>,
     size: (u32, u32),
     scale: f64,
 ) -> bool {
     let mut candidate = layout.clone();
-    candidate.x = Some(position.0);
-    candidate.y = Some(position.1);
+    match position {
+        Some((x, y)) => {
+            candidate.x = Some(x);
+            candidate.y = Some(y);
+        }
+        None => {
+            candidate.x = None;
+            candidate.y = None;
+        }
+    }
     candidate.width = Some(size.0);
     candidate.height = Some(size.1);
     candidate.scale_factor = Some(scale);
@@ -235,7 +290,10 @@ pub fn restore_window_layout<R: Runtime>(
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
-    let reachable = stored_position_is_reachable(&window, layout);
+    // A session that cannot place windows is never even asked to move one: on
+    // Wayland the compositor owns placement, so the stored position would be
+    // ignored. The stored size still applies everywhere.
+    let reachable = session_places_windows() && stored_position_is_reachable(&window, layout);
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -338,19 +396,19 @@ mod tests {
     #[test]
     fn keeps_the_last_usable_frame_when_a_measurement_is_unusable() {
         let mut layout = LayoutConfigurationV2::default();
-        assert!(store_frame(&mut layout, (120, 64), (1600, 1000), 1.0));
+        assert!(store_frame(&mut layout, Some((120, 64)), (1600, 1000), 1.0));
         assert_eq!(
             (layout.x, layout.y, layout.width, layout.height),
             (Some(120), Some(64), Some(1600), Some(1000))
         );
 
         // A size read before the window was realized.
-        assert!(!store_frame(&mut layout, (0, 0), (0, 0), 1.0));
+        assert!(!store_frame(&mut layout, Some((0, 0)), (0, 0), 1.0));
         // A scale factor outside its persisted range.
-        assert!(!store_frame(&mut layout, (0, 0), (1600, 1000), 0.0));
-        assert!(!store_frame(&mut layout, (0, 0), (1600, 1000), f64::NAN));
+        assert!(!store_frame(&mut layout, Some((0, 0)), (1600, 1000), 0.0));
+        assert!(!store_frame(&mut layout, Some((0, 0)), (1600, 1000), f64::NAN));
         // A coordinate outside its persisted range.
-        assert!(!store_frame(&mut layout, (i32::MAX, 0), (1600, 1000), 1.0));
+        assert!(!store_frame(&mut layout, Some((i32::MAX, 0)), (1600, 1000), 1.0));
 
         assert_eq!(
             (layout.x, layout.y, layout.width, layout.height, layout.scale_factor),
@@ -358,7 +416,7 @@ mod tests {
         );
 
         // A later usable frame still replaces the stored one.
-        assert!(store_frame(&mut layout, (-1280, 40), (1440, 940), 1.5));
+        assert!(store_frame(&mut layout, Some((-1280, 40)), (1440, 940), 1.5));
         assert_eq!(
             (layout.x, layout.y, layout.width, layout.height, layout.scale_factor),
             (Some(-1280), Some(40), Some(1440), Some(940), Some(1.5))
@@ -369,8 +427,36 @@ mod tests {
     #[test]
     fn stores_a_usable_frame_verbatim() {
         let mut layout = LayoutConfigurationV2::default();
-        assert!(store_frame(&mut layout, (0, 0), (1, 1), 0.5));
+        assert!(store_frame(&mut layout, Some((0, 0)), (1, 1), 0.5));
         assert_eq!(layout.width, Some(1));
         assert_eq!(layout.scale_factor, Some(0.5));
+    }
+
+    /// A session that cannot report a window position stores none, so a stale
+    /// or made-up origin is never re-applied later (on Wayland, or after the
+    /// same profile is opened from an X11 session).
+    #[test]
+    fn clears_the_stored_position_when_the_session_cannot_report_one() {
+        let mut layout = LayoutConfigurationV2::default();
+        assert!(store_frame(&mut layout, Some((320, 180)), (1280, 800), 1.0));
+        assert!(store_frame(&mut layout, None, (1280, 900), 1.0));
+        assert_eq!((layout.x, layout.y), (None, None));
+        // The size and scale still move with the window.
+        assert_eq!((layout.width, layout.height), (Some(1280), Some(900)));
+    }
+
+    /// Only a session that can actually place windows is asked to move one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_x11_sessions_place_their_own_windows() {
+        // An X11 session, and a Wayland one, decided by the session itself.
+        assert!(session_places_windows_for(None, false));
+        assert!(!session_places_windows_for(None, true));
+        // An explicit backend wins over the session's own type, which is also
+        // how GDK picks: x11 runs through XWayland on a Wayland desktop.
+        assert!(session_places_windows_for(Some("x11"), true));
+        assert!(!session_places_windows_for(Some("wayland"), false));
+        assert!(session_places_windows_for(Some("X11,wayland"), true));
+        assert!(!session_places_windows_for(Some(" wayland "), false));
     }
 }

@@ -38,11 +38,17 @@ platforms. The first restore after this change applies it as a client size once
 inset read it was captured with); the next close stores the client size, so the
 round trip is exact from then on.
 
-Position is best-effort on Linux: `set_position` runs after Tauri has mapped the
-window, which X11 window managers usually honour but tiling managers may not, and
-a Wayland compositor owns placement outright — `gtk_window_move` cannot move a
-Wayland surface, and `gtk_window_get_position` always reports `(0, 0)` there. The
-size always applies on every platform.
+Position is best-effort on Linux, and on a Wayland session it is not attempted
+at all: `set_position` runs after Tauri has mapped the window, which X11 window
+managers usually honour but tiling managers may not, while a Wayland compositor
+owns placement outright — `xdg-shell` has no position request,
+`gtk_window_move` does nothing, and `gtk_window_get_position` always reports
+`(0, 0)`. A Wayland session therefore stores no `x`/`y` (a read-back would only
+ever be that meaningless origin, which would also misplace the window if the
+same profile were later opened on X11) and never asks the compositor to move
+the window. The size always applies on every platform. Running the app as an
+X11 client (`GDK_BACKEND=x11`, i.e. through XWayland) restores the position
+again, because that session can place its own windows.
 
 `desktop_layout.rs` retains current measurements independently of the runtime
 coordinator. Native Close and File > Quit wait for a worker to acquire the
