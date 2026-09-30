@@ -43,9 +43,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Keep a Chat runnable on the workflow it froze after that library entry is renamed or deleted",
-    "updated_at": "2026-09-29 06:49:44"
+    "updated_at": "2026-09-29 17:54:34"
   },
   "deleted": false,
   "identity": "a08c6c42-bbcc-4174-92fb-3dc790185290",

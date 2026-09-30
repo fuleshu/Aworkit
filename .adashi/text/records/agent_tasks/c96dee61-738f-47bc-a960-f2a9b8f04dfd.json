@@ -42,9 +42,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Fix pasting an image from the clipboard into the chat on Linux",
-    "updated_at": "2026-09-29 13:00:55"
+    "updated_at": "2026-09-29 17:57:34"
   },
   "deleted": false,
   "identity": "c96dee61-738f-47bc-a960-f2a9b8f04dfd",

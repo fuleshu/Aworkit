@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/tauri.linux.conf.json\",\"desktop/src-tauri/src/desktop_drop.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src/chat/useDroppedImages.ts\",\"desktop/src/chat/useDroppedImages.test.ts\",\"desktop/src/chat/ChatComposer.tsx\",\"docs/chat-images.md\"]",
+    "completed_at": "2026-09-30 07:44:14",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 67f4c3d (main -> origin/main).\n",
+        "\n",
+        "The engine denies the page the dropped file's data (WebKit bug 323277 / CVE-2025-13947 hardening), so this is the same shape of fix the clipboard paste already needed: the drop is handled natively and imported in Rust. Linux-only, because on Windows the native handler takes external drops away from the page and would break the Workflow designer's in-page drag — Windows and the browser preview keep the HTML5 path untouched.\n",
+        "\n",
+        "Evidence: `desktop_drop::tests::offers_only_files_the_image_store_could_accept` passes (extension filter, including the `.png`-is-not-a-PNG rule that the frontend test now mirrors); 5 `useDroppedImages` tests pass (attachments attach, refusals report, highlight follows enter/leave/drop, nothing is installed without a native runtime); `cargo check --all-targets` clean; chat/shell 262 passed. Open risk, stated in the task: no display here, so a real drag from the file manager has not been performed — if wry's Linux `Drop` never fires on this box, that needs one manual drag to confirm and there is no local workaround (wry's Linux path is coupled to the GTK drag-leave state and a hardcoded target index)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-30 07:43:50",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: dragging an image from the file manager onto the Chat composer does nothing on Linux (the earlier HTML5 implementation, commit dfeeb56, did not work).\n",
+        "\n",
+        "Root cause: WebKitGTK 2.52 denies the page access to a dropped file's data — since the CVE-2025-13947 hardening `DataTransfer.allowsFileAccess()` is false outside Cocoa, so `dataTransfer.files`/`items` stay empty for a file dragged from the file manager (WebKit bug 323277, reproduced on 2.52.5 + GNOME Wayland). No HTML5 handler can recover it; the same denial the clipboard paste already works around natively. `dragDropEnabled: false` never helped, because on Linux that flag only decides whether Tauri observes drops (wry installs four GTK signal observers and never touches the drop target).\n",
+        "\n",
+        "Delivered (commit 67f4c3d): `desktop/src-tauri/tauri.linux.conf.json` enables the window's drag-drop handler on Linux only (on Windows it would take external drops away from the page and break the Workflow designer's in-page drag), `desktop_drop.rs` filters the dropped paths by extension, imports them through the existing `ChatImageStore::import_path` and emits the attachments to the webview, and `useDroppedImages` attaches them through the existing stored-records path and raises the drop highlight from the same drag events. No filesystem path reaches the renderer.\n",
+        "\n",
+        "Verification: new Rust test `desktop_drop::tests::offers_only_files_the_image_store_could_accept` and 5 new frontend tests (native announcement attaches, a refusal is reported, the highlight follows drag enter/leave/drop, no listener without a native runtime) pass; `cargo check --all-targets` clean; chat/shell suites 262 passed. Not verified end to end: the environment has no display, so the real drag was not performed — one manual drag on the Linux box is the remaining check."
+      ]
+    },
+    "id": 29797825498,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Import dropped images natively on Linux",
+    "updated_at": "2026-09-30 07:44:14"
+  },
+  "deleted": false,
+  "identity": "b8e022c2-8998-4c27-aeb5-94c098f265c6",
+  "schemaVersion": 1
+}

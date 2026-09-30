@@ -35,9 +35,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Restore the Linux window size correctly after a restart",
-    "updated_at": "2026-09-29 13:20:51"
+    "updated_at": "2026-09-29 17:48:05"
   },
   "deleted": false,
   "identity": "0878b53b-3907-489e-8ed0-671228ea4a1c",

@@ -13,9 +13,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Rework DSH Standard workflows: rename plan-first variants and add a faithful DSH Standard",
-    "updated_at": "2026-09-28 17:27:35"
+    "updated_at": "2026-09-29 17:49:15"
   },
   "deleted": false,
   "identity": "424c0938-4b8f-4238-9bdd-4bd207aa5e21",

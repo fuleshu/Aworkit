@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/model_images.rs\",\"desktop/src-tauri/src/runtime/images.rs\",\"desktop/src-tauri/src/runtime/images/source.rs\",\"desktop/src/chat/images.ts\",\"docs/chat-images.md\"]",
+    "completed_at": "2026-09-30 07:44:16",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as 43be5f5 (main -> origin/main).\n",
+        "\n",
+        "The stored and linked image is the original (up to 32 MiB); only what the model receives is reduced, to at most 5 MiB, aspect preserved by equal Lanczos steps, JPEG for an opaque picture and PNG for a transparent one — the rule the local image reader already applied, which is also the only \"harness\" image rule the repository records (docs/deepseek-aworkit-tool-comparison.md lists capability gaps only). The copy is derived once and cached beside the blob, the model gets a text part saying what it received and that the original is stored, and the request budget counts the copy.\n",
+        "\n",
+        "Evidence: `cargo test --lib runtime::images::source` 2 passed — the new test asserts the original is stored byte-for-byte, the copy is ≤5 MiB and re-encoded as JPEG, the record verifies against the bytes, the aspect ratio holds, and the second request is served from the cache; the two new capability-host tests pass for all three protocols (notice present, copy's media type on the wire) plus the unchanged case (no notice, original mime). `cargo test -p aworkit-capability-host --test provider_images` 4 passed; `cargo check --all-targets` clean. Limits: the accepted original still has to be within 8000 pixels per side and 32 MiB, and the notice was verified in crate tests rather than against a live provider."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-30 07:43:52",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported: an image larger than 5 MiB is rejected. Expected: it is accepted, the model receives a resized (aspect-preserving) copy, the stored/linked image stays the original, and the model is told it received a reduced version; the resize should follow the DeepSeek-harness behaviour.\n",
+        "\n",
+        "Investigation: the repository records no separate DeepSeek image-resizing rule (docs/deepseek-aworkit-tool-comparison.md lists only capability gaps), so the harness behaviour to mirror is the one already ported for the local image reader — 32 MiB source bound, re-encode as JPEG for an opaque picture and PNG for a transparent one, 3/4 Lanczos steps until the copy fits 5 MiB, 8000 pixels per side, with the original's hash/size/dimensions reported (desktop/src-tauri/src/runtime/images/source.rs).\n",
+        "\n",
+        "Delivered (commit 43be5f5): `MAX_IMAGE_SOURCE_BYTES` (32 MiB) is now the stored-attachment bound and `MAX_IMAGE_BYTES` (5 MiB) the model-copy bound; the store keeps the original blob (so the thumbnail, preview, history reference and link are the original), derives a vision copy once into a cache beside it, and the resolver gained `read_for_model` to hand it over. `ModelImageCopyV1` describes the copy and verifies its own bytes, a `reduced_image_text` part beside the image tells the model what it received and that the stored image is the original, and the request budget reserves the copy's size rather than the oversized original.\n",
+        "\n",
+        "Verification: `cargo test --lib runtime::images::source` (original kept byte-for-byte, copy ≤5 MiB, JPEG for an opaque PNG, aspect ratio preserved, record verifies, second call served from cache) and the new capability-host tests for the notice plus the copy's media type in all three protocols pass; `cargo test -p aworkit-capability-host --test provider_images` 4 passed; `cargo check --all-targets` clean; frontend suite unchanged. Limits stated: the 8000-pixel-per-side rule still applies to the accepted original, and the notice is validated in the crate tests rather than against a live provider."
+      ]
+    },
+    "id": 30209025071,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Reduce oversized images for the model instead of refusing them",
+    "updated_at": "2026-09-30 07:44:16"
+  },
+  "deleted": false,
+  "identity": "3061bf96-5570-4b8e-afd3-1028cf11b861",
+  "schemaVersion": 1
+}

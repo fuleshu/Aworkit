@@ -33,9 +33,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Fix the Tauri plugin version mismatch that blocks the desktop build",
-    "updated_at": "2026-09-29 14:49:00"
+    "updated_at": "2026-09-29 17:55:47"
   },
   "deleted": false,
   "identity": "3dd01df1-c4d9-4851-85fb-690e5aff8e30",

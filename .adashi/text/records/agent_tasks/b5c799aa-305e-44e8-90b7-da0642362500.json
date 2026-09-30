@@ -31,9 +31,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Render the Chat tab strip only when a delegated child tab is open",
-    "updated_at": "2026-09-29 17:27:01"
+    "updated_at": "2026-09-29 17:54:49"
   },
   "deleted": false,
   "identity": "b5c799aa-305e-44e8-90b7-da0642362500",

@@ -1,0 +1,39 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/styles.css\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
+    "completed_at": "2026-09-30 07:44:12",
+    "completion_memo": {
+      "lines": [
+        "Done and pushed as db7197f (main -> origin/main). All three reported layout defects are fixed in one change: the busy spinner is centred with the row title, the approval dropdown can no longer be painted over the input, and an attached image extends the panel instead of shrinking the field the user sized.\n",
+        "\n",
+        "Evidence: headless Firefox rendering of the composer at its minimum height against the built stylesheet measured toolbar top 463 / textarea bottom 457 (no overlap), panel 304px with a 124px strip while the textarea keeps 54px, and spinner centre == title centre == 53.3px. tsc clean; chat/shell/app slices 263 passed; the full desktop suite's only failures are two SettingsScreen tests that time out under full-suite load and pass 50/50 in isolation (pre-existing behaviour, unrelated). Note: the workspace also contains another writer's in-progress changes (workflows/graph_pass/documents); they were left untouched and are not part of this commit."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-30 07:43:48",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Reported (with screenshots): (1) the running spinner in a Chat history row sits at the top instead of being centred; (2) when the Chat input is dragged small, the permission (\"Full access\") dropdown is painted over the textarea; (3) attaching an image shrinks the text field because the thumbnail strip takes its space.\n",
+        "\n",
+        "Expected: the spinner is centred with the row's title; the toolbar can never overlap the input; an added image extends the panel and leaves the field the size the user set.\n",
+        "\n",
+        "Delivered (commit db7197f): `.navigation-pane .chat-history-link` centres its flex items, so the fixed 12px spinner lines up with the title. The composer panel no longer has one fixed height: the horizontal separator now sets `.composer-input`'s `min-height` (what the user drags), the panel takes the height its own rows need, the composer-scoped attachment strip is capped at 140px with its own scroll, and `.composer-input` clips a textarea taller than its row so it can never paint over the toolbar. Defaults moved to 160px field / 104px minimum / 260px timeline reserve.\n",
+        "\n",
+        "Verification: rendered the composer at its minimum height in headless Firefox against the built stylesheet and measured the geometry — toolbar top 463 > textarea bottom 457 (no overlap), the strip adds panel height (shell 304px) while the textarea keeps 54px, and the spinner centre equals the title centre (53.3px). tsc clean; `pnpm vitest run src/chat src/shell src/app.integration.test.tsx` 263 passed; the full desktop suite passes except two SettingsScreen tests that time out only under full-suite load (50/50 pass in isolation, unchanged by this work)."
+      ]
+    },
+    "id": 29612606951,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix the Chat composer layout: toolbar overlap, attachment growth, busy icon centring",
+    "updated_at": "2026-09-30 07:44:12"
+  },
+  "deleted": false,
+  "identity": "55a6518e-88c3-43ec-b76a-c064ee77c91e",
+  "schemaVersion": 1
+}
