@@ -69,21 +69,22 @@ import {
 } from "../workbench/corePort";
 
 /**
- * The Chat input panel opens at this height in logical pixels; the horizontal
- * separator at its top grows or shrinks it from here.
+ * The Chat input field opens at this height in logical pixels; the horizontal
+ * separator above it grows or shrinks the field itself. The panel around it
+ * (workflow/project row, attachment strip, footer) takes the height it needs.
  */
-const DEFAULT_COMPOSER_HEIGHT = 200;
+const DEFAULT_COMPOSER_HEIGHT = 160;
 /**
- * The panel stays usable even when the separator is dragged to the floor. Below
- * roughly this height the toolbar and the meta row would stop fitting.
+ * The field stays usable even when the separator is dragged to the floor: below
+ * roughly this height the toolbar would stop fitting under the text.
  */
-const MINIMUM_COMPOSER_HEIGHT = 168;
+const MINIMUM_COMPOSER_HEIGHT = 104;
 /**
- * Space the conversation always keeps above the panel. The separator may grow
- * the input to most of the Chat column, but never so far that the timeline
- * disappears.
+ * Space the conversation always keeps above the panel. The field may grow to
+ * most of the Chat column, but never so far that the timeline disappears —
+ * the reserve also covers the panel's own rows and a full attachment strip.
  */
-const COMPOSER_TIMELINE_RESERVE = 180;
+const COMPOSER_TIMELINE_RESERVE = 260;
 
 interface ChatWorkspaceScreenProps {
   readonly corePort?: ChatCorePort;

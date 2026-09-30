@@ -366,6 +366,9 @@ pre {
   .chat-busy-icon { animation: none; }
 }
 .navigation-pane .chat-history-link {
+  /* The running spinner is a fixed 12px box; without cross-axis centering it
+     sits at the top of the (taller) link while the title stays centred. */
+  align-items: center;
   min-width: 0;
   padding-right: 2px;
 }
@@ -1319,24 +1322,25 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  /* The draggable separator above the panel owns this height. */
-  height: var(--aw-composer-height, auto);
+  /* The panel grows with its own rows (meta, attachment strip, queued preview,
+     footer) so an added image extends the panel instead of eating the input.
+     The separator above sets the input's own height, not the panel's. */
   min-height: 0;
-  overflow: hidden;
   padding: 7px 10px 6px;
   position: relative;
 }
 .composer-shell > * {
   flex: 0 0 auto;
 }
-/* The attachment strip yields before the input itself when the panel is tight. */
+/* Inside the composer the strip is a compact scroll region; the panel takes the
+   height it needs rather than squeezing the textarea. */
 .composer-shell > .chat-image-list {
-  flex: 0 1 auto;
-  min-height: 0;
+  max-height: 140px;
 }
 .composer-shell > .composer-input {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
+  /* What the horizontal separator drags. */
+  min-height: var(--aw-composer-height, 96px);
 }
 .composer-shell.composer-dropping {
   border-top-color: var(--aw-accent);
@@ -1401,6 +1405,9 @@ pre {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
+  /* A textarea taller than its row must scroll, never paint over the toolbar
+     (the permission select, the attachment menu and the send control). */
+  overflow: hidden;
   padding: 8px;
 }
 .composer-input textarea {
