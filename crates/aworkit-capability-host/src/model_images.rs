@@ -22,11 +22,14 @@ use sha2::{Digest, Sha256};
 
 use crate::ProviderError;
 
-/// Largest single stored image. This is the stored-copy size one attachment may
-/// have, not a request allowance: it never bounds how many images a request
-/// carries nor how many bytes they add up to.
+/// Largest single image a vision request carries. This is the size of the copy
+/// the model may receive, not of the stored attachment: an image that is larger
+/// is stored as it is and reduced to this bound for the request. It never
+/// bounds how many images a request carries nor how many bytes they add up to.
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-/// Bounded local source input; the desktop prepares a model-sized copy.
+/// Largest stored attachment, and the bounded local source it came from. An
+/// image up to this size is kept byte for byte and reduced for the model when it
+/// exceeds [`MAX_IMAGE_BYTES`].
 pub const MAX_IMAGE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 /// Most images one attached request carries; older images keep a reference only.
 pub const MAX_REQUEST_IMAGES: usize = 16;
@@ -69,10 +72,10 @@ impl ImageAttachmentV1 {
                 "image/png" | "image/jpeg" | "image/webp"
             )
             || self.byte_length == 0
-            || self.byte_length > MAX_IMAGE_BYTES
+            || self.byte_length > MAX_IMAGE_SOURCE_BYTES
         {
             return Err(ProviderError::Failed(
-                "Invalid image attachment (PNG, JPEG or WebP, up to 5 MiB each)".into(),
+                "Invalid image attachment (PNG, JPEG or WebP, up to 32 MiB each)".into(),
             ));
         }
         Ok(())
@@ -98,10 +101,58 @@ impl ImageAttachmentV1 {
     }
 }
 
+/// The vision-sized copy actually sent for one attachment.
+///
+/// The durable attachment keeps the original's identity — its hash, name and
+/// size, and with them the stored and linked image — while these numbers
+/// describe what the model received instead.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelImageCopyV1 {
+    pub mime_type: String,
+    pub sha256: String,
+    pub byte_length: usize,
+    pub width: u32,
+    pub height: u32,
+    pub original_byte_length: usize,
+    pub original_width: u32,
+    pub original_height: u32,
+}
+
+impl ModelImageCopyV1 {
+    /// The same integrity rule as a stored attachment: the encoded bytes must
+    /// be exactly the ones this record describes.
+    pub fn verify(&self, bytes: &[u8]) -> Result<(), ProviderError> {
+        if !matches!(self.mime_type.as_str(), "image/png" | "image/jpeg")
+            || self.byte_length == 0
+            || self.byte_length > MAX_IMAGE_BYTES
+            || bytes.len() != self.byte_length
+            || format!("{:x}", Sha256::digest(bytes)) != self.sha256
+        {
+            return Err(ProviderError::Failed(
+                "Reduced image copy is missing or has changed".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Only the trusted desktop composition supplies this resolver. The caller
 /// validates the compact request against its frozen authority before resolving.
 pub trait ModelImageResolver: Send + Sync {
     fn read(&self, image: &ImageAttachmentV1) -> Result<Vec<u8>, ProviderError>;
+
+    /// The bytes one attachment contributes to a model request.
+    ///
+    /// The default sends the stored original unchanged. The desktop store
+    /// overrides this to reduce an image that is larger than a request should
+    /// carry, and reports what it sent so the model can be told.
+    fn read_for_model(
+        &self,
+        image: &ImageAttachmentV1,
+    ) -> Result<(Vec<u8>, Option<ModelImageCopyV1>), ProviderError> {
+        Ok((self.read(image)?, None))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -111,6 +162,9 @@ pub(crate) struct ModelImageV1 {
     pub attachment: ImageAttachmentV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Present when the bytes above are a reduced copy of the stored image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<ModelImageCopyV1>,
 }
 
 /// Validates every referenced image individually.
@@ -203,12 +257,15 @@ pub(crate) fn materialize_images(
     for (index, list) in references.iter().enumerate().rev() {
         let Some(list) = list else { continue };
         for (position, reference) in list.iter().enumerate().rev() {
-            if keep_images == 0 || reference.byte_length > keep_bytes {
+            // An image larger than a request carries is sent as a reduced copy,
+            // so the budget reserves what the model will actually receive.
+            let cost = reference.byte_length.min(MAX_IMAGE_BYTES);
+            if keep_images == 0 || cost > keep_bytes {
                 continue;
             }
             attached[index][position] = true;
             keep_images -= 1;
-            keep_bytes -= reference.byte_length;
+            keep_bytes -= cost;
         }
     }
     for (index, entry) in entries.iter_mut().enumerate() {
@@ -221,20 +278,25 @@ pub(crate) fn materialize_images(
                 resolved.push(ModelImageV1 {
                     attachment,
                     data: None,
+                    copy: None,
                 });
                 continue;
             }
-            let bytes = resolver
+            let (bytes, copy) = resolver
                 .ok_or_else(|| {
                     ProviderError::Failed(
                         "Image storage is unavailable for this model request".into(),
                     )
                 })?
-                .read(&attachment)?;
-            attachment.verify_bytes(&bytes)?;
+                .read_for_model(&attachment)?;
+            match &copy {
+                None => attachment.verify_bytes(&bytes)?,
+                Some(copy) => copy.verify(&bytes)?,
+            }
             resolved.push(ModelImageV1 {
                 attachment,
                 data: Some(STANDARD.encode(bytes)),
+                copy,
             });
         }
         let images = entry
@@ -253,6 +315,22 @@ fn image_reference_text(attachment: &ImageAttachmentV1) -> String {
     )
 }
 
+/// What a model is told when it receives a reduced copy of a stored image.
+fn reduced_image_text(attachment: &ImageAttachmentV1, copy: &ModelImageCopyV1) -> String {
+    format!(
+        "[image reduced for the model: {} (stored original {} bytes, {}x{}, id {}), sent {} bytes as {} at {}x{}. The stored and linked image is the original.]",
+        attachment.name,
+        copy.original_byte_length,
+        copy.original_width,
+        copy.original_height,
+        attachment.id,
+        copy.byte_length,
+        copy.mime_type,
+        copy.width,
+        copy.height
+    )
+}
+
 /// Protocol mapping is shared by plain completion and tool-aware requests.
 pub(crate) fn image_content(
     text: &str,
@@ -264,7 +342,6 @@ pub(crate) fn image_content(
     }
     let mut parts = Vec::new();
     for image in images {
-        let mime = &image.attachment.mime_type;
         let Some(data) = image.data.as_deref() else {
             // No bytes were attached for this image. Describe it instead, so the
             // model still knows the evidence exists and why it cannot see it.
@@ -283,7 +360,28 @@ pub(crate) fn image_content(
         let bytes = STANDARD
             .decode(data)
             .map_err(|_| ProviderError::Failed("Invalid materialized image encoding".into()))?;
-        image.attachment.verify_bytes(&bytes)?;
+        // The bytes are either the stored original or a reduced copy of it, and
+        // each is verified against its own record.
+        let mime = match &image.copy {
+            None => {
+                image.attachment.verify_bytes(&bytes)?;
+                image.attachment.mime_type.as_str()
+            }
+            Some(copy) => {
+                copy.verify(&bytes)?;
+                copy.mime_type.as_str()
+            }
+        };
+        // A reduced copy is described beside itself: the model must know it saw
+        // fewer pixels than the image the Chat holds.
+        if let Some(copy) = &image.copy {
+            let notice = reduced_image_text(&image.attachment, copy);
+            parts.push(if protocol == "gemini" {
+                json!({"text": notice})
+            } else {
+                json!({"type":"text","text": notice})
+            });
+        }
         parts.push(match protocol {
             "openai" => json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{data}"),"detail":"auto"}}),
             "anthropic" => json!({"type":"image","source":{"type":"base64","media_type":mime,"data":data}}),
@@ -299,4 +397,114 @@ pub(crate) fn image_content(
         });
     }
     Ok(Value::Array(parts))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    /// The smallest real PNG these tests can carry.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+    fn png_attachment() -> ImageAttachmentV1 {
+        let bytes = STANDARD.decode(PNG).unwrap();
+        ImageAttachmentV1 {
+            id: format!("{:x}", Sha256::digest(&bytes)),
+            name: "holiday.png".into(),
+            mime_type: "image/png".into(),
+            byte_length: bytes.len(),
+        }
+    }
+
+    /// A resolver answering with a reduced JPEG copy of a stored PNG.
+    struct Reduced;
+
+    impl ModelImageResolver for Reduced {
+        fn read(&self, _: &ImageAttachmentV1) -> Result<Vec<u8>, ProviderError> {
+            Err(ProviderError::Failed(
+                "the reduced path never reads the stored blob".into(),
+            ))
+        }
+
+        fn read_for_model(
+            &self,
+            _: &ImageAttachmentV1,
+        ) -> Result<(Vec<u8>, Option<ModelImageCopyV1>), ProviderError> {
+            let bytes = STANDARD.decode(PNG).unwrap();
+            Ok((
+                bytes.clone(),
+                Some(ModelImageCopyV1 {
+                    mime_type: "image/jpeg".into(),
+                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    byte_length: bytes.len(),
+                    width: 800,
+                    height: 600,
+                    original_byte_length: 8 * 1024 * 1024,
+                    original_width: 4000,
+                    original_height: 3000,
+                }),
+            ))
+        }
+    }
+
+    /// An image the model receives reduced must be described as such, in every
+    /// protocol, and the wire must carry the copy's own media type.
+    #[test]
+    fn a_reduced_copy_is_described_to_the_model_in_every_protocol() {
+        let input = json!([{"role":"user","content":"look","images":[png_attachment()]}]);
+        let materialized =
+            materialize_images(&input, Some(&Reduced), ImageDispatchV1::Attach).unwrap();
+        let images: Vec<ModelImageV1> =
+            serde_json::from_value(materialized[0]["images"].clone()).unwrap();
+        let sent = STANDARD.decode(PNG).unwrap().len();
+        for protocol in ["openai", "anthropic", "gemini"] {
+            let content = image_content("look", &images, protocol)
+                .unwrap()
+                .to_string();
+            assert!(content.contains("image reduced for the model"), "{protocol}");
+            assert!(
+                content.contains("stored original 8388608 bytes, 4000x3000"),
+                "{protocol}"
+            );
+            assert!(
+                content.contains(&format!("sent {sent} bytes as image/jpeg at 800x600")),
+                "{protocol}"
+            );
+            assert!(
+                content.contains("data:image/jpeg;base64,")
+                    || content.contains("\"mimeType\":\"image/jpeg\"")
+                    || content.contains("\"media_type\":\"image/jpeg\""),
+                "{protocol}: the copy decides the media type"
+            );
+            assert!(!content.contains("image/png"), "{protocol}");
+        }
+    }
+
+    /// An image within the request bound keeps its original bytes, its own
+    /// media type, and needs no notice.
+    #[test]
+    fn a_stored_image_within_the_bound_is_sent_as_it_is() {
+        struct Stored(Vec<u8>);
+
+        impl ModelImageResolver for Stored {
+            fn read(&self, _: &ImageAttachmentV1) -> Result<Vec<u8>, ProviderError> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let stored = STANDARD.decode(PNG).unwrap();
+        let input = json!([{"role":"user","content":"look","images":[png_attachment()]}]);
+        let materialized =
+            materialize_images(&input, Some(&Stored(stored)), ImageDispatchV1::Attach).unwrap();
+        let images: Vec<ModelImageV1> =
+            serde_json::from_value(materialized[0]["images"].clone()).unwrap();
+        assert_eq!(images[0].copy, None);
+        let content = image_content("look", &images, "openai")
+            .unwrap()
+            .to_string();
+        assert!(!content.contains("image reduced for the model"));
+        assert!(content.contains("data:image/png;base64,"));
+    }
 }

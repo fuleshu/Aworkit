@@ -94,10 +94,20 @@ capabilities are frozen when a Chat starts. Discovery preserves advertised visio
 capabilities, including OpenAI-compatible `supports_vision` and input modalities.
 Enabling the switch does not add vision to a text-only model.
 
-The initial implementation accepts PNG, JPEG and WebP, up to 5 MiB per image,
-8000 pixels per side. Those are per-attachment validity rules; they are checked
-when an image is added and never limit how many images a message or a Chat may
-hold.
+A Chat accepts PNG, JPEG and WebP up to 32 MiB per image and 8000 pixels per
+side. Those are per-attachment validity rules; they are checked when an image is
+added and never limit how many images a message or a Chat may hold.
+
+**An image larger than 5 MiB is not refused.** The original is stored, previewed
+and linked exactly as it was, and the model receives a reduced copy: the aspect
+ratio is preserved, each step shrinks both sides by the same Lanczos factor
+until the copy fits 5 MiB, an opaque picture becomes JPEG and a transparent one
+stays PNG — the same preparation the local image reader applies to an oversized
+source file. The copy is produced once and cached beside the blob. A text part
+beside the image tells the model what it received, e.g. `[image reduced for the
+model: holiday.png (stored original 8388608 bytes, 4000x3000, id …), sent 1048576
+bytes as image/jpeg at 2000x1500. The stored and linked image is the original.]`
+The request budget counts the copy, not the stored original.
 
 **There is no image count limit and no total image-size limit.** A Chat sends
 every image it holds on every request. The model's own context window and the

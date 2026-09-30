@@ -3,7 +3,8 @@
 use aworkit_capability_host::{
     ProviderError,
     model_images::{
-        ImageAttachmentV1, MAX_IMAGE_BYTES, ModelImageResolver, validate_image_attachments,
+        ImageAttachmentV1, MAX_IMAGE_BYTES, MAX_IMAGE_SOURCE_BYTES, ModelImageCopyV1,
+        ModelImageResolver, validate_image_attachments,
     },
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -49,9 +50,13 @@ impl ChatImageStore {
     }
 
     /// Validates actual image bytes before atomically publishing a local blob.
+    ///
+    /// The stored blob is the original the user chose, byte for byte; a picture
+    /// larger than a vision request should carry is reduced for the model when
+    /// it is sent, never on the way in.
     pub fn import(&self, name: String, data: String) -> Result<ImageAttachmentV1, String> {
-        if data.len() > MAX_IMAGE_BYTES.div_ceil(3) * 4 {
-            return Err("Images must be 5 MiB or smaller".into());
+        if data.len() > MAX_IMAGE_SOURCE_BYTES.div_ceil(3) * 4 {
+            return Err("Images must be 32 MiB or smaller".into());
         }
         let bytes = STANDARD
             .decode(data)
@@ -61,7 +66,7 @@ impl ChatImageStore {
 
     /// Import a bounded native file/capture without a base64 round trip.
     pub(crate) fn import_bytes(&self, name: String, bytes: &[u8]) -> Result<ImageAttachmentV1, String> {
-        if bytes.len() > MAX_IMAGE_BYTES { return Err("Images must be 5 MiB or smaller".into()); }
+        if bytes.len() > MAX_IMAGE_SOURCE_BYTES { return Err("Images must be 32 MiB or smaller".into()); }
         let format = image::guess_format(&bytes).map_err(|_| "Choose a PNG, JPEG or WebP image")?;
         let mime_type = match format {
             image::ImageFormat::Png => "image/png",
@@ -120,6 +125,103 @@ impl ChatImageStore {
             STANDARD.encode(encoded.into_inner())
         ))
     }
+
+    /// The bytes a model request should carry for one attachment.
+    ///
+    /// The stored original is the linked image: the thumbnail, the preview and
+    /// the durable reference all keep it. A picture larger than a vision request
+    /// should carry is reduced once into a copy cached beside its blob, and that
+    /// copy is what the model receives.
+    fn model_request_bytes(
+        &self,
+        image: &ImageAttachmentV1,
+    ) -> Result<(Vec<u8>, Option<ModelImageCopyV1>), String> {
+        let original = self.read(image).map_err(|error| error.to_string())?;
+        if original.len() <= MAX_IMAGE_BYTES {
+            return Ok((original, None));
+        }
+        let copy = self.vision_copy(image, &original)?;
+        Ok((copy.bytes, Some(copy.record)))
+    }
+
+    /// Loads the vision copy of one oversized stored image, producing it once.
+    ///
+    /// The cache is a plain file beside the blob (`vision-<id>.<ext>`): it holds
+    /// no authority of its own — the copy is verified against the record that
+    /// describes it — and a lost race to write it is not a failure, because both
+    /// writers produce identical bytes.
+    fn vision_copy(
+        &self,
+        image: &ImageAttachmentV1,
+        original: &[u8],
+    ) -> Result<StoredVisionCopy, String> {
+        let original_dimensions = image_dimensions(&self.root.join(&image.id))?;
+        for (extension, mime_type) in [("png", "image/png"), ("jpg", "image/jpeg")] {
+            let path = self
+                .root
+                .join(format!("vision-{}.{extension}", image.id));
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            let (width, height) = image_dimensions(&path)?;
+            return Ok(StoredVisionCopy {
+                record: ModelImageCopyV1 {
+                    mime_type: mime_type.to_owned(),
+                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    byte_length: bytes.len(),
+                    width,
+                    height,
+                    original_byte_length: original.len(),
+                    original_width: original_dimensions.0,
+                    original_height: original_dimensions.1,
+                },
+                bytes,
+            });
+        }
+        let copy = source::model_copy(original)?;
+        let path = self
+            .root
+            .join(format!("vision-{}.{}", image.id, copy.extension));
+        let mut temporary =
+            tempfile::NamedTempFile::new_in(&self.root).map_err(|e| e.to_string())?;
+        temporary
+            .write_all(&copy.bytes)
+            .map_err(|e| e.to_string())?;
+        temporary.as_file().sync_all().map_err(|e| e.to_string())?;
+        let _ = temporary.persist_noclobber(&path);
+        Ok(StoredVisionCopy {
+            record: ModelImageCopyV1 {
+                mime_type: copy.mime_type.to_owned(),
+                sha256: format!("{:x}", Sha256::digest(&copy.bytes)),
+                byte_length: copy.bytes.len(),
+                width: copy.width,
+                height: copy.height,
+                original_byte_length: original.len(),
+                original_width: copy.original_width,
+                original_height: copy.original_height,
+            },
+            bytes: copy.bytes,
+        })
+    }
+}
+
+/// One derived vision copy together with the record that describes it.
+struct StoredVisionCopy {
+    bytes: Vec<u8>,
+    record: ModelImageCopyV1,
+}
+
+/// The pixel dimensions of one stored or derived image file.
+///
+/// A stored blob has no file extension — its name is its hash — so the format is
+/// sniffed from the contents instead of the path.
+fn image_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .into_dimensions()
+        .map_err(|e| e.to_string())
 }
 
 fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
@@ -153,11 +255,21 @@ impl ModelImageResolver for ChatImageStore {
         let mut bytes = Vec::new();
         fs::File::open(path)
             .map_err(|_| unavailable())?
-            .take((MAX_IMAGE_BYTES + 1) as u64)
+            .take((MAX_IMAGE_SOURCE_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| unavailable())?;
         image.verify_bytes(&bytes)?;
         Ok(bytes)
+    }
+
+    /// The desktop store owns the reduction: the durable attachment keeps the
+    /// original, and only the dispatch copy carries the vision-sized one.
+    fn read_for_model(
+        &self,
+        image: &ImageAttachmentV1,
+    ) -> Result<(Vec<u8>, Option<ModelImageCopyV1>), ProviderError> {
+        self.model_request_bytes(image)
+            .map_err(ProviderError::Failed)
     }
 }
 

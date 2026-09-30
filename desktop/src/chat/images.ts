@@ -2,12 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 export const maxImageBytes = 5 * 1024 * 1024;
+/// Largest image a Chat stores: the original the user chose is kept byte for
+/// byte, and an image above `maxImageBytes` is reduced for the model when it is
+/// sent rather than refused.
+export const maxImageSourceBytes = 32 * 1024 * 1024;
 export const imageAttachmentSchema = z
   .object({
     id: z.string().regex(/^[a-f0-9]{64}$/),
     name: z.string().min(1).max(255),
     mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
-    byteLength: z.number().int().positive().max(maxImageBytes),
+    byteLength: z.number().int().positive().max(maxImageSourceBytes),
   })
   .strict();
 export type ImageAttachment = z.infer<typeof imageAttachmentSchema>;
@@ -42,9 +46,9 @@ export async function importChatImage(file: File): Promise<ImageAttachment> {
     !/\.(png|jpe?g|webp)$/i.test(file.name)
   )
     throw new Error("Choose PNG, JPEG or WebP images.");
-  if (file.size === 0 || file.size > maxImageBytes)
+  if (file.size === 0 || file.size > maxImageSourceBytes)
     throw new Error(
-      `${file.name || "Image"} must be between 1 byte and 5 MiB.`,
+      `${file.name || "Image"} must be between 1 byte and 32 MiB.`,
     );
   const dataUrl = await fileDataUrl(file);
   const data = dataUrl.slice(dataUrl.indexOf(",") + 1);
