@@ -61,6 +61,7 @@ import {
 } from "./createProject";
 import { useChatErrorNotices } from "./useChatErrorNotices";
 import type { ChatIntent, ChatProjectChoice, TimelineItem } from "./types";
+import { chatHeaderContext } from "./chatHeader";
 import {
   createWorkflowLibraryPort,
   TauriWorkflowCorePort,
@@ -674,11 +675,7 @@ export function ChatWorkspaceScreen({
     setSelectedTimelineId(id);
     setInspectorOpen(true);
   };
-  const chatContext = [
-    chat.workflowName,
-    chat.branch,
-    chat.runId === "run.draft" ? null : chat.runId,
-  ].filter((item): item is string => item !== null);
+  const chatContext = chatHeaderContext(chat);
   return (
     <section
       ref={attachChatLayout}
