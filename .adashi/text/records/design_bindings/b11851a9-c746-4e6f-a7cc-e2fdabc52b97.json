@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-09-30 08:05:28",
+    "design_external_id": "about-dialog-and-menu-cleanup",
+    "id": 3642428434,
+    "target": "desktop/src-tauri/src/presentation.rs",
+    "target_type": "file",
+    "updated_at": "2026-09-30 08:05:28",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b11851a9-c746-4e6f-a7cc-e2fdabc52b97",
+  "schemaVersion": 1
+}

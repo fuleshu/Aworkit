@@ -870,9 +870,10 @@ fn load_or_create_workflows(
             let rescue_migrated = migrate_rescue_model_node(&mut document);
             let plan_migrated = migrate_standard_agent_plan_contract(&mut document);
             let persona_migrated = super::tool_registry::migrate_persona(&mut document);
+            let triage_migrated = migrate_triage_router_classifier(&mut document);
             let aggregate_limits_migrated =
                 migrate_agent_aggregate_limits(&mut document) || persona_migrated;
-            rescue_migrated || plan_migrated || aggregate_limits_migrated
+            rescue_migrated || plan_migrated || aggregate_limits_migrated || triage_migrated
         } else {
             false
         };
@@ -1340,6 +1341,43 @@ fn migrate_standard_agent_plan_contract(document: &mut Value) -> bool {
     );
     configuration.insert("outputContract".into(), Value::String("plan".into()));
     true
+}
+
+/// The Triage Router classifier originally said "the user's request" without
+/// scoping it to a single message. A model-call prompt also carries the chat
+/// transcript, so once a tool-needing turn (for example a weather question) was
+/// in the chat, later general-knowledge turns were judged in that context and
+/// classified COMPLEX. Scope the classifier to the final user message. Only the
+/// exact shipped prompt is migrated; a user-edited one is preserved.
+const LEGACY_TRIAGE_CLASSIFIER_INSTRUCTIONS: &str = "Classify the user's request. Reply with exactly one word and nothing else: SIMPLE when it can be answered from general knowledge in a single short reply, or COMPLEX when it needs tools, current information, or project evidence.";
+const TRIAGE_CLASSIFIER_INSTRUCTIONS: &str = "Classify ONLY the final user message. Earlier turns are background context and must not change the result.\nReply with exactly one word and nothing else.\nSIMPLE: the final message can be answered correctly from stable general knowledge with no tools and no live data — a capital city, the calories in a food, a definition, a calculation, or an explanation.\nCOMPLEX: the final message itself needs current or external information (weather, news, prices, scores, schedules, recent events), project files, or an action.\nDefault to SIMPLE. Answer SIMPLE even when earlier turns needed tools.";
+
+fn migrate_triage_router_classifier(document: &mut Value) -> bool {
+    let Some(nodes) = document.get_mut("nodes").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some("model_call") {
+            continue;
+        }
+        let Some(configuration) = node
+            .get_mut("configuration")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        if configuration.get("instructions").and_then(Value::as_str)
+            == Some(LEGACY_TRIAGE_CLASSIFIER_INSTRUCTIONS)
+        {
+            configuration.insert(
+                "instructions".into(),
+                Value::String(TRIAGE_CLASSIFIER_INSTRUCTIONS.into()),
+            );
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Removes obsolete Agent aggregate-limit settings. Agent loops now continue
@@ -2336,14 +2374,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_seeded_json_workflow_is_executable() {
+    fn every_bundled_json_workflow_is_executable() {
+        // Every bundled template must satisfy the executable catalog, whether
+        // or not it is seeded on a fresh profile. A non-seeded template (one
+        // with a real Settings prerequisite, such as an external agent target)
+        // is imported and run deliberately, so it must still be valid. The
+        // blank creation canvas is the one exception: it is intentionally an
+        // empty, editable document rather than a runnable workflow.
         let bundled = bundled_workflow_library().unwrap();
-        for template in bundled
-            .workflows
-            .iter()
-            .filter(|template| template.seed_on_fresh_profile)
-        {
-            validate_v1_executable_catalog(&template.document).unwrap();
+        for template in &bundled.workflows {
+            let empty = template.document["nodes"]
+                .as_array()
+                .is_some_and(Vec::is_empty);
+            if empty {
+                continue;
+            }
+            validate_v1_executable_catalog(&template.document)
+                .unwrap_or_else(|error| panic!("bundled workflow '{}': {error}", template.template_id));
         }
     }
 
@@ -2946,6 +2993,51 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_triage_classifier_is_scoped_once_and_edits_are_preserved() {
+        let mut workflow = bundled_workflow_template("triage-router").unwrap();
+        workflow["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["id"] == "classify.1")
+            .unwrap()["configuration"]["instructions"] =
+            Value::String(LEGACY_TRIAGE_CLASSIFIER_INSTRUCTIONS.into());
+
+        assert!(migrate_triage_router_classifier(&mut workflow));
+        assert_eq!(
+            workflow["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["id"] == "classify.1")
+                .unwrap()["configuration"]["instructions"],
+            Value::String(TRIAGE_CLASSIFIER_INSTRUCTIONS.into())
+        );
+        // The migration is idempotent.
+        assert!(!migrate_triage_router_classifier(&mut workflow));
+
+        // A user-edited classifier prompt is preserved verbatim.
+        let mut edited = bundled_workflow_template("triage-router").unwrap();
+        edited["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["id"] == "classify.1")
+            .unwrap()["configuration"]["instructions"] =
+            Value::String("Classify my way.".into());
+        assert!(!migrate_triage_router_classifier(&mut edited));
+        assert_eq!(
+            edited["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["id"] == "classify.1")
+                .unwrap()["configuration"]["instructions"],
+            Value::String("Classify my way.".into())
+        );
+    }
+
+    #[test]
     fn an_existing_profile_is_not_backfilled_with_bundled_workflows() {
         let root = TempDir::new().unwrap();
         let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
@@ -2972,6 +3064,9 @@ mod tests {
     fn library_crud_create_rename_duplicate_delete_and_set_default() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
+        // The bundle seeds several workflows; the CRUD assertions below are
+        // relative to whatever it ships rather than a fixed library size.
+        let seeded = documents.workflow_library().entries.len();
 
         let (created_id, created_version) = documents
             .create_workflow("Research loop", Some("standard-agent"))
@@ -3053,7 +3148,7 @@ mod tests {
 
         drop(documents);
         let reopened = CanonicalDocuments::open(root.path()).unwrap();
-        assert_eq!(reopened.workflow_library().entries.len(), 3);
+        assert_eq!(reopened.workflow_library().entries.len(), seeded + 1);
         assert!(
             !reopened
                 .workflow_library()
@@ -3121,17 +3216,19 @@ mod tests {
     fn library_refuses_deleting_the_default_workflow_and_unknown_targets() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        // Keep the bundled default workflow and remove the other entry, so the
-        // library holds one workflow and it is the default one.
+        // Keep the bundled default workflow and remove every other entry, so
+        // the library holds one workflow and it is the default one.
         let default_id = documents.workflow_library().default_workflow_id.clone();
-        let other_id = documents
+        let others: Vec<String> = documents
             .workflow_library()
             .entries
             .iter()
             .map(|entry| entry.id.clone())
-            .find(|id| *id != default_id)
-            .unwrap();
-        documents.delete_workflow(&other_id).unwrap();
+            .filter(|id| *id != default_id)
+            .collect();
+        for id in &others {
+            documents.delete_workflow(id).unwrap();
+        }
         assert_eq!(documents.workflow_library().entries.len(), 1);
         assert!(
             documents

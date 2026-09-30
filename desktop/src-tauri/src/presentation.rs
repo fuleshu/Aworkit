@@ -62,7 +62,6 @@ pub const fn capabilities() -> NativePresentationCapabilitiesV1 {
 pub fn install_application_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let file = SubmenuBuilder::new(app, "File")
         .text("aworkit.new-chat", "New Chat")
-        .text("aworkit.open-workflow", "Open Workflow…")
         .separator()
         .text("aworkit.settings", "Settings…")
         .separator()
@@ -87,16 +86,11 @@ pub fn install_application_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         .separator()
         .fullscreen()
         .build()?;
-    let window = SubmenuBuilder::new(app, "Window")
-        .minimize()
-        .maximize()
-        .build()?;
     let help = SubmenuBuilder::new(app, "Help")
-        .text("aworkit.shortcuts", "Keyboard Shortcuts")
-        .about(None)
+        .text("aworkit.about", "About")
         .build()?;
     let menu = MenuBuilder::new(app)
-        .items(&[&file, &edit, &view, &window, &help])
+        .items(&[&file, &edit, &view, &help])
         .build()?;
     app.set_menu(menu)?;
     Ok(())

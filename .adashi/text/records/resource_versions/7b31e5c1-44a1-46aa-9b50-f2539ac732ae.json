@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "about-dialog-and-menu-cleanup|file|desktop/src-tauri/src/presentation.rs",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-30 08:05:28",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7b31e5c1-44a1-46aa-9b50-f2539ac732ae",
+  "schemaVersion": 1
+}

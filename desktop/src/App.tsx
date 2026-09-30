@@ -20,6 +20,7 @@ import { PathActionProvider } from "./chat/pathActions";
 import type { RuntimeSnapshot } from "./chat/corePort";
 import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
+import { AboutDialog } from "./shell/AboutDialog";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
 import {
@@ -149,6 +150,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
     NativePresentationRequest,
     { kind: "confirmation" }
   > | null>(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const openNewChat = useCallback(() => {
     navigate("chat", () => setNewChatRequest((request) => request + 1));
   }, [navigate]);
@@ -200,7 +202,6 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         listen<string>("aworkit:native-menu", ({ payload }) => {
           const actions: Record<string, () => void> = {
             "aworkit.new-chat": openNewChat,
-            "aworkit.open-workflow": () => navigate("workflows"),
             "aworkit.settings": () => navigate("settings"),
             "aworkit.chat": () => navigate("chat"),
             "aworkit.workflows": () => navigate("workflows"),
@@ -210,12 +211,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 title: "Management Chat unavailable",
                 body: "Management Chat is unsupported in this rescue build.",
               }),
-            "aworkit.shortcuts": () =>
-              setNotification({
-                kind: "notification",
-                title: "Keyboard shortcuts",
-                body: "Use Ctrl/Command+1 for Chat, +2 for Workflows, and +, for Settings.",
-              }),
+            "aworkit.about": () => setAboutOpen(true),
           };
           actions[payload]?.();
         }),
@@ -399,6 +395,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
           }}
         />
       )}
+      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }

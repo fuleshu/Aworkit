@@ -104,9 +104,14 @@ fn every_bundled_executable_workflow_starts_with_no_saved_projects() {
                 .unwrap()
                 .iter()
                 .any(|node| {
-                    node["configuration"]["toolIds"]
+                    // Agents bind many tools via toolIds; a Tool or External
+                    // Agent node binds exactly one via toolId. Enable whichever
+                    // capability a workflow actually declares.
+                    let binds_many = node["configuration"]["toolIds"]
                         .as_array()
-                        .is_some_and(|ids| ids.contains(&json!(tool.id)))
+                        .is_some_and(|ids| ids.contains(&json!(tool.id)));
+                    let binds_one = node["configuration"]["toolId"] == json!(tool.id);
+                    binds_many || binds_one
                 })
             {
                 tool.enabled = true;

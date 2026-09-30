@@ -642,6 +642,11 @@ struct PassMachine<'a> {
     values: BTreeMap<String, Value>,
     completed: Vec<String>,
     executed: BTreeSet<String>,
+    /// Nodes this pass resolved as "branch not taken". Their outgoing
+    /// transitions are inert: they neither activate nor block a successor, so a
+    /// converge node reached through the taken branch still runs. A node that
+    /// later executes (a re-entered loop region) is removed again.
+    skipped: BTreeSet<String>,
     active_edges: BTreeSet<usize>,
     activity: Vec<GraphNodeActivityV1>,
     tool_activity: Vec<WorkflowToolActivityV1>,
@@ -728,6 +733,9 @@ impl<'a> PassMachine<'a> {
         };
         if !self.ready(node_id) {
             self.push_activity(node, "skipped", "branch not taken");
+            // Record the branch decision so a converge node downstream is not
+            // held back by this node's still-active outgoing transitions.
+            self.skipped.insert(node_id.to_owned());
             return NodeStep::Skipped;
         }
         // Finish pure graph bookkeeping after the last model response. A Stop
@@ -845,6 +853,7 @@ impl<'a> PassMachine<'a> {
             for region_id in &region.region {
                 if !frame.completed_this_iteration.contains(region_id) {
                     self.executed.remove(region_id);
+                    self.skipped.remove(region_id);
                 }
             }
         }
@@ -923,6 +932,7 @@ impl<'a> PassMachine<'a> {
                 self.activate_loop_route(&region, LoopRouteV1::Body);
                 for region_id in &region.region {
                     self.executed.remove(region_id);
+                    self.skipped.remove(region_id);
                 }
                 self.loop_frames.insert(
                     node.id.clone(),
@@ -966,6 +976,9 @@ impl<'a> PassMachine<'a> {
     fn settle_node(&mut self, node: &CompiledGraphNodeV1, value: Value, summary: &str) {
         self.values.insert(node.id.clone(), value);
         self.executed.insert(node.id.clone());
+        // A node that executed this pass is no longer a skipped branch, which
+        // matters when a loop re-enters a region it had skipped earlier.
+        self.skipped.remove(&node.id);
         if !self.completed.contains(&node.id) {
             self.completed.push(node.id.clone());
         }
@@ -1178,6 +1191,11 @@ impl<'a> PassMachine<'a> {
         for index in incoming {
             let edge = &self.compiled.edges[index];
             if !self.active_edges.contains(&index) {
+                continue;
+            }
+            if self.skipped.contains(&edge.source) {
+                // A branch that was not taken activates no transition and must
+                // not block a successor the taken branch already reached.
                 continue;
             }
             any_active = true;
@@ -1969,6 +1987,7 @@ pub(crate) fn execute_graph_pass_observed(
         values: BTreeMap::new(),
         completed: Vec::new(),
         executed: BTreeSet::new(),
+        skipped: BTreeSet::new(),
         // A feedback edge is a declarative region boundary, never a runnable
         // transition: the header drives its own iterations, and excluding it
         // keeps the header ready before its region has run.
@@ -2559,6 +2578,42 @@ mod tests {
             .filter(|activity| activity.status == "completed")
             .map(|activity| activity.node_id.clone())
             .collect()
+    }
+
+    #[test]
+    fn a_converging_node_runs_when_one_branch_was_skipped() {
+        // A condition splits into two branches that each have an intermediate
+        // node before converging on the same output. The branch the condition
+        // did not take activates no transition, so it must not hold the
+        // converge node (and the wait behind it) back.
+        let document = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"cond.1","type":"condition","configuration":{"predicate":{"kind":"always"}}},
+                {"id":"branch.1","type":"parallel"},
+                {"id":"branch.2","type":"parallel"},
+                {"id":"out.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"cond.1"},
+                {"id":"e2","source":"cond.1","target":"branch.1","sourcePort":"true","configuration":{"route":"true"}},
+                {"id":"e3","source":"cond.1","target":"branch.2","sourcePort":"false","configuration":{"route":"false"}},
+                {"id":"e4","source":"branch.1","target":"out.1"},
+                {"id":"e5","source":"branch.2","target":"out.1"},
+                {"id":"e6","source":"out.1","target":"wait.1"}
+            ]
+        });
+        let outcome = run_loop_pass(&document, None, None);
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        assert_eq!(
+            completed_nodes(&outcome),
+            vec!["input.1", "cond.1", "branch.1", "out.1", "wait.1"]
+        );
+        assert_eq!(activity_count(&outcome, "branch.2", "skipped"), 1);
+        assert_eq!(activity_count(&outcome, "out.1", "completed"), 1);
+        assert_eq!(activity_count(&outcome, "wait.1", "completed"), 1);
     }
 
     #[test]

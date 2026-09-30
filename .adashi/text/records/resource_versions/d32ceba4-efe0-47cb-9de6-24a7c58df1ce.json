@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "about-dialog",
+    "resource_kind": "mockup.accepted",
+    "updated_at": "2026-09-30 08:05:47",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "d32ceba4-efe0-47cb-9de6-24a7c58df1ce",
+  "schemaVersion": 1
+}

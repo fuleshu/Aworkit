@@ -22,7 +22,7 @@
       },
       "configuration": {
         "modelTierId": "tier:simple",
-        "instructions": "Classify the user's request. Reply with exactly one word and nothing else: SIMPLE when it can be answered from general knowledge in a single short reply, or COMPLEX when it needs tools, current information, or project evidence.",
+        "instructions": "Classify ONLY the final user message. Earlier turns are background context and must not change the result.\nReply with exactly one word and nothing else.\nSIMPLE: the final message can be answered correctly from stable general knowledge with no tools and no live data \u2014 a capital city, the calories in a food, a definition, a calculation, or an explanation.\nCOMPLEX: the final message itself needs current or external information (weather, news, prices, scores, schedules, recent events), project files, or an action.\nDefault to SIMPLE. Answer SIMPLE even when earlier turns needed tools.",
         "maximumTokens": 16
       }
     },

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "about-dialog-and-menu-cleanup|file|desktop/src/App.tsx",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-09-30 08:05:28",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "ea70b91b-f3c4-4595-93e7-f006d878b55d",
+  "schemaVersion": 1
+}

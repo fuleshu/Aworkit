@@ -23,14 +23,23 @@ native executable-catalog mirror) and by the native
 ## Where the files live
 
 - The canonical definitions are templates in
-  `desktop/workflows/default-workflows.json`. They are seeded on a fresh
-  profile and appear in the workflow library.
+  `desktop/workflows/default-workflows.json`. They appear in the workflow
+  library, seeded on a fresh profile when their runtime needs are met.
+- **Delegated Code Review** is bundled but not auto-seeded, because an External
+  Agent node cannot start until a Codex or Claude Code target is configured.
+  Import it when that target is ready; the other three are seeded.
 - Byte-identical, importable copies live in `desktop/workflows/examples/`. Use
   the editor's **Import** action to load one into an existing profile; the
   coverage test fails if an example drifts from its bundled template.
 
 ## Design notes
 
+- **Model Call nodes see the chat transcript.** A `model_call` prompt carries the
+  conversation, not only its wired input value. A classifier built on one must
+  therefore say which message it judges ("classify only the final user message")
+  and default to the cheap branch for stable knowledge, or an earlier
+  tool-needing turn leaks into later classifications. The Triage Router prompt
+  states this explicitly.
 - **Conditions** inspect the single value a node carries. The router matches
   the classifier's exact scalar reply; the evidence brief tests the Plan's
   structured `evidenceNeeded` array, which is why a `model_call` with

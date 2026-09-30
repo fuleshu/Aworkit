@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/presentation.rs\",\"desktop/src/App.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-09-30 08:13:38",
+    "completion_memo": "Menu bar cleaned up and About dialog added. presentation.rs: removed File > Open Workflow..., removed the whole Window submenu, removed Help > Keyboard Shortcuts, added Help > About (id aworkit.about) and dropped the predefined .about(None). App.tsx: removed the open-workflow and shortcuts native-menu handlers, added aboutOpen state and routed aworkit.about to it. New shell/AboutDialog.tsx + styles.css rules: modal <dialog> showing Developer Timo Fleisch, Company d.b.a. klutzGames, Webpage https://www.klutzgames.com and GitHub https://github.com/fuleshu/Aworkit as opener links, License Apache-2.0, and 18 curated third-party libraries with licenses (incl. Rig.rs). StrictMode-safe showModal guard; Escape/Close dismiss and restore focus; opener failure publishes a notification. Verified: pnpm check clean, pnpm build ok, AboutDialog 3 tests + app.integration 6 tests pass, full suite 600/601 with one unrelated 5 s SettingsScreen timeout that passed on isolated re-run, cargo check --bin aworkit-desktop clean (pre-existing warnings only). Caveat: Rig.rs is shown as requested, but rig-core is not in desktop/src-tauri/Cargo.lock; the workspace Cargo.toml also still declares license = MIT while the LICENSE file is Apache-2.0.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-09-30 08:05:32",
+    "created_files": "[\"desktop/src/shell/AboutDialog.tsx\",\"desktop/src/shell/AboutDialog.test.tsx\"]",
+    "description": "Fix the native menu bar and add an About dialog. Remove File > Open Workflow..., remove the whole Window submenu, remove Help > Keyboard Shortcuts, and add Help > About opening an in-app About dialog (Timo Fleisch, d.b.a. klutzGames, https://www.klutzgames.com, https://github.com/fuleshu/Aworkit, Apache-2.0, major library licenses). Design: markdown:about-dialog-and-menu-cleanup.",
+    "id": 32703871155,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Clean up the menu bar and add an About dialog",
+    "updated_at": "2026-09-30 08:13:38"
+  },
+  "deleted": false,
+  "identity": "2dfac908-6cdf-42ca-ae29-b0360bc4a221",
+  "schemaVersion": 1
+}

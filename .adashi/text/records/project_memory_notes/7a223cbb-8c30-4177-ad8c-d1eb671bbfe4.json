@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Task 170: menu cleanup + About dialog. presentation.rs removed File>Open Workflow..., the Window submenu and Help>Keyboard Shortcuts; Help>About emits aworkit.about -> new shell/AboutDialog.tsx modal <dialog> (Timo Fleisch, d.b.a. klutzGames, klutzgames.com + github.com/fuleshu/Aworkit via tauri-plugin-opener, Apache-2.0, 18 curated library licenses). Verified tsc clean, pnpm build ok, AboutDialog 3 + app.integration 6 pass, full suite 600/601 (unrelated SettingsScreen timeout flake, green isolated), cargo check clean. Open: Rig.rs is listed as requested but rig-core is NOT in desktop/src-tauri/Cargo.lock (providers hand-rolled in aworkit-capability-host); workspace Cargo.toml still says license = MIT while LICENSE is Apache-2.0. App embeds dist at compile time -> packaged build needs a rebuild.",
+    "created_at": "2026-09-30 08:13:47",
+    "id": 21835668488,
+    "note_id": "task-170-menu-about-dialog-20260930",
+    "operation_id": "mem-task-170-menu-about-20260930-b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-170-menu-about-20260930-b",
+    "task_id": {
+      "ref": "2dfac908-6cdf-42ca-ae29-b0360bc4a221"
+    }
+  },
+  "deleted": false,
+  "identity": "7a223cbb-8c30-4177-ad8c-d1eb671bbfe4",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-09-30 08:05:32",
+    "design_external_id": "about-dialog-and-menu-cleanup",
+    "id": 9335100000,
+    "sort_order": 0,
+    "target_type": "markdown",
+    "task_id": {
+      "ref": "2dfac908-6cdf-42ca-ae29-b0360bc4a221"
+    }
+  },
+  "deleted": false,
+  "identity": "b97eba0c-a9c1-4841-bd3e-47df6cf03bf9",
+  "schemaVersion": 1
+}

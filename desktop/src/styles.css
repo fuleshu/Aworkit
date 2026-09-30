@@ -196,6 +196,54 @@ pre {
   color: var(--aw-danger);
 }
 
+/* About dialog: wider than the base dialog, scrollable when the library list
+   does not fit. Both classes are required: the base .workbench-dialog rule is
+   bundled after per-dialog rules and wins an equal-specificity tie. */
+.workbench-dialog.about-dialog {
+  max-height: calc(100% - 32px);
+  max-width: 560px;
+  overflow: auto;
+}
+.about-version {
+  font-size: var(--aw-font-caption);
+}
+.about-meta {
+  display: grid;
+  gap: 4px 16px;
+  grid-template-columns: 90px minmax(0, 1fr);
+  margin-top: 12px;
+}
+.about-meta dt {
+  color: var(--aw-secondary);
+}
+.about-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.about-dialog h3 {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  margin-top: 16px;
+  text-transform: uppercase;
+}
+.about-libraries {
+  display: grid;
+  gap: 2px 24px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.about-libraries li {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.about-license {
+  color: var(--aw-secondary);
+  text-align: right;
+}
+
 /* Persistent desktop shell */
 .desktop-shell {
   background: var(--aw-window);

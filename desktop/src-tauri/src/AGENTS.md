@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1395508081463161 -->
+<!-- adashi:generated revision=1740598853189427 -->
 # Architecture — `desktop/src-tauri/src` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -11,6 +11,11 @@ Boundaries crossing this folder:
 
 Bound here:
 - file `desktop/src-tauri/src/main.rs`
+- file `desktop/src-tauri/src/presentation.rs`
 
-[Showing 1 of 1 design element(s) bound here, 17 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
+
+Markdown design specifications:
+
+
+- [Menu bar cleanup and About dialog](../../../docs/adashi/design-7bc099543cfac12ded4d0e3352b0bb3e81707edf59571f86c74abe20b2e3ed8a.md)
 <!-- adashi:architecture:end -->
