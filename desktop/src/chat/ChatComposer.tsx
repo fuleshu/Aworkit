@@ -8,6 +8,7 @@ import {
   readNativeClipboardImage,
 } from "./clipboardImage";
 import { dragCarriesFiles, droppedImageFiles } from "./dropImages";
+import { useDroppedImages } from "./useDroppedImages";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import type { ProjectDraft } from "./createProject";
 import {
@@ -180,6 +181,13 @@ export function ChatComposer({
     if (file !== null) await addFiles([file]);
   };
   const [dropping, setDropping] = useState(false);
+  // On Linux the drop is imported natively (WebKitGTK denies the page the file
+  // data) and announced back; the highlight and the attachments come from there.
+  const nativeDropping = useDroppedImages({
+    onImages: addAttachments,
+    onError: reportError,
+  });
+  const dropActive = dropping || nativeDropping;
   // The Project dropdown's create entry opens the create-project dialog; a
   // project just created here is listed immediately, before the next snapshot
   // carries it, so the selection can never point at a missing option.
@@ -230,7 +238,7 @@ export function ChatComposer({
     : null;
   return (
     <section
-      className={`composer-shell${dropping ? " composer-dropping" : ""}`}
+      className={`composer-shell${dropActive ? " composer-dropping" : ""}`}
       aria-label="Chat composer"
       onPaste={(event) => {
         if (chat.recoveryPending || commandPending) return;
@@ -276,7 +284,7 @@ export function ChatComposer({
         void addFiles(files);
       }}
     >
-      {dropping && (
+      {dropActive && (
         <div className="composer-drop-hint" aria-hidden="true">
           Drop images to attach
         </div>

@@ -73,12 +73,20 @@ Paste and drop are two different platform problems:
   holds the image. A paste that offers the webview nothing at all is therefore
   read from the OS clipboard through the native clipboard plugin and re-encoded
   as a PNG attachment. Text pastes and copied files never take that path.
-- **Drop.** The main window disables the native drag-drop interception
-  (`dragDropEnabled: false`) so the webview receives ordinary HTML5 drop events
-  on Linux and Windows; the composer accepts the transported image files and
-  reports the same "Choose PNG, JPEG or WebP images." reason for a dropped file
-  the import path cannot store. A file dropped anywhere else is ignored instead
-  of navigating the webview.
+- **Drop.** Windows and the browser Preview use the webview's own HTML5 drop:
+  the composer accepts the transported image files and reports the same "Choose
+  PNG, JPEG or WebP images." reason for a dropped file the import path cannot
+  store. Linux cannot: WebKitGTK 2.52 denies the page access to a dropped file's
+  data — since the CVE-2025-13947 hardening `DataTransfer.allowsFileAccess()`
+  is false outside Cocoa, so `dataTransfer.files` stays empty for a file dragged
+  from the file manager (WebKit bug 323277). The main window therefore enables
+  Tauri's own drag-drop handler on Linux (`tauri.linux.conf.json`, Linux only:
+  on Windows that handler takes external drops away from the page and would
+  break the Workflow designer's in-page drag), the dropped paths are imported by
+  the native image store, and the resulting attachments are announced to the
+  composer, which also raises the drop highlight from the same events. No
+  filesystem path ever reaches the renderer. A file dropped anywhere else is
+  ignored instead of navigating the webview.
 
 In **Settings → Providers**, enable **Vision (image input)** for the chosen model
 and save. Use a model that actually supports vision, then start a new Chat: model

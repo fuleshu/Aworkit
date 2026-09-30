@@ -30,6 +30,7 @@ use aworkit_desktop::runtime::{
 use tauri::{Emitter, Manager};
 
 mod desktop_layout;
+mod desktop_drop;
 mod desktop_snapshot;
 mod desktop_subagent_view;
 mod desktop_bootstrap;
@@ -888,7 +889,10 @@ fn main() {
             ];
             handler(invoke)
         })
-        .on_window_event(desktop_layout::on_window_event)
+        .on_window_event(|window, event| {
+            desktop_layout::on_window_event(window, event);
+            desktop_drop::on_window_event(window, event);
+        })
         .on_menu_event(aworkit_desktop::presentation::forward_menu_event)
         .plugin(tauri_plugin_opener::init())
         .run(context)
