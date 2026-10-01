@@ -284,6 +284,7 @@ describe("Milestone 08 Chat and Run details experience", () => {
       throughSequence: 1,
       reducerVersion: "chat.semantic.reducer.v1",
       stateHash: `sha256:${"0".repeat(64)}`,
+      subagents: [{childId:"child.external",kind:"external",status:"completed",running:false,depth:1,nodeId:"agent.1",parentInvocationId:"invocation.1",task:"Reply CODEX_NATIVE_OK",finalText:"CODEX_NATIVE_OK",modelTurns:1,toolCalls:0,inputTokens:10,outputTokens:3,headRevision:1,createdAt:"now",updatedAt:"now"}],
       chat: {
         ...draftChat,
         workflowName: null,
@@ -315,6 +316,7 @@ describe("Milestone 08 Chat and Run details experience", () => {
       kind: "future.event",
       payload: { retained: true },
     });
+    expect(normalized.subagents?.[0]).toMatchObject({kind:"external",status:"completed",finalText:"CODEX_NATIVE_OK"});
     expect(normalized.evidence[0]).toMatchObject({
       category: "unknown",
       state: "opaque",

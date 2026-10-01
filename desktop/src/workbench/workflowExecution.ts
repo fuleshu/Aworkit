@@ -220,14 +220,6 @@ export function assessNativeWorkflow(
                 code: "native_agent_tools",
                 message: `Workflow node '${id}' agent toolIds must reference tool.<name> or mcp:<server> bindings.`,
               });
-            else if (
-              !BUILTIN_TOOL_BINDING_IDS.has(toolId) &&
-              !toolId.startsWith("mcp:")
-            )
-              issues.push({
-                code: "native_agent_tools",
-                message: `Workflow node '${id}' agent binds tool '${toolId}' with no installed executor in this build.`,
-              });
           }
           if (unique.size !== toolIds.length)
             issues.push({
@@ -325,14 +317,6 @@ export function assessNativeWorkflow(
           issues.push({
             code: "native_tool_node",
             message: `Workflow node '${id}' tool toolId must reference a tool.<name> or mcp:<server> binding.`,
-          });
-        else if (
-          !BUILTIN_TOOL_BINDING_IDS.has(toolId) &&
-          !toolId.startsWith("mcp:")
-        )
-          issues.push({
-            code: "native_tool_node",
-            message: `Workflow node '${id}' tool binds '${toolId}' with no installed executor in this build.`,
           });
         const parameters = configuration.parameters;
         if (

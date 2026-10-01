@@ -98,7 +98,7 @@ const subagentChildStatusSchema = z.enum([
 ]);
 const subagentChildSummarySchema = z.object({
   childId: z.string().min(1),
-  kind: z.enum(["fresh", "fork"]),
+  kind: z.enum(["fresh", "fork", "external"]),
   status: subagentChildStatusSchema,
   running: z.boolean(),
   depth: z.number().int().nonnegative(),

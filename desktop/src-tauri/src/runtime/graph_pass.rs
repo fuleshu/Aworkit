@@ -292,6 +292,7 @@ pub(crate) struct GraphPassOutcomeV1 {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledGraphNodeV1 {
+    pub capability_warnings: Vec<String>,
     pub id: String,
     pub node_type: String,
     pub label: String,
@@ -397,13 +398,8 @@ pub(crate) fn compile_graph_pass(
                     let binding = tool_bindings
                         .iter()
                         .find(|binding| binding.capability_id == tool_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            format!(
-                                "agent node '{id}' binds tool '{tool_id}' with no frozen native binding"
-                            )
-                        })?;
-                    tool_bindings_for_node.push(binding);
+                        .cloned();
+                    if let Some(binding) = binding { tool_bindings_for_node.push(binding); }
                 }
             }
             "tool" => {
@@ -414,13 +410,8 @@ pub(crate) fn compile_graph_pass(
                 let binding = tool_bindings
                     .iter()
                     .find(|binding| binding.capability_id == tool_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "tool node '{id}' binds tool '{tool_id}' with no frozen native binding"
-                        )
-                    })?;
-                tool_bindings_for_node.push(binding);
+                    .cloned();
+                if let Some(binding) = binding { tool_bindings_for_node.push(binding); }
             }
             "external_agent" => {
                 let tool_id = configuration
@@ -435,17 +426,13 @@ pub(crate) fn compile_graph_pass(
                 let binding = tool_bindings
                     .iter()
                     .find(|binding| binding.capability_id == tool_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "external agent node '{id}' binds tool '{tool_id}' with no frozen native binding"
-                        )
-                    })?;
-                tool_bindings_for_node.push(binding);
+                    .cloned();
+                if let Some(binding) = binding { tool_bindings_for_node.push(binding); }
             }
             _ => {}
         }
         nodes.push(CompiledGraphNodeV1 {
+            capability_warnings: workflow.get("capabilityWarnings").and_then(Value::as_array).map(|warnings| warnings.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default(),
             id,
             node_type,
             label,
@@ -1716,10 +1703,9 @@ impl<'a> PassMachine<'a> {
         node: &CompiledGraphNodeV1,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
-        let binding = node
-            .tool_bindings
-            .first()
-            .ok_or_else(|| format!("external agent node '{}' has no binding", node.id))?;
+        let Some(binding) = node.tool_bindings.first() else {
+            return Ok(json!({"isError":true,"status":"warning","message":format!("External agent tool '{}' is unavailable; workflow continues", node.configuration["toolId"])}));
+        };
         let upstream = value_text(&self.incoming_value(&node.id));
         let instructions = node
             .configuration
@@ -1766,10 +1752,9 @@ impl<'a> PassMachine<'a> {
         node: &CompiledGraphNodeV1,
         cancellation: &CancellationToken,
     ) -> Result<Value, String> {
-        let binding = node
-            .tool_bindings
-            .first()
-            .ok_or_else(|| format!("tool node '{}' has no binding", node.id))?;
+        let Some(binding) = node.tool_bindings.first() else {
+            return Ok(json!({"isError":true,"status":"warning","message":format!("Tool '{}' is unavailable; workflow continues", node.configuration["toolId"])}));
+        };
         let upstream = value_text(&self.incoming_value(&node.id));
         let mut arguments = node
             .configuration
@@ -2298,6 +2283,7 @@ mod tests {
 
     fn node(id: &str, node_type: &str) -> CompiledGraphNodeV1 {
         CompiledGraphNodeV1 {
+            capability_warnings: Vec::new(),
             id: id.into(),
             node_type: node_type.into(),
             label: id.into(),

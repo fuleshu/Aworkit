@@ -162,10 +162,9 @@ describe.each(["agent", "tool"] as const)("%s tool validation", (type) => {
     expect(assessNativeWorkflow(workflow(id, type))).toEqual({ executable: true, issues: [] });
   });
 
-  it("continues rejecting tools without a bundled executor", () => {
+  it("allows unavailable tools so runtime can warn and continue", () => {
     const result = assessNativeWorkflow(workflow("tool.uninstalled", type));
-    expect(result.executable).toBe(false);
-    expect(result.issues.some(issue => issue.message.includes("no installed executor"))).toBe(true);
+    expect(result).toEqual({ executable: true, issues: [] });
   });
 });
 

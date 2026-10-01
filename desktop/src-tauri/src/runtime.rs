@@ -25,6 +25,7 @@ mod image_files;
 mod screen_capture;
 mod mcp;
 mod mcp_tools;
+mod workflow_capabilities;
 mod model_tool_loop;
 mod pipeline;
 mod record_cache;

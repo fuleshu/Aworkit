@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=959215397480889 -->
+<!-- adashi:generated revision=4353881898827843 -->
 # Architecture — `desktop/src-tauri/src/runtime/history` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

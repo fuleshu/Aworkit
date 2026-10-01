@@ -22,6 +22,9 @@ impl PassMachine<'_> {
             .and_then(Value::as_str)
             == Some("plan");
         let mut messages = Vec::new();
+        if let Some(notice) = context::capability_notice(node) {
+            messages.push(WorkflowMessageV1 { images: Vec::new(), role: "system".into(), content: notice });
+        }
         if !instructions.trim().is_empty() {
             messages.push(WorkflowMessageV1 {
                 images: Vec::new(),

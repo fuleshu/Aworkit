@@ -267,12 +267,12 @@ fn later_pass_adopts_a_capability_bound_mid_chat() {
         assert_eq!(carried.limit, saved.limit);
     }
 
-    // A capability the document binds but the desktop cannot resolve blocks the
-    // pass instead of running with an unresolved tool.
+    // An unavailable standalone tool retains its graph position and lets the
+    // pass continue with an unavailable result.
     let mut unresolved = followup.clone();
     unresolved.request_id = stable("command.unresolved-tool").unwrap();
     unresolved.tools.pop();
-    assert!(pipeline.validated_prepared(&unresolved).is_err());
+    assert!(pipeline.validated_prepared(&unresolved).is_ok());
 
     // A document that is not an executable v1 workflow blocks the pass too.
     let mut broken = followup.clone();

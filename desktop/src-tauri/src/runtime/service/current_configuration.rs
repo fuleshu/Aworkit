@@ -70,11 +70,13 @@ impl DesktopRuntime {
             &workflow.document,
             self.documents.settings(),
         )?;
-        let tools = freeze_current_tools(
+        let (tools, warnings) = freeze_current_tools(
             &workflow.document,
             self.documents.settings(),
             &context.tools,
         )?;
+        for warning in warnings { super::super::workflow_capabilities::warn(&mut workflow.document, warning); }
+        super::super::workflow_capabilities::retain_available(&mut workflow.document, &tools.iter().map(|t| t.tool_id.clone()).collect::<Vec<_>>());
         Ok(CurrentPassConfigurationV1 {
             document: workflow.document,
             tools,
@@ -94,9 +96,10 @@ fn freeze_current_tools(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
     frozen: &[FrozenToolBindingV1],
-) -> Result<Vec<FrozenToolBindingV1>, String> {
+) -> Result<(Vec<FrozenToolBindingV1>, Vec<String>), String> {
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
+    let mut warnings = Vec::new();
     for tool_id in document_tool_ids(workflow)? {
         if !seen.insert(tool_id.clone()) {
             continue;
@@ -106,13 +109,17 @@ fn freeze_current_tools(
             continue;
         }
         if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
-            return Err(format!(
+            warnings.push(format!(
                 "workflow binds MCP tool '{tool_id}', which this Chat never connected; start a New Chat to use it"
             ));
+            continue;
         }
-        tools.push(super::freeze_builtin_tool(&tool_id, settings)?);
+        match super::freeze_builtin_tool(&tool_id, settings) {
+            Ok(tool) => tools.push(tool),
+            Err(error) => warnings.push(format!("Tool '{tool_id}' is unavailable: {error}")),
+        }
     }
-    Ok(tools)
+    Ok((tools, warnings))
 }
 
 /// The distinct capability ids an agent or tool node binds, in document order.
@@ -144,7 +151,7 @@ fn document_tool_ids(workflow: &Value) -> Result<Vec<String>, String> {
                     .unwrap_or_default();
                 ids.extend(bound);
             }
-            "tool" => {
+            "tool" | "external_agent" => {
                 if let Some(tool_id) = configuration
                     .and_then(|config| config.get("toolId"))
                     .and_then(Value::as_str)

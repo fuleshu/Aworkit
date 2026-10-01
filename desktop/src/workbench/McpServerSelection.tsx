@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { McpServerConfiguration } from "./configuration";
+import { referencesServer } from "./mcpReferences";
 
 /** One Agent selection per MCP server; old individual bindings stay lossless. */
 export function McpServerSelection({ server, selected, editable, onChange }: {
@@ -8,10 +9,9 @@ export function McpServerSelection({ server, selected, editable, onChange }: {
   readonly editable: boolean;
   readonly onChange: (selected: string[]) => void;
 }): React.JSX.Element {
-  const binding = `mcp:${server.id}`;
-  const prefix = `mcp://${server.id}/`;
-  const explicit = selected.filter(id => id.startsWith(prefix));
-  const checked = selected.includes(binding);
+  const binding = `mcp:${server.name}`;
+  const explicit = selected.filter(id => id.startsWith("mcp://") && referencesServer(id, server));
+  const checked = selected.includes(binding) || selected.includes(`mcp:${server.id}`);
   const partial = !checked && explicit.length > 0;
   const input = useRef<HTMLInputElement>(null);
   const enabledCount = (server.tools ?? []).filter(tool => tool.enabled).length;
@@ -23,7 +23,7 @@ export function McpServerSelection({ server, selected, editable, onChange }: {
       title={partial ? `Replace the previous individual ${server.name} selections with all enabled functions`
         : `Use all enabled ${server.name} functions in this Agent`}
       onChange={() => {
-        const rest = selected.filter(id => id !== binding && !id.startsWith(prefix));
+        const rest = selected.filter(id => !referencesServer(id, server));
         onChange(checked || (!available && partial) ? rest : [...rest, binding]);
       }} />
     <span>{server.name} <small>{!server.enabled ? "Disabled in Settings" : enabledCount === 0 ? "Setup required in Settings → MCP"

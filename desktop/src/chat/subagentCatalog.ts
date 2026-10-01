@@ -12,7 +12,7 @@ export type SubagentStatus =
 /** One delegated child of the current Chat. */
 export interface SubagentCatalogEntry {
   readonly childId: string;
-  readonly kind: "fresh" | "fork";
+  readonly kind: "fresh" | "fork" | "external";
   readonly status: SubagentStatus;
   readonly task: string;
   /** The extra context the delegating Agent supplied with the task. */
@@ -70,7 +70,7 @@ export function subagentCatalog(
     const previous = byId.get(childId);
     byId.set(childId, {
       childId,
-      kind: fact.kind === "fork" ? "fork" : (previous?.kind ?? "fresh"),
+      kind: fact.kind === "fork" || fact.kind === "external" ? fact.kind : (previous?.kind ?? "fresh"),
       status,
       task: text(fact.task) ?? previous?.task ?? "",
       contextText: text(fact.contextText) ?? previous?.contextText ?? "",

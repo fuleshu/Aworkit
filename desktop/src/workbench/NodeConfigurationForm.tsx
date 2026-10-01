@@ -1,5 +1,6 @@
 import { findNativeTool, selectableTools } from "./toolRegistry";
 import { McpServerSelection } from "./McpServerSelection";
+import { referencesServer } from "./mcpReferences";
 import { useEffect, useMemo, useState } from "react";
 import type { McpServerConfiguration, SettingsV2Snapshot } from "./configuration";
 import {
@@ -670,7 +671,7 @@ function ToolMultiField({
   const native = options.tools.filter(({ value }) => !value.startsWith("mcp:"));
   const known = new Set(native.map(({ value }) => value));
   const extras = selected.filter((id) => !known.has(id) && !options.mcpConfigurations.some(
-    server => id === `mcp:${server.id}` || id.startsWith(`mcp://${server.id}/`),
+    server => referencesServer(id, server),
   ));
   const toggle = (toolId: string) => {
     const next = selected.includes(toolId)
@@ -713,7 +714,7 @@ function ToolMultiField({
             }
           />
           <span>
-            <code>{id}</code>
+            <code>{id}</code> <small>Unavailable here · workflow continues with available tools</small>
           </span>
         </label>
       ))}

@@ -33,6 +33,9 @@ use super::{
 
 const MAXIMUM_BINDINGS: usize = 256;
 
+mod executable;
+use executable::resolve_executable;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalAgentProbeRequestV2 {
@@ -486,70 +489,6 @@ fn materialize_environment(
             ))
         })
         .collect()
-}
-
-fn resolve_executable(command: &str) -> Result<PathBuf, String> {
-    if command.trim().is_empty() || command.contains('\0') {
-        return Err("external-agent executable cannot be empty".into());
-    }
-    let path = Path::new(command);
-    if path.is_absolute() {
-        return canonical_file(path);
-    }
-    if path.components().count() != 1 {
-        return Err(
-            "external-agent executable must be absolute or one bare command name from PATH".into(),
-        );
-    }
-    let search = env::var_os("PATH").ok_or_else(|| {
-        "PATH is unavailable; configure an absolute external-agent executable".to_owned()
-    })?;
-    for directory in env::split_paths(&search) {
-        if !directory.is_absolute() {
-            continue;
-        }
-        for candidate in executable_candidates(&directory, command) {
-            if candidate.is_file() {
-                return canonical_file(&candidate);
-            }
-        }
-    }
-    Err(format!(
-        "external-agent executable '{command}' was not found; configure its absolute path"
-    ))
-}
-
-fn executable_candidates(directory: &Path, command: &str) -> Vec<PathBuf> {
-    let base = directory.join(command);
-    if !cfg!(windows) || Path::new(command).extension().is_some() {
-        return vec![base];
-    }
-    let extensions = env::var_os("PATHEXT")
-        .map(|value| {
-            value
-                .to_string_lossy()
-                .split(';')
-                .filter(|item| !item.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![".EXE".into(), ".CMD".into(), ".BAT".into()]);
-    let mut candidates = vec![base.clone()];
-    candidates.extend(
-        extensions
-            .into_iter()
-            .map(|extension| directory.join(format!("{command}{extension}"))),
-    );
-    candidates
-}
-
-fn canonical_file(path: &Path) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(path)
-        .map_err(|_| "external-agent executable could not be resolved".to_owned())?;
-    if !canonical.is_file() {
-        return Err("external-agent executable is not a regular file".into());
-    }
-    Ok(canonical)
 }
 
 fn resolve_directory(value: &str) -> Result<PathBuf, String> {

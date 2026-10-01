@@ -5,7 +5,9 @@
       "lines": [
         "The small trusted Rust core owns the application lifecycle and non-replaceable contracts: typed desktop command/event API, project and capability resolution, workflow validation and freezing, Chat lifecycle, authority manifests and approvals, secret references and credential brokerage, canonical semantic event commits, process-tree supervision, extension identity/integrity/version records, recovery coordination, and repair activation/rollback gates.\n",
         "\n",
-        "It validates every worker capability request against the frozen Run manifest before dispatch, records the decision and outcome, and refuses ambiguous automatic replays. It persists events atomically before acknowledging committed state. Functional agent behavior, routing strategies, providers, tools, and adapters remain behind versioned interfaces and are not embedded into this boundary unless needed for trust or lifecycle integrity."
+        "It validates every worker capability request against the frozen Run manifest before dispatch, records the decision and outcome, and refuses ambiguous automatic replays. It persists events atomically before acknowledging committed state. Functional agent behavior, routing strategies, providers, tools, and adapters remain behind versioned interfaces and are not embedded into this boundary unless needed for trust or lifecycle integrity.\n",
+        "\n",
+        "MCP workflow portability and degraded execution: resolve authored MCP references by configured server name on the current computer, retaining legacy local-ID compatibility. Freeze resolved local identities only in the Run authority manifest. Missing or disabled servers, undiscovered or disabled tools, and unavailable built-in tools produce committed visible warning status and model-visible notices, omit unavailable capabilities, and continue execution with the available capabilities. Missing capabilities never stop workflow preparation or execution and never grant substitute authority."
       ]
     },
     "element_type": "Container",

@@ -91,7 +91,7 @@ it("uses one server checkbox for all functions and saves a server binding", () =
   const latest = agent([]);
   expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   fireEvent.click(screen.getByRole("checkbox", { name: /Adashi/ }));
-  expect(latest()).toEqual(["mcp:adashi"]);
+  expect(latest()).toEqual(["mcp:Adashi"]);
   fireEvent.click(screen.getByRole("checkbox", { name: /Adashi/ }));
   expect(latest()).toEqual([]);
 });
@@ -101,7 +101,7 @@ it("preserves old partial selections until the user selects the whole server", (
   expect(screen.getByRole("checkbox", { name: /Adashi/ })).toBePartiallyChecked();
   expect(latest()).toEqual(["mcp://adashi/read", "mcp://missing/keep"]);
   fireEvent.click(screen.getByRole("checkbox", { name: /Adashi/ }));
-  expect(latest()).toEqual(["mcp://missing/keep", "mcp:adashi"]);
+  expect(latest()).toEqual(["mcp://missing/keep", "mcp:Adashi"]);
 });
 
 it("shows unavailable servers with a setup hint, while allowing old bindings to be removed", () => {

@@ -10,6 +10,8 @@ pub(super) struct RestoredFrozenMcpV1 {
     /// The interface each bound MCP tool actually advertises in the session this
     /// application generation opened, keyed by `mcp://<server>/<tool>` id.
     pub definitions: BTreeMap<String, ModelToolDefinitionV1>,
+    pub warnings: Vec<String>,
+    pub unavailable: Vec<String>,
 }
 
 impl DesktopRuntime {
@@ -21,7 +23,7 @@ impl DesktopRuntime {
     /// generation's session, so an improved server reaches the very next pass
     /// instead of locking the Chat out (`snapshot_freezer`, "Existing Chat
     /// continuation"). A tool the server no longer advertises is a missing
-    /// capability, so it still fails closed.
+    /// capability, so it produces a warning and is omitted from this pass.
     pub(super) fn restore_frozen_mcp(
         &mut self,
         context: &FrozenChatExecutionContextV1,
@@ -30,34 +32,38 @@ impl DesktopRuntime {
             return Ok(RestoredFrozenMcpV1 {
                 manifests: context.mcp_manifests.values().cloned().collect(),
                 definitions: BTreeMap::new(),
+                warnings: Vec::new(),
+                unavailable: Vec::new(),
             });
         }
         let mut preparations = Vec::new();
+        let mut warnings = Vec::new();
         for frozen in &context.mcp_configurations {
-            let prepared = prepare_mcp_server(&frozen.server, &frozen.credentials)?;
-            let expected = context
-                .mcp_manifests
-                .get(&frozen.server.id)
-                .ok_or("Frozen MCP connection has no matching manifest")?;
-            if prepared.manifest.binding_hash != expected.binding_hash {
-                return Err(format!(
-                    "Frozen MCP connection '{}' changed",
-                    frozen.server.id
-                ));
+            let result = (|| {
+                let prepared = prepare_mcp_server(&frozen.server, &frozen.credentials)?;
+                let expected = context.mcp_manifests.get(&frozen.server.id)
+                    .ok_or("Frozen MCP connection has no matching manifest")?;
+                if prepared.manifest.binding_hash != expected.binding_hash {
+                    return Err(format!("Frozen MCP connection '{}' changed", frozen.server.name));
+                }
+                Ok::<_, String>(McpRunServerPreparationV1 {
+                    manifest: expected.clone(), endpoint: prepared.endpoint,
+                    materialization: materialize_bindings(&mut self.credentials, &prepared.secret_bindings)?,
+                })
+            })();
+            match result {
+                Ok(preparation) => preparations.push(preparation),
+                Err(error) => warnings.push(error),
             }
-            preparations.push(McpRunServerPreparationV1 {
-                manifest: expected.clone(),
-                endpoint: prepared.endpoint,
-                materialization: materialize_bindings(
-                    &mut self.credentials,
-                    &prepared.secret_bindings,
-                )?,
-            });
         }
-        let snapshots = self
-            .pipeline
-            .prepare_mcp_sessions(&context.identity.run_id, &mut preparations)?;
+        let snapshots = if preparations.is_empty() { Vec::new() } else {
+            match self.pipeline.prepare_mcp_sessions(&context.identity.run_id, &mut preparations) {
+                Ok((snapshots, notices)) => { warnings.extend(notices); snapshots },
+                Err(error) => { warnings.push(format!("MCP connections unavailable: {error}")); Vec::new() },
+            }
+        };
         let mut definitions = BTreeMap::new();
+        let mut unavailable = Vec::new();
         for tool in context
             .tools
             .iter()
@@ -67,13 +73,12 @@ impl DesktopRuntime {
             let descriptor = snapshots
                 .iter()
                 .find(|snapshot| snapshot.server_id.as_str() == server)
-                .and_then(|snapshot| snapshot.catalog.tools.iter().find(|tool| tool.name == name))
-                .ok_or_else(|| {
-                    format!(
-                        "MCP tool '{}' is no longer provided by server '{server}'",
-                        tool.tool_id
-                    )
-                })?;
+                .and_then(|snapshot| snapshot.catalog.tools.iter().find(|tool| tool.name == name));
+            let Some(descriptor) = descriptor else {
+                warnings.push(format!("MCP tool '{}' is no longer provided by server '{server}'", tool.tool_id));
+                unavailable.push(tool.tool_id.clone());
+                continue;
+            };
             // The alias is rebuilt from the Chat's own frozen server label, so
             // this build's provider naming reaches the model without letting an
             // echoed server field rename the tool.
@@ -103,6 +108,8 @@ impl DesktopRuntime {
                 .map(|prepared| prepared.manifest)
                 .collect(),
             definitions,
+            warnings,
+            unavailable,
         })
     }
 }

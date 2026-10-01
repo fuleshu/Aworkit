@@ -109,46 +109,69 @@ fn later_catalog_changes_apply_only_to_new_resolutions() {    let (workflow, mut
 }
 
 #[test]
-fn missing_disabled_and_unconfigured_servers_report_actionable_errors() {
+fn unavailable_selections_warn_and_preserve_other_tools() {
     let (workflow, mut settings) = fixture();
-    settings.mcp_servers[0].enabled = false;
-    assert!(
-        expand_server_selections(&workflow, &settings)
-            .unwrap_err()
-            .contains("disabled")
-    );
-    settings.mcp_servers[0].enabled = true;
-    for tool in &mut settings.mcp_servers[0].tools {
-        tool.enabled = false;
+    for state in 0..4 {
+        match state {
+            0 => settings.mcp_servers[0].enabled = false,
+            1 => { settings.mcp_servers[0].enabled = true; for tool in &mut settings.mcp_servers[0].tools { tool.enabled = false; } },
+            2 => settings.mcp_servers[0].tools.clear(),
+            _ => settings.mcp_servers.clear(),
+        }
+        let resolved = expand_server_selections(&workflow, &settings).unwrap();
+        assert_eq!(resolved["nodes"][0]["configuration"]["toolIds"], json!(["tool.todo"]));
+        assert!(!resolved["capabilityWarnings"].as_array().unwrap().is_empty());
+        assert_eq!(resolved["nodes"][1], workflow["nodes"][1]);
     }
-    assert!(
-        expand_server_selections(&workflow, &settings)
-            .unwrap_err()
-            .contains("no enabled functions")
-    );
-    settings.mcp_servers[0].tools.clear();
-    assert!(
-        expand_server_selections(&workflow, &settings)
-            .unwrap_err()
-            .contains("Connect and enable")
-    );
-    settings.mcp_servers.clear();
-    assert!(
-        expand_server_selections(&workflow, &settings)
-            .unwrap_err()
-            .contains("missing")
-    );
 }
 
 #[test]
-fn individual_bindings_and_other_server_prefixes_remain_exact() {
+fn names_resolve_across_computers_and_exports_remove_source_ids() {
+    let (workflow, mut linux) = fixture();
+    linux.mcp_servers[0].id = "mcp.linux-guid".into();
+    let mut original = workflow.clone();
+    original["nodes"][0]["configuration"]["toolIds"] = json!(["tool.todo", "mcp:mcp.linux-guid", "mcp://mcp.linux-guid/read"]);
+    original["nodes"][1]["configuration"]["toolId"] = json!("mcp://mcp.linux-guid/read");
+    original["extension"] = json!({"opaque":"mcp:mcp.linux-guid"});
+    let portable = crate::runtime::workflow_capabilities::portable_document(&original, &linux);
+    assert_eq!(portable["nodes"][0]["configuration"]["toolIds"], json!(["tool.todo", "mcp:Adashi", "mcp://Adashi/read"]));
+    assert_eq!(portable["extension"], original["extension"]);
+    let (_, mut windows) = fixture();
+    windows.mcp_servers[0].id = "mcp.windows-guid".into();
+    let resolved = expand_server_selections(&portable, &windows).unwrap();
+    assert_eq!(resolved["nodes"][0]["configuration"]["toolIds"], json!(["tool.todo", "mcp://mcp.windows-guid/read", "mcp://mcp.windows-guid/write"]));
+    assert_eq!(resolved["nodes"][1]["configuration"]["toolId"], "mcp://mcp.windows-guid/read");
+    assert!(resolved.get("capabilityWarnings").is_none());
+    for name in ["Adashi / α", "Adashi%20X", "Adashi (prod)!*'"] {
+        windows.mcp_servers[0].name = name.into();
+        let named = crate::runtime::workflow_capabilities::portable_document(&resolved, &windows);
+        assert_eq!(expand_server_selections(&named, &windows).unwrap()["nodes"], resolved["nodes"]);
+        let mut group = named.clone();
+        group["nodes"][0]["configuration"]["toolIds"] = json!([format!("mcp:{name}")]);
+        assert!(expand_server_selections(&group, &windows).unwrap().get("capabilityWarnings").is_none());
+    }
+}
+
+#[test]
+fn missing_tools_warn_without_substituting_other_servers() {
     let (mut workflow, settings) = fixture();
-    workflow["nodes"][0]["configuration"]["toolIds"] =
-        json!(["mcp://adashi/read", "mcp://adashi.other/write"]);
-    assert_eq!(
-        expand_server_selections(&workflow, &settings).unwrap(),
-        workflow
-    );
+    workflow["nodes"][0]["configuration"]["toolIds"] = json!(["mcp://Adashi/read", "mcp://adashi.other/write", "mcp://Adashi/missing", "tool.todo"]);
+    let resolved = expand_server_selections(&workflow, &settings).unwrap();
+    assert_eq!(resolved["nodes"][0]["configuration"]["toolIds"], json!(["mcp://adashi/read", "tool.todo"]));
+    assert_eq!(resolved["capabilityWarnings"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn missing_builtin_and_live_mcp_definitions_do_not_abort_freeze() {
+    let (_, settings) = fixture();
+    let mut workflow = json!({"nodes":[{"id":"agent","type":"agent","configuration":{"instructions":"Continue the task.","toolIds":["tool.todo", "tool.uninstalled", "mcp://adashi/read"]}}]});
+    let frozen = freeze_graph_bindings(&workflow, &settings, &BTreeMap::new()).unwrap();
+    assert_eq!(frozen.tools.len(), 1);
+    assert_eq!(frozen.warnings.len(), 2);
+    for warning in frozen.warnings { crate::runtime::workflow_capabilities::warn(&mut workflow, warning); }
+    crate::runtime::workflow_capabilities::retain_available(&mut workflow, &frozen.tools.iter().map(|t| t.tool_id.clone()).collect::<Vec<_>>());
+    assert_eq!(workflow["nodes"][0]["configuration"]["toolIds"], json!(["tool.todo"]));
+    assert_eq!(workflow["nodes"][0]["configuration"]["instructions"], "Continue the task.");
 }
 
 #[test]

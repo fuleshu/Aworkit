@@ -57,17 +57,17 @@ pub(super) fn preview_mcp_definitions(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
 ) -> Result<BTreeMap<String, DiscoveredMcpDefinition>, String> {
-    graph_mcp_tool_ids(workflow).into_iter().map(|id| {
-        let (server_id, name) = split_mcp_capability(&id).map_err(|error| error.to_string())?;
+    Ok(graph_mcp_tool_ids(workflow).into_iter().filter_map(|id| {
+        let (server_id, name) = split_mcp_capability(&id).ok()?;
         let server = settings.mcp_servers.iter().find(|server| server.id == server_id && server.enabled)
-            .ok_or_else(|| format!("MCP server '{server_id}' is missing or disabled in Settings"))?;
+            ?;
         let tool = server.tools.iter().find(|tool| tool.name == name && tool.enabled)
-            .ok_or_else(|| format!("MCP tool '{id}' is missing or disabled; discover and enable it in Settings → MCP"))?;
-        Ok((id.clone(), DiscoveredMcpDefinition {
+            ?;
+        Some((id.clone(), DiscoveredMcpDefinition {
             definition: ModelToolDefinitionV1 { capability_id: id.clone(), name: mcp_provider_name(server_id, &server.name, name),
                 description: if tool.description.is_empty() { format!("Call MCP tool '{name}'.") } else { tool.description.clone() },
                 input_schema: tool.input_schema.clone() },
             annotations: tool.annotations.clone(),
         }))
-    }).collect()
+    }).collect())
 }

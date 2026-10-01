@@ -46,6 +46,10 @@ const summary = (
 });
 
 describe("subagent catalog projection", () => {
+  it("preserves external child identity in live events and saved summaries", () => {
+    expect(subagentCatalog([child(1, {childId:"child.external",kind:"external",status:"completed",finalText:"CODEX_NATIVE_OK"})])[0]).toMatchObject({kind:"external",status:"completed"});
+    expect(fromSubagentSummary(summary({kind:"external",status:"completed",running:false}))).toMatchObject({kind:"external",status:"completed"});
+  });
   it("folds the newest lifecycle fact per child and ignores malformed facts", () => {
     const catalog = subagentCatalog([
       child(1, { childId: "child.a", kind: "fresh", status: "running", task: "Research VR", modelTurns: 0 }),

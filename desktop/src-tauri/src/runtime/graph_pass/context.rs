@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// Preparation facts are a runtime context layer, never rewritten instructions.
+pub(super) fn capability_notice(node: &CompiledGraphNodeV1) -> Option<String> {
+    (!node.capability_warnings.is_empty()).then(|| format!(
+        "Workflow capability warnings (continue with available tools):\n{}",
+        node.capability_warnings.join("\n")
+    ))
+}
+
 /// Planning cannot invoke tools. Describe the first reachable Agents' real
 /// tool sets so it can plan their work without inventing discovery functions.
 /// Stop at Agent and turn boundaries; unrelated branches are not advertised.
@@ -74,6 +82,7 @@ pub(super) fn agent_messages(
     {
         sections.push(instructions.to_owned());
     }
+    if let Some(notice) = capability_notice(node) { sections.push(notice); }
     if node
         .tool_bindings
         .iter()
@@ -241,6 +250,7 @@ mod tests {
     #[test]
     fn inventory_stops_at_agents_and_turn_boundaries_and_excludes_unrelated_nodes() {
         let node = |id: &str, kind: &str| CompiledGraphNodeV1 {
+            capability_warnings: Vec::new(),
             id: id.into(),
             node_type: kind.into(),
             label: id.into(),

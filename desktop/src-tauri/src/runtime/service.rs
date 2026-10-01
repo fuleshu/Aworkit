@@ -6,6 +6,9 @@ mod current_configuration;
 mod steering;
 mod mcp_definitions;
 mod mcp_selection;
+mod mcp_discovery;
+mod workflow_tools;
+use workflow_tools::freeze_graph_bindings;
 mod snapshot_page;
 pub use snapshot_page::ChatFeedReader;
 mod tool_plugins;
@@ -193,7 +196,7 @@ trait WorkflowPipelinePort: Send + Sync {
         &self,
         _run_id: &StableId,
         _servers: &mut [McpRunServerPreparationV1],
-    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+    ) -> Result<(Vec<McpCapabilitySnapshotV1>, Vec<String>), String> {
         Err("MCP session preparation is not available from this pipeline".into())
     }
 
@@ -295,7 +298,7 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
         &self,
         run_id: &StableId,
         servers: &mut [McpRunServerPreparationV1],
-    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+    ) -> Result<(Vec<McpCapabilitySnapshotV1>, Vec<String>), String> {
         WorkflowExecutionPipeline::prepare_mcp_sessions(self, run_id, servers)
     }
 
@@ -1233,6 +1236,7 @@ impl DesktopRuntime {
         };
         execution_request.tools = request_tool_bindings(pass_tools)?;
         let mcp = self.restore_frozen_mcp(context)?;
+        execution_request.tools.retain(|tool| !mcp.unavailable.contains(&tool.capability_id));
         // The Chat keeps the MCP capabilities it holds; each tool's interface is
         // whatever the reconnected session advertises, so an edited server
         // reaches this pass instead of rejecting the Chat over changed metadata.
@@ -1247,6 +1251,8 @@ impl DesktopRuntime {
             Some(pass) => pass.document.clone(),
             None => context.workflow_snapshot.clone(),
         };
+        for warning in mcp.warnings { super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning); }
+        super::workflow_capabilities::retain_available(&mut execution_request.workflow_snapshot, &execution_request.tools.iter().map(|t| t.capability_id.clone()).collect::<Vec<_>>());
         // One outer graph execution is brokered. Agent-internal provider and
         // tool calls are telemetry, not termination budgets. The authority
         // deadline fields carry the pipeline's no-aggregate-deadline sentinel;
@@ -1962,93 +1968,7 @@ impl DesktopRuntime {
         )?;
         workflow.document =
             mcp_selection::expand_server_selections(&workflow.document, self.documents.settings())?;
-        // MCP resolution: every mcp:// tool id must name an enabled saved MCP
-        // server whose exact manifest is opened, credential-staged, and
-        // discovered at freeze. The discovery snapshot supplies the exact
-        // model-facing definition; sessions then open on demand per Run.
-        let mut mcp_definitions = BTreeMap::new();
-        let mut mcp_manifests = BTreeMap::new();
-        let mcp_ids = graph_mcp_tool_ids(&workflow.document);
-        if !mcp_ids.is_empty() {
-            let settings = self.documents.settings().clone();
-            let credentials = settings.credentials.clone();
-            let mut preparations = Vec::new();
-            let mut resolved_servers = BTreeSet::new();
-            for capability_id in mcp_ids {
-                let (server_id, _tool) =
-                    split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
-                let server = settings
-                        .mcp_servers
-                        .iter()
-                        .find(|server| server.id == server_id)
-                        .ok_or_else(|| {
-                            format!(
-                                "workflow binds MCP server '{server_id}' which is not installed in saved Settings"
-                            )
-                        })?;
-                if !server.enabled {
-                    return Err(format!(
-                        "workflow binds MCP server '{server_id}' which is disabled in saved Settings"
-                    ));
-                }
-                if !resolved_servers.contains(server_id) {
-                    let prepared = prepare_mcp_server(server, &credentials)?;
-                    let materialization =
-                        materialize_bindings(&mut self.credentials, &prepared.secret_bindings)?;
-                    preparations.push(McpRunServerPreparationV1 {
-                        manifest: prepared.manifest.clone(),
-                        endpoint: prepared.endpoint.clone(),
-                        materialization,
-                    });
-                    resolved_servers.insert(server_id.to_owned());
-                }
-            }
-            let snapshots = self
-                .pipeline
-                .prepare_mcp_sessions(&identity.run_id, &mut preparations)?;
-            for preparation in &preparations {
-                mcp_manifests.insert(
-                    preparation.manifest.server_id.to_string(),
-                    preparation.manifest.clone(),
-                );
-            }
-            for capability_id in graph_mcp_tool_ids(&workflow.document) {
-                let (server_id, tool) =
-                    split_mcp_capability(&capability_id).map_err(|error| error.to_string())?;
-                let snapshot = snapshots
-                    .iter()
-                    .find(|snapshot| snapshot.server_id.as_str() == server_id)
-                    .ok_or_else(|| format!("MCP server '{server_id}' has no discovery snapshot"))?;
-                let descriptor = snapshot
-                    .catalog
-                    .tools
-                    .iter()
-                    .find(|descriptor| descriptor.name == tool)
-                    .ok_or_else(|| {
-                        format!("MCP server '{server_id}' did not discover tool '{tool}'")
-                    })?;
-                // The frozen alias leads with the configured server name so the
-                // model can re-identify its tools; an unconfigured server id is
-                // its own fallback label.
-                let server_label = self
-                    .documents
-                    .settings()
-                    .mcp_servers
-                    .iter()
-                    .find(|server| server.id == server_id)
-                    .map(|server| server.name.clone())
-                    .unwrap_or_else(|| mcp_fallback_label(server_id));
-                mcp_definitions.insert(
-                    capability_id.clone(),
-                    DiscoveredMcpDefinition::from_descriptor(
-                        &capability_id,
-                        server_id,
-                        &server_label,
-                        descriptor,
-                    ),
-                );
-            }
-        }
+        let (mcp_definitions, mcp_manifests) = self.discover_workflow_mcp(&mut workflow.document, &identity.run_id);
         // v1 model resolution: every referenced tier must resolve to the same
         // provider/model binding so the single frozen secret lease covers the
         // whole pass.
@@ -2092,6 +2012,8 @@ impl DesktopRuntime {
             self.documents.settings(),
             &mcp_definitions,
         )?;
+        for warning in &agent.warnings { super::workflow_capabilities::warn(&mut workflow.document, warning.clone()); }
+        super::workflow_capabilities::retain_available(&mut workflow.document, &agent.tools.iter().map(|t| t.tool_id.clone()).collect::<Vec<_>>());
         validate_model_capabilities(
             &resolved.provider,
             &resolved.model,
@@ -3848,14 +3770,10 @@ fn validate_credential_metadata_update(
     Ok(())
 }
 
-struct FrozenWorkflowAgentV1 {
-    run_deadline_millis: u64,
-    tools: Vec<FrozenToolBindingV1>,
-}
 
 /// Freezes one installed, enabled built-in capability through the same path a
-/// first-input freeze uses. A capability that is missing or disabled fails
-/// closed: an edit can bind a tool the user enabled, never invent one.
+/// first-input freeze uses. The caller reports unavailable capabilities as
+/// warnings; an edit can bind an enabled tool, never invent one.
 fn freeze_builtin_tool(
     tool_id: &str,
     settings: &SettingsConfigurationV2,
@@ -3935,101 +3853,6 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
     ids
 }
 
-fn freeze_graph_bindings(
-    workflow: &Value,
-    settings: &SettingsConfigurationV2,
-    mcp_definitions: &BTreeMap<String, DiscoveredMcpDefinition>,
-) -> Result<FrozenWorkflowAgentV1, String> {
-    let nodes = workflow
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "workflow nodes are missing".to_owned())?;
-    let mut seen = BTreeSet::new();
-    let mut tools = Vec::new();
-    for node in nodes {
-        let node_id = node
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "workflow node id is missing".to_owned())?;
-        let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
-        let configuration = node.get("configuration").and_then(Value::as_object);
-        let tool_ids: Vec<String> = match node_type {
-            "agent" => configuration
-                .and_then(|config| config.get("toolIds"))
-                .and_then(Value::as_array)
-                .map(|ids| {
-                    ids.iter()
-                        .map(|id| id.as_str().map(str::to_owned))
-                        .collect::<Option<Vec<_>>>()
-                })
-                .ok_or_else(|| format!("workflow node '{node_id}' toolIds must be an array"))?
-                .unwrap_or_default(),
-            "tool" => configuration
-                .and_then(|config| config.get("toolId"))
-                .and_then(Value::as_str)
-                .map(|tool_id| vec![tool_id.to_owned()])
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        for tool_id in tool_ids {
-            if !seen.insert(tool_id.clone()) {
-                continue;
-            }
-            if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
-                let discovered = mcp_definitions.get(&tool_id).ok_or_else(|| {
-                    format!("workflow MCP tool '{tool_id}' has no frozen definition")
-                })?;
-                let definition = discovered.definition.clone();
-                let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
-                let configured_server = settings
-                    .mcp_servers
-                    .iter()
-                    .find(|server| server.id == server_id);
-                let saved_tool = configured_server
-                    .and_then(|server| server.tools.iter().find(|entry| entry.name == tool));
-                if saved_tool.is_some_and(|entry| !entry.enabled) {
-                    return Err(format!("MCP tool '{tool_id}' is disabled in Settings"));
-                }
-                // Descriptions already travel in the frozen tool definition. Only
-                // explicitly configured instructions belong in the system prompt.
-                let options = saved_tool
-                    .map(|entry| entry.options.clone())
-                    .unwrap_or_default();
-                // The alias leads with the configured server name so the model can
-                // re-identify its tools; a server without a usable name falls back
-                // to its own id.
-                let label = configured_server
-                    .map(|server| server.name.clone())
-                    .unwrap_or_else(|| mcp_fallback_label(server_id));
-                let snapshot = BuiltInToolConfigurationV2 {
-                    options,
-                    id: tool_id.clone(),
-                    name: mcp_provider_name(server_id, &label, tool),
-                    enabled: true,
-                    requires_project: false,
-                    credential_bindings: Vec::new(),
-                    configuration: discovered.configuration(server_id, tool)?,
-                };
-                let tool_hash = canonical_hash(&snapshot)?;
-                tools.push(FrozenToolBindingV1 {
-                    tool_id,
-                    tool_hash,
-                    tool_snapshot: snapshot,
-                    credentials: Vec::new(),
-                    definition: Some(definition),
-                });
-                continue;
-            }
-            tools.push(freeze_builtin_tool(&tool_id, settings)?);
-        }
-    }
-    Ok(FrozenWorkflowAgentV1 {
-        // Preserve the durable field for old Chat records without deriving
-        // execution behavior from the removed Agent timeoutSeconds setting.
-        run_deadline_millis: DEFAULT_MODEL_CALL_TIMEOUT_SECONDS.saturating_mul(1_000),
-        tools,
-    })
-}
 
 /// Maps one pass's frozen tool bindings into the request shape the pipeline
 /// consumes. Options and credential metadata travel with the binding; the
@@ -5637,25 +5460,20 @@ mod tests {
     }
 
     #[test]
-    fn project_file_tools_fail_before_provider_when_disabled() {
+    fn disabled_project_tools_warn_and_allow_the_provider_to_continue() {
         let disabled_root = TempDir::new().unwrap();
         let workspace = TempDir::new().unwrap();
         let disabled_provider = Arc::new(FixtureProvider::new());
         let mut disabled = runtime(&disabled_root, disabled_provider.clone());
         configure_project_read_workflow(&mut disabled, Some(workspace.path()), false);
-        let error = disabled
+        let receipt = disabled
             .command(project_tool_start("chat.tool.disabled", "read notes.txt"))
-            .unwrap_err();
-        assert!(error.contains("disabled in saved Settings"), "{error}");
-        assert_eq!(disabled_provider.calls.load(Ordering::SeqCst), 0);
-        assert!(
-            disabled_provider
-                .execution_requests
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(disabled.snapshot(0).unwrap().version, 0);
+            .unwrap();
+        assert!(receipt.accepted);
+        assert_eq!(disabled_provider.calls.load(Ordering::SeqCst), 1);
+        let requests = disabled_provider.execution_requests.lock().unwrap();
+        assert!(requests[0].tools.is_empty());
+        assert!(requests[0].workflow_snapshot["capabilityWarnings"].to_string().contains("disabled in saved Settings"));
     }
 
     #[test]
@@ -7099,12 +6917,7 @@ mod tests {
                 settings,
             })
             .unwrap();
-        assert!(
-            runtime
-                .workflow_start_disabled_reason()
-                .unwrap()
-                .contains("disabled")
-        );
+        assert_eq!(runtime.workflow_start_disabled_reason(), None);
     }
 
     #[test]

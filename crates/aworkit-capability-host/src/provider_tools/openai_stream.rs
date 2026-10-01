@@ -43,6 +43,7 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
     let mut line = String::new();
     let mut data = Vec::new();
     let mut state = StreamState::default();
+    let mut keepalive_reported = false;
     loop {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
@@ -84,8 +85,17 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
             }
         } else if let Some(value) = field.strip_prefix("data:") {
             data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
-        } else if !field.starts_with(':')
-            && !field.starts_with("event:")
+        } else if field.starts_with(':') {
+            // Providers can queue a request while sending only SSE keepalives.
+            // Surface that evidence once without copying untrusted comment text
+            // or turning a long queue into an unbounded stream of status cards.
+            if !keepalive_reported {
+                emit(ModelToolEventV1::Progress {
+                    text: "Provider connection is active; waiting for its response.\n".into(),
+                })?;
+                keepalive_reported = true;
+            }
+        } else if !field.starts_with("event:")
             && !field.starts_with("id:")
             && !field.starts_with("retry:")
         {
@@ -419,6 +429,33 @@ mod tests {
     }
 
     struct TimedOutReader;
+
+    #[test]
+    fn keepalives_report_waiting_once_and_do_not_prevent_completion() {
+        let stream = concat!(
+            ": keep-alive\n\n: private provider comment\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Ready\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mut events = Vec::new();
+        consume_openai_stream(
+            io::Cursor::new(stream),
+            4096,
+            &[],
+            "openai.fixture",
+            &CancellationToken::default(),
+            &mut |event| { events.push(event); Ok(()) },
+        ).expect("keepalive stream completes");
+        let progress = events.iter().filter_map(|event| match event {
+            ModelToolEventV1::Progress { text } => Some(text.as_str()),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(progress, ["Provider connection is active; waiting for its response.\n"]);
+        assert!(events.iter().any(|event| matches!(event,
+            ModelToolEventV1::AssistantOutput { text } if text == "Ready")));
+    }
 
     impl Read for TimedOutReader {
         fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {

@@ -239,17 +239,17 @@ impl WorkflowPipelinePort for QuestionPipeline {
         &self,
         run_id: &StableId,
         servers: &mut [McpRunServerPreparationV1],
-    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+    ) -> Result<(Vec<McpCapabilitySnapshotV1>, Vec<String>), String> {
         self.mcp_preparations
             .lock()
             .unwrap()
             .push(run_id.as_str().to_owned());
         let tool_name = self.mcp_tool_name.lock().unwrap().clone();
         let input_schema = self.mcp_input_schema.lock().unwrap().clone();
-        Ok(servers
+        Ok((servers
             .iter()
             .map(|server| frozen_mcp_snapshot(&server.manifest, &tool_name, &input_schema))
-            .collect())
+            .collect(), Vec::new()))
     }
 
     fn validate_question_target(
@@ -384,7 +384,7 @@ fn configure_mcp_chat(core: &mut DesktopRuntime) {
         auto_connect: false,
         plugin: None,
         transport: IntegrationTransportV2::Stdio {
-            command: "/bin/sh".into(),
+            command: "fixture-mcp".into(),
             args: vec![],
             cwd: None,
             env: vec![],
@@ -522,17 +522,19 @@ fn a_changed_mcp_tool_interface_is_adopted_for_the_chat() {
 }
 
 /// A tool the server no longer advertises is a missing capability, not metadata
-/// drift, so it still fails closed with an accurate reason.
+/// drift: it warns and leaves other capabilities available.
 #[test]
-fn an_mcp_tool_the_server_no_longer_provides_still_fails_closed() {
+fn an_mcp_tool_the_server_no_longer_provides_warns_and_continues() {
     let root = TempDir::new().unwrap();
     let (mut core, pipeline, frozen, _) = started_mcp_chat(&root);
     *pipeline.mcp_tool_name.lock().unwrap() = "echo.renamed".into();
 
-    let error = core
+    let restored = core
         .restore_frozen_mcp(&frozen.context)
-        .expect_err("a vanished MCP tool must block execution");
-    assert!(error.contains("no longer provided"), "{error}");
+        .expect("a vanished MCP tool must not block execution");
+    assert!(restored.warnings.iter().any(|w| w.contains("no longer provided")));
+    assert_eq!(restored.unavailable.len(), 1);
+    assert!(restored.definitions.is_empty());
 }
 
 /// The whole point: after the server changes, the next pass of the same Chat is

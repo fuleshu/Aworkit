@@ -146,6 +146,9 @@ pub(crate) fn probe_tool_with_api_key(
                 ))
             })(),
             "tool.subagent" => probe_subagent_tool(&request.tool),
+            "tool.subagent_codex" | "tool.subagent_claude_code" => {
+                probe_external_subagent_tool(&request.tool)
+            }
             "tool.web_search" => probe_web_search_tool(&request.tool, api_key),
             "tool.web_fetch" | "tool.web_extract" => probe_web_fetch_tool(&request.tool),
             _ => Err(format!(
@@ -252,6 +255,21 @@ fn probe_subagent_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, Str
             "{} executes bounded child loops on the frozen model gateway; no external adapter is required.",
             tool.name
         ),
+    ))
+}
+
+/// Probe the installed delegation bridge without starting an external agent.
+/// The external-agent Settings connection test owns executable and login checks.
+fn probe_external_subagent_tool(tool: &BuiltInToolConfigurationV2) -> Result<(String, String), String> {
+    tool.validate_implemented_contract()?;
+    let adapter = if tool.id == "tool.subagent_codex" {
+        "codex_app_server"
+    } else {
+        "claude_code"
+    };
+    Ok((
+        adapter.into(),
+        "External-agent delegation adapter is installed. Use Check & connect in External agents to verify the configured executable and connection.".into(),
     ))
 }
 
@@ -649,6 +667,28 @@ mod tests {
         });
         assert!(subagent_result.ok, "{}", subagent_result.message);
         assert_eq!(subagent_result.adapter, "run-local-subagent");
+        for (id, adapter) in [
+            ("tool.subagent_codex", "codex_app_server"),
+            ("tool.subagent_claude_code", "claude_code"),
+        ] {
+            let manifest = super::super::tool_registry::native_tool(id).expect("native adapter");
+            let result = probe_tool(ToolProbeRequestV2 {
+                tool: BuiltInToolConfigurationV2 {
+                    options: Default::default(),
+                    id: id.into(),
+                    name: id.into(),
+                    enabled: true,
+                    requires_project: manifest.requires_project,
+                    credential_bindings: Vec::new(),
+                    configuration: manifest.configuration.clone(),
+                },
+                project: None,
+                draft_fingerprint: format!("draft.{id}"),
+            });
+            assert!(result.ok, "{id}: {}", result.message);
+            assert_eq!(result.adapter, adapter);
+            assert!(result.message.contains("Check & connect"));
+        }
         // An unknown tool id still fails explicitly.
         let unknown = probe_tool(ToolProbeRequestV2 {
             tool: file_tool("tool.unknown"),

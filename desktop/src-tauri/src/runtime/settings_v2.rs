@@ -3770,7 +3770,12 @@ mod tests {
     fn the_desktop_editor_command_is_validated_as_launchable_or_absent() {
         let mut settings = configured();
         settings.validate().expect("no editor is valid");
-        for accepted in ["code", "/usr/bin/code", "  code  "] {
+        let absolute_editor = if cfg!(windows) {
+            r"C:\Program Files\Microsoft VS Code\Code.exe"
+        } else {
+            "/usr/bin/code"
+        };
+        for accepted in ["code", absolute_editor, "  code  "] {
             settings.desktop.editor = Some(accepted.to_owned());
             settings
                 .validate()

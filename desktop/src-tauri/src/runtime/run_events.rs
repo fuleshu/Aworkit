@@ -104,6 +104,17 @@ impl RunEventStream {
     ) -> Result<super::semantic_events::SharedEvents, String> {
         self.committer.committed_events_shared()
     }
+    /// Durable status for unavailable capabilities, shared by normal execution
+    /// and approval recovery so both native paths expose the same warning.
+    pub(crate) fn capability_warnings(&self, workflow: &Value) -> Result<(), String> {
+        if let Some(warnings) = workflow.get("capabilityWarnings").and_then(Value::as_array) {
+            for warning in warnings {
+                self.context_event("workflow.capability-warning", json!({"message":warning,"status":"warning"}))?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn context_event(
         &self,
         kind: &str,

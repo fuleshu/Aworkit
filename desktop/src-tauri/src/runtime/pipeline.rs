@@ -964,6 +964,8 @@ impl WorkflowExecutionPipeline {
         run_events
             .ensure_healthy()
             .map_err(WorkflowPipelineError::Store)?;
+        run_events.capability_warnings(&prepared.worker_proposal.payload["config"]["workflow"])
+            .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway = Arc::new(
             FrozenModelGateway::new(
@@ -1189,11 +1191,12 @@ impl WorkflowExecutionPipeline {
         &self,
         run_id: &StableId,
         servers: &mut [McpRunServerPreparationV1],
-    ) -> Result<Vec<McpCapabilitySnapshotV1>, String> {
+    ) -> Result<(Vec<McpCapabilitySnapshotV1>, Vec<String>), String> {
         self.file_tool_authority
             .mcp
             .prepare_production_run(run_id, servers)?;
         let mut snapshots = Vec::with_capacity(servers.len());
+        let mut warnings = Vec::new();
         for server in servers {
             // This service-owned preparation is attested for the actual live
             // host generation, not the one-shot Settings probe generation.
@@ -1201,10 +1204,13 @@ impl WorkflowExecutionPipeline {
             let snapshot = self
                 .file_tool_authority
                 .mcp
-                .open_frozen(run_id, &server.manifest)?;
-            snapshots.push(snapshot);
+                .open_frozen(run_id, &server.manifest);
+            match snapshot {
+                Ok(snapshot) => snapshots.push(snapshot),
+                Err(error) => warnings.push(format!("MCP server '{}' is unavailable: {error}", server.manifest.server_id)),
+            }
         }
-        Ok(snapshots)
+        Ok((snapshots, warnings))
     }
 
     fn prepare_pending_leases(
@@ -2346,6 +2352,8 @@ impl AdmittedInvocationDispatcherV1 for ModelInvocationDispatcher {
         run_events
             .ensure_healthy()
             .map_err(WorkflowPipelineError::Store)?;
+        run_events.capability_warnings(&envelope.payload["config"]["workflow"])
+            .map_err(WorkflowPipelineError::Store)?;
         let model_observer = Arc::new(ModelRunEventObserver::new(run_events.clone()));
         let gateway = Arc::new(
             FrozenModelGateway::new(
@@ -3314,28 +3322,15 @@ fn compile_graph_snapshot(
                 )
             }
             "tool" => {
-                let tool_id = configuration
-                    .get("toolId")
-                    .and_then(Value::as_str)
+                let tool_id = configuration.get("toolId").and_then(Value::as_str)
                     .ok_or_else(|| invalid_workflow("tool node has no toolId"))?;
-                let binding = tool_bindings
-                    .iter()
-                    .find(|binding| binding.capability_id == tool_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        invalid_workflow("tool node binds a tool with no frozen native binding")
-                    })?;
-                (
-                    WorkerExecutorKindV1::Brokered,
-                    Some(stable(
-                        if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
-                            &binding.internal_id
-                        } else {
-                            &binding.capability_id
-                        },
-                    )?),
-                    vec![binding],
-                )
+                if let Some(binding) = tool_bindings.iter().find(|binding| binding.capability_id == tool_id).cloned() {
+                    (WorkerExecutorKindV1::Brokered,
+                     Some(stable(if binding.capability_id.starts_with(MCP_CAPABILITY_PREFIX) { &binding.internal_id } else { &binding.capability_id })?),
+                     vec![binding])
+                } else {
+                    (WorkerExecutorKindV1::Pure, None, Vec::new())
+                }
             }
             "external_agent" => {
                 let tool_id = configuration
@@ -3350,17 +3345,12 @@ fn compile_graph_snapshot(
                 let binding = tool_bindings
                     .iter()
                     .find(|binding| binding.capability_id == tool_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        invalid_workflow(
-                            "external agent node binds a tool with no frozen native binding",
-                        )
-                    })?;
-                (
+                    .cloned();
+                if let Some(binding) = binding { (
                     WorkerExecutorKindV1::Brokered,
                     Some(stable(&binding.capability_id)?),
                     vec![binding],
-                )
+                ) } else { (WorkerExecutorKindV1::Pure, None, Vec::new()) }
             }
             other => {
                 return Err(invalid_workflow(&format!(
@@ -5713,6 +5703,23 @@ mod tests {
             .expect("input completion activity");
         assert_eq!(input.input, output.output);
         assert!(input.input.as_ref().is_some_and(Value::is_string));
+    }
+
+    #[test]
+    fn unavailable_tool_node_reports_a_result_and_reaches_downstream_agent() {
+        let root = TempDir::new().unwrap();
+        let (pipeline, _, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+        let mut request = graph_request(metadata);
+        request.workflow_snapshot["nodes"].as_array_mut().unwrap().push(json!({"id":"missing.1","label":"Unavailable tool","type":"tool","configuration":{"toolId":"tool.uninstalled"}}));
+        let edges = request.workflow_snapshot["edges"].as_array_mut().unwrap();
+        edges.iter_mut().find(|e| e["id"] == "e2").unwrap()["target"] = json!("missing.1");
+        edges.push(json!({"id":"e2b","source":"missing.1","target":"agent.1"}));
+        request.workflow_snapshot["capabilityWarnings"] = json!(["Tool 'tool.uninstalled' is unavailable"]);
+        let result = pipeline.execute(request).unwrap();
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert!(result.node_activity.iter().any(|a| a.node_id == "missing.1" && a.output.as_ref().is_some_and(|v| v["isError"] == true)));
+        assert!(result.node_activity.iter().any(|a| a.node_id == "agent.1" && a.status == "completed"));
+        assert!(pipeline.event_committer.committed_events().unwrap().iter().any(|e| e.kind == "workflow.capability-warning"));
     }
 
     #[test]

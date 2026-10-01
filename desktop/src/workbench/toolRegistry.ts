@@ -33,7 +33,7 @@ export function selectableTools(settings: { readonly tools: readonly BuiltInTool
   return [
     ...settings.tools.filter(tool => tool.enabled).map(tool => ({ value: tool.id, label: tool.name })),
     ...settings.mcpServers.filter(server => server.enabled).flatMap(server => (server.tools ?? [])
-      .filter(tool => tool.enabled).map(tool => ({ value: `mcp://${server.id}/${tool.name}`, label: `${server.name} · ${tool.name}` }))),
+      .filter(tool => tool.enabled).map(tool => ({ value: `mcp://${encodeURIComponent(server.name)}/${tool.name}`, label: `${server.name} · ${tool.name}` }))),
   ];
 }
 

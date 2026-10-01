@@ -1,74 +1,106 @@
-//! Resolve Agent-level MCP server selections before freezing a Chat.
-//! Saved workflows keep `mcp:<server>`; execution snapshots contain exact tools.
+//! Resolve portable MCP names to exact local tool identities for one pass.
 use super::*;
+use crate::runtime::workflow_capabilities::{server, warn};
 
 pub(super) fn expand_server_selections(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
 ) -> Result<Value, String> {
     let mut resolved = workflow.clone();
-    let Some(nodes) = resolved.get_mut("nodes").and_then(Value::as_array_mut) else {
-        return Err("workflow nodes are missing".into());
-    };
+    let mut warnings = Vec::new();
+    let nodes = resolved
+        .get_mut("nodes")
+        .and_then(Value::as_array_mut)
+        .ok_or("workflow nodes are missing")?;
     for node in nodes {
-        if node.get("type").and_then(Value::as_str) != Some("agent") {
-            continue;
-        }
-        let Some(ids) = node
-            .get_mut("configuration")
-            .and_then(|config| config.get_mut("toolIds"))
-            .and_then(Value::as_array_mut)
-        else {
-            continue; // The executable catalog validator reports malformed nodes.
-        };
-        let mut expanded = Vec::new();
-        let mut seen = BTreeSet::new();
-        for id in ids.iter() {
-            let id = id.as_str().ok_or("Agent tool selections must be strings")?;
-            let candidates = if id.starts_with("mcp:") && !id.starts_with(MCP_CAPABILITY_PREFIX) {
-                let server_id = &id[4..];
-                let server = settings
-                    .mcp_servers
-                    .iter()
-                    .find(|server| server.id == server_id)
-                    .ok_or_else(|| format!("MCP server '{server_id}' is missing from Settings"))?;
-                if !server.enabled {
-                    return Err(format!(
-                        "MCP server '{}' is disabled in Settings → MCP",
-                        server.name
-                    ));
+        let kind = node
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if kind == "agent" {
+            if let Some(ids) = node
+                .get_mut("configuration")
+                .and_then(|c| c.get_mut("toolIds"))
+                .and_then(Value::as_array_mut)
+            {
+                let mut expanded = Vec::new();
+                for id in ids.iter() {
+                    let id = id.as_str().ok_or("Agent tool selections must be strings")?;
+                    match resolve(id, settings) {
+                        Ok(candidates) => {
+                            for candidate in candidates {
+                                if !expanded.contains(&json!(candidate)) {
+                                    expanded.push(json!(candidate));
+                                }
+                            }
+                        }
+                        Err(warning) => warnings.push(warning),
+                    }
                 }
-                if server.tools.is_empty() {
-                    return Err(format!(
-                        "MCP server '{}' needs setup. Connect and enable it in Settings → MCP",
-                        server.name
-                    ));
-                }
-                let tools: Vec<_> = server
-                    .tools
-                    .iter()
-                    .filter(|tool| tool.enabled)
-                    .map(|tool| format!("mcp://{server_id}/{}", tool.name))
-                    .collect();
-                if tools.is_empty() {
-                    return Err(format!(
-                        "MCP server '{}' has no enabled functions in Settings → MCP",
-                        server.name
-                    ));
-                }
-                tools
-            } else {
-                vec![id.to_owned()]
-            };
-            for candidate in candidates {
-                if seen.insert(candidate.clone()) {
-                    expanded.push(Value::String(candidate));
+                *ids = expanded;
+            }
+        } else if kind == "tool" {
+            if let Some(id) = node
+                .get_mut("configuration")
+                .and_then(|c| c.get_mut("toolId"))
+            {
+                if let Some(text) = id.as_str() {
+                    match resolve(text, settings) {
+                        Ok(ids) if ids.len() == 1 => *id = json!(ids[0]),
+                        Ok(_) => warnings
+                            .push(format!("Tool node requires an individual tool: '{text}'")),
+                        Err(warning) => warnings.push(warning),
+                    }
                 }
             }
         }
-        *ids = expanded;
+    }
+    for warning in warnings {
+        warn(&mut resolved, warning);
     }
     Ok(resolved)
+}
+
+fn resolve(id: &str, settings: &SettingsConfigurationV2) -> Result<Vec<String>, String> {
+    if !id.starts_with("mcp:") {
+        return Ok(vec![id.into()]);
+    }
+    let (name, tool) = if id.starts_with(MCP_CAPABILITY_PREFIX) {
+        let (name, tool) = split_mcp_capability(id)?;
+        (name, Some(tool))
+    } else {
+        (&id[4..], None)
+    };
+    let server = server(settings, name, tool.is_some())?;
+    if !server.enabled {
+        return Err(format!(
+            "MCP server '{}' is disabled in Settings → MCP",
+            server.name
+        ));
+    }
+    if let Some(tool) = tool {
+        if !server.tools.iter().any(|t| t.name == tool && t.enabled) {
+            return Err(format!(
+                "MCP tool '{}/{tool}' is missing or disabled in Settings → MCP",
+                server.name
+            ));
+        }
+        return Ok(vec![format!("mcp://{}/{tool}", server.id)]);
+    }
+    let ids: Vec<_> = server
+        .tools
+        .iter()
+        .filter(|t| t.enabled)
+        .map(|t| format!("mcp://{}/{}", server.id, t.name))
+        .collect();
+    if ids.is_empty() {
+        return Err(format!(
+            "MCP server '{}' has no enabled functions; connect and enable it in Settings → MCP",
+            server.name
+        ));
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]

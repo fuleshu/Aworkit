@@ -3,6 +3,7 @@ import { useProjectedNotification } from "../notifications/NotificationContext";
 import { useNotificationMessage } from "../notifications/useNotificationMessage";
 import type { SettingsV2Snapshot } from "./configuration";
 import { createSettingsV2CorePort } from "./settingsV2Port";
+import { portableMcpDocument } from "./mcpReferences";
 import {
   createWorkflowCorePort,
   nextWorkbenchCommandId,
@@ -481,7 +482,7 @@ export function WorkflowEditorScreen({
     setError(null);
     setNotice(null);
     try {
-      const contents = JSON.stringify(editor.document, null, 2);
+      const contents = JSON.stringify(portableMcpDocument(editor.document, settings?.settings.mcpServers ?? []), null, 2);
       const first = await files.writeDocument({
         path,
         contents,

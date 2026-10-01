@@ -6,6 +6,10 @@ import {
 import type { RuntimeEvent } from "./corePort";
 
 describe("canonical semantic timeline projection", () => {
+  it("shows unavailable capabilities as warning status with the actionable message", () => {
+    const items = projectSemanticTimeline([event(1, "workflow.capability-warning", { message: "MCP server 'Adashi' is missing from Settings" })]);
+    expect(items[0]).toMatchObject({ title: "Unavailable capability", status: "warning", body: "MCP server 'Adashi' is missing from Settings" });
+  });
   it("closes a question on a legacy stop without closing a later question", () => {
     const items = projectSemanticTimeline([
       event(1, "question.asked", { questionId: "old", prompt: "Old question" }),

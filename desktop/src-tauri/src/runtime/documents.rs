@@ -319,6 +319,7 @@ impl CanonicalDocuments {
         expected_version: u64,
         workflow: Value,
     ) -> Result<u64, String> {
+        let workflow = super::workflow_capabilities::portable_document(&workflow, self.settings());
         let state = self.workflows.get(workflow_id).ok_or_else(|| {
             format!("workflow '{workflow_id}' does not exist in the workflow library")
         })?;
@@ -425,6 +426,7 @@ impl CanonicalDocuments {
         name: &str,
         document: Value,
     ) -> Result<(String, u64), String> {
+        let document = super::workflow_capabilities::portable_document(&document, self.settings());
         validate_workflow_name(name)?;
         self.require_unused_workflow_name(name, None)?;
         if document.get("schemaVersion").and_then(Value::as_u64)
@@ -1712,11 +1714,6 @@ fn validate_agent_configuration(
                     "workflow node '{node_id}' agent toolIds must reference tool.<name> or mcp:<server> bindings"
                 )
             })?;
-        if !builtin_tool_binding_ids().contains(tool_id) && !tool_id.starts_with("mcp:") {
-            return Err(format!(
-                "workflow node '{node_id}' agent binds tool '{tool_id}' with no installed executor in this build"
-            ));
-        }
         if !seen.insert(tool_id) {
             return Err(format!(
                 "workflow node '{node_id}' agent toolIds must be unique"
@@ -1959,11 +1956,6 @@ fn validate_tool_configuration(
     if !super::tool_registry::is_callable(tool_id) {
         return Err(format!(
             "workflow node '{node_id}': automatic context plugins belong on Agent nodes; select Workspace Instructions in the Agent tool selector"
-        ));
-    }
-    if !builtin_tool_binding_ids().contains(tool_id) && !tool_id.starts_with("mcp:") {
-        return Err(format!(
-            "workflow node '{node_id}' tool binds '{tool_id}' with no installed executor in this build"
         ));
     }
     if config

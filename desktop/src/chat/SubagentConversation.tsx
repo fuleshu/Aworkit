@@ -42,7 +42,7 @@ export function SubagentConversation({
       <header className="subagent-child-header">
         <div>
           <p className="eyebrow">
-            {entry.kind === "fork" ? "FORKED SUBAGENT" : "SUBAGENT"}
+            {entry.kind === "fork" ? "FORKED SUBAGENT" : entry.kind === "external" ? "EXTERNAL AGENT" : "SUBAGENT"}
             {entry.depth > 1 ? ` · DEPTH ${entry.depth}` : ""}
           </p>
           <h2 title={task.length > 0 ? task : entry.childId}>

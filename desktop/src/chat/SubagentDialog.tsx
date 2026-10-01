@@ -127,7 +127,7 @@ export function SubagentDialog({
                   <span className="subagent-list-main">
                     <strong>{subagentTabLabel(entry)}</strong>
                     <small>
-                      {entry.kind === "fork" ? "Forked" : "Fresh"} ·{" "}
+                      {entry.kind === "fork" ? "Forked" : entry.kind === "external" ? "External" : "Fresh"} ·{" "}
                       {entry.modelTurns} turn(s) · {entry.toolCalls} tool call(s)
                     </small>
                   </span>
