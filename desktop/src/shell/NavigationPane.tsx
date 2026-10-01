@@ -188,10 +188,6 @@ export function NavigationPane({
           collapsed={collapsed}
           onClick={() => onNavigate("settings")}
         />
-        <div className="account-row">
-          <span className="avatar">L</span>
-          {!collapsed && <span>Local desktop</span>}
-        </div>
       </div>
     </nav>
   );
