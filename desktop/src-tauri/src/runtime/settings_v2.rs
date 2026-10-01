@@ -1471,37 +1471,6 @@ pub(crate) fn validate_extension_lifecycle_update(
     Ok(())
 }
 
-/// Prevents the generic full-document Settings command from claiming that an
-/// executor is active when this build has no execution path for it. Existing
-/// `true` values are treated as legacy metadata: they remain round-trippable
-/// and may be cleared, but generic Settings cannot create a new enablement.
-pub(crate) fn validate_unavailable_executor_enablement_update(
-    previous: &SettingsConfigurationV2,
-    next: &SettingsConfigurationV2,
-) -> Result<(), String> {
-    let previous_agent_enabled = previous
-        .external_agents
-        .iter()
-        .map(|agent| (agent.id.as_str(), agent.enabled))
-        .collect::<BTreeMap<_, _>>();
-    for agent in &next.external_agents {
-        if agent.enabled
-            && !previous_agent_enabled
-                .get(agent.id.as_str())
-                .copied()
-                .unwrap_or(false)
-        {
-            return Err(format!(
-                "external agent '{}' cannot be enabled through generic Settings; external-agent execution is unavailable in this build",
-                agent.id
-            ));
-        }
-    }
-
-    // Native tool plugins and MCP have supported execution paths.
-    Ok(())
-}
-
 fn protected_extension_facts(extension: &ExtensionConfigurationV2) -> BTreeMap<&str, &Value> {
     const PROTECTED_KEYS: [&str; 12] = [
         "aworkitVersionRequirement",
@@ -4234,90 +4203,23 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_executors_cannot_gain_enabled_state_through_generic_settings() {
-        let mut previous = SettingsConfigurationV2::default();
-        previous.mcp_servers.push(McpServerConfigurationV2 {
-            plugin: None,
-            tools: Vec::new(),
-            id: "mcp.fixture".into(),
-            name: "Fixture MCP".into(),
-            enabled: false,
-            auto_connect: false,
-            transport: IntegrationTransportV2::Http {
-                url: "https://mcp.example/rpc".into(),
-                headers: Vec::new(),
-            },
-        });
-        previous
+    fn generic_settings_may_enable_an_external_agent_target() {
+        // External-agent execution is installed, so a connected target is a
+        // normal enablement rather than an unavailable-executor claim. The
+        // readiness check gates it in the UI; native Settings accepts it.
+        let mut settings = SettingsConfigurationV2::default();
+        settings
             .external_agents
             .push(codex_agent("codex", ["app-server"], None));
+        settings.external_agents[0].enabled = true;
+        settings
+            .validate()
+            .expect("an enabled external-agent target is valid");
 
-        let mut enabled_mcp = previous.clone();
-        enabled_mcp.mcp_servers[0].enabled = true;
-        validate_unavailable_executor_enablement_update(&previous, &enabled_mcp)
-            .expect("MCP tools have a supported execution path");
-
-        let mut enabled_agent = previous.clone();
-        enabled_agent.external_agents[0].enabled = true;
-        assert!(
-            validate_unavailable_executor_enablement_update(&previous, &enabled_agent)
-                .unwrap_err()
-                .contains("external agent 'agent.codex' cannot be enabled")
-        );
-
-        // Every built-in tool now has an installed v1 executor, so generic
-        // Settings may enable any of them.
-        for tool_id in builtin_tool_ids() {
-            let mut enabled_tool = previous.clone();
-            enabled_tool
-                .tools
-                .iter_mut()
-                .find(|tool| tool.id == tool_id)
-                .expect("built-in tool")
-                .enabled = true;
-            validate_unavailable_executor_enablement_update(&previous, &enabled_tool)
-                .unwrap_or_else(|error| panic!("enabling {tool_id} failed: {error}"));
-        }
-
-        let mut supported_tools = previous.clone();
-        for tool_id in ["tool.files.read", "tool.files.search"] {
-            supported_tools
-                .tools
-                .iter_mut()
-                .find(|tool| tool.id == tool_id)
-                .expect("built-in tool")
-                .enabled = true;
-        }
-        validate_unavailable_executor_enablement_update(&previous, &supported_tools)
-            .expect("implemented read-only tools may be enabled");
-
-        let mut legacy_enabled = previous.clone();
-        legacy_enabled.mcp_servers[0].enabled = true;
-        legacy_enabled.external_agents[0].enabled = true;
-        for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
-            legacy_enabled
-                .tools
-                .iter_mut()
-                .find(|tool| tool.id == tool_id)
-                .expect("built-in tool")
-                .enabled = true;
-        }
-        validate_unavailable_executor_enablement_update(&legacy_enabled, &legacy_enabled)
-            .expect("preexisting enabled metadata remains lossless");
-
-        let mut disabled_legacy = legacy_enabled.clone();
-        disabled_legacy.mcp_servers[0].enabled = false;
-        disabled_legacy.external_agents[0].enabled = false;
-        for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
-            disabled_legacy
-                .tools
-                .iter_mut()
-                .find(|tool| tool.id == tool_id)
-                .expect("built-in tool")
-                .enabled = false;
-        }
-        validate_unavailable_executor_enablement_update(&legacy_enabled, &disabled_legacy)
-            .expect("preexisting enabled metadata may be cleared");
+        settings.external_agents[0].enabled = false;
+        settings
+            .validate()
+            .expect("a disconnected external-agent target is valid");
     }
 
     #[test]

@@ -590,9 +590,9 @@ describe("Settings v2 workbench", () => {
       expect(screen.queryByText(/Connection successful/)).toBeNull();
 
       await user.click(screen.getByRole("button", { name: /External agents/ }));
-      await user.click(screen.getByRole("button", { name: "Add agent" }));
+      await user.click(screen.getByRole("button", { name: "Add Codex" }));
       const agentCard = screen
-        .getByRole("heading", { name: "External agent" })
+        .getByRole("heading", { name: "Codex" })
         .closest("section");
       expect(agentCard).not.toBeNull();
       // Delegation defaults: the policy, model and effort a target fixes for
@@ -622,7 +622,7 @@ describe("Settings v2 workbench", () => {
       expect(
         within(agentCard!).queryByRole("option", { name: "Streamable HTTP" }),
       ).toBeNull();
-      await user.click(screen.getByRole("button", { name: "Start handshake" }));
+      await user.click(screen.getByRole("button", { name: "Check & connect" }));
       expect(
         await screen.findByText(/Codex App Server handshake completed/),
       ).toBeVisible();
@@ -828,7 +828,7 @@ describe("Settings v2 workbench", () => {
       }),
     );
     expect(screen.queryByText("progress: saved true (ignored)")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Start handshake" }));
+    await user.click(screen.getByRole("button", { name: "Check & connect" }));
     expect(await screen.findByText("progress: yes")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Save configuration" }));
@@ -867,8 +867,8 @@ describe("Settings v2 workbench", () => {
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
       );
-      await user.click(screen.getByRole("button", { name: "Add agent" }));
-      await user.click(screen.getByRole("button", { name: "Start handshake" }));
+      await user.click(screen.getByRole("button", { name: "Add Codex" }));
+      await user.click(screen.getByRole("button", { name: "Check & connect" }));
       expect(
         await screen.findByText(/Codex App Server handshake completed/),
       ).toBeVisible();
@@ -910,7 +910,7 @@ describe("Settings v2 workbench", () => {
       await user.click(
         within(navigation).getByRole("button", { name: /External agents/ }),
       );
-      await user.click(screen.getByRole("button", { name: "Start handshake" }));
+      await user.click(screen.getByRole("button", { name: "Check & connect" }));
       await screen.findByText(/Codex App Server handshake completed/);
 
       await user.click(
@@ -1568,13 +1568,15 @@ describe("Settings v2 workbench", () => {
     expect(port.mcpProbes).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: /External agents/ }));
-    await user.click(screen.getByRole("button", { name: "Add agent" }));
+    await user.click(screen.getByRole("button", { name: "Add Codex" }));
+    // Enablement is real now: readiness is checked by Check & connect, and the
+    // old non-executable flag no longer exists.
     expect(
-      screen.getByRole("checkbox", {
+      screen.queryByRole("checkbox", {
         name: "Workflow execution not available",
       }),
-    ).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Start handshake" }));
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Check & connect" }));
     expect(
       await screen.findByText(/Codex App Server handshake completed/),
     ).toBeVisible();

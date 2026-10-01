@@ -38,20 +38,18 @@ export function ToolConfigurationEditor({ tool, configuration = true, externalAg
       // A target selector offers only the configured targets of this tool's own
       // product, and keeps an empty value meaning "the first enabled target".
       if (field.kind === "external_agent_target") {
-        const selected = typeof value === "string" ? value : "";
-        const selectedIsConfigured = targets.some(({ id }) => id === selected);
-        return <label className="settings-field" htmlFor={`${tool.id}-${field.key}`} key={field.key}>{field.label}
-          <select id={`${tool.id}-${field.key}`} title={field.help} disabled={field.readOnly}
-            value={selectedIsConfigured ? selected : ""}
-            onChange={e => update(e.target.value)}>
-            <option value="">First enabled target</option>
-            {targets.map(agent => <option key={agent.id} value={agent.id}>{agent.name}{agent.enabled ? "" : " (disabled)"}</option>)}
-            {selected !== "" && !selectedIsConfigured &&
-              <option value={selected}>{selected} (not configured)</option>}
-          </select>
-          {targets.length === 0 &&
-            <small className="config-help">No target of this product is configured yet; add one under External agents.</small>}
-        </label>;
+        // The connection is made once under External agents; this row only
+        // reports readiness rather than offering a second place to configure it.
+        const connected = targets.filter((agent) => agent.enabled);
+        const product =
+          tool.id === "tool.subagent_claude_code" ? "Claude Code" : "Codex";
+        return (
+          <p className="config-help" key={field.key}>
+            {connected.length > 0
+              ? `Connected: ${connected.map((agent) => agent.name).join(", ")}.`
+              : `Not connected yet. Connect ${product} under External agents.`}
+          </p>
+        );
       }
       return field.kind === "boolean"
         ? <label className="settings-field settings-checkbox-field" htmlFor={`${tool.id}-${field.key}`} key={field.key}>

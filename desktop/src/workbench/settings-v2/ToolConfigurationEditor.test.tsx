@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToolConfigurationEditor } from "./ToolConfigurationEditor";
 import type {
@@ -50,7 +50,7 @@ describe("tool configuration fields", () => {
   });
 });
 
-describe("external delegation target selector", () => {
+describe("external delegation readiness", () => {
   const delegation: BuiltInToolConfiguration = {
     id: "tool.subagent_codex",
     name: "Codex agent delegation",
@@ -87,7 +87,7 @@ describe("external delegation target selector", () => {
     configuration: {},
   });
 
-  it("offers only this product's configured targets and keeps the default meaning", () => {
+  it("reports only this product's connected target and offers no second setup", () => {
     render(
       <ToolConfigurationEditor
         externalAgents={[
@@ -99,32 +99,24 @@ describe("external delegation target selector", () => {
         onChange={vi.fn()}
       />,
     );
-    const selector = screen.getByLabelText("External agent target");
-    expect(within(selector).getByRole("option", { name: "First enabled target" })).toBeVisible();
-    expect(within(selector).getByRole("option", { name: "Work Codex" })).toBeVisible();
-    expect(within(selector).getByRole("option", { name: "Spare Codex (disabled)" })).toBeVisible();
-    // The other product's target is never offered here.
-    expect(within(selector).queryByRole("option", { name: "Claude" })).toBeNull();
+    // The connection is made under External agents; the tool row only reports it.
+    expect(screen.getByText("Connected: Work Codex.")).toBeVisible();
+    expect(screen.queryByLabelText("External agent target")).toBeNull();
+    expect(screen.queryByRole("option", { name: "Claude" })).toBeNull();
   });
 
-  it("keeps an unconfigured saved target visible and reports an empty product", () => {
-    const { rerender } = render(
+  it("says the product is not connected when it is not ready", () => {
+    render(
       <ToolConfigurationEditor
-        externalAgents={[target("agent.one", "codex_app_server", true, "Work Codex")]}
-        tool={{ ...delegation, configuration: { targetId: "agent.gone" } }}
-        onChange={vi.fn()}
-      />,
-    );
-    const selector = screen.getByLabelText("External agent target");
-    expect(within(selector).getByRole("option", { name: "agent.gone (not configured)" })).toBeVisible();
-
-    rerender(
-      <ToolConfigurationEditor
-        externalAgents={[target("agent.claude", "claude_code", true, "Claude")]}
+        externalAgents={[
+          target("agent.claude", "claude_code", true, "Claude"),
+        ]}
         tool={delegation}
         onChange={vi.fn()}
       />,
     );
-    expect(screen.getByText(/No target of this product is configured/)).toBeVisible();
+    expect(
+      screen.getByText(/Not connected yet\. Connect Codex under External agents\./),
+    ).toBeVisible();
   });
 });

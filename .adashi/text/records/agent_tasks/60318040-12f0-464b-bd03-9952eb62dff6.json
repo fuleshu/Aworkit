@@ -1,0 +1,45 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-01 15:12:42",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Separate, low-priority topic split out of #172. Later feature.\n",
+        "\n",
+        "## Goal\n",
+        "\n",
+        "Define, in Adashi design, how **app-like UI extensions** work: plugins that can contribute user interface (panels, views, dialogs, custom tool result rendering), not just tools.\n",
+        "\n",
+        "## To decide and record\n",
+        "\n",
+        "- What UI an extension may contribute and where it may render (workbench panel, chat-adjacent, settings, tool result).\n",
+        "- Host API/surface exposed to extension UI and how it is versioned.\n",
+        "- Isolation model: webview sandbox, CSP, origin/permission model, what the UI can and cannot reach (no direct broker/secrets).\n",
+        "- Packaging, discovery, enablement, versioning and trust consistent with the tool-plugin work in #172.\n",
+        "- Permission/consent UX for UI that can act on the user's behalf.\n",
+        "- Failure/degraded behavior and safe disable/removal.\n",
+        "- Relationship to the MCP Apps / UI-resource direction (an MCP server returning UI) versus Aworkit-native UI contributions.\n",
+        "\n",
+        "## Relationship\n",
+        "\n",
+        "Lowest priority; depends on the plugin packaging/trust model from #172."
+      ]
+    },
+    "id": 41206047392,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Design app-like UI extensions that contribute interface surface (later feature, low priority)",
+    "updated_at": "2026-10-01 15:12:42"
+  },
+  "deleted": false,
+  "identity": "60318040-12f0-464b-bd03-9952eb62dff6",
+  "schemaVersion": 1
+}

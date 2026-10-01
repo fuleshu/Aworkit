@@ -1,0 +1,55 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-01 15:24:36",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Separate topic split out of #172. Lower priority. Skills are **not** plugins — a skill is procedural knowledge, not a capability.\n",
+        "\n",
+        "## Current state\n",
+        "\n",
+        "Aworkit already implements the skill **runtime**: portable `SKILL.md` (YAML `name` + `description` + markdown body), discovery precedence (`.aworkit/skills`, `.agents/skills`, configured absolute folders, `~/.aworkit/skills`, `~/.agents/skills`, optional bundled folder), the `tool.skill` binding, a `skill` model tool with `<skill_content>` wrappers and progressive catalog scanning, and a `/name` user gesture that loads a user-invocable skill once. See `docs/skills-and-memory.md`.\n",
+        "\n",
+        "## Gap\n",
+        "\n",
+        "The product surface around skills is thin: there is no first-class way to install/manage skills, see what was discovered and what was rejected, refresh discovery, or invoke a skill with an obvious gesture. Codex uses `$`/`/skills`, ChatGPT uses `@`; Aworkit currently uses `/name`.\n",
+        "\n",
+        "## Deliverables\n",
+        "\n",
+        "1. **Skills management surface**: list discovered skills with name/description/source folder; show malformed/duplicate/rejected entries and why; show which root each came from.\n",
+        "2. **Install/import**: bring a skill folder in from an external location (copy into a chosen skills root), and an **Open skills folder** action; a **Refresh** action.\n",
+        "3. **Invocation**: a clear, discoverable gesture in the composer (keep `/name`, consider an `@`-style picker) that lists available user-invocable skills; respect `disable-model-invocation` and `user-invocable` controls.\n",
+        "4. **Configuration**: expose the additional absolute skill folders, bundled folder, and default-discovery toggle with plain-language labels.\n",
+        "5. **Docs**: extend the skills documentation into user-facing guidance and an agent-facing authoring skill.\n",
+        "\n",
+        "## Out of scope\n",
+        "\n",
+        "Plugin packaging/configuration (that is #172). Skills do not gain runtime capabilities; helper scripts continue to run through the agent's existing authorized tools.\n",
+        "\n",
+        "## Acceptance criteria\n",
+        "\n",
+        "- A skill dropped into a skills root is discovered after Refresh and shows its name/description/source.\n",
+        "- A malformed skill is reported with a reason instead of silently skipped.\n",
+        "- A user can invoke a listed skill from the composer and see it applied once to that input.\n",
+        "- Model-only and user-only invocation controls are respected.\n",
+        "- No user-facing jargon; labels are understandable without knowing the skill file format."
+      ]
+    },
+    "id": 45262334790,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Skills: install/manage surface and clear invocation gesture for the existing SKILL.md system (lower priority)",
+    "updated_at": "2026-10-01 15:24:36"
+  },
+  "deleted": false,
+  "identity": "cd2892db-1d3f-45b1-82ea-82f5134689d2",
+  "schemaVersion": 1
+}

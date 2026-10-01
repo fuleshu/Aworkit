@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-10-01 15:38:47",
+    "design_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "id": 21504188361,
+    "sort_order": 1,
+    "target_type": "element",
+    "task_id": {
+      "ref": "ca607eb8-840d-43a9-be8c-88ab70aafb4b"
+    }
+  },
+  "deleted": false,
+  "identity": "8e62bb2f-df58-4667-a9d4-4a36382a1b80",
+  "schemaVersion": 1
+}

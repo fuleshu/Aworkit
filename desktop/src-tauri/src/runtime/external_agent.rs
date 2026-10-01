@@ -254,6 +254,9 @@ pub(crate) fn probe_external_agent(
     }
     StableId::parse(request.agent.id.clone())
         .map_err(|_| "external-agent id is invalid".to_owned())?;
+    if request.agent.adapter == "claude_code" {
+        return probe_claude_code(&request);
+    }
     if request.agent.adapter != "codex_app_server" {
         return Err(format!(
             "external-agent adapter '{}' has no installed native handshake",
@@ -337,6 +340,55 @@ pub(crate) fn probe_external_agent(
             "Codex App Server handshake completed; {auth}; {} model(s) available.",
             result.model_ids.len()
         ),
+    })
+}
+
+/// Readiness for a configured Claude Code CLI target.
+///
+/// The installed Claude Code adapter has no non-interactive handshake that
+/// reports account state without starting a task, so readiness proves that the
+/// executable resolves, the transport is the one the adapter supports, and the
+/// fixed non-interactive policy is expressible. Sign-in is verified by the
+/// product itself on the first delegation, and the message says so rather than
+/// claiming it.
+fn probe_claude_code(
+    request: &ExternalAgentProbeRequestV2,
+) -> Result<ExternalAgentProbeResultV2, String> {
+    let started = Instant::now();
+    let (command, arguments, working_directory) = match &request.agent.connection {
+        IntegrationTransportV2::Stdio {
+            command,
+            args,
+            cwd,
+            env: _,
+        } => (command, args, cwd),
+        IntegrationTransportV2::Http { .. } => {
+            return Err("Claude Code requires its stable local STDIO transport".into());
+        }
+    };
+    for argument in arguments {
+        validate_secret_free_stdio_argument("external-agent STDIO argument", argument)?;
+    }
+    let executable = resolve_executable(command)?;
+    if let Some(directory) = working_directory.as_deref() {
+        resolve_directory(directory)?;
+    }
+    let latency_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    Ok(ExternalAgentProbeResultV2 {
+        agent_id: request.agent.id.clone(),
+        protocol: "claude-code-cli".into(),
+        server_identity: Some(executable.display().to_string()),
+        platform_family: Some(env::consts::FAMILY.to_owned()),
+        platform_os: Some(env::consts::OS.to_owned()),
+        account_type: None,
+        requires_openai_auth: false,
+        model_ids: Vec::new(),
+        capabilities: ExternalAgentCapabilitiesV2::default(),
+        latency_millis,
+        draft_fingerprint: request.draft_fingerprint.clone(),
+        message:
+            "Claude Code found. Sign-in is verified by Claude Code itself on the first delegation."
+                .into(),
     })
 }
 
@@ -703,5 +755,35 @@ mod tests {
             "app-server".into(),
             "--listen=stdio://".into(),
         ]));
+    }
+
+    #[test]
+    fn a_claude_code_draft_reports_readiness_without_a_handshake() {
+        let request = |agent| ExternalAgentProbeRequestV2 {
+            agent,
+            draft_fingerprint: "draft.fixture".into(),
+        };
+        let ready =
+            probe_claude_code(&request(target("claude_code", false))).expect("Claude resolves");
+        assert_eq!(ready.protocol, "claude-code-cli");
+        assert!(!ready.requires_openai_auth);
+        assert!(ready.message.contains("Claude Code found"), "{}", ready.message);
+
+        let mut missing = target("claude_code", false);
+        missing.connection = IntegrationTransportV2::Stdio {
+            command: "aworkit-missing-claude-fixture".into(),
+            args: Vec::new(),
+            cwd: None,
+            env: Vec::new(),
+        };
+        let error = probe_claude_code(&request(missing)).expect_err("a missing CLI is not ready");
+        assert!(error.contains("was not found"), "{error}");
+
+        let mut http = target("claude_code", false);
+        http.connection = IntegrationTransportV2::Http {
+            url: "https://claude.example/rpc".into(),
+            headers: Vec::new(),
+        };
+        assert!(probe_claude_code(&request(http)).is_err());
     }
 }

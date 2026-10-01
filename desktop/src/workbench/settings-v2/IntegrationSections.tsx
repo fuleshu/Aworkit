@@ -160,57 +160,60 @@ export function ExternalAgentsSection({
   const integrationCredentials = credentials.filter(isIntegrationCredential);
   const [probes, setProbes] = useState<Readonly<Record<string, IntegrationProbeResult>>>({});
   const [probing, setProbing] = useState<string | null>(null);
-  const addAgent = () =>
-    onChange([
-      ...agents,
-      {
-        id: localId("agent"),
-        name: "External agent",
-        adapter: "codex_app_server",
-        enabled: false,
-        connection: {
-          transport: "stdio",
-          command: "codex",
-          args: ["app-server"],
-          cwd: null,
-          env: [],
-        },
-        credentialBindings: [],
-        mcpServerIds: [],
-        capabilities: {
-          progress: false,
-          continuation: false,
-          cancellation: false,
-          approvals: false,
-        },
-        configuration: {},
-        permissionMode: undefined,
-        model: undefined,
-        reasoningEffort: undefined,
-      },
-    ]);
+
+  // A new connection is pre-filled, so the user never types a command, path,
+  // model or credential. Everything optional hides under Advanced.
+  const newAgent = (adapter: string): ExternalAgentConfiguration => ({
+    id: localId("agent"),
+    name: adapter === "claude_code" ? "Claude Code" : "Codex",
+    adapter,
+    enabled: false,
+    connection: {
+      transport: "stdio",
+      command: adapter === "claude_code" ? "claude" : "codex",
+      args: adapter === "claude_code" ? [] : ["app-server"],
+      cwd: null,
+      env: [],
+    },
+    credentialBindings: [],
+    mcpServerIds: [],
+    capabilities: emptyExternalAgentCapabilities(),
+    configuration: {},
+    permissionMode: undefined,
+    model: undefined,
+    reasoningEffort: undefined,
+  });
+  const addAgent = (adapter: string) => onChange([...agents, newAgent(adapter)]);
+
   return (
     <div className="settings-section-stack">
       <div className="section-heading-row">
         <p className="section-intro">
-          Configured targets run as unattended one-shot delegations from the
-          delegation tools and from an External Agent workflow node; Aworkit
-          neither continues nor steers a product session. Authentication stays
-          with the product: sign in once with its own CLI, or export an API key
-          in the environment that launches Aworkit. Handshake reports
-          capabilities for the exact current transport draft, and the result is
-          ephemeral diagnostic evidence, not saved configuration.
+          Connect an app once, then use it two ways: let the assistant call it
+          as a delegation tool, or place an explicit External Agent step in a
+          workflow. Choose the model and thinking on the workflow step, not here.
         </p>
-        <button
-          title="Add an external-agent target: a Codex App Server or Claude Code command that delegations run"
-          type="button"
-          onClick={addAgent}
-        >
-          Add agent
-        </button>
+        <div className="section-actions">
+          <button
+            type="button"
+            title="Add a Codex connection"
+            onClick={() => addAgent("codex_app_server")}
+          >
+            Add Codex
+          </button>
+          <button
+            type="button"
+            title="Add a Claude Code connection"
+            onClick={() => addAgent("claude_code")}
+          >
+            Add Claude Code
+          </button>
+        </div>
       </div>
       {agents.length === 0 ? (
-        <p className="settings-empty">No external agents configured.</p>
+        <p className="settings-empty">
+          No external agents connected. Add Codex or Claude Code to get started.
+        </p>
       ) : (
         <div className="settings-record-list">
           {agents.map((agent, index) => {
@@ -222,310 +225,370 @@ export function ExternalAgentsSection({
               setProbes((current) => withoutRecord(current, agent.id));
               onChange(replaceAt(agents, index, next));
             };
+            const productName =
+              agent.adapter === "claude_code"
+                ? "Claude Code"
+                : agent.adapter === "codex_app_server"
+                  ? "Codex"
+                  : agent.name;
+            const notReady = currentProbe?.ok === false;
             const hasLegacyCapabilityMetadata = Object.values(
               agent.capabilities,
             ).some(Boolean);
-            return (
-            <section className="settings-record" key={agent.id}>
-              <RecordHeading
-                id={agent.id}
-                name={agent.name}
-                onRemove={() => {
-                  setProbes((current) => withoutRecord(current, agent.id));
-                  onChange(removeAt(agents, index));
-                }}
-              />
-              <div className="settings-grid two-columns">
-                <TextField
-                  id={`${agent.id}-name`}
-                  label="Agent name"
-                  title="Name shown for this diagnostic external-agent record; this build cannot select it from a workflow node"
-                  value={agent.name}
-                  onChange={(name) =>
-                    updateAgent({ ...agent, name })
-                  }
-                />
-                <label className="settings-field" htmlFor={`${agent.id}-adapter`}>
-                  Adapter
-                  <select
-                    id={`${agent.id}-adapter`}
-                    title="Lifecycle protocol adapter; Codex App Server is the first rich target and ACP is the generic local path"
-                    value={agent.adapter}
-                    onChange={(event) => {
-                      const adapter = event.target.value;
-                      // A policy the new adapter cannot express is cleared to
-                      // the adapter's own default instead of being kept as an
-                      // unusable saved value.
-                      const modes = EXTERNAL_AGENT_PERMISSION_MODES[adapter] ?? [];
-                      const efforts =
-                        adapter === "claude_code"
-                          ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
-                          : EXTERNAL_AGENT_REASONING_EFFORTS;
-                      updateAgent({
-                        ...agent,
-                        adapter,
-                        permissionMode:
-                          agent.permissionMode !== undefined &&
-                          modes.includes(agent.permissionMode)
-                            ? agent.permissionMode
-                            : undefined,
-                        reasoningEffort:
-                          agent.reasoningEffort !== undefined &&
-                          efforts.includes(agent.reasoningEffort)
-                            ? agent.reasoningEffort
-                            : undefined,
-                      });
-                    }}
-                  >
-                    <option value="codex_app_server">Codex App Server</option>
-                    <option value="claude_code">Claude Code (local CLI)</option>
-                    {agent.adapter !== "codex_app_server" &&
-                      agent.adapter !== "claude_code" && (
-                        <option value={agent.adapter}>
-                          {agent.adapter} (adapter not installed)
-                        </option>
-                      )}
-                  </select>
-                </label>
-              </div>
-              <div className="settings-grid two-columns">
-                <label
-                  className="settings-field"
-                  htmlFor={`${agent.id}-permission-mode`}
-                >
-                  Permission mode
-                  <select
-                    id={`${agent.id}-permission-mode`}
-                    title="Non-interactive policy fixed for every delegation from this target. Native default uses the adapter's own safe default, and delegations never ask a human."
-                    value={agent.permissionMode ?? ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      updateAgent({
-                        ...agent,
-                        ...(value === ""
-                          ? { permissionMode: undefined }
-                          : {
-                              permissionMode: value as ExternalAgentPermissionMode,
-                            }),
-                      });
-                    }}
-                  >
-                    <option value="">Native default</option>
-                    {(EXTERNAL_AGENT_PERMISSION_MODES[agent.adapter] ?? []).map(
-                      (mode) => (
-                        <option key={mode} value={mode}>
-                          {PERMISSION_MODE_LABELS[mode]}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <TextField
-                  id={`${agent.id}-model`}
-                  label="Model"
-                  title="Optional model fixed for every delegation from this target. Empty leaves the product's own native model selection in force."
-                  value={agent.model ?? ""}
-                  onChange={(model) =>
-                    updateAgent({
-                      ...agent,
-                      ...(model.trim() === "" ? { model: undefined } : { model }),
-                    })
-                  }
-                />
-                <label className="settings-field" htmlFor={`${agent.id}-effort`}>
-                  Reasoning effort
-                  <select
-                    id={`${agent.id}-effort`}
-                    title="Optional reasoning effort fixed for every delegation from this target. Native default leaves the product's own selection in force."
-                    value={agent.reasoningEffort ?? ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      updateAgent({
-                        ...agent,
-                        ...(value === ""
-                          ? { reasoningEffort: undefined }
-                          : {
-                              reasoningEffort:
-                                value as (typeof EXTERNAL_AGENT_REASONING_EFFORTS)[number],
-                            }),
-                      });
-                    }}
-                  >
-                    <option value="">Native default</option>
-                    {(agent.adapter === "claude_code"
-                      ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
-                      : EXTERNAL_AGENT_REASONING_EFFORTS
-                    ).map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <Switch
-                id={`${agent.id}-enabled`}
-                label={unavailableExecutionLabel(agent.enabled)}
-                title={unavailableExecutionTitle("External-agent", agent.enabled)}
-                checked={agent.enabled}
-                disabled={!agent.enabled}
-                onChange={(enabled) =>
-                  updateAgent({ ...agent, enabled })
-                }
-              />
-              <ConnectionEditor
-                id={`${agent.id}-connection`}
-                value={agent.connection}
-                credentials={integrationCredentials}
-                allowedTransports={["stdio"]}
-                onChange={(connection) =>
-                  updateAgent({ ...agent, connection })
-                }
-              />
-              <CredentialBindingsEditor
-                id={`${agent.id}-credentials`}
-                label="Adapter credential bindings"
-                bindings={agent.credentialBindings}
-                credentials={integrationCredentials}
-                onChange={(credentialBindings) =>
-                  updateAgent(
-                    {
-                      ...agent,
-                      credentialBindings: [...credentialBindings],
+            const statusLabel = notReady
+              ? "Not ready"
+              : agent.enabled
+                ? "Ready"
+                : "Not connected";
+            const statusTone =
+              agent.enabled && !notReady ? "configured" : "disabled";
+            // Check & connect proves the app is usable, then records the
+            // connection. A failed check leaves it disconnected and shows why.
+            const connect = () => {
+              setProbing(agent.id);
+              void onProbe(agent)
+                .then((result) => {
+                  // Connecting changes `enabled`, so re-key the evidence to the
+                  // connected draft; otherwise the fresh result looks stale.
+                  const next = { ...agent, enabled: result.ok };
+                  onChange(replaceAt(agents, index, next));
+                  setProbes((current) => ({
+                    ...current,
+                    [agent.id]: {
+                      ...result,
+                      draftFingerprint: settingsRecordFingerprint(next),
                     },
-                  )
-                }
-              />
-              <fieldset className="settings-bindings">
-                <legend>MCP forwarding metadata (not consumed)</legend>
-                {mcpServers.map((server) => (
-                  <Switch
-                    key={server.id}
-                    id={`${agent.id}-${server.id}`}
-                    label={server.name}
-                    title="Preserved metadata only: the installed handshake and runtime do not forward MCP servers"
-                    checked={agent.mcpServerIds.includes(server.id)}
-                    disabled
-                    onChange={() => undefined}
-                  />
-                ))}
-                {mcpServers.length === 0 && (
-                  <p className="settings-empty">No MCP servers configured.</p>
-                )}
-                {agent.mcpServerIds.length > 0 && (
-                  <button
-                    title="Remove MCP forwarding metadata that the installed adapter cannot consume"
-                    type="button"
-                    onClick={() =>
-                      updateAgent({ ...agent, mcpServerIds: [] })
-                    }
-                  >
-                    Remove unsupported forwarding metadata
-                  </button>
-                )}
-              </fieldset>
-              {currentProbe?.ok && currentProbe.capabilities !== undefined ? (
-                <div
-                  className="capability-chips"
-                  aria-label="Capabilities from current handshake"
-                >
-                  {Object.entries(currentProbe.capabilities).map(
-                    ([name, supported]) => (
-                      <span
-                        className={`status ${supported ? "configured" : "disabled"}`}
-                        key={name}
-                      >
-                        {name}: {supported ? "yes" : "no"}
-                      </span>
-                    ),
+                  }));
+                })
+                .catch((failure: unknown) => {
+                  const next = { ...agent, enabled: false };
+                  onChange(replaceAt(agents, index, next));
+                  setProbes((current) => ({
+                    ...current,
+                    [agent.id]: {
+                      ok: false,
+                      message:
+                        failure instanceof Error
+                          ? failure.message
+                          : String(failure),
+                      draftFingerprint: settingsRecordFingerprint(next),
+                    },
+                  }));
+                })
+                .finally(() => setProbing(null));
+            };
+            return (
+              <section className="settings-record" key={agent.id}>
+                <RecordHeading
+                  id={agent.id}
+                  name={agent.name}
+                  onRemove={() => {
+                    setProbes((current) => withoutRecord(current, agent.id));
+                    onChange(removeAt(agents, index));
+                  }}
+                />
+                <div className="connection-status">
+                  <span className={`status ${statusTone}`}>{statusLabel}</span>
+                  {currentProbe !== undefined && (
+                    <span className="config-help">{currentProbe.message}</span>
                   )}
                 </div>
-              ) : (
-                <p className="field-warning">
-                  No capabilities have been reported for this exact draft. Run
-                  Start handshake to obtain ephemeral evidence.
-                </p>
-              )}
-              <p className="field-warning">
-                Saved capability booleans are legacy compatibility metadata and
-                are never treated as negotiated evidence.
-              </p>
-              {hasLegacyCapabilityMetadata && (
-                <div className="field-warning" role="alert">
-                  <div
-                    className="capability-chips"
-                    aria-label="Unsupported saved capability metadata"
+                <button
+                  id={`${agent.id}-connect`}
+                  type="button"
+                  disabled={probing === agent.id}
+                  title="Find the app, check that it is usable, and connect it"
+                  onClick={connect}
+                >
+                  {probing === agent.id ? "Checking..." : "Check & connect"}
+                </button>
+                  {currentProbe?.ok && currentProbe.capabilities !== undefined ? (
+                    <div
+                      className="capability-chips"
+                      aria-label="Capabilities from current handshake"
+                    >
+                      {Object.entries(currentProbe.capabilities).map(
+                        ([name, supported]) => (
+                          <span
+                            className={`status ${supported ? "configured" : "disabled"}`}
+                            key={name}
+                          >
+                            {name}: {supported ? "yes" : "no"}
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  ) : (
+                    <p className="field-warning">
+                      No capabilities have been reported for this exact draft.
+                      Run Check &amp; connect to obtain ephemeral evidence.
+                    </p>
+                  )}
+                  <p className="field-warning">
+                    Saved capability booleans are legacy compatibility metadata
+                    and are never treated as negotiated evidence.
+                  </p>
+                  {hasLegacyCapabilityMetadata && (
+                    <div className="field-warning" role="alert">
+                      <div
+                        className="capability-chips"
+                        aria-label="Unsupported saved capability metadata"
+                      >
+                        {Object.entries(agent.capabilities).map(
+                          ([name, supported]) => (
+                            <span className="status disabled" key={name}>
+                              {name}: {supported ? "saved true (ignored)" : "saved false"}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                      <button
+                        id={`${agent.id}-clear-capabilities`}
+                        title="Clear saved capability booleans that are not valid handshake evidence"
+                        type="button"
+                        onClick={() =>
+                          updateAgent({
+                            ...agent,
+                            capabilities: emptyExternalAgentCapabilities(),
+                          })
+                        }
+                      >
+                        Clear unsupported capability metadata
+                      </button>
+                    </div>
+                  )}                {(agent.adapter === "codex_app_server" ||
+                  agent.adapter === "claude_code") && (
+                  <label
+                    className="settings-field"
+                    htmlFor={`${agent.id}-permission`}
                   >
-                    {Object.entries(agent.capabilities).map(
-                      ([name, supported]) => (
-                        <span className="status disabled" key={name}>
-                          {name}: {supported ? "saved true (ignored)" : "saved false"}
-                        </span>
-                      ),
-                    )}
+                    While {productName} works on a delegated task, may it make
+                    changes without asking you?
+                    <select
+                      id={`${agent.id}-permission`}
+                      title="Plain-language permission choice; the exact non-interactive mode is under Advanced."
+                      value={agent.permissionMode ?? ""}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        updateAgent({
+                          ...agent,
+                          ...(value === ""
+                            ? { permissionMode: undefined }
+                            : {
+                                permissionMode:
+                                  value as ExternalAgentPermissionMode,
+                              }),
+                        });
+                      }}
+                    >
+                      <option value="">Product default</option>
+                      {connectionPermissionOptions(agent.adapter).map(
+                        (option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                )}                <details className="settings-record-details">
+                  <summary>Advanced</summary>
+                  <div className="settings-grid two-columns">
+                    <TextField
+                      id={`${agent.id}-name`}
+                      label="Agent name"
+                      title="Name shown for this connection"
+                      value={agent.name}
+                      onChange={(name) => updateAgent({ ...agent, name })}
+                    />
+                    <label
+                      className="settings-field"
+                      htmlFor={`${agent.id}-adapter`}
+                    >
+                      Adapter
+                      <select
+                        id={`${agent.id}-adapter`}
+                        title="Lifecycle protocol adapter; Codex App Server is the first rich target and Claude Code is the local CLI path."
+                        value={agent.adapter}
+                        onChange={(event) => {
+                          const adapter = event.target.value;
+                          // A policy the new adapter cannot express is cleared
+                          // to the adapter's own default instead of being kept.
+                          const modes =
+                            EXTERNAL_AGENT_PERMISSION_MODES[adapter] ?? [];
+                          const efforts =
+                            adapter === "claude_code"
+                              ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
+                              : EXTERNAL_AGENT_REASONING_EFFORTS;
+                          updateAgent({
+                            ...agent,
+                            adapter,
+                            permissionMode:
+                              agent.permissionMode !== undefined &&
+                              modes.includes(agent.permissionMode)
+                                ? agent.permissionMode
+                                : undefined,
+                            reasoningEffort:
+                              agent.reasoningEffort !== undefined &&
+                              efforts.includes(agent.reasoningEffort)
+                                ? agent.reasoningEffort
+                                : undefined,
+                          });
+                        }}
+                      >
+                        <option value="codex_app_server">Codex App Server</option>
+                        <option value="claude_code">
+                          Claude Code (local CLI)
+                        </option>
+                        {agent.adapter !== "codex_app_server" &&
+                          agent.adapter !== "claude_code" && (
+                            <option value={agent.adapter}>
+                              {agent.adapter} (adapter not installed)
+                            </option>
+                          )}
+                      </select>
+                    </label>
+                    <label
+                      className="settings-field"
+                      htmlFor={`${agent.id}-permission-mode`}
+                    >
+                      Permission mode
+                      <select
+                        id={`${agent.id}-permission-mode`}
+                        title="Exact non-interactive policy; the plain question above maps to these values."
+                        value={agent.permissionMode ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          updateAgent({
+                            ...agent,
+                            ...(value === ""
+                              ? { permissionMode: undefined }
+                              : {
+                                  permissionMode:
+                                    value as ExternalAgentPermissionMode,
+                                }),
+                          });
+                        }}
+                      >
+                        <option value="">Product default</option>
+                        {(
+                          EXTERNAL_AGENT_PERMISSION_MODES[agent.adapter] ?? []
+                        ).map((mode) => (
+                          <option key={mode} value={mode}>
+                            {PERMISSION_MODE_LABELS[mode]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <TextField
+                      id={`${agent.id}-model`}
+                      label="Model"
+                      title="Optional default. Leave empty to use the product's own selection; prefer setting the model on the workflow step."
+                      value={agent.model ?? ""}
+                      onChange={(model) =>
+                        updateAgent({
+                          ...agent,
+                          ...(model.trim() === ""
+                            ? { model: undefined }
+                            : { model }),
+                        })
+                      }
+                    />
+                    <label
+                      className="settings-field"
+                      htmlFor={`${agent.id}-effort`}
+                    >
+                      Reasoning effort
+                      <select
+                        id={`${agent.id}-effort`}
+                        title="Optional default reasoning effort. Leave empty to use the product's own selection; prefer setting it on the workflow step."
+                        value={agent.reasoningEffort ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          updateAgent({
+                            ...agent,
+                            ...(value === ""
+                              ? { reasoningEffort: undefined }
+                              : {
+                                  reasoningEffort:
+                                    value as (typeof EXTERNAL_AGENT_REASONING_EFFORTS)[number],
+                                }),
+                          });
+                        }}
+                      >
+                        <option value="">Product default</option>
+                        {(agent.adapter === "claude_code"
+                          ? EXTERNAL_AGENT_CLAUDE_REASONING_EFFORTS
+                          : EXTERNAL_AGENT_REASONING_EFFORTS
+                        ).map((effort) => (
+                          <option key={effort} value={effort}>
+                            {effort}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
-                  <button
-                    id={`${agent.id}-clear-capabilities`}
-                    title="Clear saved capability booleans that are not valid handshake evidence"
-                    type="button"
-                    onClick={() =>
+                  <ConnectionEditor
+                    id={`${agent.id}-connection`}
+                    value={agent.connection}
+                    credentials={integrationCredentials}
+                    allowedTransports={["stdio"]}
+                    onChange={(connection) =>
+                      updateAgent({ ...agent, connection })
+                    }
+                  />
+                  <CredentialBindingsEditor
+                    id={`${agent.id}-credentials`}
+                    label="Credential bindings"
+                    bindings={agent.credentialBindings}
+                    credentials={integrationCredentials}
+                    onChange={(credentialBindings) =>
                       updateAgent({
                         ...agent,
-                        capabilities: emptyExternalAgentCapabilities(),
+                        credentialBindings: [...credentialBindings],
                       })
                     }
-                  >
-                    Clear unsupported capability metadata
-                  </button>
-                </div>
-              )}
-              <ReadOnlyConfiguration
-                label="Adapter configuration (preserved, not consumed)"
-                value={agent.configuration}
-              />
-              {Object.keys(agent.configuration).length > 0 && (
-                <button
-                  title="Clear adapter configuration that the installed Codex handshake does not consume"
-                  type="button"
-                  onClick={() =>
-                    updateAgent({ ...agent, configuration: {} })
-                  }
-                >
-                  Clear unsupported adapter configuration
-                </button>
-              )}
-              <ProbeActions
-                id={agent.id}
-                label="Start handshake"
-                probing={probing === agent.id}
-                result={currentProbe}
-                onProbe={() => {
-                  const requestedFingerprint = settingsRecordFingerprint(agent);
-                  setProbing(agent.id);
-                  void onProbe(agent)
-                    .then((result) =>
-                      setProbes((current) => ({
-                        ...current,
-                        [agent.id]: result,
-                      })),
-                    )
-                    .catch((failure: unknown) =>
-                      setProbes((current) => ({
-                        ...current,
-                        [agent.id]: {
-                          ok: false,
-                          message:
-                            failure instanceof Error
-                              ? failure.message
-                              : String(failure),
-                          draftFingerprint: requestedFingerprint,
-                        },
-                      })),
-                    )
-                    .finally(() => setProbing(null));
-                }}
-              />
-            </section>
+                  />
+                  <fieldset className="settings-bindings">
+                    <legend>MCP forwarding metadata (not consumed)</legend>
+                    {mcpServers.map((server) => (
+                      <Switch
+                        key={server.id}
+                        id={`${agent.id}-${server.id}`}
+                        label={server.name}
+                        title="Preserved metadata only: the installed handshake and runtime do not forward MCP servers"
+                        checked={agent.mcpServerIds.includes(server.id)}
+                        disabled
+                        onChange={() => undefined}
+                      />
+                    ))}
+                    {mcpServers.length === 0 && (
+                      <p className="settings-empty">No MCP servers configured.</p>
+                    )}
+                    {agent.mcpServerIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => updateAgent({ ...agent, mcpServerIds: [] })}
+                      >
+                        Remove unsupported forwarding metadata
+                      </button>
+                    )}
+                  </fieldset>
+
+                  <ReadOnlyConfiguration
+                    label="Adapter configuration (preserved, not consumed)"
+                    value={agent.configuration}
+                  />
+                  {Object.keys(agent.configuration).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => updateAgent({ ...agent, configuration: {} })}
+                    >
+                      Clear unsupported adapter configuration
+                    </button>
+                  )}
+                </details>
+              </section>
             );
           })}
         </div>
@@ -741,42 +804,6 @@ export function ExtensionsSection({
   );
 }
 
-function ProbeActions({
-  id,
-  label,
-  probing,
-  result,
-  onProbe,
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly probing: boolean;
-  readonly result: IntegrationProbeResult | undefined;
-  readonly onProbe: () => void;
-}): React.JSX.Element {
-  return (
-    <div className="provider-actions">
-      <button
-        disabled={probing}
-        title={`${label} using the current unsaved transport draft`}
-        type="button"
-        onClick={onProbe}
-      >
-        {probing ? "Working…" : label}
-      </button>
-      {result !== undefined && (
-        <div className={`provider-detail ${result.ok ? "diagnostic" : "error"}`} role="status">
-          <p>{result.message}</p>
-          {result.details !== undefined && (
-            <ul>{result.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
-          )}
-        </div>
-      )}
-      <span hidden>{id}</span>
-    </div>
-  );
-}
-
 function RecordHeading({
   id,
   name,
@@ -946,4 +973,20 @@ function unavailableExecutionTitle(kind: string, enabled: boolean): string {
   return enabled
     ? `Turn off this legacy enabled flag; ${kind} workflow execution is not installed`
     : `Unavailable: this build has no ${kind.toLowerCase()} workflow executor`;
+}
+
+/** The one plain permission question, mapped to the adapter's own vocabulary. */
+function connectionPermissionOptions(
+  adapter: string,
+): readonly { value: ExternalAgentPermissionMode; label: string }[] {
+  if (adapter === "claude_code") {
+    return [
+      { value: "acceptEdits", label: "Yes, let it work" },
+      { value: "plan", label: "No, look and report only" },
+    ];
+  }
+  return [
+    { value: "never", label: "Yes, let it work" },
+    { value: "approveForMe", label: "Review changes first" },
+  ];
 }

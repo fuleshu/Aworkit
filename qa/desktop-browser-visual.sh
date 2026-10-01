@@ -365,14 +365,15 @@ click_button 'Discover and test'
 wait_for_true 'return document.querySelector("#settings-panel-mcp .provider-detail")?.textContent.includes("browser Preview started no process and made no connection") === true;'
 
 click_settings_section 'External agents'
-click_button 'Add agent'
+click_button 'Add Codex'
 wait_for_true '
-  const execution = [...document.querySelectorAll("#settings-panel-external_agents input[type=checkbox]")]
-    .find((checkbox) => checkbox.parentElement?.textContent.includes("Simple Chat execution not available"));
-  return execution?.disabled === true && execution.checked === false;
+  const panel = document.querySelector("#settings-panel-external_agents");
+  const stale = [...panel.querySelectorAll("*")].some((node) => node.textContent?.includes("Workflow execution not available"));
+  const connect = [...panel.querySelectorAll("button")].some((button) => button.textContent?.includes("Check & connect"));
+  return stale === false && connect === true;
 '
-click_button 'Start handshake'
-wait_for_true 'return document.querySelector("#settings-panel-external_agents .provider-detail")?.textContent.includes("browser Preview started no process") === true;'
+click_button 'Check & connect'
+wait_for_true 'return document.querySelector("#settings-panel-external_agents .connection-status")?.textContent.includes("browser Preview started no process") === true;'
 
 click_settings_section 'Data & sessions'
 webdriver_execute '

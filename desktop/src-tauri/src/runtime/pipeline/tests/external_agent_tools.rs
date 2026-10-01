@@ -6,7 +6,14 @@
 //! answer that returns to the parent model.
 use super::*;
 use crate::runtime::{
-    approvals::ApprovalMode, tool_loop::SUBAGENT_CODEX_CAPABILITY_ID, tool_registry,
+    approvals::ApprovalMode,
+    external_agent::resolve_delegation_target,
+    settings_v2::{
+        ExternalAgentCapabilitiesV2, ExternalAgentConfigurationV2, IntegrationTransportV2,
+        SettingsConfigurationV2,
+    },
+    tool_loop::SUBAGENT_CODEX_CAPABILITY_ID,
+    tool_registry,
 };
 
 /// Serves the parent model: one delegation call, then a final answer.
@@ -156,6 +163,61 @@ fn external_binding(
     }
 }
 
+/// Real saved Settings with exactly one connected Codex target running the fixture.
+fn connected_codex_settings(
+    target: &crate::runtime::tool_loop::ResolvedExternalAgentTargetV1,
+) -> SettingsConfigurationV2 {
+    let mut settings = SettingsConfigurationV2::default();
+    settings
+        .external_agents
+        .push(ExternalAgentConfigurationV2 {
+            id: "agent.connected".into(),
+            name: "Connected Codex".into(),
+            adapter: "codex_app_server".into(),
+            enabled: true,
+            connection: IntegrationTransportV2::Stdio {
+                command: target.executable.clone(),
+                args: target.arguments.clone(),
+                cwd: None,
+                env: Vec::new(),
+            },
+            credential_bindings: Vec::new(),
+            mcp_server_ids: Vec::new(),
+            capabilities: ExternalAgentCapabilitiesV2::default(),
+            configuration: std::collections::BTreeMap::new(),
+            permission_mode: None,
+            model: None,
+            reasoning_effort: None,
+        });
+    settings
+}
+
+/// One delegation binding resolved from real saved Settings, exactly as the
+/// first-input freeze resolves it, instead of a hand-injected target.
+fn connected_binding(
+    capability_id: &str,
+    settings: &SettingsConfigurationV2,
+) -> WorkflowToolBindingV1 {
+    let setting = tool_registry::native_defaults()
+        .into_iter()
+        .find(|tool| tool.id == capability_id)
+        .expect("installed external delegation tool");
+    let mut frozen = tool_registry::freeze_settings(&setting).expect("freezes");
+    let resolved = resolve_delegation_target(capability_id, &frozen.configuration, settings)
+        .expect("the connected target resolves from saved Settings");
+    frozen.configuration.insert(
+        "resolvedTarget".into(),
+        serde_json::to_value(resolved).expect("target"),
+    );
+    WorkflowToolBindingV1 {
+        options: frozen.options,
+        capability_id: capability_id.into(),
+        configuration: serde_json::to_value(frozen.configuration).expect("configuration"),
+        credential_bindings: Vec::new(),
+        definition: None,
+    }
+}
+
 /// A branch workflow: the condition always routes true, so the external-agent
 /// node runs and the Agent node on the false branch stays inactive. The Agent
 /// node keeps the document executable under the native rule that a workflow
@@ -251,6 +313,37 @@ fn an_external_agent_node_runs_one_delegation_and_feeds_the_answer_downstream() 
         requests.lock().unwrap().is_empty(),
         "an external-agent node must not require a parent model turn"
     );
+}
+
+#[test]
+fn a_connected_external_agent_runs_from_saved_settings_and_returns_only_its_answer() {
+    let Some(target) = fixture_target() else {
+        return;
+    };
+    let root = TempDir::new().unwrap();
+    let project = subagent_project(&root);
+    let (mut pipeline, _, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    // The whole point: the target comes from real saved Settings, not from a
+    // hand-injected fixture, so this covers connect -> resolve -> freeze -> run.
+    let settings = connected_codex_settings(&target);
+    let mut request = subagent_request(&pipeline, metadata, &project, &[]);
+    request.approvals.mode = ApprovalMode::FullAccess;
+    request.tools = vec![connected_binding(SUBAGENT_CODEX_CAPABILITY_ID, &settings)];
+    request.workflow_snapshot = external_agent_workflow("tool.subagent_codex", json!({}));
+
+    let result = pipeline
+        .execute(request)
+        .expect("a connected external-agent node executes");
+    assert_eq!(
+        result.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        result.error
+    );
+    assert_eq!(result.tool_calls, 1);
+    assert_eq!(result.model_turns, 0);
+    let text = result.assistant_text.unwrap_or_default();
+    assert!(text.contains("fixture final answer"), "{text}");
 }
 
 #[test]

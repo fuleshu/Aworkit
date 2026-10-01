@@ -91,7 +91,6 @@ use super::{
         ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2,
         SubagentViewPreferenceV1,
         validate_extension_lifecycle_update, validate_http_url,
-        validate_unavailable_executor_enablement_update,
     },
     tool_loop::{
         WorkflowToolBindingV1,
@@ -2830,7 +2829,6 @@ impl DesktopRuntime {
         }
         validate_credential_metadata_update(&previous, &settings)?;
         validate_extension_lifecycle_update(&previous, &settings)?;
-        validate_unavailable_executor_enablement_update(&previous, &settings)?;
         for extension in settings.extensions.iter().filter(|extension| extension.enabled) {
             verify_registered_extension_v2(extension).map_err(|error| {
                 format!(
@@ -7341,7 +7339,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_settings_cannot_enable_unavailable_executors_but_can_clear_legacy_state() {
+    fn generic_settings_enable_installed_executors_and_clear_legacy_state() {
         let root = TempDir::new().unwrap();
         let mut runtime = runtime(&root, Arc::new(FixtureProvider::new()));
 
@@ -7425,15 +7423,18 @@ mod tests {
                 reasoning_effort: None,
 });
         let agent_version = runtime.settings_v2_snapshot().version;
-        let error = runtime
+        let agent_receipt = runtime
             .settings_v2_commit(SettingsV2CommitInput {
-                command_id: "settings.unavailable.enable-agent".into(),
+                command_id: "settings.available.enable-agent".into(),
                 expected_version: agent_version,
                 settings: attempted_agent,
             })
-            .unwrap_err();
-        assert!(error.contains("external agent 'agent.unavailable' cannot be enabled"));
-        assert_eq!(runtime.settings_v2_snapshot().version, agent_version);
+            .expect("a connected external-agent target may be enabled");
+        assert_eq!(agent_receipt.current_version, agent_version + 1);
+        assert!(
+            runtime.settings_v2_snapshot().settings.external_agents[0].enabled,
+            "the enabled external-agent target is saved"
+        );
 
         let mut supported = runtime.settings_v2_snapshot().settings;
         for tool_id in ["tool.files.read", "tool.files.search"] {
