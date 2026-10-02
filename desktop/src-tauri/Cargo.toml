@@ -4,6 +4,7 @@ default-run = "aworkit-desktop"
 version = "0.1.0"
 description = "Aworkit desktop presentation shell"
 edition = "2024"
+license = "Apache-2.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
