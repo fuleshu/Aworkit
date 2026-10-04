@@ -19,11 +19,13 @@ pub(super) struct CurrentPassConfigurationV1 {
 impl DesktopRuntime {
     /// Resolves the current documents for a later pass of the identified Chat.
     ///
-    /// A saved workflow that still exists is the current revision and feeds the
-    /// pass, so a mid-Chat edit reaches the same Chat. A library entry the user
-    /// renamed or deleted after the first input froze it no longer identifies
-    /// that graph; the Chat then keeps the snapshot it froze rather than ending
-    /// or silently adopting a different workflow that happens to reuse the id.
+    /// A saved workflow that still exists **and is still executable** is the
+    /// current revision and feeds the pass, so a mid-Chat edit reaches the same
+    /// Chat. A saved entry this build can no longer run — renamed, deleted,
+    /// edited into a non-executable state, or saved from a read-only schema —
+    /// does not end the Chat: the pass keeps the graph the Chat froze and
+    /// reports a notice, so editing a saved workflow mid-Chat can never block
+    /// every later message.
     ///
     /// Built-in capabilities resolve through the same path as a first-input
     /// freeze, so a tool the user enabled is bound and offered immediately. An
@@ -34,47 +36,64 @@ impl DesktopRuntime {
         context: &FrozenChatExecutionContextV1,
     ) -> Result<CurrentPassConfigurationV1, String> {
         let stored = self.documents.workflow_snapshot_for(&context.workflow_id);
-        let mut workflow = if stored.document.is_null() {
-            // The frozen snapshot was validated when the Chat froze it; every
-            // later pass re-validates it because the frozen record is evidence,
-            // not a trusted input of this process.
-            validate_executable_snapshot(&context.workflow_snapshot).map_err(|error| {
-                format!(
-                    "frozen workflow '{}' is no longer executable: {error}",
-                    context.workflow_id
-                )
-            })?;
-            WorkflowSnapshot {
+        let live_entry_usable = !stored.document.is_null()
+            && stored.editable
+            && self
+                .documents
+                .require_executable_workflow(&context.workflow_id)
+                .is_ok();
+        let mut workflow = if live_entry_usable {
+            stored
+        } else {
+            // The frozen snapshot was validated when the Chat froze it, and it
+            // is the Chat's own committed evidence, so a later pass runs it.
+            // This is checked for a *usable* document, not as an upgrade gate.
+            let mut fallback = WorkflowSnapshot {
                 version: context.workflow_version,
                 document: context.workflow_snapshot.clone(),
                 editable: true,
-            }
-        } else {
-            if !stored.editable {
+                execution_verdict: None,
+            };
+            if let Err(error) = validate_executable_snapshot(&context.workflow_snapshot) {
                 return Err(format!(
-                    "workflow '{}' uses a read-only schema and cannot run",
+                    "frozen workflow '{}' is no longer executable: {error}",
                     context.workflow_id
                 ));
             }
-            self.documents
-                .require_executable_workflow(&context.workflow_id)
-                .map_err(|error| {
-                    format!(
-                        "workflow '{}' is not executable: {error}",
-                        context.workflow_id
-                    )
-                })?;
-            stored
+            let reason = if stored.document.is_null() {
+                format!(
+                    "saved workflow '{}' no longer exists; this pass runs the graph the Chat froze",
+                    context.workflow_id
+                )
+            } else if !stored.editable {
+                format!(
+                    "saved workflow '{}' uses a read-only schema and cannot run; this pass runs the graph the Chat froze",
+                    context.workflow_id
+                )
+            } else {
+                format!(
+                    "saved workflow '{}' is not executable in this build; this pass runs the graph the Chat froze",
+                    context.workflow_id
+                )
+            };
+            super::super::workflow_capabilities::warn(&mut fallback.document, reason);
+            fallback
         };
         workflow.document = mcp_selection::expand_server_selections(
             &workflow.document,
             self.documents.settings(),
-        )?;
+        )
+        .map_err(|error| {
+            format!(
+                "workflow '{}' MCP selections could not be expanded: {error}",
+                context.workflow_id
+            )
+        })?;
         let (tools, warnings) = freeze_current_tools(
             &workflow.document,
             self.documents.settings(),
             &context.tools,
-        )?;
+        );
         for warning in warnings { super::super::workflow_capabilities::warn(&mut workflow.document, warning); }
         super::super::workflow_capabilities::retain_available(&mut workflow.document, &tools.iter().map(|t| t.tool_id.clone()).collect::<Vec<_>>());
         Ok(CurrentPassConfigurationV1 {
@@ -92,20 +111,42 @@ impl DesktopRuntime {
 /// authority a running Chat already holds. A capability the Chat never held
 /// resolves through the same path as a first-input freeze, so it must be
 /// installed and enabled in saved Settings to reach this pass.
-fn freeze_current_tools(
+///
+/// Nothing here ends the pass. A binding shape this build no longer executes and
+/// a capability that is unavailable, disabled or unknown all drop the binding
+/// and report a bounded notice, exactly as the first-input freeze does.
+pub(super) fn freeze_current_tools(
     workflow: &Value,
     settings: &SettingsConfigurationV2,
     frozen: &[FrozenToolBindingV1],
-) -> Result<(Vec<FrozenToolBindingV1>, Vec<String>), String> {
+) -> (Vec<FrozenToolBindingV1>, Vec<String>) {
     let mut seen = BTreeSet::new();
     let mut tools = Vec::new();
     let mut warnings = Vec::new();
-    for tool_id in document_tool_ids(workflow)? {
+    let tool_ids = match document_tool_ids(workflow) {
+        Ok(tool_ids) => tool_ids,
+        Err(shape) => {
+            warnings.push(format!(
+                "workflow tool bindings could not be read this pass ({shape}); it runs without them"
+            ));
+            return (tools, warnings);
+        }
+    };
+    for tool_id in tool_ids {
         if !seen.insert(tool_id.clone()) {
             continue;
         }
         if let Some(binding) = frozen.iter().find(|tool| tool.tool_id == tool_id) {
-            tools.push(binding.clone());
+            if crate::runtime::history::frozen_tool_binding_is_executable(binding) {
+                tools.push(binding.clone());
+            } else {
+                // The Chat froze this capability in a shape this build can no
+                // longer dispatch. Dropping it and saying so keeps the message
+                // alive; the binding stays in the record as evidence.
+                warnings.push(format!(
+                    "tool '{tool_id}' was frozen by this Chat in a shape this build cannot execute; the pass continues without it"
+                ));
+            }
             continue;
         }
         if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
@@ -119,7 +160,7 @@ fn freeze_current_tools(
             Err(error) => warnings.push(format!("Tool '{tool_id}' is unavailable: {error}")),
         }
     }
-    Ok((tools, warnings))
+    (tools, warnings)
 }
 
 /// The distinct capability ids an agent or tool node binds, in document order.

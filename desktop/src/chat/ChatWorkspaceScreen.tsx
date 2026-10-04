@@ -515,12 +515,25 @@ export function ChatWorkspaceScreen({
     setWorkflowReadinessError(null);
     void nativeWorkflowPort
       .snapshot(selectedWorkflowId)
-      .then(({ editable }) => {
+      .then(({ editable, executionVerdict }) => {
         if (!current) return;
         if (!editable) {
           setWorkflowChecking(false);
           setWorkflowReadinessError(
             "The selected workflow uses a read-only schema and cannot run.",
+          );
+          return;
+        }
+        // The gate is the core's verdict for the workflow the user selected,
+        // never the library default: an unrelated broken default workflow must
+        // not disable Send. The verdict names the rule and the fix.
+        if (executionVerdict != null && !executionVerdict.executable) {
+          setWorkflowChecking(false);
+          const rule = executionVerdict.rule ?? "this workflow cannot run";
+          setWorkflowReadinessError(
+            executionVerdict.remedy != null && executionVerdict.remedy !== ""
+              ? `${rule} — ${executionVerdict.remedy}`
+              : rule,
           );
           return;
         }

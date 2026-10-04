@@ -274,10 +274,12 @@ export function WorkflowEditorScreen({
       : "Untitled workflow";
 
   /** Commits one complete document through the same core-accepted save the
-   * workflow library uses. The pending command ID is reused by every retry. */
+   * workflow library uses. The pending command ID is reused by every retry.
+   * Returns the core's save-time notice for a successful save (null means the
+   * save was refused and the error is already shown). */
   const commitDocument = async (
     document: WorkflowDocument,
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     const commandId = retryCommandId ?? nextWorkbenchCommandId("workflow");
     setRetryCommandId(commandId);
     try {
@@ -290,12 +292,15 @@ export function WorkflowEditorScreen({
       if (!receipt.accepted) {
         setRetryCommandId(null);
         setError(receipt.reason ?? "The trusted core rejected the workflow.");
-        return false;
+        return null;
       }
       setProjectedVersion(receipt.currentVersion);
       setStoredEditable(true);
       setRetryCommandId(null);
-      return true;
+      // The core always stores what the editor kept losslessly, and its verdict
+      // then names any reason this document cannot start a Chat, so the reason
+      // is surfaced at save time instead of at the next send.
+      return receipt.reason ?? "";
     } catch (failure) {
       const failureMessage =
         failure instanceof Error ? failure.message : String(failure);
@@ -308,7 +313,7 @@ export function WorkflowEditorScreen({
           // The complete local document stays available for Save As or retry.
         }
       }
-      return false;
+      return null;
     }
   };
 
@@ -330,9 +335,10 @@ export function WorkflowEditorScreen({
     setError(null);
     setNotice(null);
     try {
-      if (!(await commitDocument(editor.document))) return;
+      const saveNotice = await commitDocument(editor.document);
+      if (saveNotice === null) return;
       setSavedFingerprint(serializeWorkflow(editor.document));
-      setNotice(`Saved ${workflowName}.`);
+      setNotice(saveNotice === "" ? `Saved ${workflowName}.` : saveNotice);
       await refreshLibraryQuietly();
     } finally {
       setSaving(false);

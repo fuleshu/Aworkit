@@ -44,11 +44,19 @@ const providerTestResultSchema = z
     model: z.string().nullable(),
   })
   .strict();
+const workflowExecutionVerdictSchema = z
+  .object({
+    executable: z.boolean(),
+    rule: z.string().nullable().optional(),
+    remedy: z.string().nullable().optional(),
+  })
+  .strict();
 const workflowSnapshotSchema = z
   .object({
     version: z.number().int().nonnegative(),
     document: z.unknown(),
     editable: z.boolean(),
+    executionVerdict: workflowExecutionVerdictSchema.nullable().optional(),
   })
   .strict();
 
@@ -107,6 +115,18 @@ export interface WorkflowSnapshot {
   readonly version: number;
   readonly document: WorkflowDocument;
   readonly editable: boolean;
+  /**
+   * The core's verdict for this document: whether it can start a Chat now, the
+   * rule that refuses it, and the fix that clears it. Absent when the caller
+   * did not ask the core.
+   */
+  readonly executionVerdict?: WorkflowExecutionVerdict | null;
+}
+/** One saved workflow's execution verdict from the trusted core. */
+export interface WorkflowExecutionVerdict {
+  readonly executable: boolean;
+  readonly rule?: string | null;
+  readonly remedy?: string | null;
 }
 export interface WorkflowCommit {
   readonly commandId: string;
@@ -377,6 +397,7 @@ function normalizeWorkflowSnapshot(value: unknown): WorkflowSnapshot {
     version: parsed.version,
     document: parseWorkflow(JSON.stringify(parsed.document)),
     editable: parsed.editable,
+    executionVerdict: parsed.executionVerdict ?? null,
   };
 }
 

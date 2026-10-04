@@ -26,7 +26,15 @@ pub(super) fn expand_server_selections(
             {
                 let mut expanded = Vec::new();
                 for id in ids.iter() {
-                    let id = id.as_str().ok_or("Agent tool selections must be strings")?;
+                    // A selection this build cannot read is dropped with a
+                    // notice, never a reason to end the pass.
+                    let Some(id) = id.as_str() else {
+                        warnings.push(
+                            "an Agent tool selection is not a string; the pass continues without it"
+                                .to_owned(),
+                        );
+                        continue;
+                    };
                     match resolve(id, settings) {
                         Ok(candidates) => {
                             for candidate in candidates {

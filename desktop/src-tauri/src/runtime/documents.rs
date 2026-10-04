@@ -276,20 +276,21 @@ impl CanonicalDocuments {
         self.save_settings(expected_version, settings).map(|_| ())
     }
 
-    pub(crate) fn workflow_snapshot(&self) -> WorkflowSnapshot {
-        self.workflow_snapshot_for(&self.default_workflow_id)
-    }
     pub(crate) fn workflow_snapshot_for(&self, workflow_id: &str) -> WorkflowSnapshot {
         match self.workflows.get(workflow_id) {
             Some(state) => WorkflowSnapshot {
                 version: state.version,
                 document: state.document.clone(),
                 editable: state.editable,
+                // The execution verdict needs Settings and the capability view,
+                // so the service layer fills it where it is asked for.
+                execution_verdict: None,
             },
             None => WorkflowSnapshot {
                 version: 0,
                 document: Value::Null,
                 editable: false,
+                execution_verdict: None,
             },
         }
     }
@@ -2411,12 +2412,12 @@ mod tests {
     fn oversized_workflow_is_preserved_as_a_draft_but_never_saved_as_executable() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let mut oversized = documents.workflow_snapshot().document;
+        let mut oversized = documents.workflow_snapshot_for(&documents.default_workflow_id).document;
         oversized["preservedMetadata"] = Value::String("x".repeat(MAXIMUM_WORKFLOW_SNAPSHOT_BYTES));
 
         let error = documents.save_workflow(1, oversized).unwrap_err();
         assert!(error.contains("executable 128 KiB persistence bound"));
-        assert_eq!(documents.workflow_snapshot().version, 1);
+        assert_eq!(documents.workflow_snapshot_for(&documents.default_workflow_id).version, 1);
         let default_id = documents.workflow_library().default_workflow_id;
         assert!(documents.require_executable_workflow(&default_id).is_ok());
     }
@@ -2451,7 +2452,7 @@ mod tests {
             )
             .unwrap();
         let documents = CanonicalDocuments::open(root.path()).unwrap();
-        let workflow = documents.workflow_snapshot();
+        let workflow = documents.workflow_snapshot_for(&documents.default_workflow_id);
         assert_eq!(workflow.version, 2);
         assert_eq!(workflow.document["customMetadata"]["preserve"], true);
         assert!(
@@ -2962,7 +2963,7 @@ mod tests {
         broken["edges"] = json!([{"id": "broken", "source": "input", "target": "missing"}]);
         let error = documents.save_workflow(1, broken).unwrap_err();
         assert!(error.contains("target 'missing' does not exist"));
-        assert_eq!(documents.workflow_snapshot().version, 1);
+        assert_eq!(documents.workflow_snapshot_for(&documents.default_workflow_id).version, 1);
         assert!(documents.require_executable_workflow(&workflow_id).is_ok());
     }
 
@@ -3235,7 +3236,7 @@ mod tests {
     fn save_as_stores_a_new_named_workflow_or_refuses_without_a_trace() {
         let root = TempDir::new().unwrap();
         let mut documents = CanonicalDocuments::open(root.path()).unwrap();
-        let mut document = documents.workflow_snapshot().document;
+        let mut document = documents.workflow_snapshot_for(&documents.default_workflow_id).document;
         document["id"] = Value::String("workflow.foreign".into());
         document["name"] = Value::String("Imported Harness".into());
 

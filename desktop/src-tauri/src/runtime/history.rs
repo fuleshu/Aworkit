@@ -837,7 +837,11 @@ impl ChatHistory {
             context,
             context_hash,
         };
-        validate_frozen_context_record(&record, None)?;
+        // The write path does not validate the record it just built. Every part
+        // of it was validated where it was produced (the catalog, the frozen
+        // tool bindings, the frozen project scope), and every reader verifies
+        // the stored bytes. Re-validating here could only reject an artifact
+        // this build itself wrote, from a schema a later build may extend.
         if let Some(existing) = self.frozen_context(&record.context.identity.chat_id)? {
             return if existing == record {
                 Ok(existing)
@@ -2011,9 +2015,13 @@ pub(crate) fn stored_field<'a>(
 /// it must carry its model-facing definition and the frozen configuration its
 /// dispatcher reads, so a stored record proves what it will run instead of
 /// naming a family this build no longer knows. A new tool family extends this
-/// predicate with its own shape; leaving it out makes every Chat that froze one
-/// unresumable.
-fn frozen_tool_binding_is_executable(tool: &FrozenToolBindingV1) -> bool {
+/// predicate with its own shape.
+///
+/// Failing this predicate never ends a message: the pass drops the binding and
+/// reports a bounded notice, exactly as an unavailable Settings tool does. Only
+/// tamper evidence (a stored hash that no longer matches its bytes) fails a
+/// read.
+pub(crate) fn frozen_tool_binding_is_executable(tool: &FrozenToolBindingV1) -> bool {
     if super::documents::builtin_tool_binding_ids().contains(&tool.tool_id) {
         return true;
     }
@@ -2184,8 +2192,17 @@ fn validate_frozen_context_record(
 }
 
 /// Validates the frozen tool set of one stored Chat: unique identity, matching
-/// snapshot hash, credential references that agree with the snapshot, and a
-/// binding shape this build can still execute.
+/// snapshot hash, credential references that agree with the snapshot.
+///
+/// This is integrity and tamper evidence, and it stays hard: a stored binding
+/// whose bytes no longer match its recorded hash, whose identity is duplicated,
+/// or whose credential references disagree is rejected byte-exactly.
+///
+/// Whether this build can still *execute* one binding is a different question
+/// with a different outcome. That is `frozen_tool_binding_is_executable`, and
+/// the run path answers it by dropping the binding and reporting a notice: a
+/// stored record is evidence of what a Chat froze, never a gate that a later
+/// build may fail.
 ///
 /// `stored_tools` is the stored tool-bindings array when the caller holds the
 /// stored record; each binding's tool hash is then verified against the exact
@@ -2229,7 +2246,6 @@ pub(crate) fn validate_frozen_tool_bindings(
                         .iter()
                         .any(|field| field.is_empty() || field.chars().any(char::is_control))
             })
-            || !frozen_tool_binding_is_executable(tool)
         {
             return Err("stored frozen Chat tool bindings failed integrity validation".into());
         }
@@ -2417,16 +2433,22 @@ mod tests {
         validate_frozen_tool_bindings(&tools, None)
             .expect("a Chat that froze ComfyUI capabilities must stay resumable");
 
-        // A shape this build never writes is still refused, with and without the
-        // definition a dynamic binding must carry.
+        // A shape this build never writes still loads as evidence, and the pass
+        // drops it with a notice instead of failing the read: only tamper
+        // evidence (the hash check below) fails a stored record.
         let wrong_shape = vec![binding(
             "comfyui.krea-2-turbo-text-to-image-upscaled",
             BTreeMap::from([endpoint()]),
         )];
-        assert!(validate_frozen_tool_bindings(&wrong_shape, None).is_err());
+        validate_frozen_tool_bindings(&wrong_shape, None)
+            .expect("an unexecutable shape is evidence, not corruption");
+        assert!(!frozen_tool_binding_is_executable(&wrong_shape[0]));
         let mut undefined = binding("comfyui.list_node_types", BTreeMap::from([endpoint()]));
         undefined.definition = None;
-        assert!(validate_frozen_tool_bindings(&[undefined], None).is_err());
+        validate_frozen_tool_bindings(&[undefined.clone()], None)
+            .expect("a binding without a definition is evidence, not corruption");
+        assert!(!frozen_tool_binding_is_executable(&undefined));
+        assert!(frozen_tool_binding_is_executable(&tools[1]));
 
         // Tampering with the snapshot hash is still caught.
         let mut tampered = tools;

@@ -55,7 +55,7 @@ use super::{
         ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
         SettingsV2CommitInput, SettingsV2Snapshot, UiCommandInput, UiCommandReceipt,
         WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
-        WorkflowSaveAsInput,
+        WorkflowExecutionVerdictV1, WorkflowSaveAsInput,
         WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
     },
     extension_registration::{register_extension_installation_v2, verify_registered_extension_v2},
@@ -551,9 +551,12 @@ impl DesktopRuntime {
                 "Continue or stop the interrupted reply to send a new message."
                     .into(),
             );
-        } else if snapshot.chat.phase == "draft" && !snapshot.chat.locked_workflow {
-            snapshot.chat.disabled_reason = self.workflow_start_disabled_reason();
         }
+        // A draft Chat's Send gate is the workflow the user selected, not the
+        // library default: the core cannot see the composer's selection, so it
+        // reports readiness per workflow (`workflow_execution_verdict`) and the
+        // composer asks for the one it will run. An unrelated broken default
+        // workflow therefore never disables Send.
         Ok(snapshot)
     }
 
@@ -573,56 +576,108 @@ impl DesktopRuntime {
             .unwrap_or_default()
     }
 
-    fn workflow_start_disabled_reason(&self) -> Option<String> {
-        let readiness = (|| -> Result<(), String> {
-            let library = self.documents.workflow_library();
-            self.documents
-                .require_executable_workflow(&library.default_workflow_id)?;
-            let mut workflow = self.documents.workflow_snapshot();
-            workflow.document = mcp_selection::expand_server_selections(
-                &workflow.document,
-                self.documents.settings(),
-            )?;
-            let mut resolved: Option<ResolvedWorkflowModel> = None;
-            for tier_id in graph_model_tier_ids(&workflow.document) {
-                let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)?;
-                match &resolved {
-                    None => resolved = Some(candidate),
-                    Some(previous)
-                        if previous.provider.id == candidate.provider.id
-                            && previous.model.id == candidate.model.id => {}
-                    Some(_) => {
-                        return Err(
-                            "workflow model tiers resolve to different provider/model bindings"
-                                .into(),
-                        );
-                    }
+    /// The trusted core's verdict for one saved workflow: whether it can start
+    /// a Chat now, the single rule that refuses it, and the fix that clears it.
+    ///
+    /// This is the verdict the composer gates Send on for the workflow the user
+    /// selected, so it is asked per workflow and never for "the default".
+    pub(crate) fn workflow_execution_verdict(
+        &self,
+        workflow_id: &str,
+    ) -> WorkflowExecutionVerdictV1 {
+        match self.workflow_start_refusal(workflow_id) {
+            Ok(()) => WorkflowExecutionVerdictV1 {
+                executable: true,
+                rule: None,
+                remedy: None,
+            },
+            Err(refusal) => WorkflowExecutionVerdictV1 {
+                executable: false,
+                rule: Some(refusal.rule),
+                remedy: Some(refusal.remedy),
+            },
+        }
+    }
+
+    /// The first condition that stops this saved workflow starting a Chat, with
+    /// the fix a human can act on. Every rule is named; the remedy is supplied
+    /// only where the rule itself does not already say what to change.
+    fn workflow_start_refusal(&self, workflow_id: &str) -> Result<(), WorkflowStartRefusal> {
+        let mut workflow = self.documents.workflow_snapshot_for(workflow_id);
+        if workflow.document.is_null() {
+            return Err(WorkflowStartRefusal::new(
+                format!("workflow '{workflow_id}' does not exist in the workflow library"),
+                "Pick a saved workflow in the composer, or create one.",
+            ));
+        }
+        if !workflow.editable {
+            return Err(WorkflowStartRefusal::new(
+                format!("workflow '{workflow_id}' uses a read-only schema and cannot run"),
+                "This stored schema is preserved for inspection; recreate the workflow with this build to run it.",
+            ));
+        }
+        self.documents
+            .require_executable_workflow(workflow_id)
+            .map_err(|rule| {
+                WorkflowStartRefusal::new(
+                    rule,
+                    "Open the workflow in the editor, fix the node, field or bound tool the rule names, then save it.",
+                )
+            })?;
+        workflow.document = mcp_selection::expand_server_selections(
+            &workflow.document,
+            self.documents.settings(),
+        )
+        .map_err(|rule| {
+            WorkflowStartRefusal::new(
+                rule,
+                "Fix the MCP selection in Settings → MCP, or remove the tool from the node.",
+            )
+        })?;
+        let mut resolved: Option<ResolvedWorkflowModel> = None;
+        for tier_id in graph_model_tier_ids(&workflow.document) {
+            let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)
+                .map_err(WorkflowStartRefusal::from_settings_rule)?;
+            match &resolved {
+                None => resolved = Some(candidate),
+                Some(previous)
+                    if previous.provider.id == candidate.provider.id
+                        && previous.model.id == candidate.model.id => {}
+                Some(_) => {
+                    return Err(WorkflowStartRefusal::new(
+                        "workflow model tiers resolve to different provider/model bindings".to_owned(),
+                        "Bind every model tier this workflow uses to the same provider/model in Settings → Models.",
+                    ));
                 }
             }
-            let mcp_definitions =
-                preview_mcp_definitions(&workflow.document, self.documents.settings())?;
-            let agent = freeze_graph_bindings(
-                &workflow.document,
-                self.documents.settings(),
-                &mcp_definitions,
-            )?;
-            let model = resolved
-                .as_ref()
-                .ok_or_else(|| "workflow has no model-consuming node".to_owned())?;
-            validate_model_capabilities(
-                &model.provider,
-                &model.model,
-                agent
-                    .tools
-                    .iter()
-                    .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
-            )?;
-            validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)?;
-            Ok(())
-        })();
-        readiness
-            .err()
-            .map(|reason| format!("Default workflow is unavailable: {reason}"))
+        }
+        let mcp_definitions =
+            preview_mcp_definitions(&workflow.document, self.documents.settings())
+                .map_err(WorkflowStartRefusal::from_settings_rule)?;
+        let agent = freeze_graph_bindings(
+            &workflow.document,
+            self.documents.settings(),
+            &mcp_definitions,
+        )
+        .map_err(WorkflowStartRefusal::from_settings_rule)?;
+        let model = resolved.as_ref().ok_or_else(|| {
+            WorkflowStartRefusal::new(
+                "workflow has no model-consuming node".to_owned(),
+                "Add an Agent or Model Call node bound to a model tier before starting a Chat.",
+            )
+        })?;
+        validate_model_capabilities(
+            &model.provider,
+            &model.model,
+            agent
+                .tools
+                .iter()
+                .any(|tool| super::tool_registry::is_callable(&tool.tool_snapshot.id)),
+        )
+        .map_err(WorkflowStartRefusal::from_settings_rule)?;
+        validate_workflow_model_parameters(&workflow.document, &model.provider, &model.model)
+            .map_err(WorkflowStartRefusal::from_settings_rule)?;
+        Ok(())
     }
 
     pub fn command(&mut self, input: UiCommandInput) -> Result<UiCommandReceipt, String> {
@@ -1235,24 +1290,27 @@ impl DesktopRuntime {
             Some(pass) => &pass.tools,
             None => &context.tools,
         };
-        execution_request.tools = request_tool_bindings(pass_tools)?;
+        let (mut requested_tools, binding_warnings) = request_tool_bindings(pass_tools);
+        let mut pass_warnings = binding_warnings;
         let mcp = self.restore_frozen_mcp(context)?;
-        execution_request.tools.retain(|tool| !mcp.unavailable.contains(&tool.capability_id));
+        requested_tools.retain(|tool| !mcp.unavailable.contains(&tool.capability_id));
         // The Chat keeps the MCP capabilities it holds; each tool's interface is
         // whatever the reconnected session advertises, so an edited server
         // reaches this pass instead of rejecting the Chat over changed metadata.
-        for tool in &mut execution_request.tools {
+        for tool in &mut requested_tools {
             if let Some(definition) = mcp.definitions.get(&tool.capability_id) {
                 tool.definition = Some(definition.clone());
             }
         }
+        execution_request.tools = requested_tools;
+        pass_warnings.extend(mcp.warnings);
         execution_request.mcp_servers = mcp.manifests;
         execution_request.maximum_timeout_recoveries = PROVIDER_TIMEOUT_RECOVERIES_V1;
         execution_request.workflow_snapshot = match &pass {
             Some(pass) => pass.document.clone(),
             None => context.workflow_snapshot.clone(),
         };
-        for warning in mcp.warnings { super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning); }
+        for warning in pass_warnings { super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning); }
         super::workflow_capabilities::retain_available(&mut execution_request.workflow_snapshot, &execution_request.tools.iter().map(|t| t.capability_id.clone()).collect::<Vec<_>>());
         // One outer graph execution is brokered. Agent-internal provider and
         // tool calls are telemetry, not termination budgets. The authority
@@ -1276,12 +1334,12 @@ impl DesktopRuntime {
         }
         self.pipeline.preflight(&execution_request)?;
         if persist_frozen_context {
-            let persisted = self.history.freeze_context(frozen.context.clone())?;
-            if persisted != frozen {
-                return Err(
-                    "the preflighted Chat context changed before its durable freeze".into(),
-                );
-            }
+            // The write path hashes and commits the context it was handed; the
+            // read path verifies those stored bytes. Comparing the record read
+            // back against the one just passed could never differ (the freeze
+            // returns the identical existing record or the one it wrote), so it
+            // proved nothing and is gone rather than kept as a fake gate.
+            self.history.freeze_context(frozen.context.clone())?;
         }
         self.history.stage_effect_command(PendingChatCommandV1 {
             schema_version: 1,
@@ -1992,7 +2050,14 @@ impl DesktopRuntime {
                 }
             }
         }
-        let mut resolved = resolved.expect("at least one model tier is resolved");
+        // A graph with no model-consuming node cannot run and is refused here
+        // with the fix, exactly like the readiness verdict reports it: reaching
+        // this with no resolved tier is a configuration state, never a panic.
+        let Some(mut resolved) = resolved else {
+            return Err(format!(
+                "workflow '{workflow_id}' has no model-consuming node: add an Agent or Model Call node bound to a model tier in Settings → Models, or select a workflow that has one"
+            ));
+        };
         if resolved.model.context_window.is_none() {
             resolved.model.context_window = self.discover_context_window(&resolved.provider, &resolved.model.remote_id);
         }
@@ -3421,12 +3486,19 @@ impl DesktopRuntime {
 
     #[must_use]
     pub fn workflow_snapshot(&self) -> WorkflowSnapshot {
-        self.documents.workflow_snapshot()
+        let workflow_id = self.documents.workflow_library().default_workflow_id;
+        self.workflow_snapshot_for(workflow_id)
     }
 
+    /// One saved workflow with the core's execution verdict attached, so the
+    /// caller judges *this* document instead of the library default.
     #[must_use]
     pub fn workflow_snapshot_for(&self, workflow_id: String) -> WorkflowSnapshot {
-        self.documents.workflow_snapshot_for(&workflow_id)
+        let mut snapshot = self.documents.workflow_snapshot_for(&workflow_id);
+        if !snapshot.document.is_null() {
+            snapshot.execution_verdict = Some(self.workflow_execution_verdict(&workflow_id));
+        }
+        snapshot
     }
 
     #[must_use]
@@ -3453,11 +3525,27 @@ impl DesktopRuntime {
                 .documents
                 .save_workflow(input.expected_version, input.document)?,
         };
+        // Saving is preservation, never a refusal: a document the editor kept
+        // losslessly is always stored. The save then says what the core's
+        // execution verdict is, so a document that cannot start a Chat is known
+        // at save time instead of at the next send.
+        let workflow_id = match input.workflow_id.clone() {
+            Some(workflow_id) => workflow_id,
+            None => self.documents.workflow_library().default_workflow_id,
+        };
+        let verdict = self.workflow_execution_verdict(&workflow_id);
+        let reason = (!verdict.executable).then(|| {
+            format!(
+                "Saved. This workflow cannot start a Chat yet: {} — {}",
+                verdict.rule.unwrap_or_default(),
+                verdict.remedy.unwrap_or_default()
+            )
+        });
         let receipt = UiCommandReceipt {
             command_id: input.command_id.clone(),
             accepted: true,
             current_version: next_version,
-            reason: None,
+            reason,
             credential_mutation: None,
         };
         self.processed.insert(
@@ -3914,47 +4002,62 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
 /// Maps one pass's frozen tool bindings into the request shape the pipeline
 /// consumes. Options and credential metadata travel with the binding; the
 /// pipeline restores them from the saved Chat for a capability it already held.
+///
+/// This runs on the message path, so it degrades: a binding that cannot be
+/// represented in the request is dropped with a notice instead of ending the
+/// pass. The binding stays in the stored record as evidence of what the Chat
+/// froze.
 fn request_tool_bindings(
     tools: &[FrozenToolBindingV1],
-) -> Result<Vec<WorkflowToolBindingV1>, String> {
-    tools
-        .iter()
-        .map(|tool| {
-            Ok(WorkflowToolBindingV1 {
-                options: tool.tool_snapshot.options.clone(),
-                capability_id: tool.tool_id.clone(),
-                configuration: serde_json::to_value(&tool.tool_snapshot.configuration)
-                    .map_err(|error| format!("cannot encode frozen tool Settings: {error}"))?,
-                credential_bindings: tool
-                    .tool_snapshot
-                    .credential_bindings
-                    .iter()
-                    .map(|binding| {
-                        let metadata = tool
-                            .credentials
-                            .iter()
-                            .find(|metadata| {
-                                metadata.credential_ref.as_str() == binding.credential_ref
-                            })
-                            .ok_or_else(|| {
-                                format!(
-                                    "frozen tool '{}' is missing credential metadata for '{}'",
-                                    tool.tool_id, binding.credential_ref
-                                )
-                            })?;
-                        Ok(WorkflowToolCredentialBindingV1 {
-                            name: binding.name.clone(),
-                            credential_ref: metadata.credential_ref.clone(),
-                            field: binding.field.clone(),
-                            field_names: metadata.field_names.clone(),
-                            revision: metadata.revision,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?,
-                definition: tool.definition.clone(),
-            })
-        })
-        .collect()
+) -> (Vec<WorkflowToolBindingV1>, Vec<String>) {
+    let mut bindings = Vec::new();
+    let mut warnings = Vec::new();
+    for tool in tools {
+        let mut credential_bindings = Vec::new();
+        let mut usable = true;
+        for binding in &tool.tool_snapshot.credential_bindings {
+            let Some(metadata) = tool
+                .credentials
+                .iter()
+                .find(|metadata| metadata.credential_ref.as_str() == binding.credential_ref)
+            else {
+                warnings.push(format!(
+                    "frozen tool '{}' carries a credential binding with no frozen metadata ('{}'); the pass continues without this tool",
+                    tool.tool_id, binding.credential_ref
+                ));
+                usable = false;
+                break;
+            };
+            credential_bindings.push(WorkflowToolCredentialBindingV1 {
+                name: binding.name.clone(),
+                credential_ref: metadata.credential_ref.clone(),
+                field: binding.field.clone(),
+                field_names: metadata.field_names.clone(),
+                revision: metadata.revision,
+            });
+        }
+        if !usable {
+            continue;
+        }
+        let configuration = match serde_json::to_value(&tool.tool_snapshot.configuration) {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                warnings.push(format!(
+                    "frozen tool '{}' cannot be encoded for this pass ({error}); the pass continues without it",
+                    tool.tool_id
+                ));
+                continue;
+            }
+        };
+        bindings.push(WorkflowToolBindingV1 {
+            options: tool.tool_snapshot.options.clone(),
+            capability_id: tool.tool_id.clone(),
+            configuration,
+            credential_bindings,
+            definition: tool.definition.clone(),
+        });
+    }
+    (bindings, warnings)
 }
 
 fn freeze_tool_credentials(
@@ -3983,6 +4086,28 @@ fn freeze_tool_credentials(
         });
     }
     Ok(frozen)
+}
+
+/// One start refusal with the fix that clears it, so a refusal always names the
+/// thing to change instead of only the thing that is wrong.
+struct WorkflowStartRefusal {
+    rule: String,
+    remedy: String,
+}
+
+impl WorkflowStartRefusal {
+    fn new(rule: impl Into<String>, remedy: impl Into<String>) -> Self {
+        Self {
+            rule: rule.into(),
+            remedy: remedy.into(),
+        }
+    }
+
+    /// A rule from the Settings/model-resolution path. Those rules already name
+    /// what to change, so the remedy repeats the place to change it.
+    fn from_settings_rule(rule: String) -> Self {
+        Self::new(rule, "Adjust this in Settings → Models, then retry.")
+    }
 }
 
 /// The distinct model tiers referenced by the graph's model-consuming nodes.
@@ -4712,6 +4837,7 @@ mod tests {
     mod credentialed_web_search;
     mod frozen_record_compat;
     mod goal_control;
+    mod validation_failure_policy;
     mod image_chat;
     mod projectless;
     mod question;
@@ -6949,17 +7075,21 @@ mod tests {
             .documents
             .set_default_workflow("workflow.simple-chat")
             .unwrap();
-        let blocked = runtime.snapshot(0).unwrap();
+        // Readiness is the per-workflow verdict the composer gates Send on, not
+        // a draft-Chat property derived from the library default.
+        let blocked = runtime.workflow_execution_verdict("workflow.simple-chat");
+        assert!(!blocked.executable);
         assert!(
             blocked
-                .chat
-                .disabled_reason
+                .rule
                 .as_deref()
-                .is_some_and(|reason| reason.contains("Unconfigured"))
+                .is_some_and(|rule| rule.contains("Unconfigured")),
+            "{blocked:?}"
         );
+        assert!(blocked.remedy.is_some(), "a refusal names the fix: {blocked:?}");
 
         configure(&mut runtime);
-        assert_eq!(runtime.snapshot(0).unwrap().chat.disabled_reason, None);
+        assert!(runtime.workflow_execution_verdict("workflow.simple-chat").executable);
 
         let mut settings = runtime.settings_v2_snapshot().settings;
         let exact_target = match settings.model_tiers[2].resolution.clone() {
@@ -6977,13 +7107,14 @@ mod tests {
                 settings,
             })
             .unwrap();
-        let blocked = runtime.snapshot(0).unwrap();
+        let blocked = runtime.workflow_execution_verdict("workflow.simple-chat");
+        assert!(!blocked.executable);
         assert!(
             blocked
-                .chat
-                .disabled_reason
+                .rule
                 .as_deref()
-                .is_some_and(|reason| reason.contains("executes only an Exact"))
+                .is_some_and(|reason| reason.contains("executes only an Exact")),
+            "{blocked:?}"
         );
     }
 
@@ -7041,10 +7172,10 @@ mod tests {
                 workflow_id: Some("workflow.simple-chat".into()),
             })
             .unwrap();
-        assert_eq!(
-            runtime.workflow_start_disabled_reason(),
-            None,
-            "Readiness never starts the unavailable executable"
+        let verdict = runtime.workflow_execution_verdict("workflow.simple-chat");
+        assert!(
+            verdict.executable,
+            "Readiness never starts the unavailable executable: {verdict:?}"
         );
         let mut settings = runtime.settings_v2_snapshot().settings;
         settings.mcp_servers[0].tools[0].enabled = false;
@@ -7055,7 +7186,7 @@ mod tests {
                 settings,
             })
             .unwrap();
-        assert_eq!(runtime.workflow_start_disabled_reason(), None);
+        assert!(runtime.workflow_execution_verdict("workflow.simple-chat").executable);
     }
 
     #[test]
@@ -7077,7 +7208,10 @@ mod tests {
                 settings,
             })
             .unwrap();
-        let reason = runtime.snapshot(0).unwrap().chat.disabled_reason.unwrap();
+        let reason = runtime
+            .workflow_execution_verdict("workflow.simple-chat")
+            .rule
+            .unwrap_or_default();
         assert!(reason.contains("text capability"), "{reason}");
         let error = runtime
             .command(send("chat.no-text-capability", 0, "must not run"))
@@ -9065,7 +9199,13 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[1].chat_id.to_string(), first.chat_id);
         assert_eq!(requests[1].run_id.to_string(), first.run_id);
-        assert_eq!(requests[1].workflow_snapshot, frozen_snapshot);
+        // The pass runs the graph the Chat froze and *says* the saved entry is
+        // gone, as a committed capability notice, instead of ending the message.
+        let mut expected = frozen_snapshot.clone();
+        expected["capabilityWarnings"] = json!([
+            "saved workflow 'workflow.custom.1' no longer exists; this pass runs the graph the Chat froze"
+        ]);
+        assert_eq!(requests[1].workflow_snapshot, expected);
         drop(requests);
         let projection = runtime.snapshot(0).unwrap().chat;
         assert_eq!(projection.workflow_id, first.workflow_id);

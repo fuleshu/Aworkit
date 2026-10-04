@@ -425,6 +425,29 @@ pub struct WorkflowSnapshot {
     pub version: u64,
     pub document: Value,
     pub editable: bool,
+    /// The trusted core's verdict for this saved document: whether it can start
+    /// a Chat now, the one rule that refuses it, and the fix that clears it.
+    ///
+    /// The same catalog and readiness rules the start command enforces, exposed
+    /// so the composer gates Send on the workflow the user selected — never on
+    /// the library default — and so the editor can say why a saved document it
+    /// just accepted cannot run. Absent when the caller did not ask the core
+    /// (the documents layer has no settings or capability view to judge with).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_verdict: Option<WorkflowExecutionVerdictV1>,
+}
+
+/// The core's execution verdict for one saved workflow document.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowExecutionVerdictV1 {
+    pub executable: bool,
+    /// The single core rule that refused the document, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// The fix that clears the refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
