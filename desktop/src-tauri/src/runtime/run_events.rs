@@ -106,11 +106,57 @@ impl RunEventStream {
     }
     /// Durable status for unavailable capabilities, shared by normal execution
     /// and approval recovery so both native paths expose the same warning.
+    ///
+    /// A standing condition is worth saying once per Chat, not once per pass:
+    /// the recorded Chat re-emitted six identical warnings on seven requests.
+    /// The active condition set is derived from committed evidence, so the
+    /// deduplication survives the fresh `RunEventStream` each pass and a
+    /// distinct warning never re-arms another by alternating. A warning the
+    /// current pass no longer reports is committed as cleared, so a condition
+    /// that later returns notifies again instead of staying muted.
     pub(crate) fn capability_warnings(&self, workflow: &Value) -> Result<(), String> {
-        if let Some(warnings) = workflow.get("capabilityWarnings").and_then(Value::as_array) {
-            for warning in warnings {
-                self.context_event("workflow.capability-warning", json!({"message":warning,"status":"warning"}))?;
+        let current: BTreeSet<String> = workflow
+            .get("capabilityWarnings")
+            .and_then(Value::as_array)
+            .map(|warnings| {
+                warnings
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut active: BTreeSet<String> = BTreeSet::new();
+        for event in self.committer.committed_events_shared()?.iter() {
+            match event.kind.as_str() {
+                "workflow.capability-warning" => {
+                    if let Some(message) = event.payload["message"].as_str() {
+                        active.insert(message.to_owned());
+                    }
+                }
+                "workflow.capability-warning-cleared" => {
+                    if let Some(message) = event.payload["message"].as_str() {
+                        active.remove(message);
+                    }
+                }
+                _ => {}
             }
+        }
+        let mut drafts: Vec<(&str, Value)> = Vec::new();
+        for message in current.difference(&active) {
+            drafts.push((
+                "workflow.capability-warning",
+                json!({"message": message, "status": "warning"}),
+            ));
+        }
+        for message in active.difference(&current) {
+            drafts.push((
+                "workflow.capability-warning-cleared",
+                json!({"message": message}),
+            ));
+        }
+        if !drafts.is_empty() {
+            self.context_batch(drafts)?;
         }
         Ok(())
     }
@@ -1364,6 +1410,63 @@ mod tests {
     use super::*;
     use crate::runtime::semantic_events::ephemeral_semantic_event_committer;
     mod tool_nodes;
+
+    #[test]
+    fn capability_warnings_are_reported_once_and_rearm_when_the_condition_clears() {
+        let committer = ephemeral_semantic_event_committer();
+        // Each pass composes a fresh stream, exactly as the pipeline does, so
+        // the deduplication can only come from committed evidence.
+        let pass = |warnings: &[&str]| {
+            let stream = RunEventStream::new(
+                "request.warnings".into(),
+                "run.warnings".into(),
+                committer.clone(),
+                CancellationToken::default(),
+            );
+            stream
+                .capability_warnings(&json!({"capabilityWarnings": warnings}))
+                .unwrap();
+        };
+        let committed = |kind: &str, suffix: &str| {
+            committer
+                .committed_events()
+                .unwrap()
+                .into_iter()
+                .filter(|event| event.kind == kind)
+                .filter(|event| {
+                    event.payload["message"]
+                        .as_str()
+                        .is_some_and(|message| message.ends_with(suffix))
+                })
+                .count()
+        };
+        // The recorded Chat's shape: the same distinct warning on every one of
+        // seven passes is committed once.
+        for _ in 0..7 {
+            pass(&["mcp://comfyui.bridge/a"]);
+        }
+        assert_eq!(committed("workflow.capability-warning", "/a"), 1);
+        // A second warning is not suppressed by the first one's condition.
+        pass(&["mcp://comfyui.bridge/b"]);
+        assert_eq!(committed("workflow.capability-warning", "/b"), 1);
+        assert_eq!(committed("workflow.capability-warning", "/a"), 1);
+        // The first condition cleared when the pass stopped reporting it, so it
+        // re-arms and notifies again when it returns.
+        assert_eq!(committed("workflow.capability-warning-cleared", "/a"), 1);
+        pass(&["mcp://comfyui.bridge/a"]);
+        assert_eq!(committed("workflow.capability-warning", "/a"), 2);
+        assert_eq!(committed("workflow.capability-warning-cleared", "/b"), 1);
+        // Only run evidence is written: no conversation message or model context
+        // is produced, so the notice never reaches the model.
+        assert!(committer
+            .committed_events()
+            .unwrap()
+            .iter()
+            .all(|event| !matches!(
+                event.kind.as_str(),
+                "message.user" | "message.assistant"
+            ) && !event.kind.starts_with("context.")));
+    }
 
     #[test]
     fn streamed_text_is_coalesced_without_losing_or_reordering_content() {

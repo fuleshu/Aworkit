@@ -60,6 +60,7 @@ import {
   type ProjectDraft,
 } from "./createProject";
 import { useChatErrorNotices } from "./useChatErrorNotices";
+import { useCapabilityWarningNotices } from "./useCapabilityWarningNotices";
 import type { ChatIntent, ChatProjectChoice, TimelineItem } from "./types";
 import { chatHeaderContext } from "./chatHeader";
 import {
@@ -434,6 +435,7 @@ export function ChatWorkspaceScreen({
     runtime.pendingCommandIds.size > 0,
     inspect,
   );
+  useCapabilityWarningNotices(runtime.events, snapshot !== null, projectedChatId ?? null);
   useProjectedNotification("Chat", "chat-connection", "connection", !runtime.stale ? null : {
     route: "chat", summary: "Projection disconnected.", detail: runtime.error?.message ?? "The last known state remains visible. Changes are disabled until resynchronized.", severity: "warning", lifetime: { kind: "condition", conditionId: "chat-projection" },
     action: { label: "Resync", disabled: runtime.pendingCommandIds.size > 0, run: () => void runtime.resynchronize() },
