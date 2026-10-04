@@ -77,14 +77,14 @@ fn settles_staged_command(event: &Event, command_id: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ChatIdentityV1 {
     pub chat_id: StableId,
     pub run_id: StableId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FrozenCredentialBindingV1 {
     pub credential_ref: StableId,
     pub field_names: BTreeSet<String>,
@@ -92,7 +92,7 @@ pub(crate) struct FrozenCredentialBindingV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FrozenToolBindingV1 {
     pub tool_id: String,
     pub tool_hash: String,
@@ -119,7 +119,7 @@ pub(crate) struct FrozenToolBindingV1 {
 /// starts a Chat/Run. Saved Settings and workflow documents may subsequently
 /// change without mutating this record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FrozenChatExecutionContextV1 {
     /// Absent in legacy Chats: preserve their original provider authority hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,7 +186,7 @@ pub(crate) struct FrozenChatExecutionContextV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FrozenChatExecutionRecordV1 {
     pub context: FrozenChatExecutionContextV1,
     pub context_hash: String,
@@ -194,7 +194,7 @@ pub(crate) struct FrozenChatExecutionRecordV1 {
 
 /// Secret-free MCP connection and exact credential metadata for reconnection.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FrozenMcpConfigurationV1 {
     pub server: super::settings_v2::McpServerConfigurationV2,
     /// Only opaque references, field names and revisions; never secret values.
@@ -210,7 +210,7 @@ pub(crate) struct FrozenMcpConfigurationV1 {
 /// pipeline is entered. It gives restart recovery the original idempotency ID,
 /// expected history fence, and input for both first and follow-up messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PendingChatCommandV1 {
     pub schema_version: u16,
     pub frozen_context_hash: String,
@@ -626,10 +626,13 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
-            let record = decode_stored_frozen_context_record(value)?;
-            if &record.context.identity.chat_id == chat_id {
-                return Ok(Some(record));
+            // The Chat identity is read from the stored bytes, so an unrelated
+            // record this build cannot read is never decoded on this path.
+            if stored_record_chat_id(&value) != Some(chat_id.as_str()) {
+                continue;
             }
+            let record = decode_stored_frozen_context_record(value)?;
+            return Ok(Some(record));
         }
         Ok(None)
     }
@@ -646,12 +649,20 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
-            let record = decode_stored_frozen_context_record(value)?;
-            if record.context.identity.chat_id == selected_chat_id
-                && record.context.history_base_head == history_head
+            // Select from the stored bytes before decoding: only the selected
+            // Chat's record at this head is read, and an unrelated unreadable
+            // record cannot fail the read.
+            if stored_record_chat_id(&value) != Some(selected_chat_id.as_str())
+                || value
+                    .get("context")
+                    .and_then(|context| context.get("historyBaseHead"))
+                    .and_then(Value::as_u64)
+                    != Some(history_head)
             {
-                return Ok(Some(record));
+                continue;
             }
+            let record = decode_stored_frozen_context_record(value)?;
+            return Ok(Some(record));
         }
         Ok(None)
     }
@@ -676,6 +687,7 @@ impl ChatHistory {
         let session_events = self.session_events()?;
         let mut contexts = Vec::new();
         let mut contexts_by_hash = BTreeMap::new();
+        let mut unrelated_context_hashes = BTreeSet::new();
         for event in &session_events {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
@@ -683,6 +695,14 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored frozen Chat context is incomplete".into());
             };
+            // Another Chat's record is remembered by hash only, so an
+            // unreadable record this Chat does not use is never decoded.
+            if stored_record_chat_id(&value) != Some(selected_chat_id.as_str()) {
+                if let Some(hash) = stored_record_context_hash(&value) {
+                    unrelated_context_hashes.insert(hash.to_owned());
+                }
+                continue;
+            }
             let context = decode_stored_frozen_context_record(value)?;
             contexts_by_hash.insert(context.context_hash.clone(), context.clone());
             contexts.push(context);
@@ -698,6 +718,11 @@ impl ChatHistory {
                 .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
             validate_pending_command_record(&record)?;
             let Some(context) = contexts_by_hash.get(&record.frozen_context_hash) else {
+                // A staged command for another Chat: its context was filtered
+                // out, and missing evidence for this Chat stays a failure.
+                if unrelated_context_hashes.contains(&record.frozen_context_hash) {
+                    continue;
+                }
                 return Err("stored pending Chat command has no frozen context".into());
             };
             if context.context.identity.chat_id != selected_chat_id {
@@ -749,6 +774,15 @@ impl ChatHistory {
             let Some(value) = event.payload.get("record").cloned() else {
                 return Err("stored pending Chat command is incomplete".into());
             };
+            // Only a record naming this exact command can collide with it, so an
+            // unrelated unreadable staged command never has to decode.
+            if value
+                .pointer("/command/commandId")
+                .and_then(Value::as_str)
+                != Some(record.command.command_id.as_str())
+            {
+                continue;
+            }
             let existing: PendingChatCommandV1 = serde_json::from_value(value)
                 .map_err(|_| "stored pending Chat command is invalid".to_owned())?;
             validate_pending_command_record(&existing)?;
@@ -840,6 +874,41 @@ impl ChatHistory {
             })
             .map_err(|error| format!("cannot freeze Chat execution context: {error}"))?;
         Ok(record)
+    }
+
+    /// Compatibility-test seam: appends one already-encoded session-aggregate
+    /// event, exactly as another build wrote it, so a test can replay stored
+    /// records this build did not write.
+    #[cfg(test)]
+    pub(crate) fn stage_stored_session_event_for_test(
+        &self,
+        kind: &str,
+        payload: Value,
+    ) -> Result<(), String> {
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
+        let existing_events = self.session_events()?;
+        let expected_head = u64::try_from(existing_events.len())
+            .map_err(|_| "frozen Chat context sequence is exhausted".to_owned())?;
+        self.store
+            .commit(&CommitBatch {
+                chat_id: SESSION_AGGREGATE_ID.into(),
+                branch_id: BRANCH_ID.into(),
+                expected_head,
+                events: vec![Event {
+                    event_id: format!("event.test.stored.{expected_head}"),
+                    kind: kind.to_owned(),
+                    payload,
+                }],
+                attempt: None,
+                checkpoint: None,
+                deduplication: None,
+                outbox: Vec::new(),
+            })
+            .map_err(|error| format!("cannot stage stored session event: {error}"))?;
+        Ok(())
     }
 
     fn initialize_history_index(&self, data_root: &Path) -> Result<(), String> {
@@ -1434,23 +1503,43 @@ impl ChatHistory {
     }
 
     /// Decodes frozen contexts once while upgrading legacy sidebar summaries.
-    /// Ordinary snapshots resolve only the selected Chat's frozen context.
+    ///
+    /// This repair path stays exhaustive, but a record this build cannot read
+    /// degrades to "no frozen context" for that Chat instead of failing the
+    /// upgrade and with it application open. Ordinary snapshots resolve only the
+    /// selected Chat's frozen context.
     fn frozen_contexts(&self) -> Result<BTreeMap<String, FrozenChatExecutionRecordV1>, String> {
         let mut contexts = BTreeMap::new();
         for event in self.session_events()? {
             if event.kind != "chat.execution-context-frozen" {
                 continue;
             }
-            let value = event
-                .payload
-                .get("record")
-                .cloned()
-                .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())?;
-            let record = decode_stored_frozen_context_record(value)?;
+            let Some(value) = event.payload.get("record").cloned() else {
+                continue;
+            };
+            let Ok(record) = decode_stored_frozen_context_record(value) else {
+                continue;
+            };
             contexts.insert(record.context.identity.chat_id.to_string(), record);
         }
         Ok(contexts)
     }
+}
+
+/// The Chat identity of a stored frozen record, read from the stored bytes
+/// before that record is decoded or validated. `None` means this build cannot
+/// tell which Chat the record belongs to, so it is never selected.
+fn stored_record_chat_id(value: &Value) -> Option<&str> {
+    value
+        .get("context")?
+        .get("identity")?
+        .get("chatId")?
+        .as_str()
+}
+
+/// The context hash named by a stored frozen record, read before decoding.
+fn stored_record_context_hash(value: &Value) -> Option<&str> {
+    value.get("contextHash").and_then(Value::as_str)
 }
 
 impl SemanticEventCommitter for ChatHistory {
@@ -1860,20 +1949,59 @@ fn identity_from_event(event: &Event) -> Result<Option<ChatIdentityV1>, String> 
     }
 }
 
-/// Decodes a durable context while verifying the hash against the exact stored
-/// JSON. This keeps additive serde defaults backward compatible without ever
-/// treating the re-serialized, default-expanded value as the original bytes.
+/// Decodes a durable context while verifying every hash against the exact
+/// stored JSON. This keeps additive serde defaults backward compatible without
+/// ever treating the re-serialized, default-expanded value as the original
+/// bytes.
 fn decode_stored_frozen_context_record(
     value: Value,
 ) -> Result<FrozenChatExecutionRecordV1, String> {
-    let stored_context_hash = value
+    let stored_context = value
         .get("context")
-        .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())
-        .and_then(canonical_hash)?;
+        .cloned()
+        .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())?;
     let record: FrozenChatExecutionRecordV1 = serde_json::from_value(value)
         .map_err(|_| "stored frozen Chat context is invalid".to_owned())?;
-    validate_frozen_context_record(&record, Some(&stored_context_hash))?;
+    validate_frozen_context_record(&record, Some(&stored_context))?;
     Ok(record)
+}
+
+/// Whether one stored hash still describes the value it names.
+///
+/// When the caller holds the stored JSON, the comparison runs over those exact
+/// bytes (Rule A): a record a different build wrote with a field this one does
+/// not know still verifies, and any change to a stored value still fails. The
+/// write path holds no stored bytes and hashes the value it just built.
+pub(crate) fn hash_is_current(
+    stored: Option<&Value>,
+    value: &impl Serialize,
+    expected: &str,
+) -> Result<bool, String> {
+    let hash = match stored {
+        Some(stored) => canonical_hash(stored)?,
+        None => canonical_hash(value)?,
+    };
+    Ok(hash == expected)
+}
+
+/// One named sub-value of a stored record, when the caller holds stored bytes.
+///
+/// Every name here is a field serde always reads from stored JSON, so a missing
+/// one is a damaged record rather than an absent optional field. Defaulted
+/// fields that may legitimately be absent use `Value::get` directly.
+pub(crate) fn stored_field<'a>(
+    stored: Option<&'a Value>,
+    path: &[&str],
+) -> Result<Option<&'a Value>, String> {
+    let Some(mut value) = stored else {
+        return Ok(None);
+    };
+    for key in path {
+        value = value
+            .get(*key)
+            .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())?;
+    }
+    Ok(Some(value))
 }
 
 /// Whether one frozen tool binding is a shape this build can still execute.
@@ -1924,13 +2052,16 @@ fn frozen_tool_binding_is_executable(tool: &FrozenToolBindingV1) -> bool {
 
 fn validate_frozen_context_record(
     record: &FrozenChatExecutionRecordV1,
-    stored_context_hash: Option<&str>,
+    stored_context: Option<&Value>,
 ) -> Result<(), String> {
     let context = &record.context;
-    let context_hash_matches = match stored_context_hash {
-        Some(hash) => hash == record.context_hash,
-        None => canonical_hash(context)? == record.context_hash,
-    };
+    // Every nested hash is verified against the exact stored JSON sub-value
+    // whenever stored bytes are available, so a record another build wrote with
+    // a field this one does not know still loads and any change to a stored
+    // value still fails. The write path has no stored bytes yet and hashes the
+    // record it just built.
+    let stored_tools = stored_context.and_then(|value| value.get("tools"));
+    let stored_project = stored_context.and_then(|value| value.get("project"));
     if context.schema_version != 1
         || context.settings_version == 0
         || context.workflow_version == 0
@@ -1953,10 +2084,27 @@ fn validate_frozen_context_record(
         || !is_sha256(&context.provider_hash)
         || !is_sha256(&context.model_hash)
         || !is_sha256(&record.context_hash)
-        || canonical_hash(&context.workflow_snapshot)? != context.workflow_snapshot_hash
-        || canonical_hash(&context.model_tier_snapshot)? != context.model_tier_hash
-        || canonical_hash(&context.provider_snapshot)? != context.provider_hash
-        || canonical_hash(&context.model_snapshot)? != context.model_hash
+        || !hash_is_current(
+            stored_field(stored_context, &["workflowSnapshot"])?,
+            &context.workflow_snapshot,
+            &context.workflow_snapshot_hash,
+        )?
+        || !hash_is_current(
+            stored_field(stored_context, &["modelTierSnapshot"])?,
+            &context.model_tier_snapshot,
+            &context.model_tier_hash,
+        )?
+        || !hash_is_current(
+            stored_field(stored_context, &["providerSnapshot"])?,
+            &context.provider_snapshot,
+            &context.provider_hash,
+        )?
+        || !hash_is_current(
+            stored_field(stored_context, &["modelSnapshot"])?,
+            &context.model_snapshot,
+            &context.model_hash,
+        )?
+        || !hash_is_current(stored_context, context, &record.context_hash)?
         || context.model_tier_snapshot.id != context.model_tier_id
         || context.provider_snapshot.id != context.provider_id
         || context.provider_snapshot.name != context.provider_name
@@ -1965,7 +2113,6 @@ fn validate_frozen_context_record(
         || context.model_snapshot.id != context.model_id
         || context.model_snapshot.name != context.model_name
         || context.model_snapshot.remote_id != context.remote_model_id
-        || !context_hash_matches
     {
         return Err("stored frozen Chat context failed integrity validation".into());
     }
@@ -2014,7 +2161,7 @@ fn validate_frozen_context_record(
         return Err("stored frozen Chat credential metadata is invalid".into());
     }
     if let Some(project) = &context.project {
-        validate_frozen_project_scope(project)?;
+        validate_frozen_project_scope(project, stored_project)?;
     }
     if let Some(workspace) = &context.chat_workspace {
         if context.project.is_some() {
@@ -2022,7 +2169,7 @@ fn validate_frozen_context_record(
         }
         super::chat_workspace::validate_chat_workspace(workspace, &context.identity.chat_id)?;
     }
-    validate_frozen_tool_bindings(&context.tools)?;
+    validate_frozen_tool_bindings(&context.tools, stored_tools)?;
     if context
         .tools
         .iter()
@@ -2039,9 +2186,16 @@ fn validate_frozen_context_record(
 /// Validates the frozen tool set of one stored Chat: unique identity, matching
 /// snapshot hash, credential references that agree with the snapshot, and a
 /// binding shape this build can still execute.
-pub(crate) fn validate_frozen_tool_bindings(tools: &[FrozenToolBindingV1]) -> Result<(), String> {
+///
+/// `stored_tools` is the stored tool-bindings array when the caller holds the
+/// stored record; each binding's tool hash is then verified against the exact
+/// stored snapshot bytes.
+pub(crate) fn validate_frozen_tool_bindings(
+    tools: &[FrozenToolBindingV1],
+    stored_tools: Option<&Value>,
+) -> Result<(), String> {
     let mut tool_ids = BTreeSet::new();
-    for tool in tools {
+    for (index, tool) in tools.iter().enumerate() {
         let frozen_refs = tool
             .credentials
             .iter()
@@ -2053,10 +2207,19 @@ pub(crate) fn validate_frozen_tool_bindings(tools: &[FrozenToolBindingV1]) -> Re
             .iter()
             .map(|binding| binding.credential_ref.as_str())
             .collect::<BTreeSet<_>>();
+        let stored_snapshot = match stored_tools {
+            Some(stored_tools) => Some(
+                stored_tools
+                    .get(index)
+                    .and_then(|stored| stored.get("toolSnapshot"))
+                    .ok_or_else(|| "stored frozen Chat tool bindings are incomplete".to_owned())?,
+            ),
+            None => None,
+        };
         if !tool_ids.insert(tool.tool_id.as_str())
             || tool.tool_id != tool.tool_snapshot.id
             || !tool.tool_snapshot.enabled
-            || canonical_hash(&tool.tool_snapshot).ok().as_deref() != Some(&tool.tool_hash)
+            || !hash_is_current(stored_snapshot, &tool.tool_snapshot, &tool.tool_hash)?
             || frozen_refs != configured_refs
             || tool.credentials.iter().any(|credential| {
                 credential.revision == 0
@@ -2189,6 +2352,7 @@ mod tests {
     use tempfile::TempDir;
 
     mod question;
+    mod frozen_record_compat;
 
     struct SwitchableEventPort {
         fail: AtomicBool,
@@ -2250,7 +2414,7 @@ mod tests {
                 BTreeMap::from([endpoint(), ("workflows".to_owned(), json!({}))]),
             ),
         ];
-        validate_frozen_tool_bindings(&tools)
+        validate_frozen_tool_bindings(&tools, None)
             .expect("a Chat that froze ComfyUI capabilities must stay resumable");
 
         // A shape this build never writes is still refused, with and without the
@@ -2259,15 +2423,15 @@ mod tests {
             "comfyui.krea-2-turbo-text-to-image-upscaled",
             BTreeMap::from([endpoint()]),
         )];
-        assert!(validate_frozen_tool_bindings(&wrong_shape).is_err());
+        assert!(validate_frozen_tool_bindings(&wrong_shape, None).is_err());
         let mut undefined = binding("comfyui.list_node_types", BTreeMap::from([endpoint()]));
         undefined.definition = None;
-        assert!(validate_frozen_tool_bindings(&[undefined]).is_err());
+        assert!(validate_frozen_tool_bindings(&[undefined], None).is_err());
 
         // Tampering with the snapshot hash is still caught.
         let mut tampered = tools;
         tampered[0].tool_hash = format!("sha256:{}", "b".repeat(64));
-        assert!(validate_frozen_tool_bindings(&tampered).is_err());
+        assert!(validate_frozen_tool_bindings(&tampered, None).is_err());
     }
 
     #[test]

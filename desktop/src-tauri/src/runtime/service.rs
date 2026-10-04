@@ -4710,6 +4710,7 @@ mod tests {
     mod concurrency;
     mod context_model;
     mod credentialed_web_search;
+    mod frozen_record_compat;
     mod goal_control;
     mod image_chat;
     mod projectless;
@@ -4777,7 +4778,7 @@ mod tests {
             "every enabled Settings tool and both helpers freeze: {:?}",
             frozen.warnings
         );
-        crate::runtime::history::validate_frozen_tool_bindings(&frozen.tools)
+        crate::runtime::history::validate_frozen_tool_bindings(&frozen.tools, None)
             .expect("a Chat that froze ComfyUI capabilities must stay resumable");
     }
 

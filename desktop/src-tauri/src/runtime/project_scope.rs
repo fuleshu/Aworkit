@@ -12,10 +12,11 @@ use std::{
 
 use aworkit_trusted_core::{ProjectCoordinator, WorkspaceBindingV1};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{
     dto::ProjectChoiceDto,
-    history::canonical_hash,
+    history::{canonical_hash, hash_is_current, stored_field},
     settings_v2::{ProjectConfigurationV2, WorkspaceKindV2},
 };
 
@@ -105,11 +106,19 @@ pub(crate) fn resolve_project_scope(
         workspace_binding,
         branch,
     };
-    validate_frozen_project_scope(&scope)?;
+    validate_frozen_project_scope(&scope, None)?;
     Ok(Some(scope))
 }
 
-pub(crate) fn validate_frozen_project_scope(scope: &FrozenProjectScopeV1) -> Result<(), String> {
+/// Verifies a frozen project scope.
+///
+/// `stored` is the stored JSON of the scope when the caller reads a record, so
+/// both hashes are verified against the exact stored bytes. The resolve path
+/// holds no stored bytes and hashes the scope it just built.
+pub(crate) fn validate_frozen_project_scope(
+    scope: &FrozenProjectScopeV1,
+    stored: Option<&Value>,
+) -> Result<(), String> {
     let root = scope.workspace_binding.root.to_string_lossy();
     let identity = &scope.workspace_binding.identity;
     let branch_invalid = scope.branch.as_ref().is_some_and(|branch| {
@@ -121,8 +130,16 @@ pub(crate) fn validate_frozen_project_scope(scope: &FrozenProjectScopeV1) -> Res
         || scope.project_name != scope.project_snapshot.name
         || scope.workspace_kind != scope.project_snapshot.workspace.kind
         || root != identity.canonical_path
-        || canonical_hash(&scope.project_snapshot)? != scope.project_configuration_hash
-        || canonical_hash(identity)? != scope.workspace_identity_hash
+        || !hash_is_current(
+            stored_field(stored, &["projectSnapshot"])?,
+            &scope.project_snapshot,
+            &scope.project_configuration_hash,
+        )?
+        || !hash_is_current(
+            stored_field(stored, &["workspaceBinding", "identity"])?,
+            identity,
+            &scope.workspace_identity_hash,
+        )?
         || !is_sha256(&scope.project_configuration_hash)
         || !is_sha256(&scope.workspace_identity_hash)
         || (scope.workspace_kind == WorkspaceKindV2::GitWorktree) != scope.branch.is_some()

@@ -680,6 +680,10 @@ fn load_or_migrate_settings(
             Ok((saved.version, settings))
         }
         version if version == u64::from(SETTINGS_SCHEMA_VERSION_V2) => {
+            // Human-edited Settings keeps typo detection even though the shared
+            // tool-configuration type now drops unknown keys for frozen records.
+            super::settings_v2::reject_unknown_tool_fields(&value)
+                .map_err(|error| format!("stored settings document is invalid: {error}"))?;
             let mut settings: SettingsDocument = decode_ref(&stored, "settings")?;
             let repaired = settings.disable_inactive_runtime_controls()
                 | settings.normalize_legacy_project_tool_limits()

@@ -10,7 +10,7 @@ use super::settings_v2::{
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct UiCommandInput {
     pub schema_version: u16,
     pub command_id: String,

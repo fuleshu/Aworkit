@@ -59,6 +59,70 @@ fn builtin_tool_ids() -> Vec<&'static str> {
         .collect()
 }
 
+/// Rejects an unknown field inside a stored Settings tool configuration.
+///
+/// `BuiltInToolConfigurationV2` is shared with frozen Chat snapshots, where an
+/// unknown key is dropped instead of failing the record, so serde no longer
+/// rejects one. Settings is human-edited, so typo detection stays here, on the
+/// raw stored JSON where the unknown key is still visible.
+pub(crate) fn reject_unknown_tool_fields(document: &Value) -> Result<(), String> {
+    const TOOL_FIELDS: [&str; 7] = [
+        "id",
+        "name",
+        "enabled",
+        "requiresProject",
+        "credentialBindings",
+        "configuration",
+        "options",
+    ];
+    const OPTION_FIELDS: [&str; 4] =
+        ["instructions", "executable", "approvalMode", "autoApprove"];
+    const BINDING_FIELDS: [&str; 3] = ["name", "credentialRef", "field"];
+    let Some(tools) = document.get("tools").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for tool in tools {
+        let Some(tool) = tool.as_object() else {
+            continue;
+        };
+        if let Some(field) = tool
+            .keys()
+            .find(|field| !TOOL_FIELDS.contains(&field.as_str()))
+        {
+            return Err(format!(
+                "unknown field `{field}` in a built-in tool configuration"
+            ));
+        }
+        if let Some(field) = tool
+            .get("options")
+            .and_then(Value::as_object)
+            .and_then(|options| {
+                options
+                    .keys()
+                    .find(|field| !OPTION_FIELDS.contains(&field.as_str()))
+            })
+        {
+            return Err(format!("unknown field `{field}` in tool options"));
+        }
+        let Some(bindings) = tool.get("credentialBindings").and_then(Value::as_array) else {
+            continue;
+        };
+        for binding in bindings {
+            let Some(field) = binding.as_object().and_then(|binding| {
+                binding
+                    .keys()
+                    .find(|field| !BINDING_FIELDS.contains(&field.as_str()))
+            }) else {
+                continue;
+            };
+            return Err(format!(
+                "unknown field `{field}` in a tool credential binding"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Complete canonical configuration persisted as one versioned JSON document.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -933,7 +997,7 @@ impl NamedCredentialBindingV2 {
 
 /// Configuration for one Aworkit-owned built-in tool.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BuiltInToolConfigurationV2 {
     #[serde(
         default,
@@ -4271,6 +4335,41 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("must be 'host_python'")
+        );
+    }
+
+    #[test]
+    fn settings_still_reject_an_unknown_field_inside_a_tool_configuration() {
+        // `BuiltInToolConfigurationV2` is shared with frozen Chat snapshots,
+        // where an unknown key is dropped rather than failing the record. A
+        // human-edited Settings document must still report the typo.
+        let clean = serde_json::to_value(configured()).unwrap();
+        reject_unknown_tool_fields(&clean).unwrap();
+
+        let mut document = serde_json::to_value(configured()).unwrap();
+        document["tools"][0]["bridgeServerId"] = serde_json::json!("bridge.local");
+        assert!(
+            reject_unknown_tool_fields(&document)
+                .unwrap_err()
+                .contains("bridgeServerId")
+        );
+
+        let mut document = serde_json::to_value(configured()).unwrap();
+        document["tools"][0]["options"] = serde_json::json!({"futureOption": true});
+        assert!(
+            reject_unknown_tool_fields(&document)
+                .unwrap_err()
+                .contains("futureOption")
+        );
+
+        let mut document = serde_json::to_value(configured()).unwrap();
+        document["tools"][0]["credentialBindings"] = serde_json::json!([
+            {"name": "key", "credentialRef": "credential.fixture", "field": "apiKey", "futureBinding": true}
+        ]);
+        assert!(
+            reject_unknown_tool_fields(&document)
+                .unwrap_err()
+                .contains("credential binding")
         );
     }
 

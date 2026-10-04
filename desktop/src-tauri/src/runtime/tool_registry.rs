@@ -21,7 +21,7 @@ pub(crate) use persona::migrate_persona;
 
 /// User overrides, frozen along with the tool rather than read during a Run.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
