@@ -508,7 +508,26 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
             Trigger::Pressure,
         )
         .unwrap();
-    assert_eq!(c::units(&request).unwrap(), c::units(&replay).unwrap());
+    let durable = |request: &ModelToolRequestV1| {
+        // The acting replay additionally discloses its measured occupancy; the
+        // durable summary and instruction restoration must still be
+        // byte-identical.
+        let mut stripped = request.clone();
+        stripped
+            .context_messages
+            .retain(|message| !c::is_occupancy_state(&message.content));
+        c::units(&stripped).unwrap()
+    };
+    assert_eq!(durable(&request), durable(&replay));
+    assert_eq!(
+        replay
+            .context_messages
+            .iter()
+            .filter(|message| c::is_occupancy_state(&message.content))
+            .count(),
+        1,
+        "an acting pass discloses its measured occupancy"
+    );
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
@@ -635,7 +654,17 @@ fn pruning_old_tool_results_clears_the_trigger_without_a_summary() {
         calls.lock().unwrap().is_empty(),
         "no auxiliary summary call"
     );
-    let after = c::pressure(&request, None).unwrap();
+    let after = {
+        // The acting pass also appends its measured occupancy notice, which is
+        // not part of the pruning reduction. Price the request without that
+        // generated notice so the pressure drop is exactly the recorded
+        // reduction.
+        let mut stripped = request.clone();
+        stripped
+            .context_messages
+            .retain(|message| !c::is_occupancy_state(&message.content));
+        c::pressure(&stripped, None).unwrap()
+    };
     assert!(after < threshold, "{after} < {threshold}");
     assert!(
         request.exchanges[0].results[0]
@@ -1197,12 +1226,129 @@ fn a_state_change_is_appended_at_the_tail_instead_of_rewriting_the_context() {
         .state_context(
             &mut next,
             crate::runtime::tool_loop::state_context::StateEmission::Append,
+            None,
         )
         .unwrap();
     assert_eq!(
         c::units(&next).unwrap(),
         unchanged,
         "an unchanged refresh appends nothing"
+    );
+}
+
+#[test]
+fn the_occupancy_notice_is_appended_between_compactions_and_consolidated_by_one() {
+    // The measured occupancy is a generated part like the goal or the task
+    // list: disclosed on every acting request, appended at the tail so the
+    // cached prefix survives, and collapsed to one current copy by the next
+    // compaction.
+    let mut f = Fixture::with_tools(&[ID, FILE_READ_CAPABILITY_ID]);
+    let (outer, mut request) = history(&mut f);
+    f.authority.context.model_context = json!({
+        "contextWindow": 1_000_000,
+        "maxOutputTokens": 46_480,
+        "policy": {"auto": true}
+    });
+    // Large, but nowhere near the 800,000-token trigger of the declared window.
+    request.input["messages"][0]["content"] =
+        json!("Established requirements and implementation history. ".repeat(6000));
+    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
+    let occupancy = |request: &ModelToolRequestV1| {
+        request
+            .context_messages
+            .iter()
+            .filter(|message| c::is_occupancy_state(&message.content))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let first = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            1,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(first.error.is_none(), "{:?}", first.error);
+    assert!(!first.changed, "a large window must not compact here");
+    let copies = occupancy(&request);
+    assert_eq!(copies.len(), 1, "{:?}", request.context_messages);
+    assert!(
+        copies[0].content.contains("953,520"),
+        "the denominator is the effective window: {}",
+        copies[0].content
+    );
+    assert!(
+        copies[0].content.contains("runs at 80%"),
+        "{}",
+        copies[0].content
+    );
+
+    // A changed measurement is appended at the tail: every unit the previous
+    // prompt carried stays byte-identical and the cached prefix survives.
+    let before = c::units(&request).unwrap();
+    request
+        .exchanges
+        .push(tool_exchange("read.occupancy", json!("a small result")));
+    let second = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            2,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(second.error.is_none(), "{:?}", second.error);
+    let after = c::units(&request).unwrap();
+    assert_eq!(
+        &after[..before.len()],
+        before.as_slice(),
+        "the occupancy change is append-only between compactions"
+    );
+    let copies = occupancy(&request);
+    assert_eq!(copies.len(), 2, "{:?}", request.context_messages);
+    assert!(
+        copies.last().unwrap().content.ends_with(
+            "(Supersedes the earlier copy of this state in this context.)"
+        ),
+        "{}",
+        copies.last().unwrap().content
+    );
+
+    // The next compaction rebuilds the selection and consolidates the notice
+    // to exactly one current copy, measured against the window in force.
+    f.authority.context.model_context = json!({"contextWindow":65_536,"policy":{"auto":true}});
+    let compacted = f
+        .authority
+        .manage_model_context(
+            &gateway,
+            &plan,
+            &outer,
+            3,
+            Some(&f.agent),
+            &mut request,
+            &CancellationToken::default(),
+            Trigger::Pressure,
+        )
+        .unwrap();
+    assert!(compacted.changed, "{:?}", compacted.error);
+    assert!(compacted.error.is_none(), "{:?}", compacted.error);
+    let copies = occupancy(&request);
+    assert_eq!(copies.len(), 1, "{:?}", request.context_messages);
+    assert!(
+        copies[0].content.contains("65,536"),
+        "the consolidated copy reports the window it was measured against: {}",
+        copies[0].content
     );
 }
 

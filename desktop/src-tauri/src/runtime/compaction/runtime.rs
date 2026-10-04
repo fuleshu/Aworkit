@@ -1,5 +1,5 @@
 //! Trusted admission/persistence adapter for context compaction.
-use super::state_context::StateEmission;
+use super::state_context::{occupancy_notice, StateEmission};
 use super::*;
 use crate::runtime::{
     compaction as c, context_inspection::ContextDocument, model_tool_loop::AgentContextV1,
@@ -676,7 +676,7 @@ impl BoundFileToolAuthorityV1 {
         // the block from its records so the model reads one current copy instead
         // of the same state twice, once of them stale.
         if restore && generated_state(request) > state_before_restore {
-            self.state_context(request, StateEmission::Append)
+            self.state_context(request, StateEmission::Append, None)
                 .map_err(|error| error.to_string())?;
         }
         mark("restore", &mut since, &mut timings);
@@ -970,7 +970,7 @@ impl BoundFileToolAuthorityV1 {
                         // The summary is a projection; the Run's goal, task list and
                         // touched files are re-derived from their records and appended
                         // to the replacement, so they are part of the checkpoint too.
-                        self.state_context(&mut replacement, StateEmission::Consolidate)
+                        self.state_context(&mut replacement, StateEmission::Consolidate, None)
                             .map_err(|error| error.to_string())?;
                         let checkpoint=self.snapshot_payload(&owner,outer,through,&replacement,anchor.clone())?;
                         if cancellation.is_cancelled() { return Err("Context compaction cancelled".into()); }
@@ -1098,7 +1098,7 @@ impl BoundFileToolAuthorityV1 {
                         // The Run's goal, task list and touched files are
                         // re-derived from their records, exactly as a summary
                         // replacement does, so a drop does not lose them either.
-                        self.state_context(&mut replacement_request, StateEmission::Consolidate)
+                        self.state_context(&mut replacement_request, StateEmission::Consolidate, None)
                             .map_err(|error| error.to_string())?;
                         let checkpoint = self.snapshot_payload(
                             &owner,
@@ -1156,6 +1156,20 @@ impl BoundFileToolAuthorityV1 {
             })
         {
             self.run_events.context_event("context.compaction-warning",json!({"ownerKey":self.context_key(),"nodeId":owner.node_id,"child":owner.child,"body":"Context is still above the configured pressure threshold after the permitted reductions. The latest context is preserved; provider overflow recovery remains bounded by the configured retry policy."}))?;
+        }
+        // The measured occupancy notice is appended after every compaction
+        // decision has been made, so the disclosure can never change one. It is
+        // addressed to the acting model: a manual "compact now" command
+        // dispatches no model request, so it emits nothing, and a Chat that
+        // declares no window gets no invented ratio.
+        if trigger != c::Trigger::Manual {
+            if let Some(window) = window {
+                let measured =
+                    c::pressure(request, anchor.as_ref()).map_err(|error| error.to_string())?;
+                let notice = occupancy_notice(&metadata.policy, window, measured);
+                self.occupancy_context(request, Some(&notice))
+                    .map_err(|error| error.to_string())?;
+            }
         }
         mark("manage", &mut since, &mut timings);
         if cancellation.is_cancelled() {

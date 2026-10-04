@@ -470,14 +470,32 @@ pub(crate) const SUMMARY_SHRINK_RETRIES: u32 = 2;
 pub(crate) const GOAL_STATE_LABEL: &str = "Current Chat goal (";
 pub(crate) const TASK_STATE_LABEL: &str = "Current Run task list (";
 pub(crate) const FILES_STATE_LABEL: &str = "Files this Run has already read or changed (";
+/// The measured context occupancy this request carries, as a share of the
+/// effective window. It is a generated notice, not a durable record: it is
+/// re-derived from the same trigger arithmetic on every request, appended at
+/// the tail between compactions, and collapsed into one current copy by the
+/// next compaction. The authority for the numbers it prints is the compaction
+/// budget model (`compaction::Policy`), never this string.
+pub(crate) const OCCUPANCY_STATE_LABEL: &str = "Current context occupancy (";
 /// Whether one unit's content is generated durable state rather than a real
 /// user turn. Generated state is re-derived from records after every compaction
 /// and when a restored checkpoint carries it, so pinning an older copy would
-/// duplicate it and could contradict it.
+/// duplicate it and could contradict it. The occupancy notice is included here
+/// so a compaction shadows it rather than pinning it as a user direction.
 pub(crate) fn is_generated_state(content: &str) -> bool {
-    [GOAL_STATE_LABEL, TASK_STATE_LABEL, FILES_STATE_LABEL]
-        .iter()
-        .any(|label| content.starts_with(label))
+    [
+        GOAL_STATE_LABEL,
+        TASK_STATE_LABEL,
+        FILES_STATE_LABEL,
+        OCCUPANCY_STATE_LABEL,
+    ]
+    .iter()
+    .any(|label| content.starts_with(label))
+}
+
+/// Whether one unit's content is the measured occupancy notice specifically.
+pub(crate) fn is_occupancy_state(content: &str) -> bool {
+    content.starts_with(OCCUPANCY_STATE_LABEL)
 }
 
 /// Pricing is UTF-16 compatible with the Harness estimator, not a tokenizer.
