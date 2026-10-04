@@ -1,0 +1,16 @@
+{
+  "collection": "qa_job_design_links",
+  "data": {
+    "created_at": "2026-10-04 20:54:43",
+    "design_external_id": "aworkit.validate_freeze_hardening",
+    "id": 399584858,
+    "qa_job_id": {
+      "ref": "e1103fd9-bdd3-4971-ae49-5ec9d94d9109"
+    },
+    "sort_order": 0,
+    "target_type": "markdown"
+  },
+  "deleted": false,
+  "identity": "0c32dd33-18db-49bc-863d-14534a5227c8",
+  "schemaVersion": 1
+}

@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/state_context.rs\",\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/runtime.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md\"]",
+    "completed_at": "2026-10-04 20:38:11",
+    "completion_memo": "Added a machine-generated occupancy notice to the durable state block, built from the same arithmetic as the compaction trigger. It reports the anchored pressure, the effective window W (not the declared window), the percentage, the frozen trigger and the 25% target; it is appended after every compaction decision so it can never change one, carries no directive to stop, and is omitted when no window is declared. Between compactions it is appended at the tail with the supersede note and consolidated to one copy by the next compaction. Verified: state_context unit tests (5) and compaction integration tests (32) pass; full desktop lib suite 571 passed with one pre-existing unrelated comfyui fallback-id failure. Committed c7f7c31 and pushed to main. Reconciled the compaction budget specification's non-responsibility.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-04 18:06:55",
@@ -52,9 +52,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Report measured context occupancy to the model in the generated state block",
-    "updated_at": "2026-10-04 18:07:54"
+    "updated_at": "2026-10-04 20:38:11"
   },
   "deleted": false,
   "identity": "162b5ed6-5812-4767-800d-43a7598b83e9",

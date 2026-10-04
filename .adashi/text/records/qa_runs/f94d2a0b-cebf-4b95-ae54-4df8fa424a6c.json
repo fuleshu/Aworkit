@@ -1,0 +1,18 @@
+{
+  "collection": "qa_runs",
+  "data": {
+    "finished_at": "2026-10-04 20:54:53",
+    "id": 507965388,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "query_snapshot": "{\"jobIds\":[1901020914],\"states\":null,\"tags\":null,\"taskIds\":null,\"designExternalIds\":null,\"enabled\":null}",
+    "started_at": "2026-10-04 20:54:50",
+    "status": "passed",
+    "summary": "1 passed, 0 failed, 0 timed out, 0 skipped, 0 cancelled, 0 interrupted",
+    "trigger_source": "task-184-p0-verification"
+  },
+  "deleted": false,
+  "identity": "f94d2a0b-cebf-4b95-ae54-4df8fa424a6c",
+  "schemaVersion": 1
+}

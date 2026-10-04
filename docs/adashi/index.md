@@ -10,6 +10,7 @@ Agents retrieve canonical documents and readTokens through Adashi MCP before edi
 - [Tool plugins: folder-sourced MCP packages, lifecycle, transport and trust](design-977d60d60ede535901d8b2425830b636ccc52392ce568bb1f127791fd31b8fc7.md) — `aworkit.capability_host.tool_plugins`
 - [Chat notice card: one surface for an interrupted reply and a stopped Run](design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md) — `aworkit.desktop_ui.chat_notice_card`
 - [Validation and freeze: why it keeps breaking, and the ordered fix](design-c43d3c60579c2580a64d3349157aeadeaf173e82fb68e68acf9c610790b8d9bb.md) — `aworkit.validate_freeze_hardening`
+- [Validate/freeze hardening: implementation record (task 184)](design-2720c07918e84fe427ea159f4a78fe3bd24a30766fa1419b2a308fad0970c06c.md) — `aworkit.validate_freeze_hardening.implementation_record`
 - [Compaction budget model: every budget is a share of the window](design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md) — `aworkit.workflow_worker.context_compaction_budget`
 - [Failure policy: no limit ends a run; every condition is reported](design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md) — `aworkit.workflow_worker.failure_policy`
 - [System One decision models: backlog design for a decision node, tool ranking and…](design-64fc5fb1786d384cbc7c50322f772af57aa659fca85631356c4305589350ca4e.md) — `aworkit.workflow_worker.system_one_decisions`

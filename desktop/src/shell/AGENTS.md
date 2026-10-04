@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=2942871579283674 -->
+<!-- adashi:generated revision=1817355051127681 -->
 # Architecture — `desktop/src/shell` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

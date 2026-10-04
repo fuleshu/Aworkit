@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-10-04 20:54:43",
+    "qa_job_id": {
+      "ref": "e1103fd9-bdd3-4971-ae49-5ec9d94d9109"
+    },
+    "tag": "task-184"
+  },
+  "deleted": false,
+  "identity": "2afdd500-699a-47f3-a964-a03a2453a1f6",
+  "schemaVersion": 1
+}

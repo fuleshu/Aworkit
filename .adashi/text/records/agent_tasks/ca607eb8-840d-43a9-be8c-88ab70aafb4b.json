@@ -1,13 +1,13 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/skills/plugin-authoring/SKILL.md\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/skills.rs\",\"desktop/src-tauri/tauri.conf.json\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\"]",
+    "completed_at": "2026-10-04 21:53:23",
+    "completion_memo": "Four standard bundled skills now ship with the build at desktop/skills, installed as Tauri resources under <resource_dir>/skills: aworkit-skills (skill format/discovery/precedence/invocation/authoring), aworkit-plugins (skill/tool/plugin layers, manifest, transports, credentials, enable/trust), aworkit-workflows (all 12 node types with configuration keys, freeze vs per-pass, authoring/validation), aworkit-chat-storage (real files, SQLite schema, attempts/checkpoints/dedup/outbox, portable sessions). bundledSkillDir resolves a non-blank setting, then AWORKIT_BUNDLED_SKILLS_DIR, then the installed resource folder, then the repo desktop/skills; the bundled root is scanned last so project/user skills still win, and upgrades replace resources without touching user folders. Drift checks compare the workflow node table against NODE_CONFIGURATION_CONTRACTS_V1/KNOWN_NODE_TYPES and the storage schema table against a real aworkit.sqlite3 opened by LocalHistoryStore; deleting a node row fails the test. Also fixed a pre-existing unquoted-YAML defect that prevented the bundled plugin-authoring skill from loading. Tests: runtime::tool_loop::bundled_skills_tests (6) pass; full lib suite 602 passed / 1 pre-existing unrelated comfyui failure (one compaction test is flaky under parallel load and passes in isolation). Committed 957928c and pushed. Not verified: a real cargo tauri build for the resource map.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-01 15:38:47",
-    "created_files": "[]",
+    "created_files": "[\"desktop/skills/aworkit-skills/SKILL.md\",\"desktop/skills/aworkit-plugins/SKILL.md\",\"desktop/skills/aworkit-workflows/SKILL.md\",\"desktop/skills/aworkit-workflows/references/nodes.md\",\"desktop/skills/aworkit-chat-storage/SKILL.md\",\"desktop/skills/aworkit-chat-storage/references/schema.md\",\"desktop/src-tauri/src/runtime/tool_loop/bundled_skills.rs\",\"desktop/src-tauri/src/runtime/tool_loop/bundled_skills_tests.rs\"]",
     "description": {
       "lines": [
         "## Goal\n",
@@ -62,9 +62,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Ship bundled standard skills that teach an agent how Aworkit works (skills, plugins, workflows, chat storage)",
-    "updated_at": "2026-10-01 15:38:47"
+    "updated_at": "2026-10-04 21:53:23"
   },
   "deleted": false,
   "identity": "ca607eb8-840d-43a9-be8c-88ab70aafb4b",

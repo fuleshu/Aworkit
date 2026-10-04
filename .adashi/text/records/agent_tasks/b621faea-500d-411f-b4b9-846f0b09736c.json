@@ -1,13 +1,13 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/activityProjection.test.ts\"]",
+    "completed_at": "2026-10-04 20:44:08",
+    "completion_memo": "Capability warnings are now deduplicated per distinct warning per Chat, durably. RunEventStream::capability_warnings derives the active condition set from committed evidence (so a fresh stream per pass still sees prior warnings), commits each distinct warning once, and commits a workflow.capability-warning-cleared marker when a pass stops reporting it, so a later recurrence re-arms. The Chat timeline no longer projects workflow.capability-warning as a step, but the event remains committed and readable as Run evidence. A new Chat adapter (useCapabilityWarningNotices) publishes one standing status-bar notice per distinct warning with a condition lifetime, resolves on the cleared marker, and never reopens on hydration/replay. context_advisory_once is untouched. Verified: new Rust test (7 passes dedupe, second warning not suppressed, clear/re-arm, no conversation/context events) and new frontend tests (per-warning notice, no reload reopen); activityProjection test updated. Full desktop lib suite 572 passed (one pre-existing comfyui fallback-id failure); frontend 623 passed across 85 files; tsc clean. Committed 5a1be8c and pushed to main.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-04 18:13:09",
-    "created_files": "[]",
+    "created_files": "[\"desktop/src/chat/useCapabilityWarningNotices.ts\",\"desktop/src/chat/useCapabilityWarningNotices.test.tsx\"]",
     "description": {
       "lines": [
         "INTENT\n",
@@ -51,9 +51,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Report each distinct capability warning once per Chat as a status-bar notification, not repeated Chat content",
-    "updated_at": "2026-10-04 18:13:09"
+    "updated_at": "2026-10-04 20:44:08"
   },
   "deleted": false,
   "identity": "b621faea-500d-411f-b4b9-846f0b09736c",

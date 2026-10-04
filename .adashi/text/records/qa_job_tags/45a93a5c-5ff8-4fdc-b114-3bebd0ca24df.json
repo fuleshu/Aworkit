@@ -1,0 +1,13 @@
+{
+  "collection": "qa_job_tags",
+  "data": {
+    "created_at": "2026-10-04 20:54:43",
+    "qa_job_id": {
+      "ref": "e1103fd9-bdd3-4971-ae49-5ec9d94d9109"
+    },
+    "tag": "frozen-records"
+  },
+  "deleted": false,
+  "identity": "45a93a5c-5ff8-4fdc-b114-3bebd0ca24df",
+  "schemaVersion": 1
+}
