@@ -1716,7 +1716,7 @@
         {
           "key": "bundledSkillDir",
           "label": "Bundled skill folder",
-          "help": "Optional absolute folder scanned after project, additional, and user skills. Blank disables it.",
+          "help": "Absolute folder for the standard skills bundled with Aworkit. Blank uses the skills that ship with this build, scanned after project, additional, and user skills; set a folder to replace them.",
           "kind": "string",
           "readOnly": false
         },

@@ -18,7 +18,10 @@ mod image_tools;
 mod comfyui_tool;
 #[path = "compression/runtime.rs"]
 mod result_compression;
+pub(crate) mod bundled_skills;
 pub(crate) mod skills;
+#[cfg(test)]
+mod bundled_skills_tests;
 #[cfg(test)]
 mod comfyui_tests;
 #[cfg(test)]

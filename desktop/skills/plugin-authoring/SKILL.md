@@ -1,6 +1,6 @@
 ---
 name: plugin-authoring
-description: Build an Aworkit tool plugin: package layout, declaration, an MCP server (local or HTTP), configuration, credentials, schemas, optional skills, local testing and common pitfalls.
+description: "Build an Aworkit tool plugin: package layout, declaration, an MCP server (local or HTTP), configuration, credentials, schemas, optional skills, local testing and common pitfalls."
 ---
 
 # Build an Aworkit tool plugin

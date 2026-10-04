@@ -51,6 +51,123 @@ pub(crate) const KNOWN_NODE_TYPES: &[&str] = &[
     "completion",
 ];
 
+/// One node type's configuration contract: the keys the executable catalog
+/// requires and the further keys it accepts.
+///
+/// Validation reads this table, and the bundled `aworkit-workflows` skill
+/// enumerates it, so a node type or configuration key cannot change here
+/// without the drift test demanding the same change in the skill.
+pub(crate) struct NodeConfigurationContractV1 {
+    pub node_type: &'static str,
+    pub required: &'static [&'static str],
+    pub optional: &'static [&'static str],
+}
+
+/// The closed configuration catalog, in catalog order.
+pub(crate) const NODE_CONFIGURATION_CONTRACTS_V1: &[NodeConfigurationContractV1] = &[
+    NodeConfigurationContractV1 {
+        node_type: "input",
+        required: &[],
+        optional: &[],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "loop",
+        required: &["exitCondition"],
+        optional: &["maximumIterations"],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "agent",
+        required: &["modelTierId", "toolIds"],
+        optional: &[
+            "compaction",
+            "enableThinking",
+            "instructions",
+            "reasoningEffort",
+            "timeoutSeconds",
+        ],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "model_call",
+        required: &["modelTierId"],
+        optional: &[
+            "enableThinking",
+            "instructions",
+            "maximumTokens",
+            "outputContract",
+            "reasoningEffort",
+        ],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "tool",
+        required: &["toolId"],
+        optional: &["parameters"],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "external_agent",
+        required: &["toolId"],
+        optional: &["instructions", "model", "reasoningEffort"],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "condition",
+        required: &["predicate"],
+        optional: &[],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "parallel",
+        required: &[],
+        optional: &[],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "approval",
+        required: &[],
+        optional: &["message", "title"],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "output",
+        required: &[],
+        optional: &[],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "wait",
+        required: &[],
+        optional: &[],
+    },
+    NodeConfigurationContractV1 {
+        node_type: "completion",
+        required: &[],
+        optional: &[],
+    },
+];
+
+fn node_contract(node_type: &str) -> &'static NodeConfigurationContractV1 {
+    NODE_CONFIGURATION_CONTRACTS_V1
+        .iter()
+        .find(|contract| contract.node_type == node_type)
+        .expect("catalog node type")
+}
+
+/// The keys one node type accepts, required and optional together.
+fn accepted_configuration_keys(node_type: &str) -> BTreeSet<&str> {
+    let contract = node_contract(node_type);
+    contract
+        .required
+        .iter()
+        .chain(contract.optional)
+        .copied()
+        .collect()
+}
+
+/// The keys one node type requires.
+fn required_configuration_keys(node_type: &str) -> BTreeSet<&str> {
+    node_contract(node_type).required.iter().copied().collect()
+}
+
+/// Whether a node type accepts no configuration at all.
+fn accepts_no_configuration(node_type: &str) -> bool {
+    let contract = node_contract(node_type);
+    contract.required.is_empty() && contract.optional.is_empty()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LegacySettingsDocumentV1 {
@@ -1470,6 +1587,7 @@ pub(crate) fn validate_v1_executable_catalog(document: &Value) -> Result<(), Str
             .expect("validated workflow configuration object");
         match node_type {
             "input" | "output" | "wait" | "completion" | "parallel" => {
+                debug_assert!(accepts_no_configuration(node_type));
                 if !config.is_empty() {
                     return Err(format!(
                         "workflow node '{node_id}' of type {node_type} accepts no configuration"
@@ -1694,16 +1812,8 @@ fn validate_agent_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let required = BTreeSet::from(["modelTierId", "toolIds"]);
-    let allowed = BTreeSet::from([
-        "compaction",
-        "enableThinking",
-        "instructions",
-        "modelTierId",
-        "reasoningEffort",
-        "timeoutSeconds",
-        "toolIds",
-    ]);
+    let required = required_configuration_keys("agent");
+    let allowed = accepted_configuration_keys("agent");
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
             "workflow node '{node_id}' agent configuration accepts exactly modelTierId, toolIds, instructions, reasoningEffort, enableThinking, optional compaction, and the ignored legacy timeoutSeconds field"
@@ -1762,15 +1872,8 @@ fn validate_model_call_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let required = BTreeSet::from(["modelTierId"]);
-    let allowed = BTreeSet::from([
-        "enableThinking",
-        "instructions",
-        "maximumTokens",
-        "modelTierId",
-        "outputContract",
-        "reasoningEffort",
-    ]);
+    let required = required_configuration_keys("model_call");
+    let allowed = accepted_configuration_keys("model_call");
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
             "workflow node '{node_id}' model_call configuration accepts exactly modelTierId plus optional instructions, maximumTokens, outputContract, reasoningEffort, and enableThinking"
@@ -1899,8 +2002,8 @@ fn validate_external_agent_node_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let required = BTreeSet::from(["toolId"]);
-    let allowed = BTreeSet::from(["toolId", "instructions", "model", "reasoningEffort"]);
+    let required = required_configuration_keys("external_agent");
+    let allowed = accepted_configuration_keys("external_agent");
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
             "workflow node '{node_id}' external agent configuration accepts exactly toolId plus optional instructions, model, and reasoningEffort"
@@ -1955,8 +2058,8 @@ fn validate_tool_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let required = BTreeSet::from(["toolId"]);
-    let allowed = BTreeSet::from(["parameters", "toolId"]);
+    let required = required_configuration_keys("tool");
+    let allowed = accepted_configuration_keys("tool");
     if !required.is_subset(&keys) || !keys.is_subset(&allowed) {
         return Err(format!(
             "workflow node '{node_id}' tool configuration accepts exactly toolId plus optional parameters"
@@ -1996,8 +2099,8 @@ fn validate_condition_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let allowed = BTreeSet::from(["predicate"]);
-    if !keys.is_subset(&allowed) || !config.contains_key("predicate") {
+    let allowed = accepted_configuration_keys("condition");
+    if !keys.is_subset(&allowed) || !required_configuration_keys("condition").is_subset(&keys) {
         return Err(format!(
             "workflow node '{node_id}' condition configuration accepts exactly a predicate object"
         ));
@@ -2070,7 +2173,7 @@ fn validate_approval_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let allowed = BTreeSet::from(["message", "title"]);
+    let allowed = accepted_configuration_keys("approval");
     if !keys.is_subset(&allowed) {
         return Err(format!(
             "workflow node '{node_id}' approval configuration accepts only title and message"
@@ -2146,8 +2249,10 @@ fn validate_loop_configuration(
     config: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
     let keys = configuration_keys(config);
-    let allowed = BTreeSet::from(["exitCondition", "maximumIterations"]);
-    if !keys.is_subset(&allowed) || !config.contains_key("exitCondition") {
+    let allowed = accepted_configuration_keys("loop");
+    if !keys.is_subset(&allowed)
+        || !required_configuration_keys("loop").is_subset(&keys)
+    {
         return Err(format!(
             "workflow node '{node_id}' loop configuration accepts exactly an exitCondition predicate and an optional maximumIterations integer"
         ));

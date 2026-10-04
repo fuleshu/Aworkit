@@ -930,6 +930,12 @@ fn main() {
             let app_data_root = std::env::var_os("AWORKIT_QA_PROFILE")
                 .map(PathBuf::from)
                 .unwrap_or(app_data_root);
+            // Bundled standard skills ship as application resources; a packaged
+            // build reads them there, a development build falls back to the
+            // source tree. Registration happens before any Chat can freeze.
+            if let Ok(resources) = app.path().resource_dir() {
+                aworkit_desktop::runtime::register_bundled_skills_root(resources);
+            }
             desktop_bootstrap::start(app.handle(), app_data_root);
             Ok(())
         })

@@ -18,6 +18,9 @@ struct Settings {
 }
 
 /// Blank home fields resolve at Chat freeze; persisted paths are absolute.
+///
+/// A blank `bundledSkillDir` resolves to the standard skills that ship with
+/// this build ([`super::bundled_skills`]); setting a folder replaces them.
 pub(crate) fn configuration(value: &Value) -> Result<SkillConfiguration, String> {
     let settings: Settings = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
     let home =
@@ -36,8 +39,7 @@ pub(crate) fn configuration(value: &Value) -> Result<SkillConfiguration, String>
         aworkit_home: home_path(settings.aworkit_home, ".aworkit")?,
         agents_home: home_path(settings.agents_home, ".agents")?,
         custom_skill_dirs: settings.custom_skill_dirs,
-        bundled_skill_dir: (!settings.bundled_skill_dir.is_empty())
-            .then(|| PathBuf::from(settings.bundled_skill_dir)),
+        bundled_skill_dir: super::bundled_skills::resolve_root(Some(&settings.bundled_skill_dir)),
         catalog_description_max_length: settings.catalog_description_max_length,
     };
     configuration.validate()?;

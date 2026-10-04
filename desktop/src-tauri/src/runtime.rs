@@ -49,6 +49,10 @@ mod tool_result_preview;
 pub mod tool_registry;
 mod web_documents;
 
+/// Records the installed application resource directory so the bundled standard
+/// skills resolve in a packaged build as well as from the source tree.
+pub use tool_loop::bundled_skills::register_installed_root as register_bundled_skills_root;
+
 /// Canonical persistence-safe built-in project-tool limits. Settings, runtime
 /// freezing, renderer defaults, and native QA must expose these exact values.
 pub(crate) const PROJECT_FILE_READ_MAXIMUM_BYTES_V1: u64 = 256 * 1024;
