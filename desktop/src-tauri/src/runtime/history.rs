@@ -62,6 +62,31 @@ const SETTLING_COMMAND_FACT_KINDS: [&str; 7] = [
     "chat.turn_stopped",
 ];
 
+/// The exact durable Chat facts a snapshot's reducer folds: identity, title,
+/// phase, evidence and the sidebar row. A snapshot reads only these kinds, so
+/// the model-facing payloads (megabyte context checkpoints, span content and
+/// deltas) are never decoded to project Chat state. The list is derived from
+/// `projected_phase`, `sidebar_summary` and `evidence`; a fact those folds can
+/// observe but this list omits would silently disappear from every snapshot.
+const SNAPSHOT_PROJECTION_KINDS: [&str; 16] = [
+    "chat.started",
+    "chat.cancelled",
+    "message.user",
+    "message.assistant",
+    "approval.requested",
+    "approval.resolved",
+    "chat.turn_stopped",
+    "context.manual-completed",
+    "context.manual-failed",
+    "context.compaction-ended",
+    "execution.failed",
+    "tool.completed",
+    "tool.failed",
+    "question.asked",
+    "question.answered",
+    "question.cancelled",
+];
+
 /// Whether one committed Chat fact settles the effect-bearing command it names.
 /// The kind list and the command identity are the whole rule, so both staged
 /// records and the recovery fallback read the same predicate.
@@ -1394,12 +1419,18 @@ impl ChatHistory {
             run_id: indexed.run_id.clone(),
         };
         let head = self.head_for_chat(&identity.chat_id)?;
-        let all_events = if after_sequence == u64::MAX {
-            Arc::new(self.store.events_of_kinds(identity.chat_id.as_str(), BRANCH_ID, &[
-                "chat.started", "chat.cancelled", "message.user", "message.assistant", "approval.requested", "approval.resolved", "chat.turn_stopped", "context.manual-completed", "context.manual-failed", "execution.failed", "tool.completed", "tool.failed",
-            ]).map_err(|e| e.to_string())?.into_iter().map(Arc::new).collect())
-        } else { self.events()? };
-        let current = all_events.clone();
+        // The projection state is a bounded, kind-filtered read, never a decode of
+        // the retained stream. An interactive snapshot of a huge Chat (megabyte
+        // context checkpoints and span payloads) used to decode the entire stream
+        // per call, pinning a core for minutes; task #185.
+        let current: Arc<Vec<Arc<Event>>> = Arc::new(
+            self.store
+                .events_of_kinds(identity.chat_id.as_str(), BRANCH_ID, &SNAPSHOT_PROJECTION_KINDS)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
+        );
         let frozen = self.frozen_context(&identity.chat_id)?;
         let evidence = evidence(&current);
         let started = current.iter().any(|event| event.kind == "chat.started");
@@ -1457,10 +1488,15 @@ impl ChatHistory {
         }))?;
         let mut summary = sidebar_summary(&current, frozen.as_ref(), &indexed.created_at);
         summary.head_sequence = head;
-        if after_sequence == u64::MAX {
-            summary.updated_at = self.store.latest_event_time(identity.chat_id.as_str(), BRANCH_ID)
-                .map_err(|e| e.to_string())?.unwrap_or_else(|| indexed.created_at.clone());
-        }
+        // The row timestamp is a store scalar read, not a payload decode, and both
+        // the metadata and the delta snapshot resolve it the same way. Deriving it
+        // from the decoded set instead made the two paths disagree by the newest
+        // non-projection fact and rewrote the sidebar index on every poll.
+        summary.updated_at = self
+            .store
+            .latest_event_time(identity.chat_id.as_str(), BRANCH_ID)
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| indexed.created_at.clone());
         if indexed.summary.as_ref() != Some(&summary) {
             history_index::append_summaries(
                 &self.store,
@@ -1469,22 +1505,14 @@ impl ChatHistory {
             index.entries[indexed_position].summary = Some(summary);
         }
         let history = Self::history_entries(index);
-        let stream_id = identity.chat_id.to_string();
-        let events = all_events
-            .iter()
-            .enumerate()
-            .filter_map(|(offset, event)| {
-                let sequence = u64::try_from(offset).ok()?.checked_add(1)?;
-                (sequence > after_sequence).then(|| {
-                    envelope(
-                        &stream_id,
-                        BRANCH_ID,
-                        sequence,
-                        SemanticEventDraft::new(event.kind.clone(), event.payload.clone()),
-                    )
-                })
-            })
-            .collect();
+        // Only the events the caller has not seen, read from the store in bounded
+        // windows: work stays proportional to the unseen tail instead of to the
+        // whole retained Chat, and the metadata snapshot still returns no events.
+        let events = if after_sequence == u64::MAX {
+            Vec::new()
+        } else {
+            self.snapshot_delta_events(&identity.chat_id, after_sequence, head)?
+        };
         Ok(RuntimeSnapshot {
             event_window: None,
             active_chat_ids: Vec::new(),
@@ -1503,6 +1531,44 @@ impl ChatHistory {
             events,
             subagents: Vec::new(),
         })
+    }
+
+    /// The committed events after `after`, in sequence order, read from the store
+    /// in bounded windows.
+    ///
+    /// This is the interactive delta path: a caller that already holds everything
+    /// through its last seen sequence reads only the tail, and a caller far behind
+    /// still never materializes the whole stream at once. The store's own window
+    /// bound (128 rows, 4 MiB of payload) is what keeps each read finite; the loop
+    /// only advances a cursor, and the first row of every page is always returned,
+    /// so it always progresses toward `head`.
+    fn snapshot_delta_events(
+        &self,
+        chat_id: &StableId,
+        after: u64,
+        head: u64,
+    ) -> Result<Vec<CoreEventEnvelope>, String> {
+        let chat = chat_id.as_str();
+        let mut events = Vec::new();
+        let mut cursor = after.min(head);
+        while cursor < head {
+            let page = self
+                .store
+                .event_window(chat, BRANCH_ID, cursor, head, false)
+                .map_err(|error| error.to_string())?;
+            let Some((last, _)) = page.last() else { break };
+            let last = *last;
+            for (sequence, event) in page {
+                events.push(envelope(
+                    chat,
+                    BRANCH_ID,
+                    sequence,
+                    SemanticEventDraft::new(event.kind, event.payload),
+                ));
+            }
+            cursor = last;
+        }
+        Ok(events)
     }
 
     fn events(&self) -> Result<Arc<Vec<Arc<Event>>>, String> {
@@ -2515,6 +2581,158 @@ mod tests {
             self.delivered.lock().unwrap().push(event);
             Ok(())
         }
+    }
+
+    /// Task #185: an interactive snapshot of a huge Chat must not decode the
+    /// retained stream. Pre-fix, a concrete `after_sequence` was routed through
+    /// the full `events()` decode, so every poll re-read and re-parsed every
+    /// megabyte context checkpoint and span payload the Chat had ever committed,
+    /// pinning a core for minutes while the pass committed nothing.
+    #[test]
+    fn interactive_snapshot_reads_only_the_unseen_tail_of_a_huge_chat() {
+        use crate::runtime::semantic_events::noop_committed_event_port;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let identity = history.selected_identity().unwrap();
+        let mut drafts: Vec<(&str, Value)> = vec![
+            ("chat.started", json!({"createdAt":"1"})),
+            ("message.user", json!({"createdAt":"2","body":"hello"})),
+        ];
+        // Model-facing payloads the Chat projection never needs: four megabyte
+        // context checkpoints and one megabyte span input.
+        drafts.extend((0..4).map(|turn| {
+            (
+                "context.checkpoint",
+                json!({
+                    "createdAt": "3",
+                    "turn": turn,
+                    "body": "x".repeat(2 * 1024 * 1024),
+                }),
+            )
+        }));
+        drafts.push((
+            "span.started",
+            json!({
+                "createdAt": "4",
+                "spanId": "span.run.1",
+                "input": {"document": "y".repeat(1024 * 1024)},
+            }),
+        ));
+        drafts.push(("message.assistant", json!({"createdAt":"5","body":"done"})));
+        let base = history.head().unwrap();
+        let events = drafts
+            .into_iter()
+            .enumerate()
+            .map(|(offset, (kind, payload))| Event {
+                event_id: event_identity(
+                    identity.chat_id.as_str(),
+                    BRANCH_ID,
+                    base + u64::try_from(offset).unwrap() + 1,
+                ),
+                kind: kind.to_owned(),
+                payload,
+            })
+            .collect::<Vec<_>>();
+        history
+            .store
+            .commit(&CommitBatch {
+                chat_id: identity.chat_id.to_string(),
+                branch_id: BRANCH_ID.into(),
+                expected_head: base,
+                events,
+                attempt: None,
+                checkpoint: None,
+                deduplication: None,
+                outbox: Vec::new(),
+            })
+            .unwrap();
+        let head = history.head().unwrap();
+        assert_eq!(head, base + 8);
+
+        // The live shape: the desktop polls with the last sequence it already has.
+        for _ in 0..4 {
+            let snapshot = history.snapshot(head).unwrap();
+            assert_eq!(snapshot.through_sequence, head);
+            assert!(snapshot.events.is_empty(), "nothing unseen at the head");
+        }
+        assert!(
+            history.lock_stream().decoded.events.is_empty(),
+            "an interactive snapshot must not decode the retained stream"
+        );
+
+        // Mid-stream the delta is exactly the unseen tail, in committed order.
+        let delta = history.snapshot(base + 3).unwrap();
+        assert_eq!(
+            delta
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            ((base + 4)..=head).collect::<Vec<_>>()
+        );
+        assert!(history.lock_stream().decoded.events.is_empty());
+
+        // The guard above is real: the exhaustive path does decode every payload,
+        // and this stream really is megabytes of it.
+        assert_eq!(
+            history.committed_events_shared().unwrap().len(),
+            usize::try_from(head).unwrap()
+        );
+        assert!(!history.lock_stream().decoded.events.is_empty());
+        let payload_bytes: usize = history
+            .events_for_chat(&identity.chat_id)
+            .unwrap()
+            .iter()
+            .map(|event| serde_json::to_string(&event.payload).unwrap().len())
+            .sum();
+        assert!(
+            payload_bytes > 8 * 1024 * 1024,
+            "the retained stream must be expensive to decode in full: {payload_bytes} bytes"
+        );
+
+        // The metadata and delta snapshots still agree on the projected state, so
+        // the cheap projection is the same projection.
+        assert_eq!(
+            history.snapshot(u64::MAX).unwrap().state_hash,
+            history.snapshot(0).unwrap().state_hash
+        );
+
+        // A delta longer than one store window still returns every unseen event,
+        // once each, in committed order.
+        let extra = (0..200u64)
+            .map(|n| Event {
+                event_id: event_identity(identity.chat_id.as_str(), BRANCH_ID, head + n + 1),
+                kind: "message.user".into(),
+                payload: json!({"createdAt":"6","body":format!("m{n}")}),
+            })
+            .collect::<Vec<_>>();
+        history
+            .store
+            .commit(&CommitBatch {
+                chat_id: identity.chat_id.to_string(),
+                branch_id: BRANCH_ID.into(),
+                expected_head: head,
+                events: extra,
+                attempt: None,
+                checkpoint: None,
+                deduplication: None,
+                outbox: Vec::new(),
+            })
+            .unwrap();
+        let grown = history.head().unwrap();
+        assert_eq!(grown, head + 200);
+        let windowed = history.snapshot(base + 3).unwrap();
+        assert_eq!(
+            windowed
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            ((base + 4)..=grown).collect::<Vec<_>>()
+        );
     }
 
     #[test]
