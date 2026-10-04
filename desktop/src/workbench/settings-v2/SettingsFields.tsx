@@ -405,7 +405,7 @@ export function ConnectionEditor({
             <textarea
               id={`${id}-args`}
               spellCheck={false}
-              title="One public command argument per line; authentication values are rejected and must use secret-backed environment bindings"
+              title="One public command argument per line. Executable paths, endpoints and other plugin configuration belong here. Authentication values are rejected and must use secret-backed environment bindings"
               value={value.args.join("\n")}
               onChange={(event) =>
                 onChange({

@@ -3,7 +3,7 @@
 //! Diagnostics operate on the exact unsaved records supplied by the renderer.
 //! They do not persist, enable, or grant authority to a capability.
 
-use std::{collections::BTreeMap, env, fs, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, env, path::PathBuf, time::Duration};
 
 use aworkit_capability_host::{
     BuiltInProcessTools, CancellationToken, FileAuthority, HostToolLimitsV1, NativeProcessPort,
@@ -187,7 +187,7 @@ fn inspect_project(project: &ProjectConfigurationV2) -> Result<PathBuf, String> 
                 .into(),
         );
     }
-    let path = fs::canonicalize(&project.workspace.location)
+    let path = dunce::canonicalize(&project.workspace.location)
         .map_err(|_| "Workspace path does not exist or cannot be resolved.".to_owned())?;
     if !path.is_dir() {
         return Err("Workspace path is not a directory.".into());
@@ -474,7 +474,7 @@ fn find_executable(names: &[&str]) -> Option<PathBuf> {
     env::split_paths(&paths)
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|candidate| candidate.is_file())
-        .and_then(|candidate| fs::canonicalize(candidate).ok())
+        .and_then(|candidate| dunce::canonicalize(candidate).ok())
 }
 
 #[cfg(test)]

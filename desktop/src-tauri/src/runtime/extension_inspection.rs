@@ -51,7 +51,7 @@ pub(crate) fn inspect_extension_manifest_details_v2(
     reject_symlink_components(manifest_path)?;
 
     let canonical_path =
-        fs::canonicalize(manifest_path).map_err(|source| ExtensionInspectionError::FileSystem {
+        dunce::canonicalize(manifest_path).map_err(|source| ExtensionInspectionError::FileSystem {
             operation: "canonicalize the extension manifest",
             source,
         })?;

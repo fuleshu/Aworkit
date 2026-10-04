@@ -231,7 +231,7 @@ impl ProcessWorkerSupervisorV1 {
         executable: impl Into<PathBuf>,
         maximum_restarts: u32,
     ) -> Result<Self, WorkerSupervisorError> {
-        let executable_path = std::fs::canonicalize(executable.into())
+        let executable_path = dunce::canonicalize(executable.into())
             .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
         let executable = ExecutableIdentityV1::open(executable_path)
             .map_err(|error| WorkerSupervisorError::Spawn(error.to_string()))?;
@@ -549,7 +549,7 @@ impl ProcessWorkerSupervisorV1 {
             terminate_worker(&mut worker);
             return Err(WorkerSupervisorError::UnexpectedHandshakeOutput);
         };
-        let executable_identity = match std::fs::canonicalize(&handshake.executable_identity) {
+        let executable_identity = match dunce::canonicalize(&handshake.executable_identity) {
             Ok(identity) => identity,
             Err(_) => {
                 terminate_worker(&mut worker);

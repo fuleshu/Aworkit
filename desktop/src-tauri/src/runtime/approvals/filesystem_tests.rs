@@ -9,7 +9,7 @@ fn filesystem_grants_enforce_owner_access_containment_identity_and_revocation() 
     let other = root.path().join("reference-other");
     std::fs::create_dir(&other).unwrap();
     let projects = ProjectCoordinator::open(root.path().join("projects")).unwrap();
-    let target = std::fs::canonicalize(&reference)
+    let target = dunce::canonicalize(&reference)
         .unwrap()
         .join("src/file.txt");
     let context = ApprovalContext {
@@ -39,7 +39,7 @@ fn filesystem_grants_enforce_owner_access_containment_identity_and_revocation() 
     assert!(!grant.permits(
         &next,
         FilesystemAccess::Read,
-        &std::fs::canonicalize(&other).unwrap().join("file.txt"),
+        &dunce::canonicalize(&other).unwrap().join("file.txt"),
         &projects
     ));
     next.project_key = Some("project.other".into());
@@ -61,7 +61,7 @@ fn filesystem_grants_enforce_owner_access_containment_identity_and_revocation() 
             &ApprovalChoice::AlwaysApproveInProject,
             &selection,
             FilesystemAccess::Read,
-            &std::fs::canonicalize(&other).unwrap(),
+            &dunce::canonicalize(&other).unwrap(),
             &projects
         )
         .is_err()

@@ -16,7 +16,13 @@ protect the input, bound the runtime, and probe the result for you. Reach for
 
 Target: **FFmpeg 9.0.x "Lei"** (current stable, 9.0.2 on 2026-09-18), also
 supported on 8.1 "Hoare", 8.0 "Huffman" and 7.1 "Péter". The installed version
-is reported by `ffmpeg_doctor`.
+is reported by `ffmpeg_doctor`, along with the resolved `ffmpeg`/`ffprobe`
+paths and where they came from. If the tools report FFmpeg missing, tell the
+user to set `--ffmpeg`/`--ffprobe` to the executable paths in this plugin's
+Arguments (Settings → Tool Plugins → FFmpeg media tools) or to set the
+`FFMPEG_PATH`/`FFPROBE_PATH` environment variables; installing FFmpeg in a
+common folder such as `C:\ffmpeg\bin` or via the package manager also works
+without any configuration.
 
 ## Workflow
 

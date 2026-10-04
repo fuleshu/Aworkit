@@ -92,5 +92,5 @@ impl DebugCaptureStore {
 
 fn absolute_directory(path: &Path) -> Result<PathBuf, CaptureError> {
     fs::create_dir_all(path)?;
-    Ok(fs::canonicalize(path)?)
+    Ok(dunce::canonicalize(path)?)
 }

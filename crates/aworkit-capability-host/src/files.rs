@@ -4,7 +4,6 @@
 
 use std::{
     collections::BTreeSet,
-    fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
@@ -222,7 +221,7 @@ impl ProjectFiles {
     }
 
     pub fn new(authority: FileAuthority) -> Result<Self, FileToolError> {
-        let canonical_root = fs::canonicalize(&authority.root)?;
+        let canonical_root = dunce::canonicalize(&authority.root)?;
         if !canonical_root.is_dir() {
             return Err(FileToolError::OutsideRoot);
         }
@@ -957,7 +956,7 @@ fn validate_relative(path: &Path) -> Result<&Path, FileToolError> {
 /// device/inode on Unix, volume serial/file index on Windows.
 fn root_identity(path: &Path) -> Result<RootIdentity, std::io::Error> {
     Ok(RootIdentity {
-        canonical_path: fs::canonicalize(path)?,
+        canonical_path: dunce::canonicalize(path)?,
         handle: Arc::new(same_file::Handle::from_path(path)?),
     })
 }

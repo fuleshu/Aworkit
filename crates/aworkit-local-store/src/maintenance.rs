@@ -16,7 +16,7 @@ pub(crate) struct MaintenanceGate {
 impl MaintenanceGate {
     pub(crate) fn for_root(root: &Path) -> io::Result<Self> {
         fs::create_dir_all(root)?;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let parent = root.parent().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "store root has no parent")
         })?;

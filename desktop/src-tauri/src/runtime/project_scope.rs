@@ -180,7 +180,7 @@ fn linked_worktree_head(workspace_root: &Path, dot_git: &Path) -> Result<PathBuf
     } else {
         workspace_root.join(target)
     };
-    let canonical = fs::canonicalize(target)
+    let canonical = dunce::canonicalize(target)
         .map_err(|_| "the linked Git metadata directory is unavailable".to_owned())?;
     if !canonical.is_dir() {
         return Err("the linked Git metadata target is not a directory".into());
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(frozen.project_id, local.id);
         assert_eq!(
             frozen.workspace_binding.identity.canonical_path,
-            fs::canonicalize(root.path()).unwrap().to_string_lossy()
+            dunce::canonicalize(root.path()).unwrap().to_string_lossy()
         );
         assert!(frozen.workspace_identity_hash.starts_with("sha256:"));
 

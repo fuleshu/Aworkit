@@ -3558,7 +3558,7 @@ fn stable_executable(candidate: PathBuf, label: &str) -> Result<PathBuf, String>
     if !candidate.is_absolute() {
         return Err(format!("{label} executable is not an absolute path"));
     }
-    std::fs::canonicalize(&candidate).map_err(|error| {
+    dunce::canonicalize(&candidate).map_err(|error| {
         format!(
             "cannot resolve {label} executable '{}': {error}",
             candidate.display()

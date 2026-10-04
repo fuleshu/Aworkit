@@ -457,7 +457,7 @@ mod tests {
         OneShotDelegationV1 {
             run_id: StableId::parse("run.child").expect("stable id"),
             task: "Summarize the module".to_owned(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             deadline: Duration::from_secs(300),
             options,
         }

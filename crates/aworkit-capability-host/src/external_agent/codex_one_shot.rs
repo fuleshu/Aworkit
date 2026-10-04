@@ -1146,9 +1146,9 @@ mod tests {
     fn config(mode: CodexPermissionModeV1) -> CodexOneShotConfigV1 {
         CodexOneShotConfigV1 {
             name: "codex".to_owned(),
-            executable: PathBuf::from("/usr/bin/codex"),
+            executable: std::env::temp_dir().join("codex"),
             arguments: vec!["app-server".to_owned(), "--stdio".to_owned()],
-            working_directory: Some(PathBuf::from("/tmp")),
+            working_directory: Some(std::env::temp_dir()),
             inherit_environment: true,
             environment: Vec::new(),
             permission_mode: mode,
@@ -1164,7 +1164,7 @@ mod tests {
         OneShotDelegationV1 {
             run_id: StableId::parse("run.codex").expect("stable id"),
             task: "Summarize the delegation seam".to_owned(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             deadline: Duration::from_secs(30),
             options: Default::default(),
         }
@@ -1242,7 +1242,10 @@ mod tests {
             .iter()
             .find(|message| message["method"] == "thread/start")
             .expect("thread/start was sent");
-        assert_eq!(thread_start["params"]["cwd"], "/tmp");
+        assert_eq!(
+            thread_start["params"]["cwd"],
+            std::env::temp_dir().to_string_lossy().as_ref()
+        );
         assert_eq!(thread_start["params"]["ephemeral"], true);
         assert_eq!(thread_start["params"]["approvalPolicy"], "never");
         let turn_start = sent
@@ -1672,7 +1675,7 @@ mod tests {
         // A backend whose executable cannot be launched still settles with a
         // safe diagnostic instead of panicking or hanging.
         let mut missing = config(CodexPermissionModeV1::Never);
-        missing.executable = PathBuf::from("/nonexistent/codex");
+        missing.executable = std::env::temp_dir().join("nonexistent-codex");
         let backend = CodexOneShotBackendV1::new(missing).expect("configuration is valid");
         let outcome = backend.run(&request(), &CancellationToken::default());
         assert_eq!(outcome.stop_reason, SubagentStopReasonV1::Process);

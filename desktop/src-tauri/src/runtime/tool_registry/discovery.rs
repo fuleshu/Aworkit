@@ -78,7 +78,7 @@ fn read_manifest(path: &Path) -> Result<(Manifest, ToolPluginPin), String> {
     }
     super::validate_mcp_catalog(&manifest.tools)?;
     let pin = ToolPluginPin {
-        manifest_path: fs::canonicalize(path)
+        manifest_path: dunce::canonicalize(path)
             .map_err(|e| e.to_string())?
             .to_string_lossy()
             .into_owned(),
@@ -147,7 +147,11 @@ pub fn inspect(path: &Path) -> Result<McpServerConfigurationV2, String> {
 
 pub fn verify(pin: &ToolPluginPin) -> Result<(), String> {
     let (_, actual) = read_manifest(Path::new(&pin.manifest_path))?;
-    if actual != *pin {
+    // The manifest path is compared in its simplified form, so a pin stored
+    // before Windows paths lost their `\\?\` prefix still verifies.
+    let same_manifest = dunce::simplified(Path::new(&actual.manifest_path))
+        == dunce::simplified(Path::new(&pin.manifest_path));
+    if !same_manifest || actual.content_hash != pin.content_hash || actual.version != pin.version {
         return Err(
             "This plugin changed. Refresh the plugins list, then add its new version in Settings."
                 .into(),
@@ -209,7 +213,7 @@ pub fn plugin_folder(root: &Path) -> Result<std::path::PathBuf, String> {
         return Err("Tool plugin folder is not configured".into());
     }
     fs::create_dir_all(root).map_err(|e| format!("could not create the plugin folder: {e}"))?;
-    fs::canonicalize(root).map_err(|e| format!("could not resolve the plugin folder: {e}"))
+    dunce::canonicalize(root).map_err(|e| format!("could not resolve the plugin folder: {e}"))
 }
 
 /// Where one installed package would live: `<root>/<folder>` with a single,
@@ -292,7 +296,7 @@ fn copy_package(source: &Path, destination: &Path) -> Result<(), String> {
 pub fn install(source: &Path, root: &Path) -> Result<McpServerConfigurationV2, String> {
     let root = plugin_folder(root)?;
     let source = package_source(source)?;
-    let source = fs::canonicalize(&source).map_err(|e| e.to_string())?;
+    let source = dunce::canonicalize(&source).map_err(|e| e.to_string())?;
     if source.starts_with(&root) {
         return Err("That plugin is already in the plugin folder.".into());
     }
@@ -350,7 +354,7 @@ pub fn remove(root: &Path, key: &str) -> Result<String, String> {
         .parent()
         .ok_or("The plugin folder is missing")?
         .to_path_buf();
-    let canonical = fs::canonicalize(&folder).map_err(|e| e.to_string())?;
+    let canonical = dunce::canonicalize(&folder).map_err(|e| e.to_string())?;
     if canonical == root || !canonical.starts_with(&root) {
         return Err("That folder is not an installed plugin.".into());
     }

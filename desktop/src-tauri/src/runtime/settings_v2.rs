@@ -1594,7 +1594,7 @@ fn validate_mcp_transport_targets(
         } => {
             if cwd
                 .as_ref()
-                .is_some_and(|path| !Path::new(path).is_absolute())
+                .is_some_and(|path| !absolute_in_any_platform(Path::new(path)))
             {
                 return Err(format!(
                     "{owner} working directory must be absolute when configured"
@@ -1623,8 +1623,22 @@ fn unquote_runtime_path(value: &str) -> &str {
     }
 }
 
+/// Absolute in any supported configuration: a POSIX root, a drive root or a
+/// Windows rooted/UNC (including `\\?\extended`) form. A saved configuration
+/// may have been authored on another platform, so both styles validate on
+/// every platform and the host resolves what it understands at launch.
+pub(crate) fn absolute_in_any_platform(value: &Path) -> bool {
+    let text = value.to_string_lossy();
+    if text.starts_with('/') || text.starts_with('\\') {
+        return true;
+    }
+    let bytes = text.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+}
+
 fn launchable_mcp_command(path: &Path) -> bool {
-    path.is_absolute()
+    absolute_in_any_platform(path)
         || path.components().count() == 1
             && matches!(path.components().next(), Some(Component::Normal(_)))
 }
@@ -1685,13 +1699,13 @@ fn validate_codex_app_server_stdio_contract(
     let mut components = path.components();
     let bare_path_command =
         matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
-    if !path.is_absolute() && !bare_path_command {
+    if !absolute_in_any_platform(path) && !bare_path_command {
         return Err(format!(
             "{owner} executable must be absolute or one bare command name from PATH"
         ));
     }
     if let Some(cwd) = cwd
-        && !Path::new(cwd).is_absolute()
+        && !absolute_in_any_platform(Path::new(cwd))
     {
         return Err(format!(
             "{owner} working directory must be absolute when configured"

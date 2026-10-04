@@ -283,7 +283,7 @@ pub(crate) fn prepare_command(
     request: &ProcessSpecV1,
 ) -> Result<(Command, ExecutableIdentityV1), ProcessError> {
     validate_request(request)?;
-    let executable_path = std::fs::canonicalize(&request.program)
+    let executable_path = dunce::canonicalize(&request.program)
         .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
     let executable = ExecutableIdentityV1::open(&executable_path)
         .map_err(|_| ProcessError::ExecutableIdentityMismatch)?;
@@ -306,7 +306,7 @@ pub(crate) fn prepare_command(
     crate::shell::command_arguments(&mut command, &executable.canonical_path, &request.arguments);
     command.envs(&request.environment);
     if let Some(path) = &request.working_directory {
-        command.current_dir(std::fs::canonicalize(path)?);
+        command.current_dir(dunce::canonicalize(path)?);
     }
 
     Ok((command, executable))

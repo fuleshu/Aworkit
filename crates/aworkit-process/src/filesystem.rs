@@ -158,7 +158,7 @@ impl AnchoredDirectory {
         if !link_metadata.is_dir() {
             return Err(NativeFilesystemError::NotDirectory);
         }
-        let root = fs::canonicalize(supplied)?;
+        let root = dunce::canonicalize(supplied)?;
         let root_handle = SameFileHandle::from_path(&root)?;
         let identity = identify(&root)?;
         let directory_sync = sync_directory(&root).is_ok();
@@ -222,7 +222,7 @@ impl AnchoredDirectory {
     ) -> Result<PathBuf, NativeFilesystemError> {
         self.revalidate()?;
         self.validate_components(relative.as_path(), true)?;
-        let resolved = fs::canonicalize(self.root.join(relative.as_path()))?;
+        let resolved = dunce::canonicalize(self.root.join(relative.as_path()))?;
         if resolved.starts_with(&self.root) && same_volume(&self.identity, &identify(&resolved)?) {
             Ok(resolved)
         } else {
@@ -656,7 +656,7 @@ fn local_volume_proven(path: &Path) -> bool {
 #[cfg(unix)]
 fn identify(path: &Path) -> Result<FilesystemObjectIdentityV1, NativeFilesystemError> {
     use std::os::unix::fs::MetadataExt;
-    let canonical_path = fs::canonicalize(path)?;
+    let canonical_path = dunce::canonicalize(path)?;
     let metadata = fs::metadata(&canonical_path)?;
     Ok(FilesystemObjectIdentityV1 {
         canonical_path,
@@ -672,7 +672,7 @@ fn identify(path: &Path) -> Result<FilesystemObjectIdentityV1, NativeFilesystemE
         hash::{Hash, Hasher},
     };
 
-    let canonical_path = fs::canonicalize(path)?;
+    let canonical_path = dunce::canonicalize(path)?;
     let handle = SameFileHandle::from_path(&canonical_path)?;
     let volume = canonical_path
         .components()

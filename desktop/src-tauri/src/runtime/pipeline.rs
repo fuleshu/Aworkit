@@ -438,7 +438,7 @@ impl WorkflowExecutionPipeline {
         event_committer: Arc<dyn SemanticEventCommitter>,
     ) -> Result<Self, WorkflowPipelineError> {
         fs::create_dir_all(data_root).map_err(store_error)?;
-        let root = fs::canonicalize(data_root).map_err(store_error)?;
+        let root = dunce::canonicalize(data_root).map_err(store_error)?;
         let projects = ProjectCoordinator::open(root.join("core").join("workflow-execution"))
             .map_err(|error| WorkflowPipelineError::Authority(error.to_string()))?;
         fs::create_dir_all(root.join("core").join("unscoped-workspace")).map_err(store_error)?;
@@ -5506,7 +5506,7 @@ mod tests {
             observed_inputs.lock().expect("provider input")[0]["messages"][0],
             json!({"role":"system","content":format!(
                 "{instructions}\n\nWorking folder for this Chat (no saved project selected):\n{}",
-                json!({"name":null,"directory":std::fs::canonicalize(root.path().join("core/unscoped-workspace")).unwrap(),"branch":null})
+                json!({"name":null,"directory":dunce::canonicalize(root.path().join("core/unscoped-workspace")).unwrap(),"branch":null})
             )})
         );
 

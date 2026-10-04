@@ -74,7 +74,7 @@ pub(crate) fn resolve_in_workspace(
     {
         return Err("the path is empty or exceeds the accepted size".into());
     }
-    let root = std::fs::canonicalize(workspace_root)
+    let root = dunce::canonicalize(workspace_root)
         .map_err(|_| "the Chat's workspace folder is unavailable".to_owned())?;
     let candidate = Path::new(requested);
     let joined = if candidate.is_absolute() {
@@ -86,7 +86,7 @@ pub(crate) fn resolve_in_workspace(
     if !normalized.starts_with(&root) {
         return Err("the path is outside the Chat's workspace".into());
     }
-    match std::fs::canonicalize(&normalized) {
+    match dunce::canonicalize(&normalized) {
         Ok(canonical) => {
             if !canonical.starts_with(&root) {
                 return Err("the path is outside the Chat's workspace".into());
@@ -251,7 +251,7 @@ mod tests {
         let folder = root.path().join("project");
         std::fs::create_dir(&folder).expect("project folder");
         std::fs::write(folder.join("summary.md"), b"# Summary").expect("file");
-        let canonical = std::fs::canonicalize(&folder).expect("canonical root");
+        let canonical = dunce::canonicalize(&folder).expect("canonical root");
         (root, folder, canonical)
     }
 

@@ -2,6 +2,8 @@
 
 **Agent Workflow Toolkit** — a free, open-source desktop app where you design AI-agent workflows visually and run them in a familiar chat window, with full visibility of everything that happens.
 
+🌐 **Website: [klutzgames.com/aworkit](https://www.klutzgames.com/aworkit/)**
+
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)
 ![Status](https://img.shields.io/badge/status-v0.1.0%20early%20development-orange.svg)

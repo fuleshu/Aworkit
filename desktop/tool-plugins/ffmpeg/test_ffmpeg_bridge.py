@@ -11,7 +11,9 @@ and degraded paths. Skips cleanly when FFmpeg is not installed.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +35,12 @@ def call(bridge: subprocess.Popen, message: dict) -> dict:
     return json.loads(line)
 
 
-def start_bridge(workdir: Path, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> subprocess.Popen:
+def start_bridge(
+    workdir: Path,
+    ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
+    env: dict | None = None,
+) -> subprocess.Popen:
     return subprocess.Popen(
         [
             sys.executable,
@@ -49,6 +56,7 @@ def start_bridge(workdir: Path, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe"
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=env,
     )
 
 
@@ -103,7 +111,69 @@ def generate_sample(path: Path) -> None:
     subprocess.run(command, check=True, capture_output=True, text=True)
 
 
+def load_bridge_module():
+    spec = importlib.util.spec_from_file_location("ffmpeg_bridge", BRIDGE)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_resolution_and_paths() -> None:
+    """Executable resolution and path cleaning; runs without FFmpeg installed."""
+    bridge = load_bridge_module()
+
+    # Windows extended-length prefixes never leak into reported paths.
+    assert bridge._clean_path("\\\\?\\C:\\media\\in.mp4") == "C:\\media\\in.mp4"
+    assert bridge._clean_path("\\\\?\\UNC\\server\\share\\clip.mp4") == "\\\\server\\share\\clip.mp4"
+    assert bridge._clean_path("/plain/posix/path.mp4") == "/plain/posix/path.mp4"
+
+    no_which = lambda name: None  # noqa: E731
+    # An explicit path is used exactly as given and attributed to the argument.
+    found, source = bridge.resolve_executable(
+        str(BRIDGE), env_name="FFMPEG_PATH", default_name="ffmpeg", environ={}, which=no_which
+    )
+    assert found == bridge._clean_path(str(BRIDGE)), (found, source)
+    assert source == "argument", source
+
+    # An explicit path that does not exist fails loudly instead of guessing.
+    found, source = bridge.resolve_executable(
+        "/nonexistent/ffmpeg", env_name="FFMPEG_PATH", default_name="ffmpeg",
+        environ={}, which=no_which,
+    )
+    assert found is None and source == "argument", (found, source)
+
+    # The environment override wins over a bare default command name.
+    found, source = bridge.resolve_executable(
+        "ffmpeg", env_name="FFMPEG_PATH", default_name="ffmpeg",
+        environ={"FFMPEG_PATH": str(BRIDGE)}, which=no_which,
+    )
+    assert found == bridge._clean_path(str(BRIDGE)), (found, source)
+    assert source == "environment FFMPEG_PATH", source
+
+    # A well-known folder is found even when nothing is on PATH.
+    with tempfile.TemporaryDirectory(prefix="aworkit-ffmpeg-resolve-") as folder:
+        name = "aworkit-fake-ffmpeg"
+        candidate = Path(folder) / (name + (".exe" if os.name == "nt" else ""))
+        candidate.write_text("", encoding="utf-8")
+        found, source = bridge.resolve_executable(
+            name, env_name="FFMPEG_PATH", default_name=name,
+            environ={}, which=no_which, extra_dirs=[folder],
+        )
+        assert found == str(candidate), (found, source)
+        assert source.startswith("well-known folder"), source
+
+    # Nothing found anywhere is reported as unresolved, never silently guessed.
+    found, source = bridge.resolve_executable(
+        "aworkit-no-such-executable", env_name="FFMPEG_PATH",
+        default_name="aworkit-no-such-executable", environ={}, which=no_which,
+    )
+    assert found is None and source == "unresolved", (found, source)
+    print("ffmpeg-bridge: resolution checks passed")
+
+
 def main() -> int:
+    check_resolution_and_paths()
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         print("ffmpeg-bridge: skipped (ffmpeg/ffprobe not on PATH)")
         return 0
@@ -142,6 +212,9 @@ def main() -> int:
             doctor = invoke(bridge, 3, "ffmpeg_doctor", {})
             assert doctor["isError"] is False, doctor
             assert "libx264" in doctor["structuredContent"]["encoders_available"], doctor
+            # Resolved executable paths are ordinary OS paths, never `\\?\...`.
+            assert not doctor["structuredContent"]["ffmpeg_path"].startswith("\\\\?\\"), doctor
+            assert not doctor["structuredContent"]["ffprobe_path"].startswith("\\\\?\\"), doctor
 
             probe = invoke(bridge, 4, "ffmpeg_probe", {"input": "sample.mp4"})
             media = probe["structuredContent"]["media"]
@@ -249,6 +322,25 @@ def main() -> int:
             assert "--ffmpeg" in text, broken
         finally:
             stop(offline)
+
+        # FFMPEG_PATH locates FFmpeg even when the command name is wrong.
+        located = start_bridge(
+            workdir,
+            ffmpeg="not-a-real-ffmpeg-name",
+            ffprobe="not-a-real-ffprobe-name",
+            env={**os.environ, "FFMPEG_PATH": shutil.which("ffmpeg"),
+                 "FFPROBE_PATH": shutil.which("ffprobe")},
+        )
+        try:
+            initialize(located)
+            found = invoke(located, 1, "ffmpeg_doctor", {})
+            assert found["isError"] is False, found
+            content = found["structuredContent"]
+            assert content["ffmpeg_source"] == "environment FFMPEG_PATH", content
+            assert content["ffprobe_source"] == "environment FFPROBE_PATH", content
+            assert "not-a-real-ffmpeg-name" not in content["ffmpeg_path"], content
+        finally:
+            stop(located)
 
         print("ffmpeg-bridge: all checks passed")
         return 0

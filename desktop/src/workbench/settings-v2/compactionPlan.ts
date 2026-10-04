@@ -48,11 +48,11 @@ export function compactionReadout(
 export function describeCompaction(readout: CompactionReadout | null): string | null {
   if (!readout) return null;
   const sentences = [
-    `A ${readout.window.toLocaleString()}-token window targets ${readout.target.toLocaleString()} tokens after compaction: the summary gets ${readout.summaryPercent}% of what is replaced and the most recent messages keep ${readout.tailPercent}%.`,
+    `A ${readout.window.toLocaleString("en-US")}-token window targets ${readout.target.toLocaleString("en-US")} tokens after compaction: the summary gets ${readout.summaryPercent}% of what is replaced and the most recent messages keep ${readout.tailPercent}%.`,
   ];
   if (readout.reservation > 0) {
     sentences.push(
-      `This model reserves ${readout.reservation.toLocaleString()} tokens for its own output, so a summary longer than that is capped and the difference stays verbatim.`,
+      `This model reserves ${readout.reservation.toLocaleString("en-US")} tokens for its own output, so a summary longer than that is capped and the difference stays verbatim.`,
     );
   }
   sentences.push(

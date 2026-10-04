@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+dunce = "1"
 base64 = "0.22"
 aworkit-process = { path = "../aworkit-process" }
 aworkit-process-platform = { path = "../aworkit-process-platform" }

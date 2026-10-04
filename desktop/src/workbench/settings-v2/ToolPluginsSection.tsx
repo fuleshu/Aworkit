@@ -63,7 +63,7 @@ export function ToolPluginsSection({
           allowAdd={false}
           allowRemove={false}
           emptyText=""
-          intro="Configure an added plugin here: its command or server address, credentials and limits. Connect and enable it once you have checked them, then save."
+          intro="Configure an added plugin here: its command or server address, its arguments — including any executable paths it needs — credentials and limits. Connect and enable it once you have checked them, then save."
         />
       )}
     </div>

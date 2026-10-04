@@ -8,11 +8,38 @@ function event(id: string, cache?: unknown, kind = "span.usage"): RuntimeEvent {
 const values = (events: RuntimeEvent[], reviews = false, scoped = false) =>
   Object.fromEntries(cacheUsageFields(events, reviews, scoped).map(f => [f.label, f.value]));
 describe("provider cache usage", () => {
-  it("keeps unknown distinct from a reported zero and limits the ratio denominator", () => {
+  it("keeps an unreported counter distinct from a reported zero", () => {
     expect(values([event("old")])["Cached input tokens"]).toBe("Not reported");
     const v = values([event("old"), event("new", { cachedInputTokens: 0, cacheMissInputTokens: 100 })]);
     expect(v["Cached input tokens"]).toBe("0 (1/2 calls reported)");
     expect(v["Cache hit rate"]).toBe("0.0% of reported calls");
+  });
+  it("derives the uncached remainder when a provider reports only cached input", () => {
+    const v = values([event("mimo", { cachedInputTokens: 80 })]);
+    expect(v["Cached input tokens"]).toBe("80");
+    expect(v["Uncached input tokens"]).toBe("20 (input − cached; no provider counter)");
+    expect(v["Cache hit rate"]).toBe("80.0%");
+  });
+  it("labels a partially derived uncached total and keeps a reported counter authoritative", () => {
+    const mixed = values([
+      event("reported", { cachedInputTokens: 10, cacheMissInputTokens: 5 }),
+      event("derived", { cachedInputTokens: 20 }),
+    ]);
+    expect(mixed["Uncached input tokens"]).toBe("5 (1/2 calls reported)");
+    const partial = values([
+      event("derived", { cachedInputTokens: 20 }),
+      event("no-cache"),
+    ]);
+    expect(partial["Uncached input tokens"]).toBe(
+      "80 (1/2 calls) (input − cached; no provider counter)",
+    );
+    expect(partial["Cache hit rate"]).toBe("20.0% of reported calls");
+  });
+  it("never derives from a superset the provider did not report", () => {
+    const v = values([event("impossible", { cachedInputTokens: 120 })]);
+    expect(v["Cached input tokens"]).toBe("120");
+    expect(v["Uncached input tokens"]).toBe("Not reported");
+    expect(v["Cache hit rate"]).toBe("Not available");
   });
   it("counts only per-request facts and separates reviews", () => {
     const cache = { cachedInputTokens: 80, cacheMissInputTokens: 20 };

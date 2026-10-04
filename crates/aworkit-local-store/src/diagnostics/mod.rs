@@ -62,7 +62,7 @@ impl DiagnosticLogStore {
     ) -> Result<Self, DiagnosticError> {
         validate_config(&config)?;
         fs::create_dir_all(root.as_ref())?;
-        let local_root = fs::canonicalize(root.as_ref())?;
+        let local_root = dunce::canonicalize(root.as_ref())?;
         let gate = MaintenanceGate::for_root(&local_root)?;
         let diagnostic_root = local_root.join("diagnostics");
         fs::create_dir_all(&diagnostic_root)?;

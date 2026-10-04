@@ -1,0 +1,37 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/cacheUsage.ts\",\"desktop/src/chat/cacheUsage.test.ts\",\"docs/approval-cache-accounting.md\",\"desktop/src/chat/AGENTS.md\"]",
+    "completed_at": "2026-10-04 09:38:15",
+    "completion_memo": {
+      "lines": [
+        "Implemented in cacheUsageFields (desktop/src/chat/cacheUsage.ts): a call that reports cachedInputTokens with no cacheMissInputTokens now contributes input-cached to a separately summed derivedMisses total, shown as \"Uncached input tokens\" with its provenance label (\"… (input − cached; no provider counter)\", or \"(… loaded, derived)\" in scoped mode). A reported miss counter stays authoritative, the derivation is skipped when cached > input (the value then stays \"Not reported\"), and nothing in the derived path feeds pairedHits/pairedInput, so the cache-hit ratio and its \"of reported calls\" suffix are unchanged. Module docstring documents the rule.\n",
+        "\n",
+        "Design: aworkit.desktop_ui.evidence_inspector description extended with a dated \"Derived uncached remainder (2026-10-04)\" paragraph; docs/approval-cache-accounting.md gained the matching provider-difference paragraph.\n",
+        "\n",
+        "Verification: `pnpm run check` (tsc --noEmit) in desktop/ is clean. The unit-test suite was NOT run — the user explicitly asked not to run tests — so the three new/updated cases in desktop/src/chat/cacheUsage.test.ts (derived remainder, partially derived labelling with an authoritative reported counter, and refusal to derive when cached > input) are written but unexecuted. Behaviour is deterministic pure formatting over the events map. Not verified live in the app: the frontend is embedded at compile time, so the field only changes after a frontend build plus app restart."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-04 09:37:49",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Investigation of chat.daf239b81f0214c8d0ba12826cf760d7134649ac (mimo-v2.6-pro) found the Run Details \"Uncached input tokens\" field reads \"Not reported\" on OpenAI-compatible providers that return only prompt_tokens_details.cached_tokens (Xiaomi MiMo, Qwen), while DeepSeek returns prompt_cache_hit_tokens plus prompt_cache_miss_tokens. Because both APIs count cached input inside prompt_tokens, the uncached remainder is exactly input - cached and can be shown labelled as derived arithmetic instead of missing, which makes cache figures comparable across providers.\n",
+        "\n",
+        "Scope: desktop/src/chat/cacheUsage.ts (cacheUsageFields) plus its unit test. A reported counter stays authoritative; the derived total only fills in calls that reported cached input without a miss counter, only when cached <= input, and never feeds the cache-hit ratio denominator."
+      ]
+    },
+    "id": 48808448163,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Run Details: derive labelled uncached input when a provider reports only cached tokens",
+    "updated_at": "2026-10-04 09:38:15"
+  },
+  "deleted": false,
+  "identity": "697fed37-1a10-4c19-bd95-89f6c53deb39",
+  "schemaVersion": 1
+}

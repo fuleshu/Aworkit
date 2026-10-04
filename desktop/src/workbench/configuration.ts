@@ -1447,14 +1447,16 @@ function reservedMcpHeaderName(value: string): boolean {
   );
 }
 
+/** Absolute in any supported configuration: a POSIX root, a drive root or a
+ * Windows rooted/UNC (including `\\?\extended`) form. A configuration may
+ * have been authored on another platform, so both styles validate on every
+ * platform; the host resolves what it understands at launch. */
 function runtimePathIsAbsolute(value: string): boolean {
-  if (runtimeUsesWindowsPaths()) {
-    return (
-      /^[A-Za-z]:[\\/]/u.test(value) ||
-      /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/u.test(value)
-    );
-  }
-  return value.startsWith("/");
+  return (
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/u.test(value)
+  );
 }
 
 /** Windows users commonly paste a quoted executable path from a shell. */
@@ -1470,17 +1472,7 @@ function unquoteRuntimePath(value: string): string {
 
 function runtimePathIsBareCommand(value: string): boolean {
   if (value === "" || value === "." || value === "..") return false;
-  return runtimeUsesWindowsPaths()
-    ? !/[\\/:]/u.test(value)
-    : !value.includes("/");
-}
-
-function runtimeUsesWindowsPaths(): boolean {
-  const runtimeIdentity =
-    typeof navigator === "undefined"
-      ? ""
-      : `${navigator.userAgent} ${navigator.platform}`;
-  return /(?:windows|win32|win64|wow64)/iu.test(runtimeIdentity);
+  return !/[\\/:]/u.test(value);
 }
 
 function usesNonStdioListener(arguments_: readonly string[]): boolean {

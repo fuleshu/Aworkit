@@ -118,7 +118,7 @@ impl RepositoryRoot {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, RepositoryError> {
         let root = root.into();
         fs::create_dir_all(&root)?;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let gate = MaintenanceGate::for_root(&root)?;
         Ok(Self { root, gate })
     }

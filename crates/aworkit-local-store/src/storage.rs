@@ -74,7 +74,7 @@ impl StorageCoordinator {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let root = absolute_clean(&root.into())?;
         fs::create_dir_all(&root)?;
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         let gate = MaintenanceGate::for_root(&root)?;
         let coordinator = Self { root, gate };
         if !coordinator.root.join(STORAGE_SCHEMA_FILE).exists()
@@ -239,7 +239,7 @@ impl StorageCoordinator {
     ) -> Result<PathBuf, StoreError> {
         let backup_root = absolute_clean(backup_root)?;
         fs::create_dir_all(&backup_root)?;
-        let backup_root = fs::canonicalize(backup_root)?;
+        let backup_root = dunce::canonicalize(backup_root)?;
         if backup_root.starts_with(&self.root) {
             return Err(StoreError::BackupLocationInsideStore);
         }
@@ -287,7 +287,7 @@ impl StorageCoordinator {
         backup_path: impl AsRef<Path>,
     ) -> Result<RestoreReceipt, StoreError> {
         let _lease = self.gate.exclusive()?;
-        let backup_path = fs::canonicalize(backup_path.as_ref())?;
+        let backup_path = dunce::canonicalize(backup_path.as_ref())?;
         if backup_path.starts_with(&self.root) || self.root.starts_with(&backup_path) {
             return Err(StoreError::RestoreLocationOverlapsStore);
         }
@@ -338,7 +338,7 @@ impl StorageCoordinator {
     /// Validates a backup without mutating the active store.
     pub fn validate_backup(&self, backup_path: impl AsRef<Path>) -> Result<(), StoreError> {
         let _lease = self.gate.shared()?;
-        validate_backup(&fs::canonicalize(backup_path.as_ref())?)
+        validate_backup(&dunce::canonicalize(backup_path.as_ref())?)
     }
 }
 

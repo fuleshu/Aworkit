@@ -1,6 +1,11 @@
 /** Project optional provider evidence without converting missing usage to zero.
  * Only canonical per-request usage events count; embedded history never does.
  *
+ * A provider that reports cached input without an uncached counter does not make
+ * the split unknown: both APIs count cached input inside the prompt, so the
+ * remainder is exactly `input − cached`. That total is published as derived
+ * arithmetic and labelled, never as a reported counter.
+ *
  * `scoped` marks figures computed from a loaded window of events rather than the
  * whole Run. The client pages history, so a Run whose events are not all loaded
  * must never present a per-span sum as a Run total. */
@@ -32,6 +37,7 @@ export function cacheUsageFields(
   }
   if (requests.size === 0) return [];
   let hits = 0, misses = 0, hitReports = 0, missReports = 0, pairedHits = 0, pairedInput = 0;
+  const derivedMisses: number[] = [];
   for (const p of requests.values()) {
     const cache = record(p.cache);
     const hit = count(cache.cachedInputTokens), miss = count(cache.cacheMissInputTokens);
@@ -41,6 +47,10 @@ export function cacheUsageFields(
     // The denominator belongs to exactly the calls that reported hits.
     if (hit !== undefined && input !== undefined && hit <= input) {
       pairedHits += hit; pairedInput += input;
+      // Both APIs count cached input inside the prompt, so a call that reported
+      // only a hit counter still fixes the remainder exactly. Sum it separately
+      // and label it derived: it is arithmetic, never a provider counter.
+      if (miss === undefined) derivedMisses.push(input - hit);
     }
   }
   const calls = (reports: number) => `${reports} ${reports === 1 ? "call" : "calls"}`;
@@ -48,11 +58,22 @@ export function cacheUsageFields(
     : scoped ? `${total.toLocaleString()} (${calls(reports)} loaded)`
     : `${total.toLocaleString()}${reports < requests.size ? ` (${reports}/${requests.size} calls reported)` : ""}`;
   const suffix = scoped ? " in loaded activity" : "";
+  const derived = derivedMisses.reduce((sum, value) => sum + value, 0);
+  const coverage = derivedMisses.length < requests.size
+    ? ` (${derivedMisses.length}/${requests.size} calls)` : "";
+  // A provider that reports cached input but no uncached counter (MiMo, Qwen)
+  // still fixes the remainder exactly, because both count cached input inside
+  // the prompt. Summing "input − cached" is published as derived arithmetic, so
+  // it is never mistaken for a provider counter.
+  const derivedValue = derivedMisses.length === 0 ? "Not reported"
+    : scoped ? `${derived.toLocaleString()} (${calls(derivedMisses.length)} loaded, derived)`
+    : `${derived.toLocaleString()}${coverage} (input − cached; no provider counter)`;
   const rateSuffix = scoped ? " of loaded activity"
     : hitReports < requests.size ? " of reported calls" : "";
   return [
     { label: `Cached input tokens${suffix}`, value: value(hits, hitReports) },
-    { label: `Uncached input tokens${suffix}`, value: value(misses, missReports) },
+    { label: `Uncached input tokens${suffix}`, value: missReports > 0 ? value(misses, missReports)
+      : derivedMisses.length > 0 ? derivedValue : "Not reported" },
     { label: "Cache hit rate", value: pairedInput === 0 ? "Not available"
       : `${(100 * pairedHits / pairedInput).toFixed(1)}%${rateSuffix}` },
   ];

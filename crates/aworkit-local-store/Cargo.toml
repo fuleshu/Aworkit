@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+dunce = "1"
 aworkit-process = { path = "../aworkit-process" }
 aworkit-protocol = { path = "../aworkit-protocol" }
 fs2 = "0.4"

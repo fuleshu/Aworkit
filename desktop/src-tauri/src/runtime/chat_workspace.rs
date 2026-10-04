@@ -28,7 +28,7 @@ impl ChatWorkspaceStore {
     ) -> Result<WorkspaceBindingV1, String> {
         fs::create_dir_all(&self.root)
             .map_err(|error| format!("cannot create Chat workspace storage: {error}"))?;
-        let root = fs::canonicalize(&self.root).map_err(|error| error.to_string())?;
+        let root = dunce::canonicalize(&self.root).map_err(|error| error.to_string())?;
         let path = root.join(chat_id.as_str());
         fs::create_dir_all(&path)
             .map_err(|error| format!("cannot create Chat working folder: {error}"))?;

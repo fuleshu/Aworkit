@@ -349,7 +349,7 @@ pub(crate) fn prepare_transport(
             }
             if let Some(directory) = cwd {
                 validate_text("MCP working directory", directory, true)?;
-                if !std::path::Path::new(directory).is_absolute() {
+                if !super::settings_v2::absolute_in_any_platform(std::path::Path::new(directory)) {
                     return Err("MCP working directory must be absolute".into());
                 }
             }

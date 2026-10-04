@@ -255,7 +255,7 @@ fn installing_and_removing_a_package_is_inert_reversible_and_bounded() {
 
     // Removing by id removes only that package.
     let removed = discovery::remove(&plugin_root, "plugin.comfyui-bridge").unwrap();
-    assert!(std::path::Path::new(&removed).starts_with(std::fs::canonicalize(&plugin_root).unwrap()));
+    assert!(std::path::Path::new(&removed).starts_with(dunce::canonicalize(&plugin_root).unwrap()));
     assert!(!plugin_root.join("comfyui-bridge").exists());
     let remaining = discovery::discover(&plugin_root);
     assert_eq!(remaining.len(), 1);
@@ -327,7 +327,7 @@ fn the_comfyui_reference_plugin_is_a_valid_installable_package() {
     assert_eq!(args.first().map(String::as_str), Some("bridge.py"));
     assert_eq!(
         std::path::Path::new(cwd.as_ref().expect("package working directory")),
-        base.canonicalize().unwrap()
+        dunce::canonicalize(&base).unwrap()
     );
     assert_eq!(server.tools.len(), 3);
     let runner = server
@@ -371,7 +371,7 @@ fn the_ffmpeg_reference_plugin_is_a_valid_installable_package() {
     assert!(args.iter().any(|argument| argument == "ffprobe"));
     assert_eq!(
         std::path::Path::new(cwd.as_ref().expect("package working directory")),
-        base.canonicalize().unwrap()
+        dunce::canonicalize(&base).unwrap()
     );
     assert_eq!(server.tools.len(), 8);
     let runner = server
@@ -442,4 +442,52 @@ fn mcp_working_directory_affects_frozen_transport_and_rejects_relative_paths() {
             .unwrap()
             .contains("absolute")
     );
+}
+
+#[test]
+fn plugin_paths_never_carry_the_windows_verbatim_prefix() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("fixture");
+    std::fs::create_dir(&folder).unwrap();
+    let path = folder.join("tool-plugin.json");
+    let manifest = json!({"schemaVersion":1,"id":"plugin.fixture","name":"Fixture","version":"1.0.0",
+        "execution":{"transport":"stdio","command":"missing-server.exe","args":[],"env":[]},
+        "tools":[{"name":"echo","description":"Echo text","inputSchema":{"type":"object"},"enabled":true}]});
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    let server = discovery::inspect(&path).unwrap();
+    let pin = server.plugin.unwrap();
+    // Displayed, stored and forwarded paths are ordinary OS paths on every
+    // platform, so nothing downstream shows or passes on the `\\?\\` prefix.
+    assert!(!pin.manifest_path.starts_with("\\?\\"), "{}", pin.manifest_path);
+    let super::super::settings_v2::IntegrationTransportV2::Stdio { command, cwd, .. } =
+        &server.transport
+    else {
+        panic!("stdio")
+    };
+    let cwd = cwd.as_ref().unwrap();
+    assert!(!cwd.starts_with("\\?\\"), "{}", cwd);
+    assert!(!command.starts_with("\\?\\"), "{}", command);
+    assert!(std::path::Path::new(cwd).join("tool-plugin.json").is_absolute());
+}
+
+#[test]
+#[cfg(windows)]
+fn a_pin_stored_with_the_legacy_verbatim_prefix_still_verifies() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("fixture");
+    std::fs::create_dir(&folder).unwrap();
+    let path = folder.join("tool-plugin.json");
+    let manifest = json!({"schemaVersion":1,"id":"plugin.fixture","name":"Fixture","version":"1.0.0",
+        "execution":{"transport":"stdio","command":"missing-server.exe","args":[],"env":[]},
+        "tools":[{"name":"echo","description":"Echo text","inputSchema":{"type":"object"},"enabled":true}]});
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    let server = discovery::inspect(&path).unwrap();
+    let pin = server.plugin.unwrap();
+    // A pin persisted before Windows paths lost their extended-length prefix
+    // names the same plugin, not drift.
+    let legacy = discovery::ToolPluginPin {
+        manifest_path: format!(r"\\?\{}", pin.manifest_path),
+        ..pin
+    };
+    discovery::verify(&legacy).expect("a legacy verbatim pin path must still verify");
 }

@@ -68,7 +68,7 @@ fn executable_candidates(
 }
 
 fn canonical_file(path: &Path) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(path)
+    let canonical = dunce::canonicalize(path)
         .map_err(|_| "external-agent executable could not be resolved".to_owned())?;
     if !canonical.is_file() {
         return Err("external-agent executable is not a regular file".into());
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn explicit_filename_and_absolute_executable_remain_exact() {
         let executable = env::current_exe().expect("test executable");
-        let canonical = std::fs::canonicalize(&executable).expect("canonical executable");
+        let canonical = dunce::canonicalize(&executable).expect("canonical executable");
         assert_eq!(
             resolve_executable(executable.to_str().expect("UTF-8 executable")).unwrap(),
             canonical
@@ -118,7 +118,7 @@ mod tests {
             .expect("Windows launcher beside Unix shim");
         assert_eq!(
             resolved,
-            std::fs::canonicalize(first.join("codex.cmd")).unwrap()
+            dunce::canonicalize(first.join("codex.cmd")).unwrap()
         );
         let mut command = std::process::Command::new(&resolved);
         command.stdout(std::process::Stdio::piped());
@@ -131,7 +131,7 @@ mod tests {
         std::fs::write(first.join("codex.exe"), "first executable").unwrap();
         assert_eq!(
             resolve_in_path("codex", &search, Some(OsStr::new(".EXE;.CMD"))).unwrap(),
-            std::fs::canonicalize(first.join("codex.exe")).unwrap()
+            dunce::canonicalize(first.join("codex.exe")).unwrap()
         );
     }
 
@@ -144,7 +144,7 @@ mod tests {
         let search = env::join_paths([root.path()]).unwrap();
         assert_eq!(
             resolve_in_path("codex", &search, Some(OsStr::new(".EXE;.CMD"))).unwrap(),
-            std::fs::canonicalize(executable).unwrap()
+            dunce::canonicalize(executable).unwrap()
         );
     }
 }

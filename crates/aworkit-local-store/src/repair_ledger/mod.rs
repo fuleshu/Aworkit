@@ -58,7 +58,7 @@ pub struct RepairEvidenceLedger {
 impl RepairEvidenceLedger {
     pub fn for_store_root(root: impl AsRef<Path>) -> Result<Self, RepairLedgerError> {
         fs::create_dir_all(root.as_ref())?;
-        let root = fs::canonicalize(root.as_ref())?;
+        let root = dunce::canonicalize(root.as_ref())?;
         Self::open(root.join("repair-evidence.sqlite"))
     }
 
@@ -120,7 +120,7 @@ impl RepairEvidenceLedger {
 fn absolute_file(path: &Path) -> Result<PathBuf, RepairLedgerError> {
     let parent = path.parent().ok_or(RepairLedgerError::InvalidRecord)?;
     fs::create_dir_all(parent)?;
-    let parent = fs::canonicalize(parent)?;
+    let parent = dunce::canonicalize(parent)?;
     let name = path.file_name().ok_or(RepairLedgerError::InvalidRecord)?;
     Ok(parent.join(name))
 }

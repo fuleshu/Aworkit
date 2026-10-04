@@ -172,7 +172,12 @@ impl ProjectCoordinator {
 
     pub fn revalidate_workspace(&self, binding: &WorkspaceBinding) -> Result<(), ProjectError> {
         let observed = self.resolve_workspace(&binding.root)?;
-        if observed.identity != binding.identity {
+        if observed.identity.created_at_nanos != binding.identity.created_at_nanos
+            || !same_canonical_path(
+                &observed.identity.canonical_path,
+                &binding.identity.canonical_path,
+            )
+        {
             return Err(ProjectError::WorkspaceDrift);
         }
         Ok(())
@@ -200,7 +205,13 @@ impl ProjectCoordinator {
         binding: &WorkspaceBindingV1,
     ) -> Result<(), ProjectError> {
         let observed = self.resolve_workspace_v1(&binding.root)?;
-        if observed.identity != binding.identity {
+        if observed.identity.platform != binding.identity.platform
+            || observed.identity.filesystem_object_id != binding.identity.filesystem_object_id
+            || !same_canonical_path(
+                &observed.identity.canonical_path,
+                &binding.identity.canonical_path,
+            )
+        {
             return Err(ProjectError::WorkspaceDrift);
         }
         Ok(())
@@ -307,7 +318,7 @@ impl ProjectCoordinator {
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, ProjectError> {
-    let canonical = fs::canonicalize(path).map_err(|_| ProjectError::WorkspaceUnavailable)?;
+    let canonical = dunce::canonicalize(path).map_err(|_| ProjectError::WorkspaceUnavailable)?;
     if !fs::metadata(&canonical)
         .map_err(|_| ProjectError::WorkspaceUnavailable)?
         .is_dir()
@@ -321,6 +332,15 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ProjectError> {
 /// volume serial/file index on Windows, folded through the same `Handle` hash
 /// the executable identity uses. Creation-time or directory-size fallbacks are
 /// not used because they are not stable enough to detect a swapped directory.
+/// True when two canonical path strings name the same location. Windows holds
+/// either the `\\?\` extended-length form or the ordinary drive form, and a
+/// persisted identity may carry one while a fresh resolution returns the other.
+/// Comparing the simplified forms keeps both valid without weakening the
+/// platform or filesystem-object checks around them.
+fn same_canonical_path(left: &str, right: &str) -> bool {
+    dunce::simplified(Path::new(left)) == dunce::simplified(Path::new(right))
+}
+
 fn filesystem_object_id(handle: &same_file::Handle) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -509,5 +529,34 @@ mod tests {
             })
             .is_ok()
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod verbatim_identity_tests {
+    use super::*;
+
+    #[test]
+    fn a_legacy_verbatim_identity_still_revalidates() {
+        let root =
+            std::env::temp_dir().join(format!("aworkit-verbatim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let coordinator = ProjectCoordinator::open(root.join("state")).unwrap();
+        let binding = coordinator.resolve_workspace_v1(&root).unwrap();
+        // Identity persisted before Windows paths lost their extended-length
+        // prefix is the same workspace, not drift.
+        let legacy = WorkspaceBindingV1 {
+            root: binding.root.clone(),
+            identity: WorkspaceIdentityV1 {
+                canonical_path: format!(r"\\?\{}", binding.identity.canonical_path),
+                platform: binding.identity.platform.clone(),
+                filesystem_object_id: binding.identity.filesystem_object_id.clone(),
+            },
+        };
+        coordinator
+            .revalidate_workspace_v1(&legacy)
+            .expect("a stored verbatim path is the same workspace, not drift");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

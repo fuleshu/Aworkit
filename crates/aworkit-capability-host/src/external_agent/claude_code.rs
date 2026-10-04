@@ -752,9 +752,9 @@ mod tests {
     fn config(mode: ClaudePermissionModeV1) -> ClaudeOneShotConfigV1 {
         ClaudeOneShotConfigV1 {
             name: "claude-code".to_owned(),
-            executable: PathBuf::from("/usr/bin/claude"),
+            executable: std::env::temp_dir().join("claude"),
             arguments: Vec::new(),
-            working_directory: Some(PathBuf::from("/tmp")),
+            working_directory: Some(std::env::temp_dir()),
             inherit_environment: true,
             environment: Vec::new(),
             permission_mode: mode,
@@ -769,7 +769,7 @@ mod tests {
         OneShotDelegationV1 {
             run_id: StableId::parse("run.claude").expect("stable id"),
             task: "Summarize the delegation seam".to_owned(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             deadline: Duration::from_secs(30),
             options: Default::default(),
         }
@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn a_startup_failure_is_reported_as_a_process_outcome() {
         let mut missing = config(ClaudePermissionModeV1::DontAsk);
-        missing.executable = PathBuf::from("/nonexistent/claude");
+        missing.executable = std::env::temp_dir().join("nonexistent-claude");
         let backend = ClaudeOneShotBackendV1::new(missing).expect("configuration is valid");
         let outcome = backend.run(&request(), &CancellationToken::default());
         assert_eq!(outcome.stop_reason, SubagentStopReasonV1::Process);

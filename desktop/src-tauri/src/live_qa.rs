@@ -112,7 +112,7 @@ fn absolute_directory(value: &str, label: &str) -> Result<PathBuf, String> {
         return Err(format!("live QA {label} must be an absolute path"));
     }
     fs::create_dir_all(&path).map_err(|error| format!("cannot create live QA {label}: {error}"))?;
-    fs::canonicalize(path).map_err(|error| format!("cannot resolve live QA {label}: {error}"))
+    dunce::canonicalize(path).map_err(|error| format!("cannot resolve live QA {label}: {error}"))
 }
 
 fn live_marker() -> Result<String, String> {

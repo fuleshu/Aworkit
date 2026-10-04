@@ -138,7 +138,7 @@ impl FileAccess {
         // write creates every missing directory below it: refusing at the first
         // absent component would make that creation unreachable, which is exactly
         // what made scaffolding a tree fail before the tool ever ran.
-        let target = match std::fs::canonicalize(&target) {
+        let target = match dunce::canonicalize(&target) {
             Ok(target) => target,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !directory_tool => {
                 let mut missing = vec![target
@@ -153,7 +153,7 @@ impl FileAccess {
                             target.display()
                         ));
                     };
-                    match std::fs::canonicalize(current) {
+                    match dunce::canonicalize(current) {
                         Ok(existing) => {
                             let mut resolved = existing;
                             for component in missing.iter().rev() {

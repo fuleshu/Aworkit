@@ -103,7 +103,7 @@ impl std::fmt::Debug for WorkspaceRoot {
 
 impl WorkspaceRoot {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, WorkspaceError> {
-        let root = fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         if !root.is_dir() {
             return Err(WorkspaceError::NotDirectory);
         }
@@ -138,7 +138,7 @@ impl WorkspaceRoot {
     ) -> Result<PathBuf, WorkspaceError> {
         self.revalidate()?;
         self.reject_symlinks(reference.path(), true)?;
-        let path = fs::canonicalize(self.root.join(reference.as_str()))?;
+        let path = dunce::canonicalize(self.root.join(reference.as_str()))?;
         if path.starts_with(&self.root) {
             Ok(path)
         } else {
@@ -529,7 +529,7 @@ fn root_identity(path: &Path) -> Result<RootIdentity, std::io::Error> {
     {
         use std::os::unix::fs::MetadataExt;
         Ok(RootIdentity {
-            canonical_path: fs::canonicalize(path)?,
+            canonical_path: dunce::canonicalize(path)?,
             device: metadata.dev(),
             inode: metadata.ino(),
         })
@@ -538,7 +538,7 @@ fn root_identity(path: &Path) -> Result<RootIdentity, std::io::Error> {
     {
         let _ = metadata;
         Ok(RootIdentity {
-            canonical_path: fs::canonicalize(path)?,
+            canonical_path: dunce::canonicalize(path)?,
         })
     }
 }

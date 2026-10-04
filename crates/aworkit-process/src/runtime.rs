@@ -424,7 +424,7 @@ fn validate_spec(spec: &SanitizedProcessSpecV1) -> Result<(), NativeProcessError
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, NativeProcessError> {
-    let path = std::fs::canonicalize(path)?;
+    let path = dunce::canonicalize(path)?;
     if path.is_dir() {
         Ok(path)
     } else {
@@ -488,7 +488,7 @@ mod tests {
     #[cfg(unix)]
     fn shell_spec(generation: u64, command: &str) -> SanitizedProcessSpecV1 {
         SanitizedProcessSpecV1 {
-            executable: std::fs::canonicalize("/bin/sh").expect("shell executable"),
+            executable: dunce::canonicalize("/bin/sh").expect("shell executable"),
             arguments: vec!["-c".to_owned(), command.to_owned()],
             working_directory: std::env::current_dir().expect("working directory"),
             environment: BTreeMap::new(),

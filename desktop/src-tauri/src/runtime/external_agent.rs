@@ -496,7 +496,7 @@ fn resolve_directory(value: &str) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err("external-agent working directory must be absolute".into());
     }
-    let canonical = std::fs::canonicalize(path)
+    let canonical = dunce::canonicalize(path)
         .map_err(|_| "external-agent working directory could not be resolved".to_owned())?;
     if !canonical.is_dir() {
         return Err("external-agent working directory is not a directory".into());
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(
             resolve_executable(executable.to_str().expect("UTF-8 executable"))
                 .expect("absolute executable"),
-            std::fs::canonicalize(executable).expect("canonical executable")
+            dunce::canonicalize(executable).expect("canonical executable")
         );
         assert!(resolve_executable("nested/tool").is_err());
     }

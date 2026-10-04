@@ -86,7 +86,7 @@ impl NativePluginProcessV1 {
         limits: PluginProcessLimitsV1,
     ) -> Result<Self, PluginProcessError> {
         validate_spec(spec, limits)?;
-        let executable_path = std::fs::canonicalize(&spec.program)
+        let executable_path = dunce::canonicalize(&spec.program)
             .map_err(|_| PluginProcessError::ExecutableIdentityMismatch)?;
         let executable = ExecutableIdentityV1::open(&executable_path)
             .map_err(|_| PluginProcessError::ExecutableIdentityMismatch)?;
@@ -99,7 +99,7 @@ impl NativePluginProcessV1 {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(directory) = &spec.working_directory {
-            command.current_dir(std::fs::canonicalize(directory)?);
+            command.current_dir(dunce::canonicalize(directory)?);
         }
         let mut child = aworkit_process::command::spawn_background_group(&mut command)?;
         if !ExecutableIdentityV1::open(&executable.canonical_path)

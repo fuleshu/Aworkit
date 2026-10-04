@@ -47,6 +47,17 @@ because the client pages history and a loaded window is not a Run total. Runs
 recorded before the aggregate existed keep the windowed, explicitly labelled
 figures.
 
+Providers differ in what they report, which is not the same as reporting zero.
+DeepSeek returns `prompt_cache_hit_tokens` and `prompt_cache_miss_tokens`; Xiaomi
+MiMo and Qwen return only `prompt_tokens_details.cached_tokens`, so their runs have
+no provider uncached counter at all. Because both APIs count cached input inside
+the prompt, the remainder is exactly `input − cached`, and the panel publishes it
+as derived arithmetic with that label rather than leaving a figure the provider
+did report looking unmeasured. A reported counter stays authoritative, the
+derivation is skipped when cached exceeds input, and the derived total never feeds
+the cache-hit ratio, whose denominator remains the calls that reported cached
+input.
+
 ## Reviewer context
 
 The immutable policy and user-visible transcript precede workspace context,

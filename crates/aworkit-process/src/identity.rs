@@ -33,7 +33,7 @@ impl ExecutableIdentityV1 {
         if link_metadata.len() == 0 || link_metadata.len() > MAX_EXECUTABLE_BYTES {
             return Err(IdentityError::ExecutableBound);
         }
-        let canonical_path = fs::canonicalize(supplied)?;
+        let canonical_path = dunce::canonicalize(supplied)?;
         let before = SameFileHandle::from_path(&canonical_path)?;
         let mut file = File::open(&canonical_path)?;
         let mut hasher = Sha256::new();

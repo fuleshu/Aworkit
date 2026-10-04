@@ -10,8 +10,24 @@ that turns "run ffmpeg" into a correct command.
 
 ## Prerequisites
 
-FFmpeg and FFprobe must be installed and on `PATH`, or their absolute paths set
-on the plugin's settings page. This package does not ship the binaries.
+FFmpeg and FFprobe must be installed — but **they do not have to be on `PATH`**.
+The bridge looks for them in this order, and `ffmpeg_doctor` reports which one
+it used and the exact paths it resolved:
+
+1. **`--ffmpeg` / `--ffprobe`** — an absolute path, or a command name. **This is
+   where you specify the location of your FFmpeg executables.** Open
+   **Settings → Tool Plugins → FFmpeg media tools**, edit the **Arguments** list
+   (one argument per line) and put the executable path on the line after
+   `--ffmpeg` and after `--ffprobe`, for example `D:\tools\ffmpeg\bin\ffmpeg.exe`
+   or `/opt/ffmpeg/bin/ffmpeg`.
+2. **`FFMPEG_PATH` / `FFPROBE_PATH`** environment variables holding those paths.
+3. `ffmpeg` / `ffprobe` found on `PATH`.
+4. Common install folders — `C:\ffmpeg\bin`, Scoop, Chocolatey, the WinGet
+   links folder, `Program Files`, Homebrew (`/opt/homebrew/bin`,
+   `/usr/local/bin`), `/usr/bin` and `/snap/bin` — so a standard install just
+   works without any configuration.
+
+This package does not ship the binaries.
 
 ```sh
 # Debian/Ubuntu
@@ -25,8 +41,8 @@ scoop install ffmpeg
 ```
 
 The server is plain Python 3 (no third-party packages). The plugin starts it with
-`python`; change the command to `python3` or an absolute interpreter path on the
-plugin's settings page if `python` is not on `PATH`.
+`python`; change the **Command** field on the plugin's settings page to `python3`
+or an absolute interpreter path (use **Browse…**) if `python` is not on `PATH`.
 
 ## Install and enable
 
@@ -42,10 +58,15 @@ Arguments declared in `tool-plugin.json`, editable on the plugin's settings page
 
 | Argument | Meaning |
 | --- | --- |
-| `--ffmpeg` | `ffmpeg` executable name or absolute path (default `ffmpeg` from `PATH`) |
-| `--ffprobe` | `ffprobe` executable name or absolute path (default `ffprobe`) |
+| `--ffmpeg` | `ffmpeg` executable name or absolute path (default `ffmpeg`, resolved in the order above) |
+| `--ffprobe` | `ffprobe` executable name or absolute path (default `ffprobe`, resolved in the order above) |
 | `--workdir` | Base directory for relative input/output paths (default: the plugin folder) |
 | `--timeout` | Per-invocation default in seconds (default 300, maximum 3600) |
+
+To pin a specific FFmpeg install, put its absolute path after `--ffmpeg` and
+`--ffprobe` in the **Arguments** list on the plugin's settings page
+(**Settings → Tool Plugins → FFmpeg media tools**); an explicit path always wins
+over the automatic lookup.
 
 Set `--workdir` to the folder your media lives in so relative paths resolve
 there; absolute paths always work. No secret is needed: FFmpeg is local, and the
@@ -71,7 +92,9 @@ returns a `validation` block with a fresh ffprobe summary of the output.
 ## Degraded behavior
 
 - FFmpeg missing → `ffmpeg_doctor` and every job return an MCP error result that
-  names the binary and tells you to install FFmpeg or set `--ffmpeg`/`--ffprobe`.
+  names the binary and explains where to specify its location (**Settings →
+  Tool Plugins → FFmpeg media tools → Arguments**, after `--ffmpeg` /
+  `--ffprobe`) or to set `FFMPEG_PATH` / `FFPROBE_PATH`.
   The workflow continues; the model reports the problem.
 - A job that exceeds its timeout is stopped and reported; a partial output is
   never presented as a success.

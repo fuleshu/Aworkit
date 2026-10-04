@@ -10,10 +10,23 @@ Targets FFmpeg 9.0.x (current stable, released 2026-09-18) and stays compatible
 with 6.1 and newer: it uses only long-stable options and reports the installed
 version through `ffmpeg_doctor`.
 
+Locating FFmpeg - any one is enough. The executable is looked up in this order,
+and `ffmpeg_doctor` reports which one was used:
+
+  1. `--ffmpeg` / `--ffprobe`   an absolute path, or a command name. This is
+     where you specify the location of your FFmpeg executables: Settings ->
+     Tool Plugins -> FFmpeg media tools, edit the Arguments list (one argument
+     per line) and put the executable path after `--ffmpeg` / `--ffprobe`.
+  2. `FFMPEG_PATH` / `FFPROBE_PATH` environment variables holding those paths.
+  3. `ffmpeg` / `ffprobe` found on PATH.
+  4. Common install folders (C:\ffmpeg\bin, Scoop, Chocolatey, WinGet links,
+     Program Files, Homebrew, /usr/bin, /usr/local/bin, /snap/bin), so a normal
+     install works without touching PATH.
+
 Configuration (all optional, editable in the plugin's settings):
 
-  --ffmpeg PATH     ffmpeg executable (default: `ffmpeg` from PATH)
-  --ffprobe PATH    ffprobe executable (default: `ffprobe` from PATH)
+  --ffmpeg PATH     ffmpeg executable name or path (default `ffmpeg`, resolved as above)
+  --ffprobe PATH    ffprobe executable name or path (default `ffprobe`, resolved as above)
   --workdir PATH    base for relative input/output paths (default: process cwd)
   --timeout SECONDS per-invocation default (default: 300, max 3600)
 
@@ -99,6 +112,107 @@ class BridgeError(Exception):
     def __init__(self, message: str, fix: str | None = None):
         super().__init__(message)
         self.fix = fix
+
+
+def _clean_path(path: str) -> str:
+    """Strip the Windows extended-length prefix from a path string.
+
+    Canonical Windows paths can carry a `\\?\\` (or `\\?\\UNC\\`) namespace
+    prefix. Both forms name the same file, but ffmpeg, other tools and humans
+    all prefer the ordinary form, so every path this bridge reports or passes
+    on is cleaned first. Only those two Windows prefixes are rewritten, and
+    only at the string boundary.
+    """
+    if isinstance(path, str):
+        if path.startswith("\\\\?\\UNC\\"):
+            return "\\\\" + path[8:]
+        if path.startswith("\\\\?\\"):
+            return path[4:]
+    return path
+
+
+def _well_known_directories(environ) -> list[str]:
+    """Folders where FFmpeg is commonly installed without being on PATH."""
+    folders: list[str] = []
+    if os.name == "nt":
+        drive = environ.get("SystemDrive") or "C:"
+        folders.append(drive + os.sep + os.path.join("ffmpeg", "bin"))
+        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+            base = environ.get(variable)
+            if base:
+                folders.append(os.path.join(base, "ffmpeg", "bin"))
+        local = environ.get("LOCALAPPDATA")
+        if local:
+            folders.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
+        user = environ.get("USERPROFILE")
+        if user:
+            folders.append(os.path.join(user, "scoop", "shims"))
+        program_data = environ.get("ProgramData")
+        if program_data:
+            folders.append(os.path.join(program_data, "chocolatey", "bin"))
+    else:
+        folders += ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/opt/local/bin", "/snap/bin"]
+    return [folder for folder in folders if folder]
+
+
+def _executable_names(name: str) -> list[str]:
+    """File names to try for a bare command inside a folder, per platform."""
+    if os.name != "nt" or os.path.splitext(name)[1]:
+        return [name]
+    return [name + extension for extension in (".exe", ".bat", ".cmd", "")]
+
+
+def resolve_executable(value, *, env_name, default_name, environ=None, which=None, extra_dirs=()):
+    """Resolve one configured executable to ``(path, source)``.
+
+    `value` is whatever the user configured (the `--ffmpeg`/`--ffprobe`
+    argument). An explicit path is used exactly as given. A bare command name is
+    resolved through the matching `FFMPEG_PATH`/`FFPROBE_PATH` environment
+    variable, then PATH, then the well-known install folders, so FFmpeg never
+    has to be added to PATH. ``path`` is ``None`` when nothing was found;
+    ``source`` names where it was resolved (or what was tried), for
+    `ffmpeg_doctor` and for error messages.
+    """
+    environ = os.environ if environ is None else environ
+    which = shutil.which if which is None else which
+
+    def existing(candidate: str) -> str | None:
+        candidate = _clean_path(os.path.expanduser(str(candidate)))
+        return candidate if candidate and os.path.isfile(candidate) else None
+
+    configured = str(value or "").strip()
+    separators = [separator for separator in (os.sep, os.altsep) if separator]
+    looks_like_path = (
+        os.path.isabs(configured)
+        or any(separator in configured for separator in separators)
+        or configured.startswith("\\\\")
+    )
+    if looks_like_path:
+        found = existing(configured)
+        return (found, "argument") if found else (None, "argument")
+
+    # An environment override outranks the bare default command name, so
+    # setting FFMPEG_PATH is enough even though the package ships
+    # `--ffmpeg ffmpeg`.
+    override = str(environ.get(env_name) or "").strip()
+    if override:
+        found = existing(override)
+        if not found:
+            resolved = which(override)
+            found = _clean_path(resolved) if resolved else None
+        if found:
+            return found, f"environment {env_name}"
+
+    name = configured or default_name
+    resolved = which(name)
+    if resolved:
+        return _clean_path(resolved), "PATH"
+    for directory in (*extra_dirs, *_well_known_directories(environ)):
+        for candidate in _executable_names(name):
+            found = existing(os.path.join(directory, candidate))
+            if found:
+                return found, f"well-known folder {directory}"
+    return None, "unresolved"
 
 
 def tool_definitions() -> list[dict]:
@@ -269,9 +383,17 @@ def _text(value: Any) -> str:
 
 class Bridge:
     def __init__(self, ffmpeg: str, ffprobe: str, workdir: str, timeout: float):
-        self.ffmpeg = ffmpeg
-        self.ffprobe = ffprobe
-        self.workdir = workdir
+        self.ffmpeg_path, self.ffmpeg_source = resolve_executable(
+            ffmpeg, env_name="FFMPEG_PATH", default_name="ffmpeg"
+        )
+        self.ffprobe_path, self.ffprobe_source = resolve_executable(
+            ffprobe, env_name="FFPROBE_PATH", default_name="ffprobe"
+        )
+        # When resolution fails, keep the configured value so the error names
+        # the binary the user recognizes instead of a guessed path.
+        self.ffmpeg = self.ffmpeg_path or _clean_path(ffmpeg) or "ffmpeg"
+        self.ffprobe = self.ffprobe_path or _clean_path(ffprobe) or "ffprobe"
+        self.workdir = _clean_path(os.path.abspath(os.path.expanduser(workdir or os.getcwd())))
         self.timeout = timeout
 
     # ---- process helpers ------------------------------------------------
@@ -282,7 +404,7 @@ class Bridge:
         path = os.path.expanduser(value)
         if not os.path.isabs(path):
             path = os.path.join(self.workdir, path)
-        path = os.path.normpath(path)
+        path = _clean_path(os.path.normpath(path))
         if "\0" in path:
             raise BridgeError("A file path contained a NUL character.")
         if must_exist and not os.path.isfile(path):
@@ -309,7 +431,9 @@ class Bridge:
         except FileNotFoundError as error:
             raise BridgeError(
                 f"{os.path.basename(executable)} was not found ({error}).",
-                "Install FFmpeg 9.0.x, or set --ffmpeg and --ffprobe to the executable paths in the plugin settings.",
+                "Install FFmpeg, or specify its location: Settings -> Tool Plugins -> FFmpeg media "
+                "tools, edit Arguments (one argument per line) and put the executable path after "
+                "--ffmpeg and --ffprobe; or set the FFMPEG_PATH and FFPROBE_PATH environment variables.",
             ) from error
         except subprocess.TimeoutExpired as error:
             raise BridgeError(
@@ -479,12 +603,16 @@ class Bridge:
         return {
             "ffmpeg": ffmpeg_version,
             "ffprobe": ffprobe_version,
-            "ffmpeg_path": shutil.which(self.ffmpeg) or self.ffmpeg,
-            "ffprobe_path": shutil.which(self.ffprobe) or self.ffprobe,
+            "ffmpeg_path": self.ffmpeg_path or _clean_path(self.ffmpeg),
+            "ffmpeg_source": self.ffmpeg_source,
+            "ffprobe_path": self.ffprobe_path or _clean_path(self.ffprobe),
+            "ffprobe_source": self.ffprobe_source,
             "workdir": self.workdir,
             "encoders_available": available,
             "encoders_missing": missing,
-            "notes": "FFmpeg 9.0.x is current; this bridge uses long-stable options and works from 6.1 up.",
+            "notes": "FFmpeg 9.0.x is current; this bridge uses long-stable options and works from 6.1 up. "
+            "To use a different FFmpeg, set --ffmpeg/--ffprobe in this plugin's Arguments (Settings -> "
+            "Tool Plugins -> FFmpeg media tools) or the FFMPEG_PATH/FFPROBE_PATH environment variables.",
         }
 
     def probe(self, arguments: dict) -> dict:

@@ -286,7 +286,7 @@ fn canonical_executable(path: &Path) -> Result<PathBuf, CodexAppServerProbeError
     if !path.is_absolute() {
         return Err(CodexAppServerProbeError::InvalidPath);
     }
-    let canonical = std::fs::canonicalize(path).map_err(|_| CodexAppServerProbeError::Launch)?;
+    let canonical = dunce::canonicalize(path).map_err(|_| CodexAppServerProbeError::Launch)?;
     if !canonical.is_file() || path_text(&canonical).is_none() {
         return Err(CodexAppServerProbeError::InvalidPath);
     }
@@ -297,7 +297,7 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, CodexAppServerProbeError>
     if !path.is_absolute() {
         return Err(CodexAppServerProbeError::InvalidPath);
     }
-    let canonical = std::fs::canonicalize(path).map_err(|_| CodexAppServerProbeError::Launch)?;
+    let canonical = dunce::canonicalize(path).map_err(|_| CodexAppServerProbeError::Launch)?;
     if !canonical.is_dir() || path_text(&canonical).is_none() {
         return Err(CodexAppServerProbeError::InvalidPath);
     }

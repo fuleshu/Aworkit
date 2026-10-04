@@ -3275,7 +3275,7 @@ impl DesktopRuntime {
         key: &str,
     ) -> Result<SettingsV2Snapshot, String> {
         let removed = super::tool_registry::discovery::remove(&self.tool_plugin_directory, key)?;
-        let removed = std::fs::canonicalize(&removed).unwrap_or_else(|_| PathBuf::from(&removed));
+        let removed = dunce::canonicalize(&removed).unwrap_or_else(|_| PathBuf::from(&removed));
         let mut settings = self.documents.settings().clone();
         let before = settings.mcp_servers.len();
         settings.mcp_servers.retain(|server| {
@@ -3284,7 +3284,7 @@ impl DesktopRuntime {
             };
             match Path::new(&pin.manifest_path)
                 .parent()
-                .and_then(|parent| std::fs::canonicalize(parent).ok())
+                .and_then(|parent| dunce::canonicalize(parent).ok())
             {
                 // The package we just removed; drop its saved server.
                 Some(parent) => parent != removed,
@@ -3655,7 +3655,7 @@ impl DesktopRuntime {
 fn prepare_root(root: &Path) -> Result<std::path::PathBuf, String> {
     fs::create_dir_all(root)
         .map_err(|error| format!("cannot create desktop data directory: {error}"))?;
-    fs::canonicalize(root)
+    dunce::canonicalize(root)
         .map_err(|error| format!("cannot resolve desktop data directory: {error}"))
 }
 
@@ -5617,7 +5617,7 @@ mod tests {
         );
         assert_eq!(
             requests[1].workspace.as_ref().unwrap().root,
-            fs::canonicalize(workspace.path()).unwrap()
+            dunce::canonicalize(workspace.path()).unwrap()
         );
         assert_eq!(
             requests[0].workflow_snapshot["nodes"][1]["configuration"]["toolIds"],
@@ -9060,7 +9060,7 @@ mod tests {
         let first_project = first_context.context.project.as_ref().unwrap();
         assert_eq!(
             first_project.workspace_binding.root,
-            fs::canonicalize(first_workspace.path()).unwrap()
+            dunce::canonicalize(first_workspace.path()).unwrap()
         );
         assert!(first_project.workspace_identity_hash.starts_with("sha256:"));
 
@@ -9112,7 +9112,7 @@ mod tests {
         );
         assert_eq!(
             requests[1].workspace.as_ref().unwrap().root,
-            fs::canonicalize(first_workspace.path()).unwrap()
+            dunce::canonicalize(first_workspace.path()).unwrap()
         );
         let first_hash = requests[0].frozen_context_hash.clone();
         drop(requests);
@@ -9158,7 +9158,7 @@ mod tests {
         );
         assert_eq!(
             requests[2].workspace.as_ref().unwrap().root,
-            fs::canonicalize(future_workspace.path()).unwrap()
+            dunce::canonicalize(future_workspace.path()).unwrap()
         );
     }
 
