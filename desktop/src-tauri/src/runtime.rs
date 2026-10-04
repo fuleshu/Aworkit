@@ -14,6 +14,7 @@ pub mod trace_probe;
 mod context_inspection;
 mod credential_journal;
 mod credentials;
+mod digest;
 mod documents;
 mod dto;
 mod extension_inspection;

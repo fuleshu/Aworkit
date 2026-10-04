@@ -12,7 +12,6 @@ use aworkit_local_store::{
 use aworkit_protocol::StableId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use super::dto::{
     ChatHistoryEntryDto, ChatProjectionDto, EvidenceRecordDto, RuntimeSnapshot, UiCommandInput,
@@ -190,6 +189,92 @@ pub(crate) struct FrozenChatExecutionContextV1 {
 pub(crate) struct FrozenChatExecutionRecordV1 {
     pub context: FrozenChatExecutionContextV1,
     pub context_hash: String,
+}
+
+/// The frozen-record schema version this build writes and validates with its
+/// current rules.
+pub(crate) const FROZEN_RECORD_SCHEMA_VERSION: u16 = 1;
+
+/// How this build may use one stored frozen Chat record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StoredFrozenRecordAdmission {
+    /// Written at the version this build's rules describe.
+    Current,
+    /// Written by a newer build. Its stored bytes are still verified, and the
+    /// Chat stays readable, but this build runs none of it and rewrites none of
+    /// it: refusing the read instead would make the Chat unrunnable *and*
+    /// unreadable, which is the outage this gate removes.
+    ReadOnlyNewer { version: u16 },
+}
+
+/// Selects the rule set for one stored frozen-record version.
+///
+/// The version is never merely asserted: it chooses which rules run. A known
+/// older version is lifted to the current shape by `migrate_stored_frozen_record`
+/// and then validated as current; a version above this build's opens read-only
+/// with a notice; a version below the oldest one this project ever wrote has no
+/// migration path and is damage rather than evidence.
+pub(crate) fn frozen_record_admission(
+    version: u16,
+) -> Result<StoredFrozenRecordAdmission, String> {
+    match version {
+        FROZEN_RECORD_SCHEMA_VERSION => Ok(StoredFrozenRecordAdmission::Current),
+        version if FROZEN_RECORD_MIGRATIONS.contains(&version) => {
+            Ok(StoredFrozenRecordAdmission::Current)
+        }
+        version if version < FROZEN_RECORD_SCHEMA_VERSION => Err(format!(
+            "stored frozen Chat context schema version {version} has no migration path in this build"
+        )),
+        version => Ok(StoredFrozenRecordAdmission::ReadOnlyNewer { version }),
+    }
+}
+
+/// Every older frozen-record version this build can still lift to the current
+/// shape. Adding one means adding its number here and its step below.
+///
+/// Every frozen record this project has written is version 1, so there is no
+/// older shape to lift yet: the table is empty on purpose, and the only older
+/// version a corrupt or truncated record can name is refused with its own name.
+const FROZEN_RECORD_MIGRATIONS: &[u16] = &[];
+
+/// Lifts one stored record written at a known older version to the current
+/// shape, before the current rules run over it.
+///
+/// This is the one place a version bump adds its migration, and admission routes
+/// every older version through it, so a future bump cannot ship as an assertion
+/// that silently rejects the profile it just upgraded.
+fn migrate_stored_frozen_record(version: u16, value: Value) -> Result<Value, String> {
+    if version == FROZEN_RECORD_SCHEMA_VERSION {
+        return Ok(value);
+    }
+    if !FROZEN_RECORD_MIGRATIONS.contains(&version) {
+        return Err(format!(
+            "stored frozen Chat context schema version {version} has no migration path in this build"
+        ));
+    }
+    // One arm per listed version, until there are none.
+    Ok(value)
+}
+
+/// The one sentence a Chat this build may only read opens with.
+pub(crate) fn newer_frozen_record_notice(version: u16) -> String {
+    format!(
+        "This Chat was written by a newer Aworkit (frozen record schema version {version}); it opens read-only in this build. Update Aworkit to continue this Chat."
+    )
+}
+
+impl FrozenChatExecutionContextV1 {
+    /// `None` when this build can execute the frozen Chat; `Some(notice)` when a
+    /// newer build wrote it and this one may only read it.
+    pub(crate) fn read_only_notice(&self) -> Option<String> {
+        match frozen_record_admission(self.schema_version) {
+            Ok(StoredFrozenRecordAdmission::Current) => None,
+            Ok(StoredFrozenRecordAdmission::ReadOnlyNewer { version }) => {
+                Some(newer_frozen_record_notice(version))
+            }
+            Err(error) => Some(error),
+        }
+    }
 }
 
 /// Secret-free MCP connection and exact credential metadata for reconnection.
@@ -1753,10 +1838,7 @@ fn local_events(stream_id: &str, expected_head: u64, drafts: &[SemanticEventDraf
 }
 
 pub(crate) fn identity_for_seed(seed: &str) -> Result<ChatIdentityV1, String> {
-    let digest = format!(
-        "{:x}",
-        Sha256::digest(format!("aworkit-chat-run-v1:{seed}").as_bytes())
-    );
+    let digest = super::digest::digest_bytes(format!("aworkit-chat-run-v1:{seed}").as_bytes());
     let suffix = &digest[..40];
     Ok(ChatIdentityV1 {
         chat_id: StableId::parse(format!("chat.{suffix}")).map_err(|error| error.to_string())?,
@@ -1957,6 +2039,12 @@ fn identity_from_event(event: &Event) -> Result<Option<ChatIdentityV1>, String> 
 /// stored JSON. This keeps additive serde defaults backward compatible without
 /// ever treating the re-serialized, default-expanded value as the original
 /// bytes.
+///
+/// The record's schema version selects the rules that run over it: the current
+/// version gets the full structural validation, a known older version is first
+/// lifted by `migrate_stored_frozen_record`, and a newer version this build does
+/// not know is verified and returned for reading only instead of failing the
+/// read. Tamper detection is byte-exact in every case.
 fn decode_stored_frozen_context_record(
     value: Value,
 ) -> Result<FrozenChatExecutionRecordV1, String> {
@@ -1964,10 +2052,56 @@ fn decode_stored_frozen_context_record(
         .get("context")
         .cloned()
         .ok_or_else(|| "stored frozen Chat context is incomplete".to_owned())?;
+    let version = stored_context
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .and_then(|version| u16::try_from(version).ok())
+        .ok_or_else(|| "stored frozen Chat context has no supported schema version".to_owned())?;
+    let admission = frozen_record_admission(version)?;
+    let value = match admission {
+        StoredFrozenRecordAdmission::Current => migrate_stored_frozen_record(version, value)?,
+        // A newer version is never rewritten, only verified and read.
+        StoredFrozenRecordAdmission::ReadOnlyNewer { .. } => value,
+    };
     let record: FrozenChatExecutionRecordV1 = serde_json::from_value(value)
         .map_err(|_| "stored frozen Chat context is invalid".to_owned())?;
-    validate_frozen_context_record(&record, Some(&stored_context))?;
+    match admission {
+        StoredFrozenRecordAdmission::Current => {
+            validate_frozen_context_record(&record, Some(&stored_context))?;
+        }
+        StoredFrozenRecordAdmission::ReadOnlyNewer { .. } => {
+            validate_readable_newer_frozen_context_record(&record, &stored_context)?;
+        }
+    }
     Ok(record)
+}
+
+/// Verifies a record written by a newer build as far as this build safely can:
+/// the stored context hash still describes the stored bytes, and the record is
+/// still a bounded, self-consistent piece of evidence. The version-1 structural
+/// rules deliberately do not run, because a newer schema may legitimately hold
+/// values this build's rules did not anticipate; running them would refuse the
+/// upgrade's own records.
+///
+/// This never weakens tamper detection: every byte of the stored context is
+/// covered by the hash compared here.
+fn validate_readable_newer_frozen_context_record(
+    record: &FrozenChatExecutionRecordV1,
+    stored_context: &Value,
+) -> Result<(), String> {
+    if !is_sha256(&record.context_hash)
+        || !hash_is_current(Some(stored_context), &record.context, &record.context_hash)?
+    {
+        return Err("stored frozen Chat context failed integrity validation".into());
+    }
+    if serde_json::to_vec(record)
+        .map_err(|_| "stored frozen Chat context cannot be encoded".to_owned())?
+        .len()
+        > MAXIMUM_FROZEN_CONTEXT_BYTES
+    {
+        return Err("stored frozen Chat context exceeds its size bound".into());
+    }
+    Ok(())
 }
 
 /// Whether one stored hash still describes the value it names.
@@ -2328,16 +2462,14 @@ const fn default_run_deadline_millis() -> u64 {
     60_000
 }
 
+/// The one durable digest rule, with the sentence this artifact already shows.
 pub(crate) fn canonical_hash(value: &impl Serialize) -> Result<String, String> {
-    let bytes = serde_jcs::to_vec(value)
-        .map_err(|error| format!("cannot canonicalize frozen Chat context: {error}"))?;
-    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    super::digest::canonical_hash(value)
+        .map_err(|error| format!("cannot canonicalize frozen Chat context: {error}"))
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    super::digest::is_sha256(value)
 }
 
 fn message_from_event(event: Event, role: &str) -> Result<ConversationMessage, String> {

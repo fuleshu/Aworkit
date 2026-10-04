@@ -57,7 +57,6 @@ use aworkit_workflow_worker::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -3703,23 +3702,19 @@ fn outcome_hash_v1(outcome: &ProviderOutcomeRecordV1) -> Result<String, Workflow
 }
 
 fn canonical_hash<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
-    let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
-    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    super::digest::canonical_hash(value).map_err(WorkflowPipelineError::Store)
 }
 
 fn canonical_digest<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
-    let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    super::digest::canonical_digest(value).map_err(WorkflowPipelineError::Store)
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    super::digest::is_sha256(value)
 }
 
 fn digest_hex(material: &str) -> String {
-    format!("{:x}", Sha256::digest(material.as_bytes()))
+    super::digest::digest_bytes(material.as_bytes())
 }
 
 fn digest_id(prefix: &str, material: &str) -> Result<StableId, WorkflowPipelineError> {
@@ -6654,7 +6649,10 @@ mod tests {
                 catalog: McpCatalogV1 {
                     tools: vec![McpToolDescriptorV1 {
                         name: MCP_FIXTURE_TOOL.into(),
-                        input_schema_hash: format!("sha256:{:x}", Sha256::digest(schema)),
+                        input_schema_hash: format!(
+                            "sha256:{}",
+                            crate::runtime::digest::digest_bytes(&schema)
+                        ),
                         side_effect_known_read_only: false,
                         annotations: None,
                         description: "Echo the given text.".into(),

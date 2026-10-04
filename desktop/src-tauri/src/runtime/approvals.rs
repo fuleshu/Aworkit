@@ -27,7 +27,6 @@ pub(crate) use reviewer::review_action;
 pub(crate) use store::ApprovalStore;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,11 +156,14 @@ impl ProjectApprovalGrant {
     }
 }
 
+/// The one durable digest rule: RFC 8785 canonical JSON, SHA-256, bare hex.
+///
+/// The rule sorts object keys itself, so an approval identity is order
+/// independent by construction rather than because `serde_json` happens to be
+/// built without `preserve_order`. Recorded grant ids and binding hashes are
+/// unchanged by this: the stored bytes of every value digested here are
+/// identical under both spellings, and `approval_grant_digests_keep_their_bytes`
+/// pins that against the values written before the rule was shared.
 pub(crate) fn digest(value: &impl Serialize) -> String {
-    // serde_json's default map is sorted, including nested object keys.
-    let value = serde_json::to_value(value).expect("approval values are serializable");
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&value).expect("JSON value"))
-    )
+    super::digest::canonical_digest(value).expect("approval values are serializable")
 }

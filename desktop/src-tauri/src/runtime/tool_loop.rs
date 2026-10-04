@@ -72,7 +72,6 @@ use aworkit_trusted_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::{
@@ -1763,7 +1762,7 @@ fn freeze_mcp_binding(
 /// model-facing `mcp://<server>/<tool>` id stays in the binding while every
 /// broker/manifest/descriptor layer uses this digest form.
 pub(crate) fn mcp_internal_id(capability_id: &str) -> String {
-    let digest = format!("{:x}", Sha256::digest(capability_id.as_bytes()));
+    let digest = super::digest::digest_bytes(capability_id.as_bytes());
     format!("mcp.{}", &digest[..40])
 }
 
@@ -1771,7 +1770,7 @@ pub(crate) fn mcp_internal_id(capability_id: &str) -> String {
 /// session layer's schema-drift check sees the exact pinned identity.
 fn mcp_schema_hash(schema: &Value) -> String {
     let bytes = serde_json::to_vec(schema).unwrap_or_default();
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", super::digest::digest_bytes(&bytes))
 }
 
 #[cfg(test)]
@@ -3928,7 +3927,7 @@ fn stable_executable(candidate: PathBuf, label: &str) -> Result<PathBuf, String>
 }
 
 fn content_hash_local(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", super::digest::digest_bytes(bytes))
 }
 
 /// The file location a durable tool outcome is keyed by: the resolved path the
@@ -5354,12 +5353,11 @@ fn current_epoch_millis() -> u64 {
 }
 
 fn canonical_hash<T: Serialize>(value: &T) -> Result<String, WorkflowPipelineError> {
-    let bytes = serde_jcs::to_vec(value).map_err(json_error)?;
-    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    super::digest::canonical_hash(value).map_err(WorkflowPipelineError::Store)
 }
 
 fn digest_id(prefix: &str, material: &str) -> Result<StableId, WorkflowPipelineError> {
-    let digest = format!("{:x}", Sha256::digest(material.as_bytes()));
+    let digest = super::digest::digest_bytes(material.as_bytes());
     stable(&format!("{prefix}.{}", &digest[..40]))
 }
 

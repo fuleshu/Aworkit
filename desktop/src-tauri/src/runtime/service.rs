@@ -518,6 +518,13 @@ impl DesktopRuntime {
         snapshot.chat.remembered_workflow_id = remembered.workflow_id.clone();
         snapshot.chat.remembered_project_id = remembered.project_id.clone();
         let history_head = history.head()?;
+        // A record written by a newer build is readable, never runnable: the
+        // Chat opens and says so, instead of failing to resolve a projection.
+        if let Some(frozen) = history.current_frozen_context()?
+            && let Some(notice) = frozen.context.read_only_notice()
+        {
+            snapshot.chat.disabled_reason = Some(notice);
+        }
         let pending = history
             .pending_effect_command_at_head(history_head)?
             .is_some();
@@ -1202,6 +1209,12 @@ impl DesktopRuntime {
         let request_id =
             StableId::parse(input.command_id.clone()).map_err(|error| error.to_string())?;
         let context = &frozen.context;
+        // The version gate: a Chat a newer build froze is readable, never
+        // runnable, and says which version to update to. Nothing about its
+        // frozen evidence is rewritten.
+        if let Some(notice) = context.read_only_notice() {
+            return Err(notice);
+        }
         // A later pass runs the documents as they are now, so a workflow,
         // Settings or capability edit reaches this pass of the same Chat. A
         // first input keeps the configuration it just froze.
@@ -2126,7 +2139,7 @@ impl DesktopRuntime {
                     .approval_mode
                     .unwrap_or(self.documents.settings().approvals.default_mode),
             )?),
-            schema_version: 1,
+            schema_version: super::history::FROZEN_RECORD_SCHEMA_VERSION,
             identity,
             history_base_head,
             start_command_id: StableId::parse(command_id.to_owned())

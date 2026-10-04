@@ -115,6 +115,56 @@ fn legacy_project_grants_migrate_deduplicate_and_stay_revoked() {
     );
 }
 
+/// Approval digests are stored: a grant id and a frozen binding hash are
+/// re-derived on every read, so the shared digest rule must produce the exact
+/// bytes the previous spelling produced. The expected values below were
+/// captured from that spelling before the rule was shared.
+#[test]
+fn approval_grant_digests_keep_their_bytes() {
+    use crate::runtime::tool_loop::{WorkflowToolBindingV1, freeze_file_tool_bindings};
+    let binding = freeze_file_tool_bindings(&[WorkflowToolBindingV1 {
+        options: Default::default(),
+        capability_id: "tool.python.host".into(),
+        configuration: json!({"authorityMode":"host_python","requiresApproval":true,
+            "isolatedInterpreter":true,"timeoutSeconds":30,"maximumOutputBytes":4096}),
+        credential_bindings: vec![],
+        definition: None,
+    }])
+    .unwrap()
+    .remove(0);
+    let mut authority = binding.clone();
+    authority.description.clear();
+    authority.options.instructions = None;
+    assert_eq!(
+        digest(&binding),
+        "82081402ddceb4157f9e1a06f6100c41a51ac7781d895ab5fff6e1fc98112424"
+    );
+    assert_eq!(
+        digest(&authority),
+        "132783a720dd9e64731357da780317ae177097fbdef261b45ef8e02c1bc459da"
+    );
+    // The production tuple identity of one project grant.
+    assert_eq!(
+        digest(&("project.fixture", "abc123", "project_tool")),
+        "1d61d53401e7bf411edbd6e171f2b28feae5da87ee6c0fd5148f59faebd481d6"
+    );
+    // Nested objects, integers, booleans, nulls and arrays.
+    assert_eq!(
+        digest(&json!({"timeoutSeconds":30,"maximumOutputBytes":4096,"revision":7,
+            "nested":{"b":true,"a":null},"list":[1,2,3]})),
+        "6e42b2573afc82a35229d06a6d7871cf224cc6edf7da00e9bdd39ad65ed8840c"
+    );
+    // Non-ASCII and escaped characters.
+    assert_eq!(
+        digest(&json!({"kanji":"漢","quote":"\"","esc":"a\\nb"})),
+        "dff5b364dc764f9a79d838d0e29771ad7e278b27ae1de58c5b7ac5ca14d8a928"
+    );
+    assert_eq!(
+        digest(&Vec::<String>::new()),
+        "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    );
+}
+
 #[test]
 fn modes_are_isolated_and_survive_restart() {
     let root = tempfile::TempDir::new().unwrap();

@@ -238,9 +238,7 @@ fn parse_head(value: &str) -> Result<String, String> {
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    super::digest::is_sha256(value)
 }
 
 #[cfg(test)]

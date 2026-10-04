@@ -140,6 +140,99 @@ fn tool_binding(future_field: bool) -> Value {
 }
 
 #[test]
+fn the_current_schema_version_is_validated_with_the_current_rules() {
+    let record = decode_stored_frozen_context_record(stored_record(fixture_context()))
+        .expect("a record written by this build loads");
+    assert_eq!(record.context.schema_version, FROZEN_RECORD_SCHEMA_VERSION);
+    assert_eq!(record.context.read_only_notice(), None);
+    assert_eq!(
+        frozen_record_admission(FROZEN_RECORD_SCHEMA_VERSION).unwrap(),
+        StoredFrozenRecordAdmission::Current
+    );
+}
+
+#[test]
+fn a_newer_frozen_record_schema_opens_read_only_instead_of_failing_the_read() {
+    // A later build froze this Chat with a schema this build does not know and
+    // fields this build has never seen. Its writer hashed the bytes it stored.
+    let value = stored_record_from_bytes(
+        serde_json::to_value(fixture_context()).unwrap(),
+        |context| {
+            context["schemaVersion"] = json!(2);
+            context["futureSessionField"] = json!("written by a newer build");
+        },
+    );
+    let record = decode_stored_frozen_context_record(value)
+        .expect("a record from a newer build must still be readable");
+    assert_eq!(record.context.schema_version, 2);
+    assert_eq!(
+        frozen_record_admission(2).unwrap(),
+        StoredFrozenRecordAdmission::ReadOnlyNewer { version: 2 }
+    );
+    let notice = record
+        .context
+        .read_only_notice()
+        .expect("a newer record opens read-only");
+    assert!(notice.contains("newer Aworkit"), "{notice}");
+    assert!(notice.contains("read-only"), "{notice}");
+    assert!(notice.contains("schema version 2"), "{notice}");
+}
+
+#[test]
+fn a_newer_frozen_record_is_still_verified_byte_exactly() {
+    // The version gate never weakens tamper detection: a newer record whose
+    // stored bytes changed is still refused.
+    let mut tampered = stored_record_from_bytes(
+        serde_json::to_value(fixture_context()).unwrap(),
+        |context| {
+            context["schemaVersion"] = json!(2);
+        },
+    );
+    tampered["context"]["workflowName"] = json!("Renamed in place");
+    assert!(
+        decode_stored_frozen_context_record(tampered).is_err(),
+        "a tampered newer record must stay rejected"
+    );
+
+    // A nested value changed while the outer stored hash stays as written.
+    let mut nested = stored_record_from_bytes(
+        serde_json::to_value(fixture_context()).unwrap(),
+        |context| {
+            context["schemaVersion"] = json!(2);
+        },
+    );
+    nested["context"]["providerSnapshot"]["baseUrl"] = json!("http://tampered.invalid/v1");
+    assert!(decode_stored_frozen_context_record(nested).is_err());
+}
+
+#[test]
+fn a_version_below_the_first_released_one_names_its_missing_migration_path() {
+    let value = stored_record_from_bytes(
+        serde_json::to_value(fixture_context()).unwrap(),
+        |context| {
+            context["schemaVersion"] = json!(0);
+        },
+    );
+    let error = decode_stored_frozen_context_record(value)
+        .expect_err("a version no build ever wrote is damage, not evidence");
+    assert!(error.contains("no migration path"), "{error}");
+    assert!(error.contains("version 0"), "{error}");
+}
+
+#[test]
+fn a_record_without_a_usable_schema_version_is_named_as_such() {
+    let value = stored_record_from_bytes(
+        serde_json::to_value(fixture_context()).unwrap(),
+        |context| {
+            context.as_object_mut().unwrap().remove("schemaVersion");
+        },
+    );
+    let error = decode_stored_frozen_context_record(value)
+        .expect_err("a record with no schema version cannot select a rule set");
+    assert!(error.contains("no supported schema version"), "{error}");
+}
+
+#[test]
 fn a_record_this_build_writes_still_decodes() {
     let record = decode_stored_frozen_context_record(stored_record(fixture_context()))
         .expect("a record written by this build loads");
