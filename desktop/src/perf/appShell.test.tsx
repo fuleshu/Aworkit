@@ -12,8 +12,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../App";
 import { defaultDesktopAdapters } from "../adapters/defaultAdapters";
 import { projectAppearancePreference } from "../workbench/appearance";
+import {
+  bundledDefaultWorkflowId,
+  bundledWorkflowTemplates,
+} from "../workbench/bundledWorkflows";
 
 const lazyRouteWait = { timeout: 5_000 } as const;
+
+/** The default workflow's display name, whatever the bundle calls it. */
+const starterName =
+  bundledWorkflowTemplates.find(
+    ({ workflowId }) => workflowId === bundledDefaultWorkflowId,
+  )?.name ?? "";
 
 /*
  * Wall-clock ceilings. These gates catch a regression of an order of magnitude
@@ -44,7 +54,7 @@ describe("desktop shell wall-clock gates", () => {
 
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
     expect(
-      await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait),
+      await screen.findByRole("heading", { name: starterName }, lazyRouteWait),
     ).toBeVisible();
     expect(screen.getByLabelText("Workflow graph")).toBeVisible();
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
@@ -68,7 +78,7 @@ describe("desktop shell wall-clock gates", () => {
     // Run control: it writes workflow documents and never starts a Run.
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
-    const inputNode = screen.getByRole("button", { name: "Input" });
+    const inputNode = screen.getByRole("button", { name: "Chat Input" });
     await user.click(inputNode);
     expect(
       screen.getByRole("button", { name: "Delete node" }),
@@ -93,9 +103,9 @@ describe("desktop shell wall-clock gates", () => {
     expect(document.documentElement.dataset.appearance).toBe("dark");
 
     await user.click(screen.getByRole("button", { name: "Back to Workflows" }));
-    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
+    await screen.findByRole("heading", { name: starterName }, lazyRouteWait);
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Input" })).toBe(inputNode);
+    expect(screen.getByRole("button", { name: "Chat Input" })).toBe(inputNode);
     await user.click(screen.getByRole("button", { name: /Undo/ }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     // Measured 12-21s on the development machine.

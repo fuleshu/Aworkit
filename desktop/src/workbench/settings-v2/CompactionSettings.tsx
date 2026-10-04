@@ -1,6 +1,6 @@
 import type { ModelConfiguration, ProviderConfiguration } from "../configuration";
 import { CompressionSettings } from "./CompressionSettings";
-import { compactionReadout, describeCompaction } from "./compactionPlan";
+import { compactionReadout, DEFAULT_SUMMARY_SHARE, describeCompaction } from "./compactionPlan";
 
 export function CompactionSettings({model,providers,onChange}:{model:ModelConfiguration;providers:readonly ProviderConfiguration[];onChange:(model:ModelConfiguration)=>void}) {
   const policy = model.compaction ?? {};
@@ -12,7 +12,7 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
   // Compaction sizes one plan from the model's declared window. A model that
   // declares none has no ratio to derive from, so the panel offers exactly one
   // of the two controls rather than one that would silently do nothing.
-  const readout = compactionReadout(model.contextWindow, model.maxOutputTokens, Number(policy.summaryShare ?? 0.382));
+  const readout = compactionReadout(model.contextWindow, model.maxOutputTokens, Number(policy.summaryShare ?? DEFAULT_SUMMARY_SHARE));
   return <><CompressionSettings model={model} onChange={onChange} /><details className="model-compaction-settings"><summary>Context compaction</summary>
     <p className="section-intro">Summarize earlier work as this model approaches its context limit. Every budget is a share of the model's declared window, so compaction aims to leave a quarter of it occupied - split between the written summary and the most recent messages kept verbatim. The original Chat history remains available. Changes apply to new Chats.</p>
     <label className="switch-label"><input type="checkbox" checked={policy.auto !== false} onChange={event=>set("auto",event.target.checked)} title="Automatically reduce context before model requests" />Automatic compaction</label>
@@ -24,7 +24,7 @@ export function CompactionSettings({model,providers,onChange}:{model:ModelConfig
       {number("thresholdRatio","Compact at (%)",0.8,"Percentage of the model context window that triggers compaction; it must stay above the 25% occupancy target, or every request would compact",100,26,100)}
       {model.contextWindow == null
         ? number("retainTokens","Verbatim tail without a declared window (tokens)",0,"This model declares no context window, so compaction has no ratio to size a plan from; this is how many recent tokens it keeps verbatim on the legacy byte-pressure path")
-        : number("summaryShare","Summary share of compaction",0.382,"How compaction divides what it keeps: this share becomes the written summary, the rest stays as the most recent messages, verbatim. Lower keeps more original history; higher keeps a fuller written account of what was dropped.",100,1,90)}
+        : number("summaryShare","Summary share of compaction (%)",DEFAULT_SUMMARY_SHARE,"How compaction divides what it keeps: this share becomes the written summary, the rest stays as the most recent messages, verbatim. Lower keeps more original history; higher keeps a fuller written account of what was dropped.",100,1,90)}
       {number("compactionRetries","Additional pressure reductions",1,"Additional reductions if a valid checkpoint still leaves context above the threshold",1,0,32)}
       {number("maxOverflowRetries","Overflow recovery attempts",1,"Consecutive provider context-overflow retries; each requires a committed reduction",1,0,32)}
     </div>

@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Task 172 follow-up 2026-10-04: plugins now live in ONE Settings section, \"Tool Plugins\" (id tool_plugins) - folder listing (Refresh/Open folder/Install/Add/Use updated/Remove) plus the complete added-plugin config, including the MCP command/args/cwd/credentials and functions, reusing McpServersSection with allowAdd/allowRemove false. The MCP servers tab shows general servers only (entries without a plugin pin). Both share the stored mcpServers array but are separate dirty/rebase domains in settingsDraft.ts, and an mcpServers validation issue maps to tool_plugins when it has a plugin. The ComfyUI manifest no longer passes --api-key-env/COMFYUI_API_KEY in args (it tripped the inline-secret check twice); bridge.py defaults COMFYUI_API_KEY and the user binds a credential in env. Verified: tsc clean, vitest 81/81, Rust tool_registry 10/10. Old installs must re-run Install plugin… from the updated folder then Use updated plugin.",
+    "created_at": "2026-10-04 07:47:56",
+    "id": 32328682664,
+    "note_id": "task-172-tool-plugins-tab-20261004",
+    "operation_id": "mem-task-172-tool-plugins-tab-20261004-b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-172-tool-plugins-tab-20261004-b",
+    "task_id": {
+      "ref": "09b266e2-2f3a-4b37-9a19-a4f9dca8f584"
+    }
+  },
+  "deleted": false,
+  "identity": "6abe8abf-1fde-4361-a803-74ed0ade6c46",
+  "schemaVersion": 1
+}

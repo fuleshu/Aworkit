@@ -439,7 +439,7 @@ fn actual_compaction_restores_current_root_and_nested_rules_and_survives_reopen(
     );
     // The summary budget is derived from what the window targets, never more
     // than half the span it replaces: a 16k window targets 4,000 tokens, and
-    // the summary takes 38.2% of what the tail minimum leaves of that.
+    // the summary takes 20% of what the tail minimum leaves of that.
     let fixed = c::fixed_tokens(&summary_requests[0]).unwrap();
     assert_eq!(
         summary_requests[0].parameters["maxOutputTokens"],

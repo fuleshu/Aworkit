@@ -41,7 +41,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
   {
     id: "tools",
     label: "Tools",
-    description: "Built-in tool availability and bindings",
+    description: "Built-in tools and Agent bindings",
+  },
+  {
+    id: "tool_plugins",
+    label: "Tool Plugins",
+    description: "Folder-sourced plugin packages and their complete configuration",
   },
   {
     id: "extensions",
@@ -93,18 +98,60 @@ const sectionFields = {
   projects: "projects",
   appearance: "appearance",
   desktop: "desktop",
-} as const satisfies Record<SettingsSectionId, keyof SettingsConfigurationV2>;
+} as const satisfies Record<
+  Exclude<SettingsSectionId, "tool_plugins">,
+  keyof SettingsConfigurationV2
+>;
+
+/**
+ * One stored `mcpServers` array holds two user-visible groups: plugin-backed
+ * connections, configured with their package in Tool Plugins, and general MCP
+ * servers, configured on the MCP servers tab. They share a field but never a
+ * section, so both the dirty set and rebasing split them explicitly.
+ */
+function pluginServers(
+  servers: readonly McpServerConfiguration[],
+): readonly McpServerConfiguration[] {
+  return servers.filter((server) => server.plugin !== undefined);
+}
+
+function generalServers(
+  servers: readonly McpServerConfiguration[],
+): readonly McpServerConfiguration[] {
+  return servers.filter((server) => server.plugin === undefined);
+}
 
 /** Returns the domains that differ from the last canonical projection. */
 export function dirtySettingsSections(
   draft: SettingsConfigurationV2,
   canonical: SettingsConfigurationV2,
 ): ReadonlySet<SettingsSectionId> {
-  return new Set(
-    SETTINGS_SECTIONS.filter(({ id }) =>
-      differs(draft[sectionFields[id]], canonical[sectionFields[id]]),
-    ).map(({ id }) => id),
-  );
+  const dirty = new Set<SettingsSectionId>();
+  for (const { id } of SETTINGS_SECTIONS) {
+    if (id === "mcp") {
+      if (
+        differs(
+          generalServers(draft.mcpServers),
+          generalServers(canonical.mcpServers),
+        )
+      )
+        dirty.add("mcp");
+      continue;
+    }
+    if (id === "tool_plugins") {
+      if (
+        differs(
+          pluginServers(draft.mcpServers),
+          pluginServers(canonical.mcpServers),
+        )
+      )
+        dirty.add("tool_plugins");
+      continue;
+    }
+    const field = sectionFields[id];
+    if (differs(draft[field], canonical[field])) dirty.add(id);
+  }
+  return dirty;
 }
 
 /** Rebases only locally edited domains onto a newer canonical projection. */
@@ -115,8 +162,19 @@ export function rebaseSettingsDraft(
 ): SettingsConfigurationV2 {
   const next = structuredClone(canonical);
   for (const section of dirty) {
+    if (section === "mcp" || section === "tool_plugins") continue;
     const field = sectionFields[section];
     Object.assign(next, { [field]: structuredClone(draft[field]) });
+  }
+  if (dirty.has("mcp") || dirty.has("tool_plugins")) {
+    next.mcpServers = [
+      ...(dirty.has("tool_plugins")
+        ? pluginServers(draft.mcpServers)
+        : pluginServers(next.mcpServers)),
+      ...(dirty.has("mcp")
+        ? generalServers(draft.mcpServers)
+        : generalServers(next.mcpServers)),
+    ];
   }
   return next;
 }
@@ -320,7 +378,7 @@ export function settingsDraftIssues(
         ...freeformSecretIssues(parsed.data),
       ]
     : parsed.error.issues.map((issue) => ({
-        section: sectionFromSchemaPath(issue.path),
+        section: sectionForSchemaPath(draft, issue.path.map(String)),
         path: issue.path.map(String).join("."),
         message: issue.message,
         focusId: focusIdForSchemaPath(draft, issue.path.map(String)),
@@ -348,6 +406,15 @@ function decorateValidationIssue(
   }
   // A cross-reference issue names a stored location, so the same field mapping
   // the schema issues use points at the editor the user has to change.
+  if (issue.section === "mcp" || issue.section === "tool_plugins") {
+    const serverId = issue.path.startsWith("mcpServers.")
+      ? issue.path.slice("mcpServers.".length).split(".")[0]
+      : undefined;
+    const server = draft.mcpServers.find((entry) => entry.id === serverId);
+    if (server !== undefined)
+      return { ...issue, section: server.plugin ? "tool_plugins" : "mcp" };
+    return issue;
+  }
   return {
     ...issue,
     focusId: focusIdForSchemaPath(draft, issue.path.split(".")),
@@ -488,6 +555,7 @@ function sectionFromSchemaPath(
     case "approvals":
     case "tools":
     case "extensions":
+      return String(path[0]) as SettingsSectionId;
     case "data":
     case "projects":
     case "appearance":
@@ -497,6 +565,23 @@ function sectionFromSchemaPath(
     default:
       return "providers";
   }
+}
+
+/**
+ * A stored `mcpServers` entry is shown either on the MCP servers tab or, when it
+ * is backed by a plugin package, inside Tool Plugins. Zod paths use the array
+ * index, so resolve the entry to decide where its problem belongs.
+ */
+function sectionForSchemaPath(
+  draft: SettingsConfigurationV2,
+  path: readonly string[],
+): SettingsSectionId {
+  const section = sectionFromSchemaPath(path);
+  if (section === "mcp" && path[0] === "mcpServers") {
+    const server = draft.mcpServers[Number(path[1])];
+    if (server?.plugin !== undefined) return "tool_plugins";
+  }
+  return section;
 }
 
 function focusIdForSchemaPath(

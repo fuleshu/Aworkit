@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.desktop_ui.workflow_editor",
+    "document_id": {
+      "ref": "0a10e259-12cf-4f6a-976e-c414f4bfb199"
+    },
+    "id": 3417842538,
+    "sort_order": 3,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "afa9bb61-8b58-40e2-bfd3-2f771a5c2a42",
+  "schemaVersion": 1
+}

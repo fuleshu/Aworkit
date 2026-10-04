@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Task 172 (tool plugins), 2026-10-03: plugin manager commands settings_v2_install/remove/open_tool_plugin_folder (Rust + tauri + frontend port); removal deletes the folder and its saved MCP server, and a missing plugin is a warning not a run end; bare command names now resolve from PATH. Plain-language plugin UI in ToolPluginLibrary.tsx. ComfyUI bridge reference plugin at desktop/tool-plugins/comfyui-bridge (bridge.py + tool-plugin.json + optional skill + test_bridge.py). Adashi docs: aworkit.capability_host.tool_plugins and aworkit.capability_host.tool_plugin_authoring_skill (mirrored desktop/skills/plugin-authoring/SKILL.md). Verified: tool_registry Rust tests 10/10, new service test, tsc clean, vitest 79/79 (raise testTimeout for the known SettingsScreen flake). Not verified: real ComfyUI E2E in the desktop app; bundled skill in-app discovery. Shell HOME is empty: run Rust tests with HOME set. Not committed.",
+    "created_at": "2026-10-03 08:21:24",
+    "id": 28600452562,
+    "note_id": "task-172-tool-plugins-20261003",
+    "operation_id": "mem-task-172-tool-plugins-20261003-b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-172-tool-plugins-20261003-b",
+    "task_id": {
+      "ref": "09b266e2-2f3a-4b37-9a19-a4f9dca8f584"
+    }
+  },
+  "deleted": false,
+  "identity": "c08f13dc-48e4-47db-ac0f-3c88d7e85d04",
+  "schemaVersion": 1
+}

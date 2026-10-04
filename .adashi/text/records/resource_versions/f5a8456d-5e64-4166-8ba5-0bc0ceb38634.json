@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.tool_plugin_authoring_skill",
+    "resource_kind": "design.markdown",
+    "updated_at": "2026-10-04 07:44:54",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "f5a8456d-5e64-4166-8ba5-0bc0ceb38634",
+  "schemaVersion": 1
+}

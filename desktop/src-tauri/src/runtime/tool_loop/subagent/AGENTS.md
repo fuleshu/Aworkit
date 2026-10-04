@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=3085953612156338 -->
+<!-- adashi:generated revision=4224594039564922 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop/subagent` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

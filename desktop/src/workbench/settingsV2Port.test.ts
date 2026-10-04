@@ -78,3 +78,25 @@ describe("native Settings v2 read", () => {
     await expect(new TauriSettingsV2CorePort().snapshot()).rejects.toThrow();
   });
 });
+
+describe("native plugin folder commands", () => {
+  it("installs, removes and opens the plugin folder through dedicated commands", async () => {
+    native.invoke.mockResolvedValue(preUpgradeProjection());
+    const port = new TauriSettingsV2CorePort();
+    await port.installToolPlugin("/tmp/plugins/comfyui-bridge");
+    expect(native.invoke).toHaveBeenLastCalledWith(
+      "settings_v2_install_tool_plugin",
+      { path: "/tmp/plugins/comfyui-bridge" },
+    );
+    await port.removeToolPlugin("plugin.comfyui-bridge");
+    expect(native.invoke).toHaveBeenLastCalledWith(
+      "settings_v2_remove_tool_plugin",
+      { pluginId: "plugin.comfyui-bridge" },
+    );
+    native.invoke.mockResolvedValue(undefined);
+    await port.openToolPluginFolder();
+    expect(native.invoke).toHaveBeenLastCalledWith(
+      "settings_v2_open_tool_plugin_folder",
+    );
+  });
+});

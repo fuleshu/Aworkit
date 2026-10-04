@@ -563,6 +563,56 @@ async fn settings_v2_register_extension(
     .map_err(|error| format!("extension-registration worker failed: {error}"))?
 }
 
+/// Copies one user-chosen plugin package folder into the plugin folder.
+#[tauri::command]
+async fn settings_v2_install_tool_plugin(
+    runtime: tauri::State<'_, SharedRuntime>,
+    path: String,
+) -> Result<SettingsV2Snapshot, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .settings_v2_install_tool_plugin(&PathBuf::from(path))
+    })
+    .await
+    .map_err(|error| format!("tool-plugin install worker failed: {error}"))?
+}
+
+/// Removes one sourced plugin package and its saved server.
+#[tauri::command]
+async fn settings_v2_remove_tool_plugin(
+    runtime: tauri::State<'_, SharedRuntime>,
+    plugin_id: String,
+) -> Result<SettingsV2Snapshot, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .settings_v2_remove_tool_plugin(&plugin_id)
+    })
+    .await
+    .map_err(|error| format!("tool-plugin removal worker failed: {error}"))?
+}
+
+/// Reveals the plugin folder in the platform file manager.
+#[tauri::command]
+async fn settings_v2_open_tool_plugin_folder(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<(), String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .open_tool_plugin_folder()
+    })
+    .await
+    .map_err(|error| format!("tool-plugin folder worker failed: {error}"))?
+}
+
 #[tauri::command]
 async fn workflow_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
@@ -859,6 +909,9 @@ fn main() {
                 settings_v2_probe_tool,
                 settings_v2_inspect_extension,
                 settings_v2_register_extension,
+                settings_v2_install_tool_plugin,
+                settings_v2_remove_tool_plugin,
+                settings_v2_open_tool_plugin_folder,
                 workflow_snapshot,
                 workflow_library,
                 workflow_commit,

@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "id": "plugin.ffmpeg",
+  "name": "FFmpeg media tools",
+  "version": "1.0.0",
+  "execution": {
+    "transport": "stdio",
+    "command": "python",
+    "args": [
+      "ffmpeg_bridge.py",
+      "--ffmpeg",
+      "ffmpeg",
+      "--ffprobe",
+      "ffprobe"
+    ],
+    "env": []
+  },
+  "tools": [
+    {
+      "name": "ffmpeg_doctor",
+      "description": "Report the installed FFmpeg and FFprobe versions, the configured executable paths, and which common encoders are present.",
+      "inputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Call ffmpeg_doctor before a media job when FFmpeg may be missing or you need to know whether a codec such as libx265, libsvtav1 or h264_nvenc is available." }
+    },
+    {
+      "name": "ffmpeg_probe",
+      "description": "Inspect a media file with ffprobe: container, duration, bit rate and every stream with its codec, resolution, frame rate, sample rate and channels.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "include_raw": { "type": "boolean" }
+        },
+        "required": ["input"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": { "instructions": "Always probe a file before transforming it. Use the real duration, resolution and codecs you received instead of assuming them." }
+    },
+    {
+      "name": "ffmpeg_convert",
+      "description": "Transcode one media file to another codec, container, resolution or frame rate. Creates the output; never modifies the input.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "output": { "type": "string" },
+          "video_codec": { "type": "string" },
+          "audio_codec": { "type": "string" },
+          "crf": { "type": "integer" },
+          "preset": { "type": "string" },
+          "video_bitrate": { "type": "string" },
+          "resolution": { "type": "string" },
+          "fit": { "type": "string", "enum": ["stretch", "pad", "crop"] },
+          "fps": { "type": "number" },
+          "audio_bitrate": { "type": "string" },
+          "sample_rate": { "type": "integer" },
+          "channels": { "type": "integer", "enum": [1, 2] },
+          "start": { "type": "string" },
+          "duration": { "type": "string" },
+          "faststart": { "type": "boolean" },
+          "strip_metadata": { "type": "boolean" },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["input", "output"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Use ffmpeg_convert for codec, container, size and frame-rate changes. Prefer libx264 + aac for compatibility and libx265/AV1 for smaller files. Keep the input path out of the output path so the original is preserved." }
+    },
+    {
+      "name": "ffmpeg_trim",
+      "description": "Cut one segment out of a media file. `copy` is fast and keyframe-aligned; `encode` is frame-accurate. Creates a new file.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "output": { "type": "string" },
+          "start": { "type": "string" },
+          "duration": { "type": "string" },
+          "end": { "type": "string" },
+          "mode": { "type": "string", "enum": ["copy", "encode"] },
+          "crf": { "type": "integer" },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["input", "output", "start"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Use copy mode for a fast cut, but the cut lands on a keyframe, so the start can be off by a few frames. Use encode mode when the exact frame matters." }
+    },
+    {
+      "name": "ffmpeg_extract_audio",
+      "description": "Extract or convert the audio track to mp3, aac/m4a, wav, flac, opus or ogg, with optional loudness normalisation.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "output": { "type": "string" },
+          "format": { "type": "string", "enum": ["mp3", "aac", "m4a", "wav", "flac", "opus", "ogg"] },
+          "bitrate": { "type": "string" },
+          "sample_rate": { "type": "integer" },
+          "channels": { "type": "integer", "enum": [1, 2] },
+          "normalize": { "type": "boolean" },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["input", "output"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Use wav or flac when the audio will be edited further; mp3 or aac when it will be played. Set normalize for speech that should sit at a consistent loudness." }
+    },
+    {
+      "name": "ffmpeg_thumbnail",
+      "description": "Write one still image from a video at a chosen timestamp (png, jpg or webp), optionally scaled.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "output": { "type": "string" },
+          "timestamp": { "type": "string" },
+          "width": { "type": "integer" },
+          "quality": { "type": "integer" },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["input", "output"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Pick a timestamp that is inside the video, and probe first when you are unsure of the duration. A timestamp past the end produces no frame." }
+    },
+    {
+      "name": "ffmpeg_gif",
+      "description": "Turn a section of a video into a looping GIF with a generated colour palette (two-pass). Creates the GIF.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "string" },
+          "output": { "type": "string" },
+          "start": { "type": "string" },
+          "duration": { "type": "string" },
+          "fps": { "type": "integer" },
+          "width": { "type": "integer" },
+          "loop": { "type": "boolean" },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["input", "output"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": { "instructions": "Use a short duration and a modest frame rate and width; GIFs grow quickly. 3 seconds at 12 fps and 480 px wide is a good default." }
+    },
+    {
+      "name": "ffmpeg_run",
+      "description": "Advanced escape hatch: run ffmpeg with an explicit argument list for an operation no other tool covers. Can overwrite files.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "args": { "type": "array", "items": { "type": "string" } },
+          "overwrite": { "type": "boolean" },
+          "timeout_seconds": { "type": "integer" }
+        },
+        "required": ["args"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": true },
+      "options": { "instructions": "Reach for ffmpeg_run only for filters or muxing the structured tools do not cover. The structured tools are safer because they protect the input and validate the output. This tool adds -n unless overwrite is true." }
+    }
+  ]
+}

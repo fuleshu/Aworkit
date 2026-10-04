@@ -47,12 +47,22 @@ export function McpServersSection({
   onPickCommand,
   onChange,
   onProbe,
+  allowAdd = true,
+  allowRemove = true,
+  intro = "Enable a server to connect and load its functions, then save configuration. Select the server once in an Agent node to use all its enabled functions.",
+  emptyText = "No MCP servers configured.",
 }: {
   readonly servers: readonly McpServerConfiguration[];
   readonly credentials: readonly CredentialMetadataConfiguration[];
   readonly onPickCommand: () => Promise<string | null>;
   readonly onChange: (servers: readonly McpServerConfiguration[]) => void;
   readonly onProbe: (server: McpServerConfiguration) => Promise<IntegrationProbeResult>;
+  /** Plugin-backed connections are added from the plugin library, not here. */
+  readonly allowAdd?: boolean;
+  /** A plugin package is removed from the library, so its editor hides Remove. */
+  readonly allowRemove?: boolean;
+  readonly intro?: string;
+  readonly emptyText?: string;
 }): React.JSX.Element {
   const integrationCredentials = credentials.filter(isIntegrationCredential);
   const latestServers = useRef(servers);
@@ -77,20 +87,19 @@ export function McpServersSection({
   return (
     <div className="settings-section-stack">
       <div className="section-heading-row">
-        <p className="section-intro">
-          Enable a server to connect and load its functions, then save configuration.
-          Select the server once in an Agent node to use all its enabled functions.
-        </p>
-        <button
-          title="Add a secret-free MCP transport configuration"
-          type="button"
-          onClick={addServer}
-        >
-          Add server
-        </button>
+        <p className="section-intro">{intro}</p>
+        {allowAdd && (
+          <button
+            title="Add a secret-free MCP transport configuration"
+            type="button"
+            onClick={addServer}
+          >
+            Add server
+          </button>
+        )}
       </div>
       {servers.length === 0 ? (
-        <p className="settings-empty">No MCP servers configured.</p>
+        <p className="settings-empty">{emptyText}</p>
       ) : (
         <div className="settings-record-list">
           {servers.map((server, index) => {
@@ -104,9 +113,9 @@ export function McpServersSection({
               <RecordHeading
                 id={server.id}
                 name={server.name}
-                onRemove={() => {
+                onRemove={allowRemove ? () => {
                   onChange(removeAt(servers, index));
-                }}
+                } : undefined}
               />
               <div className="settings-grid two-columns">
                 <TextField
@@ -119,7 +128,7 @@ export function McpServersSection({
                   }
                 />
               </div>
-              {server.plugin && <p className="settings-field-help">Tool plugin version {server.plugin.version} · {server.plugin.manifestPath}</p>}
+              {server.plugin && <p className="settings-field-help">Tool plugin version {server.plugin.version} · Plugin file {server.plugin.manifestPath}</p>}
               <ConnectionEditor
                 id={server.id}
                 value={server.transport}

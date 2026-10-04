@@ -6205,9 +6205,26 @@ mod tests {
                 WEB_EXTRACT_CAPABILITY_ID,
             ],
         );
-        // The seeded production workflow: Input -> Plan -> Agent -> Output -> Wait.
-        execution_request.workflow_snapshot =
-            bundled_workflow_template("standard-agent").expect("bundled Standard Agent");
+        // The plan-first production workflow: Input -> Plan -> Agent -> Output -> Wait.
+        let mut workflow = bundled_workflow_template("planer").expect("bundled Planer");
+        // This test freezes exactly the bound capabilities above, so narrow the
+        // Planer's agent (which ships the full native tool set) to that set.
+        workflow["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["id"] == "agent.1")
+            .expect("planer agent")["configuration"]["toolIds"] = json!([
+            FILE_READ_CAPABILITY_ID,
+            FILE_SEARCH_CAPABILITY_ID,
+            FILE_LIST_CAPABILITY_ID,
+            FILE_GREP_CAPABILITY_ID,
+            TODO_CAPABILITY_ID,
+            super::super::tool_loop::SKILL_CAPABILITY_ID,
+            WEB_SEARCH_CAPABILITY_ID,
+            WEB_EXTRACT_CAPABILITY_ID,
+        ]);
+        execution_request.workflow_snapshot = workflow;
         execution_request.frozen_context_hash = format!("sha256:{}", "d".repeat(64));
         execution_request.project_branch = Some("main".into());
         execution_request.budget.turns = 9;

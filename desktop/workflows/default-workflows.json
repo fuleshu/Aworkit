@@ -9,81 +9,178 @@
       "document": {
         "schemaVersion": 1,
         "id": "workflow.simple-chat",
-        "name": "Simple Chat",
+        "name": "Simple",
         "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 205 } },
+          {
+            "id": "input.1",
+            "label": "Input",
+            "type": "input",
+            "position": {
+              "x": 36,
+              "y": 205
+            }
+          },
           {
             "id": "agent.1",
             "label": "Agent",
             "type": "agent",
-            "position": { "x": 245, "y": 205 },
+            "position": {
+              "x": 245,
+              "y": 205
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "toolIds": []
             }
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 470, "y": 205 } },
-          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 695, "y": 205 } }
+          {
+            "id": "output.1",
+            "label": "Output",
+            "type": "output",
+            "position": {
+              "x": 470,
+              "y": 205
+            }
+          },
+          {
+            "id": "wait.1",
+            "label": "Wait for input",
+            "type": "wait",
+            "position": {
+              "x": 695,
+              "y": 205
+            }
+          }
         ],
         "edges": [
-          { "id": "input-agent", "source": "input.1", "target": "agent.1" },
-          { "id": "agent-output", "source": "agent.1", "target": "output.1" },
-          { "id": "output-wait", "source": "output.1", "target": "wait.1" }
+          {
+            "id": "input-agent",
+            "source": "input.1",
+            "target": "agent.1"
+          },
+          {
+            "id": "agent-output",
+            "source": "agent.1",
+            "target": "output.1"
+          },
+          {
+            "id": "output-wait",
+            "source": "output.1",
+            "target": "wait.1"
+          }
         ],
-        "comments": "Simple Chat: Chat Input → Agent → Chat Output → Wait for Input."
+        "comments": "Simple: the lightest ready-to-use workflow. Chat Input -> Agent (no tools) -> Chat Output -> Wait for Input. Use it for plain conversation and general knowledge, or as a starting point to build your own workflow."
       }
     },
     {
       "templateId": "standard-agent",
       "seedOnFreshProfile": true,
       "document": {
-        "schemaVersion": 1,
-        "id": "workflow.standard-agent",
-        "name": "Standard Agent",
-        "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 205 } },
+        "comments": "Standard: the ready-to-use default workflow. Chat Input -> Agent (the full native tool set: files, shell, Python, web search, skills, goals, subagents and background jobs) -> Chat Output -> Wait for Input. The agent begins work immediately instead of planning first, grounding itself with reads and searches and tracking multi-step work with the task list and the goal. Choose 'Planer' when a plan-first pass is wanted. The agent uses the DSH compaction-basic plus tool-result-pruner policy (thresholdChars 81920, headChars 73728, tailChars 4096) so one bounded 64 KiB file read survives pruning intact. A project-specific MCP binding is omitted so the workflow runs in any profile, and Codex/Claude Code delegation is omitted until an enabled external agent exists in Settings.",
+        "edges": [
           {
-            "id": "plan.1",
-            "label": "Plan",
-            "type": "model_call",
-            "position": { "x": 245, "y": 205 },
-            "configuration": {
-              "modelTierId": "tier:balanced",
-              "instructions": "Analyze the user request without answering it. Return only one JSON object with exactly these fields: goal (string), openQuestions (string array), evidenceNeeded (string array), and toolOrder (non-empty string array).",
-              "outputContract": "plan",
-              "maximumTokens": 1024
-            }
+            "id": "input-agent",
+            "source": "input.1",
+            "target": "agent.1"
           },
           {
-            "id": "agent.1",
-            "label": "Agent",
-            "type": "agent",
-            "position": { "x": 470, "y": 205 },
+            "id": "agent-output",
+            "source": "agent.1",
+            "target": "output.1"
+          },
+          {
+            "id": "output-wait",
+            "source": "output.1",
+            "target": "wait.1"
+          }
+        ],
+        "id": "workflow.standard-agent",
+        "name": "Standard",
+        "nodes": [
+          {
+            "id": "input.1",
+            "label": "Chat Input",
+            "position": {
+              "x": 36,
+              "y": 205
+            },
+            "type": "input"
+          },
+          {
             "configuration": {
+              "compaction": {
+                "auto": true,
+                "headChars": 73728,
+                "pruneToolResults": true,
+                "tailChars": 4096,
+                "thresholdChars": 81920
+              },
+              "instructions": "You are an AI agent powered by Aworkit.\n\nYou are a coding agent powered by the selected model.\n\nYour working directory is the current Chat project workspace.",
               "modelTierId": "tier:balanced",
+              "reasoningEffort": "high",
               "toolIds": [
                 "tool.files.read",
                 "tool.files.search",
+                "tool.files.edit",
                 "tool.files.list",
                 "tool.files.grep",
+                "tool.files.write",
+                "tool.shell.host",
+                "tool.python.host",
                 "tool.todo",
-                "tool.skill",
+                "tool.goal",
+                "tool.ask_user",
+                "tool.browse",
                 "tool.web_search",
-                "tool.web_extract"
-              ],
-              "instructions": "You are Aworkit, a helpful, knowledgeable, and direct AI assistant. Help users with questions, analysis, creative work, coding, and actions. Communicate clearly, acknowledge uncertainty, and adapt your level of detail to the request."
-            }
+                "tool.web_fetch",
+                "tool.web_extract",
+                "tool.subagent",
+                "tool.subagent_fork",
+                "tool.subagent_list",
+                "tool.subagent_message",
+                "tool.subagent_cancel",
+                "tool.skill",
+                "tool.workspace_instructions",
+                "tool.context",
+                "tool.image.read",
+                "tool.screenshot",
+                "tool.shell.start",
+                "tool.job.output",
+                "tool.job.input",
+                "tool.job.stop",
+                "tool.job.list",
+                "tool.job.keep",
+                "tool.python.start"
+              ]
+            },
+            "id": "agent.1",
+            "label": "Agent",
+            "position": {
+              "x": 245,
+              "y": 205
+            },
+            "type": "agent"
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 695, "y": 205 } },
-          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 904, "y": 205 } }
+          {
+            "id": "output.1",
+            "label": "Chat Output",
+            "position": {
+              "x": 470,
+              "y": 205
+            },
+            "type": "output"
+          },
+          {
+            "id": "wait.1",
+            "label": "Wait for Input",
+            "position": {
+              "x": 695,
+              "y": 205
+            },
+            "type": "wait"
+          }
         ],
-        "edges": [
-          { "id": "input-plan", "source": "input.1", "target": "plan.1" },
-          { "id": "plan-agent", "source": "plan.1", "target": "agent.1" },
-          { "id": "agent-output", "source": "agent.1", "target": "output.1" },
-          { "id": "output-wait", "source": "output.1", "target": "wait.1" }
-        ],
-        "comments": "Standard Agent: Chat Input → Plan → Agent (full tool set) → Chat Output → Wait for Input."
+        "schemaVersion": 1
       }
     },
     {
@@ -98,22 +195,165 @@
       }
     },
     {
-      "templateId": "triage-router",
+      "templateId": "planer",
       "seedOnFreshProfile": true,
+      "document": {
+        "comments": "Planer: the plan-first ready-to-use workflow. Chat Input -> Plan (a tool-free structured plan) -> Agent (the full native tool set) -> Chat Output -> Wait for Input. The agent starts only after the plan is produced. Choose 'Standard' when no plan step is wanted. A project-specific MCP binding is omitted so the workflow runs in any profile.",
+        "edges": [
+          {
+            "id": "input-plan",
+            "source": "input.1",
+            "target": "plan.1"
+          },
+          {
+            "id": "plan-agent",
+            "source": "plan.1",
+            "target": "agent.1"
+          },
+          {
+            "id": "agent-output",
+            "source": "agent.1",
+            "target": "output.1"
+          },
+          {
+            "id": "output-wait",
+            "source": "output.1",
+            "target": "wait.1"
+          }
+        ],
+        "id": "workflow.planer",
+        "name": "Planer",
+        "nodes": [
+          {
+            "id": "input.1",
+            "label": "Chat Input",
+            "position": {
+              "x": 36,
+              "y": 205
+            },
+            "type": "input"
+          },
+          {
+            "configuration": {
+              "instructions": "You are planning the request that follows; produce the plan, do not execute it. Imperative language to implement changes means plan the implementation, not carry it out. A user's conversational agreement approves nothing by itself; fold any confirmed decision into the plan. This step cannot call tools: the downstream Agent performs every read, search, static analysis, and check.\n\nGround the plan in the actual repository: name the files, symbols, and evidence the Agent must inspect, and state what each step should verify. Never assume a file, API, or command output. Prefer existing functions and patterns over new machinery, and keep the change inside the requested scope.\n\nThe tool catalog is identical during planning and execution for request-cache stability, and this step calls none of it. Do not use the task list to track this planning phase: it tracks implementation after the plan is accepted, while the plan itself is this step's output.\n\nAsk the user only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask where code lives or how current behavior works; the Agent can find out.\n\nMake the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.\n\nWhen ready, return the plan in the structured form this step requires: it is presented for approval, and implementation begins only in a later step after approval. Name only tools that the downstream Agent actually has, taken from the tool inventory supplied with this request.",
+              "maximumTokens": 2048,
+              "modelTierId": "tier:balanced",
+              "outputContract": "plan",
+              "reasoningEffort": "high"
+            },
+            "id": "plan.1",
+            "label": "Plan",
+            "position": {
+              "x": 245,
+              "y": 205
+            },
+            "type": "model_call"
+          },
+          {
+            "configuration": {
+              "compaction": {
+                "auto": true,
+                "headChars": 73728,
+                "pruneToolResults": true,
+                "tailChars": 4096,
+                "thresholdChars": 81920
+              },
+              "instructions": "You are a coding agent powered by the selected model.\n\nYour working directory is the current Chat project workspace.",
+              "modelTierId": "tier:balanced",
+              "reasoningEffort": "high",
+              "toolIds": [
+                "tool.files.read",
+                "tool.files.search",
+                "tool.files.edit",
+                "tool.files.list",
+                "tool.files.grep",
+                "tool.files.write",
+                "tool.shell.host",
+                "tool.python.host",
+                "tool.todo",
+                "tool.goal",
+                "tool.ask_user",
+                "tool.browse",
+                "tool.web_search",
+                "tool.web_fetch",
+                "tool.web_extract",
+                "tool.subagent",
+                "tool.subagent_fork",
+                "tool.subagent_list",
+                "tool.subagent_message",
+                "tool.subagent_cancel",
+                "tool.skill",
+                "tool.workspace_instructions",
+                "tool.context",
+                "tool.image.read",
+                "tool.screenshot",
+                "tool.shell.start",
+                "tool.job.output",
+                "tool.job.input",
+                "tool.job.stop",
+                "tool.job.list",
+                "tool.job.keep",
+                "tool.python.start"
+              ]
+            },
+            "id": "agent.1",
+            "label": "Agent",
+            "position": {
+              "x": 470,
+              "y": 205
+            },
+            "type": "agent"
+          },
+          {
+            "id": "output.1",
+            "label": "Chat Output",
+            "position": {
+              "x": 695,
+              "y": 205
+            },
+            "type": "output"
+          },
+          {
+            "id": "wait.1",
+            "label": "Wait for Input",
+            "position": {
+              "x": 904,
+              "y": 205
+            },
+            "type": "wait"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "templateId": "triage-router",
+      "seedOnFreshProfile": false,
       "document": {
         "schemaVersion": 1,
         "id": "workflow.triage-router",
         "name": "Triage Router",
         "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 240 } },
+          {
+            "id": "input.1",
+            "label": "Input",
+            "type": "input",
+            "position": {
+              "x": 36,
+              "y": 240
+            }
+          },
           {
             "id": "classify.1",
             "label": "Classify request",
             "type": "model_call",
-            "position": { "x": 245, "y": 240 },
+            "position": {
+              "x": 245,
+              "y": 240
+            },
             "configuration": {
               "modelTierId": "tier:simple",
-              "instructions": "Classify ONLY the final user message. Earlier turns are background context and must not change the result.\nReply with exactly one word and nothing else.\nSIMPLE: the final message can be answered correctly from stable general knowledge with no tools and no live data — a capital city, the calories in a food, a definition, a calculation, or an explanation.\nCOMPLEX: the final message itself needs current or external information (weather, news, prices, scores, schedules, recent events), project files, or an action.\nDefault to SIMPLE. Answer SIMPLE even when earlier turns needed tools.",
+              "instructions": "Classify ONLY the final user message. Earlier turns are background context and must not change the result.\nReply with exactly one word and nothing else.\nSIMPLE: the final message can be answered correctly from stable general knowledge with no tools and no live data \u2014 a capital city, the calories in a food, a definition, a calculation, or an explanation.\nCOMPLEX: the final message itself needs current or external information (weather, news, prices, scores, schedules, recent events), project files, or an action.\nDefault to SIMPLE. Answer SIMPLE even when earlier turns needed tools.",
               "maximumTokens": 16
             }
           },
@@ -121,14 +361,26 @@
             "id": "route.1",
             "label": "Simple?",
             "type": "condition",
-            "position": { "x": 470, "y": 240 },
-            "configuration": { "predicate": { "kind": "eq", "path": "value", "value": "SIMPLE" } }
+            "position": {
+              "x": 470,
+              "y": 240
+            },
+            "configuration": {
+              "predicate": {
+                "kind": "eq",
+                "path": "value",
+                "value": "SIMPLE"
+              }
+            }
           },
           {
             "id": "quick.1",
             "label": "Direct answer",
             "type": "agent",
-            "position": { "x": 695, "y": 130 },
+            "position": {
+              "x": 695,
+              "y": 130
+            },
             "configuration": {
               "modelTierId": "tier:simple",
               "toolIds": [],
@@ -139,7 +391,10 @@
             "id": "gate.1",
             "label": "Approve tool use",
             "type": "approval",
-            "position": { "x": 695, "y": 340 },
+            "position": {
+              "x": 695,
+              "y": 340
+            },
             "configuration": {
               "title": "Approve grounded work",
               "message": "This request looks like it needs tools or current information. Approve to run the tool-enabled agent, or reject to stop the run."
@@ -149,7 +404,10 @@
             "id": "deep.1",
             "label": "Grounded answer",
             "type": "agent",
-            "position": { "x": 920, "y": 340 },
+            "position": {
+              "x": 920,
+              "y": 340
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "toolIds": [
@@ -164,44 +422,127 @@
               "instructions": "Answer the user's request using the registered tools. Inspect project evidence with the file tools and use the web tools for current information. Cite the sources you actually used and do not claim tool results you did not receive."
             }
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1150, "y": 240 } },
-          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 1360, "y": 240 } }
+          {
+            "id": "output.1",
+            "label": "Output",
+            "type": "output",
+            "position": {
+              "x": 1150,
+              "y": 240
+            }
+          },
+          {
+            "id": "wait.1",
+            "label": "Wait for input",
+            "type": "wait",
+            "position": {
+              "x": 1360,
+              "y": 240
+            }
+          }
         ],
         "edges": [
-          { "id": "e.input.classify", "source": "input.1", "target": "classify.1" },
-          { "id": "e.classify.route", "source": "classify.1", "target": "route.1" },
-          { "id": "e.route.quick", "source": "route.1", "target": "quick.1", "sourcePort": "true", "configuration": { "route": "true" } },
-          { "id": "e.route.gate", "source": "route.1", "target": "gate.1", "sourcePort": "false", "configuration": { "route": "false" } },
-          { "id": "e.quick.output", "source": "quick.1", "target": "output.1" },
-          { "id": "e.gate.deep", "source": "gate.1", "target": "deep.1" },
-          { "id": "e.deep.output", "source": "deep.1", "target": "output.1" },
-          { "id": "e.output.wait", "source": "output.1", "target": "wait.1" }
+          {
+            "id": "e.input.classify",
+            "source": "input.1",
+            "target": "classify.1"
+          },
+          {
+            "id": "e.classify.route",
+            "source": "classify.1",
+            "target": "route.1"
+          },
+          {
+            "id": "e.route.quick",
+            "source": "route.1",
+            "target": "quick.1",
+            "sourcePort": "true",
+            "configuration": {
+              "route": "true"
+            }
+          },
+          {
+            "id": "e.route.gate",
+            "source": "route.1",
+            "target": "gate.1",
+            "sourcePort": "false",
+            "configuration": {
+              "route": "false"
+            }
+          },
+          {
+            "id": "e.quick.output",
+            "source": "quick.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.gate.deep",
+            "source": "gate.1",
+            "target": "deep.1"
+          },
+          {
+            "id": "e.deep.output",
+            "source": "deep.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.output.wait",
+            "source": "output.1",
+            "target": "wait.1"
+          }
         ],
-        "comments": "Triage Router: Chat Input → Classify (Model Call) → Condition (simple?) → direct Agent, or Approval → tool-enabled Agent → Chat Output → Wait. Cost/latency routing with an explicit gate before tool use."
+        "comments": "Triage Router: Chat Input \u2192 Classify (Model Call) \u2192 Condition (simple?) \u2192 direct Agent, or Approval \u2192 tool-enabled Agent \u2192 Chat Output \u2192 Wait. Cost/latency routing with an explicit gate before tool use."
       }
     },
     {
       "templateId": "evidence-brief",
-      "seedOnFreshProfile": true,
+      "seedOnFreshProfile": false,
       "document": {
         "schemaVersion": 1,
         "id": "workflow.evidence-brief",
         "name": "Evidence Brief",
         "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 260 } },
-          { "id": "fan.1", "label": "Fan out", "type": "parallel", "position": { "x": 245, "y": 260 } },
+          {
+            "id": "input.1",
+            "label": "Input",
+            "type": "input",
+            "position": {
+              "x": 36,
+              "y": 260
+            }
+          },
+          {
+            "id": "fan.1",
+            "label": "Fan out",
+            "type": "parallel",
+            "position": {
+              "x": 245,
+              "y": 260
+            }
+          },
           {
             "id": "web.1",
             "label": "Web search",
             "type": "tool",
-            "position": { "x": 480, "y": 110 },
-            "configuration": { "toolId": "tool.web_search", "parameters": { "query": "{input}" } }
+            "position": {
+              "x": 480,
+              "y": 110
+            },
+            "configuration": {
+              "toolId": "tool.web_search",
+              "parameters": {
+                "query": "{input}"
+              }
+            }
           },
           {
             "id": "plan.1",
             "label": "Plan evidence",
             "type": "model_call",
-            "position": { "x": 480, "y": 410 },
+            "position": {
+              "x": 480,
+              "y": 410
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "instructions": "Plan the answer to the user's request. List in evidenceNeeded every external or project fact the answer must verify; leave evidenceNeeded empty only when the request can be answered safely from general knowledge.",
@@ -213,14 +554,25 @@
             "id": "need.1",
             "label": "Evidence needed?",
             "type": "condition",
-            "position": { "x": 710, "y": 410 },
-            "configuration": { "predicate": { "kind": "exists", "path": "evidenceNeeded.0" } }
+            "position": {
+              "x": 710,
+              "y": 410
+            },
+            "configuration": {
+              "predicate": {
+                "kind": "exists",
+                "path": "evidenceNeeded.0"
+              }
+            }
           },
           {
             "id": "agent.1",
             "label": "Grounded brief",
             "type": "agent",
-            "position": { "x": 950, "y": 220 },
+            "position": {
+              "x": 950,
+              "y": 220
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "toolIds": [
@@ -237,45 +589,123 @@
             "id": "quick.1",
             "label": "Direct brief",
             "type": "agent",
-            "position": { "x": 950, "y": 570 },
+            "position": {
+              "x": 950,
+              "y": 570
+            },
             "configuration": {
               "modelTierId": "tier:simple",
               "toolIds": [],
               "instructions": "Answer the user's request directly and concisely. No evidence gathering is required."
             }
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1190, "y": 300 } },
-          { "id": "completion.1", "label": "Completion", "type": "completion", "position": { "x": 1390, "y": 300 } }
+          {
+            "id": "output.1",
+            "label": "Output",
+            "type": "output",
+            "position": {
+              "x": 1190,
+              "y": 300
+            }
+          },
+          {
+            "id": "completion.1",
+            "label": "Completion",
+            "type": "completion",
+            "position": {
+              "x": 1390,
+              "y": 300
+            }
+          }
         ],
         "edges": [
-          { "id": "e.input.fan", "source": "input.1", "target": "fan.1" },
-          { "id": "e.fan.web", "source": "fan.1", "target": "web.1" },
-          { "id": "e.fan.plan", "source": "fan.1", "target": "plan.1" },
-          { "id": "e.plan.need", "source": "plan.1", "target": "need.1" },
-          { "id": "e.need.agent", "source": "need.1", "target": "agent.1", "sourcePort": "true", "configuration": { "route": "true" } },
-          { "id": "e.need.quick", "source": "need.1", "target": "quick.1", "sourcePort": "false", "configuration": { "route": "false" } },
-          { "id": "e.web.agent", "source": "web.1", "target": "agent.1" },
-          { "id": "e.agent.output", "source": "agent.1", "target": "output.1" },
-          { "id": "e.quick.output", "source": "quick.1", "target": "output.1" },
-          { "id": "e.output.completion", "source": "output.1", "target": "completion.1" }
+          {
+            "id": "e.input.fan",
+            "source": "input.1",
+            "target": "fan.1"
+          },
+          {
+            "id": "e.fan.web",
+            "source": "fan.1",
+            "target": "web.1"
+          },
+          {
+            "id": "e.fan.plan",
+            "source": "fan.1",
+            "target": "plan.1"
+          },
+          {
+            "id": "e.plan.need",
+            "source": "plan.1",
+            "target": "need.1"
+          },
+          {
+            "id": "e.need.agent",
+            "source": "need.1",
+            "target": "agent.1",
+            "sourcePort": "true",
+            "configuration": {
+              "route": "true"
+            }
+          },
+          {
+            "id": "e.need.quick",
+            "source": "need.1",
+            "target": "quick.1",
+            "sourcePort": "false",
+            "configuration": {
+              "route": "false"
+            }
+          },
+          {
+            "id": "e.web.agent",
+            "source": "web.1",
+            "target": "agent.1"
+          },
+          {
+            "id": "e.agent.output",
+            "source": "agent.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.quick.output",
+            "source": "quick.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.output.completion",
+            "source": "output.1",
+            "target": "completion.1"
+          }
         ],
-        "comments": "Evidence Brief: Chat Input → Parallel → (Tool: web_search running with Model Call: plan) → Condition (evidence needed?) → grounded Agent or direct Agent → Chat Output → Completion."
+        "comments": "Evidence Brief: Chat Input \u2192 Parallel \u2192 (Tool: web_search running with Model Call: plan) \u2192 Condition (evidence needed?) \u2192 grounded Agent or direct Agent \u2192 Chat Output \u2192 Completion."
       }
     },
     {
       "templateId": "iterative-planning",
-      "seedOnFreshProfile": true,
+      "seedOnFreshProfile": false,
       "document": {
         "schemaVersion": 1,
         "id": "workflow.iterative-planning",
         "name": "Iterative Planning",
         "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 260 } },
+          {
+            "id": "input.1",
+            "label": "Input",
+            "type": "input",
+            "position": {
+              "x": 36,
+              "y": 260
+            }
+          },
           {
             "id": "seed.1",
             "label": "Draft plan",
             "type": "model_call",
-            "position": { "x": 245, "y": 260 },
+            "position": {
+              "x": 245,
+              "y": 260
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "instructions": "Produce an initial plan for answering the user's request. List every genuinely unresolved question in openQuestions; leave it empty when nothing is unresolved.",
@@ -287,9 +717,18 @@
             "id": "loop.1",
             "label": "Until plan is settled",
             "type": "loop",
-            "position": { "x": 490, "y": 260 },
+            "position": {
+              "x": 490,
+              "y": 260
+            },
             "configuration": {
-              "exitCondition": { "kind": "not", "operand": { "kind": "exists", "path": "openQuestions.0" } },
+              "exitCondition": {
+                "kind": "not",
+                "operand": {
+                  "kind": "exists",
+                  "path": "openQuestions.0"
+                }
+              },
               "maximumIterations": 3
             }
           },
@@ -297,7 +736,10 @@
             "id": "refine.1",
             "label": "Refine plan",
             "type": "model_call",
-            "position": { "x": 740, "y": 130 },
+            "position": {
+              "x": 740,
+              "y": 130
+            },
             "configuration": {
               "modelTierId": "tier:quality",
               "instructions": "Refine the plan from the additional context. Resolve each open question that the conversation or general knowledge already answers; keep in openQuestions only what is still genuinely unresolved, and keep toolOrder as concrete, non-empty steps.",
@@ -309,7 +751,10 @@
             "id": "execute.1",
             "label": "Execute plan",
             "type": "agent",
-            "position": { "x": 990, "y": 260 },
+            "position": {
+              "x": 990,
+              "y": 260
+            },
             "configuration": {
               "modelTierId": "tier:balanced",
               "toolIds": [
@@ -322,20 +767,83 @@
               "instructions": "Execute the settled plan and produce the final answer for the user. Use the registered tools where the plan calls for evidence, and state clearly when the applied iteration bound stopped further planning."
             }
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1220, "y": 260 } },
-          { "id": "wait.1", "label": "Wait for input", "type": "wait", "position": { "x": 1430, "y": 260 } }
+          {
+            "id": "output.1",
+            "label": "Output",
+            "type": "output",
+            "position": {
+              "x": 1220,
+              "y": 260
+            }
+          },
+          {
+            "id": "wait.1",
+            "label": "Wait for input",
+            "type": "wait",
+            "position": {
+              "x": 1430,
+              "y": 260
+            }
+          }
         ],
         "edges": [
-          { "id": "e.input.seed", "source": "input.1", "target": "seed.1" },
-          { "id": "e.seed.loop", "source": "seed.1", "target": "loop.1" },
-          { "id": "e.loop.refine", "source": "loop.1", "target": "refine.1", "sourcePort": "body", "configuration": { "route": "body" } },
-          { "id": "e.refine.loop", "source": "refine.1", "target": "loop.1", "configuration": { "route": "feedback" } },
-          { "id": "e.loop.execute", "source": "loop.1", "target": "execute.1", "sourcePort": "exit", "configuration": { "route": "exit" } },
-          { "id": "e.loop.execute.fallback", "source": "loop.1", "target": "execute.1", "sourcePort": "fallback", "configuration": { "route": "fallback" } },
-          { "id": "e.execute.output", "source": "execute.1", "target": "output.1" },
-          { "id": "e.output.wait", "source": "output.1", "target": "wait.1" }
+          {
+            "id": "e.input.seed",
+            "source": "input.1",
+            "target": "seed.1"
+          },
+          {
+            "id": "e.seed.loop",
+            "source": "seed.1",
+            "target": "loop.1"
+          },
+          {
+            "id": "e.loop.refine",
+            "source": "loop.1",
+            "target": "refine.1",
+            "sourcePort": "body",
+            "configuration": {
+              "route": "body"
+            }
+          },
+          {
+            "id": "e.refine.loop",
+            "source": "refine.1",
+            "target": "loop.1",
+            "configuration": {
+              "route": "feedback"
+            }
+          },
+          {
+            "id": "e.loop.execute",
+            "source": "loop.1",
+            "target": "execute.1",
+            "sourcePort": "exit",
+            "configuration": {
+              "route": "exit"
+            }
+          },
+          {
+            "id": "e.loop.execute.fallback",
+            "source": "loop.1",
+            "target": "execute.1",
+            "sourcePort": "fallback",
+            "configuration": {
+              "route": "fallback"
+            }
+          },
+          {
+            "id": "e.execute.output",
+            "source": "execute.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.output.wait",
+            "source": "output.1",
+            "target": "wait.1"
+          }
         ],
-        "comments": "Iterative Planning: Chat Input → draft Plan → bounded Loop (refine Plan until openQuestions is empty) → Agent executes the settled plan → Chat Output → Wait. The declared maximumIterations caps planning cost, and the fallback route still executes."
+        "comments": "Iterative Planning: Chat Input \u2192 draft Plan \u2192 bounded Loop (refine Plan until openQuestions is empty) \u2192 Agent executes the settled plan \u2192 Chat Output \u2192 Wait. The declared maximumIterations caps planning cost, and the fallback route still executes."
       }
     },
     {
@@ -346,22 +854,39 @@
         "id": "workflow.delegated-code-review",
         "name": "Delegated Code Review",
         "nodes": [
-          { "id": "input.1", "label": "Input", "type": "input", "position": { "x": 36, "y": 240 } },
+          {
+            "id": "input.1",
+            "label": "Input",
+            "type": "input",
+            "position": {
+              "x": 36,
+              "y": 240
+            }
+          },
           {
             "id": "scan.1",
             "label": "Scan markers",
             "type": "tool",
-            "position": { "x": 255, "y": 240 },
+            "position": {
+              "x": 255,
+              "y": 240
+            },
             "configuration": {
               "toolId": "tool.files.grep",
-              "parameters": { "pattern": "TODO|FIXME|HACK", "path": "." }
+              "parameters": {
+                "pattern": "TODO|FIXME|HACK",
+                "path": "."
+              }
             }
           },
           {
             "id": "gate.1",
             "label": "Approve delegation",
             "type": "approval",
-            "position": { "x": 500, "y": 240 },
+            "position": {
+              "x": 500,
+              "y": 240
+            },
             "configuration": {
               "title": "Delegate this review?",
               "message": "Approve to send the scan findings to the configured Codex or Claude Code agent for an independent review. Configure an external agent target in Settings before running this workflow."
@@ -371,24 +896,63 @@
             "id": "review.1",
             "label": "External review",
             "type": "external_agent",
-            "position": { "x": 750, "y": 240 },
+            "position": {
+              "x": 750,
+              "y": 240
+            },
             "configuration": {
               "toolId": "tool.subagent_codex",
               "reasoningEffort": "high",
               "instructions": "Review this repository. The additional context lists outstanding TODO, FIXME and HACK markers found by a workspace scan. Inspect the referenced files and report concrete risks, real defects, and missing tests, each with its file path. Be concise and do not restate the markers verbatim."
             }
           },
-          { "id": "output.1", "label": "Output", "type": "output", "position": { "x": 1010, "y": 240 } },
-          { "id": "completion.1", "label": "Completion", "type": "completion", "position": { "x": 1210, "y": 240 } }
+          {
+            "id": "output.1",
+            "label": "Output",
+            "type": "output",
+            "position": {
+              "x": 1010,
+              "y": 240
+            }
+          },
+          {
+            "id": "completion.1",
+            "label": "Completion",
+            "type": "completion",
+            "position": {
+              "x": 1210,
+              "y": 240
+            }
+          }
         ],
         "edges": [
-          { "id": "e.input.scan", "source": "input.1", "target": "scan.1" },
-          { "id": "e.scan.gate", "source": "scan.1", "target": "gate.1" },
-          { "id": "e.gate.review", "source": "gate.1", "target": "review.1" },
-          { "id": "e.review.output", "source": "review.1", "target": "output.1" },
-          { "id": "e.output.completion", "source": "output.1", "target": "completion.1" }
+          {
+            "id": "e.input.scan",
+            "source": "input.1",
+            "target": "scan.1"
+          },
+          {
+            "id": "e.scan.gate",
+            "source": "scan.1",
+            "target": "gate.1"
+          },
+          {
+            "id": "e.gate.review",
+            "source": "gate.1",
+            "target": "review.1"
+          },
+          {
+            "id": "e.review.output",
+            "source": "review.1",
+            "target": "output.1"
+          },
+          {
+            "id": "e.output.completion",
+            "source": "output.1",
+            "target": "completion.1"
+          }
         ],
-        "comments": "Delegated Code Review: Chat Input → Tool (files.grep for TODO/FIXME/HACK) → Approval → External Agent (Codex/Claude Code) → Chat Output → Completion. Requires a configured external agent target in Settings."
+        "comments": "Delegated Code Review: Chat Input \u2192 Tool (files.grep for TODO/FIXME/HACK) \u2192 Approval \u2192 External Agent (Codex/Claude Code) \u2192 Chat Output \u2192 Completion. Requires a configured external agent target in Settings."
       }
     }
   ]

@@ -169,7 +169,9 @@ describe("Settings v2 workbench", () => {
     const navigation = screen.getByRole("navigation", {
       name: "Settings sections",
     });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(12);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(13);
+    // Plugins are configured in their own section, not under Tools or MCP.
+    expect(within(navigation).getByRole("button", { name: /Tool Plugins/ })).toBeVisible();
     await user.click(within(navigation).getByRole("button", { name: /Approvals/ }));
     await user.selectOptions(screen.getByLabelText("Default approval mode"), "approve_for_me");
     expect(screen.queryByText(/unsupported in this build/i)).toBeNull();
@@ -1525,6 +1527,62 @@ describe("Settings v2 workbench", () => {
     expect(screen.queryByText(/Simple Chat/)).toBeNull();
   });
 
+  it("configures a plugin completely in Tool Plugins and keeps it off the MCP servers tab", async () => {
+    const initial = configuration();
+    initial.mcpServers = [
+      {
+        id: "plugin.comfyui-bridge",
+        name: "ComfyUI bridge",
+        enabled: false,
+        autoConnect: false,
+        transport: {
+          transport: "stdio",
+          command: "python",
+          args: ["bridge.py", "--endpoint", "http://127.0.0.1:8188"],
+          cwd: null,
+          env: [],
+        },
+        plugin: {
+          manifestPath: "/plugins/comfyui-bridge/tool-plugin.json",
+          version: "1.0.0",
+          contentHash: "sha256:abc",
+        },
+        tools: [
+          {
+            name: "comfyui_status",
+            description: "Status",
+            inputSchema: { type: "object" },
+            enabled: true,
+          },
+        ],
+      },
+    ];
+    const port = new RecordingSettingsV2Port(initial);
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+    await screen.findByLabelText("Base URL");
+
+    const navigation = screen.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    await user.click(
+      within(navigation).getByRole("button", { name: /MCP servers/ }),
+    );
+    const mcpPanel = document.getElementById("settings-panel-mcp");
+    expect(mcpPanel).not.toBeNull();
+    // A plugin-backed connection never appears on the general MCP tab.
+    expect(within(mcpPanel!).queryByDisplayValue("ComfyUI bridge")).toBeNull();
+
+    await user.click(
+      within(navigation).getByRole("button", { name: /Tool Plugins/ }),
+    );
+    // Its complete configuration, including the MCP connection, is here.
+    expect(screen.getByDisplayValue("ComfyUI bridge")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Connect and enable" }),
+    ).toBeVisible();
+  });
+
   it("keeps implemented domains editable, disables inactive policies, and routes MCP probing through the native port", async () => {
     const port = new RecordingSettingsV2Port();
     const native = presentation({
@@ -2020,6 +2078,9 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public readonly externalAgentProbes: ExternalAgentProbeRequest[] = [];
   public readonly extensionInspections: string[] = [];
   public readonly extensionRegistrations: ExtensionRegisterCommand[] = [];
+  public readonly toolPluginInstalls: string[] = [];
+  public readonly toolPluginRemovals: string[] = [];
+  public readonly toolPluginFolderOpens: string[] = [];
   public extensionInspectionCompletions = 0;
   public extensionInspection:
     | ((path: string) => Promise<ExtensionConfiguration>)
@@ -2440,6 +2501,30 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
       ),
       reason: "Registered while disabled and untrusted.",
     };
+  }
+
+  public async installToolPlugin(path: string): Promise<SettingsV2Snapshot> {
+    this.toolPluginInstalls.push(path);
+    return structuredClone(this.state);
+  }
+
+  public async removeToolPlugin(pluginId: string): Promise<SettingsV2Snapshot> {
+    this.toolPluginRemovals.push(pluginId);
+    this.state = {
+      ...this.state,
+      version: this.state.version + 1,
+      settings: {
+        ...this.state.settings,
+        mcpServers: this.state.settings.mcpServers.filter(
+          (server) => server.id !== pluginId && server.plugin?.manifestPath !== pluginId,
+        ),
+      },
+    };
+    return structuredClone(this.state);
+  }
+
+  public async openToolPluginFolder(): Promise<void> {
+    this.toolPluginFolderOpens.push(this.state.toolPluginDirectory ?? "");
   }
 }
 

@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1776632719647812 -->
+<!-- adashi:generated revision=4224594039564922 -->
 # Architecture — `desktop/scripts` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -15,6 +15,6 @@ Bound here:
 Markdown design specifications:
 
 
-- [Compaction budget model: every budget is a share of the window](../../docs/adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md)
-2 more Markdown design(s); see the root index.
+- [Failure policy: no limit ends a run; every condition is reported](../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
+1 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

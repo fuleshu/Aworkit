@@ -37,5 +37,5 @@ it("reports nothing for a model that declares no window", () => {
 it("follows a configured share and falls back on the default", () => {
   expect(compactionReadout(100_000, null, 0.2)!.summaryPercent).toBe(20);
   expect(compactionReadout(100_000, null, 0.2)!.tailPercent).toBe(80);
-  expect(compactionReadout(100_000, null, Number.NaN)!.summaryPercent).toBe(38);
+  expect(compactionReadout(100_000, null, Number.NaN)!.summaryPercent).toBe(20);
 });

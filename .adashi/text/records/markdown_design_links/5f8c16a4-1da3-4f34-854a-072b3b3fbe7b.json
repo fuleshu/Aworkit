@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.trusted_core.snapshot_freezer",
+    "document_id": {
+      "ref": "0a10e259-12cf-4f6a-976e-c414f4bfb199"
+    },
+    "id": 3417842539,
+    "sort_order": 4,
+    "target_type": "element"
+  },
+  "deleted": false,
+  "identity": "5f8c16a4-1da3-4f34-854a-072b3b3fbe7b",
+  "schemaVersion": 1
+}

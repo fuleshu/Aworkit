@@ -190,11 +190,10 @@ fn plugin_discovery_is_inert_and_changed_packages_fail_verification() {
     else {
         panic!("stdio")
     };
-    assert!(std::path::Path::new(command).is_absolute());
-    assert_eq!(
-        std::path::Path::new(cwd.as_ref().unwrap()),
-        std::fs::canonicalize(&folder).unwrap()
-    );
+    // A bare command name stays a name for the operating system to resolve from
+    // PATH, so a package can launch a Python or Node MCP server.
+    assert_eq!(command, "missing-server.exe");
+    assert!(std::path::Path::new(cwd.as_ref().unwrap()).is_absolute());
     let pin = server.plugin.as_ref().unwrap();
     discovery::verify(pin).unwrap();
     std::fs::write(&path, manifest.to_string() + "\n").unwrap();
@@ -213,6 +212,194 @@ fn plugin_discovery_is_inert_and_changed_packages_fail_verification() {
     traversal["execution"]["command"] = "../outside.exe".into();
     std::fs::write(&path, traversal.to_string()).unwrap();
     assert!(discovery::inspect(&path).unwrap_err().contains("within"));
+}
+
+#[test]
+fn installing_and_removing_a_package_is_inert_reversible_and_bounded() {
+    let root = tempfile::tempdir().unwrap();
+    let plugin_root = root.path().join("plugins");
+    let source = root.path().join("downloads/comfyui-bridge");
+    std::fs::create_dir_all(source.join("skills/comfyui")).unwrap();
+    let manifest = json!({"schemaVersion":1,"id":"plugin.comfyui-bridge","name":"ComfyUI bridge","version":"1.0.0",
+        "execution":{"transport":"stdio","command":"python","args":["bridge.py"],"env":[]},
+        "tools":[{"name":"comfyui_queue","description":"Queue a workflow","inputSchema":{"type":"object"},"enabled":true}]});
+    std::fs::write(source.join("tool-plugin.json"), manifest.to_string()).unwrap();
+    std::fs::write(source.join("bridge.py"), b"print('bridge')").unwrap();
+    std::fs::write(source.join("skills/comfyui/SKILL.md"), b"# ComfyUI").unwrap();
+
+    let installed = discovery::install(&source, &plugin_root).unwrap();
+    assert_eq!(installed.id, "plugin.comfyui-bridge");
+    assert!(!installed.enabled && !installed.auto_connect);
+    let listed = discovery::discover(&plugin_root);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].server.as_ref().unwrap().id, "plugin.comfyui-bridge");
+    // The package's own files are copied, including its optional skill folder.
+    assert!(plugin_root
+        .join("comfyui-bridge/skills/comfyui/SKILL.md")
+        .is_file());
+    // Re-installing replaces the package instead of duplicating it.
+    discovery::install(&source, &plugin_root).unwrap();
+    assert_eq!(discovery::discover(&plugin_root).len(), 1);
+    // A second, valid package appears and the first is still discoverable.
+    let other = root.path().join("downloads/other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        other.join("tool-plugin.json"),
+        json!({"schemaVersion":1,"id":"plugin.other","name":"Other","version":"1.0.0",
+            "execution":{"transport":"stdio","command":"python","args":[],"env":[]}})
+        .to_string(),
+    )
+    .unwrap();
+    discovery::install(&other, &plugin_root).unwrap();
+    assert_eq!(discovery::discover(&plugin_root).len(), 2);
+
+    // Removing by id removes only that package.
+    let removed = discovery::remove(&plugin_root, "plugin.comfyui-bridge").unwrap();
+    assert!(std::path::Path::new(&removed).starts_with(std::fs::canonicalize(&plugin_root).unwrap()));
+    assert!(!plugin_root.join("comfyui-bridge").exists());
+    let remaining = discovery::discover(&plugin_root);
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].server.as_ref().unwrap().id, "plugin.other");
+    // Removing it twice, or removing an unknown id, is a definite failure.
+    let _ = discovery::remove(&plugin_root, "plugin.comfyui-bridge");
+    assert!(discovery::remove(&plugin_root, "plugin.comfyui-bridge").is_err());
+
+    // A chosen folder that holds no plugin is refused with a plain reason.
+    let empty = root.path().join("downloads/two-packages");
+    std::fs::create_dir_all(empty.join("a")).unwrap();
+    std::fs::create_dir_all(empty.join("b")).unwrap();
+    for folder in ["a", "b"] {
+        std::fs::write(
+            empty.join(folder).join("tool-plugin.json"),
+            json!({"schemaVersion":1,"id":format!("plugin.{folder}"),"name":"x","version":"1",
+                "execution":{"transport":"stdio","command":"python","args":[],"env":[]}})
+            .to_string(),
+        )
+        .unwrap();
+    }
+    assert!(discovery::install(&empty, &plugin_root).is_err());
+    assert!(discovery::install(&plugin_root, &plugin_root).is_err());
+    // A relative traversal in the package folder name cannot escape the root.
+    assert!(discovery::plugin_folder(std::path::Path::new("")).is_err());
+    let _ = std::fs::remove_dir_all(root.path().join("downloads"));
+}
+
+#[test]
+#[cfg(unix)]
+fn installing_refuses_a_package_that_contains_a_symbolic_link() {
+    let root = tempfile::tempdir().unwrap();
+    let plugin_root = root.path().join("plugins");
+    let source = root.path().join("downloads/linked");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("tool-plugin.json"),
+        json!({"schemaVersion":1,"id":"plugin.linked","name":"Linked","version":"1.0.0",
+            "execution":{"transport":"stdio","command":"python","args":[],"env":[]}})
+        .to_string(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("/etc/passwd", source.join("escape")).unwrap();
+    assert!(discovery::install(&source, &plugin_root).is_err());
+    assert!(discovery::discover(&plugin_root).is_empty());
+}
+
+#[test]
+fn the_comfyui_reference_plugin_is_a_valid_installable_package() {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tool-plugins/comfyui-bridge");
+    let server = discovery::inspect(&base.join("tool-plugin.json"))
+        .expect("the shipped reference plugin must validate");
+    assert_eq!(server.id, "plugin.comfyui-bridge");
+    assert!(!server.enabled && !server.auto_connect);
+    assert!(base.join("bridge.py").is_file(), "the MCP server ships with the package");
+    assert!(base.join("workflows.json").is_file());
+    assert!(
+        base.join("skills/comfyui/SKILL.md").is_file(),
+        "the package demonstrates an optional skill folder"
+    );
+    let super::super::settings_v2::IntegrationTransportV2::Stdio { command, cwd, args, .. } =
+        &server.transport
+    else {
+        panic!("the reference plugin launches a local MCP server")
+    };
+    // A bare interpreter name resolves from PATH; the script is package-relative.
+    assert_eq!(command, "python");
+    assert_eq!(args.first().map(String::as_str), Some("bridge.py"));
+    assert_eq!(
+        std::path::Path::new(cwd.as_ref().expect("package working directory")),
+        base.canonicalize().unwrap()
+    );
+    assert_eq!(server.tools.len(), 3);
+    let runner = server
+        .tools
+        .iter()
+        .find(|tool| tool.name == "comfyui_run_workflow")
+        .expect("the reference tool is declared");
+    // A side-effect hint is a hint for approval, not a read-only claim.
+    assert_eq!(runner.annotations.as_ref().and_then(|hints| hints.read_only_hint), Some(false));
+    // The inert folder scan finds it and never enables it.
+    let listed = discovery::discover(base.parent().unwrap());
+    assert!(listed.iter().any(|entry| {
+        entry
+            .server
+            .as_ref()
+            .is_some_and(|server| server.id == "plugin.comfyui-bridge")
+    }));
+}
+
+#[test]
+fn the_ffmpeg_reference_plugin_is_a_valid_installable_package() {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tool-plugins/ffmpeg");
+    let server = discovery::inspect(&base.join("tool-plugin.json"))
+        .expect("the shipped ffmpeg plugin must validate");
+    assert_eq!(server.id, "plugin.ffmpeg");
+    assert!(!server.enabled && !server.auto_connect);
+    assert!(base.join("ffmpeg_bridge.py").is_file());
+    assert!(
+        base.join("skills/ffmpeg/SKILL.md").is_file(),
+        "the plugin ships its skill"
+    );
+    let super::super::settings_v2::IntegrationTransportV2::Stdio { command, args, cwd, .. } =
+        &server.transport
+    else {
+        panic!("the ffmpeg plugin launches a local MCP server")
+    };
+    assert_eq!(command, "python");
+    assert_eq!(args.first().map(String::as_str), Some("ffmpeg_bridge.py"));
+    // The arguments carry no credential material and name the two binaries.
+    assert!(args.iter().any(|argument| argument == "--ffmpeg"));
+    assert!(args.iter().any(|argument| argument == "ffprobe"));
+    assert_eq!(
+        std::path::Path::new(cwd.as_ref().expect("package working directory")),
+        base.canonicalize().unwrap()
+    );
+    assert_eq!(server.tools.len(), 8);
+    let runner = server
+        .tools
+        .iter()
+        .find(|tool| tool.name == "ffmpeg_run")
+        .expect("the advanced tool is declared");
+    assert_eq!(
+        runner.annotations.as_ref().and_then(|hints| hints.destructive_hint),
+        Some(true),
+        "the escape hatch is a destructive hint"
+    );
+    let probe = server
+        .tools
+        .iter()
+        .find(|tool| tool.name == "ffmpeg_probe")
+        .expect("the probe tool is declared");
+    assert_eq!(
+        probe.annotations.as_ref().and_then(|hints| hints.read_only_hint),
+        Some(true)
+    );
+    let listed = discovery::discover(base.parent().unwrap());
+    assert!(listed.iter().any(|entry| {
+        entry
+            .server
+            .as_ref()
+            .is_some_and(|server| server.id == "plugin.ffmpeg")
+    }));
 }
 
 #[test]

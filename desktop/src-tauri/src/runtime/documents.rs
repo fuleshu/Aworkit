@@ -2949,20 +2949,24 @@ mod tests {
 
     #[test]
     fn exact_legacy_standard_agent_plan_is_migrated_to_the_structured_contract() {
-        let mut workflow = bundled_workflow_template("standard-agent").unwrap();
-        let configuration = workflow["nodes"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|node| node["id"] == "plan.1")
-            .unwrap()["configuration"]
-            .as_object_mut()
-            .unwrap();
-        configuration.insert(
-            "instructions".into(),
-            Value::String(LEGACY_STANDARD_PLAN_INSTRUCTIONS.into()),
-        );
-        configuration.remove("outputContract");
+        // A stored Standard workflow from before the structured plan contract.
+        // (The shipped Standard no longer plans, so this is built explicitly.)
+        let mut workflow = json!({
+            "schemaVersion": 1,
+            "id": "workflow.standard-agent",
+            "name": "Standard",
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"plan.1","type":"model_call","configuration":{
+                    "modelTierId":"tier:balanced",
+                    "instructions": LEGACY_STANDARD_PLAN_INSTRUCTIONS
+                }},
+                {"id":"agent.1","type":"agent","configuration":{"modelTierId":"tier:balanced","toolIds":[]}},
+                {"id":"output.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": []
+        });
 
         assert!(migrate_standard_agent_plan_contract(&mut workflow));
         let configuration = workflow["nodes"]

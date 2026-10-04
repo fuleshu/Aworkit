@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -3250,6 +3250,62 @@ impl DesktopRuntime {
                 draft_fingerprint: request.draft_fingerprint,
             },
         }
+    }
+
+    /// Installs one user-chosen package folder into the plugin folder.
+    ///
+    /// The copy is inert: nothing is executed and nothing is enabled. The user
+    /// reviews the discovered connection and enables the plugin afterwards.
+    pub fn settings_v2_install_tool_plugin(
+        &mut self,
+        source: &Path,
+    ) -> Result<SettingsV2Snapshot, String> {
+        super::tool_registry::discovery::install(source, &self.tool_plugin_directory)?;
+        Ok(self.settings_v2_snapshot())
+    }
+
+    /// Removes one sourced plugin package and the saved server that referenced
+    /// it, so a later Settings save cannot fail on a pin whose files are gone.
+    ///
+    /// Removing never stops a running workflow. The next pass re-resolves
+    /// configuration, so a frozen tool whose plugin is missing is reported to
+    /// the model as unavailable rather than ending the Run.
+    pub fn settings_v2_remove_tool_plugin(
+        &mut self,
+        key: &str,
+    ) -> Result<SettingsV2Snapshot, String> {
+        let removed = super::tool_registry::discovery::remove(&self.tool_plugin_directory, key)?;
+        let removed = std::fs::canonicalize(&removed).unwrap_or_else(|_| PathBuf::from(&removed));
+        let mut settings = self.documents.settings().clone();
+        let before = settings.mcp_servers.len();
+        settings.mcp_servers.retain(|server| {
+            let Some(pin) = &server.plugin else {
+                return true;
+            };
+            match Path::new(&pin.manifest_path)
+                .parent()
+                .and_then(|parent| std::fs::canonicalize(parent).ok())
+            {
+                // The package we just removed; drop its saved server.
+                Some(parent) => parent != removed,
+                // The pin already points nowhere, so the plugin is gone either
+                // way and keeping a broken reference would only block saving.
+                None => false,
+            }
+        });
+        if settings.mcp_servers.len() != before {
+            let version = self.settings_snapshot().version;
+            self.documents.save_settings(version, settings)?;
+        }
+        Ok(self.settings_v2_snapshot())
+    }
+
+    /// Reveals the plugin folder in the platform file manager.
+    ///
+    /// The webview never supplies the path, so this grants no general
+    /// folder-opening capability.
+    pub fn open_tool_plugin_folder(&mut self) -> Result<(), String> {
+        super::path_actions::reveal(&self.tool_plugin_directory)
     }
 
     /// Reads and validates an inert extension manifest. No entry point is
@@ -9225,6 +9281,71 @@ mod tests {
         )
         .unwrap();
         (manifest, entry_point)
+    }
+
+    #[test]
+    fn installing_and_removing_a_plugin_keeps_the_saved_document_consistent() {
+        let root = TempDir::new().unwrap();
+        let package = TempDir::new().unwrap();
+        let source = package.path().join("comfyui-bridge");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("tool-plugin.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": 1,
+                "id": "plugin.comfyui-bridge",
+                "name": "ComfyUI bridge",
+                "version": "1.0.0",
+                "execution": {"transport": "stdio", "command": "python", "args": ["bridge.py"], "env": []},
+                "tools": [{"name": "comfyui_status", "description": "Status", "inputSchema": {"type": "object"}, "enabled": true}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(source.join("bridge.py"), b"# bridge").unwrap();
+
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider);
+        let installed = runtime
+            .settings_v2_install_tool_plugin(&source)
+            .expect("install");
+        assert_eq!(installed.tool_plugins.len(), 1);
+        let server = installed.tool_plugins[0]
+            .server
+            .as_ref()
+            .expect("sourced server")
+            .clone();
+        assert_eq!(server.id, "plugin.comfyui-bridge");
+        assert!(!server.enabled, "a copied-in plugin is sourced disabled");
+
+        let mut settings = installed.settings.clone();
+        settings.mcp_servers.push(server);
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "settings.plugin.add".into(),
+                expected_version: installed.version,
+                settings,
+            })
+            .expect("save the added plugin");
+
+        let after = runtime
+            .settings_v2_remove_tool_plugin("plugin.comfyui-bridge")
+            .expect("remove");
+        assert!(after.tool_plugins.is_empty());
+        assert!(
+            after
+                .settings
+                .mcp_servers
+                .iter()
+                .all(|server| server.id != "plugin.comfyui-bridge"),
+            "removing the plugin drops the saved server that referenced it"
+        );
+        // Removing again is a definite failure, never a silent no-op.
+        assert!(
+            runtime
+                .settings_v2_remove_tool_plugin("plugin.comfyui-bridge")
+                .is_err()
+        );
     }
 
     #[test]

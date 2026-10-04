@@ -1,18 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": "2026-09-26: desktop/src-tauri/target/debug had grown to 142.64 GB (87,894 files); cleaned to 0.574 GB, keeping only 8 hand-made aworkit-desktop snapshot .exe files. Before: incremental/ 77.5 GB (307 cargo session dirs, 131 aworkit_desktop, each ~250 MB dominated by 110-141 MB dep-graph.bin), deps/ 56.4 GB (1944 rlibs incl. many stale ~430-496 MB libaworkit_desktop; 171 PDBs incl. 40+ ~440-527 MB aworkit_desktop PDBs), build/ 5.3 GB, uplifted root artifacts 3.1 GB. No cargo/rustc was running; the app runs from target/release. target/ still holds 306 sibling per-run target dirs from QA/agent runs (40.8 GB left, compaction-build 14.67 GB alone). profile.dev has no overrides (default full debuginfo + incremental) - consider debug=line-tables-only, incremental=false, periodic cargo clean, retention for per-run target dirs.",
-    "created_at": "2026-09-26 20:08:03",
-    "id": 279,
-    "note_id": "disk-target-debug-20260926",
-    "operation_id": "mem-disk-cleanup-20260926-2",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "mem-disk-cleanup-20260926-2",
-    "task_id": null
+    "id": 279
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "b5649034-e109-46c4-a5a6-80b87b70c4ac",
   "schemaVersion": 1
 }

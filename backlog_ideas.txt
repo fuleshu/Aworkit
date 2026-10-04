@@ -1,10 +1,5 @@
 todos:
-- increase chat input size and resizer to horizontal line
-- add projects in projects dropdown
-- working chat animated icon wrong vertical alignment
-- add image should remember folder for session
-- export import workflow should remember folder for session
-- restore position / size? not working on linux
+- figure out if/what python is bundled, default libs?
 
 What the code actually does (SummaryProvider in compaction/provider.rs, and the selectedBinding: None in your log):
 

@@ -21,11 +21,11 @@ it("sizes the summary share from the model's declared window", () => {
   const change = vi.fn();
   render(<CompactionSettings model={model()} providers={[]} onChange={change} />);
   const share = screen.getByTitle(/this share becomes the written summary/i) as HTMLInputElement;
-  expect(share.value).toBe("38.2");
+  expect(share.value).toBe("20");
   // The read-out states the numbers the policy will actually use, so the panel
   // cannot promise behaviour the runtime does not implement.
   expect(screen.getByText(/targets 65[.,]536 tokens after compaction/)).toBeTruthy();
-  expect(screen.getByText(/the summary gets 38% of what is replaced/)).toBeTruthy();
+  expect(screen.getByText(/the summary gets 20% of what is replaced/)).toBeTruthy();
   expect(screen.queryByTitle(/declares no context window/i)).toBeNull();
   fireEvent.change(share, { target: { value: "25" } });
   expect(change.mock.lastCall?.[0].compaction.summaryShare).toBe(0.25);

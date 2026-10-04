@@ -13,8 +13,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "./App";
 import { defaultDesktopAdapters } from "./adapters/defaultAdapters";
 import { projectAppearancePreference } from "./workbench/appearance";
+import {
+  bundledDefaultWorkflowId,
+  bundledWorkflowTemplates,
+} from "./workbench/bundledWorkflows";
 
 const lazyRouteWait = { timeout: 5_000 } as const;
+
+/** The default workflow's display name, whatever the bundle calls it. */
+const starterName =
+  bundledWorkflowTemplates.find(
+    ({ workflowId }) => workflowId === bundledDefaultWorkflowId,
+  )?.name ?? "";
 
 afterEach(() => {
   cleanup();
@@ -103,13 +113,12 @@ describe("honest JSON-workflow desktop slice", () => {
     const user = userEvent.setup();
     render(<App adapters={defaultDesktopAdapters} />);
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
-    expect(screen.getByRole("button", { name: "Input" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Plan" })).toBeVisible();
+    await screen.findByRole("heading", { name: starterName }, lazyRouteWait);
+    expect(screen.getByRole("button", { name: "Chat Input" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Agent" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Output" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Chat Output" })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Wait for input" }),
+      screen.getByRole("button", { name: "Wait for Input" }),
     ).toBeVisible();
     expect(screen.queryByText("Missing dependency")).toBeNull();
     // This surface handles the workflow folder only: New, Import, Save, Save
@@ -135,7 +144,7 @@ describe("honest JSON-workflow desktop slice", () => {
     fireEvent.keyDown(splitter, { key: "ArrowLeft" });
     expect(splitter).toHaveAttribute("aria-valuenow", "328");
     await user.click(screen.getByRole("button", { name: /Workflows/ }));
-    await screen.findByRole("heading", { name: "Standard Agent" }, lazyRouteWait);
+    await screen.findByRole("heading", { name: starterName }, lazyRouteWait);
     await user.click(screen.getByRole("button", { name: "New Chat" }));
     expect(
       await screen.findByRole("textbox", { name: "Chat input" }),

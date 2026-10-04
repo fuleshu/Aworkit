@@ -31,9 +31,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "finished",
+    "state": "closed",
     "title": "Import dropped images natively on Linux",
-    "updated_at": "2026-09-30 07:44:14"
+    "updated_at": "2026-10-02 06:24:38"
   },
   "deleted": false,
   "identity": "b8e022c2-8998-4c27-aeb5-94c098f265c6",

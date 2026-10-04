@@ -8,10 +8,10 @@ later Settings edits apply to new Chats.
 ## Registry
 
 Bundled tool plugins live in `desktop/tool-plugins/<plugin>/tool-plugin.json`.
-Their manifests describe identity, native executor, model-facing description,
+Their plugin files describe identity, native executor, model-facing description,
 instructions, model input schemas, configuration defaults, and labelled configuration fields.
 Native executors continue to enforce their actual authority and argument
-contracts; editing a manifest cannot invent an implementation or sandbox.
+contracts; editing a plugin file cannot invent an implementation or sandbox.
 
 External tool plugins use MCP over stdio (an executable plus arguments) or
 streamable HTTP (a server endpoint). Folder scans never execute code. The explicit
@@ -21,6 +21,20 @@ empty catalogs show a setup error. Save configuration publishes the result to
 workflows. Changing the transport disables the draft until it is connected again.
 MCP is the external tool
 protocol; Aworkit does not introduce a second tool wire protocol.
+
+Settings → **Tool Plugins** presents one plugin surface with plain actions:
+**Refresh** re-reads the plugin folder, **Open plugin folder** shows it in the
+file manager, **Install plugin…** copies a plugin from another folder into it,
+and each listed plugin can be added, updated, or removed. An added plugin is
+configured in full in the same section — its MCP command or server address,
+arguments, credentials, functions and approvals — so a plugin is never split
+across two Settings tabs. The **MCP servers** tab is for general MCP servers
+only. A plugin merely copied in is *sourced*:
+it is listed, turned off, and never run until the user adds it and turns it on.
+Removing a plugin deletes the folder and the saved server that referenced it; a
+running or later workflow is told the plugin is missing and continues. The
+reference plugin is the ComfyUI bridge under `desktop/tool-plugins/comfyui-bridge`,
+a real MCP server that exposes ComfyUI workflows as typed tools.
 
 The registry exposes the same tool identity/description/instructions contract
 for native and MCP tools. Agent nodes show one checkbox per MCP server. A saved
@@ -33,7 +47,8 @@ references remain visible and fail explicitly instead of being dropped.
 
 ## Settings
 
-Tools presents ordinary labelled controls generated from manifest settings,
+Tools presents ordinary labelled controls generated from the plugin's declared
+settings,
 including instructions, execution information, limits, and approval policy.
 MCP retains its connection tab, with executable/arguments or server endpoint,
 discovered tools, editable tool instructions, and per-tool enablement. A
@@ -42,7 +57,7 @@ and schemas. Secrets continue through the existing credential-reference path.
 
 Each Chat retains its own MCP transport and catalog snapshot. New Chats pick up
 saved transport changes immediately. Reopening a Chat reconnects its saved
-endpoint and credential references, checks the manifest binding and tool schemas,
+endpoint and credential references, checks the plugin binding and tool schemas,
 and preserves its prompts and approval choices. Pending tool approval can also
 resume after restart. A changed schema requires a New Chat; old Chats created
 before connection snapshots were introduced cannot reconstruct a missing MCP
@@ -91,7 +106,7 @@ delivery of the real `adashi_get_memory` structured result.
 
 Known untouched legacy default personas migrate to the short persona; custom
 workflow instructions remain unchanged. Old frozen Runs retain their original
-serialized contracts. Verify manifest validation, prompt selection and freeze,
+serialized contracts. Verify plugin-file validation, prompt selection and freeze,
 MCP discovery-to-selection-to-execution, typed Settings persistence, executable
 resolution, approval behavior, and native desktop rendering.
 
@@ -115,12 +130,18 @@ its own subfolder with this version-1 `tool-plugin.json`:
 }
 ```
 
-The command above resolves inside the package folder. An absolute command can
-select an installed interpreter or executable. Arguments are passed individually,
+A bare command name with no path separator (`python`, `node`) is resolved from
+`PATH`, so a Python or Node MCP server is a valid plugin without shipping a
+binary. A command with a separator, or `./name`, resolves inside the package
+folder and cannot traverse outside it; an absolute command selects an installed
+interpreter or executable. Arguments are passed individually,
 without a shell. `cwd` is optional and defaults to the package folder; relative
 command/cwd paths cannot traverse outside it. Use absolute paths in arguments
 when referring outside the working directory. The process must speak MCP on
-standard input/output; diagnostics belong on standard error.
+standard input/output; diagnostics belong on standard error. The full
+architecture is the Adashi document `aworkit.capability_host.tool_plugins`, and
+the agent skill `aworkit.capability_host.tool_plugin_authoring_skill` (mirrored
+at `desktop/skills/plugin-authoring/SKILL.md`) explains how to build one.
 
 For a service, replace `execution` with:
 
@@ -155,17 +176,18 @@ the catalog while preserving matching tools' user instructions and approval
 choices. New tools become selectable only through an enabled saved server;
 the workflow must explicitly select them.
 
-Adding a package records its manifest path, version and SHA-256 in a disabled
-Settings draft. A changed manifest blocks new probes and runs until **Refresh
-plugins → Load updated plugin**, followed by review, discovery, enablement and
+Adding a package records its plugin file path, version and SHA-256 in a
+disabled Settings draft. A changed plugin file blocks new probes and runs until
+**Refresh → Use updated plugin**, followed by review, discovery, enablement and
 Save. Loading an update resets the transport to the package declaration and
-keeps matching tools' overrides. The pin covers the manifest, not every external
-dependency or remote service implementation. Existing MCP runtime binding and
-schema checks still apply. General extension node/provider contributions remain
-on their separate protocol and lifecycle.
+keeps matching tools' overrides. The record covers the plugin file, not every
+external dependency or remote service implementation. Existing MCP runtime
+binding and schema checks still apply. The reference ComfyUI bridge plugin
+(`desktop/tool-plugins/comfyui-bridge`) exercises this path end to end and ships
+a dependency-free `test_bridge.py` that drives a protocol-compatible server.
 
 Native plugins are bundled at build time; changing their implementation or
-shipped manifest requires rebuilding the application. User instruction, limit,
+shipped plugin file requires rebuilding the application. User instruction, limit,
 executable and approval edits need no rebuild. Unknown custom workflow personas
 remain unchanged; only exact previous shipped personas migrate.
 

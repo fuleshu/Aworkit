@@ -23,11 +23,13 @@ native executable-catalog mirror) and by the native
 ## Where the files live
 
 - The canonical definitions are templates in
-  `desktop/workflows/default-workflows.json`. They appear in the workflow
-  library, seeded on a fresh profile when their runtime needs are met.
-- **Delegated Code Review** is bundled but not auto-seeded, because an External
-  Agent node cannot start until a Codex or Claude Code target is configured.
-  Import it when that target is ready; the other three are seeded.
+  `desktop/workflows/default-workflows.json`. A fresh profile seeds three
+  workflows — **Simple**, **Standard** (the default) and **Planer** — and the
+  four showcase workflows are import-only.
+- Import-only because they are examples rather than everyday defaults. Only
+  **Delegated Code Review** has a hard prerequisite (an External Agent node
+  cannot start until a Codex or Claude Code target is configured); the other
+  three run anywhere but are meant to be picked deliberately.
 - Byte-identical, importable copies live in `desktop/workflows/examples/`. Use
   the editor's **Import** action to load one into an existing profile; the
   coverage test fails if an example drifts from its bundled template.

@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1263679856341795 -->
+<!-- adashi:generated revision=4224594039564922 -->
 # Architecture — `crates/aworkit-capability-host/src/mcp/transport` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

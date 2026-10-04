@@ -20,7 +20,7 @@ import { DesktopSection } from "./settings-v2/DesktopSection";
 import { SubagentViewSection } from "./settings-v2/SubagentViewSection";
 import type { SubagentViewPreferencePort, SubagentViewPreference } from "../chat/subagentViewPreference";
 import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
-import { ToolPluginLibrary } from "./settings-v2/ToolPluginLibrary";
+import { ToolPluginsSection } from "./settings-v2/ToolPluginsSection";
 import {
   CredentialsSection,
   ToolsSection,
@@ -901,13 +901,7 @@ export function SettingsScreen({
                 />
               </SettingsPanel>
               <SettingsPanel id="tools" selected={section}>
-                <ToolPluginLibrary snapshot={snapshot} servers={draft.mcpServers}
-                  onRefresh={async () => {
-                    const latest = await runDraftScoped(() => port.snapshot());
-                    setSnapshot(current => current ? { ...current, toolPlugins: latest.toolPlugins, toolPluginDirectory: latest.toolPluginDirectory } : current);
-                  }}
-                  onAdd={server => updateRenderedDraft(current => ({ ...current, mcpServers: [...current.mcpServers.filter(entry => entry.id !== server.id), server] }))} />
-                {section === "tools" && <p className="settings-field-help">Tools inherit the Chat approval mode unless an individual tool overrides it. Manage defaults and saved project approvals under Approvals.</p>}
+                {section === "tools" && <p className="settings-field-help">Built-in tools inherit the Chat approval mode unless an individual tool overrides it. Folder-sourced plugin packages are configured under Tool Plugins. Manage defaults and saved project approvals under Approvals.</p>}
                 <SubagentViewSection
                   port={subagentViewPort}
                   onChange={onSubagentViewChange}
@@ -945,6 +939,62 @@ export function SettingsScreen({
                   })}
                 />
               </SettingsPanel>
+              <SettingsPanel id="tool_plugins" selected={section}>
+                <ToolPluginsSection
+                  snapshot={snapshot}
+                  servers={draft.mcpServers}
+                  credentials={draft.credentials}
+                  onPickCommand={draftScopedPickFile}
+                  onChange={(pluginServers) =>
+                    updateRenderedDraft((current) => ({
+                      ...current,
+                      mcpServers: [
+                        ...pluginServers,
+                        ...current.mcpServers.filter(
+                          (server) => server.plugin === undefined,
+                        ),
+                      ],
+                    }))
+                  }
+                  onProbe={(server) => runDiagnostic("MCP test", async () => {
+                    const fingerprint = mcpDraftFingerprint(server);
+                    const result = await port.probeMcp({
+                      server,
+                      draftFingerprint: fingerprint,
+                    });
+                    requireCurrentMcpDraft(server.id, fingerprint, draftRef);
+                    if (result.draftFingerprint !== fingerprint)
+                      throw new Error(
+                        "The native MCP result did not match this plugin draft.",
+                      );
+                    return {
+                      tools: result.tools,
+                      ok: result.protocolVersion !== "unavailable",
+                      message: `${result.message} (${result.latencyMillis} ms)`,
+                      draftFingerprint: fingerprint,
+                    };
+                  })}
+                  onRefresh={async () => {
+                    const latest = await runDraftScoped(() => port.snapshot());
+                    setSnapshot(current => current ? { ...current, toolPlugins: latest.toolPlugins, toolPluginDirectory: latest.toolPluginDirectory } : current);
+                  }}
+                  onOpenFolder={() => runDraftScoped(() => port.openToolPluginFolder())}
+                  onInstall={async () => {
+                    const path = await draftScopedPickFolder();
+                    if (path === null) return;
+                    const latest = await runDraftScoped(() => port.installToolPlugin(path));
+                    applySnapshot(latest, true);
+                  }}
+                  onRemove={async key => {
+                    if (dirtySections.size > 0) {
+                      throw new Error("Save your settings changes before removing a plugin.");
+                    }
+                    const latest = await runDraftScoped(() => port.removeToolPlugin(key));
+                    applySnapshot(latest, false);
+                  }}
+                  onAdd={server => updateRenderedDraft(current => ({ ...current, mcpServers: [...current.mcpServers.filter(entry => entry.id !== server.id), server] }))}
+                />
+              </SettingsPanel>
               <SettingsPanel id="extensions" selected={section}>
                 <ExtensionsSection
                   extensions={draft.extensions}
@@ -974,13 +1024,21 @@ export function SettingsScreen({
               <SettingsPanel id="mcp" selected={section}>
                 <McpServersSection
                   key={`mcp-${credentialDiagnosticEpoch}`}
-                  servers={draft.mcpServers}
+                  servers={draft.mcpServers.filter(
+                    (server) => server.plugin === undefined,
+                  )}
                   credentials={draft.credentials}
                   onPickCommand={draftScopedPickFile}
+                  intro="General MCP servers are configured here. A server that came from a plugin package is configured under Tool Plugins instead. Enable a server to connect and load its functions, then save configuration."
                   onChange={(mcpServers) =>
                     updateRenderedDraft((current) => ({
                       ...current,
-                      mcpServers: [...mcpServers],
+                      mcpServers: [
+                        ...current.mcpServers.filter(
+                          (server) => server.plugin !== undefined,
+                        ),
+                        ...mcpServers,
+                      ],
                     }))
                   }
                   onProbe={(server) => runDiagnostic("MCP test", async () => {

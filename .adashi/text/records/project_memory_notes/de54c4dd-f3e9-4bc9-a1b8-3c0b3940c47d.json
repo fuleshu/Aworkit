@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "2026-10-02 task 178 (finished): compaction summary-share default lowered 38.2% -> 20%; the Settings label is now \"Summary share of compaction (%)\". Set DEFAULT_SUMMARY_SHARE (desktop/src/workbench/settings-v2/compactionPlan.ts) and SUMMARY_BUDGET_SHARE (desktop/src-tauri/src/runtime/compaction/mod.rs) to 0.2; CompactionSettings.tsx imports DEFAULT_SUMMARY_SHARE instead of repeating 0.382, so panel fallback, read-out and runtime cannot drift. Supersedes the \"summary 0.382\" figure in the project-memory summary and the design markdown (saved via Adashi: ratio 0.8:0.2; 100k R 10,080/S 2,520, 262k 42,509/10,627, 1M 199,796/49,948, 32k floor 2,097/524). Rust plan expectations updated; the declared-output case now uses an 8,000-token output (64,000 no longer binds at 1M). Verified: vitest settings-v2 compaction 8/8, cargo test --lib runtime::compaction 19/19, tsc clean.",
+    "created_at": "2026-10-02 06:38:54",
+    "id": 24862306629,
+    "note_id": "task-178-compaction-share-20",
+    "operation_id": "mem-task-178-compaction-share-20-b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-178-compaction-share-20-b",
+    "task_id": {
+      "ref": "07ec46a5-270f-4a92-a971-af790bf0b049"
+    }
+  },
+  "deleted": false,
+  "identity": "de54c4dd-f3e9-4bc9-a1b8-3c0b3940c47d",
+  "schemaVersion": 1
+}

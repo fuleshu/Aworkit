@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "task-172-tool-plugins-tab-20261004",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-04 07:47:56",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7fc6a4c3-f11d-4e09-babd-439685263597",
+  "schemaVersion": 1
+}

@@ -5,6 +5,8 @@ Agents retrieve canonical documents and readTokens through Adashi MCP before edi
 
 - [Menu bar cleanup and About dialog](design-7bc099543cfac12ded4d0e3352b0bb3e81707edf59571f86c74abe20b2e3ed8a.md) — `about-dialog-and-menu-cleanup`
 - [MCP session recovery: reconnect instead of requiring an application restart](design-42db389a49359edcd960831556a927367d75f04df00e4586d24baa9f92481a2f.md) — `aworkit.capability_host.mcp_session_recovery`
+- [Plugin authoring skill: how to build an Aworkit tool plugin](design-80a003ff3252da5ac66379dd8367383a1360773db0ae26e1802978247c50af89.md) — `aworkit.capability_host.tool_plugin_authoring_skill`
+- [Tool plugins: folder-sourced MCP packages, lifecycle, transport and trust](design-977d60d60ede535901d8b2425830b636ccc52392ce568bb1f127791fd31b8fc7.md) — `aworkit.capability_host.tool_plugins`
 - [Chat notice card: one surface for an interrupted reply and a stopped Run](design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md) — `aworkit.desktop_ui.chat_notice_card`
 - [Compaction budget model: every budget is a share of the window](design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md) — `aworkit.workflow_worker.context_compaction_budget`
 - [Failure policy: no limit ends a run; every condition is reported](design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md) — `aworkit.workflow_worker.failure_policy`

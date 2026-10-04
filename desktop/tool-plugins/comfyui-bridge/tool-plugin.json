@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "plugin.comfyui-bridge",
+  "name": "ComfyUI bridge",
+  "version": "1.0.0",
+  "execution": {
+    "transport": "stdio",
+    "command": "python",
+    "args": [
+      "bridge.py",
+      "--endpoint",
+      "http://127.0.0.1:8188",
+      "--workflows",
+      "workflows.json"
+    ],
+    "env": []
+  },
+  "tools": [
+    {
+      "name": "comfyui_status",
+      "description": "Report whether the configured ComfyUI server is reachable and list the workflow ids this plugin exposes.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": {
+        "instructions": "Use comfyui_status first when a request depends on image generation and you have not yet confirmed that ComfyUI is running. It is a read-only check and reports the exact endpoint."
+      }
+    },
+    {
+      "name": "comfyui_list_workflows",
+      "description": "List the ComfyUI workflow ids configured for this plugin.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "options": {
+        "instructions": "Call comfyui_list_workflows before comfyui_run_workflow so you use a configured workflow id rather than guessing one."
+      }
+    },
+    {
+      "name": "comfyui_run_workflow",
+      "description": "Queue one configured ComfyUI workflow, wait for it to finish and return the produced image references. Override node inputs with '<node id>.<input name>' keys.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "workflow": {
+            "type": "string",
+            "description": "A workflow id returned by comfyui_list_workflows."
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Optional node input overrides keyed '<node id>.<input name>', for example {\"6.text\": \"a quiet harbour\"}.",
+            "additionalProperties": true
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1800
+          }
+        },
+        "required": ["workflow"]
+      },
+      "enabled": true,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false },
+      "options": {
+        "instructions": "comfyui_run_workflow queues real work on the user's ComfyUI server and can consume GPU time. Use a configured workflow id, pass only the inputs you must change, and report the returned image references. If ComfyUI is unreachable the call returns an error explaining the endpoint; tell the user instead of retrying blindly."
+      }
+    }
+  ]
+}

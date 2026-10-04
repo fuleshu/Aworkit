@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { McpServersSection } from "./settings-v2/IntegrationSections";
 import { ToolConfigurationEditor } from "./settings-v2/ToolConfigurationEditor";
 import { ToolPluginLibrary } from "./settings-v2/ToolPluginLibrary";
+import { ToolPluginsSection } from "./settings-v2/ToolPluginsSection";
 import { nativeToolDefaults, nativeTools, findNativeTool, selectableTools } from "./toolRegistry";
 import { type BuiltInToolConfiguration, type McpServerConfiguration, type SettingsV2Snapshot } from "./configuration";
 
@@ -63,7 +64,9 @@ it("merges discovered MCP tools without overwriting overrides or another edited 
   expect(latest[1].name).toBe("Edited while discovering");
   expect(latest[0].tools![0]).toMatchObject({ description: "New description", enabled: false, options: base.tools![0].options });
   expect(screen.getByText(/Connection successful/)).toBeVisible();
-  expect(selectableTools({ tools: [], mcpServers: latest })).toEqual([{ value: "mcp://mcp.test/read", label: "Test · read" }]);
+  // Authored references use the server name; the core resolves it to the local
+  // server id when a pass freezes its exact tool identities.
+  expect(selectableTools({ tools: [], mcpServers: latest })).toEqual([{ value: "mcp://Test/read", label: "Test · read" }]);
 });
 
 it("the shared registry supplies every native tool and keeps MCP identifiers in the same selection list", () => {
@@ -86,6 +89,50 @@ it("keeps discovered tool overrides when a new package manifest omits its option
   const snapshot = { toolPluginDirectory: "C:\\Plugins", toolPlugins: [{ path: updated.plugin!.manifestPath, server: updated, error: null }] } as SettingsV2Snapshot;
   const add = vi.fn();
   render(<ToolPluginLibrary snapshot={snapshot} servers={[original]} onAdd={add} onRefresh={async () => {}} />);
-  fireEvent.click(screen.getByRole("button", { name: "Load updated plugin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use updated plugin" }));
   expect(add).toHaveBeenCalledWith({ ...updated, tools: original.tools });
+});
+
+it("sources, installs, opens and removes plugin folders in plain language", async () => {
+  const server: McpServerConfiguration = { id: "plugin.comfyui-bridge", name: "ComfyUI bridge", enabled: false, autoConnect: false,
+    transport: { transport: "stdio", command: "python", args: ["bridge.py"], env: [] },
+    plugin: { manifestPath: "C:\\Plugins\\comfyui-bridge\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
+    tools: [] };
+  const snapshot = { toolPluginDirectory: "C:\\Plugins", toolPlugins: [{ path: server.plugin!.manifestPath, server, error: null }] } as SettingsV2Snapshot;
+  const install = vi.fn(async () => {});
+  const open = vi.fn(async () => {});
+  const remove = vi.fn(async () => {});
+  render(<ToolPluginLibrary snapshot={snapshot} servers={[]} onAdd={() => {}} onRefresh={async () => {}}
+    onInstall={install} onOpenFolder={open} onRemove={remove} />);
+  expect(screen.getByText(/Not added yet/)).toBeVisible();
+  expect(screen.queryByText(/manifest/i)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin…" }));
+  await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+  const openButton = screen.getByRole("button", { name: "Open plugin folder" });
+  await waitFor(() => expect(openButton).toBeEnabled());
+  fireEvent.click(openButton);
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  const removeButton = screen.getByRole("button", { name: "Remove" });
+  await waitFor(() => expect(removeButton).toBeEnabled());
+  fireEvent.click(removeButton);
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("plugin.comfyui-bridge"));
+});
+
+it("configures an added plugin completely inside the Tool Plugins tab", () => {
+  const plugin: McpServerConfiguration = { id: "plugin.comfyui-bridge", name: "ComfyUI bridge", enabled: false, autoConnect: false,
+    transport: { transport: "stdio", command: "python", args: ["bridge.py", "--endpoint", "http://127.0.0.1:8188"], cwd: null, env: [] },
+    plugin: { manifestPath: "C:\\Plugins\\comfyui-bridge\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
+    tools: [{ name: "comfyui_status", description: "Status", inputSchema: { type: "object" }, enabled: true }] };
+  const snapshot = { toolPluginDirectory: "C:\\Plugins", toolPlugins: [{ path: plugin.plugin!.manifestPath, server: plugin, error: null }] } as SettingsV2Snapshot;
+  render(<ToolPluginsSection snapshot={snapshot} servers={[plugin]} credentials={[]}
+    onPickCommand={async () => null} onChange={() => {}}
+    onProbe={async () => ({ ok: false, message: "unavailable", draftFingerprint: "" })}
+    onAdd={() => {}} onRefresh={async () => {}} />);
+  // The package listing and its complete configuration share one tab.
+  expect(screen.getByRole("heading", { name: "Plugins" })).toBeVisible();
+  expect(screen.getByLabelText("Server name")).toHaveValue("ComfyUI bridge");
+  expect(screen.getByRole("button", { name: "Connect and enable" })).toBeVisible();
+  expect(screen.getByText("comfyui_status")).toBeVisible();
+  // Plugins are added from the library, not by a second "Add server" path.
+  expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
 });

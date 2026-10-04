@@ -403,7 +403,7 @@ pub(crate) const COMPACTION_FLOOR_RATIO: f64 = 0.08;
 /// tail takes the rest. The one quality ratio in the model - prose against
 /// verbatim history - so a larger window keeps more of both. A Chat may set its
 /// own `summaryShare`, and this is what it gets when it does not.
-pub(crate) const SUMMARY_BUDGET_SHARE: f64 = 0.382;
+pub(crate) const SUMMARY_BUDGET_SHARE: f64 = 0.2;
 
 /// What one compaction replaces: the verbatim tail and the summary it pays for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

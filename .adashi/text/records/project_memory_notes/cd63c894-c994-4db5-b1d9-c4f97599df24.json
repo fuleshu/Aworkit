@@ -1,0 +1,20 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Task 172 addition 2026-10-04: second reference plugin \"FFmpeg media tools\" at desktop/tool-plugins/ffmpeg (plugin.ffmpeg). Real stdio MCP bridge ffmpeg_bridge.py with 8 tools (ffmpeg_doctor/probe read-only, convert, trim copy|encode, extract_audio, thumbnail, gif palette two-pass, run destructive). Targets FFmpeg 9.0.x \"Lei\" (9.0.2, 2026-09-18, current per ffmpeg.org) and works from 6.1. Structured tools protect the input, refuse existing outputs unless overwrite, bound timeouts, resolve relative paths against --workdir, and return a fresh ffprobe validation block. Skill at skills/ffmpeg/SKILL.md. Verified: python3 test_ffmpeg_bridge.py ran real ffmpeg 6.1.1 E2E (all passed), Rust tool_registry 11/11, tsc clean, vitest 12/12.",
+    "created_at": "2026-10-04 08:07:31",
+    "id": 33450047011,
+    "note_id": "task-172-ffmpeg-plugin-20261004",
+    "operation_id": "mem-task-172-ffmpeg-plugin-20261004-b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-task-172-ffmpeg-plugin-20261004-b",
+    "task_id": {
+      "ref": "09b266e2-2f3a-4b37-9a19-a4f9dca8f584"
+    }
+  },
+  "deleted": false,
+  "identity": "cd63c894-c994-4db5-b1d9-c4f97599df24",
+  "schemaVersion": 1
+}

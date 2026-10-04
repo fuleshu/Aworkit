@@ -416,23 +416,23 @@ fn every_budget_is_a_share_of_the_window() {
     assert_eq!(
         p.replacement_plan(100_000, 12_400, None),
         ReplacementPlan {
-            retain: 7_787,
-            summary: 4_813
+            retain: 10_080,
+            summary: 2_520
         }
     );
     assert_eq!(
         p.replacement_plan(262_144, 12_400, None),
         ReplacementPlan {
-            retain: 32_839,
-            summary: 20_297
+            retain: 42_509,
+            summary: 10_627
         },
         "the summary grows with the window instead of stopping at a cap"
     );
     assert_eq!(
         p.replacement_plan(1_048_576, 12_400, None),
         ReplacementPlan {
-            retain: 154_342,
-            summary: 95_402
+            retain: 199_796,
+            summary: 49_948
         },
         "a 1M window gets a 1M summary and a 1M tail"
     );
@@ -453,10 +453,10 @@ fn every_budget_is_a_share_of_the_window() {
     // declared output: a summary is never asked to be longer than that, and
     // whatever the summary cannot use stays verbatim.
     assert_eq!(
-        p.replacement_plan(1_048_576, 12_400, Some(64_000)),
+        p.replacement_plan(1_048_576, 12_400, Some(8_000)),
         ReplacementPlan {
-            retain: 185_744,
-            summary: 64_000
+            retain: 241_744,
+            summary: 8_000
         }
     );
     assert_eq!(
@@ -474,8 +474,8 @@ fn every_budget_is_a_share_of_the_window() {
     assert_eq!(
         p.replacement_plan(32_768, 12_400, None),
         ReplacementPlan {
-            retain: 1_620,
-            summary: 1_001
+            retain: 2_097,
+            summary: 524
         },
         "the floor plan is 8% of the window, split by the same ratio"
     );

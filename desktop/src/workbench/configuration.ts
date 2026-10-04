@@ -707,6 +707,7 @@ export type SettingsValidationIssue = {
     | "model_tiers"
     | "credentials"
     | "tools"
+    | "tool_plugins"
     | "extensions"
     | "mcp"
     | "external_agents"
@@ -872,9 +873,12 @@ export function validateSettingsConfiguration(
     issues,
   );
   for (const server of settings.mcpServers) {
+    // A plugin-backed connection is configured in the Tool Plugins section, so
+    // a problem with it is reported there rather than on the general MCP tab.
+    const section = server.plugin ? "tool_plugins" : "mcp";
     if (server.autoConnect) {
       issues.push({
-        section: "mcp",
+        section,
         path: `mcpServers.${server.id}.autoConnect`,
         message:
           "Connect at launch is unavailable; this build supports only explicit one-shot Discover and Test sessions.",
@@ -886,7 +890,7 @@ export function validateSettingsConfiguration(
       );
       if (credential?.boundProviderId != null) {
         issues.push({
-          section: "mcp",
+          section,
           path: `mcpServers.${server.id}.transport`,
           message:
             "Provider-scoped credentials cannot be injected into an MCP server.",
@@ -1188,7 +1192,7 @@ function validateConnectionCredentials(
   for (const server of servers) {
     validateConnection(
       server.transport,
-      "mcp",
+      server.plugin ? "tool_plugins" : "mcp",
       `mcpServers.${server.id}`,
       credentialFields,
       issues,

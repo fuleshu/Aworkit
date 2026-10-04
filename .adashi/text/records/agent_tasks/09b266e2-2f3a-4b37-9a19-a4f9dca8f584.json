@@ -56,9 +56,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "active",
     "title": "Tool plugins: folder-sourced Codex-shaped packages (MCP + config) with a ComfyUI bridge reference plugin, docs, agent skill, and plain-language UI (high priority)",
-    "updated_at": "2026-10-01 15:24:33"
+    "updated_at": "2026-10-03 08:21:18"
   },
   "deleted": false,
   "identity": "09b266e2-2f3a-4b37-9a19-a4f9dca8f584",

@@ -98,7 +98,7 @@ describe("preview workflow library", () => {
     await expect(
       port.create({
         commandId: "workflow.create.1",
-        name: "Simple Chat",
+        name: bundledWorkflowTemplates[0]!.name,
         template: "blank",
       }),
     ).rejects.toThrow("already exists");

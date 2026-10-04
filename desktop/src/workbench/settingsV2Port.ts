@@ -326,6 +326,12 @@ export interface SettingsV2CorePort {
   registerExtension(
     command: ExtensionRegisterCommand,
   ): Promise<SettingsV2Receipt>;
+  /** Copies one chosen plugin package folder into the plugin folder. */
+  installToolPlugin(path: string): Promise<SettingsV2Snapshot>;
+  /** Removes one sourced plugin package and its saved server. */
+  removeToolPlugin(pluginId: string): Promise<SettingsV2Snapshot>;
+  /** Reveals the plugin folder in the platform file manager. */
+  openToolPluginFolder(): Promise<void>;
 }
 
 export class TauriSettingsV2CorePort implements SettingsV2CorePort {
@@ -411,6 +417,22 @@ export class TauriSettingsV2CorePort implements SettingsV2CorePort {
     return settingsReceiptSchema.parse(
       await invoke("settings_v2_register_extension", { command }),
     );
+  }
+
+  public async installToolPlugin(path: string): Promise<SettingsV2Snapshot> {
+    return settingsV2SnapshotSchema.parse(
+      await invoke("settings_v2_install_tool_plugin", { path }),
+    );
+  }
+
+  public async removeToolPlugin(pluginId: string): Promise<SettingsV2Snapshot> {
+    return settingsV2SnapshotSchema.parse(
+      await invoke("settings_v2_remove_tool_plugin", { pluginId }),
+    );
+  }
+
+  public async openToolPluginFolder(): Promise<void> {
+    await invoke("settings_v2_open_tool_plugin_folder");
   }
 }
 
@@ -572,6 +594,24 @@ export class PreviewSettingsV2CorePort implements SettingsV2CorePort {
   ): Promise<SettingsV2Receipt> {
     throw new Error(
       "Extension registration requires the native desktop runtime; browser Preview verified or installed nothing.",
+    );
+  }
+
+  public async installToolPlugin(_path: string): Promise<SettingsV2Snapshot> {
+    throw new Error(
+      "Installing a plugin requires the native desktop runtime; browser Preview copied nothing.",
+    );
+  }
+
+  public async removeToolPlugin(_pluginId: string): Promise<SettingsV2Snapshot> {
+    throw new Error(
+      "Removing a plugin requires the native desktop runtime; browser Preview deleted nothing.",
+    );
+  }
+
+  public async openToolPluginFolder(): Promise<void> {
+    throw new Error(
+      "Opening the plugin folder requires the native desktop runtime; browser Preview opened nothing.",
     );
   }
 }

@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/settings-v2/CompactionSettings.tsx\",\"desktop/src/workbench/settings-v2/compactionPlan.ts\",\"desktop/src/workbench/settings-v2/CompactionSettings.test.tsx\",\"desktop/src/workbench/settings-v2/compactionPlan.test.ts\",\"desktop/src-tauri/src/runtime/compaction/mod.rs\",\"desktop/src-tauri/src/runtime/compaction/tests.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\",\"docs/adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md\"]",
+    "completed_at": "2026-10-02 06:38:46",
+    "completion_memo": "The Settings field now reads \"Summary share of compaction (%)\" and displays 20 by default. CompactionSettings.tsx imports DEFAULT_SUMMARY_SHARE instead of repeating the literal, so the panel fallback, the frontend mirror (compactionPlan.ts DEFAULT_SUMMARY_SHARE = 0.2) and the runtime constant (SUMMARY_BUDGET_SHARE = 0.2) cannot drift. Pinned tests updated: CompactionSettings.test.tsx expects 20 and the 20% read-out; compactionPlan.test.ts NaN fallback expects 20; Rust replacement-plan expectations recomputed for a 20% share (100k R 10,080/S 2,520; 262k 42,509/10,627; 1M 199,796/49,948; 32k floor 2,097/524) and the declared-output bound case moved to an 8,000-token output (R 241,744/S 8,000) because 64,000 no longer binds at 1M. The normative design markdown (aworkit.workflow_worker.context_compaction_budget) was saved through Adashi with the new default, ratio (0.8:0.2) and worked numbers, and docs/context-compaction.md updated to match. Verified: vitest settings-v2 compaction files 8/8 pass; cargo test --lib runtime::compaction 19/19 pass; pnpm tsc --noEmit clean. The source change is a default and label only; the runtime arithmetic is unchanged.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-02 06:36:39",
+    "created_files": "[]",
+    "description": "Settings UI: add \"(%)\" to the Summary share of compaction label so the 1-90 value is unambiguous, and change the default summary share from 0.382 to 0.20 in the Settings fallback, the frontend mirror (DEFAULT_SUMMARY_SHARE) and the runtime constant (SUMMARY_BUDGET_SHARE). Update the pinned tests and the normative design numbers, whose worked examples and default (38.2%) are derived from the share.",
+    "id": 47204316186,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Compaction summary share: label \"(%)\" and default 20%",
+    "updated_at": "2026-10-02 06:38:46"
+  },
+  "deleted": false,
+  "identity": "07ec46a5-270f-4a92-a971-af790bf0b049",
+  "schemaVersion": 1
+}

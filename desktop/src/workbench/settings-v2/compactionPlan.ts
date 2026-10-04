@@ -7,7 +7,7 @@
 /// measured per request at runtime and cannot be known here, so this reports
 /// the target occupancy and the split rather than exact token counts.
 export const COMPACTION_TARGET_RATIO = 0.25;
-export const DEFAULT_SUMMARY_SHARE = 0.382;
+export const DEFAULT_SUMMARY_SHARE = 0.2;
 
 export interface CompactionReadout {
   /// The window compaction budgets against: the declared window minus the

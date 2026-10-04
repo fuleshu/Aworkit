@@ -36,6 +36,12 @@ const starterName =
     ({ workflowId }) => workflowId === bundledDefaultWorkflowId,
   )?.name ?? "";
 
+/** The seeded simple workflow's display name, whatever the bundle calls it. */
+const simpleName =
+  bundledWorkflowTemplates.find(
+    ({ workflowId }) => workflowId === "workflow.simple-chat",
+  )?.name ?? "";
+
 /** A library entry's version, which only a core-accepted save advances. */
 async function versions(store: WorkflowStore): Promise<Record<string, number>> {
   const snapshot = await store.libraryPort.snapshot();
@@ -104,7 +110,7 @@ describe("workflow file commands", () => {
       within(libraryBar()).getByRole("combobox", { name: "Workflow" }),
       "workflow.simple-chat",
     );
-    await screen.findByRole("heading", { name: "Simple Chat" });
+    await screen.findByRole("heading", { name: simpleName });
     await user.selectOptions(
       within(libraryBar()).getByRole("combobox", { name: "Workflow" }),
       bundledDefaultWorkflowId,
@@ -165,19 +171,20 @@ describe("workflow file commands", () => {
     await screen.findByRole("heading", { name: starterName });
     const before = await store.libraryPort.snapshot();
 
+    const takenName = simpleName.toLowerCase();
     await user.click(screen.getByRole("button", { name: "Save As" }));
     const name = screen.getByRole("textbox", { name: "Save as workflow name" });
     await user.clear(name);
-    await user.type(name, "simple chat");
+    await user.type(name, takenName);
     await user.click(screen.getByRole("button", { name: "Save copy" }));
 
     expect(
       await screen.findByRole("alert"),
-    ).toHaveTextContent("a workflow named 'simple chat' already exists");
+    ).toHaveTextContent(`a workflow named '${takenName}' already exists`);
     // The dialog stays open and nothing was stored or written.
-    expect(screen.getByRole("textbox", { name: "Save as workflow name" })).toHaveValue(
-      "simple chat",
-    );
+    expect(
+      screen.getByRole("textbox", { name: "Save as workflow name" }),
+    ).toHaveValue(takenName);
     expect((await store.libraryPort.snapshot()).entries).toHaveLength(
       before.entries.length,
     );

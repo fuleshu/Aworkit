@@ -186,6 +186,13 @@ fn launch(program: &str, arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Reveals one Aworkit-owned folder (for example the tool plugin folder) in the
+/// platform file manager. The path is chosen by the core, never by the webview.
+pub(crate) fn reveal(path: &Path) -> Result<(), String> {
+    let (program, arguments) = reveal_argv(path);
+    launch(&program, &arguments).map_err(|error| format!("could not open the folder: {error}"))
+}
+
 /// Exact argv the platform uses to open a file with its default application.
 fn open_argv(path: &Path) -> (String, Vec<String>) {
     let text = path.display().to_string();
