@@ -1,0 +1,17 @@
+{
+  "collection": "design_bindings",
+  "data": {
+    "created_at": "2026-10-04 18:07:13",
+    "design_external_id": "aworkit.capability_host.comfyui_bridge",
+    "id": 5616691176,
+    "target": "desktop/src-tauri/src/runtime/tool_loop/comfyui_tool.rs",
+    "target_type": "file",
+    "updated_at": "2026-10-04 18:07:13",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "73e6c640-0b9f-4936-9884-a048a4987a12",
+  "schemaVersion": 1
+}

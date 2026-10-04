@@ -1,14 +1,11 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=4224594039564922 -->
+<!-- adashi:generated revision=4096685122692508 -->
 # Architecture — `crates/aworkit-capability-host/src` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
 
+- **ComfyUI Workflow Tools and Settings** (Component) — Turns a ComfyUI server and its API-format workflows into native agent tools: a bounded Com…
 - **Aworkit Model & Provider Gateway** (Component) — Responsibilities: Executes model requests through Aworkit-owned contracts and performs onl…
-- **Invocation Lifecycle & Cross-Platform Process Runtime** (Component) — Responsibilities: Coordinates invocation-local deadlines, cooperative cancellation, forced…
-
-Bound here:
-- file `crates/aworkit-capability-host/src/model_tools.rs`
 
 Markdown design specifications:
 

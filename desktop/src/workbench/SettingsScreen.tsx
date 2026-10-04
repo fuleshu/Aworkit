@@ -17,6 +17,7 @@ import type {
 } from "./configuration";
 import { AppearanceSection } from "./settings-v2/AppearanceSection";
 import { DesktopSection } from "./settings-v2/DesktopSection";
+import { ComfyUiSection } from "./settings-v2/ComfyUiSection";
 import { SubagentViewSection } from "./settings-v2/SubagentViewSection";
 import type { SubagentViewPreferencePort, SubagentViewPreference } from "../chat/subagentViewPreference";
 import { ApprovalsSection } from "./settings-v2/ApprovalsSection";
@@ -1118,6 +1119,70 @@ export function SettingsScreen({
                   })}
                 />
               </SettingsPanel>
+              <SettingsPanel id="comfyui" selected={section}>
+                <ComfyUiSection
+                  value={draft.comfyui}
+                  onChange={(comfyui) =>
+                    updateRenderedDraft((current) => ({ ...current, comfyui }))
+                  }
+                  onProbe={(comfyui) => runDiagnostic("ComfyUI connection test", async () => {
+                    const fingerprint = settingsRecordFingerprint(comfyui);
+                    const result = await runDraftScoped(() =>
+                      port.comfyuiProbe({
+                        endpoint: comfyui.endpoint,
+                        draftFingerprint: fingerprint,
+                      }),
+                    );
+                    requireCurrentComfyUiDraft(fingerprint, draftRef);
+                    if (result.draftFingerprint !== fingerprint)
+                      throw new Error(
+                        "The native ComfyUI test result did not match this draft.",
+                      );
+                    return result;
+                  })}
+                  onStart={(comfyui) => runDiagnostic("Start ComfyUI", async () => {
+                    // A canonical snapshot may omit an unset optional field, so
+                    // read it once as a local and treat absent as absent.
+                    const installPath = comfyui.installPath ?? "";
+                    if (installPath.trim() === "")
+                      throw new Error("Choose a ComfyUI install path before starting it.");
+                    const fingerprint = settingsRecordFingerprint(comfyui);
+                    const result = await runDraftScoped(() =>
+                      port.comfyuiStart({
+                        endpoint: comfyui.endpoint,
+                        installPath,
+                        launchArguments: comfyui.launchArguments,
+                      }),
+                    );
+                    requireCurrentComfyUiDraft(fingerprint, draftRef);
+                    return result;
+                  })}
+                  onInspect={(tool, endpoint) => runDiagnostic("Inspect ComfyUI workflow", async () => {
+                    const fingerprint = settingsRecordFingerprint({ tool, endpoint });
+                    const result = await runDraftScoped(() =>
+                      port.comfyuiInspect({
+                        workflowPath: tool.workflowPath,
+                        endpoint: endpoint.trim() === "" ? null : endpoint,
+                      }),
+                    );
+                    requireCurrentComfyUiToolDraft(fingerprint, draftRef);
+                    return result;
+                  })}
+                  onAutocreate={(tool, endpoint) => runDiagnostic("Author ComfyUI parameters", async () => {
+                    const fingerprint = settingsRecordFingerprint({ tool, endpoint });
+                    const result = await runDraftScoped(() =>
+                      port.comfyuiAutocreate({
+                        endpoint,
+                        workflowPath: tool.workflowPath,
+                        draftFingerprint: fingerprint,
+                      }),
+                    );
+                    requireCurrentComfyUiToolDraft(fingerprint, draftRef);
+                    return result;
+                  })}
+                  onPickWorkflow={draftScopedPickFile}
+                />
+              </SettingsPanel>
               <SettingsPanel id="data" selected={section}>
                 <DataSection
                   value={draft.data}
@@ -1345,6 +1410,35 @@ function requireCurrentExternalAgentDraft(
   if (agent === undefined || settingsRecordFingerprint(agent) !== fingerprint)
     throw new Error(
       "This external-agent draft changed while the native handshake was running. The result was not applied.",
+    );
+}
+
+function requireCurrentComfyUiDraft(
+  fingerprint: string,
+  draftRef: React.RefObject<SettingsConfigurationV2 | null>,
+): void {
+  const comfyui = draftRef.current?.comfyui;
+  if (comfyui === undefined || settingsRecordFingerprint(comfyui) !== fingerprint)
+    throw new Error(
+      "The ComfyUI draft changed while the native operation was running. Its stale result was ignored.",
+    );
+}
+
+function requireCurrentComfyUiToolDraft(
+  fingerprint: string,
+  draftRef: React.RefObject<SettingsConfigurationV2 | null>,
+): void {
+  const comfyui = draftRef.current?.comfyui;
+  if (
+    comfyui === undefined ||
+    !comfyui.workflowTools.some(
+      (tool) =>
+        settingsRecordFingerprint({ tool, endpoint: comfyui.endpoint }) ===
+        fingerprint,
+    )
+  )
+    throw new Error(
+      "The ComfyUI workflow draft changed while the native operation was running. Its stale result was ignored.",
     );
 }
 

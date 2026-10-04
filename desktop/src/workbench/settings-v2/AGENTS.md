@@ -1,17 +1,18 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=4224594039564922 -->
+<!-- adashi:generated revision=3861908878558189 -->
 # Architecture — `desktop/src/workbench/settings-v2` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
 
+- **ComfyUI Workflow Tools and Settings** (Component) — Turns a ComfyUI server and its API-format workflows into native agent tools: a bounded Com…
 - **Settings & Capability Resolution** (Component) — Responsibilities: Presents progressively disclosed providers/standard and custom tiers/cre…
 
-Boundaries crossing this folder:
-- Typed Command & Event Projection Gateway -> Settings & Capability Resolution: Publishes configuration, capability, health, diagnostics, and appearance projections
+Bound here:
+- file `desktop/src/workbench/settings-v2/ComfyUiSection.tsx`
+- file `desktop/src/workbench/settings-v2/DesktopSection.tsx`
 
 Markdown design specifications:
 
 
-- [Tool plugins: folder-sourced MCP packages, lifecycle, transport and trust](../../../../docs/adashi/design-977d60d60ede535901d8b2425830b636ccc52392ce568bb1f127791fd31b8fc7.md)
-1 more Markdown design(s); see the root index.
+- [System One decision models: backlog design for a decision node, tool ranking and…](../../../../docs/adashi/design-64fc5fb1786d384cbc7c50322f772af57aa659fca85631356c4305589350ca4e.md)
 <!-- adashi:architecture:end -->

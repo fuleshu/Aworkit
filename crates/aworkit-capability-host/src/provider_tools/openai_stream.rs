@@ -314,7 +314,11 @@ fn finalize_calls(
         .as_deref()
         .ok_or_else(|| invalid_stream("omitted its finish reason"))?;
     if state.calls.is_empty() {
-        if finish_reason != "stop" {
+        // A text answer is complete on `stop`. `length` means the provider hit
+        // the output bound: the partial answer is real content, and an output
+        // bound must never be reported as a failed request. Anything else is
+        // still refused as a protocol violation.
+        if !matches!(finish_reason, "stop" | "length") {
             return Err(invalid_stream("finished without a supported stop reason"));
         }
         return Ok(());
@@ -455,6 +459,48 @@ mod tests {
         assert_eq!(progress, ["Provider connection is active; waiting for its response.\n"]);
         assert!(events.iter().any(|event| matches!(event,
             ModelToolEventV1::AssistantOutput { text } if text == "Ready")));
+    }
+
+    #[test]
+    fn an_output_bound_stop_reason_is_content_not_a_failure() {
+        let stream = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Partial\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":4096,\"total_tokens\":4097}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mut events = Vec::new();
+        consume_openai_stream(
+            io::Cursor::new(stream),
+            4096,
+            &[],
+            "openai.fixture",
+            &CancellationToken::default(),
+            &mut |event| { events.push(event); Ok(()) },
+        )
+        .expect("a truncated bounded answer still completes");
+        assert!(events.iter().any(|event| matches!(event,
+            ModelToolEventV1::AssistantOutput { text } if text == "Partial")));
+    }
+
+    #[test]
+    fn an_unknown_stop_reason_is_still_refused() {
+        let stream = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let error = consume_openai_stream(
+            io::Cursor::new(stream),
+            4096,
+            &[],
+            "openai.fixture",
+            &CancellationToken::default(),
+            &mut |_event| Ok(()),
+        )
+        .expect_err("an unknown terminal reason stays a protocol error");
+        assert!(error.to_string().contains("stop reason"));
     }
 
     impl Read for TimedOutReader {

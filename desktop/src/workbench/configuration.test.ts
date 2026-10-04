@@ -73,6 +73,14 @@ function configuration(): SettingsConfigurationV2 {
     chatDefaults: {},
     layout: {},
     desktop: {},
+    comfyui: {
+      endpoint: "http://127.0.0.1:8188/",
+      installPath: null,
+      launchArguments: ["main.py", "--listen", "127.0.0.1"],
+      autoStart: false,
+      workflowFolder: null,
+      workflowTools: [],
+    },
   };
 }
 
@@ -767,6 +775,56 @@ describe("Settings configuration v2", () => {
         expect.objectContaining({
           section: "external_agents",
           message: expect.stringContaining("does not consume adapter"),
+        }),
+      ]),
+    );
+  });
+
+  it("reports invalid ComfyUI endpoints and duplicate parameter names in the ComfyUI section", () => {
+    const value = configuration();
+    value.comfyui.endpoint = "ftp://user:secret@example.test/workflow?token=x#part";
+    value.comfyui.workflowTools = [
+      {
+        id: "image-tool",
+        name: "Image tool",
+        description: "Creates an image.",
+        workflowPath: "D:\\wf\\image.json",
+        enabled: true,
+        parameters: [
+          {
+            name: "prompt",
+            description: "Prompt",
+            valueKind: "string",
+            required: true,
+            defaultValue: null,
+            nodeId: "6",
+            inputName: "text",
+            choices: [],
+          },
+          {
+            name: "prompt",
+            description: "Second prompt",
+            valueKind: "string",
+            required: false,
+            defaultValue: null,
+            nodeId: "7",
+            inputName: "text",
+            choices: [],
+          },
+        ],
+      },
+    ];
+
+    expect(validateSettingsConfiguration(value)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          section: "comfyui",
+          path: "comfyui.endpoint",
+        }),
+        expect.objectContaining({
+          section: "comfyui",
+          path: "comfyui.workflowTools.image-tool.parameters.prompt",
+          message: expect.stringContaining("unique"),
         }),
       ]),
     );

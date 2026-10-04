@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Constraint: the agent tool-binding prefixes are validated twice and must agree. Native is_tool_binding_id (runtime/documents.rs) and the editor's isToolBindingId (src/workbench/workflowExecution.ts) both gate agent toolIds and tool-node toolId. The native-ComfyUI task taught the editor and the freeze path about comfyui.<id> but not the native catalog validator, so the Chat's saved workflow 'workflow.custom.3' was refused at Run start: \"workflow node 'agent.1' agent toolIds must reference tool.<name> or mcp:<server> bindings\". Fixed by accepting COMFYUI_CAPABILITY_PREFIX in is_tool_binding_id. Add a new binding prefix to BOTH predicates plus the freeze arms in service/workflow_tools.rs. Also: two test fns in the tree had no #[test] attribute and never ran (documents.rs catalog_accepts_the_standard_agent_graph..., settings_v2.rs external_agent_delegation_defaults_are_optional); both are enabled and green - check for unannotated tests after large agent edits.",
+    "created_at": "2026-10-04 18:55:06",
+    "id": 40044680598,
+    "note_id": "handover-tool-binding-prefix-agreement",
+    "operation_id": "memory-tool-binding-prefix-compat-001",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "run-chat-projection-unavailable-fix",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "cc3df21a-d060-43e0-9bb0-7db9bf0eaefc",
+  "schemaVersion": 1
+}

@@ -1,4 +1,3 @@
-#[cfg(test)]
 use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 
@@ -7,12 +6,10 @@ use aworkit_capability_host::{
     GoogleGeminiLimitsV1, GoogleGeminiProvider, GoogleGeminiProviderConfig,
     OpenAiCompatibleLimitsV1, OpenAiCompatibleProvider, OpenAiCompatibleProviderConfig,
 };
-#[cfg(test)]
 use aworkit_capability_host::{
     FrozenModelGateway, ModelCandidateV1, ModelRequestV1, ModelResolutionPlanV1,
-    project_model_events,
+    ProviderEnginePortV1, project_model_events,
 };
-#[cfg(test)]
 use serde_json::{Value, json};
 
 use super::dto::ProviderTestResult;
@@ -26,8 +23,20 @@ const ANTHROPIC_VERSION_HASH: &str = "anthropic-messages.v1";
 const GEMINI_BINDING_ID: &str = "provider.gemini.primary";
 const GEMINI_VERSION_HASH: &str = "google-gemini.v1";
 
+/// Bounds for a Settings utility completion. They size one bounded request; a
+/// larger answer is reported, never used to end a Run.
+const MAXIMUM_UTILITY_INPUT_BYTES: usize = 8 * 1024 * 1024;
+/// Gateway output bound for one utility completion. It matches the adapter's
+/// own maximum response bound so the transport and the gateway can never
+/// disagree about the same answer.
+const MAXIMUM_UTILITY_OUTPUT_BYTES: usize = UTILITY_MAXIMUM_RESPONSE_BYTES;
+/// Stream bound for one utility completion. A reasoning model's streamed
+/// answer legitimately exceeds the 1 MiB connection default, so the utility
+/// path uses the adapter's own maximum instead of treating real content as a
+/// bound failure.
+const UTILITY_MAXIMUM_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Clone, Debug)]
-#[cfg(test)]
 pub(crate) struct ProviderCompletion {
     pub text: String,
     pub input_units: u64,
@@ -77,6 +86,20 @@ pub(crate) trait ProviderPort: Send + Sync {
         api_key: Option<String>,
         request_timeout: Duration,
     ) -> ProviderTestResult;
+
+    /// One bounded, tool-free text completion used by native Settings authors
+    /// and utilities. It returns only assistant text and token usage; it emits
+    /// no chat message, no tool call and no Run evidence.
+    fn complete_text(
+        &self,
+        kind: &str,
+        base_url: &str,
+        model: &str,
+        api_key: Option<String>,
+        request_timeout: Duration,
+        messages: &[(String, String)],
+        parameters: BTreeMap<String, Value>,
+    ) -> Result<ProviderCompletion, String>;
 
     #[cfg(test)]
     fn complete(
@@ -191,6 +214,75 @@ impl ProviderPort for BuiltInProviderPort {
                 model: None,
             },
         }
+    }
+
+    fn complete_text(
+        &self,
+        kind: &str,
+        base_url: &str,
+        model: &str,
+        api_key: Option<String>,
+        request_timeout: Duration,
+        messages: &[(String, String)],
+        parameters: BTreeMap<String, Value>,
+    ) -> Result<ProviderCompletion, String> {
+        if messages.is_empty() {
+            return Err("a completion requires at least one message".into());
+        }
+        let (binding_id, version_hash, engine): (&str, &str, Box<dyn ProviderEnginePortV1>) =
+            match kind {
+                "openai_compatible" => (
+                    OPENAI_BINDING_ID,
+                    OPENAI_VERSION_HASH,
+                    Box::new(openai_utility_provider(base_url, model, api_key, request_timeout)?),
+                ),
+                "anthropic" => (
+                    ANTHROPIC_BINDING_ID,
+                    ANTHROPIC_VERSION_HASH,
+                    Box::new(anthropic_utility_provider(base_url, model, api_key, request_timeout)?),
+                ),
+                "gemini" => (
+                    GEMINI_BINDING_ID,
+                    GEMINI_VERSION_HASH,
+                    Box::new(gemini_utility_provider(base_url, model, api_key, request_timeout)?),
+                ),
+                _ => {
+                    return Err(format!(
+                        "provider protocol '{kind}' has no installed native adapter"
+                    ));
+                }
+            };
+        let gateway = FrozenModelGateway::new(vec![engine]);
+        let input = Value::Array(
+            messages
+                .iter()
+                .map(|(role, content)| json!({"role": role, "content": content}))
+                .collect(),
+        );
+        let evidence = gateway
+            .execute(
+                &ModelResolutionPlanV1 {
+                    candidates: vec![ModelCandidateV1 {
+                        binding_id: binding_id.into(),
+                        version_hash: version_hash.into(),
+                    }],
+                    maximum_input_bytes: MAXIMUM_UTILITY_INPUT_BYTES,
+                    maximum_output_bytes: MAXIMUM_UTILITY_OUTPUT_BYTES,
+                },
+                &ModelRequestV1 { input, parameters },
+            )
+            .map_err(|error| format!("provider completion failed: {error}"))?;
+        let turn = project_model_events(&evidence.events);
+        let text = turn.assistant_text;
+        if text.trim().is_empty() {
+            return Err("provider returned an empty assistant response".into());
+        }
+        Ok(ProviderCompletion {
+            text,
+            input_units: turn.input_tokens,
+            output_units: turn.output_tokens,
+            model: model.to_owned(),
+        })
     }
 
     #[cfg(test)]
@@ -380,6 +472,79 @@ fn gemini_provider(
         api_key,
         GoogleGeminiLimitsV1 {
             request_timeout,
+            ..GoogleGeminiLimitsV1::default()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    GoogleGeminiProvider::new(config).map_err(|error| error.to_string())
+}
+
+/// A provider for one bounded utility completion.
+///
+/// It differs from the connection-test provider only in the response bound: it
+/// uses the adapter's maximum so a long streamed answer is delivered as
+/// content rather than reported as a size-bound failure of the action.
+fn openai_utility_provider(
+    base_url: &str,
+    model: &str,
+    api_key: Option<String>,
+    request_timeout: Duration,
+) -> Result<OpenAiCompatibleProvider, String> {
+    let config = OpenAiCompatibleProviderConfig::new(
+        OPENAI_BINDING_ID,
+        OPENAI_VERSION_HASH,
+        base_url,
+        model,
+        api_key,
+        OpenAiCompatibleLimitsV1 {
+            request_timeout,
+            maximum_response_bytes: UTILITY_MAXIMUM_RESPONSE_BYTES,
+            ..OpenAiCompatibleLimitsV1::default()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    OpenAiCompatibleProvider::new(config).map_err(|error| error.to_string())
+}
+
+/// A provider for one bounded utility completion.
+fn anthropic_utility_provider(
+    base_url: &str,
+    model: &str,
+    api_key: Option<String>,
+    request_timeout: Duration,
+) -> Result<AnthropicMessagesProvider, String> {
+    let config = AnthropicMessagesProviderConfig::new(
+        ANTHROPIC_BINDING_ID,
+        ANTHROPIC_VERSION_HASH,
+        base_url,
+        model,
+        api_key,
+        AnthropicMessagesLimitsV1 {
+            request_timeout,
+            maximum_response_bytes: UTILITY_MAXIMUM_RESPONSE_BYTES,
+            ..AnthropicMessagesLimitsV1::default()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    AnthropicMessagesProvider::new(config).map_err(|error| error.to_string())
+}
+
+/// A provider for one bounded utility completion.
+fn gemini_utility_provider(
+    base_url: &str,
+    model: &str,
+    api_key: Option<String>,
+    request_timeout: Duration,
+) -> Result<GoogleGeminiProvider, String> {
+    let config = GoogleGeminiProviderConfig::new(
+        GEMINI_BINDING_ID,
+        GEMINI_VERSION_HASH,
+        base_url,
+        model,
+        api_key,
+        GoogleGeminiLimitsV1 {
+            request_timeout,
+            maximum_response_bytes: UTILITY_MAXIMUM_RESPONSE_BYTES,
             ..GoogleGeminiLimitsV1::default()
         },
     )

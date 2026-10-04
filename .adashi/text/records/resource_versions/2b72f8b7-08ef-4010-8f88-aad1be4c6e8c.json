@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.comfyui_integration",
+    "resource_kind": "design.markdown",
+    "updated_at": "2026-10-04 18:06:59",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "2b72f8b7-08ef-4010-8f88-aad1be4c6e8c",
+  "schemaVersion": 1
+}

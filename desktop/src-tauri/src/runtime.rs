@@ -8,6 +8,9 @@ mod cancellation;
 mod concurrency;
 mod chat_workspace;
 mod compaction;
+pub mod comfyui;
+// TEMPORARY: wedged-pass diagnostic probe (task #185). Remove with its callers.
+pub mod trace_probe;
 mod context_inspection;
 mod credential_journal;
 mod credentials;
@@ -59,6 +62,12 @@ pub(crate) const WEB_FETCH_MAXIMUM_EXTRACT_BYTES_V1: u64 = 32 * 1024;
 pub use approvals::{ApprovalMode, ApprovalResolution, ApprovalSettings, ProjectApprovalGrant};
 pub use approvals::FilesystemGrant;
 pub use cancellation::WorkflowCancellationController;
+pub use comfyui::{
+    ComfyUiAutocreateRequestV2, ComfyUiAutocreateResultV2, ComfyUiConfigurationV2,
+    ComfyUiInspectRequestV2, ComfyUiInspectResultV2, ComfyUiParameterKindV2, ComfyUiProbeRequestV2,
+    ComfyUiProbeResultV2, ComfyUiStartRequestV2, ComfyUiStartResultV2,
+    ComfyUiToolParameterV2, ComfyUiWorkflowToolV2,
+};
 pub use dto::*;
 pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2};
 pub use path_actions::{PathActionOutcomeV1, PathActionRequestV1};

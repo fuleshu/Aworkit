@@ -600,6 +600,63 @@ export const desktopConfigurationSchema = z
   .strict()
   .default({});
 
+export const comfyUiParameterKindSchema = z.enum([
+  "string",
+  "integer",
+  "number",
+  "boolean",
+]);
+
+export const comfyUiToolParameterSchema = z
+  .object({
+    name: z.string().max(64),
+    description: z.string().max(2_000),
+    valueKind: comfyUiParameterKindSchema,
+    required: z.boolean(),
+    defaultValue: z.unknown().nullable(),
+    nodeId: z.string().max(256),
+    inputName: z.string().max(256),
+    choices: z.array(z.unknown()).max(512),
+  })
+  .strict();
+
+export const comfyUiWorkflowToolSchema = z
+  .object({
+    id: z.string().max(128),
+    name: z.string().trim().min(1).max(256),
+    description: z.string().max(2_000),
+    workflowPath: z.string().trim().min(1).max(4_096),
+    enabled: z.boolean(),
+    parameters: z.array(comfyUiToolParameterSchema).max(128),
+  })
+  .strict();
+
+/**
+ * Default ComfyUI section value, matching what the Rust section serializes for
+ * a profile that has never configured ComfyUI. Exported so a preview snapshot
+ * and a test fixture carry the exact same shape.
+ */
+export const DEFAULT_COMFYUI_CONFIGURATION = {
+  endpoint: "http://127.0.0.1:8188/",
+  installPath: null,
+  launchArguments: ["main.py", "--listen", "127.0.0.1"],
+  autoStart: false,
+  workflowFolder: null,
+  workflowTools: [],
+};
+
+export const comfyUiConfigurationSchema = z
+  .object({
+    endpoint: z.string().trim().max(4_096),
+    installPath: z.string().max(4_096).nullable(),
+    launchArguments: z.array(z.string().max(1_024)).max(32),
+    autoStart: z.boolean(),
+    workflowFolder: z.string().max(4_096).nullable(),
+    workflowTools: z.array(comfyUiWorkflowToolSchema).max(256),
+  })
+  .strict()
+  .default(DEFAULT_COMFYUI_CONFIGURATION);
+
 export const settingsConfigurationV2Schema = z
   .object({
     approvals: z.object({ defaultMode: z.enum(["ask_for_approval", "approve_for_me", "full_access"]).default("ask_for_approval") }).strict().default({ defaultMode: "ask_for_approval" }),
@@ -618,6 +675,7 @@ export const settingsConfigurationV2Schema = z
     layout: layoutConfigurationSchema,
     subagents: subagentViewConfigurationSchema.optional(),
     desktop: desktopConfigurationSchema,
+    comfyui: comfyUiConfigurationSchema,
     /*
      * Marker for the one-time "bundled tools are available by default" step.
      * The core owns it; the editor only round-trips it.
@@ -688,6 +746,18 @@ export type SubagentViewConfiguration = z.infer<
 export type DesktopConfiguration = z.infer<
   typeof desktopConfigurationSchema
 >;
+export type ComfyUiParameterKind = z.infer<
+  typeof comfyUiParameterKindSchema
+>;
+export type ComfyUiToolParameter = z.infer<
+  typeof comfyUiToolParameterSchema
+>;
+export type ComfyUiWorkflowTool = z.infer<
+  typeof comfyUiWorkflowToolSchema
+>;
+export type ComfyUiConfiguration = z.infer<
+  typeof comfyUiConfigurationSchema
+>;
 export type ProviderHealthSnapshotV2 = z.infer<
   typeof providerHealthSnapshotV2Schema
 >;
@@ -714,7 +784,8 @@ export type SettingsValidationIssue = {
     | "data"
     | "projects"
     | "appearance"
-    | "desktop";
+    | "desktop"
+    | "comfyui";
   readonly path: string;
   readonly message: string;
 };
@@ -758,6 +829,68 @@ export function validateSettingsConfiguration(
         path: `providers.${provider.id}.enabled`,
         message: "An enabled provider must contain at least one enabled model.",
       });
+    }
+  }
+  const comfyUiEndpointIssue = secretFreeHttpUrlIssue(settings.comfyui.endpoint);
+  if (comfyUiEndpointIssue !== null) {
+    issues.push({
+      section: "comfyui",
+      path: "comfyui.endpoint",
+      message: `ComfyUI endpoint ${comfyUiEndpointIssue}`,
+    });
+  }
+  const comfyUiToolIds = new Set<string>();
+  for (const tool of settings.comfyui.workflowTools) {
+    const toolPath = `comfyui.workflowTools.${tool.id}`;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(tool.id)) {
+      issues.push({
+        section: "comfyui",
+        path: toolPath,
+        message:
+          "Workflow tool ID must start with an alphanumeric character and contain only letters, numbers, '-', '_' or '.'.",
+      });
+    }
+    if (comfyUiToolIds.has(tool.id)) {
+      issues.push({
+        section: "comfyui",
+        path: toolPath,
+        message: "Workflow tool IDs must be unique.",
+      });
+    }
+    comfyUiToolIds.add(tool.id);
+    const parameterNames = new Set<string>();
+    for (const parameter of tool.parameters) {
+      const parameterPath = `${toolPath}.parameters.${parameter.name}`;
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(parameter.name)) {
+        issues.push({
+          section: "comfyui",
+          path: parameterPath,
+          message:
+            "Parameter name must start with a letter or underscore and contain only letters, numbers or underscores.",
+        });
+      }
+      if (parameterNames.has(parameter.name)) {
+        issues.push({
+          section: "comfyui",
+          path: parameterPath,
+          message: "Parameter names must be unique within a workflow tool.",
+        });
+      }
+      parameterNames.add(parameter.name);
+      if (parameter.nodeId.trim() === "") {
+        issues.push({
+          section: "comfyui",
+          path: parameterPath,
+          message: "Parameter node ID must not be empty.",
+        });
+      }
+      if (parameter.inputName.trim() === "") {
+        issues.push({
+          section: "comfyui",
+          path: parameterPath,
+          message: "Parameter input name must not be empty.",
+        });
+      }
     }
   }
   const credentialRefs = uniqueIds(

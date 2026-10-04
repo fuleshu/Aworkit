@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.comfyui_bridge",
+    "resource_kind": "design.element",
+    "updated_at": "2026-10-04 18:06:59",
+    "version": 2
+  },
+  "deleted": false,
+  "identity": "f9bf6d48-dc5d-4e38-b921-e60ec22ab8d0",
+  "schemaVersion": 1
+}

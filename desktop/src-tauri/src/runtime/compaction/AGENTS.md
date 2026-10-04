@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=4224594039564922 -->
+<!-- adashi:generated revision=7376990234876902 -->
 # Architecture — `desktop/src-tauri/src/runtime/compaction` (generated)
 
 Markdown design specifications:

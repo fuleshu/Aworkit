@@ -83,15 +83,15 @@ describe("native plugin folder commands", () => {
   it("installs, removes and opens the plugin folder through dedicated commands", async () => {
     native.invoke.mockResolvedValue(preUpgradeProjection());
     const port = new TauriSettingsV2CorePort();
-    await port.installToolPlugin("/tmp/plugins/comfyui-bridge");
+    await port.installToolPlugin("/tmp/plugins/example");
     expect(native.invoke).toHaveBeenLastCalledWith(
       "settings_v2_install_tool_plugin",
-      { path: "/tmp/plugins/comfyui-bridge" },
+      { path: "/tmp/plugins/example" },
     );
-    await port.removeToolPlugin("plugin.comfyui-bridge");
+    await port.removeToolPlugin("plugin.example");
     expect(native.invoke).toHaveBeenLastCalledWith(
       "settings_v2_remove_tool_plugin",
-      { pluginId: "plugin.comfyui-bridge" },
+      { pluginId: "plugin.example" },
     );
     native.invoke.mockResolvedValue(undefined);
     await port.openToolPluginFolder();

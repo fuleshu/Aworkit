@@ -1,13 +1,18 @@
 import { nativeToolDefaults } from "./toolRegistry";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
-import { mcpToolConfigurationSchema } from "./configuration";
+import {
+  comfyUiWorkflowToolSchema,
+  mcpServerConfigurationSchema,
+  mcpToolConfigurationSchema,
+} from "./configuration";
 import { createDurableCommandId } from "../commandId";
 import {
   extensionConfigurationSchema,
   settingsConfigurationV2Schema,
   settingsV2SnapshotSchema,
   type BuiltInToolConfiguration,
+  type ComfyUiWorkflowTool,
   type ExternalAgentConfiguration,
   type ExtensionConfiguration,
   type McpServerConfiguration,
@@ -143,6 +148,67 @@ const externalAgentProbeSchema = z
     latencyMillis: z.number().int().nonnegative(),
     draftFingerprint: z.string().min(1),
     message: z.string(),
+  })
+  .strict();
+
+export const comfyUiProbeResultSchema = z
+  .object({
+    ok: z.boolean(),
+    message: z.string(),
+    endpoint: z.string(),
+    version: z.string().nullable(),
+    latencyMillis: z.number().int().nonnegative(),
+    draftFingerprint: z.string(),
+  })
+  .strict();
+
+export const comfyUiStartResultSchema = z
+  .object({
+    ok: z.boolean(),
+    message: z.string(),
+    endpoint: z.string(),
+    processId: z.number().int().nonnegative().nullable(),
+    logPath: z.string(),
+    outputTail: z.string(),
+  })
+  .strict();
+
+const comfyUiWorkflowInputSchema = z
+  .object({
+    nodeId: z.string(),
+    classType: z.string(),
+    title: z.string().nullable(),
+    inputName: z.string(),
+    valueKind: z.enum(["string", "integer", "number", "boolean"]),
+    currentValue: z.unknown(),
+    choices: z.array(z.unknown()),
+  })
+  .strict();
+
+export const comfyUiInspectResultSchema = z
+  .object({
+    ok: z.boolean(),
+    message: z.string(),
+    workflowPath: z.string(),
+    inspection: z
+      .object({
+        nodeCount: z.number().int().nonnegative(),
+        inputs: z.array(comfyUiWorkflowInputSchema),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const comfyUiAutocreateResultSchema = z
+  .object({
+    ok: z.boolean(),
+    message: z.string(),
+    tool: comfyUiWorkflowToolSchema,
+    summary: z.string(),
+    providerId: z.string(),
+    modelId: z.string(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
   })
   .strict();
 
@@ -309,6 +375,38 @@ export interface ExternalAgentProbeResult {
   readonly message: string;
 }
 
+export interface ComfyUiProbeRequest {
+  readonly endpoint: string;
+  readonly draftFingerprint: string;
+}
+
+export type ComfyUiProbeResult = z.infer<typeof comfyUiProbeResultSchema>;
+
+export interface ComfyUiStartRequest {
+  readonly endpoint: string;
+  readonly installPath: string;
+  readonly launchArguments: readonly string[];
+}
+
+export type ComfyUiStartResult = z.infer<typeof comfyUiStartResultSchema>;
+
+export interface ComfyUiInspectRequest {
+  readonly workflowPath: string;
+  readonly endpoint: string | null;
+}
+
+export type ComfyUiInspectResult = z.infer<typeof comfyUiInspectResultSchema>;
+
+export interface ComfyUiAutocreateRequest {
+  readonly endpoint: string;
+  readonly workflowPath: string;
+  readonly draftFingerprint: string;
+}
+
+export type ComfyUiAutocreateResult = z.infer<
+  typeof comfyUiAutocreateResultSchema
+>;
+
 export interface SettingsV2CorePort {
   snapshot(): Promise<SettingsV2Snapshot>;
   commit(command: SettingsV2Commit): Promise<SettingsV2Receipt>;
@@ -322,6 +420,12 @@ export interface SettingsV2CorePort {
   probeExternalAgent(
     request: ExternalAgentProbeRequest,
   ): Promise<ExternalAgentProbeResult>;
+  comfyuiProbe(request: ComfyUiProbeRequest): Promise<ComfyUiProbeResult>;
+  comfyuiStart(request: ComfyUiStartRequest): Promise<ComfyUiStartResult>;
+  comfyuiInspect(request: ComfyUiInspectRequest): Promise<ComfyUiInspectResult>;
+  comfyuiAutocreate(
+    request: ComfyUiAutocreateRequest,
+  ): Promise<ComfyUiAutocreateResult>;
   inspectExtension(path: string): Promise<ExtensionConfiguration>;
   registerExtension(
     command: ExtensionRegisterCommand,
@@ -402,6 +506,38 @@ export class TauriSettingsV2CorePort implements SettingsV2CorePort {
   ): Promise<ExternalAgentProbeResult> {
     return externalAgentProbeSchema.parse(
       await invoke("settings_v2_probe_external_agent", { request }),
+    );
+  }
+
+  public async comfyuiProbe(
+    request: ComfyUiProbeRequest,
+  ): Promise<ComfyUiProbeResult> {
+    return comfyUiProbeResultSchema.parse(
+      await invoke("settings_v2_comfyui_probe", { request }),
+    );
+  }
+
+  public async comfyuiStart(
+    request: ComfyUiStartRequest,
+  ): Promise<ComfyUiStartResult> {
+    return comfyUiStartResultSchema.parse(
+      await invoke("settings_v2_comfyui_start", { request }),
+    );
+  }
+
+  public async comfyuiInspect(
+    request: ComfyUiInspectRequest,
+  ): Promise<ComfyUiInspectResult> {
+    return comfyUiInspectResultSchema.parse(
+      await invoke("settings_v2_comfyui_inspect", { request }),
+    );
+  }
+
+  public async comfyuiAutocreate(
+    request: ComfyUiAutocreateRequest,
+  ): Promise<ComfyUiAutocreateResult> {
+    return comfyUiAutocreateResultSchema.parse(
+      await invoke("settings_v2_comfyui_autocreate", { request }),
     );
   }
 
@@ -583,6 +719,66 @@ export class PreviewSettingsV2CorePort implements SettingsV2CorePort {
     };
   }
 
+  public async comfyuiProbe(
+    request: ComfyUiProbeRequest,
+  ): Promise<ComfyUiProbeResult> {
+    return {
+      ok: false,
+      message: "ComfyUI connection tests are not available in browser Preview.",
+      endpoint: request.endpoint,
+      version: null,
+      latencyMillis: 0,
+      draftFingerprint: request.draftFingerprint,
+    };
+  }
+
+  public async comfyuiStart(
+    request: ComfyUiStartRequest,
+  ): Promise<ComfyUiStartResult> {
+    return {
+      ok: false,
+      message: "Starting ComfyUI is not available in browser Preview.",
+      endpoint: request.endpoint,
+      processId: null,
+      logPath: "",
+      outputTail: "",
+    };
+  }
+
+  public async comfyuiInspect(
+    request: ComfyUiInspectRequest,
+  ): Promise<ComfyUiInspectResult> {
+    return {
+      ok: false,
+      message: "ComfyUI workflow inspection is not available in browser Preview.",
+      workflowPath: request.workflowPath,
+      inspection: { nodeCount: 0, inputs: [] },
+    };
+  }
+
+  public async comfyuiAutocreate(
+    request: ComfyUiAutocreateRequest,
+  ): Promise<ComfyUiAutocreateResult> {
+    const tool: ComfyUiWorkflowTool = {
+      id: "workflow-tool",
+      name: "Workflow tool",
+      description: "",
+      workflowPath: request.workflowPath,
+      enabled: true,
+      parameters: [],
+    };
+    return {
+      ok: false,
+      message: "ComfyUI parameter authoring is not available in browser Preview.",
+      tool,
+      summary: "",
+      providerId: "unavailable",
+      modelId: "unavailable",
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+  }
+
   public async inspectExtension(_path: string): Promise<ExtensionConfiguration> {
     throw new Error(
       "Extension inspection requires the native desktop runtime; browser Preview read no file and executed nothing.",
@@ -658,6 +854,14 @@ function emptySettingsV2Snapshot(): SettingsV2Snapshot {
       chatDefaults: {},
       layout: {},
       desktop: {},
+      comfyui: {
+        endpoint: "http://127.0.0.1:8188/",
+        installPath: null,
+        launchArguments: ["main.py", "--listen", "127.0.0.1"],
+        autoStart: false,
+        workflowFolder: null,
+        workflowTools: [],
+      },
     },
     providerHealth: [],
   };

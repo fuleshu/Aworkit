@@ -1,0 +1,15 @@
+{
+  "collection": "markdown_design_links",
+  "data": {
+    "design_external_id": "aworkit.workflow_worker.failure_policy",
+    "document_id": {
+      "ref": "cfb90bdf-82bb-4393-988a-96ab1673c0b5"
+    },
+    "id": 10208272118,
+    "sort_order": 2,
+    "target_type": "markdown"
+  },
+  "deleted": false,
+  "identity": "3ac84dc3-49d3-4e4c-886d-e689d85e1f4e",
+  "schemaVersion": 1
+}

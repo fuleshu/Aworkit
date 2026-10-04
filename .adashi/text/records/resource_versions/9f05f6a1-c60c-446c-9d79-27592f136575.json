@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.capability_host.comfyui_bridge|file|desktop/src/workbench/settings-v2/ComfyUiSection.tsx",
+    "resource_kind": "design.binding",
+    "updated_at": "2026-10-04 10:50:35",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "9f05f6a1-c60c-446c-9d79-27592f136575",
+  "schemaVersion": 1
+}

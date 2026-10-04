@@ -2,7 +2,7 @@
   "collection": "agent_tasks",
   "data": {
     "changed_files": "[]",
-    "completed_at": null,
+    "completed_at": "2026-10-04 18:15:09",
     "completion_memo": "",
     "confirmation_commit_id": null,
     "confirmed_at": null,
@@ -56,9 +56,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "active",
+    "state": "finished",
     "title": "Tool plugins: folder-sourced Codex-shaped packages (MCP + config) with a ComfyUI bridge reference plugin, docs, agent skill, and plain-language UI (high priority)",
-    "updated_at": "2026-10-03 08:21:18"
+    "updated_at": "2026-10-04 18:15:09"
   },
   "deleted": false,
   "identity": "09b266e2-2f3a-4b37-9a19-a4f9dca8f584",

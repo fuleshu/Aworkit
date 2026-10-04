@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=4224594039564922 -->
+<!-- adashi:generated revision=7812413445721537 -->
 # Architecture — `desktop/src/chat` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

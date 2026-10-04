@@ -151,6 +151,14 @@ impl CanonicalDocuments {
         &self.settings
     }
 
+    /// Absolute runtime data root that owns this document repository.
+    pub(crate) fn data_root(&self) -> &Path {
+        self.repository
+            .path()
+            .parent()
+            .unwrap_or_else(|| self.repository.path())
+    }
+
     pub(crate) fn settings_snapshot(&self, health: &ProviderHealth) -> SettingsSnapshot {
         let provider = legacy_provider(&self.settings);
         SettingsSnapshot {
@@ -1631,8 +1639,17 @@ pub(crate) fn builtin_tool_binding_ids() -> BTreeSet<String> {
         .collect()
 }
 
+/// Whether a tool binding id names a binding this build can freeze.
+///
+/// Built-in tools, MCP functions and ComfyUI capabilities are all resolved from
+/// their prefix here and decided against Settings at freeze: whether one
+/// Settings-derived ComfyUI workflow tool is enabled, and therefore available,
+/// is not a property of the document. Refusing the prefix would make a workflow
+/// the tool selector itself produced unrunnable.
 fn is_tool_binding_id(value: &str) -> bool {
-    value.starts_with("tool.") || value.starts_with("mcp:")
+    value.starts_with("tool.")
+        || value.starts_with("mcp:")
+        || value.starts_with(super::comfyui::COMFYUI_CAPABILITY_PREFIX)
 }
 
 fn validate_declared_ports(
@@ -1711,7 +1728,7 @@ fn validate_agent_configuration(
             .filter(|value| is_tool_binding_id(value))
             .ok_or_else(|| {
                 format!(
-                    "workflow node '{node_id}' agent toolIds must reference tool.<name> or mcp:<server> bindings"
+                    "workflow node '{node_id}' agent toolIds must reference tool.<name>, comfyui.<tool id> or mcp:<server> bindings"
                 )
             })?;
         if !seen.insert(tool_id) {
@@ -1946,7 +1963,7 @@ fn validate_tool_configuration(
         .filter(|value| is_tool_binding_id(value))
         .ok_or_else(|| {
             format!(
-                "workflow node '{node_id}' tool toolId must reference a tool.<name> or mcp:<server> binding"
+                "workflow node '{node_id}' tool toolId must reference a tool.<name>, comfyui.<tool id> or mcp:<server> binding"
             )
         })?;
     let tool_id = config
@@ -2453,6 +2470,62 @@ mod tests {
                 .all(|edge| { edge["source"] != "model.1" && edge["target"] != "model.1" })
         );
         validate_v1_executable_catalog(&workflow.document).unwrap();
+    }
+
+    #[test]
+    fn a_settings_document_from_the_python_bridge_build_still_opens() {
+        // A Settings document this build cannot decode fails
+        // `CanonicalDocuments::open`, and every projection query with it: the
+        // window then reports "Chat projection unavailable" for a profile that
+        // is otherwise intact. A section that keeps the retired bridge
+        // reference must therefore keep loading.
+        let root = TempDir::new().unwrap();
+        let repository = RepositoryRoot::open(root.path().join("documents")).unwrap();
+        let mut settings = serde_json::to_value(SettingsDocument::default()).unwrap();
+        settings["comfyui"] = json!({
+            "endpoint": "http://127.0.0.1:8188",
+            "installPath": null,
+            "launchArguments": ["main.py", "--listen", "127.0.0.1"],
+            "autoStart": false,
+            "workflowFolder": null,
+            "workflowTools": [{
+                "id": "krea",
+                "name": "Krea",
+                "description": "Generates an image",
+                "workflowPath": "D:/workflows/krea.json",
+                "enabled": true,
+                "parameters": [{
+                    "name": "prompt",
+                    "description": "What to draw",
+                    "valueKind": "string",
+                    "required": true,
+                    "defaultValue": null,
+                    "nodeId": "30:19",
+                    "inputName": "value",
+                    "choices": []
+                }]
+            }],
+            "bridgeServerId": "comfyui.bridge"
+        });
+        repository
+            .save(
+                DocumentKind::Configuration,
+                SETTINGS_ID,
+                None,
+                &json_document(&settings).unwrap(),
+            )
+            .unwrap();
+
+        let documents = CanonicalDocuments::open(root.path())
+            .expect("a profile written with the Python bridge must still open");
+        let comfyui = &documents.settings().comfyui;
+        assert_eq!(comfyui.endpoint, "http://127.0.0.1:8188/");
+        assert_eq!(comfyui.workflow_tools.len(), 1);
+        assert_eq!(
+            comfyui.bridge_server_id.as_deref(),
+            Some("comfyui.bridge"),
+            "the retired reference is read so the document loads"
+        );
     }
 
     #[test]
@@ -3716,6 +3789,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn catalog_accepts_settings_derived_comfyui_tool_bindings() {
+        // A workflow saved from the tool selector binds ComfyUI capabilities by
+        // id: one Settings-derived workflow tool plus the two authoring helpers.
+        // Whether a workflow tool is enabled is answered at freeze, so the
+        // document must stay executable and must not stop the Run from starting.
+        let document = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"agent.1","type":"agent","configuration":{
+                    "modelTierId":"tier:balanced",
+                    "toolIds":[
+                        "tool.todo",
+                        "mcp:FFmpeg media tools",
+                        "comfyui.krea-2-turbo-text-to-image-upscaled",
+                        "comfyui.get_workflow",
+                        "comfyui.list_node_types"
+                    ]
+                }},
+                {"id":"output.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e.1","source":"input.1","target":"agent.1"},
+                {"id":"e.2","source":"agent.1","target":"output.1"},
+                {"id":"e.3","source":"output.1","target":"wait.1"}
+            ]
+        });
+        validate_v1_executable_catalog(&document)
+            .expect("a workflow the tool selector produced must stay executable");
+
+        // The single-tool node binding rule shares the predicate, so every id
+        // the selector offers must pass it too.
+        for binding in [
+            "tool.todo",
+            "mcp:FFmpeg media tools",
+            "comfyui.krea-2-turbo-text-to-image-upscaled",
+            "comfyui.get_workflow",
+        ] {
+            assert!(
+                is_tool_binding_id(binding),
+                "{binding} must be an executable tool binding"
+            );
+        }
+        // A near miss stays refused, so the rule still catches a wrong prefix.
+        for foreign in [
+            "comfyui",
+            "comfyui_workflow",
+            "comfyuiX.list",
+            "tool",
+            "mcp",
+        ] {
+            assert!(
+                !is_tool_binding_id(foreign),
+                "{foreign} must not pass as a tool binding"
+            );
+        }
+    }
+
+    #[test]
     fn catalog_accepts_the_standard_agent_graph_with_conditions_and_parallelism() {
         validate_v1_executable_catalog(&bundled_workflow_template("standard-agent").unwrap())
             .unwrap();

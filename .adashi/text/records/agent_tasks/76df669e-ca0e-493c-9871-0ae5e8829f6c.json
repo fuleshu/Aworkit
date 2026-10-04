@@ -1,0 +1,60 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/lib.rs\",\"desktop/src-tauri/src/runtime.rs\",\"desktop/src-tauri/src/runtime/settings_v2.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/provider.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/main.rs\",\"desktop/src-tauri/src/runtime/tool_registry/tests.rs\",\"desktop/tool-plugins/comfyui-bridge/bridge.py\",\"desktop/tool-plugins/comfyui-bridge/test_bridge.py\",\"desktop/tool-plugins/comfyui-bridge/README.md\",\"desktop/tool-plugins/comfyui-bridge/tool-plugin.json\",\"desktop/tool-plugins/comfyui-bridge/workflows.json\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/settingsV2Port.ts\",\"desktop/src/workbench/settings-v2/settingsDraft.ts\",\"desktop/src/workbench/SettingsScreen.tsx\",\"desktop/src/workbench/configuration.test.ts\",\"desktop/src/workbench/settings-v2/settingsDraft.test.ts\",\"desktop/src/workbench/settings-v2/settingsSavePostcondition.test.ts\",\"desktop/src/workbench/SettingsScreen.test.tsx\"]",
+    "completed_at": "2026-10-04 10:50:48",
+    "completion_memo": {
+      "lines": [
+        "Advanced ComfyUI integration delivered per aworkit.capability_host.comfyui_integration.\n",
+        "\n",
+        "What changed:\n",
+        "- capability-host: new bounded ComfyUI client and API-workflow inspection (endpoint validation, /system_stats, /object_info, /prompt, /history with deadline polling, bounded /view), exported from lib.rs.\n",
+        "- desktop runtime: runtime/comfyui/{settings,bridge,authoring,server,dto}.rs plus runtime/service/comfyui.rs own the persisted `comfyui` Settings section, compilation of the workflow-tool table into the bundled bridge config, tier:balanced parameter authoring with strict JSON + one correction retry + fail-closed binding validation, reachability probe and opt-in local start. Five Tauri commands expose them; ProviderPort gained one bounded tool-free complete_text.\n",
+        "- Python bridge advanced to one typed tool per configured workflow plus comfyui_get_workflow and comfyui_list_node_types, driven by a --config document Aworkit writes.\n",
+        "- Frontend: configuration.ts schema + cross-field validation, settingsV2Port methods, SETTINGS_SECTIONS/sectionFields entry, and a new ComfyUiSection panel wired into SettingsScreen.\n",
+        "\n",
+        "Verification:\n",
+        "- cargo check --lib --bins (desktop): clean.\n",
+        "- cargo test -p aworkit-capability-host --lib comfyui: 6 passed.\n",
+        "- cargo test --lib comfyui (desktop): 25 passed.\n",
+        "- python test_bridge.py: \"comfyui-bridge: all checks passed\".\n",
+        "- pnpm exec tsc --noEmit: clean.\n",
+        "- pnpm exec vitest run src/workbench: 33 files, 300 tests passed.\n",
+        "\n",
+        "Environment note: linking the Rust *test* binaries needed TMP/TEMP redirected to the user temp directory, because the MSVC linker otherwise created its temporary file under C:\\WINDOWS and failed with LNK1104. No project or system path was modified; `cargo check` and normal builds were unaffected."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-04 10:23:17",
+    "created_files": "[\"crates/aworkit-capability-host/src/comfyui.rs\",\"desktop/src-tauri/src/runtime/comfyui/mod.rs\",\"desktop/src-tauri/src/runtime/comfyui/settings.rs\",\"desktop/src-tauri/src/runtime/comfyui/bridge.rs\",\"desktop/src-tauri/src/runtime/comfyui/authoring.rs\",\"desktop/src-tauri/src/runtime/comfyui/server.rs\",\"desktop/src-tauri/src/runtime/comfyui/dto.rs\",\"desktop/src-tauri/src/runtime/service/comfyui.rs\",\"desktop/src/workbench/settings-v2/ComfyUiSection.tsx\",\"desktop/tool-plugins/comfyui-bridge/comfy_client.py\",\"desktop/tool-plugins/comfyui-bridge/workflow_config.py\",\"desktop/tool-plugins/comfyui-bridge/authoring.py\"]",
+    "description": {
+      "lines": [
+        "Deliver the advanced ComfyUI integration described in the linked specification.\n",
+        "\n",
+        "Scope:\n",
+        "1. New persisted Settings section `comfyui` (endpoint, local install path, launch arguments, auto-start, workflow tools with typed parameters and exact node-input bindings, workflow-authoring assistant) plus a dedicated ComfyUI Settings tab.\n",
+        "2. Compile the workflow-tool table into a bundled ComfyUI bridge configuration so each enabled API workflow becomes one agent tool (MCP), reaching the model through the existing frozen tool, approval and evidence paths.\n",
+        "3. Advance the bundled `desktop/tool-plugins/comfyui-bridge` from a generic run tool to per-workflow typed tools plus bounded authoring reads (node type catalog, workflow read).\n",
+        "4. Rust `comfyui` support in `aworkit-capability-host`: bounded HTTP client for `/system_stats`, `/object_info`, `/prompt`, `/history/{id}`, `/view`, base-URL validation, and API-workflow input inspection.\n",
+        "5. Settings action \"Auto create parameters\": bounded, tool-free model call through the model mapped to `tier:balanced`, strict JSON contract, one correction retry, and fail-closed validation that every parameter binds to a real workflow input.\n",
+        "6. Connection status probe and opt-in local ComfyUI server start with readiness polling and named failure reporting.\n",
+        "7. Tests: Rust unit tests for inspection/validation/authoring parse, Python bridge tests for the dynamic tools, and TypeScript tests for the settings schema and panel.\n",
+        "\n",
+        "Reference material: the existing tool-plugin ComfyUI bridge and the Acondi `acondi-creator-tools` autocreate/discovery reference.\n",
+        "\n",
+        "Out of scope: release versions and installer bundles."
+      ]
+    },
+    "id": 52000780977,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Advanced ComfyUI integration: settings tab, workflow tools, LLM parameter authoring, server lifecycle",
+    "updated_at": "2026-10-04 10:50:48"
+  },
+  "deleted": false,
+  "identity": "76df669e-ca0e-493c-9871-0ae5e8829f6c",
+  "schemaVersion": 1
+}

@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "handover-comfyui-family-registries",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-04 19:13:32",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "1209ac1c-c196-4f99-8561-8ef77ec97d78",
+  "schemaVersion": 1
+}

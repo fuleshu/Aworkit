@@ -66,7 +66,37 @@ it("merges discovered MCP tools without overwriting overrides or another edited 
   expect(screen.getByText(/Connection successful/)).toBeVisible();
   // Authored references use the server name; the core resolves it to the local
   // server id when a pass freezes its exact tool identities.
-  expect(selectableTools({ tools: [], mcpServers: latest })).toEqual([{ value: "mcp://Test/read", label: "Test · read" }]);
+  expect(
+    selectableTools({ tools: [], mcpServers: latest }).filter(entry =>
+      entry.value.startsWith("mcp://"),
+    ),
+  ).toEqual([{ value: "mcp://Test/read", label: "Test · read" }]);
+  // A workspace that never configured a ComfyUI workflow tool gets no
+  // ComfyUI entries; one that did gets its workflow tool plus the helpers.
+  expect(selectableTools({ tools: [], mcpServers: [] }).map(entry => entry.value)).toEqual([]);
+  expect(
+    selectableTools({
+      tools: [],
+      mcpServers: [],
+      comfyui: {
+        endpoint: "http://127.0.0.1:8188/",
+        installPath: null,
+        launchArguments: [],
+        autoStart: false,
+        workflowFolder: null,
+        workflowTools: [
+          {
+            id: "krea",
+            name: "Krea",
+            description: "",
+            workflowPath: "D:\\krea.json",
+            enabled: true,
+            parameters: [],
+          },
+        ],
+      },
+    }).map(entry => entry.value),
+  ).toEqual(["comfyui.list_node_types", "comfyui.get_workflow", "comfyui.krea"]);
 });
 
 it("the shared registry supplies every native tool and keeps MCP identifiers in the same selection list", () => {
@@ -94,9 +124,9 @@ it("keeps discovered tool overrides when a new package manifest omits its option
 });
 
 it("sources, installs, opens and removes plugin folders in plain language", async () => {
-  const server: McpServerConfiguration = { id: "plugin.comfyui-bridge", name: "ComfyUI bridge", enabled: false, autoConnect: false,
+  const server: McpServerConfiguration = { id: "plugin.example", name: "Example plugin", enabled: false, autoConnect: false,
     transport: { transport: "stdio", command: "python", args: ["bridge.py"], env: [] },
-    plugin: { manifestPath: "C:\\Plugins\\comfyui-bridge\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
+    plugin: { manifestPath: "C:\\Plugins\\example\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
     tools: [] };
   const snapshot = { toolPluginDirectory: "C:\\Plugins", toolPlugins: [{ path: server.plugin!.manifestPath, server, error: null }] } as SettingsV2Snapshot;
   const install = vi.fn(async () => {});
@@ -115,14 +145,14 @@ it("sources, installs, opens and removes plugin folders in plain language", asyn
   const removeButton = screen.getByRole("button", { name: "Remove" });
   await waitFor(() => expect(removeButton).toBeEnabled());
   fireEvent.click(removeButton);
-  await waitFor(() => expect(remove).toHaveBeenCalledWith("plugin.comfyui-bridge"));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("plugin.example"));
 });
 
 it("configures an added plugin completely inside the Tool Plugins tab", () => {
-  const plugin: McpServerConfiguration = { id: "plugin.comfyui-bridge", name: "ComfyUI bridge", enabled: false, autoConnect: false,
+  const plugin: McpServerConfiguration = { id: "plugin.example", name: "Example plugin", enabled: false, autoConnect: false,
     transport: { transport: "stdio", command: "python", args: ["bridge.py", "--endpoint", "http://127.0.0.1:8188"], cwd: null, env: [] },
-    plugin: { manifestPath: "C:\\Plugins\\comfyui-bridge\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
-    tools: [{ name: "comfyui_status", description: "Status", inputSchema: { type: "object" }, enabled: true }] };
+    plugin: { manifestPath: "C:\\Plugins\\example\\tool-plugin.json", version: "1.0.0", contentHash: "sha256:abc" },
+    tools: [{ name: "example_status", description: "Status", inputSchema: { type: "object" }, enabled: true }] };
   const snapshot = { toolPluginDirectory: "C:\\Plugins", toolPlugins: [{ path: plugin.plugin!.manifestPath, server: plugin, error: null }] } as SettingsV2Snapshot;
   render(<ToolPluginsSection snapshot={snapshot} servers={[plugin]} credentials={[]}
     onPickCommand={async () => null} onChange={() => {}}
@@ -130,9 +160,9 @@ it("configures an added plugin completely inside the Tool Plugins tab", () => {
     onAdd={() => {}} onRefresh={async () => {}} />);
   // The package listing and its complete configuration share one tab.
   expect(screen.getByRole("heading", { name: "Plugins" })).toBeVisible();
-  expect(screen.getByLabelText("Server name")).toHaveValue("ComfyUI bridge");
+  expect(screen.getByLabelText("Server name")).toHaveValue("Example plugin");
   expect(screen.getByRole("button", { name: "Connect and enable" })).toBeVisible();
-  expect(screen.getByText("comfyui_status")).toBeVisible();
+  expect(screen.getByText("example_status")).toBeVisible();
   // Plugins are added from the library, not by a second "Add server" path.
   expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
 });

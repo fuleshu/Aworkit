@@ -1,0 +1,19 @@
+{
+  "collection": "c4_elements",
+  "data": {
+    "description": "Turns a ComfyUI server and its API-format workflows into native agent tools: a bounded ComfyUI HTTP client and API-workflow inspection, a persisted comfyui Settings section with typed per-workflow tools and exact node-input bindings, model-assisted parameter authoring on tier:balanced, one native capability per enabled workflow tool whose descriptor and model-facing schema are generated from Settings and executed in process by the Rust host under the existing frozen broker, approval and evidence paths, two read-only authoring helpers (the node-type catalog and a configured workflow graph) registered as built-ins, and reachability probing plus opt-in local server start. No bridge subprocess, MCP server or host interpreter is involved in running a workflow.",
+    "element_type": "Component",
+    "external_id": "aworkit.capability_host.comfyui_bridge",
+    "id": 466848325,
+    "name": "ComfyUI Workflow Tools and Settings",
+    "parent_external_id": "aworkit.capability_host",
+    "tags": "",
+    "technology": "",
+    "workspace_id": {
+      "ref": "fe6d0078-02a0-8b6c-91e8-8c149feeb4e8"
+    }
+  },
+  "deleted": false,
+  "identity": "b3947155-693f-4b41-884c-db0d3338d5f4",
+  "schemaVersion": 1
+}

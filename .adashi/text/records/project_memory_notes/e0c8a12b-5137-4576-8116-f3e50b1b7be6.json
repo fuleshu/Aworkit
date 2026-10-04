@@ -1,18 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": "Recurring git blockage in C:\\src\\Aworkit: the running Aworkit desktop app rewrites the Adashi-generated architecture block inside tracked files (agents.md, **/AGENTS.md, docs/AGENTS.md) and .adashi/local/markdown-projection.json from its live design store. Those paths are exactly what upstream commits also touch, so `git pull` aborts with \"Your local changes to the following files would be overwritten by merge\" plus untracked collisions (docs/adashi/, three generated AGENTS.md). Verified 2026-09-29: every such local edit lies strictly inside the adashi:architecture:begin/end block, so nothing hand-authored is at risk; the design store under .adashi/text is the source of truth. Resolution used: `git stash push -u` (keeps a recoverable backup), then `git pull --ff-only`, then optionally `git stash drop`. Expect the tree to go dirty again seconds after any checkout, because the app regenerates the blocks.",
-    "created_at": "2026-09-29 08:28:53",
-    "id": 13261346087,
-    "note_id": "git-pull-blocked-by-generated-agents-projections",
-    "operation_id": "mem-git-pull-generated-projections-20260929",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "mem-git-pull-generated-projections-20260929",
-    "task_id": null
+    "id": 13261346087
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "e0c8a12b-5137-4576-8116-f3e50b1b7be6",
   "schemaVersion": 1
 }

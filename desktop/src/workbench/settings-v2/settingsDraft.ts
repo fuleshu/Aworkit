@@ -64,6 +64,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
     description: "Explicit external-agent lifecycle adapters",
   },
   {
+    id: "comfyui",
+    label: "ComfyUI",
+    description: "ComfyUI server, workflow tools and parameter authoring",
+  },
+  {
     id: "data",
     label: "Data & sessions",
     description: "Local retention and portable session policy",
@@ -98,6 +103,7 @@ const sectionFields = {
   projects: "projects",
   appearance: "appearance",
   desktop: "desktop",
+  comfyui: "comfyui",
 } as const satisfies Record<
   Exclude<SettingsSectionId, "tool_plugins">,
   keyof SettingsConfigurationV2
@@ -551,6 +557,8 @@ function sectionFromSchemaPath(
       return "mcp";
     case "externalAgents":
       return "external_agents";
+    case "comfyui":
+      return "comfyui";
     case "credentials":
     case "approvals":
     case "tools":

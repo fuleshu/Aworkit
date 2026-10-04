@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-10-04 19:28:42",
+    "design_external_id": "aworkit.validate_freeze_hardening",
+    "id": 31585607709,
+    "sort_order": 0,
+    "target_type": "markdown",
+    "task_id": {
+      "ref": "fd75b962-47c9-4629-84f6-356fbc84b472"
+    }
+  },
+  "deleted": false,
+  "identity": "42828181-e0e4-48fe-bff5-62b97c8e378d",
+  "schemaVersion": 1
+}

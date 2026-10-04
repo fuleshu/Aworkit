@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.validate_freeze_hardening",
+    "resource_kind": "design.markdown",
+    "updated_at": "2026-10-04 19:22:58",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "bd6b5f43-2ce7-439e-b9dd-5b6003b5531c",
+  "schemaVersion": 1
+}

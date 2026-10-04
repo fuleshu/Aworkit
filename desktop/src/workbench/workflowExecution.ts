@@ -218,7 +218,7 @@ export function assessNativeWorkflow(
             if (typeof toolId !== "string" || !isToolBindingId(toolId))
               issues.push({
                 code: "native_agent_tools",
-                message: `Workflow node '${id}' agent toolIds must reference tool.<name> or mcp:<server> bindings.`,
+                message: `Workflow node '${id}' agent toolIds must reference tool.<name>, comfyui.<tool id> or mcp:<server> bindings.`,
               });
           }
           if (unique.size !== toolIds.length)
@@ -614,7 +614,11 @@ function validTierReference(value: unknown): boolean {
 }
 
 function isToolBindingId(value: string): boolean {
-  return value.startsWith("tool.") || value.startsWith("mcp:");
+  return (
+    value.startsWith("tool.") ||
+    value.startsWith("mcp:") ||
+    value.startsWith("comfyui.")
+  );
 }
 
 function instructionsIssue(

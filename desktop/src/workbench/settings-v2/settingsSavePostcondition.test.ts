@@ -3,6 +3,7 @@ import type {
   ProjectConfiguration,
   SettingsConfigurationV2,
 } from "../configuration";
+import { DEFAULT_COMFYUI_CONFIGURATION } from "../configuration";
 import {
   settingsDocumentsMatch,
   settingsSaveContentIssue,
@@ -29,6 +30,7 @@ function document(project: ProjectConfiguration): SettingsConfigurationV2 {
     chatDefaults: {},
     layout: {},
     desktop: {},
+    comfyui: DEFAULT_COMFYUI_CONFIGURATION,
   };
 }
 

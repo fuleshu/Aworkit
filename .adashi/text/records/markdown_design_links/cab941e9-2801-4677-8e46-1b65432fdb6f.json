@@ -1,15 +1,9 @@
 {
   "collection": "markdown_design_links",
   "data": {
-    "design_external_id": "aworkit.capability_host.tool_runtime",
-    "document_id": {
-      "ref": "0a10e259-12cf-4f6a-976e-c414f4bfb199"
-    },
-    "id": 3417842536,
-    "sort_order": 1,
-    "target_type": "element"
+    "id": 3417842536
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "cab941e9-2801-4677-8e46-1b65432fdb6f",
   "schemaVersion": 1
 }

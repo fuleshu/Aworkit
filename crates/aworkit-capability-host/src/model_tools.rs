@@ -692,12 +692,24 @@ pub(crate) fn result_text(
     }
 }
 
-fn valid_tool_name(value: &str) -> bool {
+/// Whether a model-facing tool name satisfies the provider contract: a non-empty
+/// name of at most [`MAX_TOOL_NAME_BYTES`] bytes drawn from `[A-Za-z0-9_-]`.
+///
+/// A capability whose model-facing name is generated from configuration — rather
+/// than compiled in — must build it through a sanitiser and can assert this rule
+/// directly. A display name is not a provider name: spaces, parentheses and
+/// punctuation belong to the UI, and handing one to a provider makes every
+/// request that carries it invalid.
+pub fn provider_name_is_valid(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_TOOL_NAME_BYTES
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn valid_tool_name(value: &str) -> bool {
+    provider_name_is_valid(value)
 }
 
 fn valid_identifier(value: &str, maximum: usize) -> bool {

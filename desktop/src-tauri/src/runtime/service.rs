@@ -12,6 +12,7 @@ use workflow_tools::freeze_graph_bindings;
 mod snapshot_page;
 pub use snapshot_page::ChatFeedReader;
 mod tool_plugins;
+mod comfyui;
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -4696,7 +4697,8 @@ mod tests {
     use super::super::provider::ProviderCompletion;
     use super::*;
     use crate::runtime::{
-        ApprovalMode, CredentialMetadataConfigurationV2, ExtensionConfigurationV2,
+        ApprovalMode, ComfyUiConfigurationV2, ComfyUiParameterKindV2, ComfyUiToolParameterV2,
+        ComfyUiWorkflowToolV2, CredentialMetadataConfigurationV2, ExtensionConfigurationV2,
         ExtensionStatusV2, ExternalAgentCapabilitiesV2, ExternalAgentConfigurationV2,
         IntegrationTransportV2, McpServerConfigurationV2, ModelTierConfigurationV2,
         ModelTierKindV2, ModelTierResolutionV2, ProjectConfigurationV2, ProviderCommitInput,
@@ -4712,6 +4714,72 @@ mod tests {
     mod image_chat;
     mod projectless;
     mod question;
+
+    #[test]
+    fn a_frozen_comfyui_binding_passes_the_stored_chat_integrity_check() {
+        // The freeze path writes these bindings and the stored-record integrity
+        // check reads them back. The two must agree: while they did not, every
+        // message in a Chat whose workflow bound a ComfyUI tool failed with
+        // "stored frozen Chat tool bindings failed integrity validation".
+        let settings = SettingsConfigurationV2 {
+            comfyui: ComfyUiConfigurationV2 {
+                workflow_tools: vec![ComfyUiWorkflowToolV2 {
+                    id: "krea".into(),
+                    name: "Krea".into(),
+                    description: "Generates an image".into(),
+                    workflow_path: "D:/workflows/krea.json".into(),
+                    enabled: true,
+                    parameters: vec![ComfyUiToolParameterV2 {
+                        name: "prompt".into(),
+                        description: "What to draw".into(),
+                        value_kind: ComfyUiParameterKindV2::String,
+                        required: true,
+                        default_value: None,
+                        node_id: "30:19".into(),
+                        input_name: "value".into(),
+                        choices: Vec::new(),
+                    }],
+                }],
+                ..ComfyUiConfigurationV2::default()
+            },
+            ..SettingsConfigurationV2::default()
+        };
+        let workflow = json!({
+            "schemaVersion": 1,
+            "nodes": [{
+                "id": "agent.1",
+                "type": "agent",
+                "configuration": {
+                    "modelTierId": "tier:balanced",
+                    "toolIds": [
+                        "comfyui.krea",
+                        "comfyui.get_workflow",
+                        "comfyui.list_node_types"
+                    ]
+                }
+            }],
+            "edges": []
+        });
+
+        let frozen = freeze_graph_bindings(&workflow, &settings, &BTreeMap::new()).unwrap();
+        let frozen_ids = frozen
+            .tools
+            .iter()
+            .map(|tool| tool.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            frozen_ids,
+            [
+                "comfyui.krea",
+                "comfyui.get_workflow",
+                "comfyui.list_node_types"
+            ],
+            "every enabled Settings tool and both helpers freeze: {:?}",
+            frozen.warnings
+        );
+        crate::runtime::history::validate_frozen_tool_bindings(&frozen.tools)
+            .expect("a Chat that froze ComfyUI capabilities must stay resumable");
+    }
 
     struct FixtureProvider {
         calls: AtomicUsize,
@@ -4761,7 +4829,7 @@ mod tests {
         fn complete(
             &self,
             _base_url: &str,
-            model: &str,
+            _model: &str,
             _api_key: Option<String>,
             messages: &[ConversationMessage],
         ) -> Result<ProviderCompletion, String> {
@@ -4772,8 +4840,21 @@ mod tests {
                 text: format!("fixture: {prompt}"),
                 input_units: 3,
                 output_units: 4,
-                model: model.into(),
+                model: _model.to_owned(),
             })
+        }
+
+        fn complete_text(
+            &self,
+            _kind: &str,
+            _base_url: &str,
+            _model: &str,
+            _api_key: Option<String>,
+            _request_timeout: Duration,
+            _messages: &[(String, String)],
+            _parameters: std::collections::BTreeMap<String, serde_json::Value>,
+        ) -> Result<ProviderCompletion, String> {
+            Err("the fixture provider does not implement native completions".into())
         }
 
         fn discover_models(
@@ -9287,17 +9368,17 @@ mod tests {
     fn installing_and_removing_a_plugin_keeps_the_saved_document_consistent() {
         let root = TempDir::new().unwrap();
         let package = TempDir::new().unwrap();
-        let source = package.path().join("comfyui-bridge");
+        let source = package.path().join("example");
         fs::create_dir_all(&source).unwrap();
         fs::write(
             source.join("tool-plugin.json"),
             serde_json::to_vec(&json!({
                 "schemaVersion": 1,
-                "id": "plugin.comfyui-bridge",
-                "name": "ComfyUI bridge",
+                "id": "plugin.example",
+                "name": "Example plugin",
                 "version": "1.0.0",
                 "execution": {"transport": "stdio", "command": "python", "args": ["bridge.py"], "env": []},
-                "tools": [{"name": "comfyui_status", "description": "Status", "inputSchema": {"type": "object"}, "enabled": true}]
+                "tools": [{"name": "example_status", "description": "Status", "inputSchema": {"type": "object"}, "enabled": true}]
             }))
             .unwrap(),
         )
@@ -9315,7 +9396,7 @@ mod tests {
             .as_ref()
             .expect("sourced server")
             .clone();
-        assert_eq!(server.id, "plugin.comfyui-bridge");
+        assert_eq!(server.id, "plugin.example");
         assert!(!server.enabled, "a copied-in plugin is sourced disabled");
 
         let mut settings = installed.settings.clone();
@@ -9329,7 +9410,7 @@ mod tests {
             .expect("save the added plugin");
 
         let after = runtime
-            .settings_v2_remove_tool_plugin("plugin.comfyui-bridge")
+            .settings_v2_remove_tool_plugin("plugin.example")
             .expect("remove");
         assert!(after.tool_plugins.is_empty());
         assert!(
@@ -9337,13 +9418,13 @@ mod tests {
                 .settings
                 .mcp_servers
                 .iter()
-                .all(|server| server.id != "plugin.comfyui-bridge"),
+                .all(|server| server.id != "plugin.example"),
             "removing the plugin drops the saved server that referenced it"
         );
         // Removing again is a definite failure, never a silent no-op.
         assert!(
             runtime
-                .settings_v2_remove_tool_plugin("plugin.comfyui-bridge")
+                .settings_v2_remove_tool_plugin("plugin.example")
                 .is_err()
         );
     }

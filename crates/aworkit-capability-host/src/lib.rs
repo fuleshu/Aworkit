@@ -40,6 +40,7 @@
 //! Core-approved, generation-fenced capability execution.
 mod anthropic_messages;
 mod codex_app_server;
+pub mod comfyui;
 pub mod context_compression;
 mod external_agent;
 mod files;
@@ -77,6 +78,12 @@ pub use codex_app_server::{
     CodexAppServerProbeConfigV1, CodexAppServerProbeError, CodexAppServerProbeLimitsV1,
     CodexAppServerProbeResultV1, probe_codex_app_server_v1,
 };
+pub use comfyui::{
+    ComfyUiClient, ComfyUiError, ComfyUiImageRefV1, ComfyUiRunResultV1, ComfyUiValueKindV1,
+    ComfyUiWorkflowInputV1, ComfyUiWorkflowInspectionV1, DEFAULT_COMFYUI_ENDPOINT,
+    MAXIMUM_IMAGE_BYTES, inspect_api_workflow, inspect_api_workflow_with_object_info, is_link_value,
+    validate_comfyui_endpoint,
+};
 pub use external_agent::*;
 pub use files::{
     FileAuthority, FileEditRequestV1, FileEditResultV1, FileEffectDescriptorV1, FileEffectKindV1,
@@ -113,6 +120,7 @@ pub use model_tools::{
     MAX_RETRY_NOTICE_BYTES, ModelAssistantContentV1, ModelProviderContextV1, ModelToolCallV1,
     ModelToolContextV1, ModelToolDefinitionV1, ModelToolDispatchEvidenceV1, ModelToolEventV1,
     ModelToolExchangeV1, ModelToolRequestV1, ModelToolResultV1, bound_model_notice,
+    provider_name_is_valid,
 };
 pub use normalize::{
     CapabilityOutcome, CapabilityOutcomeV1, DispatchEvidenceV1, EffectEvidenceV1,

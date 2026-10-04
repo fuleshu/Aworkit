@@ -43,7 +43,10 @@ pub(super) fn result_images(
     content: &Value,
     failed: bool,
 ) -> Result<Vec<ImageAttachmentV1>, WorkflowPipelineError> {
-    if failed || !matches!(id, READ | SCREENSHOT) {
+    if failed
+        || !(matches!(id, READ | SCREENSHOT)
+            || crate::runtime::comfyui::is_comfyui_capability(id))
+    {
         return Ok(Vec::new());
     }
     let Some(value) = content.get("image") else {

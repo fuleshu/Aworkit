@@ -33,8 +33,8 @@ only. A plugin merely copied in is *sourced*:
 it is listed, turned off, and never run until the user adds it and turns it on.
 Removing a plugin deletes the folder and the saved server that referenced it; a
 running or later workflow is told the plugin is missing and continues. The
-reference plugin is the ComfyUI bridge under `desktop/tool-plugins/comfyui-bridge`,
-a real MCP server that exposes ComfyUI workflows as typed tools.
+reference plugin is the FFmpeg bridge under `desktop/tool-plugins/ffmpeg`,
+a real MCP server that exposes bounded FFmpeg operations as typed tools.
 
 The registry exposes the same tool identity/description/instructions contract
 for native and MCP tools. Agent nodes show one checkbox per MCP server. A saved
@@ -182,9 +182,9 @@ disabled Settings draft. A changed plugin file blocks new probes and runs until
 Save. Loading an update resets the transport to the package declaration and
 keeps matching tools' overrides. The record covers the plugin file, not every
 external dependency or remote service implementation. Existing MCP runtime
-binding and schema checks still apply. The reference ComfyUI bridge plugin
-(`desktop/tool-plugins/comfyui-bridge`) exercises this path end to end and ships
-a dependency-free `test_bridge.py` that drives a protocol-compatible server.
+binding and schema checks still apply. The reference FFmpeg bridge plugin
+(`desktop/tool-plugins/ffmpeg`) exercises this path end to end and ships
+a dependency-free `test_ffmpeg_bridge.py` that drives a protocol-compatible server.
 
 Native plugins are bundled at build time; changing their implementation or
 shipped plugin file requires rebuilding the application. User instruction, limit,

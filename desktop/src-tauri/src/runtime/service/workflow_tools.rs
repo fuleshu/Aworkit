@@ -45,6 +45,7 @@ pub(super) fn freeze_graph_bindings(
             _ => Vec::new(),
         };
         for tool_id in tool_ids {
+            crate::runtime::trace_probe::mark(&format!("freeze_graph_bindings tool {tool_id}"));
             if !seen.insert(tool_id.clone()) {
                 continue;
             }
@@ -92,6 +93,88 @@ pub(super) fn freeze_graph_bindings(
                     tool_snapshot: snapshot,
                     credentials: Vec::new(),
                     definition: Some(definition),
+                });
+                continue;
+            }
+            if crate::runtime::comfyui::is_comfyui_authoring_capability(&tool_id) {
+                // The read-only authoring helpers freeze the endpoint and, for
+                // the workflow reader, the workflow table resolved from
+                // Settings now, so a later Settings edit cannot change what a
+                // running Chat inspects. They share the ComfyUI prefix but are
+                // not Settings-derived workflow tools, so this exact-id test
+                // must come first: the workflow-tool branch below would report
+                // them as unavailable and drop them.
+                let provider_name =
+                    crate::runtime::comfyui::comfyui_authoring_provider_name(&tool_id)
+                        .unwrap_or_default();
+                let snapshot = BuiltInToolConfigurationV2 {
+                    options: Default::default(),
+                    id: tool_id.clone(),
+                    name: provider_name.to_owned(),
+                    enabled: true,
+                    requires_project: false,
+                    credential_bindings: Vec::new(),
+                    configuration: crate::runtime::comfyui::comfyui_authoring_configuration(
+                        &tool_id,
+                        &settings.comfyui.endpoint,
+                        &settings.comfyui.workflow_tools,
+                    ),
+                };
+                let tool_hash = canonical_hash(&snapshot)?;
+                tools.push(FrozenToolBindingV1 {
+                    tool_id: tool_id.clone(),
+                    tool_hash,
+                    tool_snapshot: snapshot,
+                    credentials: Vec::new(),
+                    definition: Some(aworkit_capability_host::ModelToolDefinitionV1 {
+                        capability_id: tool_id.clone(),
+                        name: provider_name.to_owned(),
+                        description: crate::runtime::comfyui::comfyui_authoring_description(
+                            &tool_id,
+                        )
+                        .unwrap_or_default()
+                        .to_owned(),
+                        input_schema: crate::runtime::comfyui::comfyui_authoring_schema(&tool_id),
+                    }),
+                });
+                continue;
+            }
+            if tool_id.starts_with(crate::runtime::comfyui::COMFYUI_CAPABILITY_PREFIX) {
+                // A ComfyUI workflow tool is a native tool whose model-facing
+                // definition is generated from the saved workflow tool. Settings
+                // is the single enable decision, exactly like an MCP function.
+                let Some(native) =
+                    crate::runtime::comfyui::comfyui_native_tool(&settings.comfyui, &tool_id)
+                else {
+                    warnings.push(format!(
+                        "ComfyUI tool '{tool_id}' is unavailable or disabled in Settings"
+                    ));
+                    continue;
+                };
+                let snapshot = BuiltInToolConfigurationV2 {
+                    options: Default::default(),
+                    id: tool_id.clone(),
+                    name: native.name.clone(),
+                    enabled: true,
+                    requires_project: false,
+                    credential_bindings: Vec::new(),
+                    configuration: crate::runtime::comfyui::comfyui_frozen_configuration(
+                        &native.tool,
+                        &settings.comfyui.endpoint,
+                    ),
+                };
+                let tool_hash = canonical_hash(&snapshot)?;
+                tools.push(FrozenToolBindingV1 {
+                    tool_id,
+                    tool_hash,
+                    tool_snapshot: snapshot,
+                    credentials: Vec::new(),
+                    definition: Some(aworkit_capability_host::ModelToolDefinitionV1 {
+                        capability_id: native.capability_id.clone(),
+                        name: native.name.clone(),
+                        description: native.description.clone(),
+                        input_schema: native.input_schema.clone(),
+                    }),
                 });
                 continue;
             }

@@ -22,6 +22,14 @@ import type {
   CredentialDeleteCommand,
   CredentialStoreCommand,
   CredentialStoreReceipt,
+  ComfyUiAutocreateRequest,
+  ComfyUiAutocreateResult,
+  ComfyUiInspectRequest,
+  ComfyUiInspectResult,
+  ComfyUiProbeRequest,
+  ComfyUiProbeResult,
+  ComfyUiStartRequest,
+  ComfyUiStartResult,
   DiscoveredModel,
   ExtensionRegisterCommand,
   ExternalAgentProbeRequest,
@@ -169,9 +177,11 @@ describe("Settings v2 workbench", () => {
     const navigation = screen.getByRole("navigation", {
       name: "Settings sections",
     });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(13);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(14);
     // Plugins are configured in their own section, not under Tools or MCP.
     expect(within(navigation).getByRole("button", { name: /Tool Plugins/ })).toBeVisible();
+    // ComfyUI owns its server connection, workflow tools and parameter authoring.
+    expect(within(navigation).getByRole("button", { name: /ComfyUI/ })).toBeVisible();
     await user.click(within(navigation).getByRole("button", { name: /Approvals/ }));
     await user.selectOptions(screen.getByLabelText("Default approval mode"), "approve_for_me");
     expect(screen.queryByText(/unsupported in this build/i)).toBeNull();
@@ -1531,8 +1541,8 @@ describe("Settings v2 workbench", () => {
     const initial = configuration();
     initial.mcpServers = [
       {
-        id: "plugin.comfyui-bridge",
-        name: "ComfyUI bridge",
+        id: "plugin.example",
+        name: "Example plugin",
         enabled: false,
         autoConnect: false,
         transport: {
@@ -1543,13 +1553,13 @@ describe("Settings v2 workbench", () => {
           env: [],
         },
         plugin: {
-          manifestPath: "/plugins/comfyui-bridge/tool-plugin.json",
+          manifestPath: "/plugins/example/tool-plugin.json",
           version: "1.0.0",
           contentHash: "sha256:abc",
         },
         tools: [
           {
-            name: "comfyui_status",
+            name: "example_status",
             description: "Status",
             inputSchema: { type: "object" },
             enabled: true,
@@ -1571,13 +1581,13 @@ describe("Settings v2 workbench", () => {
     const mcpPanel = document.getElementById("settings-panel-mcp");
     expect(mcpPanel).not.toBeNull();
     // A plugin-backed connection never appears on the general MCP tab.
-    expect(within(mcpPanel!).queryByDisplayValue("ComfyUI bridge")).toBeNull();
+    expect(within(mcpPanel!).queryByDisplayValue("Example plugin")).toBeNull();
 
     await user.click(
       within(navigation).getByRole("button", { name: /Tool Plugins/ }),
     );
     // Its complete configuration, including the MCP connection, is here.
-    expect(screen.getByDisplayValue("ComfyUI bridge")).toBeVisible();
+    expect(screen.getByDisplayValue("Example plugin")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Connect and enable" }),
     ).toBeVisible();
@@ -2076,6 +2086,10 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public readonly projectProbes: ProjectProbeRequest[] = [];
   public readonly toolProbes: ToolProbeRequest[] = [];
   public readonly externalAgentProbes: ExternalAgentProbeRequest[] = [];
+  public readonly comfyuiProbes: ComfyUiProbeRequest[] = [];
+  public readonly comfyuiStarts: ComfyUiStartRequest[] = [];
+  public readonly comfyuiInspections: ComfyUiInspectRequest[] = [];
+  public readonly comfyuiAutocreates: ComfyUiAutocreateRequest[] = [];
   public readonly extensionInspections: string[] = [];
   public readonly extensionRegistrations: ExtensionRegisterCommand[] = [];
   public readonly toolPluginInstalls: string[] = [];
@@ -2451,6 +2465,69 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
       latencyMillis: 9,
       draftFingerprint: request.draftFingerprint,
       message: "Codex App Server handshake completed; 1 model available.",
+    };
+  }
+
+  public async comfyuiProbe(
+    request: ComfyUiProbeRequest,
+  ): Promise<ComfyUiProbeResult> {
+    this.comfyuiProbes.push(structuredClone(request));
+    return {
+      ok: true,
+      message: "ComfyUI is reachable.",
+      endpoint: request.endpoint,
+      version: "0.3.0",
+      latencyMillis: 8,
+      draftFingerprint: request.draftFingerprint,
+    };
+  }
+
+  public async comfyuiStart(
+    request: ComfyUiStartRequest,
+  ): Promise<ComfyUiStartResult> {
+    this.comfyuiStarts.push(structuredClone(request));
+    return {
+      ok: true,
+      message: "ComfyUI started.",
+      endpoint: request.endpoint,
+      processId: 42,
+      logPath: "C:\\logs\\comfyui.log",
+      outputTail: "",
+    };
+  }
+
+  public async comfyuiInspect(
+    request: ComfyUiInspectRequest,
+  ): Promise<ComfyUiInspectResult> {
+    this.comfyuiInspections.push(structuredClone(request));
+    return {
+      ok: true,
+      message: "Workflow inspected.",
+      workflowPath: request.workflowPath,
+      inspection: { nodeCount: 1, inputs: [] },
+    };
+  }
+
+  public async comfyuiAutocreate(
+    request: ComfyUiAutocreateRequest,
+  ): Promise<ComfyUiAutocreateResult> {
+    this.comfyuiAutocreates.push(structuredClone(request));
+    return {
+      ok: true,
+      message: "Parameters proposed.",
+      tool: {
+        id: "image-tool",
+        name: "Image tool",
+        description: "Creates an image.",
+        workflowPath: request.workflowPath,
+        enabled: true,
+        parameters: [],
+      },
+      summary: "One image workflow.",
+      providerId: "provider.local",
+      modelId: "model.chat",
+      inputTokens: 10,
+      outputTokens: 5,
     };
   }
 
@@ -2832,5 +2909,13 @@ function configuration(): SettingsConfigurationV2 {
     chatDefaults: {},
     layout: {},
     desktop: {},
+    comfyui: {
+      endpoint: "http://127.0.0.1:8188/",
+      installPath: null,
+      launchArguments: ["main.py", "--listen", "127.0.0.1"],
+      autoStart: false,
+      workflowFolder: null,
+      workflowTools: [],
+    },
   };
 }

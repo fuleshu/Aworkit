@@ -181,6 +181,16 @@ fn extend_manifest_capability_bindings(
                     vec!["agent".to_owned(), "tool".to_owned()],
                 )?
             }
+            // A ComfyUI workflow tool is dynamic for the same reason: its
+            // descriptor is generated from Settings rather than compiled in.
+            None if crate::runtime::comfyui::is_comfyui_workflow_capability(&tool.capability_id) => {
+                let descriptor = comfyui_tool_descriptor(&tool.capability_id)?;
+                file_tool_capability_binding_with_nodes(
+                    &tool,
+                    &descriptor,
+                    vec!["agent".to_owned(), "tool".to_owned()],
+                )?
+            }
             None => return Err(WorkflowPipelineError::IncompleteEvidence),
         };
         saved.manifest.capability_bindings.push(binding);

@@ -1,20 +1,9 @@
 {
   "collection": "project_memory_notes",
   "data": {
-    "body": "2026-09-28: after an app restart, MCP calls failed for ~8 min with \"no MCP transport peer is installed for this application generation\". Root cause: complete_question in desktop/src-tauri/src/runtime/service.rs staged the answer then resumed the pass without reconnecting the Chat's frozen MCP endpoints — the mirror of the approval path task 155 fixed. A question answered in a new process resumed the Run with no McpToolRuntimeV1 peer for that run id, so every mcp:// call failed in open_frozen until a fresh turn rebuilt its request. Evidence: chat.4ccbad85 spans 3021-3115 (17:46:16-17:46:53) failed right after a question answer; the next fresh turn worked. Fix: self.restore_frozen_mcp(&frozen.context) before accepting that work. Test: answering_a_question_reconnects_the_chats_frozen_mcp_endpoints fails without it, passes with it; 505 lib tests pass; validated live after a restart. Open: a denied approval still resumes without the reconnect.",
-    "created_at": "2026-09-28 16:08:23",
-    "id": 5599223794,
-    "note_id": "mcp-question-path-reconnect-20260928",
-    "operation_id": "mem-mcp-question-path-reconnect-20260928",
-    "project_id": {
-      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
-    },
-    "run_id": "mem-mcp-question-path-reconnect-20260928",
-    "task_id": {
-      "ref": "cca64ef2-ad8f-40f5-aa51-3946ab8610a0"
-    }
+    "id": 5599223794
   },
-  "deleted": false,
+  "deleted": true,
   "identity": "77363b12-d521-4910-af1c-a7e0aee820ab",
   "schemaVersion": 1
 }

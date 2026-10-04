@@ -77,7 +77,7 @@ use super::{
         FileToolAuthorityRuntimeV1, FrozenFileToolAuthorityContextV1, StoredFileToolBindingV1,
         ToolApprovalChallengeV1, WorkflowToolActivityV1, WorkflowToolBindingV1,
         file_tool_capability_binding_with_nodes, file_tool_descriptors, freeze_file_tool_bindings,
-        implied_job_control_ids,
+        comfyui_tool_descriptor, implied_job_control_ids,
         mcp_tool_descriptor,
     },
 };
@@ -1242,6 +1242,7 @@ impl WorkflowExecutionPipeline {
         descriptor: &CapabilityDescriptor,
         existing_run: Option<&PreparedExecutionRecordV1>,
     ) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
+        crate::runtime::trace_probe::mark("pipeline prepare enter");
         let capability_id = stable(protocol.capability_id())?;
         let secret = request
             .provider
@@ -1295,10 +1296,19 @@ impl WorkflowExecutionPipeline {
         };
         let mut dynamic_descriptors = BTreeMap::new();
         for tool in &tool_bindings {
+            crate::runtime::trace_probe::mark(&format!("descriptor loop {}", tool.capability_id));
             if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
                 dynamic_descriptors.insert(
                     tool.internal_id.clone(),
                     mcp_tool_descriptor(&tool.internal_id)?,
+                );
+            } else if crate::runtime::comfyui::is_comfyui_workflow_capability(&tool.capability_id) {
+                // A workflow tool's schema comes from Settings, so its
+                // descriptor is generated for this Run exactly like an MCP
+                // function's and carries authority-binding identity only.
+                dynamic_descriptors.insert(
+                    tool.capability_id.clone(),
+                    comfyui_tool_descriptor(&tool.capability_id)?,
                 );
             }
         }
@@ -1323,6 +1333,7 @@ impl WorkflowExecutionPipeline {
             }
         }
         for tool in &tool_bindings {
+            crate::runtime::trace_probe::mark(&format!("binding loop {}", tool.capability_id));
             let descriptor_key = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
                 &tool.internal_id
             } else {
@@ -3478,10 +3489,13 @@ fn validate_request(
     protocol: ProviderProtocolV1,
     descriptor: &CapabilityDescriptor,
 ) -> Result<(), WorkflowPipelineError> {
+    crate::runtime::trace_probe::mark("validate_request enter");
     validate_v1_executable_catalog(&request.workflow_snapshot).map_err(|error| {
         WorkflowPipelineError::InvalidInput(format!("workflow graph is not executable: {error}"))
     })?;
+    crate::runtime::trace_probe::mark("validate_request catalog ok");
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
+    crate::runtime::trace_probe::mark("validate_request tool bindings ok");
     if request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
         || request.provider.request_timeout_seconds == 0
         || request.provider.request_timeout_seconds > MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1

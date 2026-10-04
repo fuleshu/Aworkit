@@ -96,6 +96,11 @@ pub struct SettingsConfigurationV2 {
     /// default application.
     #[serde(default)]
     pub desktop: DesktopConfigurationV2,
+    /// ComfyUI server, workflow tools and connection preferences. Documents
+    /// written before this section existed load with the conventional local
+    /// endpoint and no workflow tools.
+    #[serde(default)]
+    pub comfyui: super::comfyui::ComfyUiConfigurationV2,
     /// Whether this document has already had the bundled tools enabled by
     /// default. Documents written while bundled tools started disabled are
     /// missing this marker (serde defaults it to `false`), so the first load
@@ -124,6 +129,7 @@ impl Default for SettingsConfigurationV2 {
             layout: LayoutConfigurationV2::default(),
             subagents: SubagentViewPreferenceV1::default(),
             desktop: DesktopConfigurationV2::default(),
+            comfyui: super::comfyui::ComfyUiConfigurationV2::default(),
             // A document this build creates already made the choice.
             tools_defaulted_enabled: true,
         }
@@ -291,6 +297,7 @@ impl SettingsConfigurationV2 {
         }
         self.appearance.validate()?;
         self.chat_defaults.validate()?;
+        self.comfyui.validate()?;
         // Layout is written by the desktop host, not the Settings editor. An
         // out-of-range placement must never be able to fail a load: it is
         // discarded, and the window opens at its platform default instead.
@@ -3813,6 +3820,7 @@ mod tests {
         assert_eq!(decoded.desktop.editor, None);
     }
 
+    #[test]
     fn external_agent_delegation_defaults_are_optional() {
         let agent = ExternalAgentConfigurationV2 {
             id: "agent.fixture".into(),

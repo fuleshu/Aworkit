@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-04 18:06:55",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "INTENT\n",
+        "Add a machine-generated occupancy line to the durable state block (the goal / task-list / touched-files block in desktop/src-tauri/src/runtime/tool_loop/state_context.rs) so the acting model can see its own measured context occupancy instead of estimating it from conversation length.\n",
+        "\n",
+        "EVIDENCE (recorded chat.07b0ca6e15e6824e2e5642e028395b3882fa3b0d, deepseek-flash, 1,000,000 declared window)\n",
+        "- Nothing in the selection states occupancy: the runtime measures it (span.usage inputTokens, context.checkpoint pressureTokens) and sends none of it.\n",
+        "- The single compaction fired at pressure 798,777 (@19827) against an effective window W = 1,000,000 - 46,480 = 953,520 (trigger 0.8 W = 762,816).\n",
+        "- Post-compaction the next request was 241,440 tokens (@19906); the model was given the checkpoint notice with a <compacted-summary> and carried on correctly.\n",
+        "- Many calls later the model refused. The two calls that carried the refusal were 512,359 and 516,202 input tokens: about 51% of the declared 1,000,000, but 53.7% of the effective window W. Its own words: \"My context is nearly exhausted ... I physically cannot continue much further in this response - I'm at the context limit\" (@26434), and \"I'm at the end of what I can hold in this working context, so I'm stopping at a green checkpoint\" (@26482-26485).\n",
+        "- Its earlier anxiety was recorded as reasoning and passed back to it, so the stale belief was never corrected; the checkpoint preamble even tells it not to acknowledge the compaction.\n",
+        "\n",
+        "WHAT TO BUILD\n",
+        "1. One new generated part in the state block, produced by the same code that computes the compaction trigger, never hand-authored: tokens used by this request, the effective window W, the percentage, where the trigger sits, and what occupancy a compaction leaves (about 25%).\n",
+        "2. The denominator is the frozen effective window W (declared contextWindow minus the model's own output reservation), not the declared window; otherwise the line reproduces the exact error the budget model exists to prevent.\n",
+        "3. Wording states that automatic compaction handles it and that provider rejection is reported, never a silent stop. It is a measured fact with the existing not-an-instruction label and contains no directive to stop, wrap up or be brief. An occupancy disclosure that invites self-censoring is worse than none.\n",
+        "4. It is a notice: it must never terminate an Agent node and must not change any compaction decision.\n",
+        "5. It reuses the state block's semantics: appended at the tail between compactions with the supersede note, and collapsed into one current block by the next compaction. It must not rewrite a mid-context message, because the recorded chat's 98% provider cache hit rate depends on the append-only prefix.\n",
+        "6. A Chat that declares no window gets no invented ratio (omit, or fall back to the legacy byte-pressure guard, matching invariant 6 of the budget model).\n",
+        "\n",
+        "SHAPE FOR THE LINE (agreed with the user, illustrative - the numbers are computed, never hardcoded)\n",
+        "\"Current context occupancy (measured, not an instruction): 520,648 of 953,520 tokens used by this request (55%). Automatic compaction runs at 80% and reduces to about 25%; exceeding the window is reported to you, never a silent stop.\"\n",
+        "- The denominator is the effective window W, so state that number rather than the declared contextWindow (here 1,000,000 - 46,480 reserved). The percentages in this task follow the same rule: the recorded refusal reads about 54% against W, not 51% against the declared window.\n",
+        "- Name the trigger and what it leaves behind, or a model that dislikes compaction starts negotiating at 79%.\n",
+        "- Iterate the wording downward: an occupancy line is a disclosure that can itself become a reason to stop. The line reports; it never instructs the model to slow down, summarize or wrap up.\n",
+        "- Inject it from the same code path as the existing state parts; do not hand-write text in the state block.\n",
+        "\n",
+        "ACCEPTANCE\n",
+        "- Tests pin the arithmetic at 32k / 100k / 262k / 1M, assert the denominator is the effective window, and assert the line follows the frozen trigger rather than a constant.\n",
+        "- A test shows the part is append-only between compactions and that the next compaction consolidates it to one copy.\n",
+        "- A test shows the line's numbers agree with the pressure the compaction actually used: the recorded chat reads about 54% on the turn that refused at 512,359 tokens, and reads the pre-trigger figure at 798,777. A percentage must match the effective-window denominator the line prints.\n",
+        "- The recorded chat is the motivating evidence; its numbers are stated in the tests or task memo rather than recomputed by hand.\n",
+        "\n",
+        "DESIGN BOUNDARIES TO RECONCILE (do not drift)\n",
+        "- The compaction budget specification aworkit.workflow_worker.context_compaction_budget owns W, F and the trigger but explicitly excludes \"how the post-compaction state block is re-injected\". This change makes the state block the reporting surface for those values, so the task must either amend that non-responsibility or state where the occupancy line's authority now lives.\n",
+        "- The state block's contract is currently implied by the compaction modules and aworkit.workflow_worker.context_store, whose tool-continuation clause already requires model prompt prefixes to stay byte-stable across append-only exchanges. The append path is therefore normative, not stylistic.\n",
+        "- aworkit.workflow_worker.model_agent owns request compilation and the rule that every non-terminal condition is reported as a bounded notice; the occupancy line is one more such notice.\n",
+        "- aworkit.workflow_worker.failure_policy bounds the notice; the line must degrade (bound or drop) rather than fail a dispatch."
+      ]
+    },
+    "id": 57225181689,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Report measured context occupancy to the model in the generated state block",
+    "updated_at": "2026-10-04 18:07:54"
+  },
+  "deleted": false,
+  "identity": "162b5ed6-5812-4767-800d-43a7598b83e9",
+  "schemaVersion": 1
+}

@@ -1,0 +1,61 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-04 18:13:09",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "INTENT\n",
+        "A capability warning that says the same thing on every user message must stop being repeated Chat content. Today each distinct warning appears in the conversation as a timeline step, and it is re-emitted on every user message of the Chat, so the user reads the same list again and again. The user wants it as a status-bar notification instead, and only once for each individual warning.\n",
+        "\n",
+        "EVIDENCE (recorded chat.07b0ca6e15e6824e2e5642e028395b3882fa3b0d)\n",
+        "- The user changed the workflow's MCP server settings during the Chat. The Chat kept working but now every new message produces the same list of errors.\n",
+        "- 6 distinct warnings, re-emitted on 7 requests: @22120, @22440, @24204, @24770, @25098, @25617, @26495 - 42 workflow.capability-warning events in total, all identical in text:\n",
+        "  \"workflow binds MCP tool 'mcp://comfyui.bridge/<tool>', which this Chat never connected; start a New Chat to use it\" for comfyui_get_workflow, comfyui_krea_2_turbo_text_to_image_upscaled, comfyui_list_node_types, comfyui_list_workflows, comfyui_run_workflow, comfyui_status.\n",
+        "- Those warnings were the only steady notification of a real condition: the Chat's frozen tool set is 49 tools with zero comfyui entries (context.delegation-scope @8), because a Chat keeps the authority it was frozen with. The condition is correct; repeating it in the conversation is not.\n",
+        "- The warning is not sent to the model: no workflow.capability-warning appears in any context.checkpoint selection of that chat. So removing it from the Chat timeline loses nothing the model reads, and the notification does not replace a model-visible fact.\n",
+        "\n",
+        "WHERE THE REPETITION COMES FROM (verified)\n",
+        "- desktop/src-tauri/src/runtime/service/current_configuration.rs (freeze_current_tools, ~line 95-123) re-derives the bound tool ids from the workflow document on every pass and returns the warning for each mcp:// binding not present in the frozen set. workflow_capabilities::warn already deduplicates identical strings within one document.\n",
+        "- desktop/src-tauri/src/runtime/run_events.rs (capability_warnings, ~line 109-116) publishes one workflow.capability-warning per warning on every pass, so the dedup inside the document does not survive to the next user message.\n",
+        "- desktop/src-tauri/src/runtime/service.rs (~1255) and graph_pass.rs (~435) carry the warnings for the pass.\n",
+        "- desktop/src/chat/activityProjection.ts:446 renders it as a Chat timeline step: kind \"step\", title \"Unavailable capability\", status \"warning\". That projection is what makes it conversation content.\n",
+        "\n",
+        "REQUIRED CHANGE\n",
+        "1. Deduplicate by distinct warning per Chat, durably, not just within one document or one process. The existing per-stream helper RunEventStream::context_advisory_once (run_events.rs ~133-160) already implements \"a persistent condition is worth saying once, not on every turn; a cleared condition re-arms\" for compaction advisories, and is the intended pattern. Note its current shape keeps only the last body, so it is insufficient for 6 independent warnings: use one condition key per distinct warning (or a set), so warning 1 and warning 2 do not re-arm each other by alternating.\n",
+        "2. Re-arm honestly: if the condition clears and later returns, it notifies again. A cleared set must not permanently mute a real condition.\n",
+        "3. Stop rendering the warning as Chat timeline content. Remove the workflow.capability-warning branch in activityProjection.ts:446. Keep the event kind as the durable record - it remains the evidence for why a tool is unavailable and stays available in Run details' raw evidence and to context/compression logic.\n",
+        "4. Surface it as a status-bar notification through the existing shell-owned notification service (design element aworkit.desktop_ui.notifications: NotificationPort + DesktopStatusBar + docked details, publisher per feature, NotificationStore owns presentation dedup/ordering/expiry/ack - see docs/design-desktop-notifications-settings-return.md). Follow the existing Chat pattern (desktop/src/chat/useChatErrorNotices.ts): only newly committed events notify, hydration/replay never reopens an old warning, and one notification key per distinct warning message so the list shows each warning once.\n",
+        "5. Severity and lifetime: this is a standing condition of the Chat, not a failure, so \"warning\" severity with a condition lifetime keyed per warning (not a transient toast), unless the frontend pattern makes per-message condition keys unusable - in that case state the chosen lifetime in the task memo.\n",
+        "6. The user-visible text must still say what to do (the existing message already ends with \"start a New Chat to use it\"). Do not drop the actionable part when moving it to the status bar.\n",
+        "7. Do not change the authority rule that produces the warning. A running Chat keeps its frozen tool set; this task changes only where and how often the condition is reported.\n",
+        "\n",
+        "ACCEPTANCE\n",
+        "- A test shows the same distinct warning is published once across many consecutive passes, and that a different warning is not suppressed by it (the alternating-warnings case).\n",
+        "- A test shows the warning is not projected as a Chat timeline item, while the workflow.capability-warning event is still committed and readable as evidence.\n",
+        "- A frontend test shows one status-bar notification per distinct warning, with no new notification when the Chat's event history is reloaded or replayed.\n",
+        "- The notification does not reach the model's context (no new selection content), matching the recorded chat where the warnings never entered the model's context.\n",
+        "\n",
+        "DESIGN BOUNDARIES TO RECONCILE (do not drift)\n",
+        "- The compaction budget specification (aworkit.workflow_worker.context_compaction_budget) requires that a standing condition is published once per distinct body through the run event stream's context_advisory_once, and a cleared condition re-arms. This task extends that same mechanism to capability warnings, so the helper must keep that contract for both callers - do not weaken the advisory dedup to make the warning case easier.\n",
+        "- aworkit.desktop_ui.notifications owns the presentation contract: the store owns deduplication/ordering/expiry/acknowledgement and feature adapters own relevance. Publishing a capability condition is the feature adapter's job; the store must not learn about workflows.\n",
+        "- aworkit.desktop_ui.conversation currently owns the projection that renders the warning as a step. Removing that branch narrows its scope; the durable event and Run details evidence must stay intact."
+      ]
+    },
+    "id": 58286353735,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Report each distinct capability warning once per Chat as a status-bar notification, not repeated Chat content",
+    "updated_at": "2026-10-04 18:13:09"
+  },
+  "deleted": false,
+  "identity": "b621faea-500d-411f-b4b9-846f0b09736c",
+  "schemaVersion": 1
+}

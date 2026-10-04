@@ -1,5 +1,22 @@
+
+bugs:
+- get stuck when using agents
+- agents dont display correctly
+- chat tab partially covered when agent tabs exisist
+
 todos:
 - figure out if/what python is bundled, default libs?
+
+comfyui integration:
+The choice this leaves
+You're right that "part of Aworkit" and "needs Python installed" sit awkwardly together. Three options, in my order of preference:
+
+Native Rust workflow tool — the ComfyUI workflow becomes a first-class Aworkit tool class in the tool loop (freeze, descriptor, validation, dispatch, approval) calling the Rust ComfyUI client. No Python, no subprocess, no bridge. Largest change, cleanest result, and the honest answer to "make it part of Aworkit".
+Bundle a Python runtime — ship an embedded interpreter and run both the bridge and the existing Python tool through it. Consistent, but adds tens of MB and packaging work, and the Python tool would need to switch to the bundled interpreter too.
+Keep host Python — what exists now; fine for a dev machine, weakest for distribution.
+Which do you want? I'd take option 1 and retire the Python bridge entirely.
+
+
 
 What the code actually does (SummaryProvider in compaction/provider.rs, and the selectedBinding: None in your log):
 

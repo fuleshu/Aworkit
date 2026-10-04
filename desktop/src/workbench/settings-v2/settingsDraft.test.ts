@@ -54,6 +54,15 @@ function configuration(
     chatDefaults: {},
     layout: {},
     desktop: {},
+    comfyui: {
+      endpoint: "http://127.0.0.1:8188/",
+      installPath: null,
+      launchArguments: ["main.py", "--listen", "127.0.0.1"],
+      autoStart: false,
+      workflowFolder: null,
+      workflowTools: [],
+      bridgeServerId: null,
+    },
   } as unknown as SettingsConfigurationV2;
 }
 
@@ -104,40 +113,34 @@ describe("tool plugin settings sections", () => {
     ).toBe("Edited general");
   });
 
-  it("accepts the shipped ComfyUI plugin arguments as secret-free", () => {
-    const comfyui: McpServerConfiguration = {
-      id: "plugin.comfyui-bridge",
-      name: "ComfyUI bridge",
+  it("accepts a plugin's shipped arguments as secret-free", () => {
+    const example: McpServerConfiguration = {
+      id: "plugin.example",
+      name: "Example plugin",
       enabled: false,
       autoConnect: false,
       transport: {
         transport: "stdio",
         command: "python",
-        args: [
-          "bridge.py",
-          "--endpoint",
-          "http://127.0.0.1:8188",
-          "--workflows",
-          "workflows.json",
-        ],
-        cwd: "/plugins/comfyui-bridge",
+        args: ["server.py", "--config", "settings.json"],
+        cwd: "/plugins/example",
         env: [],
       },
       plugin: {
-        manifestPath: "/plugins/comfyui-bridge/tool-plugin.json",
+        manifestPath: "/plugins/example/tool-plugin.json",
         contentHash: "sha256:x",
         version: "1.0.0",
       },
       tools: [
         {
-          name: "comfyui_status",
+          name: "example_status",
           description: "Status",
           inputSchema: { type: "object" },
           enabled: true,
         },
       ],
     };
-    const issues = settingsDraftIssues(configuration([comfyui]), {}).filter(
+    const issues = settingsDraftIssues(configuration([example]), {}).filter(
       (issue) => issue.section === "tool_plugins",
     );
     expect(issues).toEqual([]);

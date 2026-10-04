@@ -65,7 +65,7 @@
         "\n",
         "## Optional skills\n",
         "\n",
-        "A plugin may contribute skill folders under `skills/<name>/SKILL.md`. They use the existing skill format exactly: YAML frontmatter with `name` and `description`, an optional invocation policy, and a Markdown body. A plugin contributes knowledge through the same discovery precedence as every other skill; it does not get to change that precedence. The reference ComfyUI plugin ships one such skill.\n",
+        "A plugin may contribute skill folders under `skills/<name>/SKILL.md`. They use the existing skill format exactly: YAML frontmatter with `name` and `description`, an optional invocation policy, and a Markdown body. A plugin contributes knowledge through the same discovery precedence as every other skill; it does not get to change that precedence. The reference FFmpeg plugin ships one such skill.\n",
         "\n",
         "## Settings, and where a plugin is configured\n",
         "\n",

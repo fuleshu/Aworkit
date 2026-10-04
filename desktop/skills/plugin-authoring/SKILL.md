@@ -146,8 +146,8 @@ Skills contribute knowledge; they do not add tools or authority.
    credentials and functions are all configured in the same section), bind the
    tool to an Agent and call it once end to end.
 
-The reference implementation is `desktop/tool-plugins/comfyui-bridge/`, with a
-dependency-free end-to-end check in its `test_bridge.py`.
+The reference implementation is `desktop/tool-plugins/ffmpeg/`, with a
+dependency-free end-to-end check in its `test_ffmpeg_bridge.py`.
 
 ## 10. Common pitfalls
 

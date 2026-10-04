@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Constraint (outage on 2026-10-04): every SettingsConfigurationV2 section is deny_unknown_fields, so REMOVING a field bricks any profile that already persisted it. The native-ComfyUI task deleted ComfyUiConfigurationV2.bridgeServerId; profiles written by the earlier bridge build then failed `stored settings document is invalid: unknown field bridgeServerId`, so CanonicalDocuments::open failed and every command answered Err. The UI showed only \"Chat projection unavailable\" with no reason. Fixed by keeping the key readable and unrewritten: #[serde(default, skip_serializing)] bridge_server_id, plus two regression tests (runtime/comfyui/settings.rs, runtime/documents.rs). Rule for future edits: never drop a persisted Settings field; read it, ignore it, and let the next write drop it. Surfacing the startup error on that screen is still open.",
+    "created_at": "2026-10-04 18:30:35",
+    "id": 39759150509,
+    "note_id": "handover-settings-document-field-removal",
+    "operation_id": "memory-settings-bridge-field-compat-001",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "run-chat-projection-unavailable-fix",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "e7301fda-37f6-4d5b-a4b3-0e127bdc5a1c",
+  "schemaVersion": 1
+}

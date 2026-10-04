@@ -16,6 +16,9 @@ use aworkit_desktop::presentation::{
 };
 use aworkit_desktop::runtime::{
     CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
+    ComfyUiAutocreateRequestV2, ComfyUiAutocreateResultV2, ComfyUiInspectRequestV2,
+    ComfyUiInspectResultV2, ComfyUiProbeRequestV2, ComfyUiProbeResultV2, ComfyUiStartRequestV2,
+    ComfyUiStartResultV2,
     DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
     ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, PathActionOutcomeV1,
     PathActionRequestV1,
@@ -448,6 +451,70 @@ async fn settings_v2_discover_models(
     })
     .await
     .map_err(|error| format!("model-discovery worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn settings_v2_comfyui_probe(
+    runtime: tauri::State<'_, SharedRuntime>,
+    request: ComfyUiProbeRequestV2,
+) -> Result<ComfyUiProbeResultV2, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
+        Ok(runtime.settings_v2_comfyui_probe(request))
+    })
+    .await
+    .map_err(|error| format!("ComfyUI-probe worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn settings_v2_comfyui_start(
+    runtime: tauri::State<'_, SharedRuntime>,
+    request: ComfyUiStartRequestV2,
+) -> Result<ComfyUiStartResultV2, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
+        Ok(runtime.settings_v2_comfyui_start(request))
+    })
+    .await
+    .map_err(|error| format!("ComfyUI-start worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn settings_v2_comfyui_inspect(
+    runtime: tauri::State<'_, SharedRuntime>,
+    request: ComfyUiInspectRequestV2,
+) -> Result<ComfyUiInspectResultV2, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?;
+        Ok(runtime.settings_v2_comfyui_inspect(request))
+    })
+    .await
+    .map_err(|error| format!("ComfyUI-inspect worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn settings_v2_comfyui_autocreate(
+    runtime: tauri::State<'_, SharedRuntime>,
+    request: ComfyUiAutocreateRequestV2,
+) -> Result<ComfyUiAutocreateResultV2, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock is unavailable".to_owned())?
+            .settings_v2_comfyui_autocreate(request)
+    })
+    .await
+    .map_err(|error| format!("ComfyUI-authoring worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -902,6 +969,10 @@ fn main() {
                 settings_v2_delete_credential,
                 settings_v2_test_provider,
                 settings_v2_discover_models,
+                settings_v2_comfyui_probe,
+                settings_v2_comfyui_start,
+                settings_v2_comfyui_inspect,
+                settings_v2_comfyui_autocreate,
                 settings_v2_probe_mcp,
                 settings_v2_probe_external_agent,
                 chat_path_action,

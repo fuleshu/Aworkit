@@ -1,0 +1,16 @@
+{
+  "collection": "task_design_specification_links",
+  "data": {
+    "created_at": "2026-10-04 19:47:37",
+    "design_external_id": "aworkit.workflow_worker.failure_policy",
+    "id": 31814408722,
+    "sort_order": 0,
+    "target_type": "markdown",
+    "task_id": {
+      "ref": "b1ce25a9-e4c8-4724-b826-093819d5e77b"
+    }
+  },
+  "deleted": false,
+  "identity": "98aab991-1f16-44ac-82da-f0982228b738",
+  "schemaVersion": 1
+}

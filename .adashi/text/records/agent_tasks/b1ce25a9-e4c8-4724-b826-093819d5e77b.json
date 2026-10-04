@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-04 19:47:37",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "LIVE INCIDENT (2026-10-04 21:29-21:47). Reproduced twice today on the user's real profile; the app becomes unusable and only a kill+restart clears it.\n",
+        "\n",
+        "SYMPTOM\n",
+        "User sends a message in a new Chat; the Chat commits command.started, chat.started, message.user, run/node spans and three context events (context.delegation-scope, context.compression-scope, context.instructions), then stops. Nothing else is ever committed. The window is unresponsive (\"froze after my input\"). Chat in the report: chat.fc1ff7279b8db4488c302c79fbe8d2089aa78734, workflow.custom.3 (\"DSH Standard\"), first user message at 21:29:40.\n",
+        "\n",
+        "MEASURED EVIDENCE (read-only, live process pid 46812)\n",
+        "- One thread (2844) held ~580 CPU-seconds; process total 1,090 CPU-seconds when killed (~18 minutes of a full core), sustained ~95-173% CPU in every 20 s sample.\n",
+        "- Disk: bursty reads of the history database at 0-202 MB/s, ~26,000 read ops/sec; the main DB file's LastAccessTime tracked the wall clock.\n",
+        "- ZERO writes: the WAL lastWrite was 21:29:43, i.e. the moment the pass started, and never moved again across 18 minutes.\n",
+        "- No capability was ever invoked for that Chat: no rows in aworkit-invocations.sqlite3, no tool.requested, no model_call span, no context.checkpoint, no span.content_delta.\n",
+        "- Timeline: app start 21:28:50 -> adashi-mcp spawned 21:29:39 -> Chat events 21:29:40 -> hot loop from 21:29:41 until killed 21:47.\n",
+        "So the app wedges in the code between the last context source and the model request/context checkpoint, i.e. in agent-node context assembly / request compilation. It is NOT a validation failure and NOT a provider retry (the tier:balanced provider is DeepSeek, provider-health = ready, and a network wait would not pin a core).\n",
+        "\n",
+        "NOT YET NAMED: the exact spinning function. A thread stack sample was denied (OpenThread -> OS error 5 in this shell), the GUI cannot be launched from a non-interactive shell (menu_typography::install panics with \"the underlying handle is not available\"), and profile writes are blocked by the sandbox. Static scanning of the recently changed code found no unbounded loop: provider.rs adds only the Settings utility-completion path; the new ComfyUI loops are all bounded (probe every 1.5 s to a 300 s deadline; queue wait every 750 ms to a 600 s bound); compaction's fit_summary while-loop provably terminates via shrink_summary returning false.\n",
+        "\n",
+        "USER REGRESSION CLAIM (treat as the primary lead)\n",
+        "\"It was working fine before the ComfyUI native rust implementation.\" That is the uncommitted change set: ~1,316 added lines in tracked files plus the untracked desktop/src-tauri/src/runtime/comfyui/**, runtime/service/comfyui.rs, runtime/tool_loop/comfyui_tool.rs and crates/aworkit-capability-host/src/comfyui.rs. Prioritise finding the wedge inside that set.\n",
+        "\n",
+        "CONTRIBUTING PROFILE STATE (must be fixed too, or any scan stays fatal)\n",
+        "- History store: 31.5 GB main + 11.0 GB WAL (freelist 0), 597,589 events, 15 GB of payload.\n",
+        "- 19,241 span.started events = 7.5 GB and 7,681 context.checkpoint events = 7.5 GB: roughly 2 MB of duplicated context per model turn, 15 GB total. 482,471 span.content_delta events. Nothing prunes any of it.\n",
+        "- A `wal_checkpoint(TRUNCATE)` was attempted and refused with \"attempt to write a readonly database\" because profile writes are outside the sandbox workspace; with an 11 GB WAL and a 32 KB wal-index, every read pays wal-index recovery, which is itself a multi-GB read.\n",
+        "\n",
+        "IMMEDIATE MITIGATION THAT WORKED: kill the process. All state is committed (frozen context at session sequence 370, staged command, 10 Chat events); a restart lets the recovery path mark the interrupted run. Do not leave it running: it never recovers on its own.\n",
+        "\n",
+        "WHAT TO DO\n",
+        "1. Reproduce first. Instrument the agent context-assembly and request-compilation stages to append a marker file (a GUI release build has no console; write to %TEMP%), reproduce the wedge, and read the last marker. Then fix the loop/fault and prove it with a test that fails before the change.\n",
+        "2. Apply the failure policy to that pass: a pass that reports nothing and commits nothing must surface to the user and stay interruptible. It must never be able to pin a core silently for minutes.\n",
+        "3. Bound and prune the store: stop writing a full ~1 MB context copy into both context.checkpoint and span.started on every turn, add retention, and make any remaining maintenance pass incremental and off the interactive path (see task #184, P0.3/P2.5).\n",
+        "4. Never scan the whole store from the interactive path; index or scope every history read by chat.\n",
+        "\n",
+        "ACCEPTANCE\n",
+        "- The reported Chat, and a fresh New Chat on workflow.custom.3, both complete a turn on the real profile.\n",
+        "- The instrumented marker proves the pass reaches request compilation and reports progress.\n",
+        "- A regression test drives an agent pass with the same shape (many tool bindings incl. ComfyUI + MCP selections) and fails if it stalls.\n",
+        "- The store stops growing per turn and any maintenance pass is incremental."
+      ]
+    },
+    "id": 63387791540,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "LIVE: an agent pass wedges the app - one core pinned for 18 minutes, no writes, no events, no invocation (chat.fc1ff727)",
+    "updated_at": "2026-10-04 19:47:37"
+  },
+  "deleted": false,
+  "identity": "b1ce25a9-e4c8-4724-b826-093819d5e77b",
+  "schemaVersion": 1
+}

@@ -1876,6 +1876,52 @@ fn decode_stored_frozen_context_record(
     Ok(record)
 }
 
+/// Whether one frozen tool binding is a shape this build can still execute.
+///
+/// A built-in tool is admitted by identity. A dynamic tool — an MCP function or
+/// a ComfyUI capability — is admitted only in the exact shape freeze writes:
+/// it must carry its model-facing definition and the frozen configuration its
+/// dispatcher reads, so a stored record proves what it will run instead of
+/// naming a family this build no longer knows. A new tool family extends this
+/// predicate with its own shape; leaving it out makes every Chat that froze one
+/// unresumable.
+fn frozen_tool_binding_is_executable(tool: &FrozenToolBindingV1) -> bool {
+    if super::documents::builtin_tool_binding_ids().contains(&tool.tool_id) {
+        return true;
+    }
+    if tool.definition.is_none() {
+        return false;
+    }
+    let configuration = &tool.tool_snapshot.configuration;
+    if tool.tool_id.starts_with("mcp://") {
+        return configuration.len()
+            == 2 + usize::from(configuration.contains_key("annotations"))
+            && configuration.get("annotations").is_none_or(|hints| {
+                serde_json::from_value::<aworkit_capability_host::McpToolAnnotationsV1>(
+                    hints.clone(),
+                )
+                .is_ok()
+            })
+            && configuration.contains_key("serverId")
+            && configuration.contains_key("tool");
+    }
+    if crate::runtime::comfyui::is_comfyui_workflow_capability(&tool.tool_id) {
+        // The endpoint, the workflow file and every (node id, input name) pair.
+        return configuration.len() == 3
+            && ["endpoint", "workflowPath", "parameters"]
+                .iter()
+                .all(|key| configuration.contains_key(*key));
+    }
+    if crate::runtime::comfyui::is_comfyui_authoring_capability(&tool.tool_id) {
+        // The endpoint, plus the workflow table the reader resolves.
+        let expected = 1 + usize::from(
+            tool.tool_id == crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
+        );
+        return configuration.len() == expected && configuration.contains_key("endpoint");
+    }
+    false
+}
+
 fn validate_frozen_context_record(
     record: &FrozenChatExecutionRecordV1,
     stored_context_hash: Option<&str>,
@@ -1976,8 +2022,26 @@ fn validate_frozen_context_record(
         }
         super::chat_workspace::validate_chat_workspace(workspace, &context.identity.chat_id)?;
     }
+    validate_frozen_tool_bindings(&context.tools)?;
+    if context
+        .tools
+        .iter()
+        .any(|tool| tool.tool_snapshot.requires_project)
+        && context.project.is_none()
+        && context.chat_workspace.is_none()
+        || !(30_000..=3_600_000).contains(&context.run_deadline_millis)
+    {
+        return Err("stored frozen Chat Agent execution context is invalid".into());
+    }
+    Ok(())
+}
+
+/// Validates the frozen tool set of one stored Chat: unique identity, matching
+/// snapshot hash, credential references that agree with the snapshot, and a
+/// binding shape this build can still execute.
+pub(crate) fn validate_frozen_tool_bindings(tools: &[FrozenToolBindingV1]) -> Result<(), String> {
     let mut tool_ids = BTreeSet::new();
-    if context.tools.iter().any(|tool| {
+    for tool in tools {
         let frozen_refs = tool
             .credentials
             .iter()
@@ -1989,7 +2053,7 @@ fn validate_frozen_context_record(
             .iter()
             .map(|binding| binding.credential_ref.as_str())
             .collect::<BTreeSet<_>>();
-        !tool_ids.insert(tool.tool_id.as_str())
+        if !tool_ids.insert(tool.tool_id.as_str())
             || tool.tool_id != tool.tool_snapshot.id
             || !tool.tool_snapshot.enabled
             || canonical_hash(&tool.tool_snapshot).ok().as_deref() != Some(&tool.tool_hash)
@@ -2002,28 +2066,10 @@ fn validate_frozen_context_record(
                         .iter()
                         .any(|field| field.is_empty() || field.chars().any(char::is_control))
             })
-            || !(super::documents::builtin_tool_binding_ids().contains(&tool.tool_id)
-                || (tool.tool_id.starts_with("mcp://")
-                    && tool.definition.is_some()
-                    && tool.tool_snapshot.configuration.len()
-                        == 2 + usize::from(tool.tool_snapshot.configuration.contains_key("annotations"))
-                    && tool.tool_snapshot.configuration.get("annotations").is_none_or(|hints| {
-                        serde_json::from_value::<aworkit_capability_host::McpToolAnnotationsV1>(hints.clone()).is_ok()
-                    })
-                    && tool.tool_snapshot.configuration.contains_key("serverId")
-                    && tool.tool_snapshot.configuration.contains_key("tool")))
-    }) {
-        return Err("stored frozen Chat tool bindings failed integrity validation".into());
-    }
-    if context
-        .tools
-        .iter()
-        .any(|tool| tool.tool_snapshot.requires_project)
-        && context.project.is_none()
-        && context.chat_workspace.is_none()
-        || !(30_000..=3_600_000).contains(&context.run_deadline_millis)
-    {
-        return Err("stored frozen Chat Agent execution context is invalid".into());
+            || !frozen_tool_binding_is_executable(tool)
+        {
+            return Err("stored frozen Chat tool bindings failed integrity validation".into());
+        }
     }
     Ok(())
 }
@@ -2157,6 +2203,71 @@ mod tests {
             self.delivered.lock().unwrap().push(event);
             Ok(())
         }
+    }
+
+    #[test]
+    fn frozen_comfyui_bindings_stay_executable_in_a_stored_chat() {
+        // A Chat that froze a Settings-derived ComfyUI workflow tool and the two
+        // authoring helpers must stay resumable: refusing the family here made
+        // every message in that Chat fail with a tool-binding integrity error.
+        let binding = |tool_id: &str, configuration: BTreeMap<String, Value>| {
+            let snapshot = BuiltInToolConfigurationV2 {
+                options: Default::default(),
+                id: tool_id.to_owned(),
+                name: "Frozen capability".into(),
+                enabled: true,
+                requires_project: false,
+                credential_bindings: Vec::new(),
+                configuration,
+            };
+            FrozenToolBindingV1 {
+                tool_id: tool_id.to_owned(),
+                tool_hash: canonical_hash(&snapshot).unwrap(),
+                tool_snapshot: snapshot,
+                credentials: Vec::new(),
+                definition: Some(ModelToolDefinitionV1 {
+                    capability_id: tool_id.to_owned(),
+                    name: "frozen_capability".into(),
+                    description: "Frozen for this Chat".into(),
+                    input_schema: json!({"type": "object"}),
+                }),
+            }
+        };
+        let endpoint = || ("endpoint".to_owned(), json!("http://127.0.0.1:8188/"));
+
+        let tools = vec![
+            binding(
+                "comfyui.krea-2-turbo-text-to-image-upscaled",
+                BTreeMap::from([
+                    endpoint(),
+                    ("workflowPath".to_owned(), json!("D:/workflows/krea.json")),
+                    ("parameters".to_owned(), json!([])),
+                ]),
+            ),
+            binding("comfyui.list_node_types", BTreeMap::from([endpoint()])),
+            binding(
+                "comfyui.get_workflow",
+                BTreeMap::from([endpoint(), ("workflows".to_owned(), json!({}))]),
+            ),
+        ];
+        validate_frozen_tool_bindings(&tools)
+            .expect("a Chat that froze ComfyUI capabilities must stay resumable");
+
+        // A shape this build never writes is still refused, with and without the
+        // definition a dynamic binding must carry.
+        let wrong_shape = vec![binding(
+            "comfyui.krea-2-turbo-text-to-image-upscaled",
+            BTreeMap::from([endpoint()]),
+        )];
+        assert!(validate_frozen_tool_bindings(&wrong_shape).is_err());
+        let mut undefined = binding("comfyui.list_node_types", BTreeMap::from([endpoint()]));
+        undefined.definition = None;
+        assert!(validate_frozen_tool_bindings(&[undefined]).is_err());
+
+        // Tampering with the snapshot hash is still caught.
+        let mut tampered = tools;
+        tampered[0].tool_hash = format!("sha256:{}", "b".repeat(64));
+        assert!(validate_frozen_tool_bindings(&tampered).is_err());
     }
 
     #[test]

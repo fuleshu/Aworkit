@@ -15,9 +15,12 @@ mod file_operations;
 mod goal;
 pub(crate) mod question;
 mod image_tools;
+mod comfyui_tool;
 #[path = "compression/runtime.rs"]
 mod result_compression;
 pub(crate) mod skills;
+#[cfg(test)]
+mod comfyui_tests;
 #[cfg(test)]
 mod skills_tests;
 mod state_context;
@@ -267,6 +270,11 @@ pub(crate) fn approval_free_tool_ids() -> BTreeSet<&'static str> {
         WEB_EXTRACT_CAPABILITY_ID,
         SUBAGENT_LIST_CAPABILITY_ID,
         SUBAGENT_CANCEL_CAPABILITY_ID,
+        // The ComfyUI authoring helpers only read the local catalog and a
+        // workflow file the user already configured, so they settle without a
+        // decision. Running a workflow still needs one.
+        crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID,
+        crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
     ])
 }
 
@@ -387,6 +395,13 @@ fn tool_approval_copy(call: &ModelToolCallV1) -> (String, String) {
                 format!("The model wants to run this Python code on the host:\n\n{code}"),
             )
         }
+        id if id.starts_with(crate::runtime::comfyui::COMFYUI_CAPABILITY_PREFIX) => (
+            "Allow ComfyUI workflow run?".to_owned(),
+            format!(
+                "The model wants to run the ComfyUI workflow tool '{}', which generates or edits images with these arguments:\n\n{arguments}",
+                call.capability_id
+            ),
+        ),
         FILE_EDIT_CAPABILITY_ID => (
             "Allow file edit?".to_owned(),
             format!("The model wants to edit a file with these arguments:\n\n{arguments}"),
@@ -624,6 +639,28 @@ pub(crate) enum StoredFileToolLimitV1 {
         tool_name: String,
         schema_hash: String,
     },
+    /// One ComfyUI workflow tool. The endpoint, the workflow file and every
+    /// parameter binding were resolved from Settings before the Run, so a
+    /// later Settings change cannot alter what a running Chat executes.
+    ComfyUi {
+        /// ComfyUI base URL the frozen workflow is submitted to.
+        endpoint: String,
+        /// Absolute path of the frozen API workflow JSON.
+        workflow_path: String,
+        /// Frozen bindings: name, node id, input name, required and choices.
+        parameters: Vec<Value>,
+    },
+    /// One read-only ComfyUI authoring helper. The endpoint was resolved from
+    /// Settings before the Run, together with the workflow table the reader
+    /// resolves ids in, so a later Settings edit cannot change what a running
+    /// Chat inspects.
+    ComfyUiAuthoring {
+        /// ComfyUI base URL the helper reads.
+        endpoint: String,
+        /// Frozen `(workflow tool id -> workflow file path)` table.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        workflows: BTreeMap<String, String>,
+    },
 }
 
 fn subagent_default_maximum_depth() -> u32 {
@@ -765,6 +802,26 @@ pub(crate) fn file_tool_descriptors()
             CapabilityKind::FileRead,
             "workspace_instructions.read",
             json!({"type":"object","properties":{},"additionalProperties":false}),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID,
+            CapabilityKind::Plugin,
+            crate::runtime::comfyui::COMFYUI_AUTHORING_SCOPE,
+            crate::runtime::comfyui::comfyui_authoring_schema(
+                crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID,
+            ),
+            SideEffectClass::ReadOnly,
+            false,
+        ),
+        (
+            crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
+            CapabilityKind::Plugin,
+            crate::runtime::comfyui::COMFYUI_AUTHORING_SCOPE,
+            crate::runtime::comfyui::comfyui_authoring_schema(
+                crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID,
+            ),
             SideEffectClass::ReadOnly,
             false,
         ),
@@ -1029,6 +1086,40 @@ pub(crate) fn mcp_tool_descriptor(
     Ok(descriptor)
 }
 
+/// Builds the per-tool descriptor for one ComfyUI workflow tool.
+///
+/// A workflow tool's schema is derived from Settings, so its descriptor is
+/// generated rather than compiled into the frozen built-in matrix. Like an MCP
+/// function it exists for authority-binding identity only: freeze records its
+/// version and hash in the manifest, and dispatch re-derives and re-checks them
+/// before executing in process. It is therefore never registered in the
+/// capability-host registry.
+pub(crate) fn comfyui_tool_descriptor(
+    capability_id: &str,
+) -> Result<CapabilityDescriptor, WorkflowPipelineError> {
+    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor enter {capability_id}"));
+    let mut descriptor = CapabilityDescriptor::build(
+        capability_id,
+        crate::runtime::comfyui::COMFYUI_ADAPTER_VERSION,
+        CapabilityKind::Plugin,
+        SideEffectClass::NonIdempotent,
+    )
+    .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
+    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor built {capability_id}"));
+    descriptor.guarantees_same_id_deduplication = false;
+    descriptor.supports_cancellation = true;
+    descriptor.allowed_scopes = vec![crate::runtime::comfyui::COMFYUI_RUN_SCOPE.to_owned()];
+    descriptor.requires_workspace = false;
+    descriptor.maximum_concurrency = 4;
+    descriptor.max_input_bytes = MAXIMUM_TOOL_PAYLOAD_BYTES;
+    descriptor.max_output_bytes = MAXIMUM_TOOL_RESULT_BYTES;
+    descriptor
+        .rehash()
+        .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
+    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor done {capability_id}"));
+    Ok(descriptor)
+}
+
 /// One resolved external-agent delegation target, frozen with the Chat.
 ///
 /// Values are secret-free by construction: Settings refuses secret-like STDIO
@@ -1116,9 +1207,14 @@ fn freeze_external_agent(
 pub(crate) fn freeze_file_tool_bindings(
     requested: &[WorkflowToolBindingV1],
 ) -> Result<Vec<StoredFileToolBindingV1>, WorkflowPipelineError> {
+    crate::runtime::trace_probe::mark("freeze_file_tool_bindings enter");
     let mut seen = BTreeSet::new();
     let mut bindings = Vec::with_capacity(requested.len());
     for requested in requested {
+        crate::runtime::trace_probe::mark(&format!(
+            "freeze_file_tool_bindings tool {}",
+            requested.capability_id
+        ));
         if !seen.insert(requested.capability_id.as_str()) {
             return Err(invalid_tool("duplicate tool binding"));
         }
@@ -1399,6 +1495,13 @@ pub(crate) fn freeze_file_tool_bindings(
             "subagent_list" | "subagent_message" | "subagent_cancel" => {
                 subagent::freeze_control(&requested.capability_id, requested)?
             }
+            crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID
+            | crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID => {
+                freeze_comfyui_authoring(requested)?
+            }
+            id if crate::runtime::comfyui::is_comfyui_workflow_capability(id) => {
+                freeze_comfyui_binding(requested)?
+            }
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => freeze_mcp_binding(requested)?,
             _ => return Err(invalid_tool("tool binding has no installed native adapter")),
         };
@@ -1465,11 +1568,138 @@ pub(crate) fn freeze_file_tool_bindings(
     Ok(bindings)
 }
 
+/// Freezes one read-only ComfyUI authoring helper.
+///
+/// The frozen configuration carries the endpoint the helper reads and, for the
+/// workflow reader, the exact workflow table resolved from Settings. The
+/// model-facing definition travels in the binding exactly like an MCP function,
+/// so the generated schema cannot drift from what the model is told.
+fn freeze_comfyui_authoring(
+    requested: &WorkflowToolBindingV1,
+) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
+    let capability_id = requested.capability_id.as_str();
+    let provider_name = crate::runtime::comfyui::comfyui_authoring_provider_name(capability_id)
+        .ok_or_else(|| invalid_tool("unknown ComfyUI authoring capability"))?
+        .to_owned();
+    let object = requested
+        .configuration
+        .as_object()
+        .ok_or_else(|| invalid_tool("ComfyUI authoring configuration must be an object"))?;
+    let mut allowed = BTreeSet::from(["endpoint"]);
+    if capability_id == crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID {
+        allowed.insert("workflows");
+    }
+    if object.keys().map(String::as_str).collect::<BTreeSet<_>>() != allowed {
+        return Err(invalid_tool(
+            "ComfyUI authoring configuration accepts endpoint and, for the workflow reader, workflows",
+        ));
+    }
+    let endpoint = object
+        .get("endpoint")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_tool("ComfyUI authoring endpoint is missing"))?
+        .to_owned();
+    let mut workflows = BTreeMap::new();
+    if let Some(table) = object.get("workflows") {
+        let table = table
+            .as_object()
+            .ok_or_else(|| invalid_tool("ComfyUI workflow table must be an object"))?;
+        if table.len() > 256 {
+            return Err(invalid_tool("ComfyUI workflow table is too large"));
+        }
+        for (id, path) in table {
+            let path = path
+                .as_str()
+                .filter(|value| !value.trim().is_empty() && !value.contains('\0'))
+                .ok_or_else(|| invalid_tool("ComfyUI workflow path is missing"))?;
+            workflows.insert(id.clone(), path.to_owned());
+        }
+    }
+    let definition = requested
+        .definition
+        .clone()
+        .ok_or_else(|| invalid_tool("ComfyUI authoring binding needs its generated definition"))?;
+    if definition.capability_id != requested.capability_id {
+        return Err(invalid_tool(
+            "ComfyUI authoring definition capability id does not match the binding",
+        ));
+    }
+    Ok((
+        provider_name,
+        crate::runtime::comfyui::comfyui_authoring_description(capability_id)
+            .unwrap_or_default()
+            .to_owned(),
+        crate::runtime::comfyui::comfyui_authoring_schema(capability_id),
+        StoredFileToolLimitV1::ComfyUiAuthoring { endpoint, workflows },
+    ))
+}
+
 /// Freezes one `mcp://<server>/<tool>` binding. The configuration carries
 /// exactly the two resolution keys; the model-facing name, description, and
 /// schema come from the definition discovered at freeze (or a generated
 /// permissive fallback for callers without discovery). The session layer
 /// enforces the exact discovered schema hash on every call.
+/// Freezes one ComfyUI workflow tool.
+///
+/// The frozen configuration carries the endpoint, the workflow file and every
+/// `(node id, input name)` binding. The model-facing definition travels in the
+/// binding exactly like an MCP function, so the generated schema cannot drift
+/// from what the model is told.
+fn freeze_comfyui_binding(
+    requested: &WorkflowToolBindingV1,
+) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
+    let object = requested
+        .configuration
+        .as_object()
+        .ok_or_else(|| invalid_tool("ComfyUI tool configuration must be an object"))?;
+    let observed = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    if observed != BTreeSet::from(["endpoint", "workflowPath", "parameters"]) {
+        return Err(invalid_tool(
+            "ComfyUI tool configuration accepts endpoint, workflowPath and parameters",
+        ));
+    }
+    let endpoint = object
+        .get("endpoint")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_tool("ComfyUI tool endpoint is missing"))?
+        .to_owned();
+    let workflow_path = object
+        .get("workflowPath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_tool("ComfyUI tool workflow path is missing"))?
+        .to_owned();
+    let parameters = object
+        .get("parameters")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_tool("ComfyUI tool parameters must be an array"))?
+        .clone();
+    if parameters.len() > 128 {
+        return Err(invalid_tool("ComfyUI tool has too many parameters"));
+    }
+    let definition = requested
+        .definition
+        .clone()
+        .ok_or_else(|| invalid_tool("ComfyUI tool binding needs its generated definition"))?;
+    if definition.capability_id != requested.capability_id {
+        return Err(invalid_tool(
+            "ComfyUI tool definition capability id does not match the binding",
+        ));
+    }
+    Ok((
+        definition.name.clone(),
+        definition.description.clone(),
+        definition.input_schema.clone(),
+        StoredFileToolLimitV1::ComfyUi {
+            endpoint,
+            workflow_path,
+            parameters,
+        },
+    ))
+}
+
 fn freeze_mcp_binding(
     requested: &WorkflowToolBindingV1,
 ) -> Result<(String, String, Value, StoredFileToolLimitV1), WorkflowPipelineError> {
@@ -1597,6 +1827,9 @@ pub(crate) fn file_tool_capability_binding_with_nodes(
             SUBAGENT_CAPABILITY_ID => SUBAGENT_ADAPTER_ID,
             id if is_subagent_tool(id) => SUBAGENT_ADAPTER_ID,
             id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_ADAPTER_ID,
+            id if id.starts_with(crate::runtime::comfyui::COMFYUI_CAPABILITY_PREFIX) => {
+                crate::runtime::comfyui::COMFYUI_ADAPTER_ID
+            }
             _ => return Err(WorkflowPipelineError::IncompleteEvidence),
         })?,
         adapter_version: descriptor.version.clone(),
@@ -2805,6 +3038,12 @@ impl ApprovedHostDispatchPortV1 for FileToolHostPortV1 {
         if record.call.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
             return self.dispatch_mcp(record, dispatch);
         }
+        // A ComfyUI workflow descriptor is generated from Settings, so - like an
+        // MCP function - it never enters the frozen registry and dispatch stays
+        // in process, re-deriving and re-checking the frozen identity first.
+        if crate::runtime::comfyui::is_comfyui_workflow_capability(&record.call.capability_id) {
+            return self.dispatch_comfyui(record, dispatch);
+        }
         let descriptor = self
             .runtime
             .descriptors
@@ -3078,6 +3317,112 @@ impl FileToolHostPortV1 {
             .map_err(|_| BrokerError::Unavailable)?;
         Ok(DeliveryAcceptanceV1::Accepted)
     }
+
+    /// Executes one in-process ComfyUI workflow capability.
+    ///
+    /// The descriptor was generated from Settings at freeze time rather than
+    /// compiled into the frozen registry, so the exact frozen identity is
+    /// re-derived here and must match the manifest before the workflow runs.
+    fn dispatch_comfyui(
+        &self,
+        record: ToolInvocationRecordV1,
+        dispatch: &ApprovedDispatchV1,
+    ) -> Result<DeliveryAcceptanceV1, BrokerError> {
+        if record.authority_manifest_id != dispatch.manifest_id
+            || dispatch.payload_hash != record.proposal.payload_hash
+            || dispatch.capability_id != record.proposal.capability_id
+            || canonical_hash(&record.payload).ok().as_deref()
+                != Some(dispatch.payload_hash.as_str())
+            || record.manifest_binding.capability_id != dispatch.capability_id
+            || !dispatch.lease_ids.is_empty()
+        {
+            return Err(BrokerError::IdentityConflict);
+        }
+        let descriptor = comfyui_tool_descriptor(&record.call.capability_id)
+            .map_err(|_| BrokerError::IdentityConflict)?;
+        if record.manifest_binding.adapter_version != descriptor.version
+            || record.manifest_binding.descriptor_hash != descriptor.version_hash
+        {
+            return Err(BrokerError::IdentityConflict);
+        }
+        if self
+            .runtime
+            .projects
+            .revalidate_workspace_v1(&record.workspace)
+            .is_err()
+            || revalidate_optional_branch(&record.workspace, record.project_branch.as_deref())
+                .is_err()
+        {
+            return Ok(DeliveryAcceptanceV1::RejectedDefinitelyNotStarted);
+        }
+        if self
+            .runtime
+            .records
+            .outcome(&dispatch.invocation_id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return Ok(DeliveryAcceptanceV1::AlreadyAccepted);
+        }
+        let envelope = ApprovedInvocationEnvelopeV1 {
+            schema_version: SchemaVersion::V1,
+            invocation_id: dispatch.invocation_id.clone(),
+            decision_id: dispatch.invocation_id.clone(),
+            host_generation: self.runtime.generation,
+            capability_id: record.call.capability_id.clone(),
+            adapter_version: descriptor.version.clone(),
+            binding_hash: descriptor.version_hash.clone(),
+            extension: None,
+            required_isolation_profile: descriptor.required_isolation.clone(),
+            kind: descriptor.kind,
+            enforced_scopes: vec![crate::runtime::comfyui::COMFYUI_RUN_SCOPE.to_owned()],
+            deadline_epoch_millis: record.deadline_epoch_millis,
+            cancellation_token: digest_id("cancel.comfyui", dispatch.invocation_id.as_str())
+                .map_err(|_| BrokerError::Unavailable)?,
+            lease_handles: Vec::new(),
+            max_output_bytes: MAXIMUM_TOOL_RESULT_BYTES,
+            payload: record.payload.clone(),
+            core_authentication_tag: String::new(),
+        };
+        let dispatcher = FileToolDispatcherV1 {
+            projects: self.runtime.projects.clone(),
+            records: self.runtime.records.clone(),
+            web: self.runtime.web.clone(),
+            runtime: self.runtime.clone(),
+            context: self.context.clone(),
+            run_events: self.run_events.clone(),
+            record,
+            secret_client: ToolSecretLeaseClient {
+                authority: self.runtime.lease_authority.clone(),
+            },
+        };
+        // A Run cancellation aborts the in-flight queue wait instead of leaving
+        // the call to the poll bound; on normal completion the watcher exits.
+        let cancellation = CancellationToken::default();
+        let watcher = {
+            let pass_cancellation = self.context.cancellation.clone();
+            let scoped = cancellation.clone();
+            std::thread::spawn(move || loop {
+                if pass_cancellation.is_cancelled() {
+                    scoped.cancel();
+                    return;
+                }
+                if scoped.is_cancelled() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            })
+        };
+        let outcome = dispatcher.execute(&envelope, &cancellation);
+        cancellation.cancel();
+        let _ = watcher.join();
+        dispatcher
+            .records
+            .record_outcome(&outcome)
+            .map_err(|_| BrokerError::Unavailable)?;
+        Ok(DeliveryAcceptanceV1::Accepted)
+    }
 }
 
 impl FileToolDispatcherV1 {
@@ -3311,6 +3656,17 @@ impl FileToolDispatcherV1 {
                     tool_name,
                     schema_hash,
                 } => self.run_mcp_tool(envelope, server_id, tool_name, schema_hash, cancellation),
+                StoredFileToolLimitV1::ComfyUi {
+                    endpoint,
+                    workflow_path,
+                    parameters,
+                } => self.run_comfyui_tool(endpoint, workflow_path, parameters, cancellation),
+                StoredFileToolLimitV1::ComfyUiAuthoring { endpoint, .. } => self
+                    .run_comfyui_authoring(
+                        &self.record.binding.capability_id,
+                        endpoint,
+                        cancellation,
+                    ),
                 StoredFileToolLimitV1::ExternalAgent { .. } => {
                     self.run_external_agent(envelope, cancellation)
                 }
@@ -3530,7 +3886,12 @@ fn shell_program() -> Result<PathBuf, String> {
     stable_executable(candidate, "host shell")
 }
 
-fn python_program() -> Result<PathBuf, String> {
+/// Resolves Aworkit's host Python interpreter: the configured
+/// `AWORKIT_PYTHON_EXECUTABLE`, otherwise `python.exe`/`python3.exe` on `PATH`.
+/// Aworkit does not bundle a Python runtime, so every Python-backed capability
+/// — the Python tool and a locally started ComfyUI server — uses this same
+/// resolution and the same named failure when no interpreter exists.
+pub(crate) fn python_program() -> Result<PathBuf, String> {
     if let Some(configured) = std::env::var_os("AWORKIT_PYTHON_EXECUTABLE") {
         return stable_executable(PathBuf::from(configured), "host Python");
     }
@@ -4092,6 +4453,18 @@ fn validate_call_arguments(
             "cancel" => BTreeSet::from(["childId"]),
             _ => return Err(invalid_tool("unknown subagent control operation")),
         },
+        // A workflow tool's frozen parameter names are the exact inputs it
+        // exposes; validate_comfyui_arguments enforces the required ones.
+        StoredFileToolLimitV1::ComfyUi { parameters, .. } => parameters
+            .iter()
+            .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
+            .collect::<BTreeSet<_>>(),
+        StoredFileToolLimitV1::ComfyUiAuthoring { .. } => match binding.capability_id.as_str() {
+            crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID => {
+                BTreeSet::from(["limit", "search"])
+            }
+            _ => BTreeSet::from(["workflow"]),
+        },
         // MCP argument shapes are server-defined; the frozen validator only
         // bounds the payload. The session layer enforces the exact discovered
         // schema hash before the peer sees the call.
@@ -4163,6 +4536,12 @@ fn validate_call_arguments(
         StoredFileToolLimitV1::ExternalAgent { .. } => {
             // The task is required; the model route overrides are optional.
             observed_keys.is_subset(&expected_keys) && observed_keys.contains("task")
+        }
+        // Workflow parameters are optional unless frozen as required, and the
+        // authoring helpers take an optional search and limit; the typed
+        // validators below enforce every required argument.
+        StoredFileToolLimitV1::ComfyUi { .. } | StoredFileToolLimitV1::ComfyUiAuthoring { .. } => {
+            observed_keys.is_subset(&expected_keys)
         }
         _ => observed_keys == expected_keys,
     };
@@ -4454,6 +4833,12 @@ fn validate_call_arguments(
         }
         // MCP argument payloads were bounded in the shape check above; the
         // server schema is enforced by the session layer at call time.
+        StoredFileToolLimitV1::ComfyUi { parameters, .. } => {
+            validate_comfyui_arguments(parameters, object)?;
+        }
+        StoredFileToolLimitV1::ComfyUiAuthoring { .. } => {
+            validate_comfyui_authoring_arguments(&binding.capability_id, object)?;
+        }
         StoredFileToolLimitV1::Mcp { .. } => {}
     }
     Ok(())
@@ -4472,6 +4857,119 @@ fn validate_mcp_arguments(arguments: &Value) -> Result<(), WorkflowPipelineError
     }
     if object.values().any(Value::is_null) {
         return Err(invalid_tool("MCP tool arguments must not contain null"));
+    }
+    Ok(())
+}
+
+/// Validates one ComfyUI call against the parameter bindings frozen with it.
+///
+/// The frozen bindings are the exact inputs the workflow exposes, so an
+/// undeclared key, a missing required value, a null, a wrong JSON type or a
+/// value outside a reported choice set is refused before ComfyUI sees it.
+fn validate_comfyui_arguments(
+    parameters: &[Value],
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), WorkflowPipelineError> {
+    let mut known = BTreeSet::new();
+    for parameter in parameters {
+        let name = parameter
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_tool("ComfyUI parameter binding is missing its name"))?;
+        known.insert(name.to_owned());
+    }
+    if let Some(unknown) = object.keys().find(|key| !known.contains(*key)) {
+        return Err(invalid_tool(&format!(
+            "ComfyUI tool does not accept the argument '{unknown}'"
+        )));
+    }
+    for parameter in parameters {
+        let name = parameter
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let required = parameter
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let Some(value) = object.get(name) else {
+            if required {
+                return Err(invalid_tool(&format!(
+                    "ComfyUI tool requires the argument '{name}'"
+                )));
+            }
+            continue;
+        };
+        if value.is_null() {
+            return Err(invalid_tool(&format!(
+                "ComfyUI argument '{name}' must not be null"
+            )));
+        }
+        let kind = parameter
+            .get("valueKind")
+            .and_then(Value::as_str)
+            .unwrap_or("string");
+        let matches_kind = match kind {
+            "string" => value.is_string(),
+            "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+            "number" => value.is_number(),
+            "boolean" => value.is_boolean(),
+            _ => false,
+        };
+        if !matches_kind {
+            return Err(invalid_tool(&format!(
+                "ComfyUI argument '{name}' must be a {kind}"
+            )));
+        }
+        let choices = parameter.get("choices").and_then(Value::as_array);
+        if let Some(choices) = choices {
+            if !choices.is_empty() && !choices.contains(value) {
+                return Err(invalid_tool(&format!(
+                    "ComfyUI argument '{name}' is not one of the workflow's allowed values"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validates one ComfyUI authoring call against the helper's frozen shape.
+///
+/// The two helpers are read-only, so the call has no side effect to bound; the
+/// validator still refuses a malformed search, an out-of-range limit and a
+/// missing or oversized workflow id before the server or the filesystem sees
+/// the call.
+fn validate_comfyui_authoring_arguments(
+    capability_id: &str,
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), WorkflowPipelineError> {
+    match capability_id {
+        crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID => {
+            if object
+                .get("search")
+                .is_some_and(|value| value.as_str().is_none_or(|search| search.len() > 4_096))
+            {
+                return Err(invalid_tool(
+                    "ComfyUI node search must be a string of at most 4096 bytes",
+                ));
+            }
+            if object
+                .get("limit")
+                .is_some_and(|value| value.as_u64().is_none_or(|limit| !(1..=200).contains(&limit)))
+            {
+                return Err(invalid_tool(
+                    "ComfyUI node limit must be an integer from 1 through 200",
+                ));
+            }
+        }
+        crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID => {
+            object
+                .get("workflow")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 128 && !value.contains('\0'))
+                .ok_or_else(|| invalid_tool("ComfyUI workflow id must be a bounded string"))?;
+        }
+        _ => return Err(invalid_tool("unknown ComfyUI authoring capability")),
     }
     Ok(())
 }
@@ -4817,6 +5315,13 @@ fn scope_for(capability_id: &str) -> &'static str {
         id if is_external_agent_tool(id) => SUBAGENT_EXTERNAL_SCOPE,
         id if is_subagent_tool(id) => SUBAGENT_SCOPE,
         id if id.starts_with(MCP_CAPABILITY_PREFIX) => MCP_SCOPE,
+        crate::runtime::comfyui::COMFYUI_NODE_TYPES_CAPABILITY_ID
+        | crate::runtime::comfyui::COMFYUI_GET_WORKFLOW_CAPABILITY_ID => {
+            crate::runtime::comfyui::COMFYUI_AUTHORING_SCOPE
+        }
+        id if crate::runtime::comfyui::is_comfyui_workflow_capability(id) => {
+            crate::runtime::comfyui::COMFYUI_RUN_SCOPE
+        }
         _ => "invalid",
     }
 }
