@@ -1429,10 +1429,22 @@ pre {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
-  /* A textarea taller than its row must scroll, never paint over the toolbar
-     (the permission select, the attachment menu and the send control). */
-  overflow: hidden;
+  /* The field itself must not clip: the toolbar's anchored popovers (the
+     attachment menu, subagents, the task list, the goal and the context
+     details) open upward, past the field's top edge. Only the text row is
+     clipped, by .composer-text below. */
+  overflow: visible;
   padding: 8px;
+}
+/* A textarea taller than its row must scroll or be clipped here, never paint
+   over the toolbar (the permission select, the attachment menu and the send
+   control). Clipping the text row rather than the whole field keeps the
+   toolbar's popovers free to open above the composer. */
+.composer-text {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
 }
 .composer-input textarea {
   border: 0;

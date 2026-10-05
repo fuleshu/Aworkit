@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-10-05 15:38:33",
+    "completion_memo": "Root cause: `.composer-input` had `overflow: hidden` (added to stop an over-tall textarea painting over the toolbar), which also clipped every absolutely-positioned popover anchored to controls inside it (attachment menu, subagents, task list, goal, context) at the field's top edge. Fix: wrapped the textarea in a new `.composer-text` grid row that owns the clip, and set `.composer-input` to `overflow: visible`. Popover anchoring is unchanged. Verified: `pnpm check` (tsc) clean; chat vitest 283/286 pass with the 3 failures pre-existing and environment-only (German number locale in cacheUsage; Windows `powershell` vs expected `bash` dialect in ToolCallCard/toolCallPresentation). Reproduced and confirmed the fix in headless Edge with the real styles.css/context.css: with the current CSS, a point just above the field resolves to `context-popover` (painted above the field); forcing `overflow: hidden` back on `.composer-input` makes the same point resolve to `composer-shell` (clipped). Temporary probe files removed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-05 15:37:19",
+    "created_files": "[]",
+    "description": "The composer toolbar's anchored popovers (attachment menu, subagents, task list, goal, context usage) open upward with `bottom: calc(100% + 14px)` from controls inside `.composer-input`. That field had `overflow: hidden` to stop a textarea taller than its row from painting over the toolbar, which also clipped every popover at the field's top edge. Fix: scope the clipping to a new `.composer-text` row that wraps the textarea, and set `.composer-input` to `overflow: visible`, so the toolbar's popovers can open above the composer while the textarea is still clipped.",
+    "id": 69388193239,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix composer control popovers clipped by the Chat input field",
+    "updated_at": "2026-10-05 15:38:33"
+  },
+  "deleted": false,
+  "identity": "d14042df-fb76-4dc3-a295-ab20fc587b90",
+  "schemaVersion": 1
+}

@@ -3,6 +3,10 @@ bugs:
 - get stuck when using agents
 - agents dont display correctly
 - chat tab partially covered when agent tabs exisist
+- auto close of sub agents not working
+- not store empty chat 
+- what about history of removed projects
+- chat scroll improvements - step user entries - to the beginning
 
 todos:
 - figure out if/what python is bundled, default libs?

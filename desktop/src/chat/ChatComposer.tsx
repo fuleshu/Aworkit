@@ -396,29 +396,31 @@ export function ChatComposer({
         </p>
       )}
       <div className="composer-input">
-        <textarea
-          aria-label="Chat input"
-          placeholder="Message Aworkit"
-          disabled={chat.recoveryPending || commandPending}
-          title={
-            recoveryReason ??
-            "Draft text stays local until the trusted core confirms a committed event"
-          }
-          value={state.draft}
-          onCompositionStart={() => edit({ imeComposing: true })}
-          onCompositionEnd={() => edit({ imeComposing: false })}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !state.imeComposing
-            ) {
-              event.preventDefault();
-              void send();
+        <div className="composer-text">
+          <textarea
+            aria-label="Chat input"
+            placeholder="Message Aworkit"
+            disabled={chat.recoveryPending || commandPending}
+            title={
+              recoveryReason ??
+              "Draft text stays local until the trusted core confirms a committed event"
             }
-          }}
-          onChange={(event) => edit({ draft: event.target.value })}
-        />
+            value={state.draft}
+            onCompositionStart={() => edit({ imeComposing: true })}
+            onCompositionEnd={() => edit({ imeComposing: false })}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !state.imeComposing
+              ) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+            onChange={(event) => edit({ draft: event.target.value })}
+          />
+        </div>
         <div className="composer-toolbar">
           <ImageAttachmentMenu
             disabled={chat.recoveryPending || commandPending}
