@@ -18,9 +18,13 @@ export function DataSection({
     <div className="settings-section-stack">
       <p className="section-intro">
         Local SQLite is the only active Chat-history backend in this build.
-        Portable sessions, detailed protocol capture, and automatic retention
-        are shown disabled so saved Settings never promise behavior the runtime
-        does not perform.
+        Retention is bounded here: a Chat keeps the newest snapshot of every
+        context scope and its newest turns automatically, and the History store
+        panel below measures the store and offers the explicit reclaim that
+        returns superseded bytes to the operating system. Portable sessions and
+        detailed protocol capture are shown disabled so saved Settings never
+        promise behavior the runtime does not perform, and no day-based
+        retention setting is composed in this build.
       </p>
       <label className="switch-label" htmlFor="portable-history-capability">
         <input
@@ -64,7 +68,7 @@ export function DataSection({
         <OptionalDaysField
           id="history-retention"
           label="Local history retention"
-          title="Unavailable: automatic local-history deletion is not composed in this build"
+          title="No day-based retention setting: the runtime bounds a Chat on its own by keeping the newest context snapshot and newest turns per scope, and the History store panel in this section performs the explicit reclaim. This field is inactive."
           value={value.localHistoryRetentionDays}
           disabled
         />

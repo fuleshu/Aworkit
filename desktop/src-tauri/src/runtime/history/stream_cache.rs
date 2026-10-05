@@ -112,6 +112,42 @@ impl StreamCache {
         }
         self.head = head;
     }
+
+    /// Applies a retention release to the warm view of the stream.
+    ///
+    /// The store stays the authority. This keeps a released payload from living
+    /// on in memory, and keeps the next append's newest-first scan from finding
+    /// the same payload intact again and deciding the same release twice.
+    pub(super) fn release_payloads(&mut self, released: &[(String, Value)]) {
+        let find = |event_id: &str| {
+            released
+                .iter()
+                .find(|(id, _)| id == event_id)
+                .map(|(_, payload)| payload)
+        };
+        for event in Arc::make_mut(&mut self.decoded.events).iter_mut() {
+            let Some(payload) = find(&event.event_id) else {
+                continue;
+            };
+            let replacement = Event {
+                event_id: event.event_id.clone(),
+                kind: event.kind.clone(),
+                payload: payload.clone(),
+            };
+            *event = Arc::new(replacement);
+        }
+        let Some(envelopes) = &mut self.decoded.envelopes else {
+            return;
+        };
+        for envelope in Arc::make_mut(envelopes).iter_mut() {
+            let Some(payload) = find(&envelope.event_id) else {
+                continue;
+            };
+            let mut replacement = CoreEventEnvelope::clone(envelope);
+            replacement.payload = payload.clone();
+            *envelope = Arc::new(replacement);
+        }
+    }
 }
 
 #[cfg(test)]

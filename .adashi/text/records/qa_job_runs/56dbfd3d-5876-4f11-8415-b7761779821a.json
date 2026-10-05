@@ -1,0 +1,23 @@
+{
+  "collection": "qa_job_runs",
+  "data": {
+    "command_snapshot": "{\"command\":\"cd desktop/src-tauri && HOME=/home/timofl cargo test --lib frozen_record_compat\",\"designSpecificationLinks\":[{\"designExternalId\":\"aworkit.validate_freeze_hardening\",\"id\":399584858,\"qaJobId\":1901020914,\"sortOrder\":0,\"targetType\":\"markdown\",\"title\":\"Validation and freeze: why it keeps breaking, and the ordered fix\"}],\"enabled\":true,\"kind\":\"unit\",\"name\":\"Frozen record compatibility (task 184 P0)\",\"scope\":\"A stored frozen Chat record written by another build still loads with its hashes verified over stored bytes; a tampered value is rejected; one unreadable unrelated record still lets the app open, list Chats and start a turn.\",\"shell\":\"bash\",\"tags\":[\"compatibility\",\"frozen-records\",\"task-184\"],\"taskLinks\":[{\"id\":2963159960,\"number\":184,\"qaJobId\":1901020914,\"sortOrder\":0,\"state\":\"finished\",\"taskId\":62300866276,\"title\":\"Refactor the validate/freeze chain: hash stored bytes, one capability registry, one schema verdict, versioned records (P0 -> P1 -> P2)\"}],\"timeoutSeconds\":600,\"workingDirectory\":\"\"}",
+    "duration_ms": 1,
+    "exit_code": null,
+    "finished_at": "2026-10-05 10:19:13",
+    "id": 1295429533,
+    "lease_expires_at": null,
+    "output": "Failed to start QA command: program not found",
+    "qa_job_id": {
+      "ref": "e1103fd9-bdd3-4971-ae49-5ec9d94d9109"
+    },
+    "qa_run_id": {
+      "ref": "c9b73793-bce0-48b3-a31e-185ad88330ff"
+    },
+    "started_at": "2026-10-05 10:19:07",
+    "status": "failed"
+  },
+  "deleted": false,
+  "identity": "56dbfd3d-5876-4f11-8415-b7761779821a",
+  "schemaVersion": 1
+}

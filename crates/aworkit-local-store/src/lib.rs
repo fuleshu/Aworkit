@@ -80,8 +80,8 @@ pub use extension_inventory::{
     ExtensionInventory, ExtensionInventoryError, ExtensionInventoryMode,
 };
 pub use ledger::{
-    Attempt, Checkpoint, CommitBatch, CommitOutcome, CommitReceipt, Deduplication, Event,
-    LocalHistoryStore, OutboxEntry, PendingOutbox, StoreError,
+    Attempt, CandidateEventV1, Checkpoint, CommitBatch, CommitOutcome, CommitReceipt,
+    Deduplication, Event, LocalHistoryStore, OutboxEntry, PendingOutbox, StoreError,
 };
 pub use portable_journal::{
     PortableJournalError, PortableJournalPhase, PortableJournalRecord, PortableRuntimeJournal,

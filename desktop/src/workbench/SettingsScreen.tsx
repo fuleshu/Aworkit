@@ -31,6 +31,7 @@ import {
   DataSection,
   ProjectsSection,
 } from "./settings-v2/DataProjectsSection";
+import { HistoryStoreSection } from "./settings-v2/HistoryStoreSection";
 import {
   ExtensionsSection,
   ExternalAgentsSection,
@@ -1189,6 +1190,14 @@ export function SettingsScreen({
                   onChange={(data) =>
                     updateRenderedDraft((current) => ({ ...current, data }))
                   }
+                />
+                <HistoryStoreSection
+                  loadStatus={() => port.historyStoreStatus()}
+                  reclaim={() => port.historyReclaim()}
+                  onProgress={(handler) =>
+                    port.onHistoryReclaimProgress(handler)
+                  }
+                  confirm={draftScopedConfirm}
                 />
               </SettingsPanel>
               <SettingsPanel id="projects" selected={section}>

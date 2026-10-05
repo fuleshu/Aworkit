@@ -289,7 +289,120 @@ describe("Run details projection", () => {
     });
     expect(JSON.stringify(view.summary)).toContain("Duration");
   });
+
+  it("states a released request body in the selected call's Input section", () => {
+    const call = item("span.model.1", "model", "Model call 1", 2, {
+      spanId: "span.model.1",
+      status: "completed",
+      metadata: { spanKind: "model_call", hasInput: true, prunedPayload: marker() },
+    });
+    const events = [
+      spanEvent(2, "span.started", "span.model.1", {
+        spanKind: "model_call",
+        hasInput: true,
+        prunedPayload: marker(),
+        createdAt: "1001000",
+      }),
+      spanEvent(3, "span.usage", "span.model.1", {
+        inputTokens: 20,
+        outputTokens: 5,
+        createdAt: "1001002",
+      }),
+      spanEvent(4, "span.completed", "span.model.1", {
+        status: "completed",
+        createdAt: "1001005",
+      }),
+    ];
+
+    const view = projectRunDetails({
+      chat,
+      items: [call],
+      events,
+      records: [],
+      selectedId: call.id,
+    });
+
+    expect(view.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "notice",
+          title: "Input",
+          payload: expect.objectContaining({
+            kind: "model_call_input",
+            bytes: 1_200_000,
+            digestBefore: `sha256:${"b".repeat(64)}`,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      view.sections.some((section) => section.kind === "data" && section.title === "Input"),
+    ).toBe(false);
+    // The call's usage and timing are unaffected by the release.
+    expect(view.summary).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Duration", value: "5.0 s" }),
+      ]),
+    );
+    expect(view.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fields",
+          title: "Model and usage",
+          fields: expect.arrayContaining([
+            { label: "Input tokens", value: "20" },
+            { label: "Output tokens", value: "5" },
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps an intact request body as Input data with no notice", () => {
+    const call = item("span.model.1", "model", "Model call 1", 1, {
+      spanId: "span.model.1",
+      status: "completed",
+      input: { messages: ["exact input"] },
+      metadata: { spanKind: "model_call", hasInput: true },
+    });
+    const view = projectRunDetails({
+      chat,
+      items: [call],
+      events: [
+        spanEvent(1, "span.started", "span.model.1", {
+          spanKind: "model_call",
+          hasInput: true,
+          createdAt: "1000",
+        }),
+      ],
+      records: [],
+      selectedId: call.id,
+    });
+    expect(view.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "data",
+          title: "Input",
+          value: { messages: ["exact input"] },
+        }),
+      ]),
+    );
+    expect(view.sections.some((section) => section.kind === "notice")).toBe(false);
+  });
 });
+
+/** The marker that replaced one model call's compiled request body. */
+function marker(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    kind: "model_call_input",
+    bytes: 1_200_000,
+    digestBefore: `sha256:${"b".repeat(64)}`,
+    prunedAt: "2026-08-03 14:02:11",
+    retainedTurns: 20,
+    reason: "Superseded by newer turns.",
+  };
+}
 
 function item(
   id: string,

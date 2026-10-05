@@ -8,6 +8,7 @@ import {
   type RunDetailsSection,
 } from "./runDetails";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
+import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import { RawJsonView } from "./RawJsonView";
 
 interface RunDetailsInspectorProps {
@@ -135,6 +136,8 @@ function RunDetailsSectionView({
         <p className="run-details-prose">{section.text}</p>
       ) : section.kind === "data" ? (
         <StructuredValue value={section.value} />
+      ) : section.kind === "notice" ? (
+        <ReleasedPayloadNotice payload={section.payload} />
       ) : (
         <RunLog entries={section.entries} onSelect={onSelect} />
       )}

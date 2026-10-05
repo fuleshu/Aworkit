@@ -212,6 +212,70 @@ export const comfyUiAutocreateResultSchema = z
   })
   .strict();
 
+/** One event kind's share of the bytes the local history store holds. */
+const historyPayloadKindSchema = z
+  .object({
+    kind: z.string().min(1),
+    events: z.number().int().nonnegative(),
+    bytes: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/**
+ * What the local history store holds right now. Measured, not estimated, so
+ * Settings can state the retention policy and its current cost.
+ */
+export const historyStoreStatusSchema = z
+  .object({
+    storeBytes: z.number().int().nonnegative(),
+    payloadBytes: z.number().int().nonnegative(),
+    snapshotBytes: z.number().int().nonnegative(),
+    deletedChats: z.number().int().nonnegative(),
+    deletedChatBytes: z.number().int().nonnegative(),
+    /** Delivery records the queue still holds, delivered or not. */
+    outboxRows: z.number().int().nonnegative(),
+    /** How many of those are already delivered: the ones a reclaim removes. */
+    outboxDeliveredRows: z.number().int().nonnegative(),
+    /** The payload bytes every delivery record holds together. */
+    outboxBytes: z.number().int().nonnegative(),
+    retainedTurns: z.number().int().nonnegative(),
+    kinds: z.array(historyPayloadKindSchema),
+  })
+  .strict();
+
+/** What one explicit reclaim pass did to the store. */
+export const historyReclaimReportSchema = z
+  .object({
+    streamsScanned: z.number().int().nonnegative(),
+    payloadsPruned: z.number().int().nonnegative(),
+    payloadBytesReleased: z.number().int().nonnegative(),
+    chatsPurged: z.number().int().nonnegative(),
+    eventsRemoved: z.number().int().nonnegative(),
+    /** Already-delivered delivery records the pass removed outright. */
+    outboxRowsRemoved: z.number().int().nonnegative(),
+    /** The payload bytes those removed delivery records held. */
+    outboxBytesReleased: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/** A reclaim pass plus the store size it moved from and to. */
+export const historyReclaimOutcomeSchema = z
+  .object({
+    report: historyReclaimReportSchema,
+    storeBytesBefore: z.number().int().nonnegative(),
+    storeBytesAfter: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/** The native progress of one running reclaim pass. */
+export const historyReclaimProgressSchema = z
+  .object({
+    phase: z.enum(["releasing", "rewriting"]),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export interface SettingsV2Receipt {
   readonly commandId: string;
   readonly accepted: boolean;
@@ -407,6 +471,18 @@ export type ComfyUiAutocreateResult = z.infer<
   typeof comfyUiAutocreateResultSchema
 >;
 
+export type HistoryStoreStatus = z.infer<typeof historyStoreStatusSchema>;
+
+export type HistoryReclaimReport = z.infer<typeof historyReclaimReportSchema>;
+
+export type HistoryReclaimOutcome = z.infer<
+  typeof historyReclaimOutcomeSchema
+>;
+
+export type HistoryReclaimProgress = z.infer<
+  typeof historyReclaimProgressSchema
+>;
+
 export interface SettingsV2CorePort {
   snapshot(): Promise<SettingsV2Snapshot>;
   commit(command: SettingsV2Commit): Promise<SettingsV2Receipt>;
@@ -436,6 +512,20 @@ export interface SettingsV2CorePort {
   removeToolPlugin(pluginId: string): Promise<SettingsV2Snapshot>;
   /** Reveals the plugin folder in the platform file manager. */
   openToolPluginFolder(): Promise<void>;
+  /** Measures what the local history store holds without changing it. */
+  historyStoreStatus(): Promise<HistoryStoreStatus>;
+  /**
+   * Runs one explicit retention pass. It can take minutes, so the caller
+   * subscribes to `onHistoryReclaimProgress` before invoking it.
+   */
+  historyReclaim(): Promise<HistoryReclaimOutcome>;
+  /**
+   * Subscribes to the running pass's progress, returning its unlisten
+   * function. Progress is a report, never a precondition of the pass.
+   */
+  onHistoryReclaimProgress(
+    handler: (progress: HistoryReclaimProgress) => void,
+  ): Promise<() => void>;
 }
 
 export class TauriSettingsV2CorePort implements SettingsV2CorePort {
@@ -569,6 +659,28 @@ export class TauriSettingsV2CorePort implements SettingsV2CorePort {
 
   public async openToolPluginFolder(): Promise<void> {
     await invoke("settings_v2_open_tool_plugin_folder");
+  }
+
+  public async historyStoreStatus(): Promise<HistoryStoreStatus> {
+    return historyStoreStatusSchema.parse(
+      await invoke("desktop_history_store_status"),
+    );
+  }
+
+  public async historyReclaim(): Promise<HistoryReclaimOutcome> {
+    return historyReclaimOutcomeSchema.parse(
+      await invoke("desktop_history_reclaim"),
+    );
+  }
+
+  public async onHistoryReclaimProgress(
+    handler: (progress: HistoryReclaimProgress) => void,
+  ): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<unknown>("aworkit:history-reclaim", ({ payload }) => {
+      const parsed = historyReclaimProgressSchema.safeParse(payload);
+      if (parsed.success) handler(parsed.data);
+    });
   }
 }
 
@@ -809,6 +921,25 @@ export class PreviewSettingsV2CorePort implements SettingsV2CorePort {
     throw new Error(
       "Opening the plugin folder requires the native desktop runtime; browser Preview opened nothing.",
     );
+  }
+
+  public async historyStoreStatus(): Promise<HistoryStoreStatus> {
+    throw new Error(
+      "Measuring the history store requires the native desktop runtime; browser Preview read no store.",
+    );
+  }
+
+  public async historyReclaim(): Promise<HistoryReclaimOutcome> {
+    throw new Error(
+      "Reclaiming history space requires the native desktop runtime; browser Preview released nothing.",
+    );
+  }
+
+  public async onHistoryReclaimProgress(
+    _handler: (progress: HistoryReclaimProgress) => void,
+  ): Promise<() => void> {
+    // Browser Preview runs no pass, so there is never progress to report.
+    return () => {};
   }
 }
 

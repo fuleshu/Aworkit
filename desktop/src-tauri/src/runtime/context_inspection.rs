@@ -119,7 +119,12 @@ impl ContextDocument {
                     .map_err(|e| format!("Invalid context images: {e}"))?;
             images.extend(refs);
         }
-        images.extend(self.exchanges.iter().flat_map(|e| &e.results).flat_map(|r| r.images.clone()));
+        images.extend(
+            self.exchanges
+                .iter()
+                .flat_map(|e| &e.results)
+                .flat_map(|r| r.images.clone()),
+        );
         // A durable context is never bounded by an image count or a total image
         // size: every image a Chat holds stays in it, and only each image itself
         // is checked here.
@@ -212,15 +217,21 @@ pub(crate) fn model_node<'a>(
 }
 
 /// The latest prompt for a node plus its final answer, or a subsequently saved edit.
+///
+/// History retention releases the bytes of superseded snapshots while keeping
+/// their identity, so the newest recorded context of a node may have been
+/// released. The newest source that still carries its payload is inspected; when
+/// every candidate was released the caller is told exactly that, instead of being
+/// handed a parse error for a payload that is deliberately gone.
 pub(crate) fn select_context(
     events: &[impl std::borrow::Borrow<CoreEventEnvelope>],
     node_id: &str,
 ) -> Result<ContextSelection, String> {
     let events: Vec<&CoreEventEnvelope> = events.iter().map(std::borrow::Borrow::borrow).collect();
-    let source = events
+    let candidates = events
         .iter()
         .rev()
-        .find(|event| {
+        .filter(|event| {
             (matches!(event.kind.as_str(), "context.edited" | "context.checkpoint")
                 && event.payload["nodeId"] == node_id
                 && event.payload["child"].is_null())
@@ -228,7 +239,20 @@ pub(crate) fn select_context(
                     && event.payload["spanKind"] == "model_call"
                     && model_node(event, &events) == Some(node_id))
         })
-        .ok_or("No model context is available for this node.")?;
+        .collect::<Vec<_>>();
+    let source = candidates
+        .iter()
+        .copied()
+        .find(|event| !crate::runtime::history_retention::is_pruned(&event.payload))
+        .ok_or_else(|| {
+            if candidates.is_empty() {
+                "No model context is available for this node.".to_owned()
+            } else {
+                format!(
+                    "The recorded context for node '{node_id}' was released by history retention to bound the Chat's store size. Its calls, results, timing and usage remain in Run details."
+                )
+            }
+        })?;
     let mut document = if matches!(
         source.kind.as_str(),
         "context.edited" | "context.checkpoint"

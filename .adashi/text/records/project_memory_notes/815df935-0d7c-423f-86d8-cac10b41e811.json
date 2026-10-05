@@ -1,0 +1,30 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": {
+      "lines": [
+        "Task #186. The 30.8 GB store held two copies of one history: semantic_events.payload 15.0 GB (checkpoints 7,506 MB + model-call span inputs 7,507 MB) and delivery_outbox 15,523 MB over 573,690 rows, ALL delivered=1, mirroring those same payloads. Nothing ever removed a delivered outbox row.\n",
+        "\n",
+        "Delivered outbox rows are safe to remove:\n",
+        "- pending_outbox_v1 is the only reader (`delivered = 0 AND delivery_cursor > ?`); pipeline.rs does the same.\n",
+        "- verify_durable_commit (which quarantines the store on Partial) re-checks only the batch being committed right now, whose rows are still undelivered.\n",
+        "- insert_outbox takes the next cursor from MAX(delivery_cursor) under a UNIQUE index, so the newest records must stay: purge_delivered_outbox(k) deletes only `delivered = 1 AND delivery_cursor <= MAX - k`.\n",
+        "- mark_outbox_delivered returns UnknownOutbox when the row is gone and drain_committed_outbox propagates that error: OUTBOX_RETAINED_V1 = 512 is the ack grace."
+      ]
+    },
+    "created_at": "2026-10-05 10:13:29",
+    "id": 46143374200,
+    "note_id": "handover-history-retention-outbox",
+    "operation_id": "handover-history-retention-outbox-a3",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "task-186-retention",
+    "task_id": {
+      "ref": "c949eca2-e04f-49fc-9e24-c2486ba8c195"
+    }
+  },
+  "deleted": false,
+  "identity": "815df935-0d7c-423f-86d8-cac10b41e811",
+  "schemaVersion": 1
+}

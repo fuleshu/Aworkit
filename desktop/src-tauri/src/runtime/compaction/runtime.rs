@@ -1,5 +1,5 @@
 //! Trusted admission/persistence adapter for context compaction.
-use super::state_context::{occupancy_notice, StateEmission};
+use super::state_context::{StateEmission, occupancy_notice};
 use super::*;
 use crate::runtime::{
     compaction as c, context_inspection::ContextDocument, model_tool_loop::AgentContextV1,
@@ -176,6 +176,11 @@ impl BoundFileToolAuthorityV1 {
             .rev()
             .find(|e| {
                 e.kind == "context.checkpoint"
+                    // Retention keeps the newest checkpoint of every scope, so a
+                    // tombstone here can only come from a hand-edited store or an
+                    // interrupted reclaim. Skipping it resumes from the newest
+                    // intact snapshot instead of failing the pass.
+                    && !crate::runtime::history_retention::is_pruned(&e.payload)
                     && e.payload["ownerKey"] == self.context_key()
                     && e.payload["nodeId"] == owner.node_id
                     && e.payload["child"] == json!(owner.child)
@@ -1098,8 +1103,12 @@ impl BoundFileToolAuthorityV1 {
                         // The Run's goal, task list and touched files are
                         // re-derived from their records, exactly as a summary
                         // replacement does, so a drop does not lose them either.
-                        self.state_context(&mut replacement_request, StateEmission::Consolidate, None)
-                            .map_err(|error| error.to_string())?;
+                        self.state_context(
+                            &mut replacement_request,
+                            StateEmission::Consolidate,
+                            None,
+                        )
+                        .map_err(|error| error.to_string())?;
                         let checkpoint = self.snapshot_payload(
                             &owner,
                             outer,

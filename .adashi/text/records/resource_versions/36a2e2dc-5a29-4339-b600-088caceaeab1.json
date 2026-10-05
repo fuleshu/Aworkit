@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "aworkit.local_store.history_retention",
+    "resource_kind": "design.markdown",
+    "updated_at": "2026-10-05 10:18:38",
+    "version": 3
+  },
+  "deleted": false,
+  "identity": "36a2e2dc-5a29-4339-b600-088caceaeab1",
+  "schemaVersion": 1
+}

@@ -239,9 +239,7 @@ pub(crate) enum StoredFrozenRecordAdmission {
 /// and then validated as current; a version above this build's opens read-only
 /// with a notice; a version below the oldest one this project ever wrote has no
 /// migration path and is damage rather than evidence.
-pub(crate) fn frozen_record_admission(
-    version: u16,
-) -> Result<StoredFrozenRecordAdmission, String> {
+pub(crate) fn frozen_record_admission(version: u16) -> Result<StoredFrozenRecordAdmission, String> {
     match version {
         FROZEN_RECORD_SCHEMA_VERSION => Ok(StoredFrozenRecordAdmission::Current),
         version if FROZEN_RECORD_MIGRATIONS.contains(&version) => {
@@ -443,7 +441,11 @@ impl ChatHistory {
         Ok(None)
     }
 
-    pub(crate) fn replay_navigation(&self, command_id: &str, command_hash: &str) -> Result<Option<UiCommandReceipt>, String> {
+    pub(crate) fn replay_navigation(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+    ) -> Result<Option<UiCommandReceipt>, String> {
         history_index::replay(&self.store, command_id, command_hash)
     }
 
@@ -560,7 +562,8 @@ impl ChatHistory {
     }
 
     pub(crate) fn command_started(&self, command_id: &str) -> Result<bool, String> {
-        Ok(self.events()?.iter().any(|event| {            event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
+        Ok(self.events()?.iter().any(|event| {
+            event.payload.get("requestId").and_then(Value::as_str) == Some(command_id)
                 && event.kind == "command.started"
         }))
     }
@@ -635,6 +638,12 @@ impl ChatHistory {
                 .mark_outbox_delivered(&pending.outbox_id)
                 .map_err(|error| format!("cannot acknowledge committed Chat event: {error}"))?;
         }
+        // A delivered record is a copy of an event the store already holds, so the
+        // queue is trimmed as it drains. Retention is a bound, not a promise: a
+        // queue that cannot be trimmed keeps its records and stays usable.
+        let _ = self
+            .store
+            .purge_delivered_outbox(super::history_retention::OUTBOX_RETAINED_V1);
         Ok(())
     }
 
@@ -644,7 +653,9 @@ impl ChatHistory {
             .iter()
             .filter_map(|event| match event.kind.as_str() {
                 "message.user" => Some(message_from_event(event.as_ref().clone(), "user")),
-                "message.assistant" => Some(message_from_event(event.as_ref().clone(), "assistant")),
+                "message.assistant" => {
+                    Some(message_from_event(event.as_ref().clone(), "assistant"))
+                }
                 _ => None,
             })
             .collect()
@@ -785,11 +796,14 @@ impl ChatHistory {
         history_head: u64,
     ) -> Result<Option<PendingChatCommandV1>, String> {
         let selected_chat_id = self.selected_identity()?.chat_id;
-        let chat_events = self.store.events_of_kinds(
-            selected_chat_id.as_str(),
-            BRANCH_ID,
-            &SETTLING_COMMAND_FACT_KINDS,
-        ).map_err(|e| e.to_string())?;
+        let chat_events = self
+            .store
+            .events_of_kinds(
+                selected_chat_id.as_str(),
+                BRANCH_ID,
+                &SETTLING_COMMAND_FACT_KINDS,
+            )
+            .map_err(|e| e.to_string())?;
         // Decode the profile-level session aggregate exactly once. The former
         // nested lookup reopened and revalidated every frozen context for each
         // staged command, making every history selection quadratic in the
@@ -875,7 +889,10 @@ impl ChatHistory {
         &self,
         record: PendingChatCommandV1,
     ) -> Result<PendingChatCommandV1, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         validate_pending_command_record(&record)?;
         for event in self.session_events()? {
             if event.kind != "chat.effect-command-staged" {
@@ -886,9 +903,7 @@ impl ChatHistory {
             };
             // Only a record naming this exact command can collide with it, so an
             // unrelated unreadable staged command never has to decode.
-            if value
-                .pointer("/command/commandId")
-                .and_then(Value::as_str)
+            if value.pointer("/command/commandId").and_then(Value::as_str)
                 != Some(record.command.command_id.as_str())
             {
                 continue;
@@ -941,7 +956,10 @@ impl ChatHistory {
         &self,
         context: FrozenChatExecutionContextV1,
     ) -> Result<FrozenChatExecutionRecordV1, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let context_hash = canonical_hash(&context)?;
         let record = FrozenChatExecutionRecordV1 {
             context,
@@ -1083,14 +1101,163 @@ impl ChatHistory {
         history_index::append_summaries(&self.store, summaries)
     }
 
+    /// Rebuilds the database file so pages retention freed return to the OS.
+    ///
+    /// Returns the file size before and after, so the caller reports what was
+    /// actually reclaimed. A vacuum rewrites the whole file, so it is only ever
+    /// reached through an explicit reclaim.
+    pub(crate) fn vacuum_store(&self) -> Result<(u64, u64), String> {
+        self.store.vacuum().map_err(|error| error.to_string())
+    }
+
+    /// The bytes the history database and its write-ahead log occupy.
+    pub(crate) fn file_bytes(&self) -> (u64, u64) {
+        self.store.file_bytes()
+    }
+
+    /// The stored payload, grouped by event kind, largest kind first.
+    pub(crate) fn payload_breakdown(&self) -> Result<Vec<(String, u64, u64)>, String> {
+        self.store
+            .payload_breakdown()
+            .map_err(|error| error.to_string())
+    }
+
+    /// The payload bytes one Chat's events still hold.
+    pub(crate) fn stream_payload_bytes(&self, chat_id: &str) -> Result<u64, String> {
+        self.store
+            .stream_payload_bytes(chat_id)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Rows, delivered rows and payload bytes the delivery queue holds.
+    pub(crate) fn outbox_bytes(&self) -> Result<(u64, u64, u64), String> {
+        self.store.outbox_bytes().map_err(|error| error.to_string())
+    }
+
+    /// The Chats the user deleted whose events are still stored.
+    ///
+    /// They are the only events retention removes rather than releases: the user
+    /// already removed the Chat, and the index keeps its tombstone, so nothing
+    /// disappears from the sidebar.
+    pub(crate) fn deleted_chat_ids(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .index()?
+            .entries
+            .into_iter()
+            .filter(|entry| entry.deleted)
+            .map(|entry| entry.chat_id.to_string())
+            .collect())
+    }
+
+    /// Reclaims store space from superseded snapshots and already-deleted Chats.
+    ///
+    /// The policy lives in [`super::history_retention`]: a Chat keeps the newest
+    /// snapshot of every context scope and its newest turns, so it can still be
+    /// continued from where it ended; the conversation, tool records, usage and
+    /// timing are never a candidate. A Chat the user already deleted keeps its
+    /// index tombstone and loses only its events, so nothing disappears without
+    /// the user having asked for it.
+    ///
+    /// A pass rewrites payloads and a caller follows it with a vacuum, so it is
+    /// deliberately explicit: it never runs at startup or on the interactive
+    /// path.
+    pub(crate) fn reclaim_space(
+        &self,
+        retained_turns: usize,
+        pruned_at: &str,
+        progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<super::history_retention::ReclaimReportV1, String> {
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable".to_owned())?;
+        let deleted = self
+            .deleted_chat_ids()?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let mut report = super::history_retention::ReclaimReportV1::default();
+        let streams = self.store.stream_ids().map_err(|error| error.to_string())?;
+        let total = u64::try_from(streams.len()).unwrap_or(u64::MAX);
+        progress(super::history_retention::RECLAIM_PHASE_RELEASING, 0, total);
+        for (position, chat_id) in streams.into_iter().enumerate() {
+            progress(
+                super::history_retention::RECLAIM_PHASE_RELEASING,
+                u64::try_from(position).unwrap_or(u64::MAX),
+                total,
+            );
+            if deleted.contains(&chat_id) {
+                report.events_removed += self
+                    .store
+                    .delete_stream(&chat_id)
+                    .map_err(|error| error.to_string())?;
+                report.chats_purged += 1;
+                continue;
+            }
+            let candidates = self
+                .store
+                .candidate_events(
+                    &chat_id,
+                    BRANCH_ID,
+                    &super::history_retention::PRUNABLE_KINDS,
+                )
+                .map_err(|error| error.to_string())?;
+            report.streams_scanned += 1;
+            let borrowed = candidates
+                .iter()
+                .map(|event| super::history_retention::RetentionEventV1 {
+                    event_id: &event.event_id,
+                    sequence: event.sequence,
+                    kind: &event.kind,
+                    payload: &event.payload,
+                })
+                .collect::<Vec<_>>();
+            let plan = super::history_retention::plan(&borrowed, retained_turns, pruned_at)?;
+            if plan.is_empty() {
+                continue;
+            }
+            let updates = plan
+                .iter()
+                .map(|pruned| (pruned.event_id.clone(), pruned.payload.clone()))
+                .collect::<Vec<_>>();
+            for pruned in &plan {
+                report.payload_bytes_released += pruned
+                    .payload
+                    .get(super::history_retention::PRUNED_PAYLOAD_FIELD)
+                    .and_then(|marker| marker.get("bytes"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+            }
+            report.payloads_pruned += self
+                .store
+                .prune_payloads(&updates)
+                .map_err(|error| error.to_string())?;
+        }
+        // The delivery queue's already-delivered records are the other half of
+        // the duplication: each one is a copy of an event the store still holds.
+        let (outbox_rows, outbox_bytes) = self
+            .store
+            .purge_delivered_outbox(super::history_retention::OUTBOX_RETAINED_V1)
+            .map_err(|error| error.to_string())?;
+        report.outbox_rows_removed = outbox_rows;
+        report.outbox_bytes_released = outbox_bytes;
+        Ok(report)
+    }
+
     fn copy_legacy_chat(&self, chat_id: &StableId, events: &[Event]) -> Result<(), String> {
         let existing = self.events_for_chat(chat_id)?;
-        if existing.len() > events.len()
-            || existing
-                .iter()
-                .zip(events)
-                .any(|(left, right)| left.kind != right.kind || left.payload != right.payload)
-        {
+        // A released payload is not a divergence. The legacy stream and each Chat
+        // migrated out of it are separate streams with separate retention windows,
+        // so one side can hold a tombstone where the other still holds the bytes it
+        // released. The kind still has to match, and a difference that is not a
+        // release is still the partially migrated history this check exists to
+        // catch — refusing the profile instead of silently rebuilding it.
+        let diverged = existing.iter().zip(events).any(|(left, right)| {
+            left.kind != right.kind
+                || (left.payload != right.payload
+                    && !super::history_retention::is_pruned(&left.payload)
+                    && !super::history_retention::is_pruned(&right.payload))
+        });
+        if existing.len() > events.len() || diverged {
             return Err("partially migrated Chat history differs from its legacy source".into());
         }
         let stream_id = chat_id.to_string();
@@ -1171,7 +1338,10 @@ impl ChatHistory {
         command_hash: &str,
         _expected_head: u64,
     ) -> Result<UiCommandReceipt, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let identity = identity_for_seed(command_id)?;
         let created_at = now_label();
         let summary = ChatSummaryProjection::draft(&created_at);
@@ -1199,7 +1369,10 @@ impl ChatHistory {
         _expected_head: u64,
         chat_id: &str,
     ) -> Result<UiCommandReceipt, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         let target_head = self.head_for_chat(&target.chat_id)?;
         history_index::append_command(
@@ -1222,7 +1395,10 @@ impl ChatHistory {
         chat_id: &str,
         pinned: bool,
     ) -> Result<UiCommandReceipt, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         history_index::append_command(
             &self.store,
@@ -1247,7 +1423,10 @@ impl ChatHistory {
         expected_head: u64,
         chat_id: &str,
     ) -> Result<UiCommandReceipt, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let target = self.require_visible_entry(chat_id)?;
         let index = self.index()?;
         let mut facts = vec![(
@@ -1349,7 +1528,10 @@ impl ChatHistory {
         child: &ChatIdentityV1,
         child_head: u64,
     ) -> Result<UiCommandReceipt, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         self.require_visible_entry(parent_chat_id.as_str())?;
         history_index::append_command(
             &self.store,
@@ -1403,7 +1585,10 @@ impl ChatHistory {
     }
 
     pub(crate) fn snapshot(&self, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
-        let _metadata = self.metadata_lock.lock().map_err(|_| "Chat metadata lock unavailable")?;
+        let _metadata = self
+            .metadata_lock
+            .lock()
+            .map_err(|_| "Chat metadata lock unavailable")?;
         let mut index = self.index()?;
         if let Some(identity) = &self.bound_identity {
             index.selected_chat_id = identity.chat_id.clone();
@@ -1425,7 +1610,11 @@ impl ChatHistory {
         // per call, pinning a core for minutes; task #185.
         let current: Arc<Vec<Arc<Event>>> = Arc::new(
             self.store
-                .events_of_kinds(identity.chat_id.as_str(), BRANCH_ID, &SNAPSHOT_PROJECTION_KINDS)
+                .events_of_kinds(
+                    identity.chat_id.as_str(),
+                    BRANCH_ID,
+                    &SNAPSHOT_PROJECTION_KINDS,
+                )
                 .map_err(|error| error.to_string())?
                 .into_iter()
                 .map(Arc::new)
@@ -1717,11 +1906,16 @@ impl SemanticEventCommitter for ChatHistory {
             }
         };
         self.drain_committed_outbox()?;
+        self.release_displaced_payloads(&chat_id, &committed);
         Ok(committed)
     }
 
     fn committed_events(&self) -> Result<Vec<CoreEventEnvelope>, String> {
-        Ok(self.committed_events_shared()?.iter().map(|e| e.as_ref().clone()).collect())
+        Ok(self
+            .committed_events_shared()?
+            .iter()
+            .map(|e| e.as_ref().clone())
+            .collect())
     }
 
     fn committed_events_shared(&self) -> Result<super::semantic_events::SharedEvents, String> {
@@ -1730,6 +1924,77 @@ impl SemanticEventCommitter for ChatHistory {
 }
 
 impl ChatHistory {
+    /// Releases the payloads an append just displaced from the retained window.
+    ///
+    /// This is the write path's half of
+    /// [`super::history_retention`]: a Chat that keeps working keeps its store
+    /// bounded, one displaced snapshot at a time, instead of waiting for the
+    /// explicit reclaim. Only the windows an append actually moved are examined,
+    /// the scan walks the warm view newest first, and at most
+    /// [`super::history_retention::MAX_RELEASES_PER_APPEND_V1`] payloads are
+    /// released, so an append never digests a whole history.
+    ///
+    /// Retention is a bound, not a promise: a Chat whose bytes cannot be released
+    /// keeps them and stays usable, so a failure here is never reported to the
+    /// caller and can never end a Run
+    /// (`aworkit.workflow_worker.failure_policy`).
+    fn release_displaced_payloads(&self, chat_id: &StableId, committed: &[CoreEventEnvelope]) {
+        use super::history_retention;
+        let triggering = history_retention::triggering_kinds(
+            committed
+                .iter()
+                .map(|event| (event.kind.as_str(), &event.payload)),
+        );
+        if triggering.is_empty() {
+            return;
+        }
+        let mut cache = self.lock_stream();
+        if cache.chat_id.as_deref() != Some(chat_id.as_str()) {
+            return;
+        }
+        // The scan decides a window from what it can see, and it is only allowed to
+        // see a complete view: a view that is missing its newest events could
+        // mistake an old payload for the newest of its scope.
+        if u64::try_from(cache.decoded.events.len()).ok() != Some(cache.head) {
+            return;
+        }
+        let planned = {
+            let borrowed = cache
+                .decoded
+                .events
+                .iter()
+                .enumerate()
+                .map(|(position, event)| history_retention::RetentionEventV1 {
+                    event_id: &event.event_id,
+                    sequence: u64::try_from(position).unwrap_or(u64::MAX),
+                    kind: &event.kind,
+                    payload: &event.payload,
+                })
+                .collect::<Vec<_>>();
+            history_retention::plan_displaced(
+                &borrowed,
+                &triggering,
+                history_retention::RETAINED_TURNS_V1,
+                &now_label(),
+                history_retention::MAX_RELEASES_PER_APPEND_V1,
+            )
+        };
+        let Ok(planned) = planned else {
+            return;
+        };
+        if planned.is_empty() {
+            return;
+        }
+        let released = planned
+            .into_iter()
+            .map(|pruned| (pruned.event_id, pruned.payload))
+            .collect::<Vec<_>>();
+        if self.store.prune_payloads(&released).is_err() {
+            return;
+        }
+        cache.release_payloads(&released);
+    }
+
     /// Validates and persists one semantic batch against the carried ledger.
     ///
     /// The ledger and shared snapshots advance only after durable commit; no
@@ -1742,8 +2007,8 @@ impl ChatHistory {
         drafts: Vec<SemanticEventDraft>,
     ) -> Result<Vec<CoreEventEnvelope>, String> {
         let stream_id = chat_id.as_str().to_owned();
-        let event_count = u64::try_from(drafts.len())
-            .map_err(|_| "bounded semantic batch".to_owned())?;
+        let event_count =
+            u64::try_from(drafts.len()).map_err(|_| "bounded semantic batch".to_owned())?;
         self.refresh_spans(cache, chat_id, expected_head)?;
         apply_span_drafts(&mut cache.spans, &drafts)?;
         let committed = committed_envelopes(&stream_id, expected_head, &drafts);
@@ -1776,7 +2041,10 @@ struct SpanLedgerState {
     parents: BTreeMap<String, String>,
 }
 
-fn validate_span_drafts(history: &[impl std::borrow::Borrow<Event>], drafts: &[SemanticEventDraft]) -> Result<(), String> {
+fn validate_span_drafts(
+    history: &[impl std::borrow::Borrow<Event>],
+    drafts: &[SemanticEventDraft],
+) -> Result<(), String> {
     let mut state = SpanLedgerState::default();
     for event in history.iter().map(std::borrow::Borrow::borrow) {
         observe_existing_span(&mut state, &event.kind, &event.payload);
@@ -2025,7 +2293,8 @@ fn projected_phase(events: &[impl std::borrow::Borrow<Event>]) -> &'static str {
                 .unwrap_or_default();
             !events[index + 1..].iter().any(|resolved| {
                 (resolved.kind == "approval.resolved"
-                    && resolved.payload.get("decisionId").and_then(Value::as_str) == Some(decision_id))
+                    && resolved.payload.get("decisionId").and_then(Value::as_str)
+                        == Some(decision_id))
                     || questions::ends_questions(&resolved.kind)
             })
         });
@@ -2230,8 +2499,7 @@ pub(crate) fn frozen_tool_binding_is_executable(tool: &FrozenToolBindingV1) -> b
     }
     let configuration = &tool.tool_snapshot.configuration;
     if tool.tool_id.starts_with("mcp://") {
-        return configuration.len()
-            == 2 + usize::from(configuration.contains_key("annotations"))
+        return configuration.len() == 2 + usize::from(configuration.contains_key("annotations"))
             && configuration.get("annotations").is_none_or(|hints| {
                 serde_json::from_value::<aworkit_capability_host::McpToolAnnotationsV1>(
                     hints.clone(),
@@ -2373,7 +2641,9 @@ fn validate_frozen_context_record(
     }
     if let Some(workspace) = &context.chat_workspace {
         if context.project.is_some() {
-            return Err("stored Chat cannot bind both a project and a private working folder".into());
+            return Err(
+                "stored Chat cannot bind both a project and a private working folder".into(),
+            );
         }
         super::chat_workspace::validate_chat_workspace(workspace, &context.identity.chat_id)?;
     }
@@ -2464,8 +2734,10 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
                 .is_some_and(|id| StableId::parse(id.to_owned()).is_ok())
                 && super::service::approval_control::parse_question_answer(&command.payload)
                     .is_ok_and(|answer| {
-                        answer.cancelled || answer.option_id.is_some()
-                            || answer.free_text.is_some() || answer.path.is_some()
+                        answer.cancelled
+                            || answer.option_id.is_some()
+                            || answer.free_text.is_some()
+                            || answer.path.is_some()
                     })
         }
         "approval" => {
@@ -2506,10 +2778,12 @@ fn validate_pending_command_record(record: &PendingChatCommandV1) -> Result<(), 
         || command.schema_version != 1
         || StableId::parse(command.command_id.clone()).is_err()
         || !action_shape_is_valid
-        || (!matches!(command.action.as_str(), "approval" | "question" | "compact_context")
-            && input
-                .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
-                .unwrap_or(true))
+        || (!matches!(
+            command.action.as_str(),
+            "approval" | "question" | "compact_context"
+        ) && input
+            .map(|value| value.len() > MAXIMUM_USER_INPUT_BYTES || value.contains('\0'))
+            .unwrap_or(true))
         || !attachments_are_valid
     {
         return Err("stored pending Chat command failed integrity validation".into());
@@ -2565,8 +2839,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    mod question;
     mod frozen_record_compat;
+    mod question;
 
     struct SwitchableEventPort {
         fail: AtomicBool,
@@ -2732,6 +3006,340 @@ mod tests {
                 .map(|event| event.sequence)
                 .collect::<Vec<_>>(),
             ((base + 4)..=grown).collect::<Vec<_>>()
+        );
+    }
+
+    /// Task #186: the legacy migration re-verifies its copy on every open, and a
+    /// released payload is not a divergence. The legacy stream `chat.local` and
+    /// every Chat migrated out of it are separate streams with separate retention
+    /// windows, so one side holds a tombstone where the other still holds the
+    /// bytes it released. Comparing the payload alone refused the whole profile
+    /// with "partially migrated Chat history differs from its legacy source".
+    #[test]
+    fn a_released_payload_does_not_refuse_the_legacy_migration() {
+        use crate::runtime::semantic_events::noop_committed_event_port;
+        use aworkit_local_store::{CommitBatch, Event as StoredEvent, LocalHistoryStore};
+
+        let root = tempfile::TempDir::new().unwrap();
+        let legacy_store =
+            LocalHistoryStore::open(root.path().join("history").join("aworkit.sqlite3")).unwrap();
+        legacy_store
+            .commit(&CommitBatch {
+                chat_id: CHAT_ID.into(),
+                branch_id: BRANCH_ID.into(),
+                expected_head: 0,
+                events: vec![
+                    StoredEvent {
+                        event_id: "legacy.event.1".into(),
+                        kind: "chat.created".into(),
+                        payload: json!({"chatId": "chat.legacy.1", "runId": "run.1"}),
+                    },
+                    StoredEvent {
+                        event_id: "legacy.event.2".into(),
+                        kind: "context.checkpoint".into(),
+                        payload: json!({
+                            "nodeId": "node.1",
+                            "ownerKey": "owner.1",
+                            "snapshot": {"document": "the legacy snapshot"},
+                        }),
+                    },
+                ],
+                attempt: None,
+                checkpoint: None,
+                deduplication: None,
+                outbox: Vec::new(),
+            })
+            .unwrap();
+
+        // The first open migrates the legacy stream into its own Chat.
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let migrated_chat = history
+            .index()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| entry.chat_id.clone())
+            .find(|chat_id| chat_id.as_str() != CHAT_ID)
+            .expect("the legacy stream was migrated into a Chat");
+        assert_eq!(history.events_for_chat(&migrated_chat).unwrap().len(), 2);
+        drop(history);
+
+        // Release the legacy stream's own copy, as a retention pass may.
+        let legacy = legacy_store
+            .events(CHAT_ID, BRANCH_ID)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.kind == "context.checkpoint")
+            .expect("the legacy checkpoint is stored");
+        let released = crate::runtime::history_retention::plan(
+            &[crate::runtime::history_retention::RetentionEventV1 {
+                event_id: &legacy.event_id,
+                sequence: 1,
+                kind: &legacy.kind,
+                payload: &legacy.payload,
+            }],
+            0,
+            "2026-10-05T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(released.len(), 1);
+        legacy_store
+            .prune_payloads(&[(released[0].event_id.clone(), released[0].payload.clone())])
+            .unwrap();
+
+        // Opening again must re-verify the migration and still accept the profile.
+        let reopened =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .expect("a released legacy payload does not refuse the profile");
+        assert_eq!(
+            reopened.events_for_chat(&migrated_chat).unwrap().len(),
+            2,
+            "a tolerated difference must not re-copy or truncate the migrated Chat"
+        );
+    }
+
+    /// Task #186: a Chat that keeps working keeps its store bounded. Every
+    /// append releases the snapshot it just displaced, so a live Chat never has
+    /// to wait for the explicit reclaim — and the window it keeps is untouched.
+    #[test]
+    fn an_append_releases_the_checkpoint_snapshot_it_displaced() {
+        use crate::runtime::history_retention::{
+            PRUNABLE_KINDS, PRUNED_PAYLOAD_FIELD, RETAINED_TURNS_V1, is_pruned,
+        };
+        use crate::runtime::semantic_events::noop_committed_event_port;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let identity = history.selected_identity().unwrap();
+        let appended = RETAINED_TURNS_V1 + 5;
+        for turn in 0..appended {
+            let mut drafts = vec![SemanticEventDraft::new(
+                "context.checkpoint",
+                json!({
+                    "ownerKey": "owner.one",
+                    "nodeId": "node.one",
+                    "snapshot": {"turn": turn, "context": "c".repeat(4_096)},
+                }),
+            )];
+            if turn == 0 {
+                drafts.push(SemanticEventDraft::new(
+                    "message.user",
+                    json!({"createdAt": "1", "body": "hello"}),
+                ));
+            }
+            history.commit(drafts).unwrap();
+        }
+
+        let candidates = history
+            .store
+            .candidate_events(identity.chat_id.as_str(), BRANCH_ID, &PRUNABLE_KINDS)
+            .unwrap();
+        assert_eq!(candidates.len(), appended);
+        for (index, candidate) in candidates.iter().enumerate() {
+            let released = index < appended - RETAINED_TURNS_V1;
+            assert_eq!(
+                is_pruned(&candidate.payload),
+                released,
+                "event {index} of {} must be {}",
+                candidates.len(),
+                if released { "released" } else { "intact" }
+            );
+        }
+
+        // The window itself is byte-identical: only the displaced turns changed.
+        for candidate in &candidates[appended - RETAINED_TURNS_V1..] {
+            assert_eq!(
+                candidate.payload["snapshot"]["context"],
+                json!("c".repeat(4_096))
+            );
+        }
+
+        // A released payload states what it dropped, and keeps everything else.
+        let released = &candidates[0];
+        let marker = &released.payload[PRUNED_PAYLOAD_FIELD];
+        assert!(released.payload.get("snapshot").is_none());
+        assert_eq!(released.payload["ownerKey"], json!("owner.one"));
+        assert_eq!(marker["kind"], json!("context_checkpoint"));
+        assert_eq!(marker["retainedTurns"], json!(RETAINED_TURNS_V1));
+        assert!(marker["bytes"].as_u64().unwrap() > 4_096);
+        assert!(
+            marker["digestBefore"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+
+        // The conversation is not a candidate and never moved.
+        let conversation = history
+            .events_for_chat(&identity.chat_id)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.kind == "message.user")
+            .expect("the user message is still committed");
+        assert_eq!(conversation.payload["body"], json!("hello"));
+    }
+
+    /// The resumption invariant: the newest snapshot of a scope that runs
+    /// alongside another is kept however busy the other scope is. A per-Chat
+    /// window would have released it, and the Chat would lose where it was.
+    #[test]
+    fn a_quiet_scope_keeps_its_newest_snapshot_beside_a_busy_one() {
+        use crate::runtime::history_retention::{PRUNABLE_KINDS, RETAINED_TURNS_V1, is_pruned};
+        use crate::runtime::semantic_events::noop_committed_event_port;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let identity = history.selected_identity().unwrap();
+        let checkpoint = |owner: &str, node: &str| {
+            SemanticEventDraft::new(
+                "context.checkpoint",
+                json!({
+                    "ownerKey": owner,
+                    "nodeId": node,
+                    "snapshot": {"at": "the only one of this scope"},
+                }),
+            )
+        };
+        history
+            .commit(vec![checkpoint("owner.quiet", "node.quiet")])
+            .unwrap();
+        for _ in 0..(RETAINED_TURNS_V1 + 6) {
+            history
+                .commit(vec![checkpoint("owner.busy", "node.busy")])
+                .unwrap();
+        }
+
+        let candidates = history
+            .store
+            .candidate_events(identity.chat_id.as_str(), BRANCH_ID, &PRUNABLE_KINDS)
+            .unwrap();
+        let quiet = candidates
+            .iter()
+            .find(|candidate| candidate.payload["ownerKey"] == json!("owner.quiet"))
+            .expect("the quiet scope's checkpoint is still stored");
+        assert!(
+            !is_pruned(&quiet.payload),
+            "the newest snapshot of a scope is never released"
+        );
+        let busy = candidates
+            .iter()
+            .filter(|candidate| candidate.payload["ownerKey"] == json!("owner.busy"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            busy.iter().filter(|c| !is_pruned(&c.payload)).count(),
+            RETAINED_TURNS_V1
+        );
+    }
+
+    /// A released payload is not released twice: the warm view moves with the
+    /// store, so the next append's scan does not find it intact again.
+    #[test]
+    fn a_released_payload_keeps_its_tombstone_across_later_appends() {
+        use crate::runtime::history_retention::{
+            PRUNABLE_KINDS, PRUNED_PAYLOAD_FIELD, RETAINED_TURNS_V1,
+        };
+        use crate::runtime::semantic_events::noop_committed_event_port;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let identity = history.selected_identity().unwrap();
+        let checkpoint = |turn: usize| {
+            SemanticEventDraft::new(
+                "context.checkpoint",
+                json!({
+                    "ownerKey": "owner.one",
+                    "nodeId": "node.one",
+                    "snapshot": {"turn": turn},
+                }),
+            )
+        };
+        for turn in 0..(RETAINED_TURNS_V1 + 1) {
+            history.commit(vec![checkpoint(turn)]).unwrap();
+        }
+        let first = history
+            .store
+            .candidate_events(identity.chat_id.as_str(), BRANCH_ID, &PRUNABLE_KINDS)
+            .unwrap()
+            .remove(0);
+        let pruned_at = first.payload[PRUNED_PAYLOAD_FIELD]["prunedAt"].clone();
+
+        for turn in 0..3 {
+            history
+                .commit(vec![checkpoint(RETAINED_TURNS_V1 + 1 + turn)])
+                .unwrap();
+        }
+        let again = history
+            .store
+            .candidate_events(identity.chat_id.as_str(), BRANCH_ID, &PRUNABLE_KINDS)
+            .unwrap()
+            .remove(0);
+        assert_eq!(again.event_id, first.event_id);
+        assert_eq!(
+            again.payload[PRUNED_PAYLOAD_FIELD]["prunedAt"], pruned_at,
+            "a released payload must not be rewritten by a later append"
+        );
+    }
+
+    /// The same bound covers the other half of the duplication: the compiled
+    /// model-call input a turn stores beside its checkpoint.
+    #[test]
+    fn an_append_releases_the_model_call_input_it_displaced() {
+        use crate::runtime::history_retention::{
+            PRUNABLE_KINDS, PRUNED_PAYLOAD_FIELD, RETAINED_TURNS_V1, is_pruned,
+        };
+        use crate::runtime::semantic_events::noop_committed_event_port;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let history =
+            ChatHistory::open_with_committed_events(root.path(), noop_committed_event_port())
+                .unwrap();
+        let identity = history.selected_identity().unwrap();
+        let appended = RETAINED_TURNS_V1 + 4;
+        for call in 0..appended {
+            history
+                .commit(vec![SemanticEventDraft::new(
+                    "span.started",
+                    json!({
+                        "spanId": format!("span.model.{call}"),
+                        "spanKind": "model_call",
+                        "hasInput": true,
+                        "input": {"messages": "m".repeat(4_096)},
+                    }),
+                )])
+                .unwrap();
+        }
+
+        let candidates = history
+            .store
+            .candidate_events(identity.chat_id.as_str(), BRANCH_ID, &PRUNABLE_KINDS)
+            .unwrap();
+        assert_eq!(candidates.len(), appended);
+        let released = &candidates[0];
+        assert!(is_pruned(&released.payload));
+        assert!(released.payload.get("input").is_none());
+        assert_eq!(
+            released.payload["hasInput"],
+            json!(true),
+            "the call did carry a request; the marker is what says its bytes are gone"
+        );
+        assert_eq!(
+            released.payload[PRUNED_PAYLOAD_FIELD]["kind"],
+            json!("model_call_input")
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|candidate| !is_pruned(&candidate.payload))
+                .count(),
+            RETAINED_TURNS_V1
         );
     }
 

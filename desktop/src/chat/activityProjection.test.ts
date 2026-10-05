@@ -487,6 +487,66 @@ describe("canonical semantic timeline projection", () => {
       metadata: { capabilityId: "tool.files.read" },
     });
   });
+
+  it("keeps a released model call in place with its usage and its release marker", () => {
+    const released = {
+      schemaVersion: 1,
+      kind: "model_call_input",
+      bytes: 1_200_000,
+      digestBefore: `sha256:${"d".repeat(64)}`,
+      prunedAt: "2026-08-03 14:02:11",
+      retainedTurns: 20,
+      reason: "Superseded by newer turns.",
+    };
+    const items = projectSemanticTimeline([
+      event(1, "message.user", { body: "Ask", createdAt: "1" }),
+      span(2, "span.started", "span.agent.1", {
+        spanKind: "agent_loop",
+        semanticRole: "agent_loop",
+        title: "Agent",
+      }),
+      span(3, "span.started", "span.model.1", {
+        parentSpanId: "span.agent.1",
+        spanKind: "model_call",
+        semanticRole: "model_call",
+        title: "Model call 1",
+        hasInput: true,
+        prunedPayload: released,
+        createdAt: "3",
+      }),
+      span(4, "span.usage", "span.model.1", { inputTokens: 12, outputTokens: 7 }),
+      span(5, "span.completed", "span.model.1", {
+        status: "completed",
+        hasOutput: true,
+        output: [{ kind: "assistant_output", text: "The answer" }],
+      }),
+    ]);
+
+    // The row keeps its place, its identity and its settled lifecycle.
+    expect(items.map((item) => item.id)).toEqual([
+      "event.chat.1",
+      "span.agent.1",
+      "span.model.1",
+    ]);
+    const call = items.find((item) => item.id === "span.model.1");
+    expect(call).toMatchObject({
+      sequence: 3,
+      title: "Model call 1",
+      status: "completed",
+      metadata: {
+        spanKind: "model_call",
+        hasInput: true,
+        prunedPayload: expect.objectContaining({
+          kind: "model_call_input",
+          bytes: 1_200_000,
+        }),
+      },
+    });
+    // Only the released body is absent; state and usage stay authoritative.
+    expect(call?.input).toBeUndefined();
+    expect(call?.output).toEqual([{ kind: "assistant_output", text: "The answer" }]);
+    expect(JSON.stringify(call?.raw)).toContain('"inputTokens":12');
+  });
 });
 
 function event(

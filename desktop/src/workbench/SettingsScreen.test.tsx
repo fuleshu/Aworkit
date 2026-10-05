@@ -34,6 +34,9 @@ import type {
   ExtensionRegisterCommand,
   ExternalAgentProbeRequest,
   ExternalAgentProbeResult,
+  HistoryReclaimOutcome,
+  HistoryReclaimProgress,
+  HistoryStoreStatus,
   McpProbeRequest,
   McpProbeResult,
   ModelDiscoveryRequest,
@@ -1658,6 +1661,13 @@ describe("Settings v2 workbench", () => {
       }),
     ).toBeDisabled();
     expect(screen.getByLabelText("Local history retention")).toBeDisabled();
+    // The store is measured through the same port, and the explicit reclaim is
+    // offered only after that measurement.
+    expect(await screen.findByText("Store file on disk")).toBeVisible();
+    expect(screen.getByText("Deleted Chats still stored")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Reclaim space…" }),
+    ).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: /Projects/ }));
     await user.click(screen.getByRole("button", { name: "Add folder…" }));
@@ -2095,6 +2105,14 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
   public readonly toolPluginInstalls: string[] = [];
   public readonly toolPluginRemovals: string[] = [];
   public readonly toolPluginFolderOpens: string[] = [];
+  public readonly historyProgressHandlers: ((
+    progress: HistoryReclaimProgress,
+  ) => void)[] = [];
+  public historyStatusCalls = 0;
+  public historyReclaims = 0;
+  public historyStatusFailure: string | null = null;
+  public historyReclaimFailure: string | null = null;
+  public historyReclaimGate: Promise<void> | null = null;
   public extensionInspectionCompletions = 0;
   public extensionInspection:
     | ((path: string) => Promise<ExtensionConfiguration>)
@@ -2602,6 +2620,57 @@ class RecordingSettingsV2Port implements SettingsV2CorePort {
 
   public async openToolPluginFolder(): Promise<void> {
     this.toolPluginFolderOpens.push(this.state.toolPluginDirectory ?? "");
+  }
+
+  public async historyStoreStatus(): Promise<HistoryStoreStatus> {
+    this.historyStatusCalls += 1;
+    if (this.historyStatusFailure !== null)
+      throw new Error(this.historyStatusFailure);
+    return {
+      storeBytes: 33_000_000_000,
+      payloadBytes: 16_000_000_000,
+      snapshotBytes: 15_000_000_000,
+      deletedChats: 29,
+      deletedChatBytes: 900_000_000,
+      outboxRows: 573_690,
+      outboxDeliveredRows: 573_178,
+      outboxBytes: 16_277_250_048,
+      retainedTurns: 20,
+      kinds: [
+        { kind: "context.checkpoint", events: 7_694, bytes: 7_500_000_000 },
+        { kind: "span.started", events: 7_923, bytes: 7_500_000_000 },
+      ],
+    };
+  }
+
+  public async historyReclaim(): Promise<HistoryReclaimOutcome> {
+    this.historyReclaims += 1;
+    if (this.historyReclaimGate !== null) await this.historyReclaimGate;
+    if (this.historyReclaimFailure !== null)
+      throw new Error(this.historyReclaimFailure);
+    return {
+      report: {
+        streamsScanned: 124,
+        payloadsPruned: 15_383,
+        payloadBytesReleased: 8_200_000_000,
+        chatsPurged: 29,
+        eventsRemoved: 52_118,
+        outboxRowsRemoved: 573_178,
+        outboxBytesReleased: 16_277_250_048,
+      },
+      storeBytesBefore: 33_000_000_000,
+      storeBytesAfter: 21_000_000_000,
+    };
+  }
+
+  public async onHistoryReclaimProgress(
+    handler: (progress: HistoryReclaimProgress) => void,
+  ): Promise<() => void> {
+    this.historyProgressHandlers.push(handler);
+    return () => {
+      const index = this.historyProgressHandlers.indexOf(handler);
+      if (index >= 0) this.historyProgressHandlers.splice(index, 1);
+    };
   }
 }
 

@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=1817355051127681 -->
+<!-- adashi:generated revision=5155630453389839 -->
 # Architecture — `desktop/src-tauri/src/runtime` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -14,6 +14,6 @@ Capability Invocation Broker, Workflow Revision Rebinding, Model Call & Internal
 Markdown design specifications:
 
 
-- [Compaction budget model: every budget is a share of the window](../../../../docs/adashi/design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md)
-2 more Markdown design(s); see the root index.
+- [Canonical history retention: what is kept, what is tombstoned](../../../../docs/adashi/design-2a005671e53228561314658f750c8bf60cb763d25d38c290fd6f065f1cc38a4f.md)
+3 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

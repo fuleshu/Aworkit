@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "handover-history-retention-outbox",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-05 10:13:29",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "e412c03d-2bc3-4428-9a26-ca988e3be63e",
+  "schemaVersion": 1
+}

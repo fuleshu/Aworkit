@@ -2,27 +2,21 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use aworkit_desktop::management::{
-    ManagementRepairCommandInput,
-    ManagementRepairProjectionDto, ManagementRepairReceipt,
+    ManagementRepairCommandInput, ManagementRepairProjectionDto, ManagementRepairReceipt,
 };
 use aworkit_desktop::presentation::{
     NativeAppearanceV1, NativePresentationCapabilitiesV1, NativeWindowActionV1,
 };
 use aworkit_desktop::runtime::{
-    CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2, CredentialStoreInputV2,
     ComfyUiAutocreateRequestV2, ComfyUiAutocreateResultV2, ComfyUiInspectRequestV2,
     ComfyUiInspectResultV2, ComfyUiProbeRequestV2, ComfyUiProbeResultV2, ComfyUiStartRequestV2,
-    ComfyUiStartResultV2,
-    DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
-    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, PathActionOutcomeV1,
-    PathActionRequestV1,
-    McpProbeRequestV2, McpProbeResultV2, ModelDiscoveryRequestV2, ModelDiscoveryResultV2,
+    ComfyUiStartResultV2, CommittedChatEventPort, CoreEventEnvelope, CredentialDeleteInputV2,
+    CredentialStoreInputV2, DesktopRuntime, ExtensionConfigurationV2, ExtensionRegisterInputV2,
+    ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2, McpProbeRequestV2, McpProbeResultV2,
+    ModelDiscoveryRequestV2, ModelDiscoveryResultV2, PathActionOutcomeV1, PathActionRequestV1,
     ProjectProbeRequestV2, ProjectProbeResultV2, ProviderProbeRequestV2, ProviderProbeResultV2,
     ProviderTestInput, ProviderTestResult, SettingsCommitInput, SettingsSnapshot,
     SettingsV2CommitInput, SettingsV2Snapshot, ToolProbeRequestV2, ToolProbeResultV2,
@@ -32,11 +26,11 @@ use aworkit_desktop::runtime::{
 };
 use tauri::{Emitter, Manager};
 
-mod desktop_layout;
+mod desktop_bootstrap;
 mod desktop_drop;
+mod desktop_layout;
 mod desktop_snapshot;
 mod desktop_subagent_view;
-mod desktop_bootstrap;
 
 type SharedRuntime = Arc<desktop_bootstrap::RuntimeHost>;
 
@@ -87,15 +81,22 @@ fn native_system_text_scale(
 }
 
 #[tauri::command]
-fn native_set_menu_font(window: tauri::WebviewWindow, font_size: f64, dark: bool) -> Result<(), String> {
+fn native_set_menu_font(
+    window: tauri::WebviewWindow,
+    font_size: f64,
+    dark: bool,
+) -> Result<(), String> {
     aworkit_desktop::menu_typography::project(&window, font_size, dark)
 }
 
 #[cfg(all(debug_assertions, target_os = "windows"))]
 #[tauri::command]
-async fn native_menu_font_metrics(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+async fn native_menu_font_metrics(
+    window: tauri::WebviewWindow,
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || aworkit_desktop::menu_typography::metrics(&window))
-        .await.map_err(|e| e.to_string())?
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -188,8 +189,12 @@ async fn desktop_context_model(
     chat_id: String,
     workflow_id: Option<String>,
 ) -> Result<Option<aworkit_desktop::runtime::ContextModelDto>, String> {
-    runtime_worker(Arc::clone(runtime.inner()), "context model", move |runtime|
-        runtime.context_model(&chat_id, workflow_id.as_deref())).await
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "context model",
+        move |runtime| runtime.context_model(&chat_id, workflow_id.as_deref()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -205,13 +210,28 @@ async fn approval_project_grants(
 }
 
 #[tauri::command]
-async fn approval_filesystem_grants(runtime: tauri::State<'_, SharedRuntime>) -> Result<Vec<aworkit_desktop::runtime::FilesystemGrant>, String> {
-    runtime_worker(Arc::clone(runtime.inner()), "filesystem permissions", |runtime| runtime.filesystem_approval_grants()).await
+async fn approval_filesystem_grants(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<Vec<aworkit_desktop::runtime::FilesystemGrant>, String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "filesystem permissions",
+        |runtime| runtime.filesystem_approval_grants(),
+    )
+    .await
 }
 
 #[tauri::command]
-async fn approval_revoke_filesystem_grant(runtime: tauri::State<'_, SharedRuntime>, id: String) -> Result<(), String> {
-    runtime_worker(Arc::clone(runtime.inner()), "revoke filesystem permission", move |runtime| runtime.revoke_filesystem_approval(&id)).await
+async fn approval_revoke_filesystem_grant(
+    runtime: tauri::State<'_, SharedRuntime>,
+    id: String,
+) -> Result<(), String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "revoke filesystem permission",
+        move |runtime| runtime.revoke_filesystem_approval(&id),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -822,6 +842,50 @@ async fn workflow_set_default(
     .map_err(|error| format!("workflow default worker failed: {error}"))?
 }
 
+/// What the local history store holds, so Settings can state the retention
+/// policy and its current cost instead of leaving the store invisible.
+#[tauri::command]
+async fn desktop_history_store_status(
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<aworkit_desktop::runtime::HistoryStoreStatusV1, String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "history store status",
+        |runtime| runtime.history_store_status(),
+    )
+    .await
+}
+
+/// The explicit reclaim: release superseded snapshots, remove already-deleted
+/// Chats' events, and rewrite the file so the freed pages return to the OS.
+///
+/// It reports what it is doing the whole way, because a pass over a large store
+/// is minutes of work and never runs on its own.
+#[tauri::command]
+async fn desktop_history_reclaim(
+    app: tauri::AppHandle,
+    runtime: tauri::State<'_, SharedRuntime>,
+) -> Result<aworkit_desktop::runtime::ReclaimOutcomeV1, String> {
+    runtime_worker(
+        Arc::clone(runtime.inner()),
+        "history reclaim",
+        move |runtime| {
+            let mut progress = |phase: &str, done: u64, total: u64| {
+                let _ = app.emit(
+                    "aworkit:history-reclaim",
+                    aworkit_desktop::runtime::ReclaimProgressV1 {
+                        phase: phase.to_owned(),
+                        done,
+                        total,
+                    },
+                );
+            };
+            runtime.reclaim_history_space(&mut progress)
+        },
+    )
+    .await
+}
+
 #[tauri::command]
 async fn management_repair_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
@@ -1000,6 +1064,8 @@ fn main() {
                 workflow_set_default,
                 management_repair_snapshot,
                 management_repair_command,
+                desktop_history_store_status,
+                desktop_history_reclaim,
                 native_presentation_capabilities,
                 native_system_text_scale,
                 native_set_menu_font,

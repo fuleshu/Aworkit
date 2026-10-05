@@ -3,6 +3,7 @@ import type { RuntimeEvent } from "./corePort";
 import { ContextPanel } from "./ContextPanel";
 import { CompressionUsage } from "./CompressionUsage";
 import { compactTokens, contextModel, contextUsage, projectContexts, type ContextDocument, type ContextModel, type ContextSelection } from "./contextProjection";
+import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import "./context.css";
 
 interface Props {
@@ -20,8 +21,9 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
   const selection = selections.find(s => s.nodeId === selectedNode) ?? selections[0];
   const model = contextModel(events, fallback);
   const estimate = selection ? contextUsage(selection) : null;
+  const released = selection?.released;
   const capacity = model?.contextWindow ?? null;
-  const percent = capacity && estimate ? Math.round(estimate.total / capacity * 100) : null;
+  const percent = capacity && estimate && estimate.known ? Math.round(estimate.total / capacity * 100) : null;
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<ContextSelection | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -33,7 +35,7 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [open]);
-  const totalLabel = estimate ? `${estimate.reported ? "" : "~"}${estimate.total.toLocaleString()} tokens` : "No model call yet";
+  const totalLabel = estimate && estimate.known ? `${estimate.reported ? "" : "~"}${estimate.total.toLocaleString()} tokens` : released !== undefined ? "released snapshot" : "No model call yet";
   const label = `Context usage: ${totalLabel}${capacity ? ` / ${capacity.toLocaleString()} capacity` : ""}${percent === null ? "" : ` (${percent}% used)`}`;
   return <div ref={root} className="context-usage" onKeyDown={event => {
     if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
@@ -48,24 +50,33 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
     </button>
     {open && <section id={popupId} role="dialog" aria-label="Context usage details" className="context-popover">
       <div className="context-popover-summary"><span><strong>{percent === null ? "—" : `${percent}%`}</strong> of context used</span>
-        <strong title={label}>{estimate ? (estimate.reported ? "" : "~") + estimate.total.toLocaleString() : "—"} / {capacity ? capacity.toLocaleString() : "Not reported"}</strong></div>
-      <div className="context-segments" aria-hidden="true">{estimate && ["system", "tools", "messages"].map(part => {
-        const amount = estimate[part as "system" | "tools" | "messages"];
-        return <span key={part} className={"context-segment-" + part} style={{ width: `${Math.min(100, amount / Math.max(capacity ?? estimate.total, estimate.total, 1) * 100)}%` }} />;
-      })}</div>
-      <dl className="context-breakdown">{(["system", "tools", "messages"] as const).map(part =>
-        <div key={part}><dt><i className={"context-segment-" + part} />{part === "system" ? "System prompt" : part === "tools" ? "Tools" : "Messages"}</dt><dd>{estimate ? "~" + compactTokens(estimate[part]) : "—"}</dd></div>)}</dl>
+        <strong title={label}>{estimate?.known ? (estimate.reported ? "" : "~") + estimate.total.toLocaleString() : "—"} / {capacity ? capacity.toLocaleString() : "Not reported"}</strong></div>
+      {/* A released snapshot has no readable document, so the breakdown is
+          replaced by the statement rather than by zeroes. */}
+      {released !== undefined ? (
+        <ReleasedPayloadNotice payload={released} />
+      ) : (
+        <>
+          <div className="context-segments" aria-hidden="true">{estimate && ["system", "tools", "messages"].map(part => {
+            const amount = estimate[part as "system" | "tools" | "messages"];
+            return <span key={part} className={"context-segment-" + part} style={{ width: `${Math.min(100, amount / Math.max(capacity ?? estimate.total, estimate.total, 1) * 100)}%` }} />;
+          })}</div>
+          <dl className="context-breakdown">{(["system", "tools", "messages"] as const).map(part =>
+            <div key={part}><dt><i className={"context-segment-" + part} />{part === "system" ? "System prompt" : part === "tools" ? "Tools" : "Messages"}</dt><dd>{estimate ? "~" + compactTokens(estimate[part]) : "—"}</dd></div>)}</dl>
+        </>
+      )}
       {selections.length > 1 && <select aria-label="Context workflow node" title="Choose the workflow node whose model context you want to inspect" value={selection?.nodeId}
         onChange={event => setSelectedNode(event.target.value)}>{selections.map(s => <option key={s.nodeId} value={s.nodeId}>{s.label}</option>)}</select>}
-      <p className="context-usage-note">{estimate ? estimate.reported ? "Provider total · estimated breakdown." : "Estimated tokens · includes the latest completed response." : "Context is available after the first model call."}
+      {released === undefined && <p className="context-usage-note">{estimate ? estimate.reported ? "Provider total · estimated breakdown." : "Estimated tokens · includes the latest completed response." : "Context is available after the first model call."}
         {estimate?.hasImages && !estimate.reported && " Image token cost is not included in the estimate."}
-        {!capacity && " The provider has not reported a context limit; set it in Model Settings."}</p>
+        {!capacity && " The provider has not reported a context limit; set it in Model Settings."}</p>}
       {selection?.inputTokens !== null && selection?.inputTokens !== undefined && <p className="context-usage-note">Last request reported {compactTokens(selection.inputTokens)} input / {compactTokens(selection.outputTokens ?? 0)} output tokens.</p>}
       {model && <p className="context-model-name">{model.name}</p>}
       <CompressionUsage events={events} nodeId={selection?.nodeId} />
-      <button type="button" className="context-display-button" disabled={!selection} title="Open the complete raw model context"
+      <button type="button" className="context-display-button" disabled={!selection} title={released === undefined ? "Open the complete raw model context" : "Open the released snapshot's statement of what retention removed"}
         onClick={() => { if (selection) { setPanel(selection); setOpen(false); } }}>Display Context</button>
-      {onCompact && <button type="button" className="context-compact-button" disabled={!selection || Boolean(editDisabledReason)} title={editDisabledReason ?? "Summarize earlier context now, retaining recent work and the original Chat history"}
+      {onCompact && <button type="button" className="context-compact-button" disabled={!selection || selection.document === null || Boolean(editDisabledReason)}
+        title={selection?.document === null ? "The newest snapshot for this node was released, so there is no readable context to summarize." : editDisabledReason ?? "Summarize earlier context now, retaining recent work and the original Chat history"}
         onClick={() => { if (selection) { setOpen(false); void onCompact(selection); } }}>Compact context</button>}
     </section>}
     {panel && <ContextPanel selection={panel} editDisabledReason={editDisabledReason} onSave={onSave} onClose={() => { setPanel(null); trigger.current?.focus(); }} />}

@@ -2105,6 +2105,108 @@ pre {
   gap: 14px;
   min-width: 0;
 }
+/* The measured history store: four read-outs, the per-kind breakdown that
+   makes the cost visible, and the reclaim action's own states. */
+.history-store-measurements {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+.history-store-measurements > div {
+  background: var(--aw-inset);
+  border: 1px solid var(--aw-divider);
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+.history-store-measurements dt {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+}
+.history-store-measurements dd {
+  color: var(--aw-text);
+  font-size: var(--aw-font-ui);
+  margin: 0;
+}
+.history-store-kinds {
+  border-collapse: collapse;
+  width: 100%;
+}
+.history-store-kinds caption {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  padding-bottom: 6px;
+  text-align: left;
+}
+.history-store-kinds th,
+.history-store-kinds td {
+  border-bottom: 1px solid var(--aw-divider);
+  font-size: var(--aw-font-ui);
+  padding: 6px 10px 6px 0;
+  text-align: left;
+}
+.history-store-kinds thead th {
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+}
+.history-store-kinds tbody th {
+  color: var(--aw-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.history-store-kinds th:not(:first-child),
+.history-store-kinds td:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+.history-store-policy {
+  display: grid;
+  gap: 8px;
+}
+.history-store-policy p,
+.history-store-result p,
+.history-store-confirm h4,
+.history-store-confirm p {
+  margin: 0;
+}
+.history-store-policy p {
+  color: var(--aw-secondary);
+}
+.history-store-policy strong {
+  color: var(--aw-text);
+}
+.history-store-confirm {
+  background: var(--aw-panel);
+  border: 1px solid var(--aw-divider);
+  border-left: 3px solid var(--aw-warning);
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+/* The pass is minutes long, so activity stays visible even while the phase has
+   no known total to count against. */
+.history-store-progress {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.history-store-progress::before {
+  animation: aworkit-busy-spin 0.9s linear infinite;
+  border: 2px solid var(--aw-control);
+  border-radius: 50%;
+  border-top-color: var(--aw-accent);
+  content: "";
+  display: block;
+  flex: 0 0 12px;
+  height: 12px;
+  width: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .history-store-progress::before {
+    animation-duration: 1.8s;
+  }
+}
 .settings-grid {
   display: grid;
   gap: 12px;

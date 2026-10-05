@@ -1,18 +1,18 @@
-mod context_edit;
-mod recovery;
 mod concurrent;
+mod context_edit;
 mod context_model;
 mod current_configuration;
-mod steering;
 mod mcp_definitions;
-mod mcp_selection;
 mod mcp_discovery;
+mod mcp_selection;
+mod recovery;
+mod steering;
 mod workflow_tools;
 use workflow_tools::freeze_graph_bindings;
 mod snapshot_page;
 pub use snapshot_page::ChatFeedReader;
-mod tool_plugins;
 mod comfyui;
+mod tool_plugins;
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -25,11 +25,11 @@ use std::{
 
 use aworkit_capability_host::{McpCapabilitySnapshotV1, McpPeerPort, ModelToolDefinitionV1};
 use aworkit_protocol::StableId;
-use mcp_definitions::{DiscoveredMcpDefinition, preview_mcp_definitions};
 use aworkit_trusted_core::{
     CredentialMetadataV1, CredentialRef, NativeCredentialStore, PlatformCredentialStorePort,
     ProjectCoordinator,
 };
+use mcp_definitions::{DiscoveredMcpDefinition, preview_mcp_definitions};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -55,8 +55,8 @@ use super::{
         ProviderTestResult, RuntimeSnapshot, SettingsCommitInput, SettingsSnapshot,
         SettingsV2CommitInput, SettingsV2Snapshot, UiCommandInput, UiCommandReceipt,
         WorkflowCommitInput, WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput,
-        WorkflowExecutionVerdictV1, WorkflowSaveAsInput,
-        WorkflowLibrarySnapshot, WorkflowRenameInput, WorkflowSnapshot, WorkflowTargetInput,
+        WorkflowExecutionVerdictV1, WorkflowLibrarySnapshot, WorkflowRenameInput,
+        WorkflowSaveAsInput, WorkflowSnapshot, WorkflowTargetInput,
     },
     extension_registration::{register_extension_installation_v2, verify_registered_extension_v2},
     external_agent::{
@@ -93,13 +93,9 @@ use super::{
         ExtensionConfigurationV2, IntegrationTransportV2, LayoutConfigurationV2,
         ModelConfigurationV2, ModelTargetV2, ModelTierConfigurationV2, ModelTierResolutionV2,
         ProviderConfigurationV2, SETTINGS_SCHEMA_VERSION_V2, SettingsConfigurationV2,
-        SubagentViewPreferenceV1,
-        validate_extension_lifecycle_update, validate_http_url,
+        SubagentViewPreferenceV1, validate_extension_lifecycle_update, validate_http_url,
     },
-    tool_loop::{
-        WorkflowToolBindingV1,
-        WorkflowToolCredentialBindingV1,
-    },
+    tool_loop::{WorkflowToolBindingV1, WorkflowToolCredentialBindingV1},
 };
 
 struct ProcessedCommand {
@@ -120,8 +116,15 @@ mod goal_control;
 use approval_control::{parse_approval_resolution, parse_question_answer};
 
 trait WorkflowPipelinePort: Send + Sync {
-    fn stopped_node(&self, _request_id: &StableId) -> Result<Option<String>, String> { Ok(None) }
-    fn for_chat(&self, _events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> { None }
+    fn stopped_node(&self, _request_id: &StableId) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    fn for_chat(
+        &self,
+        _events: Arc<dyn SemanticEventCommitter>,
+    ) -> Option<Arc<dyn WorkflowPipelinePort>> {
+        None
+    }
     fn validate_approval_target(
         &self,
         _decision_id: &str,
@@ -212,7 +215,10 @@ impl WorkflowPipelinePort for WorkflowExecutionPipeline {
     fn stopped_node(&self, request_id: &StableId) -> Result<Option<String>, String> {
         WorkflowExecutionPipeline::stopped_node(self, request_id).map_err(|error| error.to_string())
     }
-    fn for_chat(&self, events: Arc<dyn SemanticEventCommitter>) -> Option<Arc<dyn WorkflowPipelinePort>> {
+    fn for_chat(
+        &self,
+        events: Arc<dyn SemanticEventCommitter>,
+    ) -> Option<Arc<dyn WorkflowPipelinePort>> {
         Some(Arc::new(self.with_chat_events(events)))
     }
     fn validate_approval_target(
@@ -495,14 +501,19 @@ impl DesktopRuntime {
         self
     }
 
-    fn snapshot_history(&self, history: &ChatHistory, after_sequence: u64) -> Result<RuntimeSnapshot, String> {
+    fn snapshot_history(
+        &self,
+        history: &ChatHistory,
+        after_sequence: u64,
+    ) -> Result<RuntimeSnapshot, String> {
         let mut snapshot = history.snapshot(after_sequence)?;
         snapshot.projects = selectable_projects(&self.documents.settings().projects);
         self.populate_context_model(&mut snapshot)?;
         // The durable child frames are the authoritative child catalog: the
         // desktop still folds live lifecycle facts, but this read makes a
         // restart report a child that was running as interrupted.
-        snapshot.subagents = self.subagent_child_catalog(&snapshot.chat.chat_id, &snapshot.chat.run_id);
+        snapshot.subagents =
+            self.subagent_child_catalog(&snapshot.chat.chat_id, &snapshot.chat.run_id);
         let fallback_mode = history
             .current_frozen_context()?
             .and_then(|record| record.context.approval_mode)
@@ -528,7 +539,12 @@ impl DesktopRuntime {
         let pending = history
             .pending_effect_command_at_head(history_head)?
             .is_some();
-        if pending && !self.chat_commands.active_ids().contains(&snapshot.chat.chat_id) {
+        if pending
+            && !self
+                .chat_commands
+                .active_ids()
+                .contains(&snapshot.chat.chat_id)
+        {
             let frozen = history
                 .pending_context_at_head(history_head)?
                 .or(history.current_frozen_context()?);
@@ -554,10 +570,8 @@ impl DesktopRuntime {
             snapshot.chat.phase = "paused".into();
             snapshot.chat.locked_workflow = true;
             snapshot.chat.recovery_pending = true;
-            snapshot.chat.disabled_reason = Some(
-                "Continue or stop the interrupted reply to send a new message."
-                    .into(),
-            );
+            snapshot.chat.disabled_reason =
+                Some("Continue or stop the interrupted reply to send a new message.".into());
         }
         // A draft Chat's Send gate is the workflow the user selected, not the
         // library default: the core cannot see the composer's selection, so it
@@ -652,7 +666,8 @@ impl DesktopRuntime {
                         && previous.model.id == candidate.model.id => {}
                 Some(_) => {
                     return Err(WorkflowStartRefusal::new(
-                        "workflow model tiers resolve to different provider/model bindings".to_owned(),
+                        "workflow model tiers resolve to different provider/model bindings"
+                            .to_owned(),
                         "Bind every model tier this workflow uses to the same provider/model in Settings → Models.",
                     ));
                 }
@@ -721,12 +736,7 @@ impl DesktopRuntime {
                 payload.insert("workflowId".into(), Value::String(workflow_id));
             }
             if input.payload.get("projectId").is_none()
-                && let Some(project_id) = self
-                    .documents
-                    .settings()
-                    .chat_defaults
-                    .project_id
-                    .clone()
+                && let Some(project_id) = self.documents.settings().chat_defaults.project_id.clone()
             {
                 if let Some(payload) = input.payload.as_object_mut() {
                     payload.insert("projectId".into(), Value::String(project_id));
@@ -735,17 +745,21 @@ impl DesktopRuntime {
         }
         let fingerprint = command_fingerprint(&input)?;
         let replay = if super::concurrency::is_navigation(&input.action) {
-            self.history.replay_navigation(&input.command_id, &fingerprint)?
-        } else { self.history.replay(&input.command_id, &fingerprint)? };
+            self.history
+                .replay_navigation(&input.command_id, &fingerprint)?
+        } else {
+            self.history.replay(&input.command_id, &fingerprint)?
+        };
         if let Some(receipt) = replay {
             return Ok(receipt);
         }
         if let Some(processed) = self.processed.get(&input.command_id) {
             return replay_processed(processed, &fingerprint);
         }
-        if !super::concurrency::is_navigation(&input.action) && let Some(pending) = self
-            .history
-            .pending_effect_command_at_head(self.history.head()?)?
+        if !super::concurrency::is_navigation(&input.action)
+            && let Some(pending) = self
+                .history
+                .pending_effect_command_at_head(self.history.head()?)?
             && !matches!(
                 input.action.as_str(),
                 "resume" | "abandon_recovery" | "approval" | "question"
@@ -898,9 +912,10 @@ impl DesktopRuntime {
             let mut child_context = parent_context.context.clone();
             child_context.identity = child.clone();
             if child_context.chat_workspace.is_some() {
-                child_context.chat_workspace = Some(self.chat_workspaces.create(
-                    &self.project_coordinator, &child.chat_id,
-                )?);
+                child_context.chat_workspace = Some(
+                    self.chat_workspaces
+                        .create(&self.project_coordinator, &child.chat_id)?,
+                );
             }
             child_context.history_base_head = 0;
             child_context.start_command_id =
@@ -1025,12 +1040,19 @@ impl DesktopRuntime {
             facts.push(("context.fork-source",json!({"nodeId":node,"ownerKey":owner_key,"parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"instructionSources":sources})));
             // A deliberate fork copies only this selected node's parent archive.
             // References keep their identity, but authority becomes child-owned.
-            let parent_owner = super::compaction::hash(&json!({"chat":parent.chat_id,"branch":parent_context.as_ref().and_then(|c|c.context.project.as_ref()).and_then(|p|p.branch.as_ref())}));
-            for event in parent_events.iter().filter(|e|e.kind=="context.compression" && e.payload["nodeId"]==node && e.payload["child"].is_null() && e.payload["ownerKey"]==parent_owner) {
-                let mut payload=event.payload.clone();
-                payload["ownerKey"]=json!(owner_key);
-                payload["parentChatId"]=json!(parent.chat_id);
-                facts.push(("context.compression",payload));
+            let parent_owner = super::compaction::hash(
+                &json!({"chat":parent.chat_id,"branch":parent_context.as_ref().and_then(|c|c.context.project.as_ref()).and_then(|p|p.branch.as_ref())}),
+            );
+            for event in parent_events.iter().filter(|e| {
+                e.kind == "context.compression"
+                    && e.payload["nodeId"] == node
+                    && e.payload["child"].is_null()
+                    && e.payload["ownerKey"] == parent_owner
+            }) {
+                let mut payload = event.payload.clone();
+                payload["ownerKey"] = json!(owner_key);
+                payload["parentChatId"] = json!(parent.chat_id);
+                facts.push(("context.compression", payload));
             }
             facts.push(("context.compacted",json!({"nodeId":node,"ownerKey":owner_key,"child":null,"strategy":"fork","parentChatId":parent.chat_id,"sourceSequence":selection.sequence,"body":"Context selection inherited from the parent Chat."})));
             let snapshot = super::compaction::Snapshot {
@@ -1140,13 +1162,11 @@ impl DesktopRuntime {
                 // how a remembered project becomes the default for a new Chat. An
                 // explicit null is the user choosing no project and is honored.
                 let selected_project_id = optional_project_id(&input.payload)?.or_else(|| {
-                    input.payload.get("projectId").is_none().then(|| {
-                        self.documents
-                            .settings()
-                            .chat_defaults
-                            .project_id
-                            .clone()
-                    })?
+                    input
+                        .payload
+                        .get("projectId")
+                        .is_none()
+                        .then(|| self.documents.settings().chat_defaults.project_id.clone())?
                 });
                 if !conversation.is_empty() && !command_started {
                     return Err("the current Chat is already started; enqueue follow-up input or start a New Chat".into());
@@ -1323,8 +1343,17 @@ impl DesktopRuntime {
             Some(pass) => pass.document.clone(),
             None => context.workflow_snapshot.clone(),
         };
-        for warning in pass_warnings { super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning); }
-        super::workflow_capabilities::retain_available(&mut execution_request.workflow_snapshot, &execution_request.tools.iter().map(|t| t.capability_id.clone()).collect::<Vec<_>>());
+        for warning in pass_warnings {
+            super::workflow_capabilities::warn(&mut execution_request.workflow_snapshot, warning);
+        }
+        super::workflow_capabilities::retain_available(
+            &mut execution_request.workflow_snapshot,
+            &execution_request
+                .tools
+                .iter()
+                .map(|t| t.capability_id.clone())
+                .collect::<Vec<_>>(),
+        );
         // One outer graph execution is brokered. Agent-internal provider and
         // tool calls are telemetry, not termination budgets. The authority
         // deadline fields carry the pipeline's no-aggregate-deadline sentinel;
@@ -1388,8 +1417,7 @@ impl DesktopRuntime {
                     }),
                 ));
             }
-            let mut user_fact =
-                message_fact(&user_input, &created_at, MessageUsageV1::default());
+            let mut user_fact = message_fact(&user_input, &created_at, MessageUsageV1::default());
             if let Some(object) = user_fact.as_object_mut() {
                 if !images.is_empty() {
                     object.insert("attachments".into(), json!(images));
@@ -1733,7 +1761,8 @@ impl DesktopRuntime {
         // call still pending.
         let command_started = self.history.command_started(&input.command_id)?;
         let question_id = string_field(&input.payload, "questionId")?;
-        self.history.ensure_question_resumable(&question_id, &input.command_id)?;
+        self.history
+            .ensure_question_resumable(&question_id, &input.command_id)?;
         let answer = parse_question_answer(&input.payload)?;
         let frozen = self.history.current_frozen_context()?.ok_or_else(|| {
             "the current Chat has no durable frozen execution context for a question".to_owned()
@@ -2040,7 +2069,8 @@ impl DesktopRuntime {
         )?;
         workflow.document =
             mcp_selection::expand_server_selections(&workflow.document, self.documents.settings())?;
-        let (mcp_definitions, mcp_manifests) = self.discover_workflow_mcp(&mut workflow.document, &identity.run_id);
+        let (mcp_definitions, mcp_manifests) =
+            self.discover_workflow_mcp(&mut workflow.document, &identity.run_id);
         // v1 model resolution: every referenced tier must resolve to the same
         // provider/model binding so the single frozen secret lease covers the
         // whole pass.
@@ -2072,13 +2102,17 @@ impl DesktopRuntime {
             ));
         };
         if resolved.model.context_window.is_none() {
-            resolved.model.context_window = self.discover_context_window(&resolved.provider, &resolved.model.remote_id);
+            resolved.model.context_window =
+                self.discover_context_window(&resolved.provider, &resolved.model.remote_id);
         }
         // Missing compression in old frozen Chats remains disabled. New Chats
         // explicitly snapshot the default without changing the saved Settings.
         let policy = resolved.model.compaction.get_or_insert_with(|| json!({}));
         if policy.get("compression").is_none() {
-            policy["compression"] = serde_json::to_value(aworkit_capability_host::context_compression::Policy::default()).map_err(|e|e.to_string())?;
+            policy["compression"] = serde_json::to_value(
+                aworkit_capability_host::context_compression::Policy::default(),
+            )
+            .map_err(|e| e.to_string())?;
         }
         let workflow_name = workflow
             .document
@@ -2091,8 +2125,17 @@ impl DesktopRuntime {
             self.documents.settings(),
             &mcp_definitions,
         )?;
-        for warning in &agent.warnings { super::workflow_capabilities::warn(&mut workflow.document, warning.clone()); }
-        super::workflow_capabilities::retain_available(&mut workflow.document, &agent.tools.iter().map(|t| t.tool_id.clone()).collect::<Vec<_>>());
+        for warning in &agent.warnings {
+            super::workflow_capabilities::warn(&mut workflow.document, warning.clone());
+        }
+        super::workflow_capabilities::retain_available(
+            &mut workflow.document,
+            &agent
+                .tools
+                .iter()
+                .map(|t| t.tool_id.clone())
+                .collect::<Vec<_>>(),
+        );
         validate_model_capabilities(
             &resolved.provider,
             &resolved.model,
@@ -2115,7 +2158,10 @@ impl DesktopRuntime {
                 revision: metadata.revision,
             });
         let chat_workspace = if project.is_none() {
-            Some(self.chat_workspaces.create(&self.project_coordinator, &identity.chat_id)?)
+            Some(
+                self.chat_workspaces
+                    .create(&self.project_coordinator, &identity.chat_id)?,
+            )
         } else {
             None
         };
@@ -2131,14 +2177,16 @@ impl DesktopRuntime {
                 self.documents.settings(),
                 &mcp_manifests,
             ),
-            approval_mode: Some(self.approvals.mode(
-                identity.chat_id.as_str(),
-                self.documents
-                    .settings()
-                    .chat_defaults
-                    .approval_mode
-                    .unwrap_or(self.documents.settings().approvals.default_mode),
-            )?),
+            approval_mode: Some(
+                self.approvals.mode(
+                    identity.chat_id.as_str(),
+                    self.documents
+                        .settings()
+                        .chat_defaults
+                        .approval_mode
+                        .unwrap_or(self.documents.settings().approvals.default_mode),
+                )?,
+            ),
             schema_version: super::history::FROZEN_RECORD_SCHEMA_VERSION,
             identity,
             history_base_head,
@@ -2406,14 +2454,98 @@ impl DesktopRuntime {
         self.documents.layout()
     }
 
+    /// Reclaims store space from superseded snapshots and already-deleted Chats.
+    ///
+    /// The policy is [`super::history_retention`]: a Chat keeps the newest
+    /// snapshot of every context scope and its newest
+    /// [`super::history_retention::RETAINED_TURNS_V1`] turns, so it still
+    /// continues from where it ended; the conversation, tool evidence, usage and
+    /// timing are never touched, and an already-deleted Chat loses only its
+    /// events while its index tombstone stays. A pass rewrites payloads and then
+    /// vacuums the file, so it is explicit by design and never runs at startup or
+    /// on the interactive path.
+    ///
+    /// # Errors
+    ///
+    /// Returns a reason when the store refuses a rewrite or the vacuum fails.
+    pub fn reclaim_history_space(
+        &mut self,
+        progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<super::ReclaimOutcomeV1, String> {
+        let report = self.history.reclaim_space(
+            super::history_retention::RETAINED_TURNS_V1,
+            &now_label(),
+            progress,
+        )?;
+        progress(super::history_retention::RECLAIM_PHASE_REWRITING, 0, 0);
+        let (store_bytes_before, store_bytes_after) = self.history.vacuum_store()?;
+        progress(super::history_retention::RECLAIM_PHASE_REWRITING, 1, 1);
+        Ok(super::ReclaimOutcomeV1 {
+            report,
+            store_bytes_before,
+            store_bytes_after,
+        })
+    }
+
+    /// What the history store holds and what a reclaim could release.
+    ///
+    /// Measured from the store itself, so Settings can state the retention policy
+    /// and its current cost without guessing or reading a single payload body.
+    ///
+    /// # Errors
+    ///
+    /// Returns a reason when the store refuses to report its own size.
+    pub fn history_store_status(&self) -> Result<super::HistoryStoreStatusV1, String> {
+        let (database, log) = self.history.file_bytes();
+        let breakdown = self
+            .history
+            .payload_breakdown()
+            .map_err(|error| error.to_string())?;
+        let superseded = super::history_retention::PRUNABLE_KINDS;
+        let (outbox_rows, outbox_delivered_rows, outbox_bytes) = self
+            .history
+            .outbox_bytes()
+            .map_err(|error| error.to_string())?;
+        let mut status = super::HistoryStoreStatusV1 {
+            store_bytes: database.saturating_add(log),
+            payload_bytes: 0,
+            snapshot_bytes: 0,
+            deleted_chats: 0,
+            deleted_chat_bytes: 0,
+            outbox_rows,
+            outbox_delivered_rows,
+            outbox_bytes,
+            retained_turns: u64::try_from(super::history_retention::RETAINED_TURNS_V1)
+                .unwrap_or(u64::MAX),
+            kinds: breakdown
+                .iter()
+                .map(|(kind, events, bytes)| super::HistoryPayloadKindV1 {
+                    kind: kind.clone(),
+                    events: *events,
+                    bytes: *bytes,
+                })
+                .collect(),
+        };
+        for (kind, _, bytes) in &breakdown {
+            status.payload_bytes = status.payload_bytes.saturating_add(*bytes);
+            if superseded.contains(&kind.as_str()) {
+                status.snapshot_bytes = status.snapshot_bytes.saturating_add(*bytes);
+            }
+        }
+        for chat_id in self.history.deleted_chat_ids()? {
+            status.deleted_chats = status.deleted_chats.saturating_add(1);
+            status.deleted_chat_bytes = status
+                .deleted_chat_bytes
+                .saturating_add(self.history.stream_payload_bytes(&chat_id)?);
+        }
+        Ok(status)
+    }
+
     /// Records the desktop window placement and panel separators.
     ///
     /// The desktop host supplies measurements it took itself; an unusable one is
     /// rejected here and reported, never written.
-    pub fn settings_commit_layout(
-        &mut self,
-        layout: LayoutConfigurationV2,
-    ) -> Result<(), String> {
+    pub fn settings_commit_layout(&mut self, layout: LayoutConfigurationV2) -> Result<(), String> {
         self.documents.update_layout(layout)
     }
 
@@ -2830,7 +2962,11 @@ impl DesktopRuntime {
         }
         validate_credential_metadata_update(&previous, &settings)?;
         validate_extension_lifecycle_update(&previous, &settings)?;
-        for extension in settings.extensions.iter().filter(|extension| extension.enabled) {
+        for extension in settings
+            .extensions
+            .iter()
+            .filter(|extension| extension.enabled)
+        {
             verify_registered_extension_v2(extension).map_err(|error| {
                 format!(
                     "extension '{}' has enabled legacy metadata whose verified identity is unavailable: {error}",
@@ -3928,7 +4064,6 @@ fn validate_credential_metadata_update(
     Ok(())
 }
 
-
 /// Freezes one installed, enabled built-in capability through the same path a
 /// first-input freeze uses. The caller reports unavailable capabilities as
 /// warnings; an edit can bind an enabled tool, never invent one.
@@ -4010,7 +4145,6 @@ fn graph_mcp_tool_ids(workflow: &Value) -> Vec<String> {
     }
     ids
 }
-
 
 /// Maps one pass's frozen tool bindings into the request shape the pipeline
 /// consumes. Options and credential metadata travel with the binding; the
@@ -4705,10 +4839,9 @@ fn run_state_facts(
     created_at: &str,
 ) -> Result<Vec<(&'static str, Value)>, String> {
     let settled = |capability_id: &str| {
-        result
-            .tool_activity
-            .iter()
-            .any(|activity| activity.capability_id == capability_id && activity.status == "completed")
+        result.tool_activity.iter().any(|activity| {
+            activity.capability_id == capability_id && activity.status == "completed"
+        })
     };
     let mut facts = Vec::new();
     if settled("tool.todo") {
@@ -4844,16 +4977,16 @@ mod tests {
         WorkspaceKindV2,
     };
 
-    mod context_edit;
     mod concurrency;
+    mod context_edit;
     mod context_model;
     mod credentialed_web_search;
     mod frozen_record_compat;
     mod goal_control;
-    mod validation_failure_policy;
     mod image_chat;
     mod projectless;
     mod question;
+    mod validation_failure_policy;
 
     #[test]
     fn a_frozen_comfyui_binding_passes_the_stored_chat_integrity_check() {
@@ -5596,8 +5729,8 @@ mod tests {
             .expect("bundled workflow");
         workflow["nodes"][1]["configuration"]["toolIds"] = json!([SUBAGENT_CAPABILITY_ID]);
 
-        let frozen = freeze_graph_bindings(&workflow, &settings, &BTreeMap::new())
-            .expect("subagent freeze");
+        let frozen =
+            freeze_graph_bindings(&workflow, &settings, &BTreeMap::new()).expect("subagent freeze");
         assert_eq!(
             frozen
                 .tools
@@ -5750,7 +5883,11 @@ mod tests {
         assert_eq!(disabled_provider.calls.load(Ordering::SeqCst), 1);
         let requests = disabled_provider.execution_requests.lock().unwrap();
         assert!(requests[0].tools.is_empty());
-        assert!(requests[0].workflow_snapshot["capabilityWarnings"].to_string().contains("disabled in saved Settings"));
+        assert!(
+            requests[0].workflow_snapshot["capabilityWarnings"]
+                .to_string()
+                .contains("disabled in saved Settings")
+        );
     }
 
     #[test]
@@ -5919,7 +6056,10 @@ mod tests {
         configure_project_read_workflow(&mut runtime, Some(&workspace), true);
 
         runtime
-            .command(project_tool_start("chat.remember-selections", "remember me"))
+            .command(project_tool_start(
+                "chat.remember-selections",
+                "remember me",
+            ))
             .unwrap();
         let remembered = runtime.documents.settings().chat_defaults.clone();
         assert_eq!(
@@ -5948,11 +6088,7 @@ mod tests {
         follow_up.action = "enqueue".into();
         runtime.command(follow_up).unwrap();
         assert_eq!(
-            runtime
-                .documents
-                .settings()
-                .chat_defaults
-                .approval_mode,
+            runtime.documents.settings().chat_defaults.approval_mode,
             Some(ApprovalMode::ApproveForMe)
         );
 
@@ -6053,7 +6189,11 @@ mod tests {
         drop(desktop);
 
         let mut reopened = runtime(&root, provider);
-        assert_eq!(reopened.layout(), layout, "the placement survived the reopen");
+        assert_eq!(
+            reopened.layout(),
+            layout,
+            "the placement survived the reopen"
+        );
 
         let mut settings = reopened.settings_v2_snapshot().settings;
         settings.appearance.font_scale = 1.25;
@@ -6078,7 +6218,11 @@ mod tests {
                 settings: stripped,
             })
             .unwrap();
-        assert_eq!(reopened.layout(), layout, "a generic save kept the placement");
+        assert_eq!(
+            reopened.layout(),
+            layout,
+            "a generic save kept the placement"
+        );
 
         // An unusable placement is rejected at the boundary rather than written,
         // so a bad measurement can never make the app unopenable.
@@ -6167,7 +6311,13 @@ mod tests {
         let pending_command = send("chat.dangling-spans", 0, "resume after a crash");
         let command_hash = command_fingerprint(&pending_command).unwrap();
         let frozen = runtime
-            .freeze_workflow_context(&pending_command, &pending_command.command_id, &command_hash, 0, None)
+            .freeze_workflow_context(
+                &pending_command,
+                &pending_command.command_id,
+                &command_hash,
+                0,
+                None,
+            )
             .unwrap();
         runtime
             .history
@@ -6197,24 +6347,21 @@ mod tests {
                             "createdAt": now_label(),
                         }),
                     ),
-                    (
-                        "message.user",
-                        {
-                            let mut fact = message_fact(
-                                "resume after a crash",
-                                &now_label(),
-                                MessageUsageV1::default(),
+                    ("message.user", {
+                        let mut fact = message_fact(
+                            "resume after a crash",
+                            &now_label(),
+                            MessageUsageV1::default(),
+                        );
+                        if let Some(object) = fact.as_object_mut() {
+                            object.insert(
+                                "requestId".into(),
+                                Value::String(pending_command.command_id.clone()),
                             );
-                            if let Some(object) = fact.as_object_mut() {
-                                object.insert(
-                                    "requestId".into(),
-                                    Value::String(pending_command.command_id.clone()),
-                                );
-                                object.insert("runId".into(), Value::String(run_id.clone()));
-                            }
-                            fact
-                        },
-                    ),
+                            object.insert("runId".into(), Value::String(run_id.clone()));
+                        }
+                        fact
+                    }),
                     (
                         "span.started",
                         json!({
@@ -6268,14 +6415,18 @@ mod tests {
         let resumed = reopened.snapshot(0).unwrap();
         assert!(!resumed.chat.recovery_pending);
         // The dangling spans are closed and the recovered turn is visible.
-        let open = resumed.events.iter().filter(|event| event.kind == "span.started").any(|started| {
-            !resumed.events.iter().any(|end| {
-                matches!(
-                    end.kind.as_str(),
-                    "span.completed" | "span.failed" | "span.cancelled"
-                ) && end.payload.get("spanId") == started.payload.get("spanId")
-            })
-        });
+        let open = resumed
+            .events
+            .iter()
+            .filter(|event| event.kind == "span.started")
+            .any(|started| {
+                !resumed.events.iter().any(|end| {
+                    matches!(
+                        end.kind.as_str(),
+                        "span.completed" | "span.failed" | "span.cancelled"
+                    ) && end.payload.get("spanId") == started.payload.get("spanId")
+                })
+            });
         assert!(!open, "no span may stay open after recovery");
         assert!(
             resumed
@@ -7099,10 +7250,17 @@ mod tests {
                 .is_some_and(|rule| rule.contains("Unconfigured")),
             "{blocked:?}"
         );
-        assert!(blocked.remedy.is_some(), "a refusal names the fix: {blocked:?}");
+        assert!(
+            blocked.remedy.is_some(),
+            "a refusal names the fix: {blocked:?}"
+        );
 
         configure(&mut runtime);
-        assert!(runtime.workflow_execution_verdict("workflow.simple-chat").executable);
+        assert!(
+            runtime
+                .workflow_execution_verdict("workflow.simple-chat")
+                .executable
+        );
 
         let mut settings = runtime.settings_v2_snapshot().settings;
         let exact_target = match settings.model_tiers[2].resolution.clone() {
@@ -7199,7 +7357,11 @@ mod tests {
                 settings,
             })
             .unwrap();
-        assert!(runtime.workflow_execution_verdict("workflow.simple-chat").executable);
+        assert!(
+            runtime
+                .workflow_execution_verdict("workflow.simple-chat")
+                .executable
+        );
     }
 
     #[test]
@@ -7386,10 +7548,10 @@ mod tests {
             // canonical settings document persists no unattested booleans.
             capabilities: ExternalAgentCapabilitiesV2::default(),
             configuration: BTreeMap::new(),
-                    permission_mode: None,
+            permission_mode: None,
             model: None,
             reasoning_effort: None,
-});
+        });
         settings.projects.push(ProjectConfigurationV2 {
             id: "project.atlas".into(),
             name: "Atlas".into(),
@@ -7516,10 +7678,10 @@ mod tests {
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
-                            permission_mode: None,
+                permission_mode: None,
                 model: None,
                 reasoning_effort: None,
-});
+            });
         let agent_version = runtime.settings_v2_snapshot().version;
         let agent_receipt = runtime
             .settings_v2_commit(SettingsV2CommitInput {
@@ -7587,10 +7749,10 @@ mod tests {
                 mcp_server_ids: Vec::new(),
                 capabilities: ExternalAgentCapabilitiesV2::default(),
                 configuration: BTreeMap::new(),
-                            permission_mode: None,
+                permission_mode: None,
                 model: None,
                 reasoning_effort: None,
-});
+            });
         for tool_id in ["tool.files.edit", "tool.shell.host", "tool.python.host"] {
             legacy_enabled
                 .tools
@@ -7955,10 +8117,10 @@ mod tests {
                 approvals: true,
             },
             configuration: BTreeMap::new(),
-                    permission_mode: None,
+            permission_mode: None,
             model: None,
             reasoning_effort: None,
-});
+        });
 
         replace_credential_references(&mut settings, "credential.old", "credential.new");
 
@@ -9010,7 +9172,11 @@ mod tests {
         let first_projection = runtime.snapshot(0).unwrap().chat;
         assert_ne!(first_projection.chat_id, "chat.local");
         assert_ne!(first_projection.run_id, "run.local");
-        assert!(provider.execution_requests.lock().unwrap()[0].tools.is_empty());
+        assert!(
+            provider.execution_requests.lock().unwrap()[0]
+                .tools
+                .is_empty()
+        );
 
         // The user enables a tool and binds it to the agent while the Chat waits.
         let mut settings = runtime.settings_v2_snapshot();

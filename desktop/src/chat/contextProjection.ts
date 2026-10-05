@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { RuntimeEvent } from "./corePort";
+import {
+  releasedContextCheckpoint,
+  releasedModelCallInput,
+  type ReleasedPayload,
+} from "./releasedPayload";
 
 const messageSchema = z.object({
   role: z.enum(["system", "user", "assistant"]), content: z.string(),
@@ -22,13 +27,21 @@ export type ContextDocument = z.infer<typeof contextDocumentSchema>;
 export interface ContextSelection {
   readonly nodeId: string;
   readonly label: string;
-  readonly document: ContextDocument;
+  /**
+   * The parsed context document, or null when this scope's newest payload had
+   * its heavy field released by history retention. A null document is always
+   * accompanied by `released`, so a surface states the omission instead of
+   * reporting that no context exists.
+   */
+  readonly document: ContextDocument | null;
   readonly sequence: number;
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly edited: boolean;
   readonly pressureTokens?: number;
   readonly pressureReported?: boolean;
+  /** The retention marker that replaced the scope's heavy field, or undefined. */
+  readonly released?: ReleasedPayload;
 }
 export interface ContextModel { readonly name: string; readonly contextWindow: number | null }
 export const record = (value: unknown): Record<string, unknown> =>
@@ -51,6 +64,18 @@ export function projectContexts(events: readonly RuntimeEvent[]): ContextSelecti
         parent = spans.get(String(ancestor.parentSpanId));
       }
       if (!node || typeof node.nodeId !== "string" || !event.spanId) continue;
+      const label = typeof node.label === "string" ? node.label : node.nodeId;
+      // A released request body keeps the call, its usage and its result, so the
+      // scope stays listed as a stated omission instead of disappearing.
+      const released = releasedModelCallInput(fact);
+      if (released !== undefined) {
+        modelSpans.set(event.spanId, node.nodeId);
+        contexts.set(node.nodeId, {
+          nodeId: node.nodeId, label, sequence: event.sequence,
+          document: null, inputTokens: null, outputTokens: null, edited: false, released,
+        });
+        continue;
+      }
       const raw = record(fact.input);
       const parsed = contextDocumentSchema.safeParse({
         input: raw.tools !== undefined && raw.input !== undefined ? raw.input : raw,
@@ -61,13 +86,26 @@ export function projectContexts(events: readonly RuntimeEvent[]): ContextSelecti
       if (!parsed.success) continue;
       modelSpans.set(event.spanId, node.nodeId);
       contexts.set(node.nodeId, {
-        nodeId: node.nodeId, label: typeof node.label === "string" ? node.label : node.nodeId,
+        nodeId: node.nodeId, label,
         sequence: event.sequence, document: parsed.data, inputTokens: null, outputTokens: null, edited: false,
       });
     } else if (["context.edited", "context.checkpoint"].includes(event.kind) && typeof fact.nodeId === "string" && fact.child == null) {
+      const previous = contexts.get(fact.nodeId);
+      // The checkpoint itself stays committed; only its snapshot is gone. The
+      // scope's newest payload keeps winning here as it always did, so a later
+      // readable checkpoint or model call supersedes this statement.
+      const released = event.kind === "context.checkpoint" ? releasedContextCheckpoint(fact) : undefined;
+      if (released !== undefined) {
+        contexts.set(fact.nodeId, {
+          nodeId: fact.nodeId, label: previous?.label ?? fact.nodeId,
+          sequence: event.sequence, document: null, inputTokens: null, outputTokens: null,
+          edited: false, released,
+          ...(typeof fact.pressureTokens === "number" ? { pressureTokens: fact.pressureTokens, pressureReported: fact.pressureReported === true } : {}),
+        });
+        continue;
+      }
       const parsed = contextDocumentSchema.safeParse(event.kind === "context.checkpoint" ? record(fact.snapshot).document : fact.document);
       if (!parsed.success) continue;
-      const previous = contexts.get(fact.nodeId);
       contexts.set(fact.nodeId, {
         nodeId: fact.nodeId, label: previous?.label ?? fact.nodeId,
         sequence: event.sequence, document: parsed.data, inputTokens: null, outputTokens: null, edited: event.kind === "context.edited",
@@ -82,7 +120,7 @@ export function projectContexts(events: readonly RuntimeEvent[]): ContextSelecti
           inputTokens: typeof fact.inputTokens === "number" ? fact.inputTokens : null,
           outputTokens: typeof fact.outputTokens === "number" ? fact.outputTokens : null,
         });
-      } else if (event.kind === "span.completed" && Array.isArray(fact.output)) {
+      } else if (event.kind === "span.completed" && Array.isArray(fact.output) && previous.document !== null) {
         const output = fact.output.map(record);
         if (!output.some(e => e.kind === "tool_call")) {
           const content = output.filter(e => e.kind === "assistant_output").map(e => typeof e.text === "string" ? e.text : "").join("");
@@ -152,12 +190,21 @@ export function compactTokens(value: number): string {
     : String(value);
 }
 
-/** Provider usage is authoritative even when the local character heuristic overestimates it. */
+/** Provider usage is authoritative even when the local character heuristic overestimates it.
+ *
+ * `available` is false only when the scope's heavy field was released, so the
+ * breakdown is unknown; `known` says whether a total exists at all, because a
+ * released checkpoint still reports the pressure the provider measured. */
 export function contextUsage(selection: ContextSelection) {
-  const estimate = estimateContext(selection.document);
+  const available = selection.document !== null;
+  const estimate = selection.document === null
+    ? { system: 0, tools: 0, messages: 0, total: 0, hasImages: false }
+    : estimateContext(selection.document);
   const reported = selection.pressureTokens !== undefined ? selection.pressureReported === true : selection.inputTokens !== null && selection.inputTokens > 0;
   const total = selection.pressureTokens ?? (reported ? selection.inputTokens! + (selection.outputTokens ?? 0) : estimate.total);
   const scale = estimate.total > 0 ? total / estimate.total : 0;
   const system = Math.round(estimate.system * scale), tools = Math.round(estimate.tools * scale);
-  return { ...estimate, total, system, tools, messages: Math.max(0, total - system - tools), reported };
+  return { ...estimate, total, system, tools,
+    messages: available ? Math.max(0, total - system - tools) : 0,
+    reported, available, known: available || total > 0 };
 }

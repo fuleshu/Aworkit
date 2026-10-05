@@ -1,5 +1,7 @@
 import { ActorBubble } from "./ActorBubble";
 import { prettyJson } from "./jsonPresentation";
+import { releasedModelCallInput } from "./releasedPayload";
+import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import { isSelectionClick } from "./selectionClick";
 import type { TimelineActor, TimelineItem } from "./types";
 
@@ -48,6 +50,11 @@ export function ModelCallBlock({
   const hasOutput = item.output !== undefined || metadata.hasOutput === true;
   const input = item.input !== undefined ? item.input : metadata.input;
   const output = item.output !== undefined ? item.output : metadata.output;
+  // A released request body keeps `hasInput`, because the call really carried a
+  // request, so the omission is stated where the body would have been rendered.
+  // A payload that still carries its body renders exactly as it did before.
+  const releasedRequest =
+    input === undefined ? releasedModelCallInput(metadata) : undefined;
 
   return (
     <section
@@ -85,7 +92,14 @@ export function ModelCallBlock({
         </span>
       </header>
 
-      {hasInput && <ModelCallData label="Input" value={input} />}
+      {releasedRequest !== undefined ? (
+        <ReleasedPayloadNotice
+          className="model-call-released"
+          payload={releasedRequest}
+        />
+      ) : (
+        hasInput && <ModelCallData label="Input" value={input} />
+      )}
 
       <div className="model-call-stream">
         {reasoning.length > 0 && (

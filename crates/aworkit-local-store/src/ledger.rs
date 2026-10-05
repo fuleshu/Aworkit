@@ -43,6 +43,18 @@ pub struct Event {
     pub payload: Value,
 }
 
+/// One committed event with its durable position, read for maintenance.
+///
+/// Retention needs the sequence to know which payload is the newest of its
+/// scope; the projection feed does not, which is why [`Event`] stays as it is.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CandidateEventV1 {
+    pub event_id: String,
+    pub sequence: u64,
+    pub kind: String,
+    pub payload: Value,
+}
+
 /// Legacy v1 facade for one execution attempt.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Attempt {
@@ -485,6 +497,253 @@ impl LocalHistoryStore {
             .optional()?
             .map(from_i64)
             .transpose()
+    }
+
+    /// Every Chat stream the store holds, in stable order.
+    pub fn stream_ids(&self) -> Result<Vec<String>, StoreError> {
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        let mut statement =
+            connection.prepare("SELECT chat_id FROM chat_streams ORDER BY chat_id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// One committed event with its durable position, read for maintenance.
+    pub fn candidate_events(
+        &self,
+        chat_id: &str,
+        branch_id: &str,
+        kinds: &[&str],
+    ) -> Result<Vec<CandidateEventV1>, StoreError> {
+        validate_id(chat_id)?;
+        validate_id(branch_id)?;
+        if kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        let placeholders = vec!["?"; kinds.len()].join(",");
+        let sql = format!(
+            "SELECT event_id, sequence, kind, payload FROM semantic_events
+             WHERE chat_id = ?1 AND branch_id = ?2 AND kind IN ({placeholders})
+             ORDER BY sequence"
+        );
+        let mut values: Vec<&dyn rusqlite::ToSql> = vec![&chat_id, &branch_id];
+        for kind in kinds {
+            values.push(kind);
+        }
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (event_id, sequence, kind, payload) = row?;
+            events.push(CandidateEventV1 {
+                event_id,
+                sequence: from_i64(sequence)?,
+                kind,
+                payload: serde_json::from_str(&payload)?,
+            });
+        }
+        Ok(events)
+    }
+
+    /// Replaces the payload of already-committed events, in one transaction.
+    ///
+    /// Retention is the only caller. A payload whose bytes were released keeps
+    /// its event identity, kind and sequence and records the omission inside its
+    /// own payload, so the stream head, the sequence ledger, the delivery outbox
+    /// and the history index are untouched. Returns how many rows changed.
+    pub fn prune_payloads(&self, updates: &[(String, Value)]) -> Result<u64, StoreError> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let _lease = self.gate.exclusive()?;
+        let connection = self.lock_connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        let mut changed = 0_u64;
+        {
+            let mut statement = transaction
+                .prepare("UPDATE semantic_events SET payload = ?1 WHERE event_id = ?2")?;
+            for (event_id, payload) in updates {
+                changed +=
+                    statement.execute(params![serde_json::to_string(payload)?, event_id])? as u64;
+            }
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    /// The bytes this store's database file and its write-ahead log occupy.
+    ///
+    /// Reported to the user before a reclaim, because a vacuum is what returns
+    /// rewritten pages to the operating system and deleting rows alone does not.
+    pub fn file_bytes(&self) -> (u64, u64) {
+        let size =
+            |path: std::path::PathBuf| std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        let database = self.database_path().to_path_buf();
+        let mut log = database.clone().into_os_string();
+        log.push("-wal");
+        (size(database), size(PathBuf::from(log)))
+    }
+
+    /// The stored payload, grouped by event kind, largest kind first.
+    ///
+    /// This is what makes retention reporting measured rather than estimated: the
+    /// same query answers "how big is each kind" and "how big is the pool a
+    /// reclaim draws from".
+    pub fn payload_breakdown(&self) -> Result<Vec<(String, u64, u64)>, StoreError> {
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        let mut statement = connection.prepare(
+            "SELECT kind, count(*), coalesce(sum(length(cast(payload as blob))), 0)
+             FROM semantic_events GROUP BY kind ORDER BY 3 DESC, 1",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut breakdown = Vec::new();
+        for row in rows {
+            let (kind, events, bytes) = row?;
+            breakdown.push((kind, from_i64(events)?, from_i64(bytes)?));
+        }
+        Ok(breakdown)
+    }
+
+    /// The payload bytes one Chat's events still hold.
+    pub fn stream_payload_bytes(&self, chat_id: &str) -> Result<u64, StoreError> {
+        validate_id(chat_id)?;
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        let bytes: i64 = connection.query_row(
+            "SELECT coalesce(sum(length(cast(payload as blob))), 0) FROM semantic_events
+             WHERE chat_id = ?1",
+            params![chat_id],
+            |row| row.get(0),
+        )?;
+        Ok(from_i64(bytes)?)
+    }
+
+    /// Removes delivery records that have already been delivered.
+    ///
+    /// The outbox is the delivery queue between the trusted core and its
+    /// presentation port, and its payload is a copy of the event it announced.
+    /// Measured on a real profile, that copy doubled the whole store: 573,690
+    /// delivered rows held 15.5 GB, half of it context snapshots and compiled
+    /// model-call inputs that the events themselves also held.
+    ///
+    /// A delivered row is never read again: the pending query selects
+    /// `delivered = 0`, and [`Self::verify_durable_commit`] only ever re-checks
+    /// the batch it is committing right now, whose rows are still undelivered.
+    /// The newest `keep_newest` records are kept, delivered or not, because
+    /// inserts derive the next `delivery_cursor` from the queue's maximum and an
+    /// acknowledgement may still be in flight for a record delivered moments ago.
+    ///
+    /// Returns the rows removed and the payload bytes they held.
+    pub fn purge_delivered_outbox(&self, keep_newest: u32) -> Result<(u64, u64), StoreError> {
+        let _lease = self.gate.exclusive()?;
+        let connection = self.lock_connection()?;
+        let maximum: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(delivery_cursor), 0) FROM delivery_outbox",
+            [],
+            |row| row.get(0),
+        )?;
+        let cutoff = maximum - i64::from(keep_newest);
+        if cutoff <= 0 {
+            return Ok((0, 0));
+        }
+        let transaction = connection.unchecked_transaction()?;
+        let bytes: i64 = transaction.query_row(
+            "SELECT COALESCE(SUM(LENGTH(CAST(payload AS blob))), 0) FROM delivery_outbox
+             WHERE delivered = 1 AND delivery_cursor <= ?1",
+            params![cutoff],
+            |row| row.get(0),
+        )?;
+        let removed = transaction.execute(
+            "DELETE FROM delivery_outbox WHERE delivered = 1 AND delivery_cursor <= ?1",
+            params![cutoff],
+        )?;
+        transaction.commit()?;
+        Ok((
+            u64::try_from(removed).map_err(|_| StoreError::InvalidStoredData)?,
+            from_i64(bytes.max(0))?,
+        ))
+    }
+
+    /// Rows and payload bytes the delivery queue still holds, delivered or not.
+    pub fn outbox_bytes(&self) -> Result<(u64, u64, u64), StoreError> {
+        let _lease = self.gate.shared()?;
+        let connection = self.lock_connection()?;
+        let (rows, delivered, bytes): (i64, i64, i64) = connection.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(delivered), 0),
+                    COALESCE(SUM(LENGTH(CAST(payload AS blob))), 0)
+             FROM delivery_outbox",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok((from_i64(rows)?, from_i64(delivered)?, from_i64(bytes)?))
+    }
+
+    /// Removes one Chat's events, its attempt and checkpoint records, its
+    /// undelivered outbox rows and its stream head.
+    ///
+    /// Only a Chat the user already deleted reaches this: the history index keeps
+    /// its tombstone, so the removal is not silent and nothing appends to that
+    /// Chat again. Returns how many events were removed.
+    ///
+    /// `attempts`, `checkpoints` and `delivery_outbox` each carry
+    /// `FOREIGN KEY (chat_id, branch_id) REFERENCES chat_streams`, so the stream
+    /// head is only removable once every one of them is gone. Deleting them
+    /// before the head is what keeps a purge of a Chat that ever recorded an
+    /// attempt, a checkpoint or an outbox row from failing the whole pass.
+    pub fn delete_stream(&self, chat_id: &str) -> Result<u64, StoreError> {
+        validate_id(chat_id)?;
+        let _lease = self.gate.exclusive()?;
+        let connection = self.lock_connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        let removed = transaction.execute(
+            "DELETE FROM semantic_events WHERE chat_id = ?1",
+            params![chat_id],
+        )? as u64;
+        for dependents in ["attempts", "checkpoints", "delivery_outbox"] {
+            transaction.execute(
+                &format!("DELETE FROM {dependents} WHERE chat_id = ?1"),
+                params![chat_id],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM chat_streams WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
+    /// Rebuilds the database file so pages retention freed return to the OS.
+    ///
+    /// Returns the file size in bytes before and after, so a caller can report
+    /// what was actually reclaimed rather than what it hoped to reclaim.
+    pub fn vacuum(&self) -> Result<(u64, u64), StoreError> {
+        let path = self.database_path().to_path_buf();
+        let before = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        let _lease = self.gate.exclusive()?;
+        {
+            let connection = self.lock_connection()?;
+            connection.execute_batch("VACUUM")?;
+        }
+        let after = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        Ok((before, after))
     }
 
     pub(crate) fn committed_timeline_page(
@@ -1747,6 +2006,79 @@ mod tests {
         let pending = store.pending_outbox_v1(0, 8).expect("outbox");
         assert_eq!(pending.len(), 1);
         assert_ne!(pending[0].payload_hash, "");
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn purging_delivered_outbox_keeps_the_cursor_and_pending_records() {
+        let (store, root) = store();
+        // Twelve delivered batches, then one batch that is still pending.
+        for head in 0..12 {
+            store.commit(&batch(head)).expect("commit");
+            store
+                .mark_outbox_delivered(&format!("outbox_{head}"))
+                .expect("deliver");
+        }
+        store.commit(&batch(12)).expect("commit");
+        let (rows, delivered, bytes) = store.outbox_bytes().expect("outbox");
+        assert_eq!((rows, delivered), (13, 12));
+        assert!(bytes > 0);
+
+        let (removed, released) = store.purge_delivered_outbox(2).expect("purge");
+        assert_eq!(
+            removed, 11,
+            "every delivered record below the newest two records"
+        );
+        assert!(released > 0);
+        let (rows, delivered, _) = store.outbox_bytes().expect("outbox");
+        assert_eq!((rows, delivered), (2, 1));
+        // The pending record is the one the drain still has to deliver.
+        assert_eq!(store.pending_outbox_v1(0, 8).expect("pending").len(), 1);
+
+        // The queue's next cursor continues from its maximum, so a purge must not
+        // let a later batch reuse a cursor the unique index already handed out.
+        let after = store.commit(&batch(13)).expect("commit");
+        assert!(matches!(after, CommitOutcome::Committed(_)));
+        let (rows, delivered, _) = store.outbox_bytes().expect("outbox");
+        assert_eq!((rows, delivered), (3, 1));
+
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn deleting_a_stream_removes_rows_the_stream_head_is_referenced_by() {
+        let (store, root) = store();
+        store.commit(&batch(0)).expect("commit");
+        assert_eq!(
+            store.delete_stream("chat_01").expect("delete stream"),
+            1,
+            "the Chat's single event is removed"
+        );
+        assert_eq!(store.head_sequence("chat_01", "main").expect("head"), None);
+        assert!(
+            store
+                .event_ids("chat_01", "main")
+                .expect("events")
+                .is_empty()
+        );
+        assert!(store.pending_outbox_v1(0, 8).expect("outbox").is_empty());
+        let connection = store.lock_connection().expect("connection");
+        let dependents: i64 = connection
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM attempts)
+                      + (SELECT COUNT(*) FROM checkpoints)
+                      + (SELECT COUNT(*) FROM delivery_outbox)",
+                [],
+                |row| row.get(0),
+            )
+            .expect("dependent rows");
+        assert_eq!(
+            dependents, 0,
+            "attempts, checkpoints and outbox rows must not outlive their stream"
+        );
+        drop(connection);
         drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }

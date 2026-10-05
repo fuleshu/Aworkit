@@ -1,0 +1,28 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": {
+      "lines": [
+        "Task #186 trap, cost a live-profile outage. `initialize_history_index` re-runs the legacy migration on every open: it reads the legacy stream `chat.local` and `copy_legacy_chat` requires each migrated Chat to equal its segment. Those are separate streams with separate retention windows, so a release tombstones one side only, and payload equality refused the profile with \"partially migrated Chat history differs from its legacy source\" — the app would not open.\n",
+        "\n",
+        "Fix: tolerate a payload difference when either side is a released tombstone (`is_pruned`); the kind must still match, and any other difference is still refused instead of silently rebuilding the Chat. Test: runtime::history::tests::a_released_payload_does_not_refuse_the_legacy_migration (verified to fail on the old predicate).\n",
+        "\n",
+        "Lesson: after any payload-level change, open the real profile (`DesktopRuntime::open`) and project every Chat; fixtures did not catch this."
+      ]
+    },
+    "created_at": "2026-10-05 10:13:45",
+    "id": 50119606933,
+    "note_id": "handover-history-retention-legacy-migration",
+    "operation_id": "handover-history-retention-legacy-migration-a3",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "task-186-retention",
+    "task_id": {
+      "ref": "c949eca2-e04f-49fc-9e24-c2486ba8c195"
+    }
+  },
+  "deleted": false,
+  "identity": "986f94b1-a708-4bfb-9a98-ea53d3dd5f8e",
+  "schemaVersion": 1
+}

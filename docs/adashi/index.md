@@ -9,6 +9,7 @@ Agents retrieve canonical documents and readTokens through Adashi MCP before edi
 - [Plugin authoring skill: how to build an Aworkit tool plugin](design-80a003ff3252da5ac66379dd8367383a1360773db0ae26e1802978247c50af89.md) — `aworkit.capability_host.tool_plugin_authoring_skill`
 - [Tool plugins: folder-sourced MCP packages, lifecycle, transport and trust](design-977d60d60ede535901d8b2425830b636ccc52392ce568bb1f127791fd31b8fc7.md) — `aworkit.capability_host.tool_plugins`
 - [Chat notice card: one surface for an interrupted reply and a stopped Run](design-a61225a271f18a0dbe29517113cdc0e500956c68f0e462a82935d5ae8fc6915b.md) — `aworkit.desktop_ui.chat_notice_card`
+- [Canonical history retention: what is kept, what is tombstoned](design-2a005671e53228561314658f750c8bf60cb763d25d38c290fd6f065f1cc38a4f.md) — `aworkit.local_store.history_retention`
 - [Validation and freeze: why it keeps breaking, and the ordered fix](design-c43d3c60579c2580a64d3349157aeadeaf173e82fb68e68acf9c610790b8d9bb.md) — `aworkit.validate_freeze_hardening`
 - [Validate/freeze hardening: implementation record (task 184)](design-2720c07918e84fe427ea159f4a78fe3bd24a30766fa1419b2a308fad0970c06c.md) — `aworkit.validate_freeze_hardening.implementation_record`
 - [Compaction budget model: every budget is a share of the window](design-314864b721718fd83b8db8de7a418d90dcd0bd3b99c1ec7d087e1af9aed16b2b.md) — `aworkit.workflow_worker.context_compaction_budget`
