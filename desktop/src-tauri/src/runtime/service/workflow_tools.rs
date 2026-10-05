@@ -45,7 +45,6 @@ pub(super) fn freeze_graph_bindings(
             _ => Vec::new(),
         };
         for tool_id in tool_ids {
-            crate::runtime::trace_probe::mark(&format!("freeze_graph_bindings tool {tool_id}"));
             if !seen.insert(tool_id.clone()) {
                 continue;
             }

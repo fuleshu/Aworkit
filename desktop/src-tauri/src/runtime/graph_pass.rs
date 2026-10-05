@@ -337,9 +337,7 @@ pub(crate) fn compile_graph_pass(
     workflow: &Value,
     tool_bindings: &[StoredFileToolBindingV1],
 ) -> Result<CompiledGraphPassV1, String> {
-    crate::runtime::trace_probe::mark("compile_graph_pass enter");
     validate_v1_executable_catalog(workflow)?;
-    crate::runtime::trace_probe::mark("compile_graph_pass catalog ok");
     let document_nodes = workflow["nodes"]
         .as_array()
         .ok_or_else(|| "workflow nodes are missing".to_owned())?;

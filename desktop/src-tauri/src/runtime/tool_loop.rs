@@ -1099,7 +1099,6 @@ pub(crate) fn mcp_tool_descriptor(
 pub(crate) fn comfyui_tool_descriptor(
     capability_id: &str,
 ) -> Result<CapabilityDescriptor, WorkflowPipelineError> {
-    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor enter {capability_id}"));
     let mut descriptor = CapabilityDescriptor::build(
         capability_id,
         crate::runtime::comfyui::COMFYUI_ADAPTER_VERSION,
@@ -1107,7 +1106,6 @@ pub(crate) fn comfyui_tool_descriptor(
         SideEffectClass::NonIdempotent,
     )
     .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
-    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor built {capability_id}"));
     descriptor.guarantees_same_id_deduplication = false;
     descriptor.supports_cancellation = true;
     descriptor.allowed_scopes = vec![crate::runtime::comfyui::COMFYUI_RUN_SCOPE.to_owned()];
@@ -1118,7 +1116,6 @@ pub(crate) fn comfyui_tool_descriptor(
     descriptor
         .rehash()
         .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
-    crate::runtime::trace_probe::mark(&format!("comfyui_tool_descriptor done {capability_id}"));
     Ok(descriptor)
 }
 
@@ -1209,14 +1206,9 @@ fn freeze_external_agent(
 pub(crate) fn freeze_file_tool_bindings(
     requested: &[WorkflowToolBindingV1],
 ) -> Result<Vec<StoredFileToolBindingV1>, WorkflowPipelineError> {
-    crate::runtime::trace_probe::mark("freeze_file_tool_bindings enter");
     let mut seen = BTreeSet::new();
     let mut bindings = Vec::with_capacity(requested.len());
     for requested in requested {
-        crate::runtime::trace_probe::mark(&format!(
-            "freeze_file_tool_bindings tool {}",
-            requested.capability_id
-        ));
         if !seen.insert(requested.capability_id.as_str()) {
             return Err(invalid_tool("duplicate tool binding"));
         }

@@ -9,8 +9,6 @@ mod concurrency;
 mod chat_workspace;
 mod compaction;
 pub mod comfyui;
-// TEMPORARY: wedged-pass diagnostic probe (task #185). Remove with its callers.
-pub mod trace_probe;
 mod context_inspection;
 mod credential_journal;
 mod credentials;

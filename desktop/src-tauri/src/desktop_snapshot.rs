@@ -14,9 +14,6 @@ pub async fn desktop_chat_snapshot(
 ) -> Result<RuntimeSnapshot, String> {
     let host = Arc::clone(runtime.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        aworkit_desktop::runtime::trace_probe::mark(&format!(
-            "desktop_chat_snapshot enter chat={chat_id:?} after={after_sequence}"
-        ));
         let (mut snapshot, reader) = {
             let runtime = host.lock()?;
             let snapshot = runtime.snapshot_for_chat(u64::MAX, chat_id.as_deref())?;

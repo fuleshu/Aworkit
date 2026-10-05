@@ -215,7 +215,6 @@ pub fn comfyui_native_tool(
     configuration: &ComfyUiConfigurationV2,
     capability_id: &str,
 ) -> Option<ComfyUiNativeTool> {
-    crate::runtime::trace_probe::mark(&format!("comfyui_native_tool enter {capability_id}"));
     let tool_id = comfyui_tool_id(capability_id)?;
     configuration
         .workflow_tools
@@ -238,7 +237,6 @@ pub fn comfyui_native_tool(
 /// an input the workflow does not expose.
 #[must_use]
 pub fn comfyui_input_schema(tool: &ComfyUiWorkflowToolV2) -> Value {
-    crate::runtime::trace_probe::mark(&format!("comfyui_input_schema enter {}", tool.id));
     let mut properties = Map::new();
     let mut required = Vec::new();
     for parameter in &tool.parameters {
@@ -263,7 +261,6 @@ pub fn comfyui_input_schema(tool: &ComfyUiWorkflowToolV2) -> Value {
     schema.insert("properties".into(), Value::Object(properties));
     schema.insert("required".into(), json!(required));
     schema.insert("additionalProperties".into(), json!(false));
-    crate::runtime::trace_probe::mark(&format!("comfyui_input_schema done {}", tool.id));
     Value::Object(schema)
 }
 
@@ -276,7 +273,6 @@ pub fn comfyui_frozen_configuration(
     tool: &ComfyUiWorkflowToolV2,
     endpoint: &str,
 ) -> BTreeMap<String, Value> {
-    crate::runtime::trace_probe::mark(&format!("comfyui_frozen_configuration enter {}", tool.id));
     let parameters = tool
         .parameters
         .iter()
