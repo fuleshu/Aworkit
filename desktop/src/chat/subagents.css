@@ -6,11 +6,14 @@
   border-bottom: 1px solid var(--aw-divider);
   display: flex;
   gap: 2px;
+  isolation: isolate;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 4px 8px 0;
+  position: relative;
   scrollbar-width: thin;
+  z-index: 1;
 }
 .subagent-tabs::-webkit-scrollbar { height: 6px; }
 /* The group is the tab surface, so the highlight covers the label and its
@@ -20,7 +23,9 @@
   border-bottom: 2px solid transparent;
   border-radius: 7px 7px 0 0;
   display: inline-flex;
-  flex: 0 1 auto;
+  /* Tabs never shrink: a squeezed tab would let its label overflow under the
+     neighbouring tab. Overflow scrolls the strip instead. */
+  flex: 0 0 auto;
   max-width: 232px;
   min-width: 0;
   position: relative;
@@ -35,7 +40,7 @@
   color: var(--aw-secondary);
   cursor: pointer;
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   font: inherit;
   gap: 8px;
   min-width: 0;
@@ -45,6 +50,7 @@
 .subagent-tab-parent {
   border-bottom: 2px solid transparent;
   border-radius: 7px 7px 0 0;
+  flex: 0 0 auto;
   max-width: 160px;
   padding-right: 10px;
 }
@@ -101,8 +107,8 @@
 
 /* Read-only child conversation. */
 .subagent-conversation {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -111,10 +117,12 @@
   align-items: start;
   border-bottom: 1px solid var(--aw-divider);
   display: flex;
+  flex: 0 0 auto;
   gap: 16px;
   justify-content: space-between;
   padding: 14px 16px 10px;
 }
+.subagent-child-heading { min-width: 0; }
 .subagent-child-header h2 {
   font-size: var(--aw-font-ui);
   font-weight: 600;
@@ -123,11 +131,28 @@
 }
 .subagent-lineage { color: var(--aw-secondary); font-size: var(--aw-font-caption); margin: 6px 0 0; overflow-wrap: anywhere; }
 .subagent-lineage code { font-size: var(--aw-font-caption); }
-.subagent-context { padding: 8px 16px 0; }
-.subagent-context summary { color: var(--aw-secondary); cursor: pointer; font-size: var(--aw-font-caption); }
-.subagent-context pre { background: var(--aw-window); border: 1px solid var(--aw-divider); border-radius: 8px; margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 10px; white-space: pre-wrap; }
-.subagent-readonly { color: var(--aw-muted); font-size: var(--aw-font-caption); margin: 8px 16px 0; }
-.subagent-empty { color: var(--aw-secondary); margin: 24px 16px; }
+/* The delegated brief and its context are model input, so they render as
+   Markdown in a bounded, scrollable surface: a long prompt stays readable
+   without burying the child's own activity below it. */
+.subagent-brief {
+  border-bottom: 1px solid var(--aw-divider);
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 10px 16px;
+}
+.subagent-brief summary { color: var(--aw-secondary); cursor: pointer; font-size: var(--aw-font-caption); }
+.subagent-brief[open] summary { margin-bottom: 8px; }
+.subagent-brief .bubble-markdown {
+  background: var(--aw-window);
+  border: 1px solid var(--aw-divider);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.subagent-readonly { color: var(--aw-muted); flex: 0 0 auto; font-size: var(--aw-font-caption); margin: 8px 16px 0; }
+.subagent-conversation > .timeline-scroll { flex: 1 1 auto; min-height: 0; }
+.subagent-empty { color: var(--aw-secondary); flex: 1 1 auto; margin: 24px 16px; overflow: auto; }
 .subagent-empty > p { margin: 0 0 10px; }
 .subagent-empty > button { border-radius: 6px; padding: 6px 12px; }
 .subagent-open { align-self: start; border-radius: 6px; font-size: var(--aw-font-caption); margin: 8px 0 0; padding: 5px 10px; }

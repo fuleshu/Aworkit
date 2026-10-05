@@ -138,22 +138,28 @@ export function useSubagentFeed(
         let cursor = initial ? throughSequence : scope.cursor;
         let collected: RuntimeEvent[] = [];
         let support = scope.support;
-        let exhausted = cursor < 1;
-        while (cursor >= 1) {
-          // `beforeSequence` is exclusive, so ask for the page ending at cursor.
+        // One child-scoped page is the whole read: the core returns this
+        // child's own bounded page and reports whether older child facts exist,
+        // so an empty or exhausted page ends the loop instead of scanning the
+        // parent's entire history one sequence at a time.
+        let next = cursor;
+        let exhausted = next < 1;
+        while (next >= 1 && !exhausted) {
+          // `beforeSequence` is exclusive, so ask for the page ending at next.
           const page = await port.subagentEvents(
             chatId,
             childId,
-            cursor + 1,
+            next + 1,
             throughSequence,
           );
           if (ticket.current !== mine) return;
           collected = mergeChildEvents(collected, page.events);
           support = withEventSupport(support, page.window.supportingEvents);
-          exhausted = !page.window.hasMore;
-          cursor = page.window.firstSequence - 1;
-          if (page.events.length > 0) break;
+          exhausted = !page.window.hasMore || page.window.firstSequence >= next;
+          next = page.window.firstSequence - 1;
+          if (page.events.length > 0 || exhausted) break;
         }
+        cursor = next;
         setScopes((current) => {
           const merged =
             current.chatId === chatId && current.childId === childId

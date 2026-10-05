@@ -19,10 +19,37 @@ interface SubagentConversationProps {
 }
 
 /**
+ * A short, single-line title for one delegated task.
+ *
+ * The complete brief is always rendered below as Markdown, so the title only
+ * has to make the tab scannable; a task whose first line is very long is
+ * bounded instead of pushing the whole header down.
+ */
+export function subagentTaskTitle(task: string): string {
+  const firstLine = task
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (firstLine === undefined) return "Delegated task";
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine;
+}
+
+/** Human eyebrow for the delegated scope's kind. */
+function kindLabel(kind: SubagentCatalogEntry["kind"]): string {
+  if (kind === "fork") return "FORKED SUBAGENT";
+  if (kind === "external") return "EXTERNAL AGENT";
+  return "SUBAGENT";
+}
+
+/**
  * One delegated child rendered like the main conversation but read-only: the
  * child's own bounded evidence with a header that carries its lineage, status
  * and assigned task. There is no composer here — a child never accepts user
  * steering, and this view never creates a second Run or history.
+ *
+ * The delegated brief and its context are user-facing model input, so they are
+ * rendered as Markdown rather than as raw preformatted text; a long brief stays
+ * readable and can be collapsed once it has been read.
  */
 export function SubagentConversation({
   entry,
@@ -37,17 +64,17 @@ export function SubagentConversation({
   active,
 }: SubagentConversationProps): React.JSX.Element {
   const task = entry.task.trim();
+  const context = entry.contextText.trim();
+  const title = subagentTaskTitle(task);
   return (
     <div className="subagent-conversation">
       <header className="subagent-child-header">
-        <div>
+        <div className="subagent-child-heading">
           <p className="eyebrow">
-            {entry.kind === "fork" ? "FORKED SUBAGENT" : entry.kind === "external" ? "EXTERNAL AGENT" : "SUBAGENT"}
+            {kindLabel(entry.kind)}
             {entry.depth > 1 ? ` · DEPTH ${entry.depth}` : ""}
           </p>
-          <h2 title={task.length > 0 ? task : entry.childId}>
-            {task.length > 0 ? task : "Delegated task"}
-          </h2>
+          <h2 title={task.length > 0 ? title : entry.childId}>{title}</h2>
           <p className="subagent-lineage">
             Child <code>{entry.childId}</code>
             {entry.nodeId !== undefined && entry.nodeId.length > 0 && (
@@ -62,10 +89,16 @@ export function SubagentConversation({
           {subagentStatusLabel(entry.status)}
         </span>
       </header>
-      {entry.contextText.trim().length > 0 && (
-        <details className="subagent-context">
+      {task.length > 0 && (
+        <details className="subagent-brief" open>
+          <summary>Assigned task</summary>
+          <MarkdownContent className="bubble-markdown">{task}</MarkdownContent>
+        </details>
+      )}
+      {context.length > 0 && (
+        <details className="subagent-brief">
           <summary>Assigned context</summary>
-          <pre>{entry.contextText}</pre>
+          <MarkdownContent className="bubble-markdown">{context}</MarkdownContent>
         </details>
       )}
       <p className="subagent-readonly" role="note">

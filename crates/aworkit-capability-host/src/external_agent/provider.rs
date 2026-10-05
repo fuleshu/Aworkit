@@ -196,6 +196,88 @@ impl OneShotDelegationV1 {
     }
 }
 
+/// Largest accepted, human-readable progress note.
+pub const MAXIMUM_PROGRESS_TEXT_BYTES: usize = 2 * 1_024;
+
+/// What one live progress note describes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubagentProgressKindV1 {
+    /// The product accepted the task and started working.
+    Started,
+    /// Product commentary: the child's own narration of what it is doing.
+    Commentary,
+    /// The product is reasoning about the task.
+    Reasoning,
+    /// A short, secret-free summary of one tool action.
+    Tool,
+    /// The product produced its final answer.
+    Completed,
+}
+
+impl SubagentProgressKindV1 {
+    /// Stable, non-secret machine name for one kind.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Commentary => "commentary",
+            Self::Reasoning => "reasoning",
+            Self::Tool => "tool",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+/// One bounded, secret-free progress note from a running delegation.
+///
+/// A note may describe an action but never carries tool input, file content,
+/// environment values, credentials or raw protocol payloads. It is advisory:
+/// losing a note never changes the delegation's outcome.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubagentProgressV1 {
+    /// What the note describes.
+    pub kind: SubagentProgressKindV1,
+    /// Human-readable, bounded text.
+    pub text: String,
+}
+
+impl SubagentProgressV1 {
+    /// Bounds one note on a character boundary; a blank note is dropped.
+    #[must_use]
+    pub fn bounded(kind: SubagentProgressKindV1, text: impl Into<String>) -> Option<Self> {
+        let mut text = text.into();
+        if text.trim().is_empty() {
+            return None;
+        }
+        if text.len() > MAXIMUM_PROGRESS_TEXT_BYTES {
+            let mut end = MAXIMUM_PROGRESS_TEXT_BYTES;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+        }
+        Some(Self { kind, text })
+    }
+}
+
+/// Receives live progress while one delegation runs.
+///
+/// An implementation must stay cheap and must never block or fail the run: a
+/// note that cannot be delivered is dropped, and only the terminal outcome
+/// settles the delegation.
+pub trait SubagentProgressSinkV1 {
+    /// Receives one bounded note.
+    fn note(&mut self, progress: SubagentProgressV1);
+}
+
+/// Discards progress; the default for a caller that only needs the outcome.
+#[derive(Default)]
+pub struct NoopSubagentProgressV1;
+
+impl SubagentProgressSinkV1 for NoopSubagentProgressV1 {
+    fn note(&mut self, _progress: SubagentProgressV1) {}
+}
+
 /// The terminal result of one one-shot delegation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubagentOutcomeV1 {
@@ -287,6 +369,21 @@ pub trait ExternalAgentBackendV1: Send + Sync {
         request: &OneShotDelegationV1,
         cancellation: &CancellationToken,
     ) -> SubagentOutcomeV1;
+
+    /// Runs one delegation while forwarding bounded progress notes.
+    ///
+    /// The default ignores progress, so a backend that cannot report it stays
+    /// valid and its outcome is unchanged. A backend that can report progress
+    /// must treat it as advisory only: a note that cannot be delivered is
+    /// dropped and never settles, fails or retries the run.
+    fn run_observed(
+        &self,
+        request: &OneShotDelegationV1,
+        cancellation: &CancellationToken,
+        _progress: &mut dyn SubagentProgressSinkV1,
+    ) -> SubagentOutcomeV1 {
+        self.run(request, cancellation)
+    }
 }
 
 /// The set of backends this host generation may delegate to.
@@ -683,6 +780,19 @@ mod tests {
                 .validate()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn progress_notes_are_bounded_and_blank_notes_are_dropped() {
+        assert!(
+            SubagentProgressV1::bounded(SubagentProgressKindV1::Tool, "   ").is_none()
+        );
+        let long = "é".repeat(MAXIMUM_PROGRESS_TEXT_BYTES);
+        let note = SubagentProgressV1::bounded(SubagentProgressKindV1::Commentary, long)
+            .expect("note");
+        assert!(note.text.len() <= MAXIMUM_PROGRESS_TEXT_BYTES);
+        assert!(note.text.chars().all(|character| character == 'é'));
+        assert_eq!(note.kind.as_str(), "commentary");
     }
 
     #[test]

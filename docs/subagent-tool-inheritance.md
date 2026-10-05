@@ -317,3 +317,54 @@ question as an ordinary result, the chosen path, and — on the desktop side —
 dialog's labels, options, free text, declared default, skip, decide-later,
 operating-system chooser and rejected-answer states plus the workspace's
 auto-open, durable card, answer dispatch, dismissal and close-on-commit.
+
+## Child tabs: readable input, one bounded read, live external activity
+
+Adashi task 188 (id 71117580523), design `aworkit.desktop_ui.chat_workspace`,
+`aworkit.desktop_ui.conversation`, `aworkit.desktop_ui.composer` and
+`aworkit.workflow_worker.subagent`.
+
+A child tab is a bounded, back-scrollable window over the same canonical Run
+history, and five defects in that surface were repaired together.
+
+Fast child reads. The child feed no longer walks the parent's raw history one
+bounded page per IPC until a child-tagged event appears. `semantic_events` gains
+a partial expression index on `json_extract(payload, '$.subagentChildId')`, and
+`child_event_window` returns one child's own newest page directly with a
+`LIMIT 129` probe that proves whether an older child page exists. A child with no
+activity settles in one empty read instead of scanning the Run; a child with
+activity opens in one query, exactly like the Chat feed. The read still returns
+child-tagged facts only, so a sibling child and the parent never leak into a
+child scope, and `has_more` now means "older child facts exist" rather than
+"older raw history exists".
+
+Live external activity. The one-shot external-agent seam gains
+`run_observed` and a bounded, secret-free `SubagentProgressV1` sink; the default
+keeps a backend that cannot report progress valid, and progress never settles,
+fails or retries a run. The Codex App Server adapter forwards product commentary,
+the kind of each tool action, reasoning status and turn completion; the Claude
+Code adapter forwards assistant commentary and tool names. Raw command text,
+tool input, file content and protocol payloads never cross this boundary. The
+delegation commits each note as a `model.progress` activity fact on a detached,
+child-tagged evidence stream, so the external tab streams through the ordinary
+timeline exactly like an in-process child; at most 200 notes are shown and a
+single note reports the omission.
+
+Readable input. The delegated task and its assigned context render as Markdown
+in a bounded, collapsible brief instead of as raw preformatted text, with a
+single-line title in the header so a long prompt stays scannable.
+
+Composer ownership. `hasOpenSemanticSpan` ignores child-owned spans, so a
+still-running background child never makes its parent Chat look like a live turn.
+The composer keeps Send (not Stop) available while only background children run,
+and Stop no longer latches the parent because of a child's open span.
+
+Layout. Parent-liveness, tab shrinking and paint order are fixed: the tab strip
+is a labelled, non-shrinking, horizontally scrolling strip whose tabs never
+overflow under one another, and the Chat view header paints above it.
+
+Tests cover the child-scoped page (one query, sibling isolation, an unknown
+child settling empty), the bounded progress note, the Codex progress forwarding
+including that raw command text never crosses the boundary, the parent-liveness
+signal ignoring a detached child's open span, and the tab strip.
+

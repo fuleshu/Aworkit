@@ -633,6 +633,9 @@ pre {
 }
 .chat-main > .chat-view-header {
   grid-row: 1;
+  /* The title header always paints above the tab strip, which follows it. */
+  position: relative;
+  z-index: 2;
 }
 .chat-main > .stale-banner,
 .chat-main > .command-banner,
@@ -641,6 +644,8 @@ pre {
 }
 .chat-main > .subagent-tabs {
   grid-row: 3;
+  position: relative;
+  z-index: 1;
 }
 .chat-main > .chat-tabpanel {
   display: grid;

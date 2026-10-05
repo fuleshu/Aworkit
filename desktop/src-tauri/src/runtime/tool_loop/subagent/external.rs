@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aworkit_capability_host::{
-    ExternalAgentBackendRegistryV1, MAXIMUM_DEADLINE, OneShotDelegationV1, SubagentStartOptionsV1,
-    SubagentStopReasonV1,
+    ExternalAgentBackendRegistryV1, MAXIMUM_DEADLINE, OneShotDelegationV1, SubagentProgressSinkV1,
+    SubagentProgressV1, SubagentStartOptionsV1, SubagentStopReasonV1,
 };
 use aworkit_protocol::StableId;
 use serde_json::{Value, json};
@@ -142,7 +142,16 @@ impl FileToolDispatcherV1 {
                 cancellation.clone(),
                 move |_handle: Arc<crate::runtime::tool_loop::jobs::ChildJobHandle>,
                       child_token: CancellationToken| {
-                    let outcome = backend_handle.run(&request, &child_token);
+                    // The product's own progress becomes child-tagged activity
+                    // on a detached child stream, so the external tab streams
+                    // exactly like an in-process child.
+                    let child_stream = fact_stream.detached_child(
+                        format!("external.{closure_child_id}"),
+                        closure_child_id.clone(),
+                    );
+                    let mut activity = ChildActivitySinkV1::new(child_stream);
+                    let outcome =
+                        backend_handle.run_observed(&request, &child_token, &mut activity);
                     let frame = build_external_child_frame(
                         &running,
                         outcome.stop_reason == SubagentStopReasonV1::Completed,
@@ -189,7 +198,13 @@ impl FileToolDispatcherV1 {
             ));
         }
 
-        let outcome = backend_handle.run(&request, cancellation);
+        // The product's own progress becomes child-tagged activity on a detached
+        // child stream, so the external tab streams exactly like a child's own.
+        let child_stream = self
+            .run_events
+            .detached_child(format!("external.{child_id}"), child_id.clone());
+        let mut activity = ChildActivitySinkV1::new(child_stream);
+        let outcome = backend_handle.run_observed(&request, cancellation, &mut activity);
         let status = match outcome.stop_reason {
             SubagentStopReasonV1::Completed => ChildStatusV1::Completed,
             SubagentStopReasonV1::Aborted => ChildStatusV1::Cancelled,
@@ -331,5 +346,55 @@ fn stop_reason_name(reason: SubagentStopReasonV1) -> &'static str {
         SubagentStopReasonV1::InvalidResult => "no usable answer was produced",
         SubagentStopReasonV1::Process => "the product process failed",
         SubagentStopReasonV1::Unknown => "an unclassified failure",
+    }
+}
+
+/// Bound on the live activity notes one external delegation contributes.
+///
+/// The bound shapes the live view only: it never settles a delegation, and a
+/// single note reports the omission so the tab never pretends to be complete.
+const MAXIMUM_EXTERNAL_ACTIVITY_NOTES: usize = 200;
+
+/// Commits one child-tagged activity fact per bounded product progress note.
+///
+/// The facts are ordinary `model.progress` activity, so the child tab renders
+/// them through the normal timeline exactly like an in-process child's own
+/// activity. Publishing is best-effort: a note that cannot be committed never
+/// affects the delegation's outcome.
+struct ChildActivitySinkV1 {
+    stream: Arc<RunEventStream>,
+    notes: usize,
+}
+
+impl ChildActivitySinkV1 {
+    fn new(stream: Arc<RunEventStream>) -> Self {
+        Self { stream, notes: 0 }
+    }
+}
+
+impl SubagentProgressSinkV1 for ChildActivitySinkV1 {
+    fn note(&mut self, progress: SubagentProgressV1) {
+        if self.notes > MAXIMUM_EXTERNAL_ACTIVITY_NOTES {
+            return;
+        }
+        self.notes += 1;
+        let body = if self.notes > MAXIMUM_EXTERNAL_ACTIVITY_NOTES {
+            format!(
+                "Further external-agent activity is omitted from the live view (more than \
+                 {MAXIMUM_EXTERNAL_ACTIVITY_NOTES} notes). The final answer is unaffected."
+            )
+        } else {
+            progress.text
+        };
+        let _ = self.stream.context_event(
+            "model.progress",
+            json!({
+                "body": body,
+                "status": "completed",
+                "channel": "progress",
+                "source": "external-agent",
+                "category": progress.kind.as_str(),
+            }),
+        );
     }
 }

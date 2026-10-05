@@ -82,6 +82,24 @@ describe("canonical semantic timeline projection", () => {
     ).toBe(false);
   });
 
+  it("ignores a detached child's spans when reporting parent liveness", () => {
+    const childSpan = span(1, "span.started", "span.run.child", {
+      spanKind: "run",
+      semanticRole: "run",
+      title: "Run",
+      subagentChildId: "child.a",
+    });
+    const parentSpan = span(2, "span.started", "span.run.parent", {
+      spanKind: "run",
+      semanticRole: "run",
+      title: "Run",
+    });
+    // A still-running background child never makes its parent look like a live
+    // turn, or the composer would offer Stop and refuse a new message.
+    expect(hasOpenSemanticSpan([childSpan])).toBe(false);
+    expect(hasOpenSemanticSpan([childSpan, parentSpan])).toBe(true);
+  });
+
   it("renders model-tool-model in committed order with hierarchical spans", () => {
     const events = [
       event(1, "message.user", { body: "List files", createdAt: "1" }),

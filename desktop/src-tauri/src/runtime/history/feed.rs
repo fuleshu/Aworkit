@@ -94,11 +94,12 @@ impl ChatHistory {
     /// One delegated child's own evidence, read from the same canonical Run
     /// history with the same bounded windowed semantics as the Chat feed.
     ///
-    /// A child's facts carry its durable `subagentChildId`, so the window is
-    /// filtered to that child while the raw scan still steps back by the same
-    /// bounded page. A page may contain no child event at all: the caller keeps
-    /// paging back until an earlier child activity appears or history is
-    /// exhausted, exactly like an older load that only filled support.
+    /// A child's facts carry its durable `subagentChildId`, so the read is
+    /// filtered to that child by an index-backed query and returns that child's
+    /// own bounded page directly. The page is the newest page of child facts at
+    /// or below the cursor; `has_more` is true only when older child facts
+    /// exist, so a child with no activity settles in one read instead of
+    /// scanning unrelated history.
     pub(crate) fn subagent_feed_page(
         &self,
         child_id: &str,
@@ -114,21 +115,22 @@ impl ChatHistory {
             .map(|cursor| cursor.saturating_sub(1))
             .unwrap_or(head)
             .min(head);
-        let rows = self
+        // One child-scoped, index-backed read: the newest bounded page of this
+        // child's own facts. A page never walks unrelated parent history, so
+        // opening a child tab costs one query exactly like the Chat feed.
+        let mut rows = self
             .store
-            .event_window(chat, BRANCH_ID, 0, through, true)
+            .child_event_window(chat, BRANCH_ID, child_id, 0, through)
             .map_err(|e| e.to_string())?;
-        // The cursor is the oldest raw event this page scanned, so a page made
-        // only of other scopes still advances toward the start of history.
+        // 129 rows prove an older child page exists; the extra oldest row is
+        // only the probe and is not part of this page.
+        let has_more = rows.len() > 128;
+        if has_more {
+            rows.remove(0);
+        }
         let first = rows.first().map_or(through, |row| row.0);
         let last = rows.last().map_or(through, |row| row.0);
-        let child_rows = rows
-            .iter()
-            .filter(|(_, event)| {
-                event.payload.get("subagentChildId").and_then(Value::as_str) == Some(child_id)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let child_rows = rows;
         let mut support = BTreeMap::new();
         let mut pending = child_rows
             .iter()
@@ -175,7 +177,7 @@ impl ChatHistory {
                 first_sequence: first,
                 last_sequence: last,
                 head_sequence: head,
-                has_more: first > 1 && through > 0,
+                has_more,
                 supporting_events: support.into_values().collect(),
             },
             events: child_rows
@@ -342,29 +344,29 @@ mod tests {
         drafts.extend((0..200).map(|i| ("message.user", json!({"body":i.to_string()}))));
         commit(0, drafts);
 
-        // The newest raw page is entirely parent activity, so the child scope
-        // is empty but the cursor still advances toward the start of history.
+        // The child read is child-scoped: one query returns child.a's own newest
+        // page directly, however far back its facts are among parent activity.
         let page = history
             .subagent_feed_page("child.a", None, 206)
             .unwrap();
-        assert!(page.events.is_empty());
-        assert_eq!(page.window.first_sequence, 79);
-        assert_eq!(page.window.last_sequence, 206);
-        assert!(page.window.has_more);
-        // The older page carries only child.a, never child.b or the parent.
-        let older = history
-            .subagent_feed_page("child.a", Some(page.window.first_sequence), 206)
-            .unwrap();
         assert_eq!(
-            older
-                .events
+            page.events
                 .iter()
                 .map(|event| event.sequence)
                 .collect::<Vec<_>>(),
             vec![2, 3, 4]
         );
-        assert_eq!(older.window.first_sequence, 1);
+        assert_eq!(page.window.first_sequence, 2);
+        assert_eq!(page.window.last_sequence, 4);
+        assert!(!page.window.has_more);
+        // Stepping below the oldest child fact reports no older child page; it
+        // never walks the 200 unrelated parent events.
+        let older = history
+            .subagent_feed_page("child.a", Some(page.window.first_sequence), 206)
+            .unwrap();
+        assert!(older.events.is_empty());
         assert!(!older.window.has_more);
+        // A sibling child is never part of child.a's scope.
         let other = history
             .subagent_feed_page("child.b", None, 6)
             .unwrap();
@@ -376,6 +378,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![5, 6]
         );
+        // A child that never committed activity settles in one empty read.
         assert!(
             history
                 .subagent_feed_page("child.unknown", None, 6)

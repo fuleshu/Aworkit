@@ -123,7 +123,7 @@ export function SubagentTabs({
         title="The parent Chat conversation"
         onClick={() => onActivate(null)}
       >
-        Chat
+        <span className="subagent-tab-label">Chat</span>
       </button>
       {open.map((entry) => {
         const selected = active === entry.childId;

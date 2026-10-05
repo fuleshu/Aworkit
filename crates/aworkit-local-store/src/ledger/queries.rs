@@ -69,6 +69,60 @@ impl LocalHistoryStore {
         Ok(events)
     }
 
+    /// One delegated child's own tagged events, newest page first.
+    ///
+    /// A child's facts carry its durable `subagentChildId`, so one child's page
+    /// is a single indexed range scan of the canonical history instead of a
+    /// repeated walk over unrelated parent events. Returns at most 129 rows in
+    /// ascending order: a full 129 means an older child page still exists, and
+    /// the caller trims the extra oldest row.
+    pub fn child_event_window(
+        &self,
+        chat: &str,
+        branch: &str,
+        child: &str,
+        after: u64,
+        through: u64,
+    ) -> Result<Vec<(u64, Event)>, StoreError> {
+        validate_id(chat)?;
+        validate_id(branch)?;
+        let _lease = self.gate.shared()?;
+        let connection = self.query_connection()?;
+        let mut statement = connection.prepare(
+            "SELECT sequence,event_id,kind,payload FROM semantic_events \
+             WHERE chat_id=?1 AND branch_id=?2 \
+             AND json_extract(payload,'$.subagentChildId')=?3 \
+             AND sequence>?4 AND sequence<=?5 \
+             ORDER BY sequence DESC LIMIT 129",
+        )?;
+        let mut rows = statement.query(params![
+            chat,
+            branch,
+            child,
+            to_i64(after)?,
+            to_i64(through)?
+        ])?;
+        let mut events = Vec::new();
+        let mut bytes = 0usize;
+        while let Some(row) = rows.next()? {
+            let payload: String = row.get(3)?;
+            if !events.is_empty() && bytes.saturating_add(payload.len()) > 4 * 1024 * 1024 {
+                break;
+            }
+            bytes = bytes.saturating_add(payload.len());
+            events.push((
+                from_i64(row.get(0)?)?,
+                Event {
+                    event_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    payload: serde_json::from_str(&payload)?,
+                },
+            ));
+        }
+        events.reverse();
+        Ok(events)
+    }
+
     /// Read a small semantic projection without decoding unrelated model inputs
     /// and checkpoints. Kinds are bound values, never interpolated SQL.
     pub fn events_of_kinds(

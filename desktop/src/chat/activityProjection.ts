@@ -127,6 +127,11 @@ export function hasOpenSemanticSpan(events: readonly RuntimeEvent[]): boolean {
   const terminal = new Set<string>();
   for (const event of events) {
     const fact = payload(event);
+    // A detached child owns its own span lifetime. A still-running background
+    // child must never make its parent Chat look like a live turn, or the
+    // composer would offer Stop and refuse a new message until the child ends.
+    if (typeof fact.subagentChildId === "string" && fact.subagentChildId.length > 0)
+      continue;
     const spanId = event.spanId ?? string(fact.spanId);
     if (spanId === undefined) continue;
     if (event.kind === "span.started") started.add(spanId);

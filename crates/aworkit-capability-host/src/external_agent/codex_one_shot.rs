@@ -10,8 +10,9 @@
 //! The child runs unattended. Approval, permission, MCP-elicitation and
 //! user-input requests are answered or declined by fixed policy without a
 //! human, and any other server request fails the run instead of being guessed
-//! at. Codex commentary, reasoning, tool traffic, stderr and workspace diffs
-//! never cross this boundary.
+//! at. Codex commentary and the *kind* of each tool action are forwarded as
+//! bounded, secret-free progress notes; raw protocol payloads, tool input and
+//! file content never cross this boundary.
 
 use std::{
     io::Write,
@@ -34,7 +35,8 @@ use crate::{
     },
     external_agent::{
         ExternalAgentBackendV1, OneShotDelegationV1, SubagentBackendCapabilitiesV1,
-        SubagentOutcomeV1, SubagentStopReasonV1,
+        SubagentOutcomeV1, SubagentProgressKindV1, SubagentProgressSinkV1, SubagentProgressV1,
+        SubagentStopReasonV1,
     },
 };
 
@@ -378,7 +380,20 @@ pub fn run_codex_one_shot(
     request: &OneShotDelegationV1,
     cancellation: &CancellationToken,
 ) -> SubagentOutcomeV1 {
-    match drive(wire, config, request, cancellation) {
+    let mut progress = crate::external_agent::NoopSubagentProgressV1;
+    run_codex_one_shot_observed(wire, config, request, cancellation, &mut progress)
+}
+
+/// Runs one delegation while forwarding the bounded product progress the
+/// app-server reports. Progress is advisory: it never changes the outcome.
+pub fn run_codex_one_shot_observed(
+    wire: &mut dyn CodexProtocolWireV1,
+    config: &CodexOneShotConfigV1,
+    request: &OneShotDelegationV1,
+    cancellation: &CancellationToken,
+    progress: &mut dyn SubagentProgressSinkV1,
+) -> SubagentOutcomeV1 {
+    match drive(wire, config, request, cancellation, progress) {
         Ok(outcome) => outcome,
         Err(outcome) => outcome,
     }
@@ -389,6 +404,7 @@ fn drive(
     config: &CodexOneShotConfigV1,
     request: &OneShotDelegationV1,
     cancellation: &CancellationToken,
+    progress: &mut dyn SubagentProgressSinkV1,
 ) -> RunResult<SubagentOutcomeV1> {
     if let Err(error) = config.validate() {
         return Err(SubagentOutcomeV1::failed(
@@ -510,7 +526,12 @@ fn drive(
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty() && id.len() <= 512)
         .ok_or_else(|| protocol_stop("turn-start", "the app-server turn identity was invalid"))?;
-    commit_turn_id(&mut state, turn_id);
+    commit_turn_id(&mut state, turn_id, progress);
+    report_progress(
+        progress,
+        SubagentProgressKindV1::Started,
+        "Codex started the delegated task.",
+    );
 
     // Await the authoritative terminal notification for this thread and turn.
     while state.terminal_turn.is_none() {
@@ -529,7 +550,7 @@ fn drive(
             .poll_interval
             .min(deadline.saturating_duration_since(Instant::now()));
         match wire.receive(wait) {
-            Ok(message) => handle_message(wire, &mut state, &message, config)?,
+            Ok(message) => handle_message(wire, &mut state, &message, config, progress)?,
             Err(CodexWireErrorV1::TimedOut) => {}
             Err(error) => return Err(wire_stop("turn", error)),
         }
@@ -633,24 +654,112 @@ fn handle_message(
     state: &mut RunState,
     message: &Value,
     config: &CodexOneShotConfigV1,
+    progress: &mut dyn SubagentProgressSinkV1,
 ) -> Result<(), SubagentOutcomeV1> {
     if let Some(method) = message.get("method").and_then(Value::as_str) {
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
         if let Some(id) = message.get("id") {
             return answer_server_request(wire, state, id, method, &params, config);
         }
-        return observe_notification(state, method, &params);
+        return observe_notification(state, method, &params, progress);
     }
     // A response is correlated by the request that awaited it, so anything
     // reaching here has already been claimed or is not this run's business.
     Ok(())
 }
 
+/// Forwards one bounded note on a character boundary; a blank note is dropped.
+fn report_progress(
+    progress: &mut dyn SubagentProgressSinkV1,
+    kind: SubagentProgressKindV1,
+    text: impl Into<String>,
+) {
+    if let Some(note) = SubagentProgressV1::bounded(kind, text) {
+        progress.note(note);
+    }
+}
+
+/// Forwards one bounded, secret-free note derived from an app-server item.
+///
+/// The note describes *what kind* of action happened; it never carries the
+/// command text, file content or any other product payload.
+fn report_item_progress(
+    item: Option<&Value>,
+    started: bool,
+    progress: &mut dyn SubagentProgressSinkV1,
+) {
+    let Some(item) = item else {
+        return;
+    };
+    let Some(kind) = item.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    let declined = item.get("status").and_then(Value::as_str) == Some("declined");
+    match kind {
+        "agentMessage" if !started => {
+            if item.get("phase").and_then(Value::as_str) == Some("commentary") {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    report_progress(progress, SubagentProgressKindV1::Commentary, text);
+                }
+            }
+        }
+        "reasoning" if started => report_progress(
+            progress,
+            SubagentProgressKindV1::Reasoning,
+            "Reasoning about the task.",
+        ),
+        "commandExecution" if started => report_progress(
+            progress,
+            SubagentProgressKindV1::Tool,
+            "Running a shell command.",
+        ),
+        "fileChange" if started => report_progress(
+            progress,
+            SubagentProgressKindV1::Tool,
+            "Changing workspace files.",
+        ),
+        "mcpToolCall" if started => report_progress(
+            progress,
+            SubagentProgressKindV1::Tool,
+            "Calling an MCP tool.",
+        ),
+        "webSearch" if started => {
+            report_progress(progress, SubagentProgressKindV1::Tool, "Searching the web.")
+        }
+        "commandExecution" if declined => report_progress(
+            progress,
+            SubagentProgressKindV1::Tool,
+            "A command was declined under the selected permission mode.",
+        ),
+        "fileChange" if declined => report_progress(
+            progress,
+            SubagentProgressKindV1::Tool,
+            "A file change was declined under the selected permission mode.",
+        ),
+        _ => {}
+    }
+}
+
 fn observe_notification(
     state: &mut RunState,
     method: &str,
     params: &Value,
+    progress: &mut dyn SubagentProgressSinkV1,
 ) -> Result<(), SubagentOutcomeV1> {
+    if method == "item/started" {
+        if params.get("threadId").and_then(Value::as_str) != Some(state.thread_id.as_str()) {
+            return Ok(());
+        }
+        let Some(turn_id) = params.get("turnId").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        // An item may start before this run has committed its turn id; it is
+        // still this thread's item, so its kind is reported either way.
+        if state.turn_id.is_none() || state.turn_id.as_deref() == Some(turn_id) {
+            report_item_progress(params.get("item"), true, progress);
+        }
+        return Ok(());
+    }
     if method == "item/completed" {
         if params.get("threadId").and_then(Value::as_str) != Some(state.thread_id.as_str()) {
             return Ok(());
@@ -666,6 +775,7 @@ fn observe_notification(
             }
             return Ok(());
         }
+        report_item_progress(params.get("item"), false, progress);
         return record_item(state, params);
     }
     if method == "turn/completed" {
@@ -689,10 +799,15 @@ fn observe_notification(
             return Ok(());
         }
         state.terminal_turn = Some(turn);
+        report_progress(
+            progress,
+            SubagentProgressKindV1::Completed,
+            "Codex finished the delegated task.",
+        );
         return Ok(());
     }
     // Every other notification is observational detail this boundary does not
-    // carry, including Codex reasoning and tool traffic.
+    // carry, including raw Codex payloads.
     Ok(())
 }
 
@@ -850,11 +965,11 @@ fn bounded_method(method: &str) -> String {
         .collect()
 }
 
-fn commit_turn_id(state: &mut RunState, turn_id: &str) {
+fn commit_turn_id(state: &mut RunState, turn_id: &str, progress: &mut dyn SubagentProgressSinkV1) {
     state.turn_id = Some(turn_id.to_owned());
     let buffered = std::mem::take(&mut state.early_notifications);
     for (method, params) in buffered {
-        let _ = observe_notification(state, &method, &params);
+        let _ = observe_notification(state, &method, &params, progress);
     }
 }
 
@@ -931,7 +1046,13 @@ fn await_response(
                         });
                     }
                 }
-                handle_message(wire, state, &message, config)?;
+                handle_message(
+                    wire,
+                    state,
+                    &message,
+                    config,
+                    &mut crate::external_agent::NoopSubagentProgressV1,
+                )?;
             }
             Err(CodexWireErrorV1::TimedOut) => {}
             Err(error) => return Err(wire_stop(stage, error)),
@@ -1030,6 +1151,24 @@ impl ExternalAgentBackendV1 for CodexOneShotBackendV1 {
             }
         };
         run_codex_one_shot(&mut wire, &self.config, request, cancellation)
+    }
+
+    fn run_observed(
+        &self,
+        request: &OneShotDelegationV1,
+        cancellation: &CancellationToken,
+        progress: &mut dyn SubagentProgressSinkV1,
+    ) -> SubagentOutcomeV1 {
+        let mut wire = match StdioCodexWireV1::spawn(&self.config) {
+            Ok(wire) => wire,
+            Err(error) => {
+                return SubagentOutcomeV1::failed(
+                    SubagentStopReasonV1::Process,
+                    format!("Codex could not start: {error}"),
+                );
+            }
+        };
+        run_codex_one_shot_observed(&mut wire, &self.config, request, cancellation, progress)
     }
 }
 
@@ -1256,6 +1395,74 @@ mod tests {
         assert_eq!(
             turn_start["params"]["input"],
             json!([{"type": "text", "text": "Summarize the delegation seam", "text_elements": []}])
+        );
+    }
+
+    /// Records every forwarded progress note for assertions.
+    #[derive(Default)]
+    struct RecordingSink {
+        notes: Vec<(SubagentProgressKindV1, String)>,
+    }
+
+    impl SubagentProgressSinkV1 for RecordingSink {
+        fn note(&mut self, progress: SubagentProgressV1) {
+            self.notes.push((progress.kind, progress.text));
+        }
+    }
+
+    #[test]
+    fn product_activity_is_forwarded_as_bounded_progress() {
+        let mut scripted = handshake("thread.1", "turn.1", true);
+        scripted.push(ScriptedWireV1::notification(
+            "item/started",
+            json!({
+                "threadId": "thread.1",
+                "turnId": "turn.1",
+                "item": {"type": "commandExecution", "command": "cargo test"},
+            }),
+        ));
+        scripted.push(agent_message(
+            "turn.1",
+            "Checking the seam now",
+            json!("commentary"),
+        ));
+        scripted.push(agent_message(
+            "turn.1",
+            "The seam is bounded",
+            json!("final_answer"),
+        ));
+        scripted.push(turn_completed("turn.1", "completed"));
+        let mut wire = ScriptedWireV1::new(scripted);
+        let mut sink = RecordingSink::default();
+        let outcome = run_codex_one_shot_observed(
+            &mut wire,
+            &config(CodexPermissionModeV1::Never),
+            &request(),
+            &CancellationToken::default(),
+            &mut sink,
+        );
+        assert_eq!(outcome.answer.as_deref(), Some("The seam is bounded"));
+        assert!(
+            sink.notes
+                .iter()
+                .any(|(kind, _)| *kind == SubagentProgressKindV1::Started)
+        );
+        assert!(sink.notes.iter().any(|(kind, text)| {
+            *kind == SubagentProgressKindV1::Tool && text.contains("shell command")
+        }));
+        assert!(sink.notes.iter().any(|(kind, text)| {
+            *kind == SubagentProgressKindV1::Commentary && text == "Checking the seam now"
+        }));
+        assert!(
+            sink.notes
+                .iter()
+                .any(|(kind, _)| *kind == SubagentProgressKindV1::Completed)
+        );
+        // The raw command text never crosses the progress boundary.
+        assert!(
+            sink.notes
+                .iter()
+                .all(|(_, text)| !text.contains("cargo test"))
         );
     }
 

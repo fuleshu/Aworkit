@@ -1,0 +1,51 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/external_agent/provider.rs\",\"crates/aworkit-capability-host/src/external_agent/codex_one_shot.rs\",\"crates/aworkit-capability-host/src/external_agent/claude_code.rs\",\"crates/aworkit-local-store/src/database.rs\",\"crates/aworkit-local-store/src/ledger/queries.rs\",\"desktop/src-tauri/src/runtime/history/feed.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/external.rs\",\"desktop/src/chat/SubagentConversation.tsx\",\"desktop/src/chat/SubagentTabs.tsx\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/src/chat/subagents.css\",\"desktop/src/chat/useSubagentFeed.ts\",\"desktop/src/styles.css\",\"docs/subagent-tool-inheritance.md\"]",
+    "completed_at": "2026-10-05 16:04:36",
+    "completion_memo": {
+      "lines": [
+        "Fixed all five reported subagent/external-agent defects.\n",
+        "\n",
+        "Fast child reads (slow tab): added partial expression index semantic_events_subagent_child and LocalHistoryStore::child_event_window; subagent_feed_page now returns one child's own newest page directly (LIMIT 129 probe for has_more) instead of walking parent history page-by-page; useSubagentFeed stops on an empty/exhausted page, so a child with no activity settles in one read.\n",
+        "\n",
+        "Live external activity: added SubagentProgressV1/Kind/Sink plus a defaulted run_observed to the one-shot backend seam; Codex app-server and Claude Code forward bounded, secret-free progress (commentary text, tool kind, reasoning, completion). external.rs commits each note as a child-tagged model.progress fact on a detached child evidence stream (max 200 notes, one omission note), rendered by the normal timeline.\n",
+        "\n",
+        "Readable input: SubagentConversation renders the delegated task and assigned context as Markdown in bounded collapsible briefs with a single-line header title.\n",
+        "\n",
+        "Composer gating: hasOpenSemanticSpan ignores child-owned (subagentChildId) spans, so a running background child no longer forces the parent Chat into a live turn; Send stays available and Stop no longer latches on a child's open span.\n",
+        "\n",
+        "Layout: tabs no longer shrink (so the Chat tab cannot be overlapped by the next tab), the strip is a labelled horizontally scrolling stack, and the Chat view header paints above it.\n",
+        "\n",
+        "Verification: cargo check --tests (desktop) clean; cargo test -p aworkit-capability-host --lib external_agent 46 passed (incl. new Codex progress forwarding and bounded-note tests); cargo test desktop lib a_child_page passed with the updated child-scope assertions; vitest activityProjection/useSubagentFeed/SubagentTabs/subagentWorkspace 35 passed. Docs updated in docs/subagent-tool-inheritance.md."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-05 15:56:38",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Five reported defects in the delegated-subagent surface:\n",
+        "\n",
+        "1. Layout: the Chat Workspace tab strip partly covers/overlaps the Chat view header; the parent Chat tab is partly covered by the first child tab.\n",
+        "2. Readability: the delegated task and assigned context are rendered as raw preformatted text (especially for external agents), so the tab opens on an unreadable wall of text.\n",
+        "3. Performance: opening a subagent tab is far slower than loading the main Chat. The child feed pages back through raw history one bounded page per IPC until a child-tagged event appears; a child with no tagged events scans the entire Run.\n",
+        "4. External agents (Codex) show no activity at all: the one-shot external backend deliberately discards product notifications, so the child tab shows nothing until the delegation finishes.\n",
+        "5. Composer gating: while a background delegated child is still running, the parent Chat is treated as a live turn (Stop shown, send blocked), so the user cannot reply until Stop, which then cancels the child.\n",
+        "\n",
+        "Fix completely: bounded child-scoped history read via a JSON-expression index and one SQL query; add a progress sink to the external-agent one-shot seam and forward bounded, secret-free product progress; publish child-tagged activity the child tab renders; make the parent liveness signal ignore child-owned spans; format task/context as Markdown; and repair the tab/header layout."
+      ]
+    },
+    "id": 71117580523,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix subagent and external-agent tabs: overlap, readable input, fast loading, live Codex activity, composer gating",
+    "updated_at": "2026-10-05 16:04:36"
+  },
+  "deleted": false,
+  "identity": "5a004c20-30af-46a8-b6d7-4689b1867deb",
+  "schemaVersion": 1
+}

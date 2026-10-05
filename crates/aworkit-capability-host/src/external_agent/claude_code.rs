@@ -14,8 +14,10 @@
 //!
 //! The child runs unattended. The permission mode decides what it may do, and
 //! any denial it reports is surfaced as a bounded fact rather than silently
-//! swallowed. Assistant reasoning, tool traffic and stderr never cross this
-//! boundary: only the final answer and fixed failure facts do.
+//! swallowed. Assistant commentary and the *kind* of each tool action are
+//! forwarded as bounded, secret-free progress notes; raw protocol payloads,
+//! tool input and file content never cross this boundary, and the final answer
+//! is the only result that returns.
 
 use std::{
     io::Write,
@@ -38,7 +40,8 @@ use crate::{
     },
     external_agent::{
         ExternalAgentBackendV1, OneShotDelegationV1, SubagentBackendCapabilitiesV1,
-        SubagentOutcomeV1, SubagentStopReasonV1,
+        SubagentOutcomeV1, SubagentProgressKindV1, SubagentProgressSinkV1, SubagentProgressV1,
+        SubagentStopReasonV1,
     },
 };
 
@@ -361,7 +364,19 @@ pub fn run_claude_one_shot(
     request: &OneShotDelegationV1,
     cancellation: &CancellationToken,
 ) -> SubagentOutcomeV1 {
-    match drive(stream, config, request, cancellation) {
+    let mut progress = crate::external_agent::NoopSubagentProgressV1;
+    run_claude_one_shot_observed(stream, config, request, cancellation, &mut progress)
+}
+
+/// Runs one delegation while forwarding bounded, secret-free product progress.
+pub fn run_claude_one_shot_observed(
+    stream: &mut dyn ClaudeEventStreamV1,
+    config: &ClaudeOneShotConfigV1,
+    request: &OneShotDelegationV1,
+    cancellation: &CancellationToken,
+    progress: &mut dyn SubagentProgressSinkV1,
+) -> SubagentOutcomeV1 {
+    match drive(stream, config, request, cancellation, progress) {
         Ok(outcome) => outcome,
         Err(outcome) => outcome,
     }
@@ -372,6 +387,7 @@ fn drive(
     config: &ClaudeOneShotConfigV1,
     request: &OneShotDelegationV1,
     cancellation: &CancellationToken,
+    progress: &mut dyn SubagentProgressSinkV1,
 ) -> RunResult<SubagentOutcomeV1> {
     if let Err(error) = config.validate() {
         return Err(SubagentOutcomeV1::failed(
@@ -386,6 +402,11 @@ fn drive(
     if let Err(error) = stream.submit(&request.task) {
         return Err(wire_stop("start", error));
     }
+    report_progress(
+        progress,
+        SubagentProgressKindV1::Started,
+        "Claude Code started the delegated task.",
+    );
 
     let mut state = RunState::default();
     while state.terminal.is_none() {
@@ -404,20 +425,29 @@ fn drive(
             .poll_interval
             .min(deadline.saturating_duration_since(now));
         match stream.receive(wait) {
-            Ok(event) => observe_event(&mut state, &event)?,
+            Ok(event) => observe_event(&mut state, &event, progress)?,
             Err(ClaudeWireErrorV1::TimedOut) => {}
             Err(error) => return Err(wire_stop("turn", error)),
         }
     }
 
     let terminal = state.terminal.clone().unwrap_or(Value::Null);
+    report_progress(
+        progress,
+        SubagentProgressKindV1::Completed,
+        "Claude Code finished the delegated task.",
+    );
     settle(&state, &terminal, config)
 }
 
 /// Records one stream event. Unknown event types are ignored: the terminal
 /// `result` event is authoritative, and the stream schema evolves with the
 /// product.
-fn observe_event(state: &mut RunState, event: &Value) -> RunResult<()> {
+fn observe_event(
+    state: &mut RunState,
+    event: &Value,
+    progress: &mut dyn SubagentProgressSinkV1,
+) -> RunResult<()> {
     match event.get("type").and_then(Value::as_str) {
         Some("assistant") => {
             // Only this thread's own assistant text is the delegated answer.
@@ -425,7 +455,15 @@ fn observe_event(state: &mut RunState, event: &Value) -> RunResult<()> {
             let main_thread = event.get("parent_tool_use_id").is_none_or(Value::is_null);
             if main_thread {
                 if let Some(text) = assistant_text(event) {
-                    state.last_assistant_text = Some(text);
+                    state.last_assistant_text = Some(text.clone());
+                    report_progress(progress, SubagentProgressKindV1::Commentary, text);
+                }
+                for name in tool_use_names(event) {
+                    report_progress(
+                        progress,
+                        SubagentProgressKindV1::Tool,
+                        format!("Using the {name} tool."),
+                    );
                 }
             }
             Ok(())
@@ -436,6 +474,37 @@ fn observe_event(state: &mut RunState, event: &Value) -> RunResult<()> {
         }
         _ => Ok(()),
     }
+}
+
+/// Bounds one note on a character boundary; a blank note is dropped.
+fn report_progress(
+    progress: &mut dyn SubagentProgressSinkV1,
+    kind: SubagentProgressKindV1,
+    text: impl Into<String>,
+) {
+    if let Some(note) = SubagentProgressV1::bounded(kind, text) {
+        progress.note(note);
+    }
+}
+
+/// The declared names of the tool_use blocks in one assistant message.
+///
+/// Only the tool *name* is reported: its input never crosses the boundary.
+fn tool_use_names(event: &Value) -> Vec<String> {
+    let Some(blocks) = event
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .filter_map(|block| block.get("name").and_then(Value::as_str))
+        .filter(|name| !name.trim().is_empty() && name.len() <= 128)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The concatenated text blocks of one assistant message.
@@ -638,6 +707,24 @@ impl ExternalAgentBackendV1 for ClaudeOneShotBackendV1 {
             }
         };
         run_claude_one_shot(&mut stream, &self.config, request, cancellation)
+    }
+
+    fn run_observed(
+        &self,
+        request: &OneShotDelegationV1,
+        cancellation: &CancellationToken,
+        progress: &mut dyn SubagentProgressSinkV1,
+    ) -> SubagentOutcomeV1 {
+        let mut stream = match StdioClaudeStreamV1::spawn(&self.config, request) {
+            Ok(stream) => stream,
+            Err(error) => {
+                return SubagentOutcomeV1::failed(
+                    SubagentStopReasonV1::Process,
+                    format!("Claude Code could not start: {error}"),
+                );
+            }
+        };
+        run_claude_one_shot_observed(&mut stream, &self.config, request, cancellation, progress)
     }
 }
 

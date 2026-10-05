@@ -171,6 +171,12 @@ pub(crate) fn ensure_history_schema(connection: &Connection) -> Result<(), Store
          CREATE INDEX IF NOT EXISTS semantic_events_span_lookup
              ON semantic_events(chat_id, branch_id, json_extract(payload, '$.spanId'), sequence)
              WHERE kind GLOB 'span.*';
+         -- Delegated child evidence is read as one child-scoped page. The
+         -- expression index makes that read a bounded range scan instead of a
+         -- scan of unrelated parent history.
+         CREATE INDEX IF NOT EXISTS semantic_events_subagent_child
+             ON semantic_events(chat_id, branch_id, json_extract(payload, '$.subagentChildId'), sequence)
+             WHERE json_extract(payload, '$.subagentChildId') IS NOT NULL;
          CREATE INDEX IF NOT EXISTS prepared_artifacts_age
              ON prepared_artifacts(finalized_event_id, prepared_at_epoch_ms);
          PRAGMA user_version = 3;",
