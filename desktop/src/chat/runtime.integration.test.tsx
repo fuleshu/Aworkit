@@ -1725,6 +1725,68 @@ describe("Chat native-port recovery contracts", () => {
     );
   });
 
+  it("states a released request body instead of printing null", () => {
+    // Task #186: retention removes a superseded request body and leaves a marker
+    // in the same event. Model calls normally render through ModelCallBlock, but
+    // this generic data path must state the omission too: with `hasInput` true and
+    // no body it used to print the literal text "null" with no explanation.
+    const released = {
+      id: "span.released.1",
+      kind: "step" as const,
+      title: "Plan",
+      body: "model_call: completed",
+      createdAt: "now",
+      status: "completed",
+      metadata: {
+        hasInput: true,
+        prunedPayload: {
+          schemaVersion: 1,
+          kind: "model_call_input",
+          bytes: 9_400,
+          digestBefore: "sha256:abc",
+          prunedAt: "1791191151",
+          retainedTurns: 20,
+          reason: "superseded",
+        },
+      },
+    };
+    const { rerender } = render(
+      <TimelineCard
+        card={toConversationCard(released)}
+        item={released}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+
+    const data = screen.getByLabelText("Plan data flow");
+    expect(within(data).getByText("Input")).toBeVisible();
+    expect(
+      within(data).getByText(/Request body released/u),
+    ).toBeVisible();
+    expect(within(data).getByText(/20 newest turns kept/u)).toBeVisible();
+    expect(within(data).queryByText("null")).toBeNull();
+
+    // An intact body is untouched: no marker, so the code block renders as before.
+    const intact = {
+      ...released,
+      metadata: { hasInput: true, input: { messages: ["hi"] } },
+    };
+    rerender(
+      <TimelineCard
+        card={toConversationCard(intact)}
+        item={intact}
+        selected={false}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    const intactData = screen.getByLabelText("Plan data flow");
+    expect(within(intactData).queryByRole("note")).toBeNull();
+    expect(within(intactData).getByText(/"messages"/u)).toBeVisible();
+  });
+
   it("renders assistant Markdown inside a model-owned speech bubble", () => {
     const item = {
       id: "message.assistant.1",

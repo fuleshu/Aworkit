@@ -11,6 +11,8 @@ import {
   modelCallAssistantOutput,
 } from "./ModelCallBlock";
 import { prettyJson } from "./jsonPresentation";
+import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
+import { releasedPayloadOf } from "./releasedPayload";
 import { todosFromFact } from "./todoProjection";
 import type { TimelineItem } from "./types";
 import { ApprovalActions } from "./ApprovalActions";
@@ -690,12 +692,24 @@ function ActivityData({
   if (!hasInput && !hasOutput) return null;
   const input = item.input !== undefined ? item.input : metadata.input;
   const output = item.output !== undefined ? item.output : metadata.output;
+  // A released body is a stated omission, never a null: this generic path is not
+  // where a model call normally lands (ModelCallBlock owns those), but a payload
+  // whose bytes retention released must not print "null" here either. An intact
+  // payload carries no marker, so nothing about it changes.
+  const releasedInput =
+    hasInput && input === undefined ? releasedPayloadOf(metadata) : undefined;
   const data = (
     <dl className="activity-data" aria-label={`${item.title} data flow`}>
       {hasInput && (
         <div>
           <dt>Input</dt>
-          <dd><pre>{formatActivityData(input)}</pre></dd>
+          <dd>
+            {releasedInput === undefined ? (
+              <pre>{formatActivityData(input)}</pre>
+            ) : (
+              <ReleasedPayloadNotice payload={releasedInput} />
+            )}
+          </dd>
         </div>
       )}
       {hasOutput && (
