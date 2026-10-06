@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DocumentationDialog } from "./DocumentationDialog";
 
+const openDocumentsFolder = vi.hoisted(() => vi.fn(async () => undefined));
+
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => undefined) }));
+vi.mock("./documentsExtras", () => ({ openDocumentsFolder }));
 
 // jsdom has no native modal; the dialog only needs the open state for tests.
 beforeAll(() => {
@@ -86,5 +89,17 @@ describe("DocumentationDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("opens the Aworkit documents folder from the extras document", async () => {
+    openDocumentsFolder.mockClear();
+    openHome();
+
+    fireEvent.click(
+      screen.getByRole("link", { name: "Example workflows and the FFmpeg plugin" }),
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Open the Aworkit folder" }));
+
+    await waitFor(() => expect(openDocumentsFolder).toHaveBeenCalledOnce());
   });
 });

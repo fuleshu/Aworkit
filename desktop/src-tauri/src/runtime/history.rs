@@ -1332,6 +1332,12 @@ impl ChatHistory {
             .ok_or_else(|| format!("Chat '{chat_id}' does not exist or was deleted"))
     }
 
+    /// Starts a new Chat.
+    ///
+    /// An unmaterialized draft is not a stored Chat: it holds no canonical
+    /// facts and stays out of the sidebar until its first input. Pressing New
+    /// Chat again therefore reuses the newest draft and tombstones any older
+    /// leftovers instead of storing another empty Chat every time.
     pub(crate) fn create_chat(
         &self,
         command_id: &str,
@@ -1342,6 +1348,29 @@ impl ChatHistory {
             .metadata_lock
             .lock()
             .map_err(|_| "Chat metadata lock unavailable")?;
+        let index = self.index()?;
+        let mut drafts = Vec::new();
+        for entry in &index.entries {
+            if !entry.deleted && self.head_for_chat(&entry.chat_id)? == 0 {
+                drafts.push(entry.clone());
+            }
+        }
+        if let Some(draft) = drafts.pop() {
+            let mut facts = drafts
+                .iter()
+                .map(|entry| {
+                    (
+                        "history.chat-deleted",
+                        json!({"chatId": entry.chat_id, "createdAt": now_label()}),
+                    )
+                })
+                .collect::<Vec<_>>();
+            facts.push((
+                "history.chat-selected",
+                json!({"chatId": draft.chat_id, "createdAt": now_label()}),
+            ));
+            return history_index::append_command(&self.store, command_id, command_hash, 0, facts);
+        }
         let identity = identity_for_seed(command_id)?;
         let created_at = now_label();
         let summary = ChatSummaryProjection::draft(&created_at);
@@ -1550,10 +1579,22 @@ impl ChatHistory {
         )
     }
 
-    fn history_entries(index: HistoryIndexState) -> Vec<ChatHistoryEntryDto> {
+    /// Published sidebar rows.
+    ///
+    /// A Chat whose canonical stream is still empty is an unmaterialized draft
+    /// placeholder for the open New Chat, not a stored Chat, so it is left out
+    /// until its first input materializes it. Only deliberate deletion and the
+    /// absence of content hide a row here.
+    fn history_entries(
+        &self,
+        index: HistoryIndexState,
+    ) -> Result<Vec<ChatHistoryEntryDto>, String> {
         let mut entries = Vec::new();
         for entry in index.entries {
             if entry.deleted {
+                continue;
+            }
+            if self.head_for_chat(&entry.chat_id)? == 0 {
                 continue;
             }
             entries.push(Self::history_entry(entry));
@@ -1563,7 +1604,7 @@ impl ChatHistory {
                 .cmp(&sortable_time(&left.updated_at))
                 .then_with(|| right.chat_id.cmp(&left.chat_id))
         });
-        entries
+        Ok(entries)
     }
 
     fn history_entry(entry: IndexedChat) -> ChatHistoryEntryDto {
@@ -1693,7 +1734,7 @@ impl ChatHistory {
             )?;
             index.entries[indexed_position].summary = Some(summary);
         }
-        let history = Self::history_entries(index);
+        let history = self.history_entries(index)?;
         // Only the events the caller has not seen, read from the store in bounded
         // windows: work stays proportional to the unseen tail instead of to the
         // whole retained Chat, and the metadata snapshot still returns no events.

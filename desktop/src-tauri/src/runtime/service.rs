@@ -7159,12 +7159,22 @@ mod tests {
         let mut runtime = runtime(&root, provider.clone());
         let initial = runtime.snapshot(0).unwrap();
         let initial_id = initial.chat.chat_id.clone();
+        // An unmaterialized draft is the open New Chat, not a stored Chat, so it
+        // is not listed in the history.
+        assert!(initial.history.is_empty());
+        configure(&mut runtime);
+
+        runtime
+            .command(send("chat.delete-selected.first", initial.version, "stored topic"))
+            .unwrap();
+        let stored = runtime.snapshot(0).unwrap();
+        assert_eq!(stored.history.len(), 1);
 
         runtime
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.delete-selected.new".into(),
-                expected_version: initial.version,
+                expected_version: stored.version,
                 action: "new_chat".into(),
                 target_id: Some(initial_id.clone()),
                 payload: json!({}),
@@ -7172,6 +7182,14 @@ mod tests {
             .unwrap();
         let second = runtime.snapshot(0).unwrap();
         let second_id = second.chat.chat_id.clone();
+        assert_ne!(initial_id, second_id);
+        assert_eq!(second.chat.phase, "draft");
+        assert_eq!(
+            second.history.len(),
+            1,
+            "the new draft is not stored as another history entry"
+        );
+
         runtime
             .command(UiCommandInput {
                 schema_version: 1,
@@ -7204,7 +7222,10 @@ mod tests {
         let replacement = runtime.snapshot(0).unwrap();
         assert_ne!(replacement.chat.chat_id, initial_id);
         assert_eq!(replacement.chat.phase, "draft");
-        assert_eq!(replacement.history.len(), 1);
+        assert!(
+            replacement.history.is_empty(),
+            "deleting the last stored Chat leaves only an unlisted draft"
+        );
 
         drop(runtime);
         let reopened =
@@ -7212,6 +7233,61 @@ mod tests {
         assert_eq!(
             reopened.snapshot(0).unwrap().chat.chat_id,
             replacement.chat.chat_id
+        );
+    }
+
+    #[test]
+    fn new_chat_reuses_an_empty_draft_instead_of_storing_empty_chats() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        let initial = runtime.snapshot(0).unwrap();
+        let initial_id = initial.chat.chat_id.clone();
+        configure(&mut runtime);
+
+        // Pressing New Chat on the already-open empty draft stores nothing.
+        for id in ["repeat.one", "repeat.two", "repeat.three"] {
+            runtime
+                .command(UiCommandInput {
+                    schema_version: 1,
+                    command_id: id.into(),
+                    expected_version: 0,
+                    action: "new_chat".into(),
+                    target_id: None,
+                    payload: json!({}),
+                })
+                .unwrap();
+            let repeated = runtime.snapshot(0).unwrap();
+            assert_eq!(repeated.chat.chat_id, initial_id);
+            assert!(repeated.history.is_empty());
+        }
+
+        // Once the draft stores its first input it is a real Chat, and the next
+        // New Chat opens one fresh unlisted draft.
+        runtime
+            .command(send("repeat.first-topic", 0, "a stored topic"))
+            .unwrap();
+        let stored = runtime.snapshot(0).unwrap();
+        assert_eq!(stored.history.len(), 1);
+        assert_eq!(stored.chat.chat_id, initial_id);
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "repeat.draft".into(),
+                expected_version: stored.version,
+                action: "new_chat".into(),
+                target_id: None,
+                payload: json!({}),
+            })
+            .unwrap();
+        let draft = runtime.snapshot(0).unwrap();
+        assert_ne!(draft.chat.chat_id, initial_id);
+        assert_eq!(draft.chat.phase, "draft");
+        assert_eq!(
+            draft.history.len(),
+            1,
+            "only the stored Chat is listed"
         );
     }
 

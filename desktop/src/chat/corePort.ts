@@ -410,6 +410,12 @@ export class PreviewChatCorePort implements ChatCorePort {
   };
   private readonly evidence: EvidenceRecord[] = [];
   private readonly events: RuntimeEvent[] = [];
+  /**
+   * Chat ids that have stored at least one input. An unmaterialized draft is a
+   * placeholder for the open New Chat, not a stored Chat: New Chat reuses it and
+   * the sidebar never lists it.
+   */
+  private readonly materialized = new Set<string>();
   private history: ChatHistoryEntry[] = [
     {
       chatId: "chat.preview",
@@ -431,7 +437,9 @@ export class PreviewChatCorePort implements ChatCorePort {
       reducerVersion: "chat.semantic.reducer.v1",
       stateHash: `sha256:${"0".repeat(64)}`,
       chat: this.chat,
-      history: this.history,
+      // Only stored Chats are listed; the open unmaterialized draft is the Chat
+      // itself, never a history row.
+      history: this.history.filter((entry) => this.materialized.has(entry.chatId)),
       projects: [],
       evidence: this.evidence,
       events: this.events.filter((event) => event.sequence > afterSequence),
@@ -482,6 +490,18 @@ export class PreviewChatCorePort implements ChatCorePort {
         currentVersion: this.version,
         reason:
           "Workflow execution requires the native desktop runtime; browser Preview did not contact a provider.",
+      };
+      this.seen.set(intent.commandId, { fingerprint, receipt });
+      return receipt;
+    }
+    if (intent.type === "new_chat" && !this.materialized.has(this.chat.chatId)) {
+      // The open Chat is already an empty draft: reusing it keeps empty Chats
+      // out of the history instead of storing another one per press.
+      const receipt = {
+        commandId: intent.commandId,
+        accepted: true,
+        currentVersion: this.version,
+        reason: null,
       };
       this.seen.set(intent.commandId, { fingerprint, receipt });
       return receipt;
@@ -571,6 +591,7 @@ export class PreviewChatCorePort implements ChatCorePort {
           updatedAt: String(Date.now()),
         };
         this.history = [child, ...this.history];
+        this.materialized.add(child.chatId);
         this.chat = { ...this.chat, chatId: child.chatId, runId: child.runId };
       }
     }
@@ -581,11 +602,15 @@ export class PreviewChatCorePort implements ChatCorePort {
       this.chat = { ...this.chat, phase: "failed", recoveryPending: false };
     if (intent.type === "cancel")
       this.chat = { ...this.chat, phase: "waiting_input" };
-    if (intent.type === "enqueue")
+    if (intent.type === "enqueue") {
       this.chat = {
         ...this.chat,
         queuedInputs: [...this.chat.queuedInputs, intent.input],
       };
+      // A stored input is what turns a placeholder draft into a listed Chat; a
+      // refused `start` never reaches this point.
+      this.materialized.add(this.chat.chatId);
+    }
     this.version += 1;
     this.events.push({
       schemaVersion: 1,

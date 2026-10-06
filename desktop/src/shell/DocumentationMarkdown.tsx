@@ -6,6 +6,7 @@ import {
 import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  DOCUMENTS_FOLDER_HREF,
   resolveUserHelpTarget,
   slugifyHeading,
   type UserHelpTarget,
@@ -76,6 +77,18 @@ interface DocumentationMarkdownProps {
 }
 
 /**
+ * React Markdown's default transform blanks every URL scheme it does not know,
+ * and Aworkit's own `aworkit:documents` link is one of them; without this the
+ * link would render with an empty href and act on nothing. The panel's link is
+ * preserved exactly and every other URL keeps the default safety check.
+ */
+function urlTransform(value: string): string {
+  return value.trim().toLowerCase() === DOCUMENTS_FOLDER_HREF
+    ? DOCUMENTS_FOLDER_HREF
+    : defaultUrlTransform(value);
+}
+
+/**
  * Renders one help document as CommonMark plus GFM tables.
  *
  * The panel owns navigation, so every link activation is intercepted and handed
@@ -123,7 +136,7 @@ export function DocumentationMarkdown({
       components={components}
       remarkPlugins={[remarkGfm]}
       unwrapDisallowed
-      urlTransform={defaultUrlTransform}
+      urlTransform={urlTransform}
     >
       {markdown}
     </ReactMarkdown>

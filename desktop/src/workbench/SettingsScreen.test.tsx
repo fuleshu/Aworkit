@@ -1604,10 +1604,25 @@ describe("Settings v2 workbench", () => {
     });
     const user = userEvent.setup();
     const { container } = render(
-      <SettingsScreen settingsPort={port} presentation={native} />,
+      <SettingsScreen
+        settingsPort={port}
+        presentation={native}
+        initialSection="extensions"
+      />,
     );
 
     await screen.findByLabelText("Base URL");
+    // The unavailable Extensions entry stays listed but disabled: nobody can
+    // open it as a tab, and a deep-linked visit is the only way in.
+    expect(screen.getByRole("button", { name: /Extensions/ })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Discover manifest…" }),
+    );
+    expect(await screen.findByRole("heading", { name: "extension.fixture" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Register installed package" }),
+    ).toBeDisabled();
+
     await user.click(screen.getByRole("button", { name: /Model tiers/ }));
     await user.selectOptions(screen.getAllByLabelText("Resolution")[0]!, "unconfigured");
 
@@ -1675,15 +1690,6 @@ describe("Settings v2 workbench", () => {
     await user.click(screen.getByRole("button", { name: "Test workspace" }));
     expect(await screen.findByText(/Workspace resolved/)).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
-    await user.click(
-      screen.getByRole("button", { name: "Discover manifest…" }),
-    );
-    expect(await screen.findByRole("heading", { name: "extension.fixture" })).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Register installed package" }),
-    ).toBeDisabled();
-
     await user.click(screen.getByRole("button", { name: /Appearance/ }));
     await user.click(screen.getByRole("radio", { name: /Dark/ }));
     for (const field of container.querySelectorAll("input, select, textarea"))
@@ -1724,6 +1730,7 @@ describe("Settings v2 workbench", () => {
     render(
       <SettingsScreen
         settingsPort={port}
+        initialSection="extensions"
         presentation={presentation({
           pickFile: async () => paths.shift() ?? null,
         })}
@@ -1731,7 +1738,6 @@ describe("Settings v2 workbench", () => {
     );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     const discover = screen.getByRole("button", {
       name: "Discover manifest…",
     });
@@ -1771,6 +1777,7 @@ describe("Settings v2 workbench", () => {
     render(
       <SettingsScreen
         settingsPort={port}
+        initialSection="extensions"
         presentation={presentation({
           pickFile: async () => paths.shift() ?? null,
         })}
@@ -1778,7 +1785,6 @@ describe("Settings v2 workbench", () => {
     );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     const discover = screen.getByRole("button", {
       name: "Discover manifest…",
     });
@@ -1825,6 +1831,7 @@ describe("Settings v2 workbench", () => {
     render(
       <SettingsScreen
         settingsPort={port}
+        initialSection="extensions"
         presentation={presentation({
           pickFile: async () => existing.manifestPath,
         })}
@@ -1832,7 +1839,6 @@ describe("Settings v2 workbench", () => {
     );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     await user.click(
       screen.getByRole("button", { name: "Discover manifest…" }),
     );
@@ -1869,6 +1875,7 @@ describe("Settings v2 workbench", () => {
     render(
       <SettingsScreen
         settingsPort={port}
+        initialSection="extensions"
         presentation={presentation({
           pickFile: async () => "/tmp/stale.aworkit-extension.json",
         })}
@@ -1876,7 +1883,6 @@ describe("Settings v2 workbench", () => {
     );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     await user.click(
       screen.getByRole("button", { name: "Discover manifest…" }),
     );
@@ -1895,11 +1901,12 @@ describe("Settings v2 workbench", () => {
       ),
     );
     await waitFor(() => expect(port.extensionInspectionCompletions).toBe(1));
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
-    expect(
-      screen.queryByRole("heading", { name: "extension.stale" }),
-    ).toBeNull();
+    // The Extensions tab is unavailable, so the panel cannot be reopened. The
+    // discarded stale result is proved ignored from the surviving state instead:
+    // the canonical version stays saved and clean, so the late inspection
+    // resurrected nothing into the draft.
     expect(screen.getByText(/Version 1 · saved/)).toBeVisible();
+    expect(port.commits).toHaveLength(0);
     expect(
       screen.getByRole("button", { name: "Save configuration" }),
     ).toBeDisabled();
@@ -1911,6 +1918,7 @@ describe("Settings v2 workbench", () => {
     render(
       <SettingsScreen
         settingsPort={port}
+        initialSection="extensions"
         presentation={presentation({
           pickFile: async () => "/tmp/example.aworkit-extension.json",
         })}
@@ -1918,7 +1926,6 @@ describe("Settings v2 workbench", () => {
     );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     await user.click(
       screen.getByRole("button", { name: "Discover manifest…" }),
     );
@@ -1979,10 +1986,15 @@ describe("Settings v2 workbench", () => {
     port.mutationSnapshotVersionOffset = -1;
     port.mutationSnapshotFaultCount = 2;
     const user = userEvent.setup();
-    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+    render(
+      <SettingsScreen
+        settingsPort={port}
+        presentation={presentation()}
+        initialSection="extensions"
+      />,
+    );
 
     await screen.findByLabelText("Base URL");
-    await user.click(screen.getByRole("button", { name: /Extensions/ }));
     await user.click(
       screen.getByRole("button", { name: "Register installed package" }),
     );
@@ -2024,10 +2036,15 @@ describe("Settings v2 workbench", () => {
       port.mutationReceiptCommandIdOverride = commandIdOverride;
       port.mutationReceiptVersionOffset = versionOffset;
       const user = userEvent.setup();
-      render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+      render(
+        <SettingsScreen
+          settingsPort={port}
+          presentation={presentation()}
+          initialSection="extensions"
+        />,
+      );
 
       await screen.findByLabelText("Base URL");
-      await user.click(screen.getByRole("button", { name: /Extensions/ }));
       const register = screen.getByRole("button", {
         name: "Register installed package",
       });

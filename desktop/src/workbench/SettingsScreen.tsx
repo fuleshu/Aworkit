@@ -92,6 +92,7 @@ export function SettingsScreen({
   registerLeaveGuard,
   subagentViewPort,
   onSubagentViewChange,
+  initialSection = "providers",
 }: {
   readonly settingsPort?: SettingsV2CorePort;
   readonly presentation?: SettingsPresentation;
@@ -103,13 +104,19 @@ export function SettingsScreen({
   /** Dedicated port for the delegated-subagent tab presentation preference. */
   readonly subagentViewPort?: SubagentViewPreferencePort;
   readonly onSubagentViewChange?: (preference: SubagentViewPreference) => void;
+  /**
+   * Section the surface opens on. The shell uses this to deep-link a Settings
+   * section, including one the navigation lists as unavailable, so its
+   * resolution notice can be shown without offering the section as a tab.
+   */
+  readonly initialSection?: SettingsSectionId;
 }): React.JSX.Element {
   const port = useMemo(
     () => settingsPort ?? createSettingsV2CorePort(),
     [settingsPort],
   );
   const nativePresentation = presentation ?? inertPresentation;
-  const [section, setSection] = useState<SettingsSectionId>("providers");
+  const [section, setSection] = useState<SettingsSectionId>(initialSection);
   const [snapshot, setSnapshot] = useState<SettingsV2Snapshot | null>(null);
   const [draft, setDraft] = useState<SettingsConfigurationV2 | null>(null);
   const [jsonErrors, setJsonErrors] = useState<
@@ -750,22 +757,30 @@ export function SettingsScreen({
             const issueCount = issues.filter(
               ({ section: issueSection }) => issueSection === item.id,
             ).length;
+            const disabled = item.disabled === true;
             return (
               <button
                 aria-current={item.id === section ? "page" : undefined}
+                disabled={disabled}
                 key={item.id}
-                title={`Open ${item.label}: ${item.description}`}
+                title={
+                  disabled
+                    ? (item.disabledReason ?? `${item.label} is not available yet`)
+                    : `Open ${item.label}: ${item.description}`
+                }
                 type="button"
                 onClick={() => setSection(item.id)}
               >
                 <span>{item.label}</span>
-                <small>{item.description}</small>
+                <small>{disabled ? (item.disabledReason ?? item.description) : item.description}</small>
                 <span className="settings-nav-state" aria-hidden="true">
                   {issueCount > 0
                     ? `${issueCount} issue${issueCount === 1 ? "" : "s"}`
                     : dirtySections.has(item.id)
                       ? "Unsaved"
-                      : ""}
+                      : disabled
+                        ? "Unavailable"
+                        : ""}
                 </span>
               </button>
             );

@@ -15,6 +15,13 @@ export type SettingsSectionDefinition = {
   readonly id: SettingsSectionId;
   readonly label: string;
   readonly description: string;
+  /**
+   * A section whose surface is not a working function yet stays listed but
+   * cannot be opened, so nobody has to guess what it is about.
+   */
+  readonly disabled?: boolean;
+  /** Explains the disabled state in the control's title and help text. */
+  readonly disabledReason?: string;
 };
 
 export type SettingsUiIssue = SettingsValidationIssue & {
@@ -51,7 +58,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
   {
     id: "extensions",
     label: "Extensions",
-    description: "Manifest discovery, trust, and configuration",
+    description: "Not available yet — extension discovery and trust are not implemented",
+    disabled: true,
+    disabledReason:
+      "Extensions are not available yet; this build provides no extension discovery, trust or enablement.",
   },
   {
     id: "mcp",

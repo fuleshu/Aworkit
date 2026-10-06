@@ -277,21 +277,21 @@ describe("Management repair review", () => {
     );
   });
 
-  it("marks Management Chat unsupported in the rescue navigation", () => {
+  it("omits the unsupported Management Chat entry from the rescue navigation", () => {
     renderApp(
       <App
         adapters={defaultDesktopAdapters}
         managementRepairCorePort={new PreviewManagementRepairCorePort()}
       />,
     );
-    const management = screen.getByRole("button", {
-      name: /Management Chat.*Unsupported/,
+    const navigation = screen.getByRole("navigation", {
+      name: "Primary navigation",
     });
-    expect(management).toBeDisabled();
-    expect(management).toHaveAttribute(
-      "title",
-      "Management Chat is unsupported in this build",
-    );
+    expect(
+      screen.queryByRole("button", { name: /Management Chat/ }),
+    ).toBeNull();
+    expect(navigation).not.toHaveTextContent("Management Chat");
+    expect(navigation).not.toHaveTextContent("Schedules");
     expect(
       screen.queryByRole("checkbox", {
         name: /I reviewed the complete disclosure/,

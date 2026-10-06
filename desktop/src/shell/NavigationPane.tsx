@@ -79,26 +79,11 @@ export function NavigationPane({
         {!collapsed && "New Chat"}
       </button>
       <NavigationButton
-        active={false}
-        icon="●"
-        label="Management Chat — Unsupported"
-        collapsed={collapsed}
-        disabled
-        disabledTitle="Management Chat is unsupported in this build"
-      />
-      <NavigationButton
         active={route === "workflows"}
         icon="◇"
         label="Workflows"
         collapsed={collapsed}
         onClick={() => onNavigate("workflows")}
-      />
-      <NavigationButton
-        active={false}
-        icon="◷"
-        label="Schedules"
-        collapsed={collapsed}
-        disabled
       />
       {collapsed ? (
         <NavigationButton

@@ -45,9 +45,12 @@ describe("honest JSON-workflow desktop slice", () => {
     expect(navigation).toHaveTextContent("Chat");
     expect(navigation).toHaveTextContent("Settings");
     expect(navigation).not.toHaveTextContent("Project Atlas");
+    // The unsupported Management Chat and Schedules entries are gone, not merely
+    // disabled, so the navigation only offers working surfaces.
     expect(
-      screen.getByRole("button", { name: /Management Chat.*Unsupported/ }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: /Management Chat/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Schedules/ })).toBeNull();
     expect(document.querySelector(".composer-footer .run-status")).toHaveTextContent(
       "Waiting for input",
     );

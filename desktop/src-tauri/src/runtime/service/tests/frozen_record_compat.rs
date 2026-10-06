@@ -11,6 +11,9 @@ fn a_profile_with_one_unreadable_frozen_record_still_opens_lists_and_starts() {
     let provider = Arc::new(FixtureProvider::new());
     let mut desktop = runtime(&root, provider.clone());
     configure(&mut desktop);
+    // One stored Chat so the profile has recoverable history to list after the
+    // unreadable record below is written.
+    desktop.command(send("compat.seed", 0, "seed topic")).unwrap();
     // One record this build cannot read, written for an unrelated Chat.
     desktop
         .history
