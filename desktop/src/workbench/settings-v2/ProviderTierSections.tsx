@@ -98,7 +98,9 @@ export function ProvidersModelsSection({
         name: preset.name,
         kind: preset.protocol,
         baseUrl: preset.baseUrl,
-        enabled: false,
+        // A provider the user just added is immediately active; the preset is
+        // only a starting point and can be disabled with the switch below.
+        enabled: true,
         credentialRef: null,
         models: [],
         configuration: {},
@@ -115,7 +117,7 @@ export function ProvidersModelsSection({
             Provider preset
             <select
               id="provider-preset"
-              title="Populate a new editable provider draft; this does not enable it or store credentials"
+              title="Populate a new enabled provider draft; this does not store credentials"
               value={presetId}
               onChange={(event) => setPresetId(event.target.value)}
             >
@@ -127,7 +129,7 @@ export function ProvidersModelsSection({
             </select>
           </label>
           <button
-            title="Add the selected preset as a disabled provider draft"
+            title="Add the selected preset as an enabled provider draft"
             type="button"
             onClick={addProvider}
           >

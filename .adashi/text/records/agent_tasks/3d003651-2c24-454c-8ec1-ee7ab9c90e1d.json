@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/state_context.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/pipeline.rs\",\"desktop/src-tauri/src/runtime/compaction/integration_tests.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-10-06 18:20:08",
+    "completion_memo": {
+      "lines": [
+        "Issue 1 (prefix cache) implemented. state_context.rs no longer collapses state between compactions: emit_state and occupancy_context append only, SUPERSEDED_STATE_BUDGET_BYTES and both *_over_budget helpers are deleted, and only StateEmission::Consolidate (the compaction replacement path) collapses copies. The module doc and docs/context-compaction.md record the measured cost of the removed fallback (599,718 of 686,633 uncached input tokens in the 5 collapse turns, 92.05% -> ~98.9%) and that remaining growth is bounded by compaction. Verified: cargo check --tests clean; runtime::compaction 19/19; compaction_integration 31/31 including a_state_change_is_appended_at_the_tail_instead_of_rewriting_the_context and the_occupancy_notice_is_appended_between_compactions_and_consolidated_by_one.\n",
+        "\n",
+        "Issue 2 (text-less turn) implemented. New model_tool_loop/empty_turn.rs turns an empty turn into a runtime notice (turn number + output tokens) and continues; recover() commits whatever content the turn produced, never ends the node. All three MissingAssistantOutput returns are replaced and the enum variant removed. The graph-pass no-tool Agent path (graph_pass.rs, previously a second terminal site with \"agent node ... returned no assistant text\") now reports and re-asks instead of failing the node. Verified end-to-end: pipeline test an_accepted_turn_with_no_answer_is_reported_and_the_run_continues passes (empty turn then answer, 2 model turns, the notice asserted on the second request).\n",
+        "\n",
+        "WARNINGS / deferred, no blocker found:\n",
+        "- Issue 3 (P2, naming a prefix reset in Run details) not implemented.\n",
+        "- The notice carries the turn number and its output-token count, not the provider finish reason. finish_reason is parsed in aworkit-capability-host but is not projected to the loop; plumbing it is a separate cross-crate change. The output-token count is the recorded fingerprint (65,536) and is what the notice prints.\n",
+        "- The bound design spec aworkit.workflow_worker.context_compaction_budget was not amended: it already specifies append-between-compactions with consolidation by the next compaction and explicitly leaves the append/re-injection path to the context store, so no design statement became false.\n",
+        "- My first replacement test for the removed budget fallback was dropped after it proved to assert an internal list-rebuild detail rather than prompt bytes; the invariant stays pinned by the existing passing append test, and the collapse code path is fully deleted.\n",
+        "- Environment note for future runs: this harness shell has no USERPROFILE/HOME, so 114 lib tests (service, settings_v2, documents, tool_registry) fail with \"user home directory is unavailable; configure the skill home explicitly\". They pass with USERPROFILE set, and they are unrelated to this change. Full lib suite: 502 passed / 114 environment-failed."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-06 18:09:20",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Findings from a real 19-minute benchmark run (chat.f232dbd770679e264ca8f27562c8bc15f73f27f4, workflow.standard-agent, deepseek-flash, 75 model calls, 8,634,665 input tokens). Evidence: history/aworkit.sqlite3 (span.usage, context.checkpoint, span.failed, execution.failed) plus the invocations ledger.\n",
+        "\n",
+        "ISSUE 1 (P1) — A leading durable-state block is consolidated in place between compactions, resetting the whole provider prefix cache.\n",
+        "- Measured: whole-run cache hit 92.05% (cached 7,948,032 / (cached + miss)). The Run summary event reports 92.12%. Expected ~99.6% for this prompt.\n",
+        "- 5 of 75 turns collapsed to exactly 9,216 cached tokens (hit 5.6%-9.5%) with commonPrefixBytes ~21.5 KB while sentBytes grew to 350-1080 KB. Those 5 turns carry 599,718 of the 686,633 uncached input tokens = 87.3% of all misses. Without them the same run scores ~98.9%.\n",
+        "- Recorded checkpoint proof: at prepared turns 53-54 the selection carried the stale copy at cm[3] (afterExchanges=0, \"Files this Run ... (10 total)\") plus a superseding copy at cm[11] (afterExchanges=45, \"11 total\"). At prepared turn 56 only one copy remained, AT INDEX 3, with the new text; that turn's cached tokens collapsed to 9,216. Same pattern for cm[3] 11->12 total at prepared turn 72.\n",
+        "- Cause: state_context.rs `emit_state` falls back from append to `consolidate` once superseded copies pass SUPERSEDED_STATE_BUDGET_BYTES (4096), and `consolidate` rewrites the survivor \"at the position the first copy occupied\" - the front of the prompt. A prefix cache re-bills every token after the first changed byte, so the fallback costs ~150k tokens per event instead of ~500 bytes for one append. The module doc already states the intended rule (\"between compactions a changed part is appended at the tail\").\n",
+        "- Required: between compactions, state re-emission must be append-only (no destructive rewrite); keep StateEmission::Consolidate for the compaction path only. Growth that remains is bounded by compaction, and the module doc, docs/context-compaction.md and the bound design specification must be updated to match.\n",
+        "- Tests: existing budget-fallback tests encode the old behaviour and must be rewritten to assert append-only + prefix stability (no in-scope copy is removed or rewritten between compactions).\n",
+        "\n",
+        "ISSUE 2 (P1) — A provider turn with no final assistant text stops the Run and needs a human.\n",
+        "- Recorded: span.failed x3 + execution.failed \"agent node 'agent.1' failed: provider accepted the Agent turn but returned no final assistant text\", modelTurns 3, outputUnits 65,875, automaticReplayAllowed false. Per-turn output was 120 / 219 / 65,536 - the third turn spent exactly 2^16 output tokens and ended with no final text and no tool call. The Run stopped until the user asked \"why did you stop, explain\"; the resume then completed the task.\n",
+        "- Error defined at runtime/model_tool_loop.rs:428.\n",
+        "- Required: a turn that ends without final text after exhausting the model's output ceiling must be recoverable (continue/nudge or a bounded retry), not a terminal execution.failed, and the outcome must be reported with the turn's finish reason so the cause is visible in Run details.\n",
+        "\n",
+        "ISSUE 3 (P2) — Run details do not surface a prefix reset.\n",
+        "- A turn whose commonPrefixBytes collapses while sentBytes grows is the diagnostic for Issue 1, but nothing in the evidence inspector names it.\n",
+        "\n",
+        "ISSUE 4 (P2) — The occupancy notice is appended once per turn and grows until a destructive collapse (293 bytes x every acting turn). Under the Issue 1 fix it is append-only too, so its growth is bounded by compaction; confirm that is acceptable or gate it on a material percentage change.\n",
+        "\n",
+        "NOT REPO ISSUES (recorded for the benchmark harness, not implemented here): the agent spent ~4 turns enumerating C:\\\\, Program Files, HKCU, WindowsApps and AppData hunting a headless browser even though the prompt says Firefox is installed, and ended up driving msedge; large single-response file writes hit the 64K output ceiling (Issue 2's trigger).\n",
+        "\n",
+        "Scope: Issues 1 and 2. Issues 3 and 4 are recorded for follow-up."
+      ]
+    },
+    "id": 73044121960,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Preserve the provider prefix cache across Run-state re-emission, and recover a text-less Agent turn",
+    "updated_at": "2026-10-06 18:20:08"
+  },
+  "deleted": false,
+  "identity": "3d003651-2c24-454c-8ec1-ee7ab9c90e1d",
+  "schemaVersion": 1
+}

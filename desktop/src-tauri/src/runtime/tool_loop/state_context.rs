@@ -28,15 +28,6 @@ use aworkit_capability_host::ModelToolRequestV1;
 /// records, so the bound is a formatting guard rather than a real truncation.
 const MAXIMUM_STATE_BYTES: usize = 2048;
 
-/// How much superseded state a selection may carry before the block is
-/// collapsed instead of appended to again.
-///
-/// Appending keeps the cached prefix, but a superseded copy is never free: a
-/// long run that changes state on every turn would grow the block without
-/// bound. Past this budget one consolidation replaces several appends, so the
-/// cost is one rewrite per budget rather than one per change.
-const SUPERSEDED_STATE_BUDGET_BYTES: usize = 4096;
-
 /// Note appended to a re-emitted part when an older copy of the same state is
 /// still in the selection, so the model reads which copy wins.
 const SUPERSEDE_NOTE: &str = "\n(Supersedes the earlier copy of this state in this context.)";
@@ -139,12 +130,21 @@ pub(super) enum StateEmission {
 impl BoundFileToolAuthorityV1 {
     /// Writes the canonical state block into a request.
     ///
-    /// `Consolidate` replaces every copy with one current block, which is what a
-    /// compaction replacement wants: it is rebuilding the selection regardless.
+    /// `Consolidate` replaces every copy with one current block. Only a
+    /// compaction replacement asks for it: that path rebuilds the selection
+    /// regardless, so the rewrite costs nothing it was not already paying.
     /// `Append` adds only the parts that are missing or changed, at the tail,
     /// which is what a turn-to-turn refresh wants: the prompt stays append-only
-    /// and the provider's cached prefix survives. `Append` falls back to a
-    /// consolidation once the superseded copies pass their budget.
+    /// and the provider's cached prefix survives byte for byte.
+    ///
+    /// Nothing here is budgeted. A superseded copy is not free, but removing or
+    /// rewriting one is far more expensive than keeping it: a provider caches
+    /// the longest common prefix, so the first changed byte re-bills every token
+    /// after it. A recorded 75-turn run re-billed 599,718 of its 686,633
+    /// uncached input tokens in the 5 turns where a budgeted collapse rewrote a
+    /// state block that sat at the head of the prompt, against roughly 500 bytes
+    /// per append it was trying to save. Growth between compactions is therefore
+    /// accepted and bounded by the compaction that consolidates the block.
     ///
     /// `occupancy` is the measured occupancy notice for this request, or `None`
     /// when the model declares no window and there is no ratio to print. It is a
@@ -170,10 +170,9 @@ impl BoundFileToolAuthorityV1 {
     /// An acting turn emits the occupancy disclosure on every request between
     /// compactions, but it must not re-emit the rest of the block: the goal is
     /// injected once at the head of a pass and the task/file parts follow their
-    /// own records. A notice already present byte-for-byte is left alone, a
-    /// changed one is appended at the tail with the supersede note, and a block
-    /// of superseded notices is collapsed once it passes the same budget the
-    /// rest of the state uses.
+    /// own records. A notice already present byte-for-byte is left alone and a
+    /// changed one is appended at the tail with the supersede note. Superseded
+    /// notices are never collapsed here; the next compaction consolidates them.
     pub(super) fn occupancy_context(
         &self,
         request: &mut ModelToolRequestV1,
@@ -192,11 +191,10 @@ impl BoundFileToolAuthorityV1 {
         if already_current {
             return Ok(());
         }
-        if self.occupancy_superseded_over_budget(request, &current) {
-            self.consolidate(request, vec![message], is_occupancy_state);
-        } else {
-            self.append(request, &[message], &[]);
-        }
+        // Append-only between compactions. A collapse here would rewrite a
+        // message the cached prefix already covers and re-bill every token after
+        // it, which costs orders of magnitude more than the notice it saves.
+        self.append(request, &[message], &[]);
         Ok(())
     }
 
@@ -207,9 +205,7 @@ impl BoundFileToolAuthorityV1 {
         derived: Vec<ModelToolContextV1>,
         cleared: &[(&'static str, &'static str)],
     ) {
-        if emission == StateEmission::Append
-            && !self.superseded_state_over_budget(request, &derived)
-        {
+        if emission == StateEmission::Append {
             self.append(request, &derived, cleared);
             return;
         }
@@ -313,53 +309,6 @@ impl BoundFileToolAuthorityV1 {
             message.after_input_messages = None;
         }
         request.context_messages.extend(appended);
-    }
-
-    /// Whether the occupancy copies this selection already carries, minus the
-    /// current one, have grown past the budget.
-    fn occupancy_superseded_over_budget(
-        &self,
-        request: &ModelToolRequestV1,
-        current: &str,
-    ) -> bool {
-        let mut superseded = 0usize;
-        for message in &request.context_messages {
-            if !is_occupancy_state(&message.content) {
-                continue;
-            }
-            let copy = without_note(&message.content);
-            if copy != current {
-                superseded += copy.len();
-            }
-        }
-        superseded >= SUPERSEDED_STATE_BUDGET_BYTES
-    }
-
-    /// Whether the copies this selection already carries, minus the ones that
-    /// are still current, have grown past the budget.
-    fn superseded_state_over_budget(
-        &self,
-        request: &ModelToolRequestV1,
-        derived: &[ModelToolContextV1],
-    ) -> bool {
-        let mut superseded = 0usize;
-        for message in &request.context_messages {
-            if !is_generated_state(&message.content) {
-                continue;
-            }
-            let copy = without_note(&message.content);
-            let current = derived.iter().any(|target| target.content == copy)
-                || parts().iter().any(|(label, cleared)| {
-                    copy == *cleared
-                        && !derived
-                            .iter()
-                            .any(|target| target.content.starts_with(*label))
-                });
-            if !current {
-                superseded += copy.len();
-            }
-        }
-        superseded >= SUPERSEDED_STATE_BUDGET_BYTES
     }
 
     /// The state block in canonical order: the live Chat goal, this Run's task

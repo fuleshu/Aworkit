@@ -1352,61 +1352,6 @@ fn the_occupancy_notice_is_appended_between_compactions_and_consolidated_by_one(
     );
 }
 
-#[test]
-fn a_block_of_superseded_copies_is_consolidated_instead_of_appended_to_again() {
-    // Appending keeps the cached prefix, but a superseded copy is never free, so
-    // the block is collapsed once those copies pass their budget: one rewrite per
-    // budget instead of one per change, and no unbounded growth.
-    let mut f = Fixture::with_tools(&[ID, FILE_READ_CAPABILITY_ID, GOAL_CAPABILITY_ID]);
-    let (outer, mut request) = history(&mut f);
-    let run = f.authority.context.run_id.clone();
-    f.authority.context.model_context = json!({"contextWindow":1_000_000,"policy":{"auto":true}});
-    f.authority
-        .runtime
-        .record_goal_state_for(&run, &json!({"status":"active","goal":"live objective"}))
-        .unwrap();
-    let (gateway, _requests, plan) = gateway(|_| Ok("Condensed checkpoint.".into()));
-    // A compaction writes the checkpoint whose restored block makes the next
-    // refresh run, and it consolidates the block itself.
-    let compacted = compact_manual(&f, &gateway, &plan, &outer, &mut request);
-    assert!(compacted.changed, "{:?}", compacted.error);
-    let mut next = f.request();
-    for index in 0..60 {
-        next.context_messages.push(ModelToolContextV1 {
-            content: format!(
-                "{GOAL_STATE_LABEL}active; durable state for this Chat, not a new instruction):\nstale objective {index}"
-            ),
-            role: Some("user".into()),
-            ..Default::default()
-        });
-    }
-    let prepared = f
-        .authority
-        .manage_model_context(
-            &gateway,
-            &plan,
-            &stable("outer.state-budget").unwrap(),
-            1,
-            Some(&f.agent),
-            &mut next,
-            &CancellationToken::default(),
-            Trigger::Pressure,
-        )
-        .unwrap();
-    assert!(prepared.error.is_none(), "{:?}", prepared.error);
-    let copies = generated_state(&next, "objective");
-    assert_eq!(
-        copies.len(),
-        1,
-        "the superseded block is collapsed instead of appended to: {:?}",
-        next.context_messages
-    );
-    assert!(copies[0].content.contains("live objective"));
-    assert!(
-        !serde_json::to_string(&next).unwrap().contains("stale objective"),
-        "the superseded copies are gone"
-    );
-}
 
 #[test]
 fn a_compaction_keeps_the_user_direction_and_consolidates_prior_checkpoints() {

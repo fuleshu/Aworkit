@@ -334,6 +334,26 @@ describe("Settings v2 workbench", () => {
     expect(await screen.findByDisplayValue("remote-model-2")).toBeVisible();
   });
 
+  it("adds a provider already enabled and keeps it enabled through Save", async () => {
+    const port = new RecordingSettingsV2Port();
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    await screen.findByLabelText("Base URL");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // A provider the user just added is active immediately, so configuring it
+    // never requires a second trip to the enable switch.
+    expect(await screen.findByLabelText("Provider enabled")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    const added = port.commits[0]!.settings.providers.find(
+      ({ id }) => id !== "provider.local",
+    );
+    expect(added?.enabled).toBe(true);
+  });
+
   it("keeps a recorded context window and states a known one when discovery omits it", async () => {
     const initial = configuration();
     initial.providers[0]!.models[0] = {

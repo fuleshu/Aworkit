@@ -26,6 +26,7 @@ use super::{
 };
 
 mod approval_turn;
+pub(crate) mod empty_turn;
 mod job_completion;
 mod provider_recovery;
 
@@ -425,8 +426,6 @@ pub(crate) enum ModelToolLoopErrorV1 {
     ToolAuthority(String),
     #[error("Agent model/tool budget is exhausted: {0}")]
     Budget(&'static str),
-    #[error("provider accepted the Agent turn but returned no final assistant text")]
-    MissingAssistantOutput,
 }
 
 impl ModelToolLoopFailureV1 {
@@ -531,16 +530,22 @@ pub(crate) fn execute_model_tool_loop_v1(
             }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
-                return Err(failure(
-                    ModelToolLoopErrorV1::MissingAssistantOutput,
-                    input_tokens,
-                    output_tokens,
-                    cache,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                ));
+                // An accepted turn with nothing to act on is reported and the
+                // loop continues. Only the model's final answer, a cancellation
+                // or an unrecoverable authority denial may end the node.
+                empty_turn::recover(
+                    authority,
+                    request.outer_invocation_id,
+                    empty_turn::EmptyTurnV1 {
+                        turn,
+                        output_tokens: turn_output.output_tokens,
+                    },
+                    &turn_output.assistant_content,
+                    &mut exchanges,
+                    &mut pending_runtime_notice,
+                );
+                turn = turn.saturating_add(1);
+                continue;
             }
             return Ok(ModelToolLoopOutcomeV1 {
                 assistant_text,
@@ -1023,16 +1028,22 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
             }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
-                return Err(failure(
-                    ModelToolLoopErrorV1::MissingAssistantOutput,
-                    input_tokens,
-                    output_tokens,
-                    cache,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                ));
+                // An accepted turn with nothing to act on is reported and the
+                // loop continues. Only the model's final answer, a cancellation
+                // or an unrecoverable authority denial may end the node.
+                empty_turn::recover(
+                    authority,
+                    request.outer_invocation_id,
+                    empty_turn::EmptyTurnV1 {
+                        turn,
+                        output_tokens: turn_output.output_tokens,
+                    },
+                    &turn_output.assistant_content,
+                    &mut exchanges,
+                    &mut pending_runtime_notice,
+                );
+                turn = turn.saturating_add(1);
+                continue;
             }
             return Ok(ModelToolLoopRunV1::Completed(ModelToolLoopOutcomeV1 {
                 assistant_text,
@@ -1234,16 +1245,22 @@ pub(crate) fn resume_model_tool_loop_v1(
             }
             let assistant_text = turn_output.assistant_text.trim().to_owned();
             if assistant_text.is_empty() {
-                return Err(failure(
-                    ModelToolLoopErrorV1::MissingAssistantOutput,
-                    input_tokens,
-                    output_tokens,
-                    cache,
-                    attempted_model_turns,
-                    settled_tool_calls,
-                    &exchanges,
-                    &activities,
-                ));
+                // An accepted turn with nothing to act on is reported and the
+                // loop continues. Only the model's final answer, a cancellation
+                // or an unrecoverable authority denial may end the node.
+                empty_turn::recover(
+                    authority,
+                    request.outer_invocation_id,
+                    empty_turn::EmptyTurnV1 {
+                        turn,
+                        output_tokens: turn_output.output_tokens,
+                    },
+                    &turn_output.assistant_content,
+                    &mut exchanges,
+                    &mut pending_runtime_notice,
+                );
+                turn = turn.saturating_add(1);
+                continue;
             }
             return Ok(ModelToolLoopRunV1::Completed(ModelToolLoopOutcomeV1 {
                 assistant_text,

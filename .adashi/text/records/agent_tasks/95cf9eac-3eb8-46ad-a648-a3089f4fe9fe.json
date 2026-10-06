@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/styles.css\"]",
+    "completed_at": "2026-10-06 16:47:03",
+    "completion_memo": "Root cause measured, not assumed: the section list is a flex column whose buttons shrank (28px holding ~55px of nowrap label+description) so the text was clipped instead of scrolling. styles.css now gives .settings-v2-body one bounded row (grid-template-rows: minmax(0, 1fr)), min-height: 0 + overflow-y: auto + scrollbar-gutter: stable on its nav, and flex: 0 0 auto on the nav buttons. Verified in real Chromium (Edge headless driven through scripts/native-webview.mjs) against the shipping styles.css and against the pre-change file from HEAD: at 1280x420, 1280x260 and 1000x300 the buttons keep 56px where HEAD measured 28px, navScrollHeight (841) exceeds navClientHeight, the last section is reachable after scrolling, nothing overflows the surface box, and at --aw-font-scale 1.5 the buttons keep 74px where HEAD measured 28px for 75px of text. jsdom cannot assert layout, so this check was run outside vitest; it can be promoted into a scripts/native-* smoke assertion if a permanent regression gate is wanted.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-06 16:35:35",
+    "created_files": "[]",
+    "description": "At short window heights the Settings section navigation clips its items instead of scrolling, because .settings-v2-body has overflow:hidden while its implicit grid row is content-sized. The nav needs a scrollable bounded row (minmax(0,1fr) row plus min-height:0 / overflow-y:auto on the nav).",
+    "id": 72874799873,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make the Settings section navigation scroll instead of clipping",
+    "updated_at": "2026-10-06 16:47:03"
+  },
+  "deleted": false,
+  "identity": "95cf9eac-3eb8-46ad-a648-a3089f4fe9fe",
+  "schemaVersion": 1
+}

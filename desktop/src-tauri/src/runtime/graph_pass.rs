@@ -1298,43 +1298,53 @@ impl<'a> PassMachine<'a> {
             .collect::<Vec<_>>();
         let parameters = node_model_parameters(&node.configuration);
         if definitions.is_empty() {
-            return match self.execute_text_turn(
-                &outer,
-                &ModelResolutionPlanV1 {
-                    candidates: vec![ModelCandidateV1 {
-                        binding_id: self.model_binding_id.to_owned(),
-                        version_hash: self.model_version_hash.to_owned(),
-                    }],
-                    maximum_input_bytes: MAXIMUM_PROVIDER_REQUEST_BYTES,
-                    maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
-                },
-                ModelRequestV1 {
-                    input: context,
-                    parameters,
-                },
-                Some(&agent_context(node)),
-                &initial_context,
-                None,
-                cancellation,
-            ) {
-                Ok(evidence) => {
-                    let turn = project_model_events(&evidence.events);
-                    let text = turn.assistant_text;
-                    let units = (turn.input_tokens, turn.output_tokens);
-                    self.input_units = self.input_units.saturating_add(units.0);
-                    self.output_units = self.output_units.saturating_add(units.1);
-                    self.cache_units.add(turn.cache);
-                    if text.trim().is_empty() {
-                        Err(format!(
-                            "agent node '{}' returned no assistant text",
-                            node.id
-                        ))
-                    } else {
-                        Ok(Value::String(text))
-                    }
-                }
-                Err(error) => Err(format!("agent node '{}' failed: {error}", node.id)),
+            // An Agent node without tools cannot be ended by a provider that
+            // returns nothing either: the empty turn is reported and asked
+            // again, and only the model's own final answer ends the node.
+            let plan = ModelResolutionPlanV1 {
+                candidates: vec![ModelCandidateV1 {
+                    binding_id: self.model_binding_id.to_owned(),
+                    version_hash: self.model_version_hash.to_owned(),
+                }],
+                maximum_input_bytes: MAXIMUM_PROVIDER_REQUEST_BYTES,
+                maximum_output_bytes: MAXIMUM_NODE_OUTPUT_BYTES,
             };
+            let agent = agent_context(node);
+            let mut retry_notice: Option<String> = None;
+            let mut empty_turns = 0_u32;
+            loop {
+                let turn = match self.execute_text_turn(
+                    &outer,
+                    &plan,
+                    ModelRequestV1 {
+                        input: context.clone(),
+                        parameters: parameters.clone(),
+                    },
+                    Some(&agent),
+                    &initial_context,
+                    retry_notice.as_deref(),
+                    cancellation,
+                ) {
+                    Ok(evidence) => project_model_events(&evidence.events),
+                    Err(error) => {
+                        return Err(format!("agent node '{}' failed: {error}", node.id));
+                    }
+                };
+                self.input_units = self.input_units.saturating_add(turn.input_tokens);
+                self.output_units = self.output_units.saturating_add(turn.output_tokens);
+                self.cache_units.add(turn.cache);
+                if !turn.assistant_text.trim().is_empty() {
+                    return Ok(Value::String(turn.assistant_text));
+                }
+                empty_turns = empty_turns.saturating_add(1);
+                retry_notice = Some(
+                    crate::runtime::model_tool_loop::empty_turn::EmptyTurnV1 {
+                        turn: empty_turns,
+                        output_tokens: turn.output_tokens,
+                    }
+                    .notice(),
+                );
+            }
         }
         match execute_model_tool_loop_approval_v1(
             self.gateway,

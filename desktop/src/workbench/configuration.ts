@@ -823,7 +823,14 @@ export function validateSettingsConfiguration(
       modelIds.add(model.id);
       modelKeys.add(targetKey({ providerId: provider.id, modelId: model.id }));
     }
-    if (provider.enabled && !provider.models.some(({ enabled }) => enabled)) {
+    // A provider that defines no models yet is inert, so it may be enabled
+    // while it is still being set up; the requirement applies once it actually
+    // defines models, where an all-disabled set makes the enabled flag a lie.
+    if (
+      provider.enabled &&
+      provider.models.length > 0 &&
+      !provider.models.some(({ enabled }) => enabled)
+    ) {
       issues.push({
         section: "providers",
         path: `providers.${provider.id}.enabled`,

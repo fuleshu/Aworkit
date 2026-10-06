@@ -228,6 +228,33 @@ describe("Settings configuration v2", () => {
     });
   });
 
+  it("lets an enabled provider exist before it has models, and requires one enabled model once it has any", () => {
+    // A freshly added provider is enabled immediately and starts without
+    // models; only an all-disabled model set makes the enabled flag a lie.
+    const withoutModels = configuration();
+    withoutModels.providers[0] = { ...withoutModels.providers[0]!, models: [] };
+    expect(
+      validateSettingsConfiguration(withoutModels).filter(
+        ({ section }) => section === "providers",
+      ),
+    ).toEqual([]);
+
+    const withOnlyDisabledModels = configuration();
+    withOnlyDisabledModels.providers[0] = {
+      ...withOnlyDisabledModels.providers[0]!,
+      models: [
+        { ...withOnlyDisabledModels.providers[0]!.models[0]!, enabled: false },
+      ],
+    };
+    expect(validateSettingsConfiguration(withOnlyDisabledModels)).toContainEqual(
+      expect.objectContaining({
+        section: "providers",
+        path: "providers.provider.local.enabled",
+        message: "An enabled provider must contain at least one enabled model.",
+      }),
+    );
+  });
+
   it("requires MCP environment and header values to be credential references", () => {
     const value = configuration();
     value.mcpServers.push({

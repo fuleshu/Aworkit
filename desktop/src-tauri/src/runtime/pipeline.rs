@@ -3843,7 +3843,7 @@ mod tests {
         Succeed,
         TimeoutThenSucceed,
         Ambiguous,
-        EmptyAcceptedOutput,
+        EmptyThenAnswer,
         OversizedOutput,
     }
 
@@ -3912,13 +3912,21 @@ mod tests {
                 ScriptedBehavior::Ambiguous => {
                     return Err(ProviderError::AcceptanceAmbiguous);
                 }
-                ScriptedBehavior::EmptyAcceptedOutput => {
+                ScriptedBehavior::EmptyThenAnswer if call_index == 0 => {
+                    // The recorded shape of the incident: accepted, the whole
+                    // output ceiling spent, and no text or tool call produced.
                     emit(ModelEventV1::Usage {
                         input_tokens: 7,
-                        output_tokens: 0,
+                        output_tokens: 65_536,
                         cache: Default::default(),
                     })?;
                     return Ok(aworkit_capability_host::ProviderAcceptanceV1::Accepted);
+                }
+                ScriptedBehavior::EmptyThenAnswer => {
+                    assert!(
+                        request.input.to_string().contains("Aworkit provider notice"),
+                        "the empty turn must be reported to the model on the next request"
+                    );
                 }
                 ScriptedBehavior::OversizedOutput => {
                     emit(ModelEventV1::AssistantOutput("x".repeat(16 * 1024 + 1)))?;
@@ -5373,18 +5381,35 @@ mod tests {
     }
 
     #[test]
-    fn accepted_response_without_assistant_text_is_not_committed_as_success() {
+    fn an_accepted_turn_with_no_answer_is_reported_and_the_run_continues() {
+        // The recorded incident: the provider accepted the turn, spent its whole
+        // output ceiling and returned no assistant text. The failure policy makes
+        // that a condition to report, never an ending, so the Run continues and
+        // the next turn answers.
         let root = TempDir::new().expect("root");
         let (pipeline, _credential_store, metadata, calls, _) =
-            setup(&root, ScriptedBehavior::EmptyAcceptedOutput);
+            setup(&root, ScriptedBehavior::EmptyThenAnswer);
+        let mut execution_request = request(metadata);
+        // Two turns: the empty turn, then the answer the recovery asks for.
+        execution_request.budget.turns = 2;
+        execution_request.budget.attempts = 2;
+        execution_request.budget.actions = 2;
         let result = pipeline
-            .execute(request(metadata))
-            .expect("accepted empty outcome is durably classified");
-        assert_eq!(result.status, WorkflowExecutionStatusV1::FailedKnownStarted);
-        assert!(result.assistant_text.is_none());
-        assert_eq!((result.input_units, result.output_units), (7, 0));
-        assert_eq!((result.model_turns, result.tool_calls), (1, 0));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+            .execute(execution_request)
+            .expect("an accepted empty turn is reported and recovered");
+        assert_eq!(
+            result.status,
+            WorkflowExecutionStatusV1::Succeeded,
+            "the recovery must leave a completed run: {result:?}"
+        );
+        assert_eq!(result.assistant_text.as_deref(), Some("working answer"));
+        assert_eq!(result.model_turns, 2);
+        assert_eq!(result.tool_calls, 0);
+        assert!(
+            result.output_units >= 65_536,
+            "the empty turn's own ceiling is accounted, not discarded"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

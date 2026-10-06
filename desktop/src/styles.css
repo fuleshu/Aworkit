@@ -2211,13 +2211,23 @@ pre {
 }
 .settings-v2-body {
   grid-template-columns: 230px minmax(0, 1fr);
+  /* One bounded row keeps both columns inside the surface height: the section
+     list and the panel each scroll on their own instead of being clipped when
+     the window cannot show every section. */
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 .settings-v2-body > nav {
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .settings-v2-body > nav button {
   display: grid;
+  /* Keep each section at its natural label/description height so a short
+     window scrolls the list; the flex default compresses every button until
+     the nowrap text inside it is clipped. */
+  flex: 0 0 auto;
   gap: 2px;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 7px 9px;

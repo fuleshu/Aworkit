@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/workbench/settings-v2/ProviderTierSections.tsx\",\"desktop/src/workbench/configuration.ts\",\"desktop/src/workbench/configuration.test.ts\",\"desktop/src/workbench/SettingsScreen.test.tsx\"]",
+    "completed_at": "2026-10-06 16:46:59",
+    "completion_memo": "A provider added from a preset is now created enabled (ProviderTierSections.addProvider: enabled: true) and the preset select/Add titles say the added provider is enabled and that no credential is stored. That exposed the draft rule in configuration.ts, which required every enabled provider to have an enabled model, so a brand-new provider made the draft invalid and blocked Save; per the user's decision the rule now fires only when the provider defines models (provider.models.length > 0 && none enabled). Models themselves still start disabled. Verified: pnpm exec tsc --noEmit clean; vitest src/workbench/configuration.test.ts + src/workbench/SettingsScreen.test.tsx 74 passed, including the new SettingsScreen case \"adds a provider already enabled and keeps it enabled through Save\" and the new configuration case covering both halves of the relaxed rule; the pre-existing \"preserves an unrelated provider draft while model discovery is in flight\" test passes again.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-06 16:35:28",
+    "created_files": "[]",
+    "description": "Adding a provider from the Providers & models section creates the draft with enabled:false, so the user must find and flip the switch afterwards. The new provider draft should start enabled and the preset select/Add button titles should say so. No core policy blocks an enabled provider without credential or models (document_policy only validates credentialRef shape), so this is a UI default change.",
+    "id": 71384648934,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Enable a provider as soon as it is added in Settings",
+    "updated_at": "2026-10-06 16:46:59"
+  },
+  "deleted": false,
+  "identity": "80ddd9e6-c46f-45ae-a601-e66475655e94",
+  "schemaVersion": 1
+}
