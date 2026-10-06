@@ -1,4 +1,5 @@
 import type { DesktopConfiguration } from "../configuration";
+import { DocumentsExtrasControl } from "./DocumentsExtrasControl";
 
 /**
  * How the desktop opens a path a conversation showed. The editor command is
@@ -43,6 +44,7 @@ export function DesktopSection({
           ? "No editor configured. Open in editor uses your operating system's default application."
           : `Open in editor starts "${value.editor.trim()}" with the selected file.`}
       </p>
+      <DocumentsExtrasControl />
     </div>
   );
 }

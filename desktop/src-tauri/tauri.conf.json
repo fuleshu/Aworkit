@@ -29,7 +29,13 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../skills/": "skills/"
+      "../skills/": "skills/",
+      "../workflows/examples/": "workflows/examples/",
+      "../tool-plugins/ffmpeg/tool-plugin.json": "tool-plugins/ffmpeg/tool-plugin.json",
+      "../tool-plugins/ffmpeg/ffmpeg_bridge.py": "tool-plugins/ffmpeg/ffmpeg_bridge.py",
+      "../tool-plugins/ffmpeg/test_ffmpeg_bridge.py": "tool-plugins/ffmpeg/test_ffmpeg_bridge.py",
+      "../tool-plugins/ffmpeg/README.md": "tool-plugins/ffmpeg/README.md",
+      "../tool-plugins/ffmpeg/skills/": "tool-plugins/ffmpeg/skills/"
     },
     "icon": [
       "icons/32x32.png",

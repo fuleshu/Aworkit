@@ -137,7 +137,7 @@ Every structured tool creates a new file, refuses to overwrite the input, refuse
 
 FFmpeg does not have to be on `PATH`: the bridge checks `--ffmpeg` / `--ffprobe`, then `FFMPEG_PATH` / `FFPROBE_PATH`, then `PATH`, then the common install folders. When the binary is missing the tools fail with an error that names it and says where to set the path; a job that times out is stopped and reported rather than presented as a partial success.
 
-Build it, install it, and read the full tool and configuration reference in **[desktop/tool-plugins/ffmpeg/README.md](desktop/tool-plugins/ffmpeg/README.md)**.
+A fresh Aworkit install also copies the plugin into an **Aworkit** folder inside your documents folder (`Documents\Aworkit\Tool Plugins\ffmpeg` on Windows, `~/Documents/Aworkit/…` elsewhere), ready to install from **Settings → Tool Plugins** without cloning the repository. Read the full tool and configuration reference in **[desktop/tool-plugins/ffmpeg/README.md](desktop/tool-plugins/ffmpeg/README.md)**.
 
 ### 🧪 Example workflows
 
@@ -152,7 +152,7 @@ A fresh profile already seeds three workflows — **Simple**, **Standard** (the 
 
 Each file is a plain `.aworkit.json` document you load with **Import** in the workflow editor, and each is byte-identical to its bundled template. They are examples, not rules — import one and rewrite any step's plain-sentence prompt.
 
-Full descriptions, setup notes and a "which one should I reach for?" table live in **[desktop/workflows/examples/README.md](desktop/workflows/examples/README.md)**.
+A fresh install copies the four documents and their README into `Example Workflows` inside the same Aworkit documents folder, ready to **Import**. Full descriptions, setup notes and a "which one should I reach for?" table live in **[desktop/workflows/examples/README.md](desktop/workflows/examples/README.md)**.
 
 ### 🔐 Approvals and transparency
 

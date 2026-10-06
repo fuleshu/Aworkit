@@ -65,6 +65,15 @@ describe("resolveUserHelpTarget", () => {
     });
   });
 
+  it("resolves the in-app documents-folder link", () => {
+    expect(resolveUserHelpTarget("aworkit:documents")).toEqual({
+      kind: "documents-folder",
+    });
+    expect(resolveUserHelpTarget("AWORKIT:Documents")).toEqual({
+      kind: "documents-folder",
+    });
+  });
+
   it("keeps absolute HTTP(S) links external", () => {
     expect(
       resolveUserHelpTarget("https://github.com/fuleshu/Aworkit/blob/main/README.md"),

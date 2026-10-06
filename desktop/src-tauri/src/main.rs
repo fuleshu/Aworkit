@@ -24,6 +24,7 @@ use aworkit_desktop::runtime::{
     WorkflowCreateInput, WorkflowCreateReceipt, WorkflowDuplicateInput, WorkflowLibrarySnapshot,
     WorkflowRenameInput, WorkflowSaveAsInput, WorkflowSnapshot, WorkflowTargetInput,
 };
+use aworkit_desktop::documents_extras::{DocumentsExtrasReport, DocumentsExtrasRoot};
 use tauri::{Emitter, Manager};
 
 mod desktop_bootstrap;
@@ -701,6 +702,63 @@ async fn settings_v2_open_tool_plugin_folder(
 }
 
 #[tauri::command]
+async fn documents_extras_status(
+    app: tauri::AppHandle,
+    root: tauri::State<'_, DocumentsExtrasRoot>,
+) -> Result<DocumentsExtrasReport, String> {
+    let app_data_root = root.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        aworkit_desktop::documents_extras::status(&app, &app_data_root)
+    })
+    .await
+    .map_err(|error| format!("documents-extras worker failed: {error}"))?
+}
+
+/// Turns writing the example workflows and plugin into the documents folder on
+/// or off. Turning it on writes the folder immediately.
+#[tauri::command]
+async fn documents_extras_set_enabled(
+    app: tauri::AppHandle,
+    root: tauri::State<'_, DocumentsExtrasRoot>,
+    enabled: bool,
+) -> Result<DocumentsExtrasReport, String> {
+    let app_data_root = root.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        aworkit_desktop::documents_extras::set_enabled(&app, &app_data_root, enabled)
+    })
+    .await
+    .map_err(|error| format!("documents-extras worker failed: {error}"))?
+}
+
+/// Writes any missing example files and the FFmpeg plugin, and turns writing on.
+#[tauri::command]
+async fn documents_extras_write_now(
+    app: tauri::AppHandle,
+    root: tauri::State<'_, DocumentsExtrasRoot>,
+) -> Result<DocumentsExtrasReport, String> {
+    let app_data_root = root.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        aworkit_desktop::documents_extras::write_now(&app, &app_data_root)
+    })
+    .await
+    .map_err(|error| format!("documents-extras worker failed: {error}"))?
+}
+
+/// Reveals the Aworkit folder in the platform file manager.
+#[tauri::command]
+async fn documents_extras_open_folder(
+    app: tauri::AppHandle,
+    root: tauri::State<'_, DocumentsExtrasRoot>,
+) -> Result<(), String> {
+    let app_data_root = root.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        aworkit_desktop::documents_extras::open_folder(&app, &app_data_root)
+    })
+    .await
+    .map_err(|error| format!("documents-extras worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn workflow_snapshot(
     runtime: tauri::State<'_, SharedRuntime>,
     workflow_id: Option<String>,
@@ -1000,6 +1058,14 @@ fn main() {
             if let Ok(resources) = app.path().resource_dir() {
                 aworkit_desktop::runtime::register_bundled_skills_root(resources);
             }
+            // The bundled example workflows and reference plugin are copied
+            // into the user's documents folder on first run. The app data root
+            // resolved above is managed so the Settings commands and a debug QA
+            // profile all read the same preference.
+            app.manage(aworkit_desktop::documents_extras::DocumentsExtrasRoot(
+                app_data_root.clone(),
+            ));
+            aworkit_desktop::documents_extras::start(app.handle().clone(), app_data_root.clone());
             desktop_bootstrap::start(app.handle(), app_data_root);
             Ok(())
         })
@@ -1053,6 +1119,10 @@ fn main() {
                 settings_v2_install_tool_plugin,
                 settings_v2_remove_tool_plugin,
                 settings_v2_open_tool_plugin_folder,
+                documents_extras_status,
+                documents_extras_set_enabled,
+                documents_extras_write_now,
+                documents_extras_open_folder,
                 workflow_snapshot,
                 workflow_library,
                 workflow_commit,

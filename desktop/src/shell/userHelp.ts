@@ -64,11 +64,19 @@ export function userHelpHomeDocument(): UserHelpDocument {
 }
 
 /**
+ * The help-document link that reveals the Aworkit folder in the documents
+ * directory. A dedicated scheme keeps a local-file action out of ordinary
+ * prose; the panel resolves it and never lets a document open an arbitrary path.
+ */
+export const DOCUMENTS_FOLDER_HREF = "aworkit:documents";
+
+/**
  * What a clicked Markdown link means inside the documentation panel.
  *
  * - `document` — another bundled help document, optionally at an anchor.
  * - `anchor` — a heading in the current document.
  * - `external` — an absolute HTTP(S) address for the system browser.
+ * - `documents-folder` — the Aworkit folder in the user's documents directory.
  * - `unsupported` — anything else; the link is inert on purpose.
  */
 export type UserHelpTarget =
@@ -79,6 +87,7 @@ export type UserHelpTarget =
     }
   | { readonly kind: "anchor"; readonly anchor: string }
   | { readonly kind: "external"; readonly url: string }
+  | { readonly kind: "documents-folder" }
   | { readonly kind: "unsupported" };
 
 /** Splits `path#anchor` into its two parts; the anchor may be absent. */
@@ -103,6 +112,9 @@ export function resolveUserHelpTarget(href: string | undefined): UserHelpTarget 
   if (value.startsWith("#")) {
     const anchor = value.slice(1);
     return anchor === "" ? { kind: "unsupported" } : { kind: "anchor", anchor };
+  }
+  if (value.toLowerCase() === DOCUMENTS_FOLDER_HREF) {
+    return { kind: "documents-folder" };
   }
   if (/^https?:\/\//iu.test(value)) return { kind: "external", url: value };
   if (/^[a-z][a-z0-9+.-]*:/iu.test(value)) return { kind: "unsupported" };

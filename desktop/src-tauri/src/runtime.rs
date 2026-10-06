@@ -81,6 +81,7 @@ pub use external_agent::{ExternalAgentProbeRequestV2, ExternalAgentProbeResultV2
 pub use graph_pass::{GraphApprovalRequestV1, GraphNodeActivityV1};
 pub use images::ChatImageStore;
 pub use path_actions::{PathActionOutcomeV1, PathActionRequestV1};
+pub(crate) use path_actions::reveal;
 pub use pipeline::{
     WorkflowExecutionPipeline, WorkflowExecutionRequestV1, WorkflowExecutionResultV1,
     WorkflowExecutionStatusV1, WorkflowMessageV1, WorkflowPipelineError, WorkflowProviderBindingV1,

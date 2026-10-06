@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotificationPublisher } from "../notifications/NotificationContext";
+import { openDocumentsFolder } from "./documentsExtras";
 import { DocumentationMarkdown } from "./DocumentationMarkdown";
 import {
   userHelpDocument,
@@ -178,6 +179,16 @@ export function DocumentationDialog({
             notifications.publish("open-link", {
               summary: "Could not open the link in your default browser.",
               detail: target.url,
+              severity: "error",
+              lifetime: { kind: "transient" },
+            });
+          });
+          return;
+        case "documents-folder":
+          // The native host owns the path; the panel only asks it to open.
+          void openDocumentsFolder().catch(() => {
+            notifications.publish("open-folder", {
+              summary: "Could not open the Aworkit documents folder.",
               severity: "error",
               lifetime: { kind: "transient" },
             });

@@ -88,8 +88,9 @@ image-generation tools.
 
 ## Optional extras
 
-Where the optional example workflows and the FFmpeg plugin live, and how to
-install them.
+Every installation bundles four example workflows and the FFmpeg plugin, and
+copies them into an Aworkit folder inside your documents folder. Learn where
+they are and how to install them.
 
 [Example workflows and the FFmpeg plugin](optional-extras.md)
 
