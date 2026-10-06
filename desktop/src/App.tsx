@@ -21,6 +21,7 @@ import type { RuntimeSnapshot } from "./chat/corePort";
 import type { ManagementRepairCorePort } from "./management/corePort";
 import { ManagementScreen } from "./shell/ManagementScreen";
 import { AboutDialog } from "./shell/AboutDialog";
+import { DocumentationDialog } from "./shell/DocumentationDialog";
 import { NavigationPane, type Route } from "./shell/NavigationPane";
 import { PaneSplitter } from "./shell/PaneSplitter";
 import {
@@ -151,6 +152,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
     { kind: "confirmation" }
   > | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [documentationOpen, setDocumentationOpen] = useState(false);
   const openNewChat = useCallback(() => {
     navigate("chat", () => setNewChatRequest((request) => request + 1));
   }, [navigate]);
@@ -179,6 +181,11 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
   );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
+      if (event.key === "F1") {
+        event.preventDefault();
+        setDocumentationOpen(true);
+        return;
+      }
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const routes: Record<string, Route> = {
         "1": "chat",
@@ -211,6 +218,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
                 title: "Management Chat unavailable",
                 body: "Management Chat is unsupported in this rescue build.",
               }),
+            "aworkit.documentation": () => setDocumentationOpen(true),
             "aworkit.about": () => setAboutOpen(true),
           };
           actions[payload]?.();
@@ -394,6 +402,9 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
             setConfirmation(null);
           }}
         />
+      )}
+      {documentationOpen && (
+        <DocumentationDialog onClose={() => setDocumentationOpen(false)} />
       )}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
     </div>

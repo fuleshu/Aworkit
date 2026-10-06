@@ -87,6 +87,12 @@ pub fn install_application_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         .fullscreen()
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
+        .item(
+            &MenuItemBuilder::with_id("aworkit.documentation", "Documentation")
+                .accelerator("F1")
+                .build(app)?,
+        )
+        .separator()
         .text("aworkit.about", "About")
         .build()?;
     let menu = MenuBuilder::new(app)

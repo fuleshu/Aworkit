@@ -244,6 +244,156 @@ pre {
   text-align: right;
 }
 
+/* Documentation panel: a large modal that renders the bundled Markdown help
+   documents with its own back/forward/home history. Both classes are required:
+   the base .workbench-dialog rule is bundled after per-dialog rules and wins an
+   equal-specificity tie. */
+.workbench-dialog.documentation-dialog {
+  display: flex;
+  flex-direction: column;
+  height: min(780px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  max-width: min(940px, calc(100% - 32px));
+  overflow: hidden;
+  padding: 0;
+  width: min(940px, calc(100% - 32px));
+}
+.documentation-toolbar {
+  align-items: center;
+  border-bottom: 1px solid var(--aw-divider);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.documentation-nav {
+  display: flex;
+  gap: 4px;
+}
+.documentation-nav button,
+.documentation-close {
+  align-items: center;
+  background: var(--aw-raised);
+  border: 1px solid var(--aw-divider);
+  border-radius: 4px;
+  color: var(--aw-text);
+  cursor: pointer;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+}
+.documentation-nav button {
+  width: 30px;
+}
+.documentation-nav button:hover:not(:disabled),
+.documentation-close:hover {
+  background: var(--aw-selected);
+}
+.documentation-nav button:disabled {
+  color: var(--aw-control);
+  cursor: default;
+}
+.documentation-title {
+  flex: 1 1 auto;
+  font-size: var(--aw-font-heading);
+  font-weight: 600;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.documentation-close {
+  flex: 0 0 auto;
+  padding: 0 12px;
+}
+/* Override the base dialog's action-row rule for the reading area. */
+.workbench-dialog.documentation-dialog > .documentation-body {
+  display: block;
+  flex: 1 1 auto;
+  margin-top: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 28px 32px;
+}
+.documentation-body {
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+.documentation-body h1 {
+  font-size: 1.5rem;
+  margin: 18px 0 8px;
+}
+.documentation-body h2 {
+  border-bottom: 1px solid var(--aw-divider);
+  font-size: 1.2rem;
+  margin: 26px 0 8px;
+  padding-bottom: 4px;
+}
+.documentation-body h3 {
+  font-size: 1.05rem;
+  margin: 20px 0 6px;
+}
+.documentation-body h4 {
+  font-size: 1rem;
+  margin: 16px 0 4px;
+}
+.documentation-body p {
+  color: var(--aw-secondary);
+  margin: 8px 0;
+}
+.documentation-body ul,
+.documentation-body ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+.documentation-body li {
+  margin: 3px 0;
+}
+.documentation-body a {
+  color: var(--aw-accent);
+}
+.documentation-body code {
+  background: var(--aw-inset);
+  border-radius: 3px;
+  font-size: 0.9em;
+  padding: 1px 4px;
+}
+.documentation-body pre {
+  background: var(--aw-inset);
+  border: 1px solid var(--aw-divider);
+  border-radius: 6px;
+  margin: 10px 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.documentation-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.documentation-body blockquote {
+  border-left: 3px solid var(--aw-divider);
+  color: var(--aw-secondary);
+  margin: 10px 0;
+  padding-left: 12px;
+}
+.documentation-body table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  width: 100%;
+}
+.documentation-body th,
+.documentation-body td {
+  border: 1px solid var(--aw-divider);
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.documentation-body th {
+  background: var(--aw-raised);
+}
+
 /* Persistent desktop shell */
 .desktop-shell {
   background: var(--aw-window);
