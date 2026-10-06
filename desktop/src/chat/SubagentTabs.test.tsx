@@ -2,7 +2,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SubagentTabs, subagentStatusLabel, subagentTabLabel } from "./SubagentTabs";
+import {
+  SubagentTabs,
+  subagentStatusLabel,
+  subagentTabLabel,
+  subagentTabLabels,
+} from "./SubagentTabs";
 import type { SubagentCatalogEntry } from "./subagentCatalog";
 
 afterEach(cleanup);
@@ -46,8 +51,8 @@ describe("subagent tab strip", () => {
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       "Chat",
-      expect.stringContaining("Task for child.a"),
-      expect.stringContaining("Task for child.b"),
+      "Subagent 1",
+      "Subagent 2",
     ]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "false");
     expect(tabs[1]).toHaveAttribute("aria-selected", "true");
@@ -67,7 +72,7 @@ describe("subagent tab strip", () => {
     await user.click(tabs[0]);
     expect(onActivate).toHaveBeenCalledWith(null);
     await user.click(
-      screen.getByRole("button", { name: "Close subagent tab Task for child.b" }),
+      screen.getByRole("button", { name: "Close subagent tab Subagent 2" }),
     );
     expect(onClose).toHaveBeenCalledWith("child.b");
   });
@@ -84,7 +89,7 @@ describe("subagent tab strip", () => {
         onClose={onClose}
       />,
     );
-    const childTab = screen.getByRole("tab", { name: /Task for child.a/ });
+    const childTab = screen.getByRole("tab", { name: "Subagent 1" });
     childTab.focus();
     fireEvent.keyDown(childTab, { key: "ArrowRight" });
     expect(onActivate).toHaveBeenLastCalledWith("child.b");
@@ -132,5 +137,36 @@ describe("subagent tab strip", () => {
       "Needs parent approval",
     );
     expect(subagentStatusLabel("interrupted")).toBe("Interrupted");
+  });
+
+  it("gives every child a short, stable, creation-ordered tab label", () => {
+    const labels = subagentTabLabels([
+      entry("child.b", { createdAt: "2026-01-02T00:00:00Z" }),
+      entry("child.a", { createdAt: "2026-01-01T00:00:00Z" }),
+      entry("child.fork", { kind: "fork", createdAt: "2026-01-03T00:00:00Z" }),
+      entry("child.codex", {
+        kind: "external",
+        contextText: "External codex agent. Product permission mode: never.",
+        createdAt: "2026-01-04T00:00:00Z",
+      }),
+      entry("child.claude", {
+        kind: "external",
+        contextText: "External claude-code agent. Product permission mode: dontAsk.",
+        createdAt: "2026-01-05T00:00:00Z",
+      }),
+    ]);
+    // Numbers follow creation order within each kind, so a settling sibling
+    // never renumbers a running child.
+    expect(labels.get("child.a")).toBe("Subagent 1");
+    expect(labels.get("child.b")).toBe("Subagent 2");
+    expect(labels.get("child.fork")).toBe("Fork 1");
+    expect(labels.get("child.codex")).toBe("Codex 1");
+    expect(labels.get("child.claude")).toBe("Claude Code 1");
+    // An unrecognized external product still gets a usable label.
+    expect(
+      subagentTabLabels([
+        entry("child.other", { kind: "external", contextText: "" }),
+      ]).get("child.other"),
+    ).toBe("External 1");
   });
 });

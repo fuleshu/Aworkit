@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import type { SubagentCatalogEntry, SubagentStatus } from "./subagentCatalog";
 import type { SubagentTabState } from "./subagentTabState";
 
@@ -11,10 +11,68 @@ interface SubagentTabsProps {
   readonly onClose: (childId: string) => void;
 }
 
+/**
+ * The full, task-derived label used where there is room to read it (the picker
+ * dialog and every tooltip). The strip itself uses a short label.
+ */
 export function subagentTabLabel(entry: SubagentCatalogEntry): string {
   const task = entry.task.trim().replace(/\s+/g, " ");
   if (task.length === 0) return entry.childId;
   return task.length > 48 ? `${task.slice(0, 47)}…` : task;
+}
+
+/**
+ * The product name of one external delegation, when its generated context
+ * prefix names it. A missing or unrecognized product falls back to `External`,
+ * so the tab never claims a product it cannot identify.
+ */
+function externalProductLabel(contextText: string): string {
+  const match = /^External\s+([A-Za-z0-9_-]+)\s+agent\./.exec(
+    contextText.trim(),
+  );
+  if (match === null) return "External";
+  const backend = match[1];
+  if (backend === "codex") return "Codex";
+  if (backend === "claude-code") return "Claude Code";
+  return backend.replace(/^./, (value) => value.toUpperCase());
+}
+
+/** The short kind name a tab uses before its creation-order number. */
+export function subagentKindLabel(entry: SubagentCatalogEntry): string {
+  if (entry.kind === "fork") return "Fork";
+  if (entry.kind === "external") return externalProductLabel(entry.contextText);
+  return "Subagent";
+}
+
+/** Creation time of a tab label order; unparseable stamps sort first. */
+function createdStamp(entry: SubagentCatalogEntry): number {
+  const parsed = entry.createdAt === undefined ? NaN : Date.parse(entry.createdAt);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Short, stable tab labels: the kind (or product) plus the child's 1-based
+ * creation-order number within that kind. Numbering follows creation order, so
+ * a running child is not renumbered when a sibling settles, and the full task
+ * stays available in the tab's tooltip.
+ */
+export function subagentTabLabels(
+  entries: readonly SubagentCatalogEntry[],
+): Map<string, string> {
+  const ordered = [...entries].sort(
+    (left, right) =>
+      createdStamp(left) - createdStamp(right) ||
+      left.childId.localeCompare(right.childId),
+  );
+  const counters = new Map<string, number>();
+  const labels = new Map<string, string>();
+  for (const entry of ordered) {
+    const kind = subagentKindLabel(entry);
+    const next = (counters.get(kind) ?? 0) + 1;
+    counters.set(kind, next);
+    labels.set(entry.childId, `${kind} ${next}`);
+  }
+  return labels;
 }
 
 export function subagentStatusLabel(status: SubagentStatus): string {
@@ -40,6 +98,9 @@ export function SubagentTabs({
   onClose,
 }: SubagentTabsProps): React.JSX.Element | null {
   const strip = useRef<HTMLDivElement>(null);
+  // Short, stable labels for every child in the catalog; computed before the
+  // early return so hook order never changes.
+  const labels = useMemo(() => subagentTabLabels(entries), [entries]);
   const open = state.open
     .map((childId) => entries.find((entry) => entry.childId === childId))
     .filter((entry): entry is SubagentCatalogEntry => entry !== undefined);
@@ -127,6 +188,7 @@ export function SubagentTabs({
       </button>
       {open.map((entry) => {
         const selected = active === entry.childId;
+        const short = labels.get(entry.childId) ?? subagentTabLabel(entry);
         return (
           <span
             key={entry.childId}
@@ -143,22 +205,20 @@ export function SubagentTabs({
               aria-selected={selected}
               tabIndex={selected ? 0 : -1}
               className={`subagent-tab subagent-tab-child ${selected ? "active" : ""}`}
-              title={`Subagent ${entry.kind}: ${entry.task}`}
+              title={`${short} · subagent ${entry.kind}: ${entry.task}`}
               onClick={() => onActivate(entry.childId)}
             >
               <span
                 className={`subagent-status-dot ${entry.status}`}
                 aria-hidden="true"
               />
-              <span className="subagent-tab-label">
-                {subagentTabLabel(entry)}
-              </span>
+              <span className="subagent-tab-label">{short}</span>
             </button>
             <button
               type="button"
               className="subagent-tab-close"
-              aria-label={`Close subagent tab ${subagentTabLabel(entry)}`}
-              title="Close this tab. The subagent keeps running."
+              aria-label={`Close subagent tab ${short}`}
+              title={`Close ${short}. The subagent keeps running.`}
               onClick={() => onClose(entry.childId)}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">

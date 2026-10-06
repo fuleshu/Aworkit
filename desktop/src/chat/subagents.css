@@ -23,11 +23,12 @@
   border-bottom: 2px solid transparent;
   border-radius: 7px 7px 0 0;
   display: inline-flex;
-  /* Tabs never shrink: a squeezed tab would let its label overflow under the
-     neighbouring tab. Overflow scrolls the strip instead. */
-  flex: 0 0 auto;
-  max-width: 232px;
+  /* A child tab may shrink so its label ellipsizes; the group clips that label
+     so it can never overflow under the neighbouring tab. */
+  flex: 0 1 auto;
+  max-width: 148px;
   min-width: 0;
+  overflow: hidden;
   position: relative;
 }
 .subagent-tab-group:hover { background: color-mix(in srgb, var(--aw-text) 6%, transparent); }
@@ -40,23 +41,25 @@
   color: var(--aw-secondary);
   cursor: pointer;
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   font: inherit;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 7px 6px 7px 10px;
+  overflow: hidden;
+  padding: 7px 4px 7px 9px;
 }
-/* The parent tab has no close button, so it is its own surface. */
+/* The parent tab has no close button, so it is its own surface. Its label is
+   short, so it never has to shrink. */
 .subagent-tab-parent {
   border-bottom: 2px solid transparent;
   border-radius: 7px 7px 0 0;
   flex: 0 0 auto;
-  max-width: 160px;
-  padding-right: 10px;
+  max-width: 88px;
+  padding-right: 8px;
 }
 .subagent-tab-parent:hover { background: color-mix(in srgb, var(--aw-text) 6%, transparent); }
 .subagent-tab-parent.active { background: var(--aw-raised); border-bottom-color: var(--aw-accent); }
-.subagent-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-tab-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-tab:hover { color: var(--aw-text); }
 .subagent-tab.active { color: var(--aw-text); }
 .subagent-tab:focus-visible,

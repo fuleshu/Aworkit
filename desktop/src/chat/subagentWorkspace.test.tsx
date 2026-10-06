@@ -254,7 +254,7 @@ describe("subagent tabs in the Chat workspace", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("tab", { name: /Research VR headsets/ }),
+        screen.getByRole("tab", { name: "Subagent 1" }),
       ).toHaveAttribute("aria-selected", "true"),
     );
     expect(await screen.findByText("answer from child.research")).toBeVisible();
@@ -274,13 +274,13 @@ describe("subagent tabs in the Chat workspace", () => {
     ).toBeVisible();
     // No child tab until the delegating tool block asks for one.
     expect(
-      screen.queryByRole("tab", { name: /Research VR headsets/ }),
+      screen.queryByRole("tab", { name: "Subagent 1" }),
     ).toBeNull();
     await user.click(
       await screen.findByRole("button", { name: "Open subagent" }),
     );
     const childTab = await screen.findByRole("tab", {
-      name: /Research VR headsets/,
+      name: "Subagent 1",
     });
     expect(childTab).toHaveAttribute("aria-selected", "true");
     expect(
@@ -370,7 +370,7 @@ describe("subagent tabs in the Chat workspace", () => {
     ).toBeVisible();
     created = true;
     const childTab = await screen.findByRole("tab", {
-      name: /Research VR headsets/,
+      name: "Subagent 1",
     });
     // The background tab exists but the parent stays active.
     expect(childTab).toHaveAttribute("aria-selected", "false");
@@ -402,13 +402,13 @@ describe("subagent tabs in the Chat workspace", () => {
     await screen.findByRole("heading", { name: "Delegating chat" });
     stage = 1;
     const childTab = await screen.findByRole("tab", {
-      name: /Research VR headsets/,
+      name: "Subagent 1",
     });
     expect(childTab).toHaveAttribute("aria-selected", "false");
     stage = 2;
     await waitFor(() =>
       expect(
-        screen.queryByRole("tab", { name: /Research VR headsets/ }),
+        screen.queryByRole("tab", { name: "Subagent 1" }),
       ).toBeNull(),
     );
     // With no child tab left open the workspace strip disappears again: the
@@ -442,7 +442,7 @@ describe("subagent tabs in the Chat workspace", () => {
     );
     await screen.findByRole("heading", { name: "Delegating chat" });
     stage = 1;
-    await screen.findByRole("tab", { name: /Research VR headsets/ });
+    await screen.findByRole("tab", { name: "Subagent 1" });
     stage = 2;
     await waitFor(() =>
       expect(
@@ -450,7 +450,7 @@ describe("subagent tabs in the Chat workspace", () => {
       ).toBeVisible(),
     );
     expect(
-      screen.getByRole("tab", { name: /Research VR headsets/ }),
+      screen.getByRole("tab", { name: "Subagent 1" }),
     ).toBeVisible();
   });
 });

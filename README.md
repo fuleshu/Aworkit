@@ -62,7 +62,7 @@ A branching workflow: the request is classified first, then routed — simple qu
 
 ### ⚙️ Everything configured in one place
 
-Settings cover **model providers and credentials, model tiers, built-in tools, extensions, MCP servers, external agents, projects, data retention, and appearance** (light/dark, font size). Workflows only reference models and tools by portable logical names — so you can swap a provider or model without touching your workflows.
+Settings cover **model providers and credentials, model tiers, built-in tools, skills, tool plugins, MCP servers, external agents, ComfyUI, projects, data retention, and appearance** (light/dark, font size). Workflows only reference models and tools by portable logical names — so you can swap a provider or model without touching your workflows.
 
 ![Aworkit settings: providers and models](screenshots/settings.png)
 
@@ -74,6 +74,85 @@ Settings cover **model providers and credentials, model tiers, built-in tools, e
 - **Sub-agents** — delegate parts of a task to parallel helper agents
 - **MCP servers** — connect any [Model Context Protocol](https://modelcontextprotocol.io) server and use its tools inside your workflows
 - **External agents** — plug in lifecycle-owning agents such as Codex or Claude Code
+- **Skills** — Markdown instructions the agent loads on demand, or that you load with `/name`
+- **Tool plugins** — installable folders that package an MCP server and optional skills (see [Extensions](#-extensions-mcp-tool-plugins-and-skills))
+- **ComfyUI** — turn your own ComfyUI workflows into native image-generation tools (see [ComfyUI image workflows as native tools](#-comfyui-image-workflows-as-native-tools))
+
+### 🧩 Extensions: MCP tool plugins and skills
+
+An Aworkit extension is a single installable folder — the design calls it a **tool plugin**. One plugin bundles an MCP server (the capabilities) and may also bundle **skills** (the procedural knowledge that teaches the model when and how to use them).
+
+Three layers stay deliberately separate:
+
+| Layer | What it is | What it adds |
+| --- | --- | --- |
+| **Skill** | A folder with a `SKILL.md` file | Knowledge only |
+| **MCP tool** | A capability with a typed input, a result and possibly a side effect | An action the model can propose |
+| **Plugin** | The installable, versioned package that owns the MCP server and optional skills | The delivery and trust unit |
+
+**The package.** `tool-plugin.json` declares the identity (a stable `id`, a display name, a version) and exactly one MCP transport:
+
+- **stdio** — a local command plus arguments, with an optional working directory and environment bindings. A bare command name (`python`, `node`) resolves from `PATH`; a relative command or directory resolves inside the plugin folder and can never escape it.
+- **streamable HTTP** — a server URL with optional header bindings.
+
+An optional `tools[]` array seeds names, descriptions, input schemas and per-tool instructions before the first connection; the server's live `tools/list` stays authoritative, and refreshing discovery preserves your own instructions and approval choices.
+
+**Trust is explicit.** Copying a folder in only *sources* it: Aworkit lists the plugin, turned off. Nothing runs until you add it and turn it on in **Settings → Tool Plugins**. Installation copies the whole folder and pins the declaration path, content hash and version, so a changed package is reported and must be accepted again. Credentials are named references resolved only for the connection — never embedded in the plugin file, never logged, never echoed in a result. A `readOnlyHint` paired with a *false* `destructiveHint` is what lets a call run without review; the hints are approval metadata, not a sandbox, and your approval policy and the Chat's frozen authority remain the real boundary. Removing a plugin reports a missing capability and the Run continues with what is present.
+
+**Skills.** A skill is plain Markdown on disk: `<name>/SKILL.md` with `name` and `description` frontmatter. The agent always sees one line per skill and loads the body only when it decides the skill applies, or when you type `/skill-name`. Aworkit searches the project's `.aworkit/skills` and `.agents/skills`, any additional folders you configure, then the global `~/.aworkit/skills` and `~/.agents/skills` — the first skill with a given name wins, and a project skill always beats a user or bundled one. `disable-model-invocation: true` hides a skill from the model, and `user-invocable: false` refuses `/name`.
+
+**Bundled standard skills.** Every Aworkit build ships skills that teach the agent how Aworkit itself works — `aworkit-workflows`, `aworkit-skills`, `aworkit-plugins`, `aworkit-chat-storage` and the `plugin-authoring` guide. They sit at the lowest discovery priority, so your own skill of the same name wins and an upgrade replaces them without touching anything you wrote.
+
+### 🎬 ComfyUI image workflows as native tools
+
+Aworkit has a first-class **ComfyUI** Settings tab that turns a running ComfyUI server and your own API-format workflows into native agent tools. No bridge subprocess and no MCP server: the Rust host talks to ComfyUI in process.
+
+- **One native tool per workflow.** Each enabled workflow becomes a capability with a stable id `comfyui.<tool id>`. Its model-facing name, description and JSON schema are generated from the typed parameter list you edit in Settings, so the schema the model sees and what execution writes cannot drift apart.
+- **Parameters are bound to real inputs.** Every parameter declares its type and the exact `(node id, input name)` it writes to. That binding is the security boundary: a workflow tool cannot invent a node, an input, a model filename or a downstream capability, unbound parameters are rejected, and the two helper ids are reserved.
+- **Two read-only authoring helpers.** `comfyui_list_node_types` searches the live `/object_info` catalog under a bounded page, and `comfyui_get_workflow` returns the API graph of one configured workflow so node ids and input names can be inspected. Both run without approval.
+- **Optional authoring knowledge.** The tab can also register a workflow-authoring MCP server that gives the agent ComfyUI node and workflow knowledge. It is an ordinary configured MCP entry with the normal trust, transport and approval semantics — knowledge, never a second execution path.
+- **Model-assisted authoring.** **Auto create** reads a workflow JSON, asks the model mapped to `tier:balanced` to choose sensible parameters and bind each to a supplied input, then validates every binding against that exact workflow and drops the proposal into the Settings draft for you to review. Nothing is saved automatically.
+- **Connection and local start.** Aworkit probes `GET /system_stats`, reports reachability and the server version, and — if you configured a local installation folder and enabled it — can start ComfyUI and wait for readiness before queueing work. Starting is always an explicit action.
+- **Frozen per Chat.** The Settings section resolves once, at a Chat's first input, so a later edit cannot change what a running Chat executes. A call with an undeclared key, a missing required value, a null, a wrong type or a value outside the reported choice set is refused before ComfyUI sees it.
+- **Evidence.** A successful run returns its images as immutable image evidence and as vision input for the model.
+
+Unreachable servers, workflows that produce no image, and unreadable or oversized workflow JSON are all reported as named failures; the Run continues.
+
+### 🎥 Reference extension: FFmpeg media tools
+
+[`desktop/tool-plugins/ffmpeg`](desktop/tool-plugins/ffmpeg) is the reference tool plugin and a genuinely useful one: a real stdio MCP server (plain Python 3, no third-party packages) that wraps **FFmpeg** and **FFprobe** as eight structured tools.
+
+| Tool | What it does |
+| --- | --- |
+| `ffmpeg_doctor` | versions, resolved paths, available encoders (read-only) |
+| `ffmpeg_probe` | container, duration, streams, tags via ffprobe (read-only) |
+| `ffmpeg_convert` | codec, container, resolution, frame rate or a section |
+| `ffmpeg_trim` | cut a segment — fast keyframe copy or frame-accurate encode |
+| `ffmpeg_extract_audio` | mp3, aac/m4a, wav, flac, opus or ogg, with optional loudness normalisation |
+| `ffmpeg_thumbnail` | one still frame, scaled |
+| `ffmpeg_gif` | a palette-based looping GIF |
+| `ffmpeg_run` | an explicit FFmpeg argument list for anything else |
+
+Every structured tool creates a new file, refuses to overwrite the input, refuses to replace an existing output unless you pass `overwrite: true`, and returns a `validation` block with a fresh ffprobe summary of the result. `ffmpeg_run` is the escape hatch, and the only tool that may overwrite. The plugin also ships a skill, `skills/ffmpeg/SKILL.md`, that teaches the model the codec, seeking and hardware-acceleration guidance that turns "run ffmpeg" into a correct command.
+
+FFmpeg does not have to be on `PATH`: the bridge checks `--ffmpeg` / `--ffprobe`, then `FFMPEG_PATH` / `FFPROBE_PATH`, then `PATH`, then the common install folders. When the binary is missing the tools fail with an error that names it and says where to set the path; a job that times out is stopped and reported rather than presented as a partial success.
+
+Build it, install it, and read the full tool and configuration reference in **[desktop/tool-plugins/ffmpeg/README.md](desktop/tool-plugins/ffmpeg/README.md)**.
+
+### 🧪 Example workflows
+
+A fresh profile already seeds three workflows — **Simple**, **Standard** (the default) and **Planer**. On top of those, [`desktop/workflows/examples/`](desktop/workflows/examples) holds four import-only examples that exercise the rest of the node catalog:
+
+| Workflow | What it does | Needs |
+| --- | --- | --- |
+| **Triage Router** | Answers simple questions on a fast model and routes anything needing current facts through an approval to the tool-enabled agent | a configured model |
+| **Evidence Brief** | Starts a web search while a Plan decides whether evidence is really needed, then answers with sources | web search (on by default) |
+| **Iterative Planning** | Refines a structured plan until no open questions remain, then executes the settled plan | a configured model |
+| **Delegated Code Review** | Scans the workspace for TODO/FIXME/HACK markers, asks approval, then hands an independent review to an external coding agent | a connected Codex or Claude Code target |
+
+Each file is a plain `.aworkit.json` document you load with **Import** in the workflow editor, and each is byte-identical to its bundled template. They are examples, not rules — import one and rewrite any step's plain-sentence prompt.
+
+Full descriptions, setup notes and a "which one should I reach for?" table live in **[desktop/workflows/examples/README.md](desktop/workflows/examples/README.md)**.
 
 ### 🔐 Approvals and transparency
 
