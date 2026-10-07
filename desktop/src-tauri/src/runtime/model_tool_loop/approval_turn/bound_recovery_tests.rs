@@ -377,13 +377,14 @@ fn a_provider_failure_is_reported_to_the_model_and_the_agent_finishes() {
 }
 
 #[test]
-fn an_unchanged_failure_keeps_being_reported_and_never_ends_the_node() {
+fn a_short_run_of_unchanged_failures_is_reported_and_the_model_still_answers() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let id = StableId::parse("outer.test").unwrap();
 
-    // Every dispatch fails with the same condition, which no model turn can
-    // change. The report is never withheld and the node is never ended: the model
-    // keeps being told and the user's stop remains the exit.
+    // Three identical rejections is below the identical-failure threshold, so
+    // every dispatch is reported and the model's eventual answer stands. A longer
+    // identical streak ends the pass instead: see
+    // an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning.
     let result = execute_model_tool_loop_approval_v1(
         &gateway(StuckUntilAnswering::new(observed.clone(), 3)),
         tool_request(&id, user_input()),
@@ -416,6 +417,45 @@ fn an_unchanged_failure_keeps_being_reported_and_never_ends_the_node() {
         notices[1]
     );
     assert!(notices[2].contains("same provider failure repeated"));
+}
+
+#[test]
+fn an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning() {
+    // The recorded run: the provider answered HTTP 400 to every dispatch for
+    // three minutes because the request carried an assistant message it refuses,
+    // so no turn ever reached the model. There was no Agent decision pending and
+    // nothing the loop could newly report, yet it kept dispatching the same
+    // rejected bytes. Identical failures end the pass instead.
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.test").unwrap();
+
+    let failure = match execute_model_tool_loop_approval_v1(
+        &gateway(StuckUntilAnswering::new(observed.clone(), 500)),
+        tool_request(&id, user_input()),
+        &Stuck,
+        &CancellationToken::default(),
+    ) {
+        Ok(_) => panic!("a provider that keeps refusing the same request ends the pass"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure.error.to_string().contains("quota exceeded"),
+        "the provider's own failure is what gets reported: {failure}"
+    );
+
+    let turns = observed.lock().unwrap();
+    assert_eq!(
+        turns.len(),
+        crate::runtime::model_tool_loop::MAXIMUM_IDENTICAL_PROVIDER_FAILURES as usize,
+        "the loop stops at the threshold instead of dispatching the same bytes again"
+    );
+    assert!(
+        failure
+            .error
+            .to_string()
+            .contains("refused this exact request"),
+        "the reported failure explains why the pass stopped: {failure}"
+    );
 }
 
 #[test]

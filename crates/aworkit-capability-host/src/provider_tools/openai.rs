@@ -108,6 +108,14 @@ pub(crate) fn openai_tool_request(
                 }
             }
         }
+        // A turn with neither text nor a tool call is not an assistant message a
+        // provider accepts: `content: null` with no `tool_calls` is rejected with
+        // HTTP 400, and the retained reasoning would be left standing alone. Skip
+        // it, so a reasoning-only turn already in a stored transcript replays
+        // instead of poisoning every later request of that Chat.
+        if text.is_empty() && calls.is_empty() {
+            continue;
+        }
         let mut assistant = json!({
             "role": "assistant",
             "content": if text.is_empty() { Value::Null } else { Value::String(text) },

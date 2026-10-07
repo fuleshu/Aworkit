@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=6368065812329333 -->
+<!-- adashi:generated revision=3473308335717990 -->
 # Architecture — `crates/aworkit-capability-host/src/provider_tools` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -14,6 +14,5 @@ Bound here:
 Markdown design specifications:
 
 
-- [Failure policy: no limit ends a run; every condition is reported](../../../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
-1 more Markdown design(s); see the root index.
+- [System One decision models: backlog design for a decision node, tool ranking and…](../../../../docs/adashi/design-64fc5fb1786d384cbc7c50322f772af57aa659fca85631356c4305589350ca4e.md)
 <!-- adashi:architecture:end -->

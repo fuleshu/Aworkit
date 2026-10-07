@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=5155630453389839 -->
+<!-- adashi:generated revision=569926543917810 -->
 # Architecture — `desktop/src-tauri/src/runtime` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -15,5 +15,5 @@ Markdown design specifications:
 
 
 - [Canonical history retention: what is kept, what is tombstoned](../../../../docs/adashi/design-2a005671e53228561314658f750c8bf60cb763d25d38c290fd6f065f1cc38a4f.md)
-3 more Markdown design(s); see the root index.
+2 more Markdown design(s); see the root index.
 <!-- adashi:architecture:end -->

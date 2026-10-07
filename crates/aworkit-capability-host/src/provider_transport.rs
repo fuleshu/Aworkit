@@ -90,11 +90,14 @@ impl BoundedJsonClient {
             }
         })?;
         if !response.status().is_success() {
-            let (status, overflow) = context_overflow_response(response);
+            let (status, overflow, detail) = context_overflow_response(response);
             return Err(if overflow {
                 BoundedJsonError::ContextWindowExceeded
             } else {
-                BoundedJsonError::HttpStatus(status)
+                BoundedJsonError::HttpStatus {
+                    status,
+                    detail: http_status_detail(detail.as_deref()),
+                }
             });
         }
         if response
@@ -131,37 +134,81 @@ pub(crate) enum BoundedJsonError {
     RequestTimedOut,
     #[error("provider transport failed")]
     Transport,
-    #[error("provider returned HTTP status {0}")]
-    HttpStatus(u16),
+    /// The provider's own bounded diagnostic, when it sent one.
+    #[error("provider returned HTTP status {status}{detail}")]
+    HttpStatus { status: u16, detail: String },
     #[error("provider response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("provider response is not valid JSON")]
     InvalidJson,
 }
 
-/// Read only a bounded error body, and return a sanitized canonical class.
+/// The provider's own refusal text, bounded and collapsed to a single line.
+///
+/// A refusal body is the most actionable diagnostic a run can carry, and it used
+/// to be discarded: the recorded incident reported only "HTTP status 400" 335
+/// times while the body named the malformed message that caused it. The excerpt is
+/// bounded and whitespace-collapsed so it can ride in an error, a model notice and
+/// a run record without becoming a payload of its own.
+pub(crate) const PROVIDER_ERROR_EXCERPT_BYTES: usize = 2048;
+
+/// One bounded single-line excerpt, or `None` when there is nothing to say.
+fn bounded_single_line(text: &str) -> Option<String> {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    let mut end = collapsed.len().min(PROVIDER_ERROR_EXCERPT_BYTES);
+    while !collapsed.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(collapsed[..end].to_owned())
+}
+
+/// The provider's message from a bounded error body, preferring the structured
+/// `error.message` an OpenAI-compatible provider sends.
+fn provider_error_excerpt(bytes: &[u8]) -> Option<String> {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        let error = value.get("error").unwrap_or(&value);
+        for key in ["message", "detail"] {
+            if let Some(text) = error.get(key).and_then(|value| value.as_str()) {
+                return bounded_single_line(text);
+            }
+        }
+        if let Some(text) = error.as_str() {
+            return bounded_single_line(text);
+        }
+    }
+    bounded_single_line(&String::from_utf8_lossy(bytes))
+}
+
+/// The suffix one HTTP status error carries: empty, or the provider's own words.
+pub(crate) fn http_status_detail(detail: Option<&str>) -> String {
+    detail.map(|detail| format!(": {detail}")).unwrap_or_default()
+}
+
+/// Read only a bounded error body, report whether it is a canonical overflow, and
+/// return the provider's own bounded diagnostic when it sent one.
 /// An arbitrary 400/413, network error, quota error or output-limit failure is
 /// never proof that shortening conversation can repair the request.
-pub(crate) fn context_overflow_response(response: reqwest::blocking::Response) -> (u16, bool) {
+pub(crate) fn context_overflow_response(
+    response: reqwest::blocking::Response,
+) -> (u16, bool, Option<String>) {
     let status = response.status().as_u16();
-    if !matches!(status, 400 | 413 | 422) {
-        return (status, false);
-    }
     let mut bytes = Vec::new();
-    if response
+    let read = response
         .take(64 * 1024 + 1)
         .read_to_end(&mut bytes)
-        .is_err()
-        || bytes.len() > 64 * 1024
-    {
-        return (status, false);
+        .is_ok()
+        && bytes.len() <= 64 * 1024;
+    if !read {
+        return (status, false, None);
     }
-    (
-        status,
-        serde_json::from_slice(&bytes)
+    let overflow = matches!(status, 400 | 413 | 422)
+        && serde_json::from_slice(&bytes)
             .ok()
-            .is_some_and(|value| is_context_overflow(&value)),
-    )
+            .is_some_and(|value| is_context_overflow(&value));
+    (status, overflow, provider_error_excerpt(&bytes))
 }
 
 fn is_context_overflow(value: &serde_json::Value) -> bool {
@@ -183,6 +230,41 @@ fn is_context_overflow(value: &serde_json::Value) -> bool {
         && (message.starts_with("prompt is too long")
             || (message.contains("input token count") && message.contains("exceeds the maximum"))
             || (message.contains("maximum context length") && message.contains("tokens")))
+}
+
+#[cfg(test)]
+mod provider_error_excerpt_tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_keeps_the_providers_own_message() {
+        // The recorded incident reported only "HTTP status 400" 335 times while
+        // the body named the malformed message that caused it.
+        let body = br#"{"error":{"message":"Invalid assistant message: content or tool_calls is required","type":"invalid_request_error"}}"#;
+        assert_eq!(
+            provider_error_excerpt(body).as_deref(),
+            Some("Invalid assistant message: content or tool_calls is required")
+        );
+    }
+
+    #[test]
+    fn a_plain_or_empty_body_stays_single_line_and_bounded() {
+        assert_eq!(
+            provider_error_excerpt(b"  quota\nexceeded  ").as_deref(),
+            Some("quota exceeded")
+        );
+        assert_eq!(provider_error_excerpt(b"   \n  "), None);
+        assert_eq!(provider_error_excerpt(b""), None);
+        let long = vec![b'x'; PROVIDER_ERROR_EXCERPT_BYTES * 2];
+        let excerpt = provider_error_excerpt(&long).expect("bounded excerpt");
+        assert_eq!(excerpt.len(), PROVIDER_ERROR_EXCERPT_BYTES);
+    }
+
+    #[test]
+    fn the_status_suffix_is_empty_without_a_message() {
+        assert_eq!(http_status_detail(None), "");
+        assert_eq!(http_status_detail(Some("nope")), ": nope");
+    }
 }
 
 #[cfg(test)]

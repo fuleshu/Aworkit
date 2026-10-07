@@ -117,6 +117,37 @@ fn a_turn_without_reasoning_sends_no_reasoning_content() {
 }
 
 #[test]
+fn a_reasoning_only_turn_contributes_no_assistant_message() {
+    // The recorded failure: a turn cut off at the model's output ceiling produced
+    // reasoning and nothing else. Committing it as an exchange renders
+    // `{"role":"assistant","content":null}` with no `tool_calls`, which the
+    // provider answers with HTTP 400 on every later request - 335 identical
+    // rejections in three minutes. Reasoning never stands alone in a transcript,
+    // so a reasoning-only turn contributes no message at all.
+    let request = ModelToolRequestV1 {
+        context_messages: Vec::new(),
+        input: json!({"messages":[{"role":"user","content":"Build the game."}]}),
+        parameters: Default::default(),
+        tools: vec![definition()],
+        exchanges: vec![ModelToolExchangeV1 {
+            assistant_content: vec![ModelAssistantContentV1::Reasoning {
+                text: "Thinking about the engine.".into(),
+            }],
+            results: Vec::new(),
+        }],
+        retry_notice: None,
+    };
+    let body = render(&request);
+    let messages = body["messages"].as_array().expect("messages");
+    assert_eq!(
+        messages.len(),
+        1,
+        "a reasoning-only turn must not become an assistant message: {body}"
+    );
+    assert_eq!(messages[0]["role"], "user");
+}
+
+#[test]
 fn consecutive_prompts_stay_extensions_of_one_another() {
     let first = render(&request(Some("first thought")));
     // The following turn keeps the earlier exchange verbatim and appends its own,

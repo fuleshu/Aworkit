@@ -383,11 +383,15 @@ impl OpenAiCompatibleProvider {
         response: Response,
     ) -> Result<Response, OpenAiCompatibleProviderError> {
         if !response.status().is_success() {
-            let (status, overflow) = crate::provider_transport::context_overflow_response(response);
+            let (status, overflow, detail) =
+                crate::provider_transport::context_overflow_response(response);
             return Err(if overflow {
                 OpenAiCompatibleProviderError::ContextWindowExceeded
             } else {
-                OpenAiCompatibleProviderError::HttpStatus(status)
+                OpenAiCompatibleProviderError::HttpStatus {
+                    status,
+                    detail: crate::provider_transport::http_status_detail(detail.as_deref()),
+                }
             });
         }
         if response
@@ -404,11 +408,15 @@ impl OpenAiCompatibleProvider {
         response: Response,
     ) -> Result<T, OpenAiCompatibleProviderError> {
         if !response.status().is_success() {
-            let (status, overflow) = crate::provider_transport::context_overflow_response(response);
+            let (status, overflow, detail) =
+                crate::provider_transport::context_overflow_response(response);
             return Err(if overflow {
                 OpenAiCompatibleProviderError::ContextWindowExceeded
             } else {
-                OpenAiCompatibleProviderError::HttpStatus(status)
+                OpenAiCompatibleProviderError::HttpStatus {
+                    status,
+                    detail: crate::provider_transport::http_status_detail(detail.as_deref()),
+                }
             });
         }
         if response
@@ -585,8 +593,10 @@ pub enum OpenAiCompatibleProviderError {
     RequestTimedOut,
     #[error("provider transport failed")]
     Transport,
-    #[error("provider returned HTTP status {0}")]
-    HttpStatus(u16),
+    /// The provider's own bounded diagnostic, when it sent one: a refusal that
+    /// names the offending field is what makes the next attempt different.
+    #[error("provider returned HTTP status {status}{detail}")]
+    HttpStatus { status: u16, detail: String },
     #[error("provider response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("provider response is not valid JSON")]

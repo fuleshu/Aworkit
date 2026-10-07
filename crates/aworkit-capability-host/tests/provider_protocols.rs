@@ -383,7 +383,10 @@ fn new_provider_adapters_redact_keys_deny_redirects_and_enforce_bounds() {
     let anthropic = AnthropicMessagesProvider::new(anthropic_config).expect("Anthropic provider");
     assert_eq!(
         anthropic.test_connection(),
-        Err(AnthropicMessagesProviderError::HttpStatus(302))
+        Err(AnthropicMessagesProviderError::HttpStatus {
+            status: 302,
+            detail: String::new(),
+        })
     );
     anthropic_server.join().expect("redirect fixture");
 
@@ -413,4 +416,78 @@ fn new_provider_adapters_redact_keys_deny_redirects_and_enforce_bounds() {
         Err(GoogleGeminiProviderError::ResponseTooLarge)
     );
     gemini_server.join().expect("bound fixture");
+}
+
+#[test]
+fn an_anthropic_refusal_keeps_the_providers_own_message() {
+    // A refusal body is the most actionable diagnostic a run can carry, and it
+    // used to be read and then discarded, leaving the bare status.
+    let (origin, server) = start_fixture(1, |_request| FixtureResponse {
+        status: 400,
+        headers: Vec::new(),
+        body: br#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content: field required"}}"#
+            .to_vec(),
+        delay: Duration::ZERO,
+    });
+    let config = AnthropicMessagesProviderConfig::new(
+        "binding.anthropic-refusal",
+        "version.anthropic",
+        format!("{origin}/v1"),
+        "claude-fixture",
+        Some("anthropic-never-log".to_owned()),
+        AnthropicMessagesLimitsV1::default(),
+    )
+    .expect("Anthropic config");
+    let anthropic = AnthropicMessagesProvider::new(config).expect("Anthropic provider");
+    let error = anthropic
+        .test_connection()
+        .expect_err("a 400 is a refusal, not a catalog");
+    assert_eq!(
+        error,
+        AnthropicMessagesProviderError::HttpStatus {
+            status: 400,
+            detail: ": messages.0.content: field required".to_owned(),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "Anthropic provider returned HTTP status 400: messages.0.content: field required"
+    );
+    server.join().expect("refusal fixture");
+}
+
+#[test]
+fn a_gemini_refusal_keeps_the_providers_own_message() {
+    let (origin, server) = start_fixture(1, |_request| FixtureResponse {
+        status: 400,
+        headers: Vec::new(),
+        body: br#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}"#
+            .to_vec(),
+        delay: Duration::ZERO,
+    });
+    let config = GoogleGeminiProviderConfig::new(
+        "binding.gemini-refusal",
+        "version.gemini",
+        format!("{origin}/v1beta"),
+        "gemini-fixture",
+        Some("gemini-never-log".to_owned()),
+        GoogleGeminiLimitsV1::default(),
+    )
+    .expect("Gemini config");
+    let gemini = GoogleGeminiProvider::new(config).expect("Gemini provider");
+    let error = gemini
+        .test_connection()
+        .expect_err("a 400 is a refusal, not a catalog");
+    assert_eq!(
+        error,
+        GoogleGeminiProviderError::HttpStatus {
+            status: 400,
+            detail: ": API key not valid. Please pass a valid API key.".to_owned(),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "Gemini provider returned HTTP status 400: API key not valid. Please pass a valid API key."
+    );
+    server.join().expect("refusal fixture");
 }

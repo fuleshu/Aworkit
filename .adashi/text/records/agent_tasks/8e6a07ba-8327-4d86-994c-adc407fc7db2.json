@@ -1,0 +1,66 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/provider_tools/openai.rs\",\"crates/aworkit-capability-host/src/provider_tools/reasoning_passback_tests.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/empty_turn.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/bound_recovery_tests.rs\"]",
+    "completed_at": "2026-10-07 08:21:11",
+    "completion_memo": {
+      "lines": [
+        "Three fixes implemented and verified.\n",
+        "\n",
+        "1. provider_tools/openai.rs - a renderer guard: an exchange whose assistant content has neither text nor a tool call contributes no assistant message, so a reasoning-only turn already committed in a stored transcript replays instead of making every later request invalid. This is what unblocks chat.0e61d222be0b04c2ee63ff7c1c0edd14d085e98f.\n",
+        "2. model_tool_loop/empty_turn.rs - recover() commits a turn only when it carries assistant text or a tool call (is_resendable); reasoning alone is never committed.\n",
+        "3. model_tool_loop.rs - ProviderRecoveryBudget now tracks the consecutive identical failure and its count (progressed() clears the streak on any accepted turn). Five in a row, with no successful turn in between, ends the pass and reports why: \"The provider refused this exact request N times in a row, so no turn reached the model.\" Below the threshold nothing changes: every failure is still reported and the model still decides.\n",
+        "\n",
+        "VERIFICATION (all run with a writable TMP/TEMP)\n",
+        "- cargo check --tests: clean, no new warnings.\n",
+        "- capability-host lib: 188 passed / 0 failed / 2 ignored, including the new provider_tools::reasoning_passback_tests::a_reasoning_only_turn_contributes_no_assistant_message.\n",
+        "- capability-host integration: provider_tools_openai 3/3, provider_protocols 2/2, provider_images 4/4, milestone and host suites green.\n",
+        "- desktop model_tool_loop: 14/14, including the new an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning and the adapted a_short_run_of_unchanged_failures_is_reported_and_the_model_still_answers.\n",
+        "- desktop compaction_integration: 31/31 (the #191 prefix-cache work is unaffected).\n",
+        "- desktop pipeline: 88/89; the single failure (standard_agent_workflow_runs_plan_agent_output_wait_end_to_end) passes once USERPROFILE is set, so it is the shell's missing home directory, not this change.\n",
+        "- desktop an_accepted_turn_with_no_answer_is_reported_and_the_run_continues: passes.\n",
+        "\n",
+        "AUDIT CAVEATS / NOT DONE\n",
+        "- The failure-policy design spec aworkit.workflow_worker.failure_policy still states \"no limit ends a run; every condition is reported\". Fix 3 is a deliberate, user-requested exception and the spec was not amended in this change, so model and code disagree until it is. docs/context-compaction.md has the same sentence.\n",
+        "- The provider's own 400 diagnostic body is still not captured; the run records \"provider returned HTTP status 400\" and the new failure text. Surfacing the provider message would make the next diagnosis faster.\n",
+        "- Not investigated further: whether DeepSeek's 64K ceiling can be raised by sending an explicit max_tokens; the recorded parameters carried none, so the ceiling was the provider's default."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 08:20:45",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Follow-up to #191 from the second benchmark run (chat.0e61d222be0b04c2ee63ff7c1c0edd14d085e98f, 4,529 events, stopped by the user).\n",
+        "\n",
+        "WHAT HAPPENED\n",
+        "- Turn 1 hit the provider's response ceiling: 65,536 output tokens, all of it reasoning, no assistant text and no tool call.\n",
+        "- The #191 empty-turn fix committed that turn as an exchange. The OpenAI-compatible renderer wrote {\"role\":\"assistant\",\"content\":null} with no tool_calls, and the provider answered HTTP 400 to every later request.\n",
+        "- The provider-error recovery then re-dispatched the identical request 335 times in ~3 minutes (span.model turn.2 .. turn.335, ~0.6 s apart, no usage recorded), piling the recovery notice up to ~200 copies before bound_model_notice truncated it. The user stopped the run. Nothing would have stopped it by itself: no report budget may end a node, by design.\n",
+        "\n",
+        "WHY THERE WAS A \"LIMIT\"\n",
+        "- There is no Aworkit output cap on an Agent node. The recorded wire parameters were {\"reasoningEffort\":\"high\"}; max_tokens is only written when maxOutputTokens resolves (provider_tools/openai.rs apply). The model's declared maxOutputTokens (393,216) feeds the compaction budget, not the agent turn. 65,536 is the provider's own response ceiling for that model.\n",
+        "- The count that made no sense was our own: MAXIMUM_ERROR_RECOVERIES (32) changed only the notice wording and never stopped anything, so an identically failing dispatch could repeat for ever.\n",
+        "\n",
+        "FIXES\n",
+        "1. provider_tools/openai.rs: an exchange with neither text nor a tool call contributes no assistant message, so a reasoning-only turn already stored in a transcript replays instead of poisoning every later request (this also unblocks the chat that is stuck).\n",
+        "2. model_tool_loop/empty_turn.rs: recover() commits a turn only when it carries assistant text or a tool call; reasoning alone is never committed.\n",
+        "3. model_tool_loop.rs: ProviderRecoveryBudget tracks consecutive identical failures. Five in a row with no successful turn in between ends the pass with a reported reason (\"The provider refused this exact request N times in a row, so no turn reached the model\"); any successful turn clears the streak. This is the \"detect that the same call keeps failing\" behaviour the user asked for.\n",
+        "\n",
+        "POLICY NOTE / OPEN ITEM\n",
+        "- Fix 3 deliberately adds a fourth stopping condition, which contradicts the normative design spec aworkit.workflow_worker.failure_policy (\"no limit ends a run; every condition is reported\"). It is justified as a fact about the dispatch rather than a budget on the work (no request reaches the model, so no Agent decision is pending), but the design spec and docs/context-compaction.md still state the old rule and should be amended to record this exception."
+      ]
+    },
+    "id": 75248402537,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Stop the identical-provider-failure retry loop, and never commit a reasoning-only assistant turn",
+    "updated_at": "2026-10-07 08:21:11"
+  },
+  "deleted": false,
+  "identity": "8e6a07ba-8327-4d86-994c-adc407fc7db2",
+  "schemaVersion": 1
+}

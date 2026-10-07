@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=8865023053209750 -->
+<!-- adashi:generated revision=7046939090106192 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop/jobs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -9,9 +9,7 @@ These responsibilities are already owned here: extend them, do not duplicate.
 
 Bound here:
 - file `desktop/src-tauri/src/runtime/tool_loop/jobs/contract.rs`
+- file `desktop/src-tauri/src/runtime/tool_loop/jobs/registry.rs`
 
-Markdown design specifications:
-
-
-- [Failure policy: no limit ends a run; every condition is reported](../../../../../../docs/adashi/design-54d8a038f1a1117e53ced2794b7bf5c67047ec98c211e858467ca04653770b70.md)
+[Showing 2 of 2 design element(s) bound here, 15 further line(s) dropped. Retrieve the rest with the adashi_design get_scope operation.]
 <!-- adashi:architecture:end -->

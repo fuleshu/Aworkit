@@ -416,8 +416,9 @@ pub enum GoogleGeminiProviderError {
     RequestTimedOut,
     #[error("Gemini provider transport failed")]
     Transport,
-    #[error("Gemini provider returned HTTP status {0}")]
-    HttpStatus(u16),
+    /// The provider's own bounded diagnostic, when it sent one.
+    #[error("Gemini provider returned HTTP status {status}{detail}")]
+    HttpStatus { status: u16, detail: String },
     #[error("Gemini response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("Gemini response is not valid JSON")]
@@ -597,7 +598,9 @@ fn map_transport_error(error: BoundedJsonError) -> GoogleGeminiProviderError {
         BoundedJsonError::RequestTimedOut => GoogleGeminiProviderError::RequestTimedOut,
         BoundedJsonError::Transport => GoogleGeminiProviderError::Transport,
         BoundedJsonError::ContextWindowExceeded => GoogleGeminiProviderError::ContextWindowExceeded,
-        BoundedJsonError::HttpStatus(status) => GoogleGeminiProviderError::HttpStatus(status),
+        BoundedJsonError::HttpStatus { status, detail } => {
+            GoogleGeminiProviderError::HttpStatus { status, detail }
+        }
         BoundedJsonError::ResponseTooLarge => GoogleGeminiProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => GoogleGeminiProviderError::InvalidJson,
     }

@@ -409,8 +409,9 @@ pub enum AnthropicMessagesProviderError {
     RequestTimedOut,
     #[error("Anthropic provider transport failed")]
     Transport,
-    #[error("Anthropic provider returned HTTP status {0}")]
-    HttpStatus(u16),
+    /// The provider's own bounded diagnostic, when it sent one.
+    #[error("Anthropic provider returned HTTP status {status}{detail}")]
+    HttpStatus { status: u16, detail: String },
     #[error("Anthropic response exceeds the configured size bound")]
     ResponseTooLarge,
     #[error("Anthropic response is not valid JSON")]
@@ -561,7 +562,9 @@ fn map_transport_error(error: BoundedJsonError) -> AnthropicMessagesProviderErro
         BoundedJsonError::ContextWindowExceeded => {
             AnthropicMessagesProviderError::ContextWindowExceeded
         }
-        BoundedJsonError::HttpStatus(status) => AnthropicMessagesProviderError::HttpStatus(status),
+        BoundedJsonError::HttpStatus { status, detail } => {
+            AnthropicMessagesProviderError::HttpStatus { status, detail }
+        }
         BoundedJsonError::ResponseTooLarge => AnthropicMessagesProviderError::ResponseTooLarge,
         BoundedJsonError::InvalidJson => AnthropicMessagesProviderError::InvalidJson,
     }

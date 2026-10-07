@@ -1,15 +1,13 @@
 
 bugs:
-- get stuck when using agents
-- agents dont display correctly
-- chat tab partially covered when agent tabs exisist
 - auto close of sub agents not working
-- not store empty chat 
+- cleanup failing tests
 - what about history of removed projects
 - chat scroll improvements - step user entries - to the beginning
 
 todos:
 - figure out if/what python is bundled, default libs?
+- notifications in win bar and chat icon when finished
 
 comfyui integration:
 The choice this leaves

@@ -43,13 +43,15 @@ impl EmptyTurnV1 {
 
 /// Records what an empty turn produced and asks the model to continue.
 ///
-/// An empty turn is never an ending. Content the turn did produce (reasoning, or a
-/// partial answer) is committed so the transcript stays faithful and the model can
-/// see what it already said; a turn that produced nothing at all is not committed,
-/// because an empty assistant message is not a useful history entry. Either way the
-/// notice carries the condition into the next request. A failed durable commit is
-/// reported rather than added as a second ending, exactly as the job-completion
-/// barrier does.
+/// An empty turn is never an ending. Content the provider accepts on a later
+/// turn — assistant text, or a tool call — is committed so the transcript stays
+/// faithful and the model can see what it already said. A turn that produced
+/// only reasoning is not committed: reasoning never stands alone in a
+/// transcript, and rendering it alone yields an assistant message with no
+/// content and no tool calls, which the provider rejects with HTTP 400 on every
+/// later request. Either way the notice carries the condition into the next
+/// request. A failed durable commit is reported rather than added as a second
+/// ending, exactly as the job-completion barrier does.
 pub(crate) fn recover(
     authority: &dyn ModelToolInvocationPortV1,
     outer: &StableId,
@@ -58,7 +60,7 @@ pub(crate) fn recover(
     exchanges: &mut Vec<ModelToolExchangeV1>,
     notice: &mut Option<String>,
 ) {
-    if !content.is_empty() {
+    if content.iter().any(is_resendable) {
         let exchange = ModelToolExchangeV1 {
             assistant_content: content.to_vec(),
             results: Vec::new(),
@@ -75,4 +77,16 @@ pub(crate) fn recover(
         exchanges.push(exchange);
     }
     append_runtime_notices(notice, vec![empty.notice()]);
+}
+
+/// Whether a retained assistant part belongs in a later provider request.
+///
+/// Reasoning alone does not: the wire shape it produces carries no content and
+/// no tool call, and providers reject that assistant message outright.
+fn is_resendable(part: &aworkit_capability_host::ModelAssistantContentV1) -> bool {
+    matches!(
+        part,
+        aworkit_capability_host::ModelAssistantContentV1::Text { .. }
+            | aworkit_capability_host::ModelAssistantContentV1::ToolCall { .. }
+    )
 }

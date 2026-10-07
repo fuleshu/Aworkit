@@ -40,22 +40,35 @@ const TOOL_CONTEXT_HEADROOM_BYTES: usize = 512 * 1024;
 /// no aggregate deadline, so the user remains the only hard stop.
 pub(crate) const PROVIDER_TIMEOUT_RECOVERIES_V1: u32 = 32;
 /// How many provider failures are reported in full before the notice switches to
-/// a compact repeat reminder. This is a wording threshold, never a stop: the
-/// Agent node ends only on a final answer, cancellation, or an unrecoverable
-/// authority denial, so a repeating failure keeps being reported to the model.
+/// a compact repeat reminder. This is a wording threshold, not a stop.
 const MAXIMUM_ERROR_RECOVERIES: u32 = 32;
+
+/// How many times one identical provider failure may repeat consecutively, with
+/// no successful turn in between, before the pass stops instead of dispatching
+/// the same rejected bytes again.
+///
+/// This is the one provider condition that ends a pass, and it is a fact about
+/// the dispatch rather than a budget on the Agent's work: when the provider
+/// refuses the request, no turn reaches the model, so there is no Agent decision
+/// pending and nothing left to report that the model has not already been told. A
+/// recorded run repeated an HTTP 400 rejection 335 times in three minutes this
+/// way. Five attempts leave room for a flaky transport while refusing to spin,
+/// and any successful turn clears the streak.
+pub(crate) const MAXIMUM_IDENTICAL_PROVIDER_FAILURES: u32 = 5;
 
 /// The provider-failure report ledger for one Agent invocation.
 ///
 /// Every failure produces a model-visible notice, whether or not it repeats. A
 /// failure that repeats *identically* still produces one: the notice says the
 /// request has not changed, which is the fact the model needs to decide to do
-/// something different. The ledger never gates the loop, because a report is
-/// always available and an unavailable report is never a reason to end a node.
+/// something different.
 #[derive(Default)]
 struct ProviderRecoveryBudget {
     reports: u32,
     reported: std::collections::BTreeSet<String>,
+    /// The last failure text, and how many times it has repeated in a row.
+    last_failure: Option<String>,
+    identical_failures: u32,
 }
 
 impl ProviderRecoveryBudget {
@@ -68,6 +81,13 @@ impl ProviderRecoveryBudget {
         provider_request: &mut ModelToolRequestV1,
     ) -> String {
         self.reports = self.reports.saturating_add(1);
+        let text = error.to_string();
+        if self.last_failure.as_deref() == Some(text.as_str()) {
+            self.identical_failures = self.identical_failures.saturating_add(1);
+        } else {
+            self.last_failure = Some(text);
+            self.identical_failures = 1;
+        }
         // The ledger exists only to tell a repeat from a new condition. It is
         // bounded so a long run cannot grow it without limit; forgetting an old
         // key costs one extra full notice, never a stop.
@@ -92,6 +112,18 @@ impl ProviderRecoveryBudget {
         let bounded = aworkit_capability_host::bound_model_notice(&merged);
         provider_request.retry_notice = Some(bounded.clone());
         bounded
+    }
+
+    /// A turn the provider accepted clears the identical-failure streak.
+    fn progressed(&mut self) {
+        self.last_failure = None;
+        self.identical_failures = 0;
+    }
+
+    /// Whether the provider has refused this exact failure too many times in a
+    /// row for another identical dispatch to be worth making.
+    fn stalled(&self) -> bool {
+        self.identical_failures >= MAXIMUM_IDENTICAL_PROVIDER_FAILURES
     }
 }
 pub(crate) const PROVIDER_TIMEOUT_NOTICE: &str = "Aworkit recovery notice: the previous provider request timed out before a complete response was received. Any partial response from that attempt was discarded. Continue the task using the conversation and completed tool results available here.";
@@ -122,8 +154,9 @@ fn report_provider_failure(
     recovery: &mut ProviderRecoveryBudget,
     error: &ProviderError,
     provider_request: &mut ModelToolRequestV1,
-) {
+) -> bool {
     recovery.note(error, provider_request);
+    !recovery.stalled()
 }
 
 /// Report a context-preparation condition on the acting request.
@@ -853,9 +886,22 @@ fn execute_tool_turn_with_timeout_recovery(
             Err(error) if provider_recovery_notice(&error).is_some() => {
                 // Every provider failure that is not cancellation becomes the
                 // model's next turn: the exact failure is reported on the same
-                // frozen route and the Agent decides what to do about it. There is
-                // no report budget that can end the node.
-                report_provider_failure(recovery, &error, &mut provider_request);
+                // frozen route and the Agent decides what to do about it.
+                if report_provider_failure(recovery, &error, &mut provider_request) {
+                    continue;
+                }
+                // The provider has refused this exact failure repeatedly with no
+                // successful turn in between, so the same bytes will get the same
+                // answer: another dispatch is provably useless, and because no
+                // request reaches the model there is no Agent decision left to
+                // make. End the pass with a reason the user can act on, instead of
+                // spinning.
+                return Err(ProviderError::Failed(format!(
+                    "{error}. The provider refused this exact request {} times in a row, so no turn \
+                     reached the model.",
+                    recovery.identical_failures
+                ))
+                .into());
             }
             Err(error) => return Err(error.into()),
             Ok(evidence) => {
@@ -881,6 +927,7 @@ fn execute_tool_turn_with_timeout_recovery(
                     &output.assistant_text,
                     &output.calls,
                 );
+                recovery.progressed();
                 return Ok(evidence);
             }
         }

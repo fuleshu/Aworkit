@@ -1,0 +1,62 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/provider_transport.rs\",\"crates/aworkit-capability-host/src/openai_compatible.rs\",\"crates/aworkit-capability-host/src/anthropic_messages.rs\",\"crates/aworkit-capability-host/src/google_gemini.rs\",\"crates/aworkit-capability-host/tests/provider_protocols.rs\",\"docs/context-compaction.md\"]",
+    "completed_at": "2026-10-07 08:41:01",
+    "completion_memo": {
+      "lines": [
+        "Completed: no adapter drops the provider's refusal text any more, so the \"NOT DONE\" item on the previous memo is closed.\n",
+        "\n",
+        "- AnthropicMessagesProviderError::HttpStatus and GoogleGeminiProviderError::HttpStatus now carry { status: u16, detail: String } and render \"Anthropic|Gemini provider returned HTTP status {status}{detail}\"; the map sites pass the detail through, so the shared transport excerpt reaches the typed error rather than being discarded.\n",
+        "- Both enums derive Clone, Debug, Error, Eq, PartialEq (no Copy), so the String field is additive; nothing else matched the old tuple shape except the one assertion in tests/provider_protocols.rs, which is updated.\n",
+        "- Two new integration tests drive the real HTTP fixture and assert the whole path end to end: an_anthropic_refusal_keeps_the_providers_own_message (400 with Anthropic's error.message shape) and a_gemini_refusal_keeps_the_providers_own_message (400 with Gemini's error.message shape), each asserting both the typed variant and its rendered Display.\n",
+        "\n",
+        "VERIFICATION (this increment)\n",
+        "- cargo test -p aworkit-capability-host (lib AND every integration binary): all \"test result: ok\", 0 failed - lib 191 passed / 2 ignored, provider_protocols 4 passed (was 2), and every other suite green.\n",
+        "- desktop cargo check --tests: Finished, no errors, only the pre-existing warnings.\n",
+        "\n",
+        "STATE OF THE WHOLE CHANGE (tasks #191-#193)\n",
+        "- Prefix cache: between compactions state re-emission is append-only; only a compaction consolidates.\n",
+        "- Text-less turn: reported and continued; a reasoning-only turn never enters the transcript; the renderer drops one that already did, so a stuck Chat replays.\n",
+        "- Repeated refusal: five identical provider failures with no accepted turn in between end the pass with the provider's own words; the failure policy and docs/context-compaction.md now record that exception.\n",
+        "- Refusal diagnostics: OpenAI-compatible, Anthropic and Gemini all carry a bounded 2048-byte single-line excerpt of the provider's own message."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 08:34:30",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Second half of the user's instruction on 2026-10-07, after the endless-refusal incident (chat.0e61d222be0b04c2ee63ff7c1c0edd14d085e98f).\n",
+        "\n",
+        "DECISION RECORDED\n",
+        "- The user confirmed that a model call which keeps failing repetitively must be allowed to end the run: a misconfigured provider, a provider-side outage, or a harness bug cannot be allowed to spin for ever.\n",
+        "- aworkit.workflow_worker.failure_policy is amended accordingly (2026-10-07): invariant 1 now lists four terminating classes, the fourth being \"a provider that refuses the same request repeatedly with no accepted turn in between\"; the accepted-turn-with-no-answer case is explicitly moved out of the terminating set (the recorded 65,536-token reasoning turn is the case the loop must survive); invariant 4 records that the one attempt-counting ending is a dispatch fact, never a measure of the Agent's progress; the Consequences section now states the exception and the reasoning behind it. Invariant 1's old wording, which listed \"a provider that accepts a turn and returns neither an answer nor a tool call\" as an unrecoverable refusal, is removed because it contradicted the implemented behaviour since task #191.\n",
+        "- docs/context-compaction.md's \"A provider failure never ends a Run\" bullet now carries the same exception.\n",
+        "\n",
+        "REQUESTED FEATURE\n",
+        "- The provider's own refusal text is now captured instead of a bare status. provider_transport.rs gained PROVIDER_ERROR_EXCERPT_BYTES (2048), bounded_single_line, provider_error_excerpt (prefers error.message, then error.detail, then a bare string, then the raw body) and http_status_detail. BoundedJsonError::HttpStatus and OpenAiCompatibleProviderError::HttpStatus now carry { status, detail } and render \"provider returned HTTP status 400: <the provider's words>\". The body was previously read and then discarded by context_overflow_response, which is why 335 identical refusals reported only the status. Anthropic and Gemini transport mappings keep their existing status-only shape.\n",
+        "\n",
+        "VERIFICATION\n",
+        "- capability-host lib: 191 passed / 0 failed / 2 ignored, including three new provider_error_excerpt_tests (JSON error.message extraction, single-line collapsing and the 2048-byte bound, and the empty-suffix case).\n",
+        "- capability-host integration: provider_protocols 2/2, provider_tool_contracts 4/4, provider_tools_openai 3/3.\n",
+        "- desktop cargo check --tests: Finished with no errors and only the pre-existing warnings.\n",
+        "\n",
+        "NOT DONE / OPEN\n",
+        "- Anthropic and Gemini still surface the bare status in their typed provider errors; their shared transport now formats the detail, but the mapping deliberately drops it. Extend the same way if those providers matter.\n",
+        "- The 335-attempt incident was 3 minutes of ~0.6 s refusals; nothing rate-limits retries of a *varying* provider failure, which remains report-and-continue by design."
+      ]
+    },
+    "id": 77475021199,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Carry the provider's own refusal text in the error, and record the repeated-refusal ending in the failure policy",
+    "updated_at": "2026-10-07 08:41:01"
+  },
+  "deleted": false,
+  "identity": "30c0ce6f-9089-478f-9298-2495d5afd420",
+  "schemaVersion": 1
+}
