@@ -145,19 +145,15 @@ it("states a released checkpoint instead of reporting no context at all",()=>{
   expect(contextUsage(selected)).toMatchObject({ available:false, known:true, total:120, reported:true });
   render(<ContextUsage events={[...events,checkpoint]} model={{name:"Fixture",contextWindow:32000}} editDisabledReason={null} onSave={vi.fn()} onCompact={vi.fn()} />);
   fireEvent.click(screen.getByRole("button",{name:/Context usage/}));
-  const notice=screen.getByRole("note");
-  expect(notice.textContent).toContain("Context snapshot released — this turn's snapshot was superseded by newer turns, so its 2.9 MB context snapshot was released to bound this Chat's store size. The newest snapshot of every context scope and the latest 20 turns are kept.");
-  expect(notice.textContent).toContain("Released 2026-08-03 14:02:11");
-  expect(notice.getAttribute("title")).toContain(`Canonical digest before release: sha256:${"a".repeat(64)}`);
+  // The breakdown is omitted and retention is not narrated.
+  expect(screen.queryByRole("note")).toBeNull();
   expect(screen.queryByText("System prompt")).toBeNull();
-  // The omission stays inspectable rather than opening an empty or invalid editor.
+  // With no readable document the editor stays closed and unreachable.
   expect(screen.getByRole("button",{name:"Compact context"})).toHaveProperty("disabled",true);
-  fireEvent.click(screen.getByRole("button",{name:"Display Context"}));
-  expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.getByRole("dialog",{name:"Model context"}).textContent).toContain("Context snapshot released");
+  expect(screen.getByRole("button",{name:"Display Context"})).toHaveProperty("disabled",true);
 });
 
-it("states a released request body without losing the call's usage",()=>{
+it("keeps a released request body's usage while the body is not shown",()=>{
   const released=[
     event(1,"span.started",{spanId:"node",spanKind:"graph_node",nodeId:"agent.1",label:"Agent"}),
     event(2,"span.started",{spanId:"loop",spanKind:"agent_loop",parentSpanId:"node"}),
@@ -171,10 +167,9 @@ it("states a released request body without losing the call's usage",()=>{
   expect(contextUsage(selected)).toMatchObject({ available:false, known:true, total:900, reported:true });
   render(<ContextUsage events={released} editDisabledReason={null} onSave={vi.fn()} />);
   fireEvent.click(screen.getByRole("button",{name:/Context usage/}));
-  const notice=screen.getByRole("note");
-  expect(notice.textContent).toContain("Request body released — this turn's snapshot was superseded by newer turns, so its 1.2 MB request body was released to bound this Chat's store size. Its usage, timing and result are unaffected.");
+  expect(screen.queryByRole("note")).toBeNull();
   expect(screen.getByText(/Last request reported 800 input \/ 100 output tokens/)).toBeTruthy();
-  expect(screen.getByRole("button",{name:"Display Context"})).toHaveProperty("disabled",false);
+  expect(screen.getByRole("button",{name:"Display Context"})).toHaveProperty("disabled",true);
 });
 
 it("keeps an intact request body readable and a released one out of the breakdown",()=>{

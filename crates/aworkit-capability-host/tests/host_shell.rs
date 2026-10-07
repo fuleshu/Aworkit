@@ -9,8 +9,25 @@ use aworkit_capability_host::{
 use std::{collections::BTreeMap, path::PathBuf};
 
 fn run(shell: PathBuf, command: &str) -> String {
+    // Keep the helper hermetic: an explicit invocation environment still wins
+    // over the per-user runtime baseline the shell tool now adds.
     let temporary = tempfile::tempdir().unwrap();
     let temporary_path = temporary.path().to_string_lossy().into_owned();
+    run_with_environment(
+        shell,
+        command,
+        BTreeMap::from([
+            ("TEMP".into(), temporary_path.clone()),
+            ("TMP".into(), temporary_path),
+        ]),
+    )
+}
+
+fn run_with_environment(
+    shell: PathBuf,
+    command: &str,
+    environment: BTreeMap<String, String>,
+) -> String {
     let result = BuiltInProcessTools::new(NativeProcessPort)
         .execute_shell(
             &ShellInvocationV1 {
@@ -18,10 +35,7 @@ fn run(shell: PathBuf, command: &str) -> String {
                 shell_program: shell,
                 command_text: command.into(),
                 working_directory: None,
-                environment: BTreeMap::from([
-                    ("TEMP".into(), temporary_path.clone()),
-                    ("TMP".into(), temporary_path),
-                ]),
+                environment,
                 limits: HostToolLimitsV1::default(),
             },
             &CancellationToken::default(),
@@ -122,6 +136,60 @@ fn cmd_expands_machine_windows_variables_instead_of_creating_literal_paths() {
         if let Ok(expected) = std::env::var(name) {
             assert_eq!(value, expected, "{name} must reach the child unchanged");
         }
+    }
+}
+
+#[test]
+fn host_shell_children_get_a_writable_user_temp_and_an_expanded_profile() {
+    // The controlled child starts from an empty environment, so the shell tool
+    // must supply the per-user runtime baseline itself. Without a real %TEMP% a
+    // compiler or linker falls back to the unwritable Windows directory (rustc
+    // reproduces `LNK1104: cannot open file 'C:\WINDOWS\lnk{...}.tmp'`), and
+    // without %USERPROFILE% tools that resolve the user home fail.
+    let text = run_with_environment(
+        system32().join("cmd.exe"),
+        "echo TEMP=[%TEMP%] & echo TMP=[%TMP%] & echo USERPROFILE=[%USERPROFILE%] \
+         & echo aworkit-temp-probe> \"%TEMP%\\aworkit-temp-probe.txt\" \
+         & type \"%TEMP%\\aworkit-temp-probe.txt\" \
+         & del \"%TEMP%\\aworkit-temp-probe.txt\"",
+        BTreeMap::new(),
+    );
+    let reported: BTreeMap<&str, &str> = text
+        .lines()
+        .filter_map(|line| line.trim().split_once('='))
+        .map(|(name, value)| (name, value.trim_matches(['[', ']'])))
+        .collect();
+    for name in ["TEMP", "TMP"] {
+        let value = *reported
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} was not reported: {text}"));
+        assert!(
+            !value.contains('%'),
+            "{name} stayed a literal reference in the child shell: {value}"
+        );
+    }
+    assert!(
+        PathBuf::from(reported["TEMP"]).is_dir(),
+        "the child %TEMP% must be an existing directory: {text}"
+    );
+    assert!(
+        text.contains("aworkit-temp-probe"),
+        "the child could not create and read a file in %TEMP%: {text}"
+    );
+    // The profile is passed through rather than synthesized, so a stripped
+    // launcher that defines none can only be matched to what it has.
+    if let Ok(expected) = std::env::var("USERPROFILE") {
+        let value = *reported
+            .get("USERPROFILE")
+            .unwrap_or_else(|| panic!("USERPROFILE was not reported: {text}"));
+        assert!(
+            !value.contains('%'),
+            "%USERPROFILE% stayed a literal reference in the child shell: {value}"
+        );
+        assert_eq!(
+            value, expected,
+            "%USERPROFILE% must reach the child unchanged"
+        );
     }
 }
 

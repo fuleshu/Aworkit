@@ -81,7 +81,7 @@ describe("ModelCallBlock", () => {
     ]);
   });
 
-  it("states a released request body while keeping the call, its usage and its result", () => {
+  it("keeps the call, its usage and its result when the request body was released", () => {
     render(
       <ModelCallBlock item={releasedModelCall()} selected={false} onSelect={vi.fn()} />,
     );
@@ -93,16 +93,9 @@ describe("ModelCallBlock", () => {
     expect(within(block).getByLabelText("Thinking: Model call 2")).toBeVisible();
     expect(within(block).getByLabelText("Model output: Model call 2")).toBeVisible();
 
-    // The released body is stated, never rendered.
-    const notice = within(block).getByRole("note");
-    expect(notice.textContent).toContain(
-      "Request body released — this turn's snapshot was superseded by newer turns, so its 1.2 MB request body was released to bound this Chat's store size. Its usage, timing and result are unaffected.",
-    );
-    expect(notice.textContent).toContain("Released 2026-08-03 14:02:11");
-    expect(notice.textContent).toContain("20 newest turns kept");
-    expect(notice.getAttribute("title")).toContain(
-      `Canonical digest before release: sha256:${"c".repeat(64)}`,
-    );
+    // Retention is not narrated: the released body leaves no Input block and no
+    // notice, and it is never rendered as an empty value.
+    expect(within(block).queryByRole("note")).toBeNull();
     expect(within(block).queryByLabelText("Input JSON")).toBeNull();
     expect(within(block).queryByText("Input")).toBeNull();
     expect(block.textContent).not.toContain("[object Object]");

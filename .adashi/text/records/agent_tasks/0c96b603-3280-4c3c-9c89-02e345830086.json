@@ -1,0 +1,41 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/shell.rs\",\"crates/aworkit-capability-host/src/tools.rs\",\"crates/aworkit-capability-host/tests/python_adapter.rs\"]",
+    "completed_at": "2026-10-07 16:48:03",
+    "completion_memo": {
+      "lines": [
+        "Added `shell::user_runtime_environment(explicit)` - it clones the caller's map and applies the existing `apply_user_runtime_environment` baseline, so explicit values win - and used it in `python_spec`. Host Python children now receive the same per-user runtime baseline as host shells (Windows: TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA; POSIX: HOME, TMPDIR, TMP, TEMP). PATH is still supplied by `prepare_command`, so `python_spec` adds none; absolute interpreter identity and `-I` isolated mode are unchanged.\n",
+        "\n",
+        "Updated `python_adapter.rs` to assert the caller's `EXPLICIT=value` survives and TEMP/TMP are present (USERPROFILE matched the host when defined), and recorded the decision in the bound design element aworkit.capability_host.process_runtime. Linked tasks 201 and 202 to that element.\n",
+        "\n",
+        "Verified: `cargo test -p aworkit-capability-host --no-fail-fast` exit 0 (python_preparation_preserves_frozen_interpreter_isolation_and_legacy_arguments ok, no FAILED lines); `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib` 622 passed, 0 failed, 1 ignored.\n",
+        "\n",
+        "Not verified: as with task 201, the running Aworkit process needs a rebuild and restart before the fix is live; a real host Python child was not executed end-to-end (the live Python RSS test requires the public internet and is ignored)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 16:44:41",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "`python_spec` in `crates/aworkit-capability-host/src/tools.rs` returns exactly the caller's `invocation.environment` (pinned by `tests/python_adapter.rs:30`). The desktop Python job passes an empty map (`desktop/src-tauri/src/runtime/tool_loop/jobs.rs:224`), so a host Python child receives only `PATH` + the machine-scoped baseline from `prepare_command` and lacks `TEMP`/`TMP`/`USERPROFILE`. Python starts and imports fine (absolute interpreter, `-I` isolated mode), but `tempfile.gettempdir()`, `os.path.expanduser('~')` and child processes it spawns still fall back to `C:\\\\WINDOWS`, the same defect fixed for the shell in task 201.\n",
+        "\n",
+        "Fix: add a `shell::user_runtime_environment(explicit)` helper that clones the caller's map and applies the existing `apply_user_runtime_environment` baseline (explicit values win), then use it in `python_spec` so host Python children get the same per-user runtime baseline as host shells. Do not add PATH/PATHEXT here: `prepare_command` already supplies PATH.\n",
+        "\n",
+        "Verification: update `python_adapter.rs` to assert the explicit `EXPLICIT=value` survives and `TEMP`/`TMP` are present (and `USERPROFILE` matches the host when defined); run the capability-host suite and the desktop lib suite."
+      ]
+    },
+    "id": 91992147664,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Give host Python children the per-user runtime baseline",
+    "updated_at": "2026-10-07 16:48:03"
+  },
+  "deleted": false,
+  "identity": "0c96b603-3280-4c3c-9c89-02e345830086",
+  "schemaVersion": 1
+}

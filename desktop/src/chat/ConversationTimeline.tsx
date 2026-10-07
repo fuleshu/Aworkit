@@ -11,7 +11,6 @@ import {
   modelCallAssistantOutput,
 } from "./ModelCallBlock";
 import { prettyJson } from "./jsonPresentation";
-import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import { releasedPayloadOf } from "./releasedPayload";
 import { todosFromFact } from "./todoProjection";
 import type { TimelineItem } from "./types";
@@ -185,7 +184,7 @@ export function ConversationTimeline({
       tabIndex={0}
     >
       {hasOlder && <div className="chat-history-loader">
-        {olderLoading ? <ChatBusy label="Loading earlier activity…" /> : <button type="button" title="Load earlier activity without moving your reading position" onClick={() => void loadOlder()}>{olderError ? "Retry loading earlier activity" : "Load earlier activity"}</button>}
+        {olderLoading ? <ChatBusy label="Loading earlier activity…" /> : <button type="button" title={olderError ? `Retry loading earlier activity. The last attempt failed: ${olderError}` : "Load earlier activity without moving your reading position"} onClick={() => void loadOlder()}>{olderError ? "Retry loading earlier activity" : "Load earlier activity"}</button>}
       </div>}
       {items.length === 0 ? (
         <p className="empty-state timeline-empty">
@@ -703,16 +702,10 @@ function ActivityData({
     hasInput && input === undefined ? releasedPayloadOf(metadata) : undefined;
   const data = (
     <dl className="activity-data" aria-label={`${item.title} data flow`}>
-      {hasInput && (
+      {hasInput && releasedInput === undefined && (
         <div>
           <dt>Input</dt>
-          <dd>
-            {releasedInput === undefined ? (
-              <pre>{formatActivityData(input)}</pre>
-            ) : (
-              <ReleasedPayloadNotice payload={releasedInput} />
-            )}
-          </dd>
+          <dd><pre>{formatActivityData(input)}</pre></dd>
         </div>
       )}
       {hasOutput && (

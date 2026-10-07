@@ -3,7 +3,6 @@ import type { RuntimeEvent } from "./corePort";
 import { ContextPanel } from "./ContextPanel";
 import { CompressionUsage } from "./CompressionUsage";
 import { compactTokens, contextModel, contextUsage, projectContexts, type ContextDocument, type ContextModel, type ContextSelection } from "./contextProjection";
-import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import "./context.css";
 
 interface Props {
@@ -52,10 +51,8 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
       <div className="context-popover-summary"><span><strong>{percent === null ? "—" : `${percent}%`}</strong> of context used</span>
         <strong title={label}>{estimate?.known ? (estimate.reported ? "" : "~") + estimate.total.toLocaleString() : "—"} / {capacity ? capacity.toLocaleString() : "Not reported"}</strong></div>
       {/* A released snapshot has no readable document, so the breakdown is
-          replaced by the statement rather than by zeroes. */}
-      {released !== undefined ? (
-        <ReleasedPayloadNotice payload={released} />
-      ) : (
+          omitted rather than shown as zeroes. */}
+      {released === undefined && (
         <>
           <div className="context-segments" aria-hidden="true">{estimate && ["system", "tools", "messages"].map(part => {
             const amount = estimate[part as "system" | "tools" | "messages"];
@@ -73,7 +70,7 @@ export function ContextUsage({ events, model: fallback, editDisabledReason, onSa
       {selection?.inputTokens !== null && selection?.inputTokens !== undefined && <p className="context-usage-note">Last request reported {compactTokens(selection.inputTokens)} input / {compactTokens(selection.outputTokens ?? 0)} output tokens.</p>}
       {model && <p className="context-model-name">{model.name}</p>}
       <CompressionUsage events={events} nodeId={selection?.nodeId} />
-      <button type="button" className="context-display-button" disabled={!selection} title={released === undefined ? "Open the complete raw model context" : "Open the released snapshot's statement of what retention removed"}
+      <button type="button" className="context-display-button" disabled={!selection || released !== undefined} title={released === undefined ? "Open the complete raw model context" : "No readable context is retained for this node"}
         onClick={() => { if (selection) { setPanel(selection); setOpen(false); } }}>Display Context</button>
       {onCompact && <button type="button" className="context-compact-button" disabled={!selection || selection.document === null || Boolean(editDisabledReason)}
         title={selection?.document === null ? "The newest snapshot for this node was released, so there is no readable context to summarize." : editDisabledReason ?? "Summarize earlier context now, retaining recent work and the original Chat history"}

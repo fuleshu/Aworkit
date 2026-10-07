@@ -1,0 +1,43 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/useHistoryScroll.ts\",\"desktop/src/chat/ConversationTimeline.tsx\"]",
+    "completed_at": "2026-10-07 17:00:31",
+    "completion_memo": {
+      "lines": [
+        "Investigation first, then a targeted fix.\n",
+        "\n",
+        "Evidence gathered on the live chat (chat.b3400a4d0daa16e7f8d444d34005092707636502): the canonical history is contiguous 1..10366 with no gaps; a faithful offline replay of the exact backend page contract plus the real useOlderChatEvents loop paged the entire chat in 65 clicks with 0 failures; a jsdom test of the real useChatRuntime.loadOlder showed a failed page followed by a retry does reach the port again and clears olderError. So the data, the page contract and the retry wiring were sound.\n",
+        "\n",
+        "Fix in useHistoryScroll.ts: gate the scroll-driven and wheel-driven auto-loads and `request` itself on `!restoring.current`. Previously only onScroll checked it, so a wheel event during the ~3-frame position restore after a prepend could start a second load from a mid-restore position, and the two restores then competed and pinned the view near the top. ConversationTimeline.tsx now puts the failure text on the Retry button's tooltip, so a genuine backend error is diagnosable instead of silent.\n",
+        "\n",
+        "Verified: `npx tsc --noEmit` clean; `npx vitest run src/chat` 286 passed / 3 failed, and those same 3 fail with this change stashed (pre-existing Windows-dialect assertions expecting 'bash' plus a cache-unit mismatch), so no regression. Temporary reproduction harnesses were deleted.\n",
+        "\n",
+        "Not verified: the running desktop app has not been rebuilt, so the fix is not live yet."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 16:58:46",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Chat chat.b3400a4d0daa16e7f8d444d34005092707636502 cannot load earlier activity: the timeline shows \"Retry loading earlier activity\" and clicking it changes nothing.\n",
+        "\n",
+        "Investigation (evidence): the canonical history is contiguous (1..10366, no gaps); a faithful offline replay of the exact backend page contract plus the real `useOlderChatEvents` loop paged the whole chat in 65 clicks with 0 failures; a jsdom test of the real `useChatRuntime.loadOlder` proving a failed page followed by a retry reaches the port again and clears `olderError` passes. So the data, the page contract and the retry wiring are sound.\n",
+        "\n",
+        "Defect: `desktop/src/chat/useHistoryScroll.ts` guards the scroll-driven auto-load with `!restoring.current` but the wheel-driven auto-load does not, and `request` itself does not either. After a successful prepend the layout effect restores the reading position over ~3 frames; a wheel event in that window starts a second load that captures a mid-restore scroll position, and the two restores then compete, leaving the view pinned near the top so upward scrolling never reaches the older rows. Fix: gate both the wheel handler and `request` on `!restoring.current`, matching `onScroll`. Also surface the error text on the Retry button so a real failure is diagnosable instead of silent."
+      ]
+    },
+    "id": 92047956441,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix the older-activity auto-load cascade that pins the timeline at the top",
+    "updated_at": "2026-10-07 17:00:31"
+  },
+  "deleted": false,
+  "identity": "9f68d630-4890-4427-9378-83a42dd451be",
+  "schemaVersion": 1
+}

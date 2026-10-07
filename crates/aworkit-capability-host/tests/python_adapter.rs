@@ -27,7 +27,26 @@ fn python_preparation_preserves_frozen_interpreter_isolation_and_legacy_argument
         ["-I", "-c", "print('hello')", "literal argument"]
     );
     assert_eq!(spec.working_directory, request.working_directory);
-    assert_eq!(spec.environment, request.environment);
+    // The caller's explicit value survives; the per-user runtime baseline the
+    // tool needs (scratch directory, profile) is added around it.
+    assert_eq!(
+        spec.environment.get("EXPLICIT").map(String::as_str),
+        Some("value")
+    );
+    for name in ["TEMP", "TMP"] {
+        assert!(
+            spec.environment
+                .get(name)
+                .is_some_and(|value| !value.is_empty()),
+            "{name} must be present in a host Python child"
+        );
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        assert_eq!(
+            spec.environment.get("USERPROFILE").map(String::as_str),
+            Some(profile.as_str())
+        );
+    }
     assert_eq!(spec.timeout, request.limits.timeout);
 }
 

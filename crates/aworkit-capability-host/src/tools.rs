@@ -195,7 +195,9 @@ impl<P: PlatformProcessPort> BuiltInProcessTools<P> {
             program: invocation.interpreter.clone(),
             arguments,
             working_directory: invocation.working_directory.clone(),
-            environment: invocation.environment.clone(),
+            // Host Python already gets PATH from the launch path, so add only the
+            // per-user runtime baseline its scripts and child processes need.
+            environment: crate::shell::user_runtime_environment(&invocation.environment),
             timeout: invocation.limits.timeout,
             maximum_output_bytes: invocation.limits.maximum_output_bytes,
             cancellation_grace: invocation.limits.cancellation_grace,

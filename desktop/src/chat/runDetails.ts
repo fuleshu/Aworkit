@@ -1,7 +1,6 @@
 import type { RuntimeEvent } from "./corePort";
 import { prettyJson } from "./jsonPresentation";
 import { cacheUsageFields, reportedCacheFields, reportedCacheUnits } from "./cacheUsage";
-import { releasedModelCallInput, type ReleasedPayload } from "./releasedPayload";
 import type { ChatProjection, EvidenceRecord, TimelineItem } from "./types";
 
 export interface RunDetailField {
@@ -39,16 +38,6 @@ export type RunDetailsSection =
       readonly kind: "data";
       readonly title: string;
       readonly value: unknown;
-    }
-  | {
-      /**
-       * A payload whose heavy field retention released. The body cannot be
-       * shown, so the section states the omission instead of rendering an
-       * empty value, and the row keeps its place and its other facts.
-       */
-      readonly kind: "notice";
-      readonly title: string;
-      readonly payload: ReleasedPayload;
     }
   | {
       readonly kind: "log";
@@ -238,12 +227,6 @@ function projectItem(
   const modelFields = modelDetailFields(selected, scopeEvents, relatedRecords, usage);
   const toolFields = toolDetailFields(selected, scopeEvents, relatedRecords);
   const searchUsageFields = paidSearchUsage(scopeEvents).flatMap(paidSearchUsageFields);
-  // A released request keeps its call, its usage and its timing; only the
-  // compiled body is gone, so the Input section states the omission.
-  const releasedRequest =
-    selected.input === undefined
-      ? releasedModelCallInput(selected.metadata)
-      : undefined;
   const descendants = scopeItems.filter(({ id }) => id !== selected.id);
   const sections: RunDetailsSection[] = [];
   const summary = (selected.body ?? "").trim();
@@ -263,12 +246,6 @@ function projectItem(
     });
   if (selected.input !== undefined)
     sections.push({ kind: "data", title: "Input", value: selected.input });
-  else if (releasedRequest !== undefined)
-    sections.push({
-      kind: "notice",
-      title: "Input",
-      payload: releasedRequest,
-    });
   if (selected.output !== undefined)
     sections.push({ kind: "data", title: "Output", value: selected.output });
   if (descendants.length > 0) {

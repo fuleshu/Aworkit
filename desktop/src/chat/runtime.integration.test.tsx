@@ -1761,11 +1761,9 @@ describe("Chat native-port recovery contracts", () => {
     );
 
     const data = screen.getByLabelText("Plan data flow");
-    expect(within(data).getByText("Input")).toBeVisible();
-    expect(
-      within(data).getByText(/Request body released/u),
-    ).toBeVisible();
-    expect(within(data).getByText(/20 newest turns kept/u)).toBeVisible();
+    // Retention is not narrated: the released Input row is omitted entirely.
+    expect(within(data).queryByText("Input")).toBeNull();
+    expect(within(data).queryByText(/Request body released/u)).toBeNull();
     expect(within(data).queryByText("null")).toBeNull();
 
     // An intact body is untouched: no marker, so the code block renders as before.

@@ -322,22 +322,9 @@ describe("Run details projection", () => {
       selectedId: call.id,
     });
 
-    expect(view.sections).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "notice",
-          title: "Input",
-          payload: expect.objectContaining({
-            kind: "model_call_input",
-            bytes: 1_200_000,
-            digestBefore: `sha256:${"b".repeat(64)}`,
-          }),
-        }),
-      ]),
-    );
-    expect(
-      view.sections.some((section) => section.kind === "data" && section.title === "Input"),
-    ).toBe(false);
+    // A released request body is not narrated in the interface: the Input
+    // section is omitted entirely, and the row keeps its other facts.
+    expect(view.sections.some((section) => section.title === "Input")).toBe(false);
     // The call's usage and timing are unaffected by the release.
     expect(view.summary).toEqual(
       expect.arrayContaining([
@@ -387,7 +374,6 @@ describe("Run details projection", () => {
         }),
       ]),
     );
-    expect(view.sections.some((section) => section.kind === "notice")).toBe(false);
   });
 });
 

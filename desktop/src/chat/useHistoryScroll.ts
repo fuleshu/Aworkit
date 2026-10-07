@@ -12,7 +12,10 @@ export function useHistoryScroll(scroll: RefObject<HTMLDivElement | null>, follo
   const frame = useRef<number | null>(null);
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
   const request = useCallback(async () => {
-    if (!load || loading || !hasMore || !scroll.current || anchor.current) return;
+    // A restore owns the scroll position for a few frames after a prepend.
+    // Starting a load inside that window captures a mid-restore position and
+    // the two restores then fight, pinning the view near the top.
+    if (!load || loading || !hasMore || !scroll.current || anchor.current || restoring.current) return;
     following.current = false;
     anchor.current = { top: scroll.current.scrollTop, extent, first: ids[0], row: captureTimelineAnchor(scroll.current), settled: false };
     try { await load(); } finally {
@@ -55,7 +58,7 @@ export function useHistoryScroll(scroll: RefObject<HTMLDivElement | null>, follo
       previousTop = element.scrollTop;
       if (upward && !restoring.current && !following.current && element.scrollTop < 180) void requestRef.current();
     };
-    const onWheel = (event: WheelEvent) => { if (event.deltaY < 0 && element.scrollTop < 180) void requestRef.current(); };
+    const onWheel = (event: WheelEvent) => { if (event.deltaY < 0 && !restoring.current && element.scrollTop < 180) void requestRef.current(); };
     element.addEventListener("scroll", onScroll, { passive: true });
     element.addEventListener("wheel", onWheel, { passive: true });
     return () => { element.removeEventListener("scroll", onScroll); element.removeEventListener("wheel", onWheel); };

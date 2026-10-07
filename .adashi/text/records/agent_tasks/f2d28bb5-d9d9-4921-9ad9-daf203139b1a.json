@@ -1,0 +1,49 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src/chat/ModelCallBlock.tsx\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/ContextUsage.tsx\",\"desktop/src/chat/ContextPanel.tsx\",\"desktop/src/chat/RunDetailsInspector.tsx\",\"desktop/src/chat/runDetails.ts\",\"desktop/src/chat/releasedPayload.ts\",\"desktop/src/chat/releasedPayload.test.ts\",\"desktop/src/chat/runDetails.test.ts\",\"desktop/src/chat/ModelCallBlock.test.tsx\",\"desktop/src/chat/ContextUsage.test.tsx\",\"desktop/src/chat/runtime.integration.test.tsx\"]",
+    "completed_at": "2026-10-07 17:14:49",
+    "completion_memo": {
+      "lines": [
+        "Removed the released-payload retention notice from every user-facing surface. Deleted `ReleasedPayloadNotice.tsx` and `releasedPayload.css`, and deleted the presentation helpers in `releasedPayload.ts` (releasedBytesLabel, releasedRequestStatement, releasedSnapshotStatement, releasedPayloadEvidence, releasedPayloadDigest).\n",
+        "\n",
+        "Behaviour now: when a payload's heavy bytes were released, the surface shows the omission, not a narrative. ModelCallBlock omits the Input block; ConversationTimeline omits the Input row; ContextUsage omits the breakdown and disables Display Context; ContextPanel renders no body and no longer says \"Snapshot released\"; runDetails no longer emits a \"notice\" section and its variant was removed from RunDetailsSection. `releasedPayloadOf`/`releasedModelCallInput`/`releasedContextCheckpoint` are kept, because a surface still needs to detect the tombstone so it never renders a null or an empty document.\n",
+        "\n",
+        "Design: `runDetails.ts` is bound to aworkit.desktop_ui.evidence_inspector, but that element's description never described the released-payload notice, so no design text became inaccurate and no design write was needed. The retention policy itself (aworkit.local_store.history_retention) is unchanged.\n",
+        "\n",
+        "Verified: `npx tsc --noEmit` clean. `npx vitest run src/chat` -> 283 passed / 3 failed; the 3 are the pre-existing Windows-dialect and cache-unit failures (cacheUsage.test.ts, ToolCallCard.test.tsx, toolCallPresentation.test.ts), already proven pre-existing by running them with the change stashed. The four updated files (releasedPayload, runDetails, ModelCallBlock, ContextUsage) and runtime.integration.test.tsx all pass.\n",
+        "\n",
+        "Not verified: the running desktop app has not been rebuilt."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 17:09:03",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Every older Agent/model-call card now shows the retention \"released payload\" notice (\"Request body released — this turn's snapshot was superseded by newer turns, so its 1.3 MB request body was released to bound this Chat's store size…\" plus \"Released <time> · 20 newest turns kept\"). The user reports this as internal implementation language that must not be user-facing.\n",
+        "\n",
+        "Remove the notice from every user-facing surface and leave nothing empty in its place:\n",
+        "- ModelCallBlock (the Agent card) and the generic activity card in ConversationTimeline: omit the Input block when the body was released.\n",
+        "- ContextUsage popover: omit the token breakdown; keep the summary; disable \"Display Context\" for a released scope with a neutral title.\n",
+        "- ContextPanel: render no body when the scope has no readable document; drop the \"Snapshot released\" status wording.\n",
+        "- RunDetailsInspector/runDetails: stop emitting the released \"notice\" section and remove the section variant.\n",
+        "- Delete ReleasedPayloadNotice.tsx and releasedPayload.css, and delete the presentation helpers in releasedPayload.ts (releasedBytesLabel, releasedRequestStatement, releasedSnapshotStatement, releasedPayloadEvidence, releasedPayloadDigest). Keep releasedPayloadOf/releasedModelCallInput/releasedContextCheckpoint, which are still needed to detect a released payload so no surface renders null or an empty document.\n",
+        "- Update releasedPayload.test.ts, ModelCallBlock.test.tsx, ContextUsage.test.tsx and runtime.integration.test.tsx to assert the notice is absent instead of present.\n",
+        "\n",
+        "Design: runDetails.ts is bound to aworkit.desktop_ui.evidence_inspector; record the removal there."
+      ]
+    },
+    "id": 94541940112,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Remove the \"released payload\" retention notice from the user interface",
+    "updated_at": "2026-10-07 17:14:49"
+  },
+  "deleted": false,
+  "identity": "f2d28bb5-d9d9-4921-9ad9-daf203139b1a",
+  "schemaVersion": 1
+}

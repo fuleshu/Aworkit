@@ -4,8 +4,9 @@
  * committed event, so the event, its sequence, its timing and its usage stay
  * exactly where they were. A payload that carries the marker is *released*.
  *
- * This module is the one reader of that marker. Every surface states the same
- * omission from the same words, and a payload without the marker is untouched.
+ * This module is the one reader of that marker: callers use it only to detect a
+ * released payload, so no surface renders a null or an empty document in its
+ * place. Retention is not narrated in the interface.
  */
 
 /** The heavy field a release removed, in the runtime's own words. */
@@ -54,51 +55,6 @@ export function releasedModelCallInput(value: unknown): ReleasedPayload | undefi
 export function releasedContextCheckpoint(value: unknown): ReleasedPayload | undefined {
   const payload = releasedPayloadOf(value);
   return payload?.kind === "context_checkpoint" ? payload : undefined;
-}
-
-/** The released size in human units, or null when the runtime reported none. */
-export function releasedBytesLabel(bytes: number | null): string | null {
-  if (bytes === null || bytes < 0) return null;
-  if (bytes >= 1_000_000) return `${compact(bytes / 1_000_000)} MB`;
-  if (bytes >= 1_000) return `${compact(bytes / 1_000)} KB`;
-  return bytes === 1 ? "1 byte" : `${bytes.toLocaleString()} bytes`;
-}
-
-/** The omission a released request body leaves in the product's words. */
-export function releasedRequestStatement(payload: ReleasedPayload): string {
-  return `Request body released — this turn's snapshot was superseded by newer turns, so its ${sized(payload, "request body")} was released to bound this Chat's store size. Its usage, timing and result are unaffected.`;
-}
-
-/** The omission a released context checkpoint leaves in the product's words. */
-export function releasedSnapshotStatement(payload: ReleasedPayload): string {
-  const turns =
-    payload.retainedTurns === null
-      ? "and the latest turns are kept"
-      : `and the latest ${payload.retainedTurns.toLocaleString()} turns are kept`;
-  return `Context snapshot released — this turn's snapshot was superseded by newer turns, so its ${sized(payload, "context snapshot")} was released to bound this Chat's store size. The newest snapshot of every context scope ${turns}.`;
-}
-
-/** Secondary evidence: when it was released and what the policy still keeps. */
-export function releasedPayloadEvidence(payload: ReleasedPayload): string | null {
-  const parts: string[] = [];
-  if (payload.prunedAt !== null) parts.push(`Released ${payload.prunedAt}`);
-  if (payload.retainedTurns !== null)
-    parts.push(`${payload.retainedTurns.toLocaleString()} newest turns kept`);
-  return parts.length === 0 ? null : parts.join(" · ");
-}
-
-/** The pre-release canonical digest, kept as evidence rather than as a headline. */
-export function releasedPayloadDigest(payload: ReleasedPayload): string | null {
-  return payload.digestBefore;
-}
-
-function sized(payload: ReleasedPayload, noun: string): string {
-  const size = releasedBytesLabel(payload.bytes);
-  return size === null ? noun : `${size} ${noun}`;
-}
-
-function compact(value: number): string {
-  return value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/u, "");
 }
 
 function releasedKind(value: unknown): ReleasedPayloadKind | undefined {

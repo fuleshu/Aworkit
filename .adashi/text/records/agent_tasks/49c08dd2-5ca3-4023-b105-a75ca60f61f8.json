@@ -1,0 +1,50 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/shell.rs\",\"crates/aworkit-capability-host/tests/host_shell.rs\"]",
+    "completed_at": "2026-10-07 16:00:25",
+    "completion_memo": {
+      "lines": [
+        "Added a bounded per-user runtime baseline to `shell::environment` (the host-shell child environment): TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA on Windows; HOME, TMPDIR, TMP, TEMP elsewhere. An explicit invocation value still wins, and a launcher that defines no temp variable falls back to `std::env::temp_dir()`. This restores the scratch directory rustc/link.exe require (the LNK1104 against `C:\\WINDOWS\\lnk*.tmp`) and keeps `%TEMP%`/`%USERPROFILE%` expanded in cmd.exe instead of literal.\n",
+        "\n",
+        "Scoped deliberately: `ProcessRunner::run_controlled` keeps its tested no-user-environment guarantee, so the baseline lives in the host-shell tool path (`shell_spec`), not in `prepare_command`. `host_network.rs` still asserts USERPROFILE is absent for that primitive.\n",
+        "\n",
+        "Known boundary (not required for this defect): `python_spec` is unchanged because `python_adapter.rs:30` pins its environment, so host Python children still lack the baseline. Flagged as a possible follow-up.\n",
+        "\n",
+        "No design element is bound to these files, so no design-model update was needed.\n",
+        "\n",
+        "Verified: `cargo test -p aworkit-capability-host --no-fail-fast` exit 0, including the new `host_shell::host_shell_children_get_a_writable_user_temp_and_an_expanded_profile` and the unchanged `host_network::native_windows_launch_retains_system_root_without_inheriting_user_environment`; `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib` 622 passed, 0 failed, 1 ignored.\n",
+        "\n",
+        "Not verified: the running Aworkit process still uses the old code until it is rebuilt and restarted; the QA job 'Milestone 05' targets a Linux working directory (/home/timofl/src/Aworkit) and cannot run this Windows-only path here."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 15:55:27",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "The controlled child environment in `crates/aworkit-capability-host/src/shell.rs` clears the environment and re-adds only `PATH` plus a machine-scoped Windows baseline (`WINDOWS_MACHINE_ENVIRONMENT`). It deliberately omits per-user variables, so every host command runs with `%TEMP%`, `%TMP%` and `%USERPROFILE%` undefined.\n",
+        "\n",
+        "Consequences observed:\n",
+        "- `link.exe` (via rustc) resolves its scratch directory through TMP/TEMP and falls back to `C:\\WINDOWS`, producing `LNK1104: cannot open file 'C:\\WINDOWS\\lnk{...}.tmp'`.\n",
+        "- Tools and tests that resolve the user home fail with `user home directory is unavailable`.\n",
+        "- `%TEMP%`/`%USERPROFILE%` command text stays literal in cmd.exe (the same class of defect the machine baseline already fixes for `%SystemDrive%`).\n",
+        "\n",
+        "Fix: add a bounded, non-credential user baseline (TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH) to the controlled child environment, with a computed temp fallback when the launching process defines none. Explicit invocation environment still wins. Add a Windows regression test that a controlled child sees a non-empty, writable TEMP/TMP and an expanded USERPROFILE.\n",
+        "\n",
+        "Out of scope: the other env_clear() sites (external agents, MCP peers, plugins, the sandboxed process runtime) keep their own allowlists."
+      ]
+    },
+    "id": 91061609108,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Restore the per-user temp and profile variables in the controlled child environment",
+    "updated_at": "2026-10-07 16:47:53"
+  },
+  "deleted": false,
+  "identity": "49c08dd2-5ca3-4023-b105-a75ca60f61f8",
+  "schemaVersion": 1
+}

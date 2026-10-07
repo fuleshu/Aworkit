@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { contextDocumentSchema, type ContextDocument, type ContextSelection } from "./contextProjection";
-import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 
 interface Props {
   readonly selection: ContextSelection;
@@ -53,13 +52,11 @@ export function ContextPanel({ selection, editDisabledReason, onSave, onClose }:
   return createPortal(<dialog ref={dialog} className="context-panel" aria-labelledby="context-panel-title"
     onCancel={event => { event.preventDefault(); void close(); }}>
     <header className="context-panel-header">
-      <div><h2 id="context-panel-title">Model context</h2><p>{selection.label} · {released !== undefined ? "Snapshot released" : editing ? "Editing enabled" : "Read only"}</p></div>
+      <div><h2 id="context-panel-title">Model context</h2><p>{selection.label} · {editing ? "Editing enabled" : "Read only"}</p></div>
       <button type="button" aria-label="Close context" title={dirty ? "Save context edits, record an event and close" : "Close context"}
         disabled={saving} onClick={() => void close()}>×</button>
     </header>
-    {released !== undefined ? (
-      <ReleasedPayloadNotice className="context-panel-released" payload={released} />
-    ) : (
+    {released === undefined && (
       <>
         <div className="context-panel-toolbar">
           <p>Raw model messages, tool definitions and exchanges. Images appear as references.</p>
@@ -78,7 +75,7 @@ export function ContextPanel({ selection, editDisabledReason, onSave, onClose }:
       </>
     )}
     <footer className="context-panel-footer">
-      <span>{released !== undefined ? "Context snapshot released" : `${dirty ? "Unsaved context changes" : "Context snapshot"} · ${source.split("\n").length.toLocaleString()} lines`}</span>
+      <span>{released !== undefined ? "Not retained" : `${dirty ? "Unsaved context changes" : "Context snapshot"} · ${source.split("\n").length.toLocaleString()} lines`}</span>
       <div>
         {dirty && <button type="button" disabled={saving} title="Discard your context edits and close without recording a change" onClick={onClose}>Discard changes</button>}
         <button type="button" className={dirty ? "primary-action" : ""} disabled={saving}

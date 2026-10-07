@@ -6,8 +6,8 @@
     },
     "resource_id": "aworkit.capability_host.process_runtime",
     "resource_kind": "design.element",
-    "updated_at": "2026-09-19 14:09:25",
-    "version": 5
+    "updated_at": "2026-10-07 16:47:34",
+    "version": 6
   },
   "deleted": false,
   "identity": "59727211-f6a1-8d85-aad3-d638cdf2ec7d",

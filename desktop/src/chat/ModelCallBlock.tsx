@@ -1,7 +1,6 @@
 import { ActorBubble } from "./ActorBubble";
 import { prettyJson } from "./jsonPresentation";
 import { releasedModelCallInput } from "./releasedPayload";
-import { ReleasedPayloadNotice } from "./ReleasedPayloadNotice";
 import { isSelectionClick } from "./selectionClick";
 import type { TimelineActor, TimelineItem } from "./types";
 
@@ -92,13 +91,8 @@ export function ModelCallBlock({
         </span>
       </header>
 
-      {releasedRequest !== undefined ? (
-        <ReleasedPayloadNotice
-          className="model-call-released"
-          payload={releasedRequest}
-        />
-      ) : (
-        hasInput && <ModelCallData label="Input" value={input} />
+      {releasedRequest === undefined && hasInput && (
+        <ModelCallData label="Input" value={input} />
       )}
 
       <div className="model-call-stream">
