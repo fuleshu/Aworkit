@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/run_events.rs\",\"desktop/src-tauri/src/runtime/run_events/tests/tool_nodes.rs\",\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/service.rs\"]",
+    "completed_at": "2026-10-07 14:52:16",
+    "completion_memo": "Fixed the orphan Agent loop. (1) run_events: publish_graph_activity now records active_tool_node for external_agent nodes exactly like tool nodes, so publish_tool_started parents the delegation to its own node span instead of calling agent_loop_span(), which lazily created a run-parented loop no Agent node could settle; span rehydration treats external_agent nodes the same way so a resumed pass parents identically. (2) Healing for chats already carrying the orphan: history gained open_child_terminal_facts(parent_span_id, ...) sharing one scan with open_span_terminal_facts, and both success settle paths (complete_workflow_input and commit_resumed_result) close every span still open directly under the Run span before the Run span terminates, with the body \"This attempt was interrupted before this step settled.\" A terminating Run owns no work, so a span left open under its own Run span has no owner left - and the Run span could never terminate while it stayed open. Tests: run_events/tests/tool_nodes.rs::external_agent_node_settles_without_opening_an_agent_loop (both live and after-restart rehydration; asserts no agent_loop span, the delegation's parent is its node span, and three started/three completed spans) and service/tests/command_commit.rs::only_direct_children_of_a_span_are_reported_as_its_orphans. Verified: cargo test --lib -> 620 passed, 1 ignored, 2 failed; both failures are the pre-existing skill-catalog pair (bundled_skills_tests::a_project_skill_of_the_same_name_wins_over_the_bundled_copy, skills_tests::skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable) that reproduce with none of this work applied. The stuck chats need a rebuild and then Continue reply: the settle now closes their orphan loop.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 14:51:59",
+    "created_files": "[]",
+    "description": "chat.b4e0edb38011784602800e069b770725f7126b0e (and the earlier chats 95d2ecb5, dd42d5c8) failed their settle with: span 'span.run...' cannot terminate while child 'span.agent-loop...' is open. Root cause: run_events::publish_graph_activity sets active_model_node for agent/model_call nodes and active_tool_node for tool nodes only, so an external_agent node set neither; publish_tool_started then found no owning parent and fell back to agent_loop_span(), which lazily creates a run-parented Agent loop that no Agent node can ever settle. The Run span could then never terminate and the finished review's answer was never committed. Fix: treat external_agent nodes exactly like tool nodes in the live start path and in span rehydration, and heal already-stuck chats by closing spans still open directly under the Run span when the Run terminates.",
+    "id": 89378909316,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "External-agent nodes left an orphan Agent loop that blocked the Run settle",
+    "updated_at": "2026-10-07 14:52:16"
+  },
+  "deleted": false,
+  "identity": "d8aea9a8-8938-4685-ac11-efb3efce79d6",
+  "schemaVersion": 1
+}

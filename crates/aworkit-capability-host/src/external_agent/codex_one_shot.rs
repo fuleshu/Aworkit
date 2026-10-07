@@ -45,7 +45,12 @@ pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Default bound for one protocol message.
 pub const DEFAULT_MAXIMUM_MESSAGE_BYTES: usize = 1_024 * 1_024;
 /// Default bound for the whole run's message count.
-pub const DEFAULT_MAXIMUM_MESSAGES: usize = 8_192;
+///
+/// A product that streams its whole turn can send a message per delta, so a long
+/// review legitimately crosses a small count. This is a runaway guard, never a
+/// bound on the work: eight thousand messages ended a real delegated review with
+/// "a bound was reached (stage: turn, category: limit)".
+pub const DEFAULT_MAXIMUM_MESSAGES: usize = 1_000_000;
 /// How long one protocol read may block before the run rechecks its bounds.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Largest accepted argv for one Codex app-server process.

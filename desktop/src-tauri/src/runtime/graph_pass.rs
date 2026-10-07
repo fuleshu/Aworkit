@@ -1751,6 +1751,17 @@ impl<'a> PassMachine<'a> {
             Ok(settled) => {
                 self.settled_tool_calls = self.settled_tool_calls.saturating_add(1);
                 self.tool_activity.push(settled.activity);
+                if settled.result.is_error {
+                    // A delegation that produced no answer cannot feed the graph:
+                    // an Output node would stringify the error envelope and the
+                    // Chat would show raw JSON. Fail the node with the product's
+                    // own diagnostic instead.
+                    return Err(format!(
+                        "external agent node '{}' failed: {}",
+                        node.id,
+                        external_agent_diagnostic(&settled.result.content)
+                    ));
+                }
                 Ok(external_agent_answer(settled.result.content))
             }
             Err(error) => Err(format!("external agent node '{}' failed: {error}", node.id)),
@@ -2093,6 +2104,17 @@ fn external_agent_answer(content: Value) -> Value {
         Some(answer) => Value::String(answer.to_owned()),
         None => content,
     }
+}
+
+/// The human-readable reason one delegation produced no answer.
+///
+/// The tool settles a failed delegation as an error result whose content is the
+/// product's own bounded diagnostic.
+fn external_agent_diagnostic(content: &Value) -> String {
+    content
+        .get("error")
+        .and_then(Value::as_str)
+        .map_or_else(|| value_text(content), str::to_owned)
 }
 
 /// How much of a reviewed plan an approval challenge shows. The frozen plan

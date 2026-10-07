@@ -4,6 +4,7 @@ bugs:
 - cleanup failing tests
 - what about history of removed projects
 - chat scroll improvements - step user entries - to the beginning
+- history is not always sorted correct.
 
 todos:
 - figure out if/what python is bundled, default libs?

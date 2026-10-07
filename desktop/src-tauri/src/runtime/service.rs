@@ -1532,6 +1532,21 @@ impl DesktopRuntime {
                         result.model
                     )),
                 );
+                // A Run that terminates owns no work: close anything the pass left
+                // open under its own Run span, or the Run span could never
+                // terminate. (An Agent loop opened for a node's own tool call once
+                // left exactly such a child.)
+                facts.extend(
+                    self.history
+                        .open_child_terminal_facts(
+                            &format!("span.run.{}.{}", result.run_id, result.request_id),
+                            "failed",
+                            "This attempt was interrupted before this step settled.",
+                            &created_at,
+                        )?
+                        .into_iter()
+                        .map(|fact| ("span.failed", fact)),
+                );
                 facts.push((
                     "span.completed",
                     run_terminal_fact(
@@ -1932,6 +1947,20 @@ impl DesktopRuntime {
                         "Last authority-checked completion succeeded with '{}'.",
                         result.model
                     )),
+                );
+                // A Run that terminates owns no work: close anything the resumed
+                // pass left open under its own Run span, or the Run span could
+                // never terminate.
+                facts.extend(
+                    self.history
+                        .open_child_terminal_facts(
+                            &format!("span.run.{}.{}", result.run_id, result.request_id),
+                            "failed",
+                            "This attempt was interrupted before this step settled.",
+                            &created_at,
+                        )?
+                        .into_iter()
+                        .map(|fact| ("span.failed", fact)),
                 );
                 facts.push((
                     "span.completed",

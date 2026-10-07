@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/subagent.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"crates/aworkit-capability-host/src/external_agent/codex_one_shot.rs\"]",
+    "completed_at": "2026-10-07 15:13:28",
+    "completion_memo": "Two fixes applied. (1) effective_status now applies the job-liveness rule only to job-owned children (Fresh/Fork): a one-shot external delegation owns no job, so the old rule reported every live delegation as interrupted the moment it started - the chip the user saw. Documented trade-off: a background external delegation left running across a restart now keeps its frame's running status until it settles, where a fresh/forked child is still reported interrupted at once. (2) run_external_agent_node now fails the node when the tool settled as an error result, using external_agent_diagnostic (content.error, else the bounded text), so the Chat shows \"external agent node 'review.1' failed: ...\" instead of stringifying the error envelope into the assistant message as raw JSON. (3) Diagnosis of the stop itself: classify_turn_failure maps the Codex app-server's codexErrorInfo usageLimitExceeded/sessionBudgetExceeded/contextWindowExceeded to SubagentStopReasonV1::Limit with category \"limit\", so \"Product subagent failure (product: Codex; stage: turn; category: limit)\" is Codex reporting its own usage/session/context cap - not an Aworkit bound. Separately, Codex's own message-count guard was 12x tighter than Claude Code's (8_192 vs 100_000); raised to the validator ceiling (1_000_000) as a runaway guard only, with a comment naming the failure it produced. Not the cause of this stop, so not offered as the fix. Verified: cargo test --lib -> 620 passed, 1 ignored, 2 failed; both failures are the pre-existing skill-catalog pair that reproduces without any of this work.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 15:13:08",
+    "created_files": "[]",
+    "description": "Follow-up on chat.e9d115b84daafa43b74ee56c00377a3323b494cf (Delegated Code Review, workflow.custom.4). The settle chain now works end to end (approval resume committed desktop.command at head 362 with a message.assistant). Three findings: (1) while the codex delegation ran, the child's tab chip read \"Interrupted\": effective_status in tool_loop/subagent.rs applied the job-liveness rule to every child, but a foreground external delegation owns no job at all, so a live one was instantly reported interrupted. (2) The failed delegation was shown to the user as raw JSON: the failed tool settled as an error result, run_external_agent_node passed the error envelope downstream, and Output stringified it into the assistant message. (3) The actual stop was the Codex product reporting its own limit - classify_turn_failure maps codexErrorInfo usageLimitExceeded/sessionBudgetExceeded/contextWindowExceeded to StopReason Limit with the opaque category \"limit\", which produced \"stage: turn; category: limit\". Codex's own usage/session/context cap, not an Aworkit bound; the same opaque text is also reachable from Aworkit's own message-size and message-count guards and from the response timeout, so the diagnostic should name which one fired.",
+    "id": 89452213437,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Delegated child chip said Interrupted; a failed delegation surfaced as JSON",
+    "updated_at": "2026-10-07 15:13:28"
+  },
+  "deleted": false,
+  "identity": "22f0c975-74c9-4fdb-9f13-3676fb3eadb7",
+  "schemaVersion": 1
+}

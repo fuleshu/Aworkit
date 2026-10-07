@@ -622,6 +622,34 @@ impl ChatHistory {
         body: &str,
         created_at: &str,
     ) -> Result<Vec<Value>, String> {
+        self.open_span_terminal_facts_where(None, status, body, created_at)
+    }
+
+    /// Terminal facts for every span still open **directly under**
+    /// `parent_span_id`.
+    ///
+    /// A Run that is terminating owns no work: a span left open under its own Run
+    /// span has no owner that could still settle it, and the Run span can never
+    /// terminate while the child stays open.
+    pub(crate) fn open_child_terminal_facts(
+        &self,
+        parent_span_id: &str,
+        status: &str,
+        body: &str,
+        created_at: &str,
+    ) -> Result<Vec<Value>, String> {
+        self.open_span_terminal_facts_where(Some(parent_span_id), status, body, created_at)
+    }
+
+    /// One scan for the open spans a terminal fact list must close: every open
+    /// span, or only those directly under one parent.
+    fn open_span_terminal_facts_where(
+        &self,
+        parent_span_id: Option<&str>,
+        status: &str,
+        body: &str,
+        created_at: &str,
+    ) -> Result<Vec<Value>, String> {
         let events = self.events()?;
         let mut terminal = events
             .iter()
@@ -645,6 +673,11 @@ impl ChatHistory {
             .rev()
             .filter(|event| event.kind == "span.started")
         {
+            if let Some(parent) = parent_span_id
+                && event.payload.get("parentSpanId").and_then(Value::as_str) != Some(parent)
+            {
+                continue;
+            }
             let Some(span_id) = event.payload.get("spanId").and_then(Value::as_str) else {
                 continue;
             };

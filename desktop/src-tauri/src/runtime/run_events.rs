@@ -804,7 +804,11 @@ impl RunEventStream {
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .active_model_node = Some(span_id);
-            } else if activity.node_type == "tool" {
+            } else if matches!(activity.node_type.as_str(), "tool" | "external_agent") {
+                // An external-agent node owns its delegation call directly, just
+                // like an explicit tool node. It has no Agent-loop wrapper, so
+                // creating one here would leave an orphan span that no Agent node
+                // can settle - and the Run span could then never terminate.
                 self.state
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
@@ -1326,8 +1330,10 @@ fn rehydrate_state(
                     Some("agent_loop") => agent_loops.push(span_id.clone()),
                     Some("subagent" | "external_agent") => subagents.push(span_id.clone()),
                     Some("graph_node")
-                        if event.payload.get("semanticRole").and_then(Value::as_str)
-                            == Some("tool") =>
+                        if matches!(
+                            event.payload.get("semanticRole").and_then(Value::as_str),
+                            Some("tool" | "external_agent")
+                        ) =>
                     {
                         tool_nodes.push(span_id);
                     }

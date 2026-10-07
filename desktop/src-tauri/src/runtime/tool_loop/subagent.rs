@@ -415,14 +415,24 @@ fn read_only(binding: &StoredFileToolBindingV1) -> bool {
                 .is_some_and(|hints| hints.permits_approval_free_call()))
 }
 
-/// A frame whose run is no longer live is reported as interrupted, so a
-/// restart never leaves a child that claims to be running.
+/// A frame whose live job is gone is reported as interrupted, so a restart never
+/// leaves a child that claims to be running.
+///
+/// Only a job-owned child can be judged by its job: a fresh or forked child runs
+/// as a parent-owned job, while a one-shot external delegation runs inside the
+/// invocation that made it and owns no job at all. Judging that one by jobs would
+/// report every live delegation as interrupted the moment it starts, so its own
+/// durable frame is authoritative.
 pub(super) fn effective_status(
     frame: &SubagentChildFrameV1,
     jobs: &jobs::JobRegistry,
     chat_id: &str,
 ) -> ChildStatusV1 {
-    if frame.status == ChildStatusV1::Running && !jobs.child_running(chat_id, &frame.child_id) {
+    let job_owned = matches!(frame.kind, ChildKindV1::Fresh | ChildKindV1::Fork);
+    if job_owned
+        && frame.status == ChildStatusV1::Running
+        && !jobs.child_running(chat_id, &frame.child_id)
+    {
         ChildStatusV1::Interrupted
     } else {
         frame.status
