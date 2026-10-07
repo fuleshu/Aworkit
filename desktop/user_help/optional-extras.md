@@ -22,7 +22,8 @@ file manager.
 If you prefer not to keep a copy there, turn it off under **Settings → Desktop →
 Example workflows and FFmpeg plugin**. The same place can write any missing file
 again or reveal the folder. Files are only ever created when they are missing, so
-anything you edit is kept.
+anything you edit is kept — and if you delete one, Aworkit puts it back the next
+time it starts (or when you choose **Write now**).
 
 ## Example workflows
 

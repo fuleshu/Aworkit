@@ -565,6 +565,41 @@ describe("canonical semantic timeline projection", () => {
     expect(call?.output).toEqual([{ kind: "assistant_output", text: "The answer" }]);
     expect(JSON.stringify(call?.raw)).toContain('"inputTokens":12');
   });
+
+  it("names and folds a delegated agent's activity instead of the main model's", () => {
+    const note = (sequence: number, body: string, category: string) =>
+      event(sequence, "model.progress", {
+        subagentChildId: "child.external.1",
+        source: "external-agent",
+        product: "codex",
+        category,
+        body,
+        status: "completed",
+      });
+    const items = projectSemanticTimeline([
+      note(1, "Codex started the delegated task.", "started"),
+      note(2, "Reasoning about the task.", "reasoning"),
+      note(3, "Reasoning about the task.", "reasoning"),
+      note(4, "Running a shell command.", "tool"),
+      event(5, "model.progress", { body: "Parent progress.", status: "completed" }),
+    ]);
+
+    // Every delegated note folds into one subagent thinking card: repeated
+    // notes are counted, and none of them reads as the main model's activity.
+    const delegated = items.filter((item) => item.actor === "subagent");
+    expect(delegated).toHaveLength(1);
+    expect(delegated[0]).toMatchObject({
+      kind: "thinking",
+      actor: "subagent",
+      title: "Working",
+      body: "Codex started the delegated task.\nReasoning about the task. (2×)\nRunning a shell command.",
+      status: "completed",
+    });
+    expect((delegated[0].metadata as { product?: string }).product).toBe("codex");
+    expect(items.find((item) => item.actor === "model")).toMatchObject({
+      body: "Parent progress.",
+    });
+  });
 });
 
 function event(

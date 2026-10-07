@@ -449,8 +449,53 @@ impl ChatHistory {
         history_index::replay(&self.store, command_id, command_hash)
     }
 
+    /// Commits the terminal facts of one Chat command under its own
+    /// deduplication identity, so a retried command returns its first receipt
+    /// instead of committing twice.
     pub(crate) fn append(
         &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        facts: Vec<(&str, Value)>,
+    ) -> Result<UiCommandReceipt, String> {
+        self.append_as(
+            "desktop.command",
+            command_id,
+            command_hash,
+            expected_head,
+            facts,
+        )
+    }
+
+    /// Commits the facts that suspend a command at an approval, question or wait
+    /// gate under a distinct identity.
+    ///
+    /// A command that suspends commits twice: once when it suspends and once
+    /// when it finally settles. Sharing one deduplication key made the settle
+    /// reuse the suspension's key with a different request hash, which the store
+    /// refuses - so an approval-gated run committed its graph and then could
+    /// never deliver its answer.
+    pub(crate) fn append_suspension(
+        &self,
+        command_id: &str,
+        command_hash: &str,
+        expected_head: u64,
+        facts: Vec<(&str, Value)>,
+    ) -> Result<UiCommandReceipt, String> {
+        self.append_as(
+            "desktop.command.pending",
+            command_id,
+            command_hash,
+            expected_head,
+            facts,
+        )
+    }
+
+    /// One commit under an explicit deduplication key type.
+    fn append_as(
+        &self,
+        key_type: &str,
         command_id: &str,
         command_hash: &str,
         expected_head: u64,
@@ -488,7 +533,7 @@ impl ChatHistory {
                 attempt: None,
                 checkpoint: None,
                 deduplication: Some(Deduplication {
-                    key_type: "desktop.command".into(),
+                    key_type: key_type.into(),
                     key: command_id.into(),
                     request_hash: command_hash.into(),
                 }),

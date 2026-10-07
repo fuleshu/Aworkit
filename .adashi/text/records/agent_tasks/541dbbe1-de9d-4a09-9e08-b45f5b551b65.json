@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/subagent/external.rs\",\"desktop/src/chat/activityProjection.ts\",\"desktop/src/chat/activityProjection.test.ts\",\"desktop/src/chat/ActorBubble.tsx\",\"desktop/src/chat/ConversationTimeline.tsx\"]",
+    "completed_at": "2026-10-07 09:46:35",
+    "completion_memo": "Delegated-agent attribution implemented. Host: ChildActivitySinkV1 now carries the product identity and commits \"product\" on every model.progress note (both the foreground and the background delegation paths); the child's running frame is still published before the delegation starts (previous turn's change). Desktop: activityProjection attributes any fact carrying subagentChildId to the subagent actor instead of the model (the cause of the \"AI\" avatar on Codex notes), and foldChildActivity merges consecutive thinking notes from one child into a single card, counting exact repeats as \"(N×)\"; ActorBubble gained an actorLabel so a delegated agent's card is bylined \"Codex\"/\"Claude Code\" (new externalAgent.ts maps the product id). ConversationTimeline passes the label for the thinking and subagent bubbles; the child's final answer still renders as the subagent speech bubble. Verified: npx tsc --noEmit clean; npx vitest run src/chat -> 286 passed, 3 pre-existing environment failures unrelated to this change (hostShellDialect returns \"powershell\" on Windows vs the tests' hardcoded \"bash\"; cacheUsage expects comma thousands separators while this machine formats with dots) and the new activityProjection case passes (19 tests in that file). cargo check --lib clean. Investigation (not fixed, needs a decision): chat.20b995213bad33fc856d9d51728b61918a1a35fa ended with execution.failed \"agent node 'agent.1' failed: provider response stream was interrupted\" after five identical StreamInterrupted attempts hit MAXIMUM_IDENTICAL_PROVIDER_FAILURES = 5, where model_tool_loop::report_provider_failure returns false and the agent node returns the error. That contradicts the project failure policy (\"no cap on provider retries may end an Agent node\", \"EVERY provider/transport error is reported and the run continues\"), so the streak limit is the real defect behind the \"Reply interrupted\" card; the follow-up \"Couldn't continue this reply\" is recover_pending_effect re-dispatching the same frozen model call (exact text behind Show details).",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 09:46:17",
+    "created_files": "[]",
+    "description": "Two parts. (1) Investigate the \"Reply interrupted\" + \"Couldn't continue this reply\" stop. Evidence: chat.20b995213bad33fc856d9d51728b61918a1a35fa committed execution.failed \"agent node 'agent.1' failed: provider response stream was interrupted\" after five identical StreamInterrupted failures (MAXIMUM_IDENTICAL_PROVIDER_FAILURES = 5 in model_tool_loop.rs), so model_tool_loop::report_provider_failure returned stalled() and the agent node returned the error instead of another recovery notice. Resume is then handled by service/recovery.rs recover_pending_effect, which re-dispatches the same frozen model call and fails the same way; the exact reason is shown behind \"Show details\" (runtime.error.message from the rejected command). (2) Make delegated external-agent activity read as the delegated agent: attribute child-tagged model.progress/model.reasoning facts to the subagent actor, carry the product (\"codex\"/\"claude_code\") on each note, fold consecutive notes from one child into a single thinking card with repeated notes counted, and label the card with the product name instead of \"AI\".",
+    "id": 83274909389,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Attribute and fold delegated external-agent activity in the Chat timeline",
+    "updated_at": "2026-10-07 09:46:35"
+  },
+  "deleted": false,
+  "identity": "541dbbe1-de9d-4a09-9e08-b45f5b551b65",
+  "schemaVersion": 1
+}

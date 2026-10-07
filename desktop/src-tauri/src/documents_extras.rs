@@ -3,12 +3,13 @@
 //!
 //! The installer ships the extras as inert application resources. This module
 //! copies them out into `<documents>/Aworkit`, so the human-facing files live
-//! somewhere the user can find, open, edit and keep. It is on by default and
-//! remembers that it ran, so deleting the folder is not fought with on every
-//! launch; Settings can turn it off, write the folder again, or reveal it.
+//! somewhere the user can find, open, edit and keep. It is on by default; every
+//! launch re-adds whatever is missing, and Settings can turn that off, write
+//! the folder again, or reveal it.
 //!
 //! Files are only ever created when missing. An edited example workflow or an
-//! edited plugin is therefore never overwritten by a later launch.
+//! edited plugin is therefore never overwritten, and a file or folder the user
+//! deleted is restored on the next launch without disturbing the rest.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -282,7 +283,8 @@ pub fn open_folder<R: Runtime>(
     crate::runtime::reveal(&folder)
 }
 
-/// First-run work: write the extras once, unless the user turned them off.
+/// Launch work: add whatever the documents folder is missing, unless the user
+/// turned writing off.
 ///
 /// Runs off the event loop, and a failure is reported rather than fatal: the
 /// app must start even when the documents folder is redirected, read-only or
@@ -297,15 +299,33 @@ pub fn start<R: Runtime>(app: AppHandle<R>, app_data_root: PathBuf) {
 
 fn ensure_on_start<R: Runtime>(app: &AppHandle<R>, app_data_root: &Path) -> Result<(), String> {
     let environment = environment(app, app_data_root)?;
+    ensure_extras(&environment)
+}
+
+/// Copies everything the documents folder is missing and records that this
+/// build wrote it.
+///
+/// Called on every launch while the preference is on. Only absent files are
+/// ever created, so an edited file is untouched and a file or folder the user
+/// deleted simply comes back; turning the preference off is the way to stop it.
+/// The preference file is only rewritten when the recorded version or folder
+/// actually changed, so an ordinary launch stays read-only.
+fn ensure_extras(environment: &Environment) -> Result<(), String> {
     let path = preference_path(&environment.app_data_root);
     let mut preference = read_preference(&path);
-    if !preference.write_to_documents || preference.written_version >= EXTRAS_VERSION {
+    if !preference.write_to_documents {
         return Ok(());
     }
     materialize(&environment.resources, &environment.documents_folder)?;
+    let folder = environment.documents_folder.display().to_string();
+    let changed = preference.written_version != EXTRAS_VERSION
+        || preference.last_folder.as_deref() != Some(folder.as_str());
     preference.written_version = EXTRAS_VERSION;
-    preference.last_folder = Some(environment.documents_folder.display().to_string());
-    write_preference(&path, &preference)
+    preference.last_folder = Some(folder);
+    if changed {
+        write_preference(&path, &preference)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -397,21 +417,71 @@ mod tests {
         assert_eq!(fs::read(&edited).unwrap(), b"my own notes");
     }
 
+    /// A resolved environment over three temporary roots.
+    fn environment_for(
+        resources_root: &Path,
+        documents_root: &Path,
+        app_data_root: &Path,
+    ) -> Environment {
+        Environment {
+            documents_folder: documents_root.join(DOCUMENTS_FOLDER_NAME),
+            app_data_root: app_data_root.to_path_buf(),
+            resources: resources_root.to_path_buf(),
+        }
+    }
+
     #[test]
-    fn ensure_on_start_writes_once_and_respects_the_opt_out() {
-        let root = TempDir::new().unwrap();
-        let preference = preference_path(root.path());
-        // A disabled preference never writes, and never records a version.
+    fn ensure_extras_restores_a_deleted_file_and_folder() {
+        let resources_root = TempDir::new().unwrap();
+        let documents = TempDir::new().unwrap();
+        let app_data = TempDir::new().unwrap();
+        resources(resources_root.path());
+        let environment = environment_for(resources_root.path(), documents.path(), app_data.path());
+
+        ensure_extras(&environment).unwrap();
+
+        // Deleting the whole examples folder brings every file back.
+        fs::remove_dir_all(environment.examples_folder()).unwrap();
+        ensure_extras(&environment).unwrap();
+        assert_eq!(count_workflow_files(&environment.examples_folder()), 2);
+
+        // An edit survives, and one deleted document is restored beside it.
+        let edited = environment.examples_folder().join("README.md");
+        fs::write(&edited, b"my own notes").unwrap();
+        fs::remove_file(
+            environment
+                .examples_folder()
+                .join("triage-router.aworkit.json"),
+        )
+        .unwrap();
+
+        ensure_extras(&environment).unwrap();
+
+        assert_eq!(count_workflow_files(&environment.examples_folder()), 2);
+        assert_eq!(fs::read(&edited).unwrap(), b"my own notes");
+    }
+
+    #[test]
+    fn ensure_extras_respects_the_opt_out() {
+        let resources_root = TempDir::new().unwrap();
+        let documents = TempDir::new().unwrap();
+        let app_data = TempDir::new().unwrap();
+        resources(resources_root.path());
+        let environment = environment_for(resources_root.path(), documents.path(), app_data.path());
         write_preference(
-            &preference,
+            &preference_path(&environment.app_data_root),
             &DocumentsExtrasPreference {
                 write_to_documents: false,
                 ..DocumentsExtrasPreference::default()
             },
         )
         .unwrap();
-        let stored = read_preference(&preference);
-        assert!(!stored.write_to_documents);
-        assert_eq!(stored.written_version, 0);
+
+        ensure_extras(&environment).unwrap();
+
+        assert!(
+            !environment.documents_folder.exists(),
+            "an opted-out launch writes nothing"
+        );
     }
 }

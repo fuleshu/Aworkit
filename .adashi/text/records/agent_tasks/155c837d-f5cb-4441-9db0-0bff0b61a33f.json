@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/history.rs\",\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/tool_loop/subagent/external.rs\"]",
+    "completed_at": "2026-10-07 10:33:29",
+    "completion_memo": "All three fixes implemented. (1) Deduplication identity: history::append is now a thin wrapper over append_as, with append_suspension using key_type \"desktop.command.pending\"; both command paths that can suspend (complete_workflow_input and commit_resumed_result) choose append_suspension for AwaitingApproval/AwaitingQuestion and append otherwise, so the suspension and the terminal settle of one command no longer share a key. New tests in service/tests/command_commit.rs: a_suspension_and_its_settlement_commit_under_different_keys (passes) and one_deduplication_key_cannot_carry_two_different_commits (passes, proving the old failure mode: the second commit is refused with \"cannot commit desktop Chat history\"). (2) graph_pass::run_external_agent_node now returns external_agent_answer(content), i.e. the product's answer string, so an Output node renders the review rather than the {childId, answer} envelope; a result without an answer keeps its envelope. (3) ChildActivitySinkV1 commits status \"completed\" only for SubagentProgressKindV1::Completed ({Started, Commentary, Reasoning, Tool} -> \"running\"), so a live delegation no longer shows as finished. Verified: cargo test --lib -> 618 passed, 1 ignored, 2 failed; both failures are pre-existing and unrelated (tool_loop::bundled_skills_tests::a_project_skill_of_the_same_name_wins_over_the_bundled_copy and tool_loop::skills_tests::skill_catalog_replay_refresh_visibility_and_human_invocation_are_durable reproduce without any of this change and are skill-catalog/skill-root issues in this environment). Full backfill for the two stuck chats (95d2ecb5, dd42d5c8) is not attempted: their runs already completed their graphs, so a resume will now settle them.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 10:24:29",
+    "created_files": "[\"desktop/src-tauri/src/runtime/service/tests/command_commit.rs\"]",
+    "description": "The user ran the delegated review (workflow.custom.4 = the review graph with scan/gate/brief/review/output/completion) in chat.95d2ecb5e1b13166913ef7bd6858a7fd421f6e90 and chat.dd42d5c8328c3af2232436f10b60d446440e1279. Both runs: the codex delegation succeeded (answer committed on the tool span), the graph reached completion, but no message.assistant was ever committed and the runs were left with an unsettled pending effect (head 501 / 557). Root cause found in the deduplication ledger: the approval suspension commits under key_type desktop.command with the start command id at head 14, and the terminal settle of the same command needs the same key with a different request_hash, which the store rejects with DeduplicationKeyReused. Also fixed the note status that made a running delegation show as completed. Fix: give the suspension its own dedup key type, and make an external_agent node hand the product answer (not the tool envelope) downstream.",
+    "id": 85111197951,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "An approval-suspended run can never settle its command (duplicate dedup key)",
+    "updated_at": "2026-10-07 10:33:29"
+  },
+  "deleted": false,
+  "identity": "155c837d-f5cb-4441-9db0-0bff0b61a33f",
+  "schemaVersion": 1
+}

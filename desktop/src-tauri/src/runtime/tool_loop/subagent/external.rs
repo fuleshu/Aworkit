@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aworkit_capability_host::{
-    ExternalAgentBackendRegistryV1, MAXIMUM_DEADLINE, OneShotDelegationV1, SubagentProgressSinkV1,
-    SubagentProgressV1, SubagentStartOptionsV1, SubagentStopReasonV1,
+    ExternalAgentBackendRegistryV1, MAXIMUM_DEADLINE, OneShotDelegationV1, SubagentProgressKindV1,
+    SubagentProgressSinkV1, SubagentProgressV1, SubagentStartOptionsV1, SubagentStopReasonV1,
 };
 use aworkit_protocol::StableId;
 use serde_json::{Value, json};
@@ -149,7 +149,8 @@ impl FileToolDispatcherV1 {
                         format!("external.{closure_child_id}"),
                         closure_child_id.clone(),
                     );
-                    let mut activity = ChildActivitySinkV1::new(child_stream);
+                    let mut activity =
+                        ChildActivitySinkV1::new(child_stream, backend_name.clone());
                     let outcome =
                         backend_handle.run_observed(&request, &child_token, &mut activity);
                     let frame = build_external_child_frame(
@@ -198,12 +199,28 @@ impl FileToolDispatcherV1 {
             ));
         }
 
+        // The child's running revision is committed before the product starts,
+        // exactly like the background path above: the Chat learns the child
+        // exists, opens its tab and can stream its product activity while it
+        // works. The terminal revision below settles it.
+        let mut running = self.external_child_frame(
+            &child_id,
+            &task,
+            backend,
+            permission_mode,
+            ChildStatusV1::Running,
+            String::new(),
+        );
+        running.head_revision = 0;
+        self.persist_child(&running)?;
+        publish_child_fact(&self.run_events, &running, ChildStatusV1::Running)?;
+
         // The product's own progress becomes child-tagged activity on a detached
         // child stream, so the external tab streams exactly like a child's own.
         let child_stream = self
             .run_events
             .detached_child(format!("external.{child_id}"), child_id.clone());
-        let mut activity = ChildActivitySinkV1::new(child_stream);
+        let mut activity = ChildActivitySinkV1::new(child_stream, backend.to_owned());
         let outcome = backend_handle.run_observed(&request, cancellation, &mut activity);
         let status = match outcome.stop_reason {
             SubagentStopReasonV1::Completed => ChildStatusV1::Completed,
@@ -364,11 +381,18 @@ const MAXIMUM_EXTERNAL_ACTIVITY_NOTES: usize = 200;
 struct ChildActivitySinkV1 {
     stream: Arc<RunEventStream>,
     notes: usize,
+    /// The product identity ("codex", "claude_code"), so the Chat can label the
+    /// notes as the delegated agent instead of as the main model.
+    product: String,
 }
 
 impl ChildActivitySinkV1 {
-    fn new(stream: Arc<RunEventStream>) -> Self {
-        Self { stream, notes: 0 }
+    fn new(stream: Arc<RunEventStream>, product: String) -> Self {
+        Self {
+            stream,
+            notes: 0,
+            product,
+        }
     }
 }
 
@@ -386,14 +410,21 @@ impl SubagentProgressSinkV1 for ChildActivitySinkV1 {
         } else {
             progress.text
         };
+        let status = match progress.kind {
+            // Only the product's own completion note settles the delegation; a
+            // note that describes work still in progress must not claim it.
+            SubagentProgressKindV1::Completed => "completed",
+            _ => "running",
+        };
         let _ = self.stream.context_event(
             "model.progress",
             json!({
                 "body": body,
-                "status": "completed",
+                "status": status,
                 "channel": "progress",
                 "source": "external-agent",
                 "category": progress.kind.as_str(),
+                "product": self.product,
             }),
         );
     }

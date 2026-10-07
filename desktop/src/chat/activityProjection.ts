@@ -22,6 +22,16 @@ function isSubagentCapability(capability: unknown): boolean {
   return typeof capability === "string" && SUBAGENT_CAPABILITIES.has(capability);
 }
 
+/**
+ * The delegated child a committed fact belongs to, when the host committed it
+ * on that child's detached stream. Such a fact is the child's own activity, so
+ * it must never be shown as the main model's.
+ */
+function childId(fact: FactPayload): string | undefined {
+  const value = fact.subagentChildId;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 interface SpanProjection {
   readonly spanId: string;
   parentSpanId?: string;
@@ -109,7 +119,7 @@ export function projectSemanticTimeline(
         workflowNodeContext(span, spans),
       ),
     );
-  return [...facts, ...spanItems].sort(
+  return [...foldChildActivity(facts), ...spanItems].sort(
     (left, right) =>
       (left.sequence ?? Number.MAX_SAFE_INTEGER) -
       (right.sequence ?? Number.MAX_SAFE_INTEGER),
@@ -620,9 +630,11 @@ function baseItem(
     kind: display.kind,
     attachments: display.attachments,
     actor:
-      event.kind === "message.assistant" || event.kind.startsWith("model.")
-        ? "model"
-        : undefined,
+      childId(fact) !== undefined
+        ? "subagent"
+        : event.kind === "message.assistant" || event.kind.startsWith("model.")
+          ? "model"
+          : undefined,
     title: display.title,
     body: string(fact.body) ?? "",
     createdAt: string(fact.createdAt) ?? "",
@@ -632,6 +644,59 @@ function baseItem(
     output: fact.hasOutput === true ? fact.output : undefined,
     raw: event,
     metadata: fact,
+  };
+}
+
+/**
+ * One card per delegated agent instead of one card per note. Consecutive
+ * activity notes committed on the same child's stream fold into a single
+ * thinking card, and an exactly repeated note is counted rather than repeated,
+ * so a long delegation cannot flood the Chat with identical cards.
+ */
+function foldChildActivity(items: readonly TimelineItem[]): TimelineItem[] {
+  const folded: TimelineItem[] = [];
+  for (const item of items) {
+    const child = childId(record(item.metadata));
+    const previous = folded[folded.length - 1];
+    if (
+      child === undefined ||
+      item.kind !== "thinking" ||
+      previous === undefined ||
+      previous.kind !== "thinking" ||
+      childId(record(previous.metadata)) !== child
+    ) {
+      folded.push(item);
+      continue;
+    }
+    folded[folded.length - 1] = mergeActivityNote(previous, item);
+  }
+  return folded;
+}
+
+/** Folds one more note into a delegated agent's running activity card. */
+function mergeActivityNote(
+  previous: TimelineItem,
+  item: TimelineItem,
+): TimelineItem {
+  const note = item.body ?? "";
+  if (note.length === 0) return previous;
+  const lines = (previous.body ?? "")
+    .split("\n")
+    .filter((line) => line.length > 0);
+  const last = lines[lines.length - 1];
+  const repeat = last === undefined ? null : /^(.*) \((\d+)×\)$/u.exec(last);
+  if (last === note) lines[lines.length - 1] = `${note} (2×)`;
+  else if (repeat !== null && repeat[1] === note)
+    lines[lines.length - 1] = `${note} (${Number(repeat[2]) + 1}×)`;
+  else lines.push(note);
+  const metadata = record(previous.metadata);
+  const count =
+    typeof metadata.activityCount === "number" ? metadata.activityCount + 1 : 2;
+  return {
+    ...previous,
+    body: lines.join("\n"),
+    status: item.status ?? previous.status,
+    metadata: { ...metadata, ...record(item.metadata), activityCount: count },
   };
 }
 

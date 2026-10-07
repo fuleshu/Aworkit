@@ -187,6 +187,61 @@ impl ProviderEnginePortV1 for StuckUntilAnswering {
     }
 }
 
+/// Fails with an interrupted provider stream `interruptions` times, then
+/// answers. A dropped stream is a transport hiccup: the model never saw the
+/// request, so the loop retries the same frozen route with a recovery notice.
+struct InterruptedUntilAnswering {
+    observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
+    interruptions: usize,
+    dispatches: AtomicUsize,
+}
+
+impl InterruptedUntilAnswering {
+    fn new(observed: Arc<Mutex<Vec<ModelToolRequestV1>>>, interruptions: usize) -> Self {
+        Self {
+            observed,
+            interruptions,
+            dispatches: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ProviderEnginePortV1 for InterruptedUntilAnswering {
+    fn binding_id(&self) -> &str {
+        "model"
+    }
+    fn version_hash(&self) -> &str {
+        "v1"
+    }
+    fn execute(
+        &self,
+        _: &ModelRequestV1,
+        _: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        unreachable!()
+    }
+    fn execute_tool_turn_cancellable(
+        &self,
+        request: &ModelToolRequestV1,
+        _: &CancellationToken,
+        emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
+    ) -> Result<ProviderAcceptanceV1, ProviderError> {
+        self.observed.lock().unwrap().push(request.clone());
+        if self.dispatches.fetch_add(1, Ordering::SeqCst) < self.interruptions {
+            return Err(ProviderError::StreamInterrupted);
+        }
+        emit(ModelToolEventV1::AssistantOutput {
+            text: "The stream came back and the task is done.".into(),
+        })?;
+        emit(ModelToolEventV1::Usage {
+            input_tokens: 10,
+            output_tokens: 10,
+            cache: Default::default(),
+        })?;
+        Ok(ProviderAcceptanceV1::Accepted)
+    }
+}
+
 /// Settles one large exchange and never reduces anything, so the authority
 /// cannot resolve an over-bound request on its own.
 struct Stuck;
@@ -534,6 +589,46 @@ fn every_failure_is_reported_and_no_report_budget_can_end_the_node() {
             <= aworkit_capability_host::MAX_RETRY_NOTICE_BYTES,
         "a notice is bounded, so it can never make the request invalid"
     );
+}
+
+#[test]
+fn an_interrupted_provider_stream_is_retried_with_a_notice_instead_of_ending_the_node() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.test").unwrap();
+
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(InterruptedUntilAnswering::new(observed.clone(), 3)),
+        tool_request(&id, user_input()),
+        &Stuck,
+        &CancellationToken::default(),
+    )
+    .unwrap_or_else(|failure| {
+        panic!("a repeated transient provider failure must not end the node: {failure}")
+    });
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion")
+    };
+    assert_eq!(outcome.assistant_text, "The stream came back and the task is done.");
+
+    let turns = observed.lock().unwrap();
+    assert_eq!(
+        turns.len(),
+        4,
+        "three interrupted streams and the turn that answered"
+    );
+    assert!(
+        turns[0].retry_notice.is_none(),
+        "the first attempt has nothing to report yet"
+    );
+    // Every retry is a fresh attempt whose bytes differ by the recovery notice,
+    // so a dropped stream never dead-ends a reply.
+    for attempt in turns.iter().skip(1) {
+        let notice = attempt.retry_notice.as_deref().unwrap_or_default();
+        assert!(
+            notice.contains("provider response stream was interrupted"),
+            "each retry carries the interruption notice: {notice}"
+        );
+    }
 }
 
 /// A context authority that cannot prepare a turn at all.

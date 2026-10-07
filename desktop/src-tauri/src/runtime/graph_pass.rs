@@ -1751,7 +1751,7 @@ impl<'a> PassMachine<'a> {
             Ok(settled) => {
                 self.settled_tool_calls = self.settled_tool_calls.saturating_add(1);
                 self.tool_activity.push(settled.activity);
-                Ok(settled.result.content)
+                Ok(external_agent_answer(settled.result.content))
             }
             Err(error) => Err(format!("external agent node '{}' failed: {error}", node.id)),
         }
@@ -2078,6 +2078,20 @@ fn value_text(value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Null => String::new(),
         other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// The value one external delegation hands to the rest of the graph.
+///
+/// A completed delegation settles as its product's final answer, so a
+/// downstream Output node renders the review itself rather than the tool
+/// envelope that carried it (`{childId, answer, notice?}`), which belongs to
+/// Aworkit's own record. A result without an answer keeps its envelope, so a
+/// failure diagnostic still reaches whatever reads it next.
+fn external_agent_answer(content: Value) -> Value {
+    match content.get("answer").and_then(Value::as_str) {
+        Some(answer) => Value::String(answer.to_owned()),
+        None => content,
     }
 }
 

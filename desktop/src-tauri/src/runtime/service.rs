@@ -1623,9 +1623,21 @@ impl DesktopRuntime {
                 ));
             }
         }
-        let receipt =
-            self.history
-                .append(&input.command_id, &fingerprint, self.history.head()?, facts)?;
+        // A command that suspends commits again when it settles, so a suspension
+        // takes its own deduplication identity; one key cannot carry both.
+        let head = self.history.head()?;
+        let receipt = match result.status {
+            WorkflowExecutionStatusV1::AwaitingApproval
+            | WorkflowExecutionStatusV1::AwaitingAnswer => self.history.append_suspension(
+                &input.command_id,
+                &fingerprint,
+                head,
+                facts,
+            )?,
+            _ => self
+                .history
+                .append(&input.command_id, &fingerprint, head, facts)?,
+        };
         // The turn is durable, so the selections a new Chat should start from are
         // now the ones this Chat actually ran with. Remembering them never fails
         // the turn: a Settings write problem leaves the previous defaults.
@@ -1999,8 +2011,19 @@ impl DesktopRuntime {
                 ));
             }
         }
-        self.history
-            .append(&input.command_id, &fingerprint, self.history.head()?, facts)
+        // A resumed pass may suspend again (a question after an approval), so the
+        // same split applies: suspensions commit under their own identity.
+        let head = self.history.head()?;
+        match result.status {
+            WorkflowExecutionStatusV1::AwaitingApproval
+            | WorkflowExecutionStatusV1::AwaitingAnswer => {
+                self.history
+                    .append_suspension(&input.command_id, &fingerprint, head, facts)
+            }
+            _ => self
+                .history
+                .append(&input.command_id, &fingerprint, head, facts),
+        }
     }
 
     /// The workflow a first Chat should run.
@@ -4978,6 +5001,7 @@ mod tests {
     };
 
     mod concurrency;
+    mod command_commit;
     mod context_edit;
     mod context_model;
     mod credentialed_web_search;

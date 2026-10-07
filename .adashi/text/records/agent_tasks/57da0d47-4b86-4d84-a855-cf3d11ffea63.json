@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/model_tool_loop.rs\",\"desktop/src-tauri/src/runtime/model_tool_loop/approval_turn/bound_recovery_tests.rs\"]",
+    "completed_at": "2026-10-07 09:59:08",
+    "completion_memo": "MAXIMUM_IDENTICAL_PROVIDER_FAILURES raised 5 -> 10 with its rationale comment updated (a reset connection or dropped stream is a transport hiccup, not a refusal; any accepted turn still clears the streak). No other logic changed: the denial path already re-dispatches a fresh attempt carrying the recovery notice (report_provider_failure writes retry_notice onto provider_request, then continue), and only after the identical streak is reached does the loop end with \"The provider refused this exact request N times in a row, so no turn reached the model.\" New regression test an_interrupted_provider_stream_is_retried_with_a_notice_instead_of_ending_the_node uses a ProviderError::StreamInterrupted provider that interrupts three times then answers, asserting four dispatches, no notice on the first, and the recovery notice on every retry. The existing an_identically_repeating_provider_failure_ends_the_pass_instead_of_spinning derives its count from the constant, so it follows the new threshold. Design: aworkit.workflow_worker.failure_policy updated (Consequences now names ten identical refusals; Evidence names the new transient-retry test). Verified: cargo test --lib model_tool_loop:: -> 15 passed.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 09:58:52",
+    "created_files": "[]",
+    "description": "Two decisions from the user. (1) The identical-provider-failure streak that ends an Agent node stays, but the threshold is raised from 5 to 10 (MAXIMUM_IDENTICAL_PROVIDER_FAILURES in desktop/src-tauri/src/runtime/model_tool_loop.rs), because a dropped stream or reset connection is a transport hiccup rather than a refusal. (2) Pin the transient-retry behaviour the user asked for: an interrupted stream is retried as a fresh attempt carrying the recovery notice, and a provider that denies the request is also re-dispatched fresh with a notice until the identical streak is reached. Also record the threshold in the failure-policy design document.",
+    "id": 84085726082,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Raise the identical provider failure threshold to ten and pin transient retries",
+    "updated_at": "2026-10-07 09:59:08"
+  },
+  "deleted": false,
+  "identity": "57da0d47-4b86-4d84-a855-cf3d11ffea63",
+  "schemaVersion": 1
+}

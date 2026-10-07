@@ -24,6 +24,7 @@ import { useTimelineReturn } from "./useTimelineReturn";
 import { useTimelineFollow } from "./useTimelineFollow";
 import { useHistoryScroll } from "./useHistoryScroll";
 import { ChatBusy } from "./ChatBusy";
+import { externalAgentLabel } from "./externalAgent";
 import { FeedStatus } from "./FeedStatus";
 
 interface ConversationTimelineProps {
@@ -465,6 +466,7 @@ export function TimelineCard({
     return (
       <ActorBubble
         actor="subagent"
+        actorLabel={externalAgentLabel(itemProduct(item))}
         ariaLabel={`Subagent: ${item.title}`}
         body={speech ?? item.body ?? "Delegated work is in progress."}
         busy={isBusy(item.status)}
@@ -499,6 +501,7 @@ export function TimelineCard({
     return (
       <ActorBubble
         actor={item.actor ?? "model"}
+        actorLabel={externalAgentLabel(itemProduct(item))}
         ariaLabel={`${card.label}: ${item.title}`}
         body={card.content}
         busy={isBusy(item.status)}
@@ -867,6 +870,14 @@ export function subagentChildIdFor(
   return typeof callId === "string" && callId.length > 0
     ? resolve(callId)
     : undefined;
+}
+
+/**
+ * The product a delegated agent's committed activity came from. It names the
+ * child's cards, so its own progress never reads as the main model's.
+ */
+function itemProduct(item: TimelineItem): unknown {
+  return metadataOf(item).product;
 }
 
 /** A plan card is the output of a model_call node committed as node.completed. */

@@ -52,9 +52,10 @@ const MAXIMUM_ERROR_RECOVERIES: u32 = 32;
 /// refuses the request, no turn reaches the model, so there is no Agent decision
 /// pending and nothing left to report that the model has not already been told. A
 /// recorded run repeated an HTTP 400 rejection 335 times in three minutes this
-/// way. Five attempts leave room for a flaky transport while refusing to spin,
-/// and any successful turn clears the streak.
-pub(crate) const MAXIMUM_IDENTICAL_PROVIDER_FAILURES: u32 = 5;
+/// way. Ten attempts leave room for a flaky transport - a reset connection or a
+/// dropped stream is a hiccup, not a refusal - while still refusing to spin, and
+/// any successful turn clears the streak.
+pub(crate) const MAXIMUM_IDENTICAL_PROVIDER_FAILURES: u32 = 10;
 
 /// The provider-failure report ledger for one Agent invocation.
 ///

@@ -6,8 +6,8 @@
     },
     "resource_id": "aworkit.workflow_worker.failure_policy",
     "resource_kind": "design.markdown",
-    "updated_at": "2026-10-07 08:34:11",
-    "version": 3
+    "updated_at": "2026-10-07 09:58:42",
+    "version": 4
   },
   "deleted": false,
   "identity": "3ca168bb-24a6-4e02-a1ab-723453bebf00",

@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/documents_extras.rs\",\"desktop/user_help/optional-extras.md\"]",
+    "completed_at": "2026-10-07 09:23:56",
+    "completion_memo": "Cause: ensure_on_start returned early once preference.written_version >= EXTRAS_VERSION, so only the first launch copied the extras; deleting a file or the whole \"Example Workflows\" folder was never repaired on a later launch. Confirmed on this machine: documents-extras.json holds writtenVersion 1 and writeToDocuments true while <documents>/Aworkit contained only \"Tool Plugins\". Fix: extracted ensure_extras(environment) which materializes missing files on every launch while the preference is on, recording written_version/last_folder and rewriting the preference only when those change (an ordinary launch stays read-only). copy_missing still never overwrites, so edits are kept; the enable/disable preference remains the opt-out. Module doc and desktop/user_help/optional-extras.md updated to state that a deleted file is restored on next launch or via \"Write now\". Tests: replaced the misleading preference-only test with ensure_extras_restores_a_deleted_file_and_folder (whole-folder delete, single-file delete, edit preserved) and ensure_extras_respects_the_opt_out. Verified: cargo test --lib documents_extras -> 6 passed. Also copied the corrected example files into the live C:\\Users\\timo\\Documents\\Aworkit\\Example Workflows so the existing profile has the fixed workflow without waiting for a rebuild.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 09:23:11",
+    "created_files": "[]",
+    "description": "Deleting a file or folder under <documents>/Aworkit is never repaired: ensure_on_start short-circuits on written_version >= EXTRAS_VERSION, so only the first launch copies the extras. Confirmed on disk (documents-extras.json has writtenVersion 1 while <documents>/Aworkit contains only \"Tool Plugins\"). copy_missing already never overwrites, so the launch pass can safely re-add anything missing on every launch; the enable/disable preference remains the opt-out. Update the module rationale, add tests for restoring a deleted file and folder.",
+    "id": 82607451634,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Restore deleted example workflows/plugin files on launch",
+    "updated_at": "2026-10-07 09:23:56"
+  },
+  "deleted": false,
+  "identity": "8431a270-ccb2-4df6-b6c1-30b63c73344d",
+  "schemaVersion": 1
+}

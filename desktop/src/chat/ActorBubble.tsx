@@ -6,6 +6,12 @@ export type ChatBubbleVariant = "speech" | "thinking";
 
 interface ActorBubbleProps {
   readonly actor: ChatActor;
+  /**
+   * The named delegated agent (for example "Codex"). When present it replaces
+   * the generic actor wording, so a delegated agent's own activity never reads
+   * as the main model's.
+   */
+  readonly actorLabel?: string;
   readonly ariaLabel: string;
   readonly body: string;
   readonly busy?: boolean;
@@ -25,6 +31,7 @@ interface ActorBubbleProps {
  */
 export function ActorBubble({
   actor,
+  actorLabel,
   ariaLabel,
   body,
   busy = false,
@@ -49,6 +56,15 @@ export function ActorBubble({
       <span className={`status ${status ?? ""}`}>{status ?? "Thinking"}</span>
     </>
   );
+  const byline =
+    actorLabel ??
+    (variant === "speech"
+      ? actor === "subagent"
+        ? "Subagent"
+        : "Aworkit"
+      : undefined);
+  const showByline =
+    byline !== undefined && (variant === "speech" ? createdAt !== undefined : true);
   return (
     <article
       aria-busy={busy || undefined}
@@ -82,9 +98,10 @@ export function ActorBubble({
           ))}
         <MarkdownContent className="bubble-markdown">{body}</MarkdownContent>
         {children}
-        {variant === "speech" && createdAt !== undefined && (
+        {showByline && (
           <small className="bubble-byline">
-            {actor === "subagent" ? "Subagent" : "Aworkit"} · {createdAt}
+            {byline}
+            {createdAt === undefined ? null : ` · ${createdAt}`}
           </small>
         )}
       </div>

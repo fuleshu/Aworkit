@@ -9,6 +9,8 @@ todos:
 - figure out if/what python is bundled, default libs?
 - notifications in win bar and chat icon when finished
 
+I also found one thing worth your attention but did not touch it, because it's a different area and it reproduces on its own: a project skill with the same name as a bundled one does not win — the bundled description is being served instead. That looks like the same class of bug as the workflow-template one from earlier (a resolution order that silently prefers the bundled copy), so it may deserve its own task.
+
 comfyui integration:
 The choice this leaves
 You're right that "part of Aworkit" and "needs Python installed" sit awkwardly together. Three options, in my order of preference:
