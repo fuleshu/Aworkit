@@ -2500,6 +2500,11 @@ mod tests {
         // is imported and run deliberately, so it must still be valid. The
         // blank creation canvas is the one exception: it is intentionally an
         // empty, editable document rather than a runnable workflow.
+        //
+        // The catalog alone is not enough: the Run start path resolves one
+        // provider/model binding from the graph's model-consuming nodes and
+        // refuses a graph that has none, so a bundled workflow without an
+        // agent or model_call node is importable but can never start.
         let bundled = bundled_workflow_library().unwrap();
         for template in &bundled.workflows {
             let empty = template.document["nodes"]
@@ -2508,6 +2513,21 @@ mod tests {
             if empty {
                 continue;
             }
+            let model_consuming = template.document["nodes"]
+                .as_array()
+                .expect("bundled workflow nodes")
+                .iter()
+                .any(|node| {
+                    matches!(
+                        node.get("type").and_then(Value::as_str),
+                        Some("agent" | "model_call")
+                    )
+                });
+            assert!(
+                model_consuming,
+                "bundled workflow '{}' has no model-consuming node, so the runtime refuses to start it",
+                template.template_id
+            );
             validate_v1_executable_catalog(&template.document)
                 .unwrap_or_else(|error| panic!("bundled workflow '{}': {error}", template.template_id));
         }

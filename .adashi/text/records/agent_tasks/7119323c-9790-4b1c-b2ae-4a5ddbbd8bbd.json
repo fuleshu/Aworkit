@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/workflows/default-workflows.json\",\"desktop/workflows/examples/delegated-code-review.aworkit.json\",\"desktop/src/workbench/workflowNodeCoverage.test.ts\",\"desktop/src-tauri/src/runtime/documents.rs\",\"docs/workflow-node-showcase.md\",\"desktop/workflows/examples/README.md\"]",
+    "completed_at": "2026-10-07 09:11:27",
+    "completion_memo": "Root cause: the bundled \"Delegated Code Review\" graph (input → tool → approval → external_agent → output → completion) had no agent or model_call node, but the Run start path derives its single provider/model binding from graph_model_tier_ids (agent/model_call only) and refuses a graph with none: \"workflow 'workflow.delegated-code-review' has no model-consuming node\". Fix: inserted a model_call node \"brief.1\" (tier:balanced, maximumTokens 1024) between the approval gate and the external_agent, rewired the edges (e.gate.brief, e.brief.review) and updated the external_agent instructions/comments; the example copy was regenerated to match the template document exactly. Regression guards: the native every_bundled_json_workflow_is_executable test now also asserts each non-empty bundled workflow has an agent or model_call node, and the TS coverage test gained a matching \"gives every bundled workflow a model-consuming node\" case (the native catalog alone did not catch this). Docs: docs/workflow-node-showcase.md now lists model_call for this workflow and names the real native test (the old reference pointed at a non-existent every_seeded_json_workflow_is_executable), and the examples README describes the brief step. Verified: npx vitest run src/workbench (35 files, 317 tests passed) and cargo test --lib every_bundled_json_workflow_is_executable (1 passed). Note: the run first hit an environmental LNK1104 in the default TEMP dir; rerunning with a workspace-local TMP succeeded. A user whose Documents\\Aworkit\\Example Workflows\\delegated-code-review.aworkit.json was already copied must delete and re-copy (or re-import) it, since Aworkit only writes missing example files.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-07 09:07:55",
+    "created_files": "[]",
+    "description": "The bundled \"Delegated Code Review\" workflow (input → tool scan → approval → external_agent → output → completion) contains no agent or model_call node, so the runtime refuses to start it: \"workflow 'workflow.delegated-code-review' has no model-consuming node\". Root cause: graph_model_tier_ids only counts agent/model_call nodes, and the bundled template omits both. Fix the template (and its byte-identical example copy) by inserting a model_call node that drafts the delegation brief after the approval gate, then add regression guards and update the docs that enumerate the workflow's nodes.",
+    "id": 80189515486,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix Delegated Code Review template: add the missing model-consuming node",
+    "updated_at": "2026-10-07 09:11:27"
+  },
+  "deleted": false,
+  "identity": "7119323c-9790-4b1c-b2ae-4a5ddbbd8bbd",
+  "schemaVersion": 1
+}

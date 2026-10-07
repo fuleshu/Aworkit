@@ -893,17 +893,31 @@
             }
           },
           {
+            "id": "brief.1",
+            "label": "Draft the review brief",
+            "type": "model_call",
+            "position": {
+              "x": 745,
+              "y": 240
+            },
+            "configuration": {
+              "modelTierId": "tier:balanced",
+              "maximumTokens": 1024,
+              "instructions": "Prepare a delegation brief for an independent code review. The additional context is raw output from a workspace scan for TODO, FIXME and HACK markers. Group the markers by file, drop duplicates and trivia, and state for each remaining item what a reviewer should check. Keep only items that suggest a real defect or a missing test; if the scan found nothing, say so in one line."
+            }
+          },
+          {
             "id": "review.1",
             "label": "External review",
             "type": "external_agent",
             "position": {
-              "x": 750,
+              "x": 990,
               "y": 240
             },
             "configuration": {
               "toolId": "tool.subagent_codex",
               "reasoningEffort": "high",
-              "instructions": "Review this repository. The additional context lists outstanding TODO, FIXME and HACK markers found by a workspace scan. Inspect the referenced files and report concrete risks, real defects, and missing tests, each with its file path. Be concise and do not restate the markers verbatim."
+              "instructions": "Review this repository. The additional context is a brief prepared from a workspace scan of TODO, FIXME and HACK markers, listing the files and what to check in each. Inspect those files and report concrete risks, real defects, and missing tests, each with its file path. Be concise and do not restate the markers verbatim."
             }
           },
           {
@@ -911,7 +925,7 @@
             "label": "Output",
             "type": "output",
             "position": {
-              "x": 1010,
+              "x": 1230,
               "y": 240
             }
           },
@@ -920,7 +934,7 @@
             "label": "Completion",
             "type": "completion",
             "position": {
-              "x": 1210,
+              "x": 1430,
               "y": 240
             }
           }
@@ -937,8 +951,13 @@
             "target": "gate.1"
           },
           {
-            "id": "e.gate.review",
+            "id": "e.gate.brief",
             "source": "gate.1",
+            "target": "brief.1"
+          },
+          {
+            "id": "e.brief.review",
+            "source": "brief.1",
             "target": "review.1"
           },
           {
@@ -952,7 +971,7 @@
             "target": "completion.1"
           }
         ],
-        "comments": "Delegated Code Review: Chat Input \u2192 Tool (files.grep for TODO/FIXME/HACK) \u2192 Approval \u2192 External Agent (Codex/Claude Code) \u2192 Chat Output \u2192 Completion. Requires a configured external agent target in Settings."
+        "comments": "Delegated Code Review: Chat Input \u2192 Tool (files.grep for TODO/FIXME/HACK) \u2192 Approval \u2192 Model Call (draft the review brief) \u2192 External Agent (Codex/Claude Code) \u2192 Chat Output \u2192 Completion. Requires a configured external agent target in Settings."
       }
     }
   ]

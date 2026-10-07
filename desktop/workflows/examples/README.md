@@ -102,9 +102,11 @@ AI helper.
 - It scans your project for leftover notes developers leave behind, like
   `TODO`, `FIXME` and `HACK`.
 - Before spending anything, it asks you to approve the review.
-- On approval, it sends those findings to an outside coding helper (Codex or
-  Claude Code), which looks at the files and reports real risks, likely bugs,
-  and missing tests — each with a file path.
+- On approval, the model turns the raw scan into a short brief — grouped by
+  file, with what to check — so the outside helper gets a tidy starting point.
+- It then sends that brief to an outside coding helper (Codex or Claude Code),
+  which looks at the files and reports real risks, likely bugs, and missing
+  tests — each with a file path.
 
 **Setup required:** You first need to connect a Codex or Claude Code helper in
 Settings. Without one, this workflow can't run. That's exactly why it isn't

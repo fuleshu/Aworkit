@@ -6,10 +6,11 @@ library used to demonstrate only five of them: `input`, `model_call`, `agent`,
 `external_agent`, `condition`, `loop`, `parallel`, `approval`, and `completion`
 — in concrete use cases.
 
-Every seeded workflow is validated by
+Every bundled workflow is validated by
 `desktop/src/workbench/workflowNodeCoverage.test.ts` (editor contract and the
 native executable-catalog mirror) and by the native
-`runtime::documents::tests::every_seeded_json_workflow_is_executable` test.
+`runtime::documents::tests::every_bundled_json_workflow_is_executable` test,
+which also requires each one to carry a model-consuming node.
 
 ## Workflows
 
@@ -18,7 +19,7 @@ native executable-catalog mirror) and by the native
 | **Triage Router** (`workflow.triage-router`) | Answer simple questions on a cheap tier; route anything needing evidence through an explicit approval to the tool-enabled agent. | `condition`, `approval` | None beyond a configured model. |
 | **Evidence Brief** (`workflow.evidence-brief`) | Start a web search while a Plan decides whether evidence is actually required; skip tool work for general-knowledge questions. | `parallel`, `tool`, `condition`, `completion` | Web search backend (keyless fallback is on by default). |
 | **Iterative Planning** (`workflow.iterative-planning`) | Refine a structured Plan until no open questions remain (bounded), then execute the settled plan. | `loop` (body/exit/fallback + feedback) | None beyond a configured model. |
-| **Delegated Code Review** (`workflow.delegated-code-review`) | Scan the workspace for TODO/FIXME/HACK markers, gate delegation, then hand an independent review to an external agent. | `tool`, `approval`, `external_agent`, `completion` | A configured Codex or Claude Code external agent target in Settings. |
+| **Delegated Code Review** (`workflow.delegated-code-review`) | Scan the workspace for TODO/FIXME/HACK markers, gate delegation, then hand an independent review to an external agent. | `tool`, `approval`, `model_call`, `external_agent`, `completion` | A configured Codex or Claude Code external agent target in Settings. |
 
 ## Where the files live
 

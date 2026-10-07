@@ -35,6 +35,23 @@ describe("bundled workflow node coverage", () => {
     expect(missing).toEqual([]);
   });
 
+  it("gives every bundled workflow a model-consuming node", () => {
+    // The runtime resolves one provider/model binding from the graph's
+    // model-consuming nodes and refuses a graph that has none, so a bundled
+    // workflow without an agent or model_call node is importable but can never
+    // start.
+    for (const { templateId, document } of bundled) {
+      if (document.nodes.length === 0) continue;
+      const modelConsuming = document.nodes.some(
+        (node) => node.type === "agent" || node.type === "model_call",
+      );
+      expect(
+        modelConsuming,
+        `${templateId} must reference a model tier from an agent or model_call node`,
+      ).toBe(true);
+    }
+  });
+
   it("keeps every bundled workflow executable under both validators", () => {
     for (const { templateId, document } of bundled) {
       // The blank creation canvas is intentionally an empty, editable document.
