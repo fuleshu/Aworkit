@@ -54,7 +54,21 @@ function isContainer(item: TimelineItem): boolean {
 
 /** Supporting records can span several raw pages without adding an activity. */
 export function hasEarlierActivity(before: readonly TimelineItem[], after: readonly TimelineItem[]): boolean {
+  return countEarlierActivity(before, after) > 0;
+}
+
+/**
+ * How many entries `after` adds that are earlier than `before`'s first entry.
+ *
+ * Callers that prefetch use the count instead of a boolean so a transcript the
+ * output filter mostly hides can keep reading until enough is revealed.
+ */
+export function countEarlierActivity(before: readonly TimelineItem[], after: readonly TimelineItem[]): number {
   const known = new Set(before.map(item => item.id));
   const first = before[0]?.sequence ?? Number.POSITIVE_INFINITY;
-  return after.some(item => !known.has(item.id) && (item.sequence ?? 0) < first);
+  let count = 0;
+  for (const item of after) {
+    if (!known.has(item.id) && (item.sequence ?? 0) < first) count += 1;
+  }
+  return count;
 }

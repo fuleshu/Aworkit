@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"desktop/src/chat/ChatOutputFilterControl.tsx\",\"desktop/src/chat/ChatOutputFilterControl.test.tsx\"]",
-    "completed_at": "2026-10-09 17:11:19",
-    "completion_memo": "Follow-up fix: the filter panel closed whenever the Chat updated, so it could not be used while the agent was running. Cause: the control registered `window.addEventListener(\"scroll\", reposition, true)` with capture, so the transcript's own auto-scroll during a Run (scroll events do not bubble but are observed in the capture phase at window) dismissed the panel. Removed the scroll listener entirely; the trigger lives in the fixed header, so normal transcript scrolling must not dismiss it. The resize listener now re-anchors the portal (recomputes placement from the trigger and popup rects via fitMenuToViewport) instead of closing. Closure behavior is unchanged for outside pointerdown and Escape. Added a regression test to ChatOutputFilterControl.test.tsx that opens the panel and dispatches window/document scroll events, asserting it stays open. Verified: `pnpm check` clean, ChatOutputFilterControl.test.tsx (3) passes, and the whole pnpm test:chat suite (46 files, 297 tests) passes.",
+    "changed_files": "[\"desktop/src/chat/conversationFeed.ts\",\"desktop/src/chat/useOlderChatEvents.ts\",\"desktop/src/chat/useChatRuntime.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/eventWindow.test.tsx\"]",
+    "completed_at": "2026-10-09 17:28:37",
+    "completion_memo": "Fixed filtered older-page prefetching. Root cause: `useOlderChatEvents` stopped at the first newly visible entry, so with thinking/tools hidden (a native page is 128 events but may show one entry) each scroll revealed roughly one item. Added `countEarlierActivity` (conversationFeed.ts) alongside `hasEarlierActivity`, and the loader now takes an `olderPageTarget`: it keeps reading pages until the *shown* transcript gained that many earlier entries, the head is reached, or an `OLDER_PAGE_BUDGET` (24) raw pages is spent (then it publishes progress and the next scroll continues). `useChatRuntime` gained an `olderPageTarget` parameter (default 1) and forwards it; `ChatWorkspaceScreen` passes `FILTERED_OLDER_TARGET` (32) only when a filter is active and 1 when both boxes are on, so the unfiltered path is byte-for-byte unchanged. Verified: `pnpm check` clean; `pnpm build` (`tsc --noEmit && vite build`) succeeds; new test in `eventWindow.test.tsx` proves a mixed-page stream reveals several entries per read (target 3 reads 3 pages, target 1 stops at 1 page) and the existing filter/loader tests still pass; the whole `pnpm test:chat` suite (46 files, 298 tests) passes. A repo-wide case-insensitive stem scan remains clean.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:08",
@@ -21,7 +21,7 @@
     },
     "state": "finished",
     "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
-    "updated_at": "2026-10-09 17:11:19"
+    "updated_at": "2026-10-09 17:28:37"
   },
   "deleted": false,
   "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",

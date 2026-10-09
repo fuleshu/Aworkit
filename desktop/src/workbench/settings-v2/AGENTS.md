@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=558046965859557 -->
+<!-- adashi:generated revision=8497184360559206 -->
 # Architecture — `desktop/src/workbench/settings-v2` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -10,7 +10,6 @@ These responsibilities are already owned here: extend them, do not duplicate.
 Bound here:
 - file `desktop/src/workbench/settings-v2/ComfyUiSection.tsx`
 - file `desktop/src/workbench/settings-v2/DesktopSection.tsx`
-
 
 Markdown design specifications:
 

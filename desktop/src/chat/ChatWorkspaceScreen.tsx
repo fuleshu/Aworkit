@@ -28,6 +28,7 @@ import {
   filterTimelineItems,
   type ChatOutputFilterState,
 } from "./chatOutputFilter";
+import { FILTERED_OLDER_TARGET } from "./useOlderChatEvents";
 import { QuestionDialog } from "./QuestionDialog";
 import { SubagentConversation } from "./SubagentConversation";
 import { questionFromMetadata, type QuestionAnswerInput } from "./question";
@@ -162,7 +163,17 @@ export function ChatWorkspaceScreen({
       filterTimelineItems(items, outputFilter),
     [outputFilter],
   );
-  const runtime = useChatRuntime(corePort, pollIntervalMs, filterFeed);
+  // With the transcript filtered, one older read must reveal several shown
+  // entries so fast scrolling does not advance them one at a time; the
+  // unfiltered path keeps the single-entry target and its current behaviour.
+  const olderPageTarget =
+    outputFilter.thinking && outputFilter.tools ? 1 : FILTERED_OLDER_TARGET;
+  const runtime = useChatRuntime(
+    corePort,
+    pollIntervalMs,
+    filterFeed,
+    olderPageTarget,
+  );
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const composerDrafts = useMemo(() => new ComposerDrafts(), []);
   const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);

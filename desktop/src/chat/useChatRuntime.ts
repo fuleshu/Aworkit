@@ -60,6 +60,7 @@ export function useChatRuntime(
   pollIntervalMs = 2_000,
   filterItems: (items: readonly TimelineItem[]) => TimelineItem[] =
     keepAllTimelineItems,
+  olderPageTarget = 1,
 ): ChatRuntimeState {
   const port = useMemo(
     () => explicitPort ?? createChatCorePort(),
@@ -416,7 +417,7 @@ export function useChatRuntime(
     return maintenance.dispatch(captured, version);
   }, [maintenance.dispatch]);
   const pendingCommandIds = new Set([...allPendingCommandIds].filter(id => pendingRef.current.get(id) === snapshot?.chat.chatId));
-  const older = useOlderChatEvents(port, snapshotRef, eventsRef, supportRef, generationRef, publishEvents, filterItems);
+  const older = useOlderChatEvents(port, snapshotRef, eventsRef, supportRef, generationRef, publishEvents, filterItems, olderPageTarget);
 
   return {
     port,

@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=558046965859557 -->
+<!-- adashi:generated revision=8497184360559206 -->
 # Architecture — `desktop/src-tauri/src/runtime` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

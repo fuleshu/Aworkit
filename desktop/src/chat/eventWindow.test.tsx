@@ -121,3 +121,39 @@ it("keeps loading older pages that the output filter hides", async () => {
     filterTimelineItems(items, { thinking: true, tools: false });
   expect(await run(hideTools)).toEqual({ calls: 2, firstSequence: 81 });
 });
+
+it("reveals several shown entries per read when the transcript is filtered", async () => {
+  const next = snapshot("a", 101, 110);
+  // Each page ends with one shown message and is otherwise hidden tool facts,
+  // so a page reveals exactly one entry once tools are hidden.
+  const mixedPage = (first: number, last: number) =>
+    events("a", first, last).map(event =>
+      event.sequence === last
+        ? event
+        : { ...event, kind: "tool.completed", payload: { capabilityId: "tool.files.list" } });
+  const run = async (target: number) => {
+    let calls = 0;
+    const port: ChatCorePort = {
+      async snapshot() { return next; },
+      async command() { throw Error("unused"); },
+      async olderEvents(_id, before) {
+        calls++;
+        const first = before - 10;
+        return { events: mixedPage(first, before - 1),
+          window: { firstSequence: first, lastSequence: before - 1, headSequence: 110, hasMore: true, supportingEvents: [] } };
+      },
+    };
+    const hideTools = (items: readonly TimelineItem[]) =>
+      filterTimelineItems(items, { thinking: true, tools: false });
+    const { result, unmount } = renderHook(() => useChatRuntime(port, 60000, hideTools, target));
+    await waitFor(() => expect(result.current.firstSequence).toBe(101));
+    await act(async () => { await result.current.loadOlder(); });
+    const outcome = { calls, firstSequence: result.current.firstSequence };
+    unmount();
+    return outcome;
+  };
+  // A target of three reads three single-entry pages instead of stopping at one.
+  expect(await run(3)).toEqual({ calls: 3, firstSequence: 71 });
+  // The single-entry target still stops at the first shown entry.
+  expect(await run(1)).toEqual({ calls: 1, firstSequence: 91 });
+});
