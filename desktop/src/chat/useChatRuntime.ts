@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatIntent } from "./types";
+import type { ChatIntent, TimelineItem } from "./types";
 import { useChatMaintenance } from "./useChatMaintenance";
 import { assertContiguous, assertSameEnvelope, mergeCanonicalEvents, withEventSupport } from "./eventWindow";
 import { useOlderChatEvents } from "./useOlderChatEvents";
@@ -9,6 +9,10 @@ import {
   type RuntimeEvent,
   type RuntimeSnapshot,
 } from "./corePort";
+
+/** Default transcript filter: every timeline entry is shown. */
+const keepAllTimelineItems = (items: readonly TimelineItem[]): TimelineItem[] =>
+  items as TimelineItem[];
 
 export interface ChatRuntimeState {
   /** The exact port this projection was built from, for scoped reads. */
@@ -54,6 +58,8 @@ const STREAM_PUBLISH_INTERVAL_MS = 50;
 export function useChatRuntime(
   explicitPort?: ChatCorePort,
   pollIntervalMs = 2_000,
+  filterItems: (items: readonly TimelineItem[]) => TimelineItem[] =
+    keepAllTimelineItems,
 ): ChatRuntimeState {
   const port = useMemo(
     () => explicitPort ?? createChatCorePort(),
@@ -410,7 +416,7 @@ export function useChatRuntime(
     return maintenance.dispatch(captured, version);
   }, [maintenance.dispatch]);
   const pendingCommandIds = new Set([...allPendingCommandIds].filter(id => pendingRef.current.get(id) === snapshot?.chat.chatId));
-  const older = useOlderChatEvents(port, snapshotRef, eventsRef, supportRef, generationRef, publishEvents);
+  const older = useOlderChatEvents(port, snapshotRef, eventsRef, supportRef, generationRef, publishEvents, filterItems);
 
   return {
     port,

@@ -2,7 +2,14 @@ import { ActorBubble } from "./ActorBubble";
 import { prettyJson } from "./jsonPresentation";
 import { releasedModelCallInput } from "./releasedPayload";
 import { isSelectionClick } from "./selectionClick";
+import {
+  isModelCallSpan,
+  modelCallAssistantOutput,
+  modelCallReasoning,
+} from "./modelCallChannels";
 import type { TimelineActor, TimelineItem } from "./types";
+
+export { isModelCallSpan, modelCallAssistantOutput, modelCallReasoning };
 
 interface ModelCallBlockProps {
   readonly item: TimelineItem;
@@ -10,12 +17,6 @@ interface ModelCallBlockProps {
   /** Hides the provider-supplied reasoning while keeping the model's answer. */
   readonly hideThinking?: boolean;
   readonly onSelect: (id: string) => void;
-}
-
-interface ModelCallChannels {
-  readonly reasoning: string;
-  readonly progress: string;
-  readonly assistantOutput: string;
 }
 
 interface WorkflowNodeContext {
@@ -34,18 +35,15 @@ export function ModelCallBlock({
   onSelect,
 }: ModelCallBlockProps): React.JSX.Element {
   const metadata = record(item.metadata);
-  const channels = modelCallChannels(item);
   const node = workflowNodeContext(item);
-  const reasoning = [channels.reasoning, channels.progress]
-    .filter((value) => value.length > 0)
-    .join("\n");
+  const reasoning = modelCallReasoning(item);
   const actor: TimelineActor = item.actor ?? "model";
   const busy = isBusy(item.status);
   // Early v1 producers could place a synchronous live chunk directly in the
   // span body. Preserve that transient path as speech until a typed channel
   // arrives; terminal lifecycle summaries must never become model speech.
   const assistantOutput =
-    channels.assistantOutput ||
+    modelCallAssistantOutput(item) ||
     (busy && reasoning.length === 0 ? (item.body ?? "") : "");
   const thinkingBusy = busy && assistantOutput.length === 0;
   const hasInput = item.input !== undefined || metadata.hasInput === true;
@@ -130,16 +128,6 @@ export function ModelCallBlock({
   );
 }
 
-/** Exact accumulated assistant text emitted by the model-call stream. */
-export function modelCallAssistantOutput(item: TimelineItem): string {
-  return modelCallChannels(item).assistantOutput;
-}
-
-/** True only for the provider-call span, not its workflow-node container. */
-export function isModelCallSpan(item: TimelineItem): boolean {
-  return record(item.metadata).spanKind === "model_call";
-}
-
 function ModelCallData({
   label,
   value,
@@ -155,15 +143,6 @@ function ModelCallData({
       </pre>
     </details>
   );
-}
-
-function modelCallChannels(item: TimelineItem): ModelCallChannels {
-  const channels = record(record(item.metadata).channels);
-  return {
-    reasoning: text(channels.reasoning),
-    progress: text(channels.progress),
-    assistantOutput: text(channels.assistantOutput),
-  };
 }
 
 function workflowNodeContext(item: TimelineItem): WorkflowNodeContext {

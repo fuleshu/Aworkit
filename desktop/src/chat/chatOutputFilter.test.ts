@@ -13,6 +13,22 @@ const item = (id: string, kind: TimelineItem["kind"]): TimelineItem => ({
   createdAt: "now",
 });
 
+/** One model-call span: a reasoning-bearing span is projected as kind "thinking". */
+const modelCall = (
+  id: string,
+  reasoning: string,
+  answer: string,
+): TimelineItem => ({
+  id,
+  kind: "thinking",
+  title: id,
+  createdAt: "now",
+  metadata: {
+    spanKind: "model_call",
+    channels: { reasoning, progress: "", assistantOutput: answer },
+  },
+});
+
 describe("chatOutputFilter", () => {
   const items = [
     item("user", "message"),
@@ -52,5 +68,23 @@ describe("chatOutputFilter", () => {
     expect(isToolEntry(item("t", "tool"))).toBe(true);
     expect(isToolEntry(item("m", "mcp"))).toBe(true);
     expect(isToolEntry(item("x", "thinking"))).toBe(false);
+  });
+
+  it("keeps a model-call span's answer and drops a reasoning-only one", () => {
+    const items = [
+      item("user", "message"),
+      modelCall("empty", "only reasoning", ""),
+      modelCall("answered", "reasoning", "the answer"),
+    ];
+    // The empty Agent block disappears with the thinking box; the answered one
+    // stays because a model-call span is not a standalone thinking entry.
+    expect(
+      filterTimelineItems(items, { thinking: false, tools: true }).map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["user", "answered"]);
+    expect(
+      filterTimelineItems(items, { thinking: true, tools: true }),
+    ).toHaveLength(3);
   });
 });

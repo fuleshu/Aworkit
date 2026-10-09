@@ -150,7 +150,19 @@ export function ChatWorkspaceScreen({
   subagentView = DEFAULT_SUBAGENT_VIEW,
   pickPath,
 }: ChatWorkspaceScreenProps): React.JSX.Element {
-  const runtime = useChatRuntime(corePort, pollIntervalMs);
+  // Which optional transcript entries are shown. Presentation-only and
+  // session-scoped; the Run records the same evidence either way. The same
+  // predicate is handed to the runtime so its older-page loader keeps fetching
+  // until the *shown* transcript actually grows, instead of stopping on a page
+  // the filter hides.
+  const [outputFilter, setOutputFilter] =
+    useState<ChatOutputFilterState>(defaultChatOutputFilter);
+  const filterFeed = useCallback(
+    (items: readonly TimelineItem[]) =>
+      filterTimelineItems(items, outputFilter),
+    [outputFilter],
+  );
+  const runtime = useChatRuntime(corePort, pollIntervalMs, filterFeed);
   const commandIds = useMemo(() => new ChatWorkspaceController(), []);
   const composerDrafts = useMemo(() => new ComposerDrafts(), []);
   const contextSave = useRef<{ fingerprint: string; intent: ChatIntent; version: number } | null>(null);
@@ -222,10 +234,6 @@ export function ChatWorkspaceScreen({
   const [workflowReadinessError, setWorkflowReadinessError] = useState<
     string | null
   >(null);
-  // Which optional transcript entries are shown. Presentation-only and
-  // session-scoped; the Run records the same evidence either way.
-  const [outputFilter, setOutputFilter] =
-    useState<ChatOutputFilterState>(defaultChatOutputFilter);
   const [stopPending, setStopPending] = useState(false);
   // The question dialog is a focused surface over the durable question card:
   // dismissing it never answers the question and never hides the card.

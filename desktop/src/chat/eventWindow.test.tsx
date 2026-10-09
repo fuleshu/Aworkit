@@ -2,6 +2,8 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { useChatRuntime } from "./useChatRuntime";
+import { filterTimelineItems } from "./chatOutputFilter";
+import type { TimelineItem } from "./types";
 import type { ChatCorePort, ChatEventPage, RuntimeEvent, RuntimeSnapshot } from "./corePort";
 import {
   chatSnapshot,
@@ -87,4 +89,35 @@ it("continues past raw pages with no earlier visible activity", async () => {
   expect(calls).toBe(2);
   expect(result.current.firstSequence).toBe(81);
   expect(result.current.events.filter(event=>event.sequence>=101)).toEqual(next.events);
+});
+
+it("keeps loading older pages that the output filter hides", async () => {
+  const next = snapshot("a", 101, 110);
+  const toolPage = (first: number, last: number) =>
+    events("a", first, last).map(event => ({ ...event, kind: "tool.completed", payload: { capabilityId: "tool.files.list" } }));
+  const run = async (filter?: (items: readonly TimelineItem[]) => TimelineItem[]) => {
+    let calls = 0;
+    const port: ChatCorePort = {
+      async snapshot() { return next; },
+      async command() { throw Error("unused"); },
+      async olderEvents(_id, before) {
+        calls++;
+        const first = before - 10;
+        return { events: calls === 1 ? toolPage(first, before - 1) : events("a", first, before - 1),
+          window: { firstSequence: first, lastSequence: before - 1, headSequence: 110, hasMore: true, supportingEvents: [] } };
+      },
+    };
+    const { result, unmount } = renderHook(() => useChatRuntime(port, 60000, filter));
+    await waitFor(() => expect(result.current.firstSequence).toBe(101));
+    await act(async () => { await result.current.loadOlder(); });
+    const outcome = { calls, firstSequence: result.current.firstSequence };
+    unmount();
+    return outcome;
+  };
+  // Shown, the tool page is earlier activity, so one read is enough.
+  expect(await run()).toEqual({ calls: 1, firstSequence: 91 });
+  // Hiding tools makes that page invisible, so the loader continues to the next.
+  const hideTools = (items: readonly TimelineItem[]) =>
+    filterTimelineItems(items, { thinking: true, tools: false });
+  expect(await run(hideTools)).toEqual({ calls: 2, firstSequence: 81 });
 });

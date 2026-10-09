@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type RefObject } from "react";
 import type { ChatCorePort, RuntimeEvent, RuntimeSnapshot } from "./corePort";
+import type { TimelineItem } from "./types";
 import { mergeCanonicalEvents, withEventSupport } from "./eventWindow";
 import { projectSemanticTimeline } from "./activityProjection";
 import { conversationFeed, hasEarlierActivity } from "./conversationFeed";
@@ -8,7 +9,8 @@ import { conversationFeed, hasEarlierActivity } from "./conversationFeed";
 export function useOlderChatEvents(port: ChatCorePort,
   snapshot: RefObject<RuntimeSnapshot | null>, events: RefObject<RuntimeEvent[]>,
   support: RefObject<RuntimeEvent[]>, generation: RefObject<number>,
-  publish: (events: RuntimeEvent[]) => void) {
+  publish: (events: RuntimeEvent[]) => void,
+  filterItems: (items: readonly TimelineItem[]) => TimelineItem[]) {
   const request = useRef(0);
   const activeGeneration = useRef<number | null>(null);
   const [busy, setBusy] = useState<{ generation: number; active: boolean }>({ generation: -1, active: false });
@@ -23,7 +25,7 @@ export function useOlderChatEvents(port: ChatCorePort,
     activeGeneration.current = owner;
     setBusy({ generation: owner, active: true }); setError(null);
     try {
-      const visible = conversationFeed(projectSemanticTimeline(withEventSupport(events.current, support.current)), before);
+      const visible = filterItems(conversationFeed(projectSemanticTimeline(withEventSupport(events.current, support.current)), before));
       let earlier: RuntimeEvent[] = [], supporting: RuntimeEvent[] = [];
       do {
         const page = await port.olderEvents(current.chat.chatId, before, current.throughSequence);
@@ -36,7 +38,9 @@ export function useOlderChatEvents(port: ChatCorePort,
         // an invisible raw page look like a successful visible prepend.
         const merged = mergeCanonicalEvents(earlier, events.current, before);
         const nextSupport = withEventSupport(support.current, supporting);
-        const feed = conversationFeed(projectSemanticTimeline(withEventSupport(merged, nextSupport)), before);
+        const feed = filterItems(conversationFeed(projectSemanticTimeline(withEventSupport(merged, nextSupport)), before));
+        // The loop stops once the *shown* transcript gained earlier activity, so
+        // a page the output filter hides does not end the read.
         if (before === 1 || hasEarlierActivity(visible, feed)) {
           support.current = nextSupport;
           publish(merged);
@@ -48,6 +52,6 @@ export function useOlderChatEvents(port: ChatCorePort,
     } finally {
       if (request.current === ticket) { activeGeneration.current = null; setBusy({ generation: owner, active: false }); }
     }
-  }, [port, snapshot, events, support, generation, publish]);
+  }, [port, snapshot, events, support, generation, publish, filterItems]);
   return { loading, error: error?.generation === generation.current ? error.message : null, load };
 }

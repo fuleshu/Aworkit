@@ -1,3 +1,8 @@
+import {
+  isModelCallSpan,
+  modelCallAssistantOutput,
+  modelCallReasoning,
+} from "./modelCallChannels";
 import type { TimelineItem } from "./types";
 
 /** Which optional Chat output entries the operator wants to see. */
@@ -24,17 +29,33 @@ export function isToolEntry(item: TimelineItem): boolean {
  *
  * Standalone reasoning entries (`kind: "thinking"`, e.g. legacy reasoning and
  * folded child activity) and tool/MCP entries are dropped when their box is
- * unchecked. Model-call spans are never dropped here even though they carry
- * reasoning: they also carry the model's final answer, so their reasoning is
- * hidden inside the card through `ModelCallBlock.hideThinking` instead.
+ * unchecked. A model-call span is normally kept even though it carries
+ * reasoning, because it also carries the model's final answer; its reasoning is
+ * hidden inside the card through `ModelCallBlock.hideThinking`. A model-call
+ * span whose only human-readable content is reasoning, however, would render as
+ * an empty Agent block, so it is dropped with the reasoning it was showing.
  */
 export function filterTimelineItems(
   items: readonly TimelineItem[],
   filter: ChatOutputFilterState,
 ): TimelineItem[] {
-  return items.filter(
-    (item) =>
-      (filter.thinking || item.kind !== "thinking") &&
-      (filter.tools || !isToolEntry(item)),
-  );
+  return items.filter((item) => {
+    const modelCall = isModelCallSpan(item);
+    if (!filter.thinking) {
+      // Standalone reasoning entries disappear with the box. A model-call span
+      // is not one: it carries the model's final answer too, so its reasoning is
+      // hidden inside the card instead. It is dropped whole only when the
+      // reasoning was its entire human-readable content.
+      if (!modelCall && item.kind === "thinking") return false;
+      if (
+        modelCall &&
+        modelCallReasoning(item).length > 0 &&
+        modelCallAssistantOutput(item).length === 0
+      ) {
+        return false;
+      }
+    }
+    if (!filter.tools && isToolEntry(item)) return false;
+    return true;
+  });
 }
