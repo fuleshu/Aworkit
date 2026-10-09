@@ -259,6 +259,28 @@ fn a_frozen_comfyui_workflow_tool_is_admitted_and_records_its_image() {
         .join("images")
         .join(&image.id)
         .is_file());
+    // Task #207: the result must name the produced media by absolute path, so
+    // the Agent can find it without searching the machine. `outputPath` is the
+    // named media file; `storedPath` is the immutable evidence blob it links to.
+    let output_path = settled.result.content["source"]["outputPath"]
+        .as_str()
+        .expect("the ComfyUI result reports the produced media path");
+    let output_path = std::path::Path::new(output_path);
+    assert!(output_path.is_absolute(), "{}", output_path.display());
+    assert!(output_path.is_file(), "{}", output_path.display());
+    assert_eq!(
+        output_path,
+        root.path()
+            .join("media")
+            .join("comfyui")
+            .join("krea_00001_.png")
+    );
+    let stored_path = settled.result.content["source"]["storedPath"]
+        .as_str()
+        .expect("the ComfyUI result reports the stored evidence path");
+    let stored_path = std::path::Path::new(stored_path);
+    assert!(stored_path.is_file(), "{}", stored_path.display());
+    assert_eq!(stored_path, root.path().join("images").join(&image.id));
 
     // An undeclared argument is refused as a tool error, never executed.
     let bad = ModelToolCallV1 {

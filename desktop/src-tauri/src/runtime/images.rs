@@ -110,6 +110,70 @@ impl ChatImageStore {
         ))
     }
 
+    /// Absolute path of the immutable blob backing one stored attachment.
+    ///
+    /// The blob is content-addressed and deliberately extension-less, so every
+    /// reader sniffs the bytes rather than the name. Producers that create media
+    /// an Agent later has to locate hand back a path, so the Agent never has to
+    /// guess a filename or search the machine for the result.
+    #[must_use]
+    pub fn blob_path(&self, image: &ImageAttachmentV1) -> PathBuf {
+        self.root.join(&image.id)
+    }
+
+    /// Publishes one produced media file under a stable, human-readable path and
+    /// returns its absolute location.
+    ///
+    /// The immutable blob is addressed by hash and has no extension: perfect for
+    /// evidence and vision reads, useless to a person or a tool that keys on the
+    /// name. A media producer therefore also gets a named copy under
+    /// `media/<producer>/<subfolder>/<filename>`, hard-linked to the blob where
+    /// the filesystem allows it so the bytes are not duplicated. A name already
+    /// taken by different bytes gains the content hash, so an export never
+    /// clobbers an unrelated file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable reason when the output directory cannot be
+    /// created or the file cannot be linked or copied.
+    pub fn publish_media(
+        &self,
+        producer: &str,
+        subfolder: &str,
+        filename: &str,
+        image: &ImageAttachmentV1,
+    ) -> Result<PathBuf, String> {
+        let profile = self
+            .root
+            .parent()
+            .ok_or("The image store has no profile directory")?;
+        let mut directory = profile.join("media");
+        if let Some(component) = safe_path_component(producer) {
+            directory.push(component);
+        }
+        for part in subfolder.split(['/', '\\']) {
+            if let Some(component) = safe_path_component(part) {
+                directory.push(component);
+            }
+        }
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("Cannot create the media output directory: {error}"))?;
+        let blob = self.root.join(&image.id);
+        let name = safe_path_component(filename)
+            .unwrap_or_else(|| format!("{}.bin", short_id(&image.id)));
+        let mut destination = directory.join(&name);
+        if destination.exists() {
+            destination = directory.join(name_with_id(&name, &image.id));
+        }
+        if !destination.exists() {
+            if fs::hard_link(&blob, &destination).is_err() {
+                fs::copy(&blob, &destination)
+                    .map_err(|error| format!("Cannot publish the produced media: {error}"))?;
+            }
+        }
+        Ok(destination)
+    }
+
     pub fn thumbnail(&self, image: &ImageAttachmentV1) -> Result<String, String> {
         let _decode = IMAGE_DECODE
             .lock()
@@ -202,6 +266,45 @@ impl ChatImageStore {
             },
             bytes: copy.bytes,
         })
+    }
+}
+
+/// One filesystem component that cannot escape its parent or surprise a shell.
+///
+/// Keeps ASCII letters, digits, space, dash, underscore and dot; every other
+/// character becomes an underscore. Leading/trailing dots and empty results are
+/// rejected so `.`, `..` and a blank component can never name a directory.
+fn safe_path_component(value: &str) -> Option<String> {
+    let cleaned: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, ' ' | '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+/// First twelve hex characters of a content address, for a readable suffix.
+fn short_id(id: &str) -> &str {
+    &id[..id.len().min(12)]
+}
+
+/// The same name with the content hash inserted before its extension, so a
+/// second, different file that reuses a producer's default name stays distinct.
+fn name_with_id(name: &str, id: &str) -> String {
+    let short = short_id(id);
+    match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => format!("{stem}-{short}.{extension}"),
+        _ => format!("{name}-{short}"),
     }
 }
 
@@ -298,4 +401,77 @@ pub(crate) fn command_text(payload: &Value) -> Result<String, String> {
         return Err("Enter a message or add an image (text limit: 128 KiB)".into());
     }
     Ok(text.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 1x1 RGBA PNG, because stored media is decoded before it is kept.
+    fn one_pixel_png() -> Vec<u8> {
+        use image::ImageEncoder;
+        let mut buffer = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut buffer)
+            .write_image(&[0_u8, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        buffer
+    }
+
+    #[test]
+    fn safe_path_components_cannot_escape_a_directory() {
+        assert_eq!(
+            safe_path_component("Krea-2 Turbo.png").as_deref(),
+            Some("Krea-2 Turbo.png")
+        );
+        // Traversal, empty and separator components are refused or neutralised.
+        assert_eq!(safe_path_component(".."), None);
+        assert_eq!(safe_path_component("."), None);
+        assert_eq!(safe_path_component(""), None);
+        assert_eq!(safe_path_component("a/b").as_deref(), Some("a_b"));
+        assert_eq!(safe_path_component("...hidden...").as_deref(), Some("hidden"));
+    }
+
+    #[test]
+    fn a_colliding_export_name_keeps_its_extension() {
+        assert_eq!(
+            name_with_id("krea.png", "abcdef0123456789"),
+            "krea-abcdef012345.png"
+        );
+        assert_eq!(
+            name_with_id("noextension", "abcdef0123456789"),
+            "noextension-abcdef012345"
+        );
+    }
+
+    #[test]
+    fn publishing_media_writes_a_named_file_and_never_clobbers() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ChatImageStore::new(root.path());
+        let image = store
+            .import_bytes("krea_00001_.png".into(), &one_pixel_png())
+            .unwrap();
+        let published = store
+            .publish_media("comfyui", "sub/dir", "krea_00001_.png", &image)
+            .unwrap();
+        assert_eq!(
+            published,
+            root.path()
+                .join("media")
+                .join("comfyui")
+                .join("sub")
+                .join("dir")
+                .join("krea_00001_.png")
+        );
+        assert!(published.is_file());
+        // A second, different export that reuses the producer's default name is
+        // written beside the first instead of overwriting it.
+        let duplicate = store
+            .import_bytes("krea_00001_.png".into(), &one_pixel_png())
+            .unwrap();
+        let second = store
+            .publish_media("comfyui", "sub/dir", "krea_00001_.png", &duplicate)
+            .unwrap();
+        assert!(second.is_file());
+        assert_ne!(second, published);
+    }
 }

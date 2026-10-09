@@ -107,23 +107,40 @@ impl FileToolDispatcherV1 {
             .images
             .import_bytes(filename.clone(), &bytes)
             .map_err(|error| format!("Could not store the produced image: {error}"))?;
+        // Two paths are reported: the named media file a person or a media tool
+        // can use directly, and the immutable evidence blob it links to.
+        let stored_path = self.runtime.images.blob_path(&image);
+        let (output_path, export_error) = match self
+            .runtime
+            .images
+            .publish_media("comfyui", &subfolder, &filename, &image)
+        {
+            Ok(path) => (path, None),
+            Err(error) => (stored_path.clone(), Some(error)),
+        };
         let summary = format!(
-            "Ran ComfyUI workflow {prompt_id}; produced {} ({} bytes).",
-            image.name, image.byte_length
+            "Ran ComfyUI workflow {prompt_id}; produced {} ({} bytes) at {}.",
+            image.name,
+            image.byte_length,
+            output_path.display()
         );
-        Ok((
-            json!({
-                "image": image,
-                "source": {
-                    "endpoint": endpoint,
-                    "workflowPath": workflow_path,
-                    "promptId": prompt_id,
-                    "filename": filename,
-                    "subfolder": subfolder,
-                },
-            }),
-            summary,
-        ))
+        let mut source = json!({
+            "endpoint": endpoint,
+            "workflowPath": workflow_path,
+            "promptId": prompt_id,
+            "filename": filename,
+            "subfolder": subfolder,
+            "outputPath": output_path.to_string_lossy(),
+            "storedPath": stored_path.to_string_lossy(),
+        });
+        if let Some(error) = export_error {
+            // The blob already exists, so a failed named export is reported to
+            // the model instead of failing the call.
+            if let Some(object) = source.as_object_mut() {
+                object.insert("outputPathError".into(), Value::from(error));
+            }
+        }
+        Ok((json!({ "image": image, "source": source }), summary))
     }
 
     /// Runs one read-only ComfyUI authoring helper.
