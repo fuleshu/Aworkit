@@ -2240,11 +2240,7 @@ pub(crate) fn evaluate_predicate(predicate: &Value, input: &Value) -> Result<boo
                 .and_then(Value::as_str)
                 .unwrap_or("value");
             let actual = lookup_path(input, path);
-            let equal = if actual.is_null() {
-                expected.is_null()
-            } else {
-                actual == *expected
-            };
+            let equal = predicate_values_equal(&actual, expected);
             Ok(if kind == "eq" { equal } else { !equal })
         }
         "and" | "or" => {
@@ -2270,6 +2266,21 @@ pub(crate) fn evaluate_predicate(predicate: &Value, input: &Value) -> Result<boo
             evaluate_predicate(operand, input).map(|result| !result)
         }
         other => Err(format!("unsupported predicate kind '{other}'")),
+    }
+}
+
+/// Whether the value a predicate read equals the value it expects.
+///
+/// Text that reached the graph from a model or a tool routinely carries
+/// surrounding whitespace - a provider that separates its answer from its
+/// reasoning answers "\n\nSIMPLE" - and that padding is never part of the value
+/// a condition means to compare. Two strings therefore compare trimmed, while
+/// every other operand keeps exact equality, so a padded string still never
+/// equals a number, a structured value or null.
+fn predicate_values_equal(actual: &Value, expected: &Value) -> bool {
+    match (actual, expected) {
+        (Value::String(actual), Value::String(expected)) => actual.trim() == expected.trim(),
+        _ => actual == expected,
     }
 }
 
@@ -2321,7 +2332,10 @@ mod tests {
     };
     use crate::runtime::graph_pass::{CompiledGraphEdgeV1, CompiledGraphNodeV1};
     use crate::runtime::model_tool_loop::SettledModelToolCallV1;
-    use aworkit_capability_host::{CancellationToken, FrozenModelGateway};
+    use aworkit_capability_host::{
+        CancellationToken, FrozenModelGateway, ModelEventV1, ModelRequestV1, ProviderAcceptanceV1,
+        ProviderEnginePortV1, ProviderError,
+    };
     use aworkit_capability_host::{ModelToolExchangeV1, ModelToolRequestV1};
     use aworkit_protocol::StableId;
     use serde_json::Value;
@@ -2391,6 +2405,139 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn predicate_string_equality_ignores_surrounding_whitespace() {
+        // A model that separates its answer from its reasoning with a blank
+        // line must not defeat a route that compares the answer, and padding
+        // must never let a different value through.
+        let padded = json!("\n\nSIMPLE");
+        let equals_simple = json!({"kind":"eq","path":"value","value":"SIMPLE"});
+        let not_simple = json!({"kind":"neq","path":"value","value":"SIMPLE"});
+        let equals_complex = json!({"kind":"eq","path":"value","value":"COMPLEX"});
+        let equals_padded = json!({"kind":"eq","path":"value","value":" SIMPLE "});
+        assert!(evaluate_predicate(&equals_simple, &padded).unwrap());
+        assert!(!evaluate_predicate(&not_simple, &padded).unwrap());
+        assert!(!evaluate_predicate(&equals_complex, &padded).unwrap());
+        // Padding on the expected side is ignored in the same way.
+        assert!(evaluate_predicate(&equals_padded, &padded).unwrap());
+        // Comparison stays typed: trimmed text never equals a number or a
+        // structured value, and null still equals only null.
+        let text_three = json!({"kind":"eq","path":"value","value":"3"});
+        let object_text = json!({"kind":"eq","path":"value","value":"{\"a\":1}"});
+        let equals_null = json!({"kind":"eq","path":"value","value":null});
+        assert!(!evaluate_predicate(&text_three, &json!(3)).unwrap());
+        assert!(!evaluate_predicate(&object_text, &json!({"a": 1})).unwrap());
+        assert!(evaluate_predicate(&equals_null, &json!(null)).unwrap());
+    }
+
+    /// A provider whose plain answer carries the blank line some models put
+    /// between their reasoning and the answer.
+    struct PaddedAnswerProvider;
+
+    impl ProviderEnginePortV1 for PaddedAnswerProvider {
+        fn binding_id(&self) -> &str {
+            "binding.loop"
+        }
+
+        fn version_hash(&self) -> &str {
+            "hash.loop"
+        }
+
+        fn execute(
+            &self,
+            _: &ModelRequestV1,
+            emit: &mut dyn FnMut(ModelEventV1) -> Result<(), ProviderError>,
+        ) -> Result<ProviderAcceptanceV1, ProviderError> {
+            emit(ModelEventV1::AssistantOutput("\n\nSIMPLE".to_owned()))?;
+            emit(ModelEventV1::Usage {
+                input_tokens: 3,
+                output_tokens: 1,
+                cache: Default::default(),
+            })?;
+            Ok(ProviderAcceptanceV1::Accepted)
+        }
+    }
+
+    #[test]
+    fn a_padded_model_call_answer_takes_the_true_route() {
+        // Regression for chat.ba470e6a1d3ebc8c2aa7172503db9309cf5b5c75: the
+        // model_call node handed the condition "\n\nSIMPLE", the equality test
+        // was exact, and the Triage Router ran its grounded, tool-enabled
+        // branch for a request its own classifier called SIMPLE.
+        let document = json!({
+            "schemaVersion": 1,
+            "nodes": [
+                {"id":"input.1","type":"input"},
+                {"id":"classify.1","type":"model_call","configuration":{
+                    "modelTierId":"tier:simple","maximumTokens":16
+                }},
+                {"id":"route.1","type":"condition","configuration":{
+                    "predicate":{"kind":"eq","path":"value","value":"SIMPLE"}
+                }},
+                {"id":"quick.1","type":"parallel"},
+                {"id":"deep.1","type":"parallel"},
+                {"id":"out.1","type":"output"},
+                {"id":"wait.1","type":"wait"}
+            ],
+            "edges": [
+                {"id":"e1","source":"input.1","target":"classify.1"},
+                {"id":"e2","source":"classify.1","target":"route.1"},
+                {"id":"e3","source":"route.1","target":"quick.1","configuration":{"route":"true"}},
+                {"id":"e4","source":"route.1","target":"deep.1","configuration":{"route":"false"}},
+                {"id":"e5","source":"quick.1","target":"out.1"},
+                {"id":"e6","source":"deep.1","target":"out.1"},
+                {"id":"e7","source":"out.1","target":"wait.1"}
+            ]
+        });
+        let compiled = compile_graph_pass(&document, &[]).expect("compiled routing graph");
+        let gateway = FrozenModelGateway::new(vec![Box::new(PaddedAnswerProvider)]);
+        let outcome = execute_graph_pass_observed(
+            &compiled,
+            &[WorkflowMessageV1 {
+                role: "user".to_owned(),
+                content: "how much calories does a glass of milk have?".to_owned(),
+                images: Vec::new(),
+            }],
+            GraphPassBudgetV1 {
+                maximum_timeout_recoveries: 1,
+                maximum_tool_output_bytes: 65_536,
+            },
+            &gateway,
+            &NoTools,
+            &StableId::parse("invocation.route.test").expect("invocation id"),
+            "request.route",
+            "chat.route",
+            "run.route",
+            "binding.loop",
+            "hash.loop",
+            1_788_854_400_000,
+            u64::MAX,
+            None,
+            None,
+            None,
+            &CancellationToken::default(),
+            None,
+        );
+        assert_eq!(outcome.status, GraphPassStatusV1::Succeeded);
+        // The model_call node carries the trimmed answer, the condition is
+        // presented with it, and the branch it did not take is skipped rather
+        // than run.
+        let classify = outcome
+            .activity
+            .iter()
+            .find(|activity| activity.node_id == "classify.1" && activity.status == "completed")
+            .expect("classify activity");
+        assert_eq!(classify.output, Some(Value::String("SIMPLE".to_owned())));
+        let route_input = outcome
+            .activity
+            .iter()
+            .find(|activity| activity.node_id == "route.1" && activity.status == "started")
+            .and_then(|activity| activity.input.clone());
+        assert_eq!(route_input, Some(Value::String("SIMPLE".to_owned())));
+        assert!(completed_nodes(&outcome).contains(&"quick.1".to_owned()));
+        assert_eq!(activity_count(&outcome, "deep.1", "skipped"), 1);
     }
 
     #[test]

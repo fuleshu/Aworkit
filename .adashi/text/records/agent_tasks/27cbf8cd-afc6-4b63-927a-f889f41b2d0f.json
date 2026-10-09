@@ -1,0 +1,23 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/graph_pass/model_call.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/skills/aworkit-workflows/references/nodes.md\"]",
+    "completed_at": "2026-10-09 08:18:49",
+    "completion_memo": "Fixed both contributing causes. (1) graph_pass/model_call.rs: the model_call node's assistant text is trimmed before it becomes the node value, so a provider that separates its answer from its reasoning with a blank line no longer hands \"\\n\\nSIMPLE\" to the graph; this matches the agent path, which already trims (model_tool_loop.rs). (2) graph_pass.rs: evaluate_predicate routes eq/neq through the new predicate_values_equal helper, which compares two strings with surrounding whitespace ignored and keeps exact equality for every other type (text still never equals a number, a structured value or null); this protects existing saved workflows whose conditions were written against padded text, and it covers loop exit conditions and nested and/or/not predicates because they evaluate through the same function. Raw provider evidence is untouched: only the graph value is trimmed. Design check: the predicate semantics are not asserted anywhere in the design model or docs, so no design drift; the change implements the intent the Triage Router already documented. Tests: predicate_string_equality_ignores_surrounding_whitespace (padded value matches on both sides, a different value still fails, trimming never coerces types) and a_padded_model_call_answer_takes_the_true_route (a scripted provider answering \"\\n\\nSIMPLE\" through a model_call node now carries \"SIMPLE\", the eq condition routes true, quick.1 completes and deep.1 is skipped rather than run). Verification: cargo test --lib -- graph_pass -> 23 passed, 0 failed, exit 0. Documentation: the eq/neq contract is stated in desktop/skills/aworkit-workflows/references/nodes.md. Formatting: the new lines are rustfmt-clean; the crate has no rustfmt.toml and many pre-existing diffs, so no repo-wide format was run. No blocker.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 08:13:22",
+    "created_files": "[]",
+    "description": "Defect: a Triage Router condition misroutes a SIMPLE classification down the tool-enabled branch. In chat chat.ba470e6a1d3ebc8c2aa7172503db9309cf5b5c75 (workflow.custom.6 v5) classify.1 returned \"\\n\\nSIMPLE\"; route.1's predicate {kind:eq,path:value,value:\"SIMPLE\"} is a strict JSON comparison, so the padding made it false and the run went route.1 --false--> gate.1 approval --> deep.1 \"Grounded answer\" (26 tools) --> web_search, while quick.1 \"Direct answer\" (toolIds []) was skipped as \"branch not taken\". Two contributing code facts: graph_pass/model_call.rs returns a non-plan model_call value untrimmed, while the agent path trims assistant_text in model_tool_loop.rs; and evaluate_predicate eq/neq does no normalisation. Fix: trim the model_call node's returned text (symmetry with agent nodes) and ignore surrounding whitespace when both sides of eq/neq are strings, with regression tests.",
+    "id": 98732365948,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix whitespace-sensitive condition routing (Triage Router misroute)",
+    "updated_at": "2026-10-09 08:18:49"
+  },
+  "deleted": false,
+  "identity": "27cbf8cd-afc6-4b63-927a-f889f41b2d0f",
+  "schemaVersion": 1
+}

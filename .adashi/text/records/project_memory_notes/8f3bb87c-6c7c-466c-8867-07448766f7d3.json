@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Defect (investigated 2026-10-09, not fixed): Triage Router condition misrouted a SIMPLE classification to the tool branch. Chat chat.ba470e6a1d3ebc8c2aa7172503db9309cf5b5c75, workflow.custom.6 v5. classify.1 (model_call) returned \"\\n\\nSIMPLE\"; route.1 predicate {kind:eq,path:value,value:\"SIMPLE\"} is exact equality, so the whitespace made it false -> gate.1 approval -> deep.1 \"Grounded answer\" (26 tools) -> web_search; quick.1 \"Direct answer\" (toolIds []) skipped \"branch not taken\". Code facts: graph_pass/model_call.rs returns Ok(Value::String(text)) untrimmed for a non-plan model_call, while the agent path trims assistant_text in model_tool_loop.rs; evaluate_predicate eq/neq has no trim or case fold. Only triggers when tier:simple resolves to a model that prefixes its answer (here Sparky qwen3.8-flash-next); the same workflow on deepseek-flash returned bare SIMPLE and routed correctly. Fix options: trim the model_call node value, or normalise scalar strings in eq/neq.",
+    "created_at": "2026-10-09 08:11:22",
+    "id": 51576488796,
+    "note_id": "triage-router-condition-whitespace-misroute",
+    "operation_id": "mem-triage-whitespace-2026-10-09b",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-triage-whitespace-2026-10-09b",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "8f3bb87c-6c7c-466c-8867-07448766f7d3",
+  "schemaVersion": 1
+}

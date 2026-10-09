@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "triage-router-condition-whitespace-fix",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-09 08:18:33",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "6e0f3962-b6f6-4216-a753-d3bcaeee29e7",
+  "schemaVersion": 1
+}

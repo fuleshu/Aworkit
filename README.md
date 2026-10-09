@@ -4,6 +4,8 @@
 
 🌐 **Website: [klutzgames.com/aworkit](https://www.klutzgames.com/aworkit/)**
 
+[![Release](https://img.shields.io/github/v/release/fuleshu/Aworkit?sort=semver&label=release)](https://github.com/fuleshu/Aworkit/releases)
+[![Downloads](https://img.shields.io/github/downloads/fuleshu/Aworkit/total?label=downloads)](https://github.com/fuleshu/Aworkit/releases)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)
 ![Status](https://img.shields.io/badge/status-v0.1.0%20early%20development-orange.svg)
@@ -28,7 +30,7 @@
 
 ## What is Aworkit?
 
-**The elevator pitch:** most AI chat apps only show you a conversation. Aworkit shows you the *machine* behind it. It is a desktop application where every chat is actually a complete, visible agent workflow — you can open it, see how it works, and reshape it with a mouse.
+**Short:** Aworkit is a codex like desktop app with a complete toolset for long running agentic tasks but open source and free. It can run local or hosted models. It has a visual node based editor for the harness workflow with branching for advanced ai workflows. 
 
 **In more detail:**
 
@@ -72,7 +74,7 @@ Settings cover **model providers and credentials, model tiers, built-in tools, s
 - **Shell and Python** — run commands and scripts on your machine
 - **Web tools** — search the web, fetch and extract page content
 - **Sub-agents** — delegate parts of a task to parallel helper agents
-- **MCP servers** — connect any [Model Context Protocol](https://modelcontextprotocol.io) server and use its tools inside your workflows
+- **MCP host** — connect any [Model Context Protocol](https://modelcontextprotocol.io) server and use its tools at any step of a workflow
 - **External agents** — plug in lifecycle-owning agents such as Codex or Claude Code
 - **Skills** — Markdown instructions the agent loads on demand, or that you load with `/name`
 - **Tool plugins** — installable folders that package an MCP server and optional skills (see [Extensions](#-extensions-mcp-tool-plugins-and-skills))
@@ -112,9 +114,6 @@ Aworkit has a first-class **ComfyUI** Settings tab that turns a running ComfyUI 
 - **Two read-only authoring helpers.** `comfyui_list_node_types` searches the live `/object_info` catalog under a bounded page, and `comfyui_get_workflow` returns the API graph of one configured workflow so node ids and input names can be inspected. Both run without approval.
 - **Optional authoring knowledge.** The tab can also register a workflow-authoring MCP server that gives the agent ComfyUI node and workflow knowledge. It is an ordinary configured MCP entry with the normal trust, transport and approval semantics — knowledge, never a second execution path.
 - **Model-assisted authoring.** **Auto create** reads a workflow JSON, asks the model mapped to `tier:balanced` to choose sensible parameters and bind each to a supplied input, then validates every binding against that exact workflow and drops the proposal into the Settings draft for you to review. Nothing is saved automatically.
-- **Connection and local start.** Aworkit probes `GET /system_stats`, reports reachability and the server version, and — if you configured a local installation folder and enabled it — can start ComfyUI and wait for readiness before queueing work. Starting is always an explicit action.
-- **Frozen per Chat.** The Settings section resolves once, at a Chat's first input, so a later edit cannot change what a running Chat executes. A call with an undeclared key, a missing required value, a null, a wrong type or a value outside the reported choice set is refused before ComfyUI sees it.
-- **Evidence.** A successful run returns its images as immutable image evidence and as vision input for the model.
 
 Unreachable servers, workflows that produce no image, and unreadable or oversized workflow JSON are all reported as named failures; the Run continues.
 
@@ -162,18 +161,16 @@ Actions that write files, run commands, or spend money can require your explicit
 
 ### Installer from GitHub
 
-Prebuilt installers are published on the **[Releases page](https://github.com/fuleshu/Aworkit/releases)**:
+Prebuilt installers are published on the **[Releases page](https://github.com/fuleshu/Aworkit/releases)**. The current release is **[v0.1.0](https://github.com/fuleshu/Aworkit/releases/tag/v0.1.0)**:
 
 | Platform | Package |
 | --- | --- |
-| Windows | `.msi` installer or Windows setup `.exe` |
-| Linux (`.deb`) | Debian / Ubuntu package |
-| Linux (`.rpm`) | Fedora / openSUSE package |
-| Linux (`.AppImage`) | runs on most distributions |
+| Windows (x64) | `Aworkit_0.1.0_x64_en-US.msi` installer or `Aworkit_0.1.0_x64-setup.exe` setup |
+| Linux (ARM64) | `Aworkit_0.1.0_arm64.deb` (Debian / Ubuntu), `Aworkit-0.1.0-1.aarch64.rpm` (Fedora / openSUSE) or `Aworkit_0.1.0_aarch64.AppImage` (runs on most distributions) |
 
-Download the file for your platform and install it as usual. On Linux you can also install the `.deb` with `sudo apt install ./<package>.deb`, or make the AppImage executable and run it directly.
+Download the file for your platform and install it as usual. On Linux you can also install the `.deb` with `sudo apt install ./Aworkit_0.1.0_arm64.deb`, or `chmod +x` the AppImage and run it directly. On Linux the app also needs a running keyring (e.g. `gnome-keyring`) for secure credential storage.
 
-> **No release published yet?** The Releases page is still empty — in that case, build from source (below) or check the page again later.
+> **Linux on x86_64?** v0.1.0 publishes Linux packages for **ARM64 only** — on an Intel or AMD machine, build from source (below). **macOS** is not supported yet.
 
 ### Build from source — Windows
 

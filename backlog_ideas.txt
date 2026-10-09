@@ -5,6 +5,9 @@ bugs:
 - what about history of removed projects
 - chat scroll improvements - step user entries - to the beginning
 - history is not always sorted correct.
+- comfyui tool needs to report full output path
+- new chat with triage router and no project takes long to initialize
+- when a setup model is not working, simply submit is disabled without any error notice
 
 todos:
 - figure out if/what python is bundled, default libs?

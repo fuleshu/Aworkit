@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "Fixed 2026-10-09 (task #205): whitespace-sensitive condition routing. graph_pass/model_call.rs now trims a non-plan model_call's assistant text before it becomes the node value, matching what the agent path already does; evaluate_predicate's eq/neq compare two strings with surrounding whitespace ignored through the new predicate_values_equal helper (graph_pass.rs), keeping exact equality for every other type. Tests: predicate_string_equality_ignores_surrounding_whitespace and a_padded_model_call_answer_takes_the_true_route (a scripted provider answering \"\\n\\nSIMPLE\" now routes true, quick.1 runs, deep.1 is skipped). Verified with cargo test --lib -- graph_pass: 23 passed, 0 failed. Contract documented in desktop/skills/aworkit-workflows/references/nodes.md. The crate is not globally rustfmt-clean (no rustfmt.toml, many pre-existing diffs), so no repo-wide format was run; the new lines are rustfmt-clean.",
+    "created_at": "2026-10-09 08:18:33",
+    "id": 54926373087,
+    "note_id": "triage-router-condition-whitespace-fix",
+    "operation_id": "mem-triage-whitespace-fix-2026-10-09",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-triage-whitespace-fix-2026-10-09",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "0691e13f-2ed9-40d6-a697-995f49d70bd0",
+  "schemaVersion": 1
+}

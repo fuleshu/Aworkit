@@ -88,11 +88,16 @@ impl PassMachine<'_> {
                 )
                 .map_err(|error| format!("model_call node '{}' failed: {error}", node.id))?;
             let turn = project_model_events(&evidence.events);
-            let text = turn.assistant_text;
+            // Surrounding whitespace is not part of the answer. A provider that
+            // separates its answer from its reasoning with a blank line would
+            // otherwise hand "\n\nSIMPLE" to a condition comparing "SIMPLE",
+            // which is exactly how a Triage Router sent a simple request down
+            // its tool-enabled branch. Agent nodes carry their trimmed answer.
+            let text = turn.assistant_text.trim().to_owned();
             self.input_units = self.input_units.saturating_add(turn.input_tokens);
             self.output_units = self.output_units.saturating_add(turn.output_tokens);
             self.cache_units.add(turn.cache);
-            if text.trim().is_empty() {
+            if text.is_empty() {
                 return Err(format!(
                     "model_call node '{}' returned no assistant text",
                     node.id

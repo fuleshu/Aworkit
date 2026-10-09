@@ -56,6 +56,12 @@ A predicate is `{"kind": ...}` where `kind` is one of:
 
 Predicates may nest at most 4 levels.
 
+`eq` and `neq` compare the value exactly, with one exception: two strings compare
+with surrounding whitespace ignored. A `model_call` answer is trimmed before it
+reaches the graph, and a condition still matches when a provider pads its answer
+(`"\n\nSIMPLE"` equals `"SIMPLE"`). Text never equals a number, a structured
+value or null.
+
 ## Routes
 
 | route | used by |
