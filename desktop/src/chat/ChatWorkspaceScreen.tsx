@@ -22,6 +22,12 @@ import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
 import { GoalControl } from "./GoalControl";
 import { TodoControl } from "./TodoControl";
+import { ChatOutputFilter } from "./ChatOutputFilter";
+import {
+  defaultChatOutputFilter,
+  filterTimelineItems,
+  type ChatOutputFilterState,
+} from "./chatOutputFilter";
 import { QuestionDialog } from "./QuestionDialog";
 import { SubagentConversation } from "./SubagentConversation";
 import { questionFromMetadata, type QuestionAnswerInput } from "./question";
@@ -216,6 +222,10 @@ export function ChatWorkspaceScreen({
   const [workflowReadinessError, setWorkflowReadinessError] = useState<
     string | null
   >(null);
+  // Which optional transcript entries are shown. Presentation-only and
+  // session-scoped; the Run records the same evidence either way.
+  const [outputFilter, setOutputFilter] =
+    useState<ChatOutputFilterState>(defaultChatOutputFilter);
   const [stopPending, setStopPending] = useState(false);
   // The question dialog is a focused surface over the durable question card:
   // dismissing it never answers the question and never hides the card.
@@ -242,6 +252,12 @@ export function ChatWorkspaceScreen({
     [runtime.events],
   );
   const feedItems = useMemo(() => conversationFeed(timelineItems, runtime.firstSequence), [timelineItems, runtime.firstSequence]);
+  // The transcript copy the filter controls. Run details and the question
+  // dialog keep reading the unfiltered `timelineItems`.
+  const displayItems = useMemo(
+    () => filterTimelineItems(feedItems, outputFilter),
+    [feedItems, outputFilter],
+  );
   // Delegated children: the durable frame catalog merged with the live facts,
   // and the per-Chat tab set that filters the same Run history for one child.
   const subagentTabs = useMemo(() => new SubagentTabMemory(), []);
@@ -706,6 +722,7 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
           <div className="run-actions">
+            <ChatOutputFilter value={outputFilter} onChange={setOutputFilter} />
             <button
               aria-pressed={inspectorOpen}
               title="Show or hide Run details"
@@ -777,7 +794,8 @@ export function ChatWorkspaceScreen({
             <ConversationTimeline
               key={chat.chatId}
               active={active}
-              items={feedItems}
+              items={displayItems}
+              hideThinking={!outputFilter.thinking}
               selectedId={selectedTimelineId}
               actionsDisabled={runtime.pendingCommandIds.size > 0}
               onSelect={selectTimelineItem}

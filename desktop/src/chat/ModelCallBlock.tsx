@@ -7,6 +7,8 @@ import type { TimelineActor, TimelineItem } from "./types";
 interface ModelCallBlockProps {
   readonly item: TimelineItem;
   readonly selected: boolean;
+  /** Hides the provider-supplied reasoning while keeping the model's answer. */
+  readonly hideThinking?: boolean;
   readonly onSelect: (id: string) => void;
 }
 
@@ -28,6 +30,7 @@ interface WorkflowNodeContext {
 export function ModelCallBlock({
   item,
   selected,
+  hideThinking = false,
   onSelect,
 }: ModelCallBlockProps): React.JSX.Element {
   const metadata = record(item.metadata);
@@ -96,7 +99,7 @@ export function ModelCallBlock({
       )}
 
       <div className="model-call-stream">
-        {reasoning.length > 0 && (
+        {!hideThinking && reasoning.length > 0 && (
           <ActorBubble
             actor={actor}
             ariaLabel={`Thinking: ${item.title}`}

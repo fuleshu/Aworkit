@@ -33,6 +33,8 @@ interface ConversationTimelineProps {
   readonly onLoadOlder?: () => Promise<void>;
   readonly active?: boolean;
   readonly items: readonly TimelineItem[];
+  /** Hides provider/agent reasoning inside model-call cards; the answer stays. */
+  readonly hideThinking?: boolean;
   readonly selectedId: string | null;
   readonly actionsDisabled?: boolean;
   readonly onSelect: (id: string) => void;
@@ -51,6 +53,7 @@ interface ConversationTimelineProps {
 export function ConversationTimeline({
   hasOlder = false, olderLoading = false, olderError, onLoadOlder,
   items,
+  hideThinking = false,
   selectedId,
   actionsDisabled = false,
   active = true,
@@ -218,6 +221,7 @@ export function ConversationTimeline({
                 item={item}
                 selected={presentedSelectedId === item.id}
                 actionsDisabled={actionsDisabled}
+                hideThinking={hideThinking}
                 onSelect={onSelect}
                 onAction={onAction}
                 subagentChildId={subagentChildIdFor(item, subagentForCall)}
@@ -236,6 +240,7 @@ export function TimelineCard({
   item,
   selected,
   actionsDisabled = false,
+  hideThinking = false,
   onSelect,
   onAction,
   subagentChildId,
@@ -245,6 +250,7 @@ export function TimelineCard({
   readonly item: TimelineItem;
   readonly selected: boolean;
   readonly actionsDisabled?: boolean;
+  readonly hideThinking?: boolean;
   readonly onSelect: (id: string) => void;
   readonly onAction: ConversationTimelineProps["onAction"];
   readonly subagentChildId?: string;
@@ -254,7 +260,12 @@ export function TimelineCard({
     return <FeedStatus item={item} selected={selected} onSelect={onSelect} />;
   if (isModelCallSpan(item))
     return (
-      <ModelCallBlock item={item} selected={selected} onSelect={onSelect} />
+      <ModelCallBlock
+        item={item}
+        selected={selected}
+        hideThinking={hideThinking}
+        onSelect={onSelect}
+      />
     );
   if (item.kind === "message")
     return item.title === "You" ? (

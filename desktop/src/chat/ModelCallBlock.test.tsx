@@ -60,6 +60,17 @@ describe("ModelCallBlock", () => {
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
+  it("hides only the reasoning bubble when the thinking filter is off", () => {
+    render(
+      <ModelCallBlock item={modelCall()} selected={false} hideThinking onSelect={vi.fn()} />,
+    );
+    const block = screen.getByRole("group", { name: "Model call: Friendly responder" });
+    // The model's answer and the lifecycle stay; only the thought is hidden.
+    expect(within(block).queryByLabelText("Thinking: Model call 2")).toBeNull();
+    const speech = within(block).getByLabelText("Model output: Model call 2");
+    expect(within(speech).getByText("Hello there!")).toBeVisible();
+  });
+
   it("removes only the separately committed assistant message mirrored by the stream", () => {
     const call = modelCall();
     const mirrored: TimelineItem = {
