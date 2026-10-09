@@ -2470,9 +2470,32 @@ fn event_created_at(event: &Event) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Epoch label normalised to milliseconds, from either producer's unit.
+///
+/// The canonical Chat stream is stamped by two producers that historically
+/// disagreed on units: `history::now_label` wrote epoch seconds while
+/// `run_events::now_label` wrote epoch milliseconds. `latest_event_time`
+/// returns whichever producer wrote the highest-sequence event, so a raw
+/// numeric comparison lets a seconds label (ten digits) always lose to a
+/// milliseconds label (thirteen digits) and the sidebar reorders itself turn by
+/// turn. Normalising both units to milliseconds makes ordering independent of
+/// the newest event's producer, and keeps already-persisted streams correct.
+///
+/// Anything that is not a plain epoch number keeps its existing meaning: an
+/// unparseable label sorts to the bottom instead of panicking.
 fn sortable_time(value: &str) -> u64 {
-    value.parse().unwrap_or(0)
+    match value.parse::<u64>() {
+        // Epoch seconds are around 1e9 today; epoch milliseconds around 1e12.
+        // Every realistic seconds label is below this ceiling.
+        Ok(units) if units < EPOCH_MILLISECOND_CEILING => units.saturating_mul(1000),
+        Ok(units) => units,
+        Err(_) => 0,
+    }
 }
+
+/// Boundary between a plausible epoch-seconds label and an epoch-milliseconds
+/// label. Epoch seconds cross it around the year 5138, so no live data does.
+const EPOCH_MILLISECOND_CEILING: u64 = 100_000_000_000;
 
 fn identity_from_event(event: &Event) -> Result<Option<ChatIdentityV1>, String> {
     let chat_id = event.payload.get("chatId").and_then(Value::as_str);
@@ -3724,6 +3747,20 @@ mod tests {
         assert!(plain.get("cachedInputUnits").is_none());
         assert!(plain.get("uncachedInputUnits").is_none());
         assert!(plain.get("inputUnits").is_none());
+    }
+
+    /// Task #206: the sidebar sort must not depend on which internal producer
+    /// stamped the newest event. Seconds and milliseconds labels must compare on
+    /// one scale, and a malformed label must not panic.
+    #[test]
+    fn sortable_time_orders_seconds_and_milliseconds_on_one_scale() {
+        assert_eq!(sortable_time("1700000000"), 1_700_000_000_000);
+        assert_eq!(sortable_time("1700000000000"), 1_700_000_000_000);
+        // A later seconds label outranks an earlier milliseconds label.
+        assert!(sortable_time("1700000001") > sortable_time("1700000000000"));
+        // Malformed and empty labels sort to the bottom rather than panicking.
+        assert_eq!(sortable_time("time-unavailable"), 0);
+        assert_eq!(sortable_time(""), 0);
     }
 }
 
