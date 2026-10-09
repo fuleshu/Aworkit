@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=4701996146244095 -->
+<!-- adashi:generated revision=6657281580032122 -->
 # Architecture — `crates/aworkit-process/src` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

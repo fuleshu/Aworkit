@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"desktop/src/chat/chatOutputFilter.ts\",\"desktop/src/chat/chatOutputFilter.css\",\"desktop/src/chat/chatOutputFilter.test.ts\",\"desktop/src/chat/ChatOutputFilter.tsx\",\"desktop/src/chat/ConversationTimeline.tsx\",\"desktop/src/chat/ModelCallBlock.tsx\",\"desktop/src/chat/ModelCallBlock.test.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
-    "completed_at": "2026-10-09 16:11:54",
-    "completion_memo": "Added the Chat output filter. A filter (funnel) icon button in the Chat header's `run-actions` opens a popover with a checkbox for `Thinking` and one for `Tools`; unchecking hides those entries and re-renders the already-rendered transcript. New `chatOutputFilter.ts` owns the session-scoped state (`{thinking, tools}`, both on by default), `isToolEntry` (tool or MCP) and `filterTimelineItems`. `ChatWorkspaceScreen` keeps `timelineItems` unfiltered for Run details and the question dialog, filters only the transcript copy (`displayItems`) and passes `hideThinking={!filter.thinking}` down. Crucially `ModelCallBlock` gained a `hideThinking` prop that hides only its reasoning bubble, because a model-call span also carries the model's final answer and a naive kind filter would delete it; `ConversationTimeline`/`TimelineCard` thread the prop. With both boxes off the transcript keeps user input, assistant output and other entries. Tooltips and aria-expanded/controls/haspopup are set, Escape and outside-pointer dismissal restore focus. Verified: `pnpm check` (tsc) clean; new `chatOutputFilter.test.ts` (4) and the extended `ModelCallBlock.test.tsx` (6, including the hide-thinking-keeps-the-answer case) pass; the whole `pnpm test:chat` suite (45 files, 292 tests) passes.",
+    "changed_files": "[\"desktop/src/chat/ChatOutputFilterControl.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
+    "completed_at": "2026-10-09 16:41:40",
+    "completion_memo": "Follow-up fix: the Chat output filter did not compile on Windows. `chatOutputFilter.ts` (logic) and `ChatOutputFilter.tsx` (control) have the same extension-stripped, case-insensitive stem, so TypeScript on a case-insensitive filesystem rejected the import as TS1149/TS1261 (and consequently TS2724 for the missing export). Renamed the control file to `ChatOutputFilterControl.tsx` and updated its import in `ChatWorkspaceScreen.tsx`; the exported `ChatOutputFilter` symbol is unchanged. A repo-wide scan for extension-stripped case-insensitive `.ts`/`.tsx` stems now reports no collisions. Verified locally with the same command the build uses: `pnpm build` (`tsc --noEmit && vite build`) succeeds, and `chatOutputFilter.test.ts`, `ModelCallBlock.test.tsx` and `composerSubmission.test.tsx` (13 tests) pass.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:08",
@@ -21,7 +21,7 @@
     },
     "state": "finished",
     "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
-    "updated_at": "2026-10-09 16:11:54"
+    "updated_at": "2026-10-09 16:41:40"
   },
   "deleted": false,
   "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",

@@ -22,7 +22,7 @@ import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextUsage } from "./ContextUsage";
 import { GoalControl } from "./GoalControl";
 import { TodoControl } from "./TodoControl";
-import { ChatOutputFilter } from "./ChatOutputFilter";
+import { ChatOutputFilter } from "./ChatOutputFilterControl";
 import {
   defaultChatOutputFilter,
   filterTimelineItems,
