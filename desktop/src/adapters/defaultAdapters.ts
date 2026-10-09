@@ -15,7 +15,10 @@ export const defaultDesktopAdapters: DesktopAdapters = {
     name: "tauri-native-presentation-facade",
     async notify(title, body): Promise<void> {
       dispatch({ kind: "notification", title, body });
-      if (document.hidden) await invokeNative("native_notify", { title, body });
+      // A visible-but-unfocused window is not `hidden`, so focus is checked
+      // too: the OS notification is for a user who cannot see Aworkit.
+      if (document.hidden || !document.hasFocus())
+        await invokeNative("native_notify", { title, body });
     },
     async confirm(title, body): Promise<boolean> {
       const native = await invokeNativeResult<boolean>("native_confirm", {

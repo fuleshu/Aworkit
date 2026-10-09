@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src/shell/useChatCompletionNotices.ts\",\"desktop/src/shell/useChatCompletionNotices.test.ts\",\"desktop/src/shell/NavigationPane.tsx\",\"desktop/src/App.tsx\",\"desktop/src/adapters/defaultAdapters.ts\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-10-09 16:09:22",
+    "completion_memo": "Chat completion is now visible in both situations the user described. Part A (app not in the foreground): `defaultAdapters.notify` now fires the native OS notification when `document.hidden || !document.hasFocus()` (a visible-but-unfocused window is not `hidden`), through the existing `native_notify` command and `tauri-plugin-notification`. Part B (app focused, Chat not active): a new `useChatCompletionNotices` hook in the shell watches the projected `activeChatIds`; a Chat that leaves that set while it is not the selected Chat gets an unread marker that clears when the Chat is opened, and NavigationPane renders a green blinking `.chat-unread-icon` (with reduced-motion fallback) in place of the plain idle glyph while the spinner still wins during a Run. App wires the hook to `adapters.nativePresentation.notify` for OS notifications and passes `unreadChatIds` to NavigationPane. On the user's question: Tauri's OS abstraction for this is the official Notification plugin (`tauri-plugin-notification`, already a dependency and already wired via `native_notify`/`show_notification`); there is no cross-platform taskbar-badge API in Tauri, so the plugin's native toast is the supported surface. Verified: `pnpm check` (tsc) clean; new `useChatCompletionNotices.test.ts` (3 tests) passes; the 6 shell test files pass. One unrelated pre-existing failure, `app.integration.test.tsx` \"preserves an unsent draft...\" (it queries the New Chat button as \"New Chat\" while its accessible name is \"＋New Chat\"), was already failing before this change and is untouched by it.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:07",
@@ -22,9 +22,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Notify on Chat completion: OS notification when unfocused and a green blinking unread icon in the history list",
-    "updated_at": "2026-10-09 15:53:07"
+    "updated_at": "2026-10-09 16:09:22"
   },
   "deleted": false,
   "identity": "a2680fa2-b2aa-4a41-bf3b-280d365ce2d2",

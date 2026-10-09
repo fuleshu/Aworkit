@@ -34,6 +34,7 @@ import {
   type SubagentViewPreference,
 } from "./chat/subagentViewPreference";
 import { usePaneWidth } from "./shell/usePaneWidth";
+import { useChatCompletionNotices } from "./shell/useChatCompletionNotices";
 import { useSettingsNavigation } from "./shell/settingsNavigation";
 import { NotificationStore } from "./notifications/NotificationStore";
 import { NotificationProvider } from "./notifications/NotificationContext";
@@ -141,6 +142,18 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
               action,
             }),
     [adapters, selectedChatId],
+  );
+  // A Run that finishes while its Chat is not the visible one gets a blinking
+  // history marker, and an operating system notification when the window
+  // itself is not focused. Opening the Chat clears the marker.
+  const chatCompletion = useChatCompletionNotices(
+    chatRuntimeState?.snapshot.activeChatIds ?? [],
+    selectedChatId,
+    (chatId) =>
+      chatRuntimeState?.snapshot.history.find(
+        (entry) => entry.chatId === chatId,
+      )?.title,
+    (title, body) => void adapters.nativePresentation.notify(title, body),
   );
   const setNotification = useCallback((request: Extract<NativePresentationRequest, { kind: "notification" }>) => {
     store.publish(`native:${request.title}`, "application", store.nextOccurrence(), {
@@ -276,6 +289,7 @@ function DesktopApp({ adapters, managementRepairCorePort, store }: AppProps & { 
         history={chatRuntimeState?.snapshot.history.map(entry => ({ ...entry, busy: chatRuntimeState.snapshot.activeChatIds?.includes(entry.chatId) ?? false }))}
         projects={chatRuntimeState?.snapshot.projects}
         selectedChatId={chatRuntimeState?.snapshot.chat.chatId}
+        unreadChatIds={chatCompletion.unreadChatIds}
         historyDisabledReason={
           chatRuntimeState === null
             ? "Loading Chat history"

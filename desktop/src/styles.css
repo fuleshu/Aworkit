@@ -563,6 +563,24 @@ pre {
 @media (prefers-reduced-motion: reduce) {
   .chat-busy-icon { animation: none; }
 }
+/* A Run finished in this Chat while another Chat was open. It blinks green
+   until the Chat is opened, so a completion is never mistaken for idle. */
+.chat-unread-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--aw-success);
+  animation: chat-unread-pulse 1.1s ease-in-out infinite;
+}
+@keyframes chat-unread-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-unread-icon { animation: none; }
+}
 .navigation-pane .chat-history-link {
   /* The running spinner is a fixed 12px box; without cross-axis centering it
      sits at the top of the (taller) link while the title stays centred. */

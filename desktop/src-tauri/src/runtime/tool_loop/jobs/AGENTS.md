@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=173102704290380 -->
+<!-- adashi:generated revision=4482445221110067 -->
 # Architecture — `desktop/src-tauri/src/runtime/tool_loop/jobs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

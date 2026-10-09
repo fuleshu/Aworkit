@@ -13,6 +13,8 @@ interface NavigationPaneProps {
   readonly history?: readonly ChatHistoryEntry[];
   readonly projects?: readonly ChatProjectChoice[];
   readonly selectedChatId?: string | null;
+  /** Chats whose Run finished while they were not the visible Chat. */
+  readonly unreadChatIds?: ReadonlySet<string>;
   readonly historyDisabledReason?: string | null;
   readonly onSelectChat?: (chatId: string) => void;
   readonly onSetChatPinned?: (chatId: string, pinned: boolean) => void;
@@ -37,6 +39,7 @@ export function NavigationPane({
   history = [],
   projects = [],
   selectedChatId = null,
+  unreadChatIds,
   historyDisabledReason = null,
   onSelectChat,
   onSetChatPinned,
@@ -118,6 +121,7 @@ export function NavigationPane({
               entries={organized.pinned}
               route={route}
               selectedChatId={selectedChatId}
+              unreadChatIds={unreadChatIds}
               disabledReason={historyDisabledReason}
               onSelectChat={onSelectChat}
               onSetChatPinned={onSetChatPinned}
@@ -137,6 +141,7 @@ export function NavigationPane({
                     key={entry.chatId}
                     entry={entry}
                     active={route === "chat" && selectedChatId === entry.chatId}
+                    unread={unreadChatIds?.has(entry.chatId) ?? false}
                     disabledReason={historyDisabledReason}
                     onSelectChat={onSelectChat}
                     onSetChatPinned={onSetChatPinned}
@@ -153,6 +158,7 @@ export function NavigationPane({
               entries={organized.standalone}
               route={route}
               selectedChatId={selectedChatId}
+              unreadChatIds={unreadChatIds}
               disabledReason={historyDisabledReason}
               onSelectChat={onSelectChat}
               onSetChatPinned={onSetChatPinned}
@@ -183,6 +189,7 @@ function HistorySection({
   entries,
   route,
   selectedChatId,
+  unreadChatIds,
   disabledReason,
   onSelectChat,
   onSetChatPinned,
@@ -193,6 +200,7 @@ function HistorySection({
   readonly entries: readonly ChatHistoryEntry[];
   readonly route: Route;
   readonly selectedChatId: string | null;
+  readonly unreadChatIds?: ReadonlySet<string>;
   readonly disabledReason: string | null;
   readonly onSelectChat?: (chatId: string) => void;
   readonly onSetChatPinned?: (chatId: string, pinned: boolean) => void;
@@ -207,6 +215,7 @@ function HistorySection({
           key={entry.chatId}
           entry={entry}
           active={route === "chat" && selectedChatId === entry.chatId}
+          unread={unreadChatIds?.has(entry.chatId) ?? false}
           disabledReason={disabledReason}
           onSelectChat={onSelectChat}
           onSetChatPinned={onSetChatPinned}
@@ -221,6 +230,7 @@ function HistorySection({
 function ChatHistoryRow({
   entry,
   active,
+  unread,
   disabledReason,
   onSelectChat,
   onSetChatPinned,
@@ -229,6 +239,7 @@ function ChatHistoryRow({
 }: {
   readonly entry: ChatHistoryEntry;
   readonly active: boolean;
+  readonly unread: boolean;
   readonly disabledReason: string | null;
   readonly onSelectChat?: (chatId: string) => void;
   readonly onSetChatPinned?: (chatId: string, pinned: boolean) => void;
@@ -298,7 +309,9 @@ function ChatHistoryRow({
       >
         {entry.busy
           ? <span className="chat-busy-icon" role="img" aria-label="Running" title="Running" />
-          : <span className="nav-icon" aria-hidden="true">○</span>}
+          : unread
+            ? <span className="chat-unread-icon" role="img" aria-label="New reply" title="A reply finished while this Chat was not open" />
+            : <span className="nav-icon" aria-hidden="true">○</span>}
         <span>{entry.title}</span>
       </button>
       <div className="chat-history-actions" ref={actionsRef}>
