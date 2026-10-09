@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"desktop/src/chat/ChatOutputFilterControl.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\"]",
-    "completed_at": "2026-10-09 16:41:40",
-    "completion_memo": "Follow-up fix: the Chat output filter did not compile on Windows. `chatOutputFilter.ts` (logic) and `ChatOutputFilter.tsx` (control) have the same extension-stripped, case-insensitive stem, so TypeScript on a case-insensitive filesystem rejected the import as TS1149/TS1261 (and consequently TS2724 for the missing export). Renamed the control file to `ChatOutputFilterControl.tsx` and updated its import in `ChatWorkspaceScreen.tsx`; the exported `ChatOutputFilter` symbol is unchanged. A repo-wide scan for extension-stripped case-insensitive `.ts`/`.tsx` stems now reports no collisions. Verified locally with the same command the build uses: `pnpm build` (`tsc --noEmit && vite build`) succeeds, and `chatOutputFilter.test.ts`, `ModelCallBlock.test.tsx` and `composerSubmission.test.tsx` (13 tests) pass.",
+    "changed_files": "[\"desktop/src/chat/ChatOutputFilterControl.tsx\",\"desktop/src/chat/chatOutputFilter.css\",\"desktop/src/chat/ChatOutputFilterControl.test.tsx\"]",
+    "completed_at": "2026-10-09 16:45:38",
+    "completion_memo": "Follow-up fix: the filter button did nothing and looked off-size. Root cause: the popover was rendered inline inside `.run-actions`, which is `overflow-x: auto`, so the opened dialog was clipped and effectively invisible. The control now renders its popover through `createPortal` to `document.body` with `position: fixed`, anchored to the trigger and fitted to the viewport via `fitMenuToViewport` (the established path/menu pattern); it closes on outside pointerdown, Escape, scroll and resize, and the outside-click check also covers the portaled panel so checkbox clicks are not treated as dismissal. Sizing: the trigger is now a 28x28 icon button matching the neighbouring text button's `min-height: 28px`, with the 16px glyph centered. Added `ChatOutputFilterControl.test.tsx` which proves the trigger opens the dialog (aria-expanded, role=dialog visible, checkbox change reported). Verified: `pnpm check` clean, the new test (2) passes, and the whole `pnpm test:chat` suite (46 files, 294 tests) passes.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:08",
@@ -21,7 +21,7 @@
     },
     "state": "finished",
     "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
-    "updated_at": "2026-10-09 16:41:40"
+    "updated_at": "2026-10-09 16:45:38"
   },
   "deleted": false,
   "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",
