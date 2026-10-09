@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"desktop/src/chat/modelCallChannels.ts\",\"desktop/src/chat/chatOutputFilter.ts\",\"desktop/src/chat/chatOutputFilter.test.ts\",\"desktop/src/chat/ModelCallBlock.tsx\",\"desktop/src/chat/useOlderChatEvents.ts\",\"desktop/src/chat/useChatRuntime.ts\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/eventWindow.test.tsx\"]",
-    "completed_at": "2026-10-09 17:01:19",
-    "completion_memo": "Two follow-up fixes to the Chat output filter. (1) Empty Agent blocks: extracted the model-call channel helpers into a pure `modelCallChannels.ts` (`isModelCallSpan`, `modelCallAssistantOutput`, new `modelCallReasoning`) and taught `filterTimelineItems` that a model-call span is not a standalone thinking entry: it is never dropped by the `kind === \"thinking\"` rule (a reasoning-bearing model-call span is projected as `kind: \"thinking\"` and also carries the final answer), and it is dropped whole only when its reasoning was its entire human-readable content (reasoning present, assistant output empty). This removes the blocks the user saw and also fixes a latent bug where the kind rule alone could have removed a model-call span together with its answer. (2) On-demand loading under the filter: `useOlderChatEvents` now takes the same `filterItems` predicate the transcript uses and applies it to both the previously visible feed and each candidate page, so its \"did we gain earlier activity?\" loop keeps fetching while the filter hides the pages; `useChatRuntime` gained an optional third `filterItems` parameter (default identity) and `ChatWorkspaceScreen` passes its `outputFilter`-derived predicate. Verified: `pnpm check` clean; `pnpm build` (`tsc --noEmit && vite build`) succeeds; new/updated tests pass — `chatOutputFilter.test.ts` (5, incl. keep-answer/drop-empty model call), `ModelCallBlock.test.tsx` (6), `eventWindow.test.tsx` (5, incl. a new test proving the loader reads a second page only when tools are hidden: calls 1 vs 2), `ChatOutputFilterControl.test.tsx` (2); and the whole `pnpm test:chat` suite (46 files, 296 tests) passes. A repo-wide case-insensitive stem scan is clean.",
+    "changed_files": "[\"desktop/src/chat/ChatOutputFilterControl.tsx\",\"desktop/src/chat/ChatOutputFilterControl.test.tsx\"]",
+    "completed_at": "2026-10-09 17:11:19",
+    "completion_memo": "Follow-up fix: the filter panel closed whenever the Chat updated, so it could not be used while the agent was running. Cause: the control registered `window.addEventListener(\"scroll\", reposition, true)` with capture, so the transcript's own auto-scroll during a Run (scroll events do not bubble but are observed in the capture phase at window) dismissed the panel. Removed the scroll listener entirely; the trigger lives in the fixed header, so normal transcript scrolling must not dismiss it. The resize listener now re-anchors the portal (recomputes placement from the trigger and popup rects via fitMenuToViewport) instead of closing. Closure behavior is unchanged for outside pointerdown and Escape. Added a regression test to ChatOutputFilterControl.test.tsx that opens the panel and dispatches window/document scroll events, asserting it stays open. Verified: `pnpm check` clean, ChatOutputFilterControl.test.tsx (3) passes, and the whole pnpm test:chat suite (46 files, 297 tests) passes.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:08",
@@ -21,7 +21,7 @@
     },
     "state": "finished",
     "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
-    "updated_at": "2026-10-09 17:01:19"
+    "updated_at": "2026-10-09 17:11:19"
   },
   "deleted": false,
   "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",

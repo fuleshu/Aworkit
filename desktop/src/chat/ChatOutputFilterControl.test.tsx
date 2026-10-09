@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatOutputFilter } from "./ChatOutputFilterControl";
@@ -43,6 +43,28 @@ describe("ChatOutputFilter", () => {
       screen.getByRole("button", {
         name: "Chat output filter (hiding reasoning)",
       }),
+    ).toBeVisible();
+  });
+
+  it("stays open while the transcript scrolls during a Run", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatOutputFilter
+        value={{ thinking: true, tools: true }}
+        onChange={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Chat output filter" }));
+    const dialog = screen.getByRole("dialog", { name: "Chat output filter" });
+    expect(dialog).toBeVisible();
+
+    // Streaming content scrolls the timeline; the panel must survive that.
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+      document.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Chat output filter" }),
     ).toBeVisible();
   });
 });

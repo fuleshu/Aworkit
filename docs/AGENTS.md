@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=3732007229236199 -->
+<!-- adashi:generated revision=558046965859557 -->
 # Architecture — `docs` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
@@ -12,6 +12,7 @@ Desktop App Shell & Navigation, Settings & Capability Resolution, Chat/Run Lifec
 
 Bound here:
 - file `docs/agent-prefix-cache.md`
+
 
 Markdown design specifications:
 

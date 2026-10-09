@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=3732007229236199 -->
+<!-- adashi:generated revision=558046965859557 -->
 # Architecture — `desktop/src-tauri/src/runtime/pipeline/tests` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

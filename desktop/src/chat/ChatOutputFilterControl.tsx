@@ -73,17 +73,35 @@ export function ChatOutputFilter({ value, onChange }: Props): React.JSX.Element 
         close(true);
       }
     };
-    // A moved anchor would strand the portal, so any scroll or resize closes it.
-    const reposition = () => close(false);
+    // The trigger sits in the fixed header, so ordinary transcript scrolling
+    // (which fires during a Run) must not dismiss the panel. Only a window
+    // resize can move it, and then the panel is re-anchored, not closed.
+    const reposition = () => {
+      const triggerBounds = trigger.current?.getBoundingClientRect();
+      const popupBounds = popup.current?.getBoundingClientRect();
+      if (triggerBounds === undefined || popupBounds === undefined) return;
+      anchor.current = {
+        right: triggerBounds.right,
+        bottom: triggerBounds.bottom,
+      };
+      setPlacement(
+        fitMenuToViewport(
+          {
+            left: triggerBounds.right - popupBounds.width,
+            top: triggerBounds.bottom + 4,
+          },
+          popupBounds.width,
+          popupBounds.height,
+        ),
+      );
+    };
     document.addEventListener("pointerdown", dismiss);
     document.addEventListener("keydown", escape);
     window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, true);
     return () => {
       document.removeEventListener("pointerdown", dismiss);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
     };
   }, [open, close]);
 
