@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[]",
-    "completed_at": null,
-    "completion_memo": "",
+    "changed_files": "[\"desktop/src/chat/composer.ts\",\"desktop/src/chat/ChatComposer.tsx\",\"desktop/src/chat/ChatWorkspaceScreen.tsx\",\"desktop/src/chat/chat.test.ts\",\"desktop/src/chat/composerSubmission.test.tsx\",\"desktop/src/styles.css\"]",
+    "completed_at": "2026-10-09 16:05:49",
+    "completion_memo": "Send is no longer disabled by workflow/model readiness, and every remaining disable is explained on screen. `composer.ts::canSubmit` dropped the `workflowReadinessError`/`workflowChecking` conditions and the `ComposerReadiness` parameter entirely (workflow/model readiness is not a disable condition); the empty-draft reason is now the exported `emptyDraftReason` so the UI can treat it as self-evident. `ChatComposer.tsx` renders any other `disabledReason` as a visible `role=\"status\"` line with an `aria-describedby` link from the button, and renders a `role=\"alert\"` warning notice when `workflowReadinessError` is set while keeping Send enabled and its title carrying the rule+remedy; the core still refuses a start with the same reason, which already reaches the status bar. `ChatWorkspaceScreen.tsx` no longer tracks/forwards `workflowChecking` (the removed gate); the readiness effect only updates the notice. Added `.composer-notices`/`.composer-notice`/`-warning` styles. Tests: `chat.test.ts` updated (readiness is no longer a canSubmit concern) and a new `composerSubmission.test.tsx` case proves Send stays enabled and the rule+remedy is announced for a non-executable workflow verdict. Verified: `pnpm check` (tsc) clean and the whole `pnpm test:chat` suite (44 files, 287 tests) passes.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:04",
@@ -20,9 +20,9 @@
     "project_id": {
       "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
     },
-    "state": "todo",
+    "state": "finished",
     "title": "Never disable the Chat submit button without a visible reason; surface workflow/model readiness",
-    "updated_at": "2026-10-09 15:53:04"
+    "updated_at": "2026-10-09 16:05:49"
   },
   "deleted": false,
   "identity": "9cdb3ae0-ac1c-47b0-8a85-4a7b99649373",

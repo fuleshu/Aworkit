@@ -213,7 +213,6 @@ export function ChatWorkspaceScreen({
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
     null,
   );
-  const [workflowChecking, setWorkflowChecking] = useState(nativeWorkflowPort !== null);
   const [workflowReadinessError, setWorkflowReadinessError] = useState<
     string | null
   >(null);
@@ -501,34 +500,30 @@ export function ChatWorkspaceScreen({
     // point at now (renamed, edited, or deleted) cannot make that Chat
     // unrunnable, so readiness is a first-input concern only.
     if (snapshot?.chat.lockedWorkflow) {
-      setWorkflowChecking(false);
       setWorkflowReadinessError(null);
       return;
     }
     if (nativeWorkflowPort === null || selectedWorkflowId === null) {
-      setWorkflowChecking(false);
       setWorkflowReadinessError(null);
       return;
     }
     let current = true;
-    setWorkflowChecking(true);
     setWorkflowReadinessError(null);
     void nativeWorkflowPort
       .snapshot(selectedWorkflowId)
       .then(({ editable, executionVerdict }) => {
         if (!current) return;
         if (!editable) {
-          setWorkflowChecking(false);
           setWorkflowReadinessError(
             "The selected workflow uses a read-only schema and cannot run.",
           );
           return;
         }
-        // The gate is the core's verdict for the workflow the user selected,
-        // never the library default: an unrelated broken default workflow must
-        // not disable Send. The verdict names the rule and the fix.
+        // The notice names the core's verdict for the workflow the user
+        // selected, never the library default: an unrelated broken default
+        // workflow must not warn about this Chat. Send stays enabled and the
+        // core still refuses a start with the same rule and remedy.
         if (executionVerdict != null && !executionVerdict.executable) {
-          setWorkflowChecking(false);
           const rule = executionVerdict.rule ?? "this workflow cannot run";
           setWorkflowReadinessError(
             executionVerdict.remedy != null && executionVerdict.remedy !== ""
@@ -537,11 +532,9 @@ export function ChatWorkspaceScreen({
           );
           return;
         }
-        setWorkflowChecking(false);
       })
       .catch(() => {
         if (current) {
-          setWorkflowChecking(false);
           setWorkflowReadinessError(
             "The selected workflow could not be checked; resynchronize before sending.",
           );
@@ -865,7 +858,6 @@ export function ChatWorkspaceScreen({
             pending={runtime.loading || ((runtime.pendingCommandIds.size > 0 || snapshot.activeChatIds?.includes(chat.chatId) === true) && !runtime.maintenancePending && runtime.queuedMaintenanceInputs.length === 0)}
           workflows={workflows}
           defaultWorkflowId={defaultWorkflowId}
-          workflowChecking={workflowChecking}
           workflowReadinessError={workflowReadinessError}
           nextCommandId={() => commandIds.createIntent("enqueue").commandId}
           onWorkflowChange={setSelectedWorkflowId}

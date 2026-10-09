@@ -1543,6 +1543,26 @@ pre {
   font-size: var(--aw-font-caption);
   justify-content: space-between;
 }
+/* A reason shown next to Send instead of hidden in a disabled tooltip. The
+   warning surface carries a workflow/model readiness notice. */
+.composer-notices {
+  display: grid;
+  gap: 3px;
+}
+.composer-notice {
+  background: var(--aw-inset);
+  border-left: 2px solid var(--aw-divider);
+  border-radius: 3px;
+  color: var(--aw-secondary);
+  font-size: var(--aw-font-caption);
+  margin: 0;
+  padding: 3px 8px;
+}
+.composer-notice-warning {
+  background: var(--aw-warning-surface);
+  border-left-color: var(--aw-warning);
+  color: var(--aw-text);
+}
 .composer-meta label {
   align-items: center;
   display: flex;

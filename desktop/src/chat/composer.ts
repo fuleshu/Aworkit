@@ -10,10 +10,8 @@ export interface ComposerState {
   readonly imeComposing: boolean;
 }
 
-export interface ComposerReadiness {
-  readonly workflowChecking?: boolean;
-  readonly workflowReadinessError?: string | null;
-}
+/** The one disabled reason that needs no explanation because the draft is empty. */
+export const emptyDraftReason = "Enter a message or add an image before sending.";
 
 export const emptyComposer: ComposerState = {
   draft: "",
@@ -31,32 +29,29 @@ export function updateComposer(
   return { ...state, ...patch };
 }
 
+/**
+ * The reason Send cannot run, or null.
+ *
+ * Workflow/model readiness is deliberately not a disable condition: a workflow
+ * that cannot start is reported by the core refusal and by the composer's own
+ * readiness notice, never by a dead button the user cannot explain.
+ */
 export function canSubmit(
   state: ComposerState,
   chat: ChatProjection,
-  readiness: ComposerReadiness = {},
 ): string | null {
   if (chat.recoveryPending)
     return "Continue or stop the interrupted reply to send a new message.";
   if (state.imeComposing) return "Finish IME composition before sending.";
   if (state.draft.trim() === "" && state.attachments.length === 0)
-    return "Enter a message or add an image before sending.";
+    return emptyDraftReason;
   if (chat.disabledReason !== undefined) return chat.disabledReason;
   if (chat.phase === "awaiting_answer")
     return "Answer or skip the agent's question to continue this Run.";
   if (["cancelled", "completed", "failed"].includes(chat.phase))
     return "This Chat is terminal. Start a new Chat to send another message.";
-  if (!chat.lockedWorkflow) {
-    if (state.workflowId === "")
-      return "Select a saved workflow before sending.";
-    if (
-      readiness.workflowReadinessError !== null &&
-      readiness.workflowReadinessError !== undefined
-    )
-      return readiness.workflowReadinessError;
-    if (readiness.workflowChecking)
-      return "Checking the saved workflow before sending.";
-  }
+  if (!chat.lockedWorkflow && state.workflowId === "")
+    return "Select a saved workflow before sending.";
   return null;
 }
 
@@ -64,9 +59,8 @@ export function submitIntent(
   state: ComposerState,
   chat: ChatProjection,
   commandId: string,
-  readiness: ComposerReadiness = {},
 ): ChatIntent {
-  const reason = canSubmit(state, chat, readiness);
+  const reason = canSubmit(state, chat);
   if (reason !== null) throw new Error(reason);
   return chat.lockedWorkflow
     ? {

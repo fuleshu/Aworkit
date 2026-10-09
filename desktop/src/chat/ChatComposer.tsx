@@ -14,6 +14,7 @@ import type { ProjectDraft } from "./createProject";
 import {
   canSubmit,
   emptyComposer,
+  emptyDraftReason,
   submitIntent,
   updateComposer,
   type ComposerState,
@@ -53,7 +54,6 @@ interface ChatComposerProps {
   readonly pending: boolean;
   readonly workflows?: readonly WorkflowOption[];
   readonly defaultWorkflowId?: string | null;
-  readonly workflowChecking?: boolean;
   readonly workflowReadinessError?: string | null;
   readonly nextCommandId: () => string;
   readonly onWorkflowChange?: (workflowId: string) => void;
@@ -90,7 +90,6 @@ export function ChatComposer({
   pending,
   workflows,
   defaultWorkflowId,
-  workflowChecking = false,
   workflowReadinessError = null,
   nextCommandId,
   onWorkflowChange,
@@ -202,20 +201,26 @@ export function ChatComposer({
       ? "Adding images…"
       : commandPending
         ? "The previous command is awaiting a committed core event."
-        : canSubmit(state, chat, {
-            workflowChecking,
-            workflowReadinessError,
-          });
+        : canSubmit(state, chat);
+  // The empty draft is self-evident; every other reason is shown next to the
+  // control instead of hiding in a disabled button's tooltip.
+  const visibleDisabledReason =
+    disabledReason !== null && disabledReason !== emptyDraftReason
+      ? disabledReason
+      : null;
+  // A workflow whose model is not ready no longer disables Send. It is
+  // announced here, and the core still refuses the start with the same rule
+  // and remedy, which also reaches the status bar.
+  const readinessNotice =
+    !chat.lockedWorkflow && workflowReadinessError
+      ? workflowReadinessError
+      : null;
   const send = async () => {
     if (disabledReason !== null) return;
     setSubmitting(true);
     try {
       const intent =
-        retryIntent ??
-        submitIntent(state, chat, nextCommandId(), {
-          workflowChecking,
-          workflowReadinessError,
-        });
+        retryIntent ?? submitIntent(state, chat, nextCommandId());
       setRetryIntent(intent);
       if (await onSubmit(intent)) {
         confirmSubmission(intent.commandId);
@@ -437,9 +442,16 @@ export function ChatComposer({
             <button
               className="primary-action composer-submit"
               aria-label={onStop ? stopRequested ? "Stopping response" : "Stop response" : chat.lockedWorkflow ? "Queue" : "Send"}
+              aria-describedby={
+                readinessNotice
+                  ? "composer-readiness"
+                  : visibleDisabledReason
+                    ? "composer-reason"
+                    : undefined
+              }
               disabled={onStop ? stopDisabled : disabledReason !== null}
               title={
-                onStop ? stopRequested ? "Stopping the current response" : "Stop the current response" : disabledReason ??
+                onStop ? stopRequested ? "Stopping the current response" : "Stop the current response" : readinessNotice ?? disabledReason ??
                 (chat.lockedWorkflow ? "Queue this input" : "Start this Chat")
               }
               type="button"
@@ -462,6 +474,20 @@ export function ChatComposer({
             ))}
           </ol>
         </details>
+      )}
+      {(readinessNotice || visibleDisabledReason) && (
+        <div className="composer-notices">
+          {readinessNotice && (
+            <p className="composer-notice composer-notice-warning" id="composer-readiness" role="alert">
+              {readinessNotice}
+            </p>
+          )}
+          {visibleDisabledReason && (
+            <p className="composer-notice" id="composer-reason" role="status">
+              {visibleDisabledReason}
+            </p>
+          )}
+        </div>
       )}
       <div className="composer-footer">
         {status}

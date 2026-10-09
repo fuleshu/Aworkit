@@ -185,20 +185,15 @@ describe("Milestone 08 Chat and Run details experience", () => {
         { ...draftChat, disabledReason: "Configure an Exact model tier." },
       ),
     ).toBe("Configure an Exact model tier.");
+    // Workflow readiness is not a canSubmit concern: Send stays enabled and the
+    // composer shows a readiness notice, while the core remains the authority
+    // that refuses a start with the same rule and remedy.
     expect(
       canSubmit(
         { ...emptyComposer, draft: "read it", projectId: null },
         { ...draftChat, projectId: null },
-        { workflowChecking: false },
       ),
     ).toBeNull();
-    expect(
-      canSubmit(
-        { ...emptyComposer, draft: "read it", projectId: "project.atlas" },
-        { ...draftChat, projectId: null },
-        { workflowChecking: true },
-      ),
-    ).toBe("Checking the saved workflow before sending.");
     expect(
       canSubmit(
         { ...emptyComposer, draft: "later" },

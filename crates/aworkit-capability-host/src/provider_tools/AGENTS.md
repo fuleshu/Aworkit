@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=8036171163279690 -->
+<!-- adashi:generated revision=173102704290380 -->
 # Architecture — `crates/aworkit-capability-host/src/provider_tools` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.
