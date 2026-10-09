@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=7250457621792541 -->
+<!-- adashi:generated revision=8036171163279690 -->
 # Architecture — `desktop/src-tauri/src/runtime/graph_pass` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

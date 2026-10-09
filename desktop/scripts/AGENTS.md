@@ -1,5 +1,5 @@
 <!-- adashi:architecture:begin -->
-<!-- adashi:generated revision=3755313086541010 -->
+<!-- adashi:generated revision=8036171163279690 -->
 # Architecture — `desktop/scripts` (generated)
 Generated from the Adashi design model; do not edit, change the model.
 These responsibilities are already owned here: extend them, do not duplicate.

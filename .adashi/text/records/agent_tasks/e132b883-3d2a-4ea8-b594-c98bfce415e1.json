@@ -1,0 +1,30 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/history.rs\"]",
+    "completed_at": "2026-10-09 15:56:07",
+    "completion_memo": "Made the Chat-history sort unit-independent. `sortable_time` in desktop/src-tauri/src/runtime/history.rs now normalises any epoch-seconds label to milliseconds before comparing (labels below EPOCH_MILLISECOND_CEILING = 1e11 are multiplied by 1000 with saturating_mul), so the sort no longer depends on whether `history::now_label` (seconds) or `run_events::now_label` (milliseconds) stamped the newest event of a Chat. Malformed labels still sort to 0 and never panic. This fixes already-persisted mixed-unit streams without a migration. Verified with the new focused unit test `runtime::history::tests::sortable_time_orders_seconds_and_milliseconds_on_one_scale` (cargo test --lib sortable_time: 1 passed). Note: one unrelated pre-existing test, runtime::service::comfyui::tests::fallback_ids_are_identifier_safe_and_bounded, fails on Linux because it hard-codes a Windows path; it is untouched by this task.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:52:59",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Symptom: the Chat history list is not always newest-first.\n",
+        "Root cause (researched): `history_entries` sorts by `sortable_time(summary.updated_at)` descending (`desktop/src-tauri/src/runtime/history.rs:1666-1687`; helper at 2473-2475 parses the label as u64). `summary.updated_at` comes from `LocalHistoryStore::latest_event_time` (crates/aworkit-local-store/src/ledger/queries.rs:7-21), i.e. the `createdAt` of the highest-sequence event. `createdAt` is written in two different units into the same stream: seconds by `history.rs::now_label` (2342-2347) and milliseconds by `run_events.rs::now_label` (1407-1412). A 13-digit millisecond label always outranks a 10-digit second label, so rows jump positions depending on which producer wrote the newest event.\n",
+        "Fix: make ordering unit-independent. Normalise the label in the sort path so epoch seconds and epoch milliseconds compare correctly (and keep the tie-break stable). Fix the shared label producer so new events use one unit. Keep the change backward compatible with already-persisted streams.\n",
+        "Verification: focused Rust unit test for the comparator/`sortable_time` covering seconds, milliseconds and unparseable labels; run only the affected crate's tests."
+      ]
+    },
+    "id": 102304023343,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix Chat history ordering: normalise the mixed createdAt units the sort key compares",
+    "updated_at": "2026-10-09 15:56:07"
+  },
+  "deleted": false,
+  "identity": "e132b883-3d2a-4ea8-b594-c98bfce415e1",
+  "schemaVersion": 1
+}

@@ -1,0 +1,30 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/service.rs\",\"desktop/src-tauri/src/runtime/service/context_model.rs\",\"desktop/src-tauri/src/runtime/service/concurrent.rs\",\"desktop/src-tauri/src/runtime/service/tests/context_model.rs\",\"desktop/src/chat/useContextModel.ts\"]",
+    "completed_at": "2026-10-09 16:02:21",
+    "completion_memo": "Removed the multi-second block from the new-Chat path. Root cause: `DesktopRuntime::context_model` called `discover_context_window`, a real provider HTTP `discover_models` with a 5s timeout, synchronously while holding the single global runtime mutex; the renderer resolves the draft's context model right after every Chat open, so new Chat (and every command behind it) waited for the network. Changes: (1) `context_model` now returns the frozen/saved context window or, when unknown, an immediate `None` after scheduling discovery; discovery runs on a detached thread using the cloned `Arc<dyn ProviderPort>` and credential, so it never holds the runtime lock. A shared `Arc<Mutex<HashMap<String, ContextWindowLookup>>>` cache on `DesktopRuntime` records Pending (dedupes concurrent renders) then Known(Option<u64>); the per-command worker clone shares the Arc. (2) `discover_context_window` (the start path that freezes the window) now consults the cache first and populates it, so a warmed draft freezes its window without a second request. (3) The cache is cleared on `settings_commit` and `settings_v2_commit` so a provider/model edit cannot serve a stale window. (4) `useContextModel` performs a few bounded retries (1.2s/2.4s/5s) so the asynchronously discovered window still reaches the UI without blocking. The `ChatHistory` full index fold and `create_chat`'s per-chat head queries were evaluated and left unchanged: they are CPU/SQLite-bounded, not the multi-second stall, and caching them would risk read-model consistency. Verified: `runtime::service::tests::context_model::discovers_capacity_off_the_command_path_and_freezes_it_without_editing_settings` (rewritten for the non-blocking contract; passes), `runtime::service::tests::credential_journal_finishes_replacement_after_settings_commit`, all 31 `settings_v2` tests, `src/chat/useContextModel.test.ts` (3), `src/chat/ContextUsage.test.tsx` (13), and `pnpm check` (tsc) all pass.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:53:03",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Symptom: creating a new Chat sometimes takes very long to initialise; it should start immediately.\n",
+        "Root cause (researched, ranked): all native commands share one global runtime mutex (`main.rs:41-56`, `concurrency.rs:83-119`). The strongest \"very long\" candidate is `desktop_context_model` → `ChatWorkspaceScreen` calls `useContextModel` for the draft → `runtime/service/context_model.rs:8-33` performs a real provider HTTP `discover_models` with a 5s timeout *inside the mutex* when settings have no context window. Secondary: the whole chat-history index is re-folded and one SQL head query per chat is run on every new chat and every 2s snapshot (`history.rs` create_chat 1419-1465 / `history_index::load` 72-125), and the per-workflow execution verdict recomputes on each chat activation.\n",
+        "Fix: stop the new-Chat path waiting on non-essential resolution. Specifically (a) make context-window discovery non-blocking for a draft Chat — cache per provider/model and/or bound it so it can never hold the runtime lock for seconds during Chat creation / initial render; (b) avoid redundant full index loads where a cached index state is already available; (c) ensure the new-Chat render path does not sequence behind workflow verdict resolution. Keep the readiness behaviour the composer needs, only remove the blocking.\n",
+        "Verification: focused tests for the touched Rust modules; confirm `new_chat` returns without a multi-second context-model call."
+      ]
+    },
+    "id": 107473642431,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make new-Chat initialisation immediate: remove the blocking workflow/context-model work",
+    "updated_at": "2026-10-09 16:02:21"
+  },
+  "deleted": false,
+  "identity": "a359e263-5e9e-4215-a6a8-87f3eb66b8c3",
+  "schemaVersion": 1
+}

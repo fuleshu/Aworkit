@@ -74,6 +74,7 @@ impl DesktopRuntime {
             cancellation_controller: self.cancellation_controller.clone(),
             chat_commands: self.chat_commands.clone(),
             worker_feedback: Some(WorkerFeedback::default()),
+            context_windows: self.context_windows.clone(),
         };
         Ok(ChatCommandWorker {
             runtime,

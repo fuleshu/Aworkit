@@ -1,0 +1,32 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:53:07",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Feature: tell the user when a model finishes.\n",
+        "Part A — Aworkit is not in the foreground: show an OS/desktop notification (Windows taskbar/app-icon surface). Plumbing already exists: `native_notify` command (`main.rs:121`) → `presentation::show_notification` using `tauri-plugin-notification` (`presentation.rs:157-167`), and `defaultAdapters.ts:18` calls it only when `document.hidden`. Extend this so completion of a background Chat raises an OS notification whenever the app window is not focused (not only when the document is hidden), with a useful title/body.\n",
+        "Part B — Aworkit is focused but the Chat is not the active one: the history list currently swaps the running spinner for a plain `○` as soon as `busy` is false (`NavigationPane.tsx:296-302`). Instead the row must show a green blinking icon after a Run completes elsewhere, until that Chat is made active.\n",
+        "Implementation notes (researched): per-Chat completion is observable from `snapshot.activeChatIds` transitions (`concurrency.rs:17-25`, `service/concurrent.rs:112`); there is no persisted unread field (`ChatHistoryEntry` types.ts:50-62). Track unread Chat ids in the shell (frontend session state), set one when a Chat leaves `activeChatIds` while not selected, and clear it when the Chat is selected (`App.tsx:285-289`). Add a `.chat-unread-icon` style to `styles.css` beside `.chat-busy-icon` (552-566) with a reduced-motion fallback.\n",
+        "Answer the user's question in the final report: Tauri's OS abstraction for this is the official Notification plugin (`tauri-plugin-notification`), which shows a native toast/notification; there is no cross-platform taskbar-badge API, so the plugin is the supported surface. Verify OS notification capability is granted.\n",
+        "Verification: frontend unit test for the unread-transition logic and the icon rendering; keep native notification test script out of scope."
+      ]
+    },
+    "id": 113021352166,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Notify on Chat completion: OS notification when unfocused and a green blinking unread icon in the history list",
+    "updated_at": "2026-10-09 15:53:07"
+  },
+  "deleted": false,
+  "identity": "a2680fa2-b2aa-4a41-bf3b-280d365ce2d2",
+  "schemaVersion": 1
+}

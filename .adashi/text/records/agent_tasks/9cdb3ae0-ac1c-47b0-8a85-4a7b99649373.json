@@ -1,0 +1,30 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:53:04",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Symptom: with a workflow whose model is not configured, the Chat submit button is disabled and the user is never told why. The user does not accept a silently disabled Send button.\n",
+        "Root cause (researched): `canSubmit` (`desktop/src/chat/composer.ts:34-61`) returns `workflowReadinessError` (line 52-56) and `workflowChecking` (57-58); `ChatComposer.tsx:199-208` turns the return value into `disabledReason` and renders it **only** as the disabled button's `title` (437-455). The readiness data is computed in `ChatWorkspaceScreen.tsx:498-553` from `workflow_snapshot`'s `executionVerdict.rule/remedy` (service.rs:626-703) but has no visible surface. A refused start would already produce a visible error notice via `useChatRuntime`/`useChatErrorNotices`, but the disabled button prevents it.\n",
+        "Fix: (1) stop disabling Send for workflow readiness/checking — the button must be enabled whenever a message can be attempted; a bad workflow is reported by the core refusal and must not be a dead end. (2) Always render the remaining disabled reasons visibly next to the control (not only as a tooltip), with `aria-describedby`. (3) Surface workflow/model readiness as a clear in-UI warning (inline composer notice and/or status-bar condition notice) carrying the rule+remedy, so the user knows exactly what to fix. Keep genuinely inapplicable states (empty draft, terminal Chat, recovery pending, awaiting answer) failing safely, but explained.\n",
+        "Verification: update/extend `chat.test.ts` (canSubmit) and `composerSubmission.test.tsx` to assert the readiness condition no longer disables Send and that a visible reason is rendered."
+      ]
+    },
+    "id": 110746787580,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Never disable the Chat submit button without a visible reason; surface workflow/model readiness",
+    "updated_at": "2026-10-09 15:53:04"
+  },
+  "deleted": false,
+  "identity": "9cdb3ae0-ac1c-47b0-8a85-4a7b99649373",
+  "schemaVersion": 1
+}

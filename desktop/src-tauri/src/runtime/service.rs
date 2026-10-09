@@ -19,7 +19,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -334,6 +334,11 @@ pub struct DesktopRuntime {
     management_repair: ManagementRepairGateway,
     processed: HashMap<String, ProcessedCommand>,
     cancellation_controller: WorkflowCancellationController,
+    /// Best-effort context-window discovery, keyed by provider identity and
+    /// remote model id. Discovery never runs on the command path: a miss returns
+    /// unknown immediately and fills this cache on a background thread, so
+    /// opening a new Chat can never wait on a provider HTTP call.
+    context_windows: Arc<Mutex<HashMap<String, context_model::ContextWindowLookup>>>,
 }
 
 impl DesktopRuntime {
@@ -475,6 +480,7 @@ impl DesktopRuntime {
             management_repair: ManagementRepairGateway::default(),
             processed: HashMap::new(),
             cancellation_controller,
+            context_windows: Default::default(),
         };
         let mut warnings = runtime
             .credential_journal
@@ -2764,6 +2770,8 @@ impl DesktopRuntime {
         }
         input.provider.base_url = input.provider.base_url.trim().to_owned();
         input.provider.model = input.provider.model.trim().to_owned();
+        // A provider or model edit can change what discovery would report.
+        self.clear_context_window_cache();
         let previous = self.documents.settings().clone();
         let previous_provider = self.documents.legacy_provider();
         let frozen_credential_refs = self.active_frozen_credential_refs()?;
@@ -2995,6 +3003,9 @@ impl DesktopRuntime {
                 }
             }
         }
+        // A full Settings save can rename, move or reconfigure a provider, so
+        // cached context-window discoveries must not outlive it.
+        self.clear_context_window_cache();
         let previous = self.documents.settings().clone();
         // The remembered New Chat selections and the window placement are
         // host-owned. A generic full-document save that carries neither keeps the

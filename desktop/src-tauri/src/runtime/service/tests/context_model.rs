@@ -1,14 +1,30 @@
 use super::*;
 
 #[test]
-fn discovers_capacity_for_drafts_and_freezes_it_without_editing_settings() {
+fn discovers_capacity_off_the_command_path_and_freezes_it_without_editing_settings() {
     let root = TempDir::new().unwrap();
     let mut desktop = runtime(&root, Arc::new(FixtureProvider::new()));
     configure(&mut desktop);
     let before = desktop.snapshot(0).unwrap();
     let settings = desktop.settings_v2_snapshot();
-    let model = desktop.context_model(&before.chat.chat_id, Some("workflow.simple-chat")).unwrap().unwrap();
-    assert_eq!(model.context_window, Some(32_768));
+
+    // The draft read must never wait on the provider. The first call returns
+    // immediately (possibly without a window) and warms the cache in the
+    // background; poll the command until discovery lands, exactly as the
+    // renderer's bounded retry does.
+    let mut window = None;
+    for _ in 0..400 {
+        let model = desktop
+            .context_model(&before.chat.chat_id, Some("workflow.simple-chat"))
+            .unwrap()
+            .unwrap();
+        if let Some(value) = model.context_window {
+            window = Some(value);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(window, Some(32_768));
     assert_eq!(desktop.settings_v2_snapshot().version, settings.version);
     assert!(desktop.context_model("chat.unrelated", Some("workflow.simple-chat")).is_err());
     desktop.command(send("capacity.start", 0, "Hello")).unwrap();

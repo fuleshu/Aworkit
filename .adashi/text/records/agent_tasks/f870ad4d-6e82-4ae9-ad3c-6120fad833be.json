@@ -1,0 +1,29 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[]",
+    "completed_at": null,
+    "completion_memo": "",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:53:08",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Feature: a filter icon button at the top of the Chat opens a dropdown with a checkbox per entry — `thinking` and `tools`. Unchecked entries are not displayed; toggling must update already-rendered content; with both unchecked only user input and model output remain.\n",
+        "Implementation notes (researched): render pipeline is `timelineItems` (`ChatWorkspaceScreen.tsx:241-244`, must stay unfiltered for the question dialog / Run Details at 932) → `feedItems` (245) → `ConversationTimeline` → `presentTimelineItems` (ConversationTimeline.tsx:65). Classification: standalone reasoning is `kind===\"thinking\"` (ConversationTimeline.tsx:499); tool/MCP are `kind===\"tool\"` (523) / `kind===\"mcp\"` (generic card). Crucially a model-call span with streamed reasoning is rendered by `ModelCallBlock` (255) which contains the reasoning bubble *and* the final assistant answer, so a naive `kind` filter would delete the answer — thread a `hideThinking` prop into `ModelCallBlock` instead and hide only its reasoning bubble. Add the control to `.run-actions` in the Chat header (`ChatWorkspaceScreen.tsx:715`), reusing the `TodoControl` popover pattern (outside-click/Escape close, aria-expanded/controls). No production localStorage exists, so keep the filter in React state (session-scoped).\n",
+        "Verification: extend `ModelCallBlock.test.tsx` / timeline tests for hiding thinking inside a model call and hiding tool rows, and assert the user message + assistant answer remain."
+      ]
+    },
+    "id": 115014952165,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "todo",
+    "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
+    "updated_at": "2026-10-09 15:53:08"
+  },
+  "deleted": false,
+  "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",
+  "schemaVersion": 1
+}

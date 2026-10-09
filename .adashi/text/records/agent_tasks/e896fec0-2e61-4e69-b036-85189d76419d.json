@@ -1,0 +1,30 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/images.rs\",\"desktop/src-tauri/src/runtime/tool_loop/comfyui_tool.rs\",\"desktop/src-tauri/src/runtime/tool_loop/comfyui_tests.rs\"]",
+    "completed_at": "2026-10-09 15:57:46",
+    "completion_memo": "The ComfyUI tool result now carries complete absolute paths. Added `ChatImageStore::publish_media` (runtime/images.rs), which writes the produced bytes as a named file with its real extension and ComfyUI subfolder under `<profile>/media/comfyui/<subfolder>/<filename>`, hard-linking the immutable blob where the filesystem allows it and falling back to a copy, and never clobbering an existing different file (a colliding name gains the content hash). `publish_media` sanitises every path component so a subfolder or filename cannot escape the media directory. Added `ChatImageStore::blob_path` for the content-addressed evidence blob. `run_comfyui_tool` (runtime/tool_loop/comfyui_tool.rs) now reports `source.outputPath` (the named media file), `source.storedPath` (the immutable blob), keeps endpoint/workflowPath/promptId/filename/subfolder, and names the path in the human summary. A failed named export degrades to the always-present blob and reports `outputPathError` instead of failing the call (failure-policy compliant). Deliberately did not add the ComfyUI server-side path: `install_path` is not part of the frozen authority binding and the endpoint may be remote, so Aworkit's own stored copy is the only path guaranteed to exist and be readable on this machine. Verified: `runtime::images::tests` (3 passed: sanitisation, collision naming, publish) and `runtime::tool_loop::comfyui_tests::a_frozen_comfyui_workflow_tool_is_admitted_and_records_its_image` (1 passed, now asserting outputPath is an absolute existing file at media/comfyui/krea_00001_.png and storedPath equals images/<id>).",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-09 15:53:01",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Symptom: after a ComfyUI run the agent receives only `filename` + `subfolder` relative to the ComfyUI server and then searches the whole computer for the generated file.\n",
+        "Root cause (researched): `FileToolDispatcherV1::run_comfyui_tool` (`desktop/src-tauri/src/runtime/tool_loop/comfyui_tool.rs:27-127`) builds the result JSON at 114-126 with `endpoint`, `workflowPath` (the input workflow), `promptId`, `filename`, `subfolder` — but no absolute path. The imported image is stored extension-less at `<app-data-root>/images/<sha256>` (`runtime/images.rs`), and the ComfyUI-server output path (`<install_path>/output/<subfolder>/<filename>`) is not derivable because `install_path` is not in the frozen tool binding (`tool_loop.rs:644-654`).\n",
+        "Fix: put a usable absolute path in the model-facing result, following the convention that produced/observed files report an absolute path (cf. `tool.files.list`/`grep` and ffmpeg's `output`). Report the absolute path of Aworkit's saved copy of the produced media (so it is valid for remote and local ComfyUI servers and readable by `tool.image.read`), and additionally report the ComfyUI server-side absolute path when the configured install path makes it derivable. Make the human-readable summary name the path. Update/extend the existing stub-server test in `comfyui_tests.rs` to assert the reported path exists.\n",
+        "Verification: focused Rust test in the desktop crate for the ComfyUI tool only."
+      ]
+    },
+    "id": 103664141848,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "ComfyUI tool: report the complete absolute output path of produced media",
+    "updated_at": "2026-10-09 15:57:46"
+  },
+  "deleted": false,
+  "identity": "e896fec0-2e61-4e69-b036-85189d76419d",
+  "schemaVersion": 1
+}

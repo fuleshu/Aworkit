@@ -20,8 +20,22 @@ export function useContextModel(read: ChatCorePort["contextModel"], chatId: stri
     if (!read || !chatId || !active) return;
     if (fallback?.contextWindow) return;
     let current = true;
-    void read(chatId, workflowId).then(model => { if (current) setResolved({ key, model }); }).catch(() => {});
-    return () => { current = false; };
+    // Capacity discovery runs off the command path so a new Chat never waits
+    // on the provider. A draft's window can therefore be unknown on the first
+    // read; a few bounded retries pick it up without blocking anything.
+    const delays = [1200, 2400, 5000];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const resolve = (attempt: number) => {
+      void read(chatId, workflowId).then(model => {
+        if (!current) return;
+        setResolved({ key, model });
+        if (model?.contextWindow == null && attempt < delays.length) {
+          timers.push(setTimeout(() => resolve(attempt + 1), delays[attempt]));
+        }
+      }).catch(() => {});
+    };
+    resolve(0);
+    return () => { current = false; timers.forEach(clearTimeout); };
   }, [read, chatId, workflowId, key, active, fallback?.contextWindow]);
   if (fallback?.contextWindow) return fallback;
   const fetched = resolved?.key === key ? resolved.model : null;
