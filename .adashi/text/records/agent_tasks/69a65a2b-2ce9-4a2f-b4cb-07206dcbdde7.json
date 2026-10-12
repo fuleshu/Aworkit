@@ -1,0 +1,29 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"crates/aworkit-capability-host/src/shell.rs\",\"desktop/src-tauri/src/runtime/graph_pass.rs\",\"desktop/src-tauri/src/runtime/documents.rs\",\"desktop/src-tauri/src/runtime/history_retention.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/external_agent_tools.rs\",\"desktop/src-tauri/src/runtime/pipeline/tests/subagent_tools.rs\",\"desktop/src-tauri/src/runtime/tool_loop/bundled_skills_tests.rs\"]",
+    "completed_at": "2026-10-12 09:41:55",
+    "completion_memo": "All rustc warnings are fixed at their cause. capability-host shell::command_arguments now marks `program` used on non-Windows builds (`#[cfg(not(windows))] let _ = program;`) since it only selects the Windows cmd.exe quoting path. graph_pass: `NodeStep::Value` no longer carries an ignored `Value` payload (both match sites used `_`; the value is read from `self.values`), `CompiledLoopV1.header_id` removed (the `loops` map is keyed by it), and the redundant `LoopRegionV1.header_id` in documents.rs removed with its construction. history_retention: `PrunedPayloadV1.kind` removed (never read; `PrunedPayloadKindV1` is still used by the pruning logic). tests: removed an unneeded `mut pipeline`, gated the Windows-only `mut setting` with `#[cfg_attr(not(windows), allow(unused_mut))]`, and dropped the unused `workspace` parameter from `fresh_configuration`. No blanket crate-level allows. Verified: `cargo check --workspace --all-targets` and the desktop crate `cargo check --all-targets` are both warning-free; `cargo test -p aworkit-capability-host` passes and the desktop `cargo test --lib` runs 628 passed / 1 ignored with only the pre-existing Windows-path ComfyUI test failing on Linux (unrelated). Remaining non-rustc notices are Vite's informational bundle-size and dual static/dynamic import suggestions in the frontend build, which are build-optimisation hints rather than code warnings.",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-12 09:41:38",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Remove every rustc warning in the repository's own crates so a normal build is clean.\n",
+        "Warnings found: (1) `unused variable: program` in crates/aworkit-capability-host/src/shell.rs:190 (used only under cfg(windows)); (2) `field 0 is never read` on `NodeStep::Value(Value)` in desktop/src-tauri/src/runtime/graph_pass.rs; (3) `field header_id is never read` on `CompiledLoopV1` and the redundant `LoopRegionV1.header_id` that fed it (documents.rs); (4) `field kind is never read` on `PrunedPayloadV1` in history_retention.rs; (5) unused `mut` in two pipeline tests; (6) unused `workspace` parameter in bundled_skills_tests.rs.\n",
+        "Fix at the cause, not with blanket allow attributes, and preserve Windows-only code paths. Verify with `cargo check --workspace --all-targets` and the desktop crate `cargo check --all-targets` (which compiles the bin, unlike `--lib`)."
+      ]
+    },
+    "id": 115657924298,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Fix all Rust compiler warnings across the workspaces",
+    "updated_at": "2026-10-12 09:41:55"
+  },
+  "deleted": false,
+  "identity": "69a65a2b-2ce9-4a2f-b4cb-07206dcbdde7",
+  "schemaVersion": 1
+}
