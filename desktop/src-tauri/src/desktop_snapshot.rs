@@ -20,7 +20,7 @@ pub async fn desktop_chat_snapshot(
             let reader = runtime.chat_feed_reader(&snapshot.chat.chat_id)?;
             (snapshot, reader)
         };
-        let page = reader.page(after_sequence, None, snapshot.through_sequence)?;
+        let page = reader.page(after_sequence, None, snapshot.through_sequence, 128)?;
         snapshot.events = page.events;
         snapshot.event_window = Some(page.window);
         Ok(snapshot)
