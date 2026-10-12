@@ -322,7 +322,7 @@ fn a_connected_external_agent_runs_from_saved_settings_and_returns_only_its_answ
     };
     let root = TempDir::new().unwrap();
     let project = subagent_project(&root);
-    let (mut pipeline, _, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    let (pipeline, _, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
     // The whole point: the target comes from real saved Settings, not from a
     // hand-injected fixture, so this covers connect -> resolve -> freeze -> run.
     let settings = connected_codex_settings(&target);

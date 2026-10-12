@@ -120,6 +120,8 @@ fn call(id: &str, tool: &str, args: Value) -> ModelToolCallV1 {
     }
 }
 fn native(id: &str) -> WorkflowToolBindingV1 {
+    // `setting` is only mutated inside the Windows-only branch below.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut setting = tool_registry::native_defaults()
         .into_iter()
         .find(|t| t.id == id)

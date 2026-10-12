@@ -132,7 +132,7 @@ pub struct GraphLoopFrameV1 {
 /// What running one node produced for the pass.
 enum NodeStep {
     /// The node settled and its value is available to successors.
-    Value(Value),
+    Value,
     /// There was nothing to do: the node already ran this pass, or its branch
     /// was not taken.
     Skipped,
@@ -311,7 +311,6 @@ pub(crate) struct CompiledGraphEdgeV1 {
 /// closes the region, and the enclosed nodes in deterministic order.
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledLoopV1 {
-    pub header_id: String,
     pub body_edge: usize,
     pub exit_edge: usize,
     pub fallback_edge: usize,
@@ -504,7 +503,6 @@ pub(crate) fn compile_graph_pass(
             (
                 header_id,
                 CompiledLoopV1 {
-                    header_id: region.header_id,
                     body_edge: region.body_edge,
                     exit_edge: region.exit_edge,
                     fallback_edge: region.fallback_edge,
@@ -702,7 +700,7 @@ impl<'a> PassMachine<'a> {
         while let Some(node_id) = queue.pop_front() {
             match self.run_node(&node_id, cancellation) {
                 NodeStep::Done(outcome) => return outcome,
-                NodeStep::Value(_) | NodeStep::Skipped => {}
+                NodeStep::Value | NodeStep::Skipped => {}
             }
         }
         self.succeeded_outcome()
@@ -809,7 +807,7 @@ impl<'a> PassMachine<'a> {
         if matches!(node.node_type.as_str(), "wait" | "completion") {
             return NodeStep::Done(self.succeeded_outcome());
         }
-        NodeStep::Value(self.values.get(&node.id).cloned().unwrap_or(Value::Null))
+        NodeStep::Value
     }
 
     /// Runs a bounded loop: the frozen exit condition is evaluated before each
@@ -938,7 +936,7 @@ impl<'a> PassMachine<'a> {
                         // resumed pass continues this iteration.
                         return NodeStep::Done(outcome);
                     }
-                    NodeStep::Value(_) | NodeStep::Skipped => {}
+                    NodeStep::Value | NodeStep::Skipped => {}
                 }
             }
             // The next iteration receives what the region produced: the value
@@ -956,7 +954,7 @@ impl<'a> PassMachine<'a> {
         self.loop_stack.pop();
         self.loop_frames.remove(&node.id);
         self.settle_node(node, value, summary);
-        NodeStep::Value(self.values.get(&node.id).cloned().unwrap_or(Value::Null))
+        NodeStep::Value
     }
 
     /// Records a node's value and completion exactly once.

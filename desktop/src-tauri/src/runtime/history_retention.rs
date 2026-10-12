@@ -195,7 +195,6 @@ pub(crate) struct RetentionEventV1<'a> {
 pub(crate) struct PrunedPayloadV1 {
     pub event_id: String,
     pub sequence: u64,
-    pub kind: PrunedPayloadKindV1,
     /// The complete replacement payload: the original identity and timing with
     /// the dropped value replaced by the tombstone marker.
     pub payload: Value,
@@ -374,7 +373,6 @@ pub(crate) fn plan(
         plan.push(PrunedPayloadV1 {
             event_id: event.event_id.to_owned(),
             sequence: event.sequence,
-            kind,
             payload: tombstone(event.payload, kind, dropped, pruned_at, retained_turns)?,
         });
     }
@@ -436,7 +434,6 @@ pub(crate) fn plan_displaced(
         displaced.push(PrunedPayloadV1 {
             event_id: event.event_id.to_owned(),
             sequence: event.sequence,
-            kind,
             payload: tombstone(event.payload, kind, dropped, pruned_at, retained_turns)?,
         });
         if displaced.len() >= limit {

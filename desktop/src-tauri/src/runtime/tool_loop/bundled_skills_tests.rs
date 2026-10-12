@@ -33,7 +33,7 @@ fn read(path: &Path) -> String {
 }
 
 /// A fresh profile: no configured folders, no project, blank bundled folder.
-fn fresh_configuration(root: &Path, workspace: &Path) -> SkillConfiguration {
+fn fresh_configuration(root: &Path) -> SkillConfiguration {
     let configuration = json!({
         "includeDefaultRoots": true,
         "aworkitHome": root.join("global").to_string_lossy(),
@@ -121,7 +121,7 @@ fn a_fresh_profile_discovers_every_standard_skill() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    let configuration = fresh_configuration(root.path(), &workspace);
+    let configuration = fresh_configuration(root.path());
     assert_eq!(
         configuration.bundled_skill_dir.as_deref(),
         Some(shipped().as_path()),
@@ -172,7 +172,7 @@ fn a_project_skill_of_the_same_name_wins_over_the_bundled_copy() {
         "---\nname: aworkit-workflows\ndescription: project override that must win\n---\nproject body\n",
     )
     .unwrap();
-    let configuration = fresh_configuration(root.path(), &workspace);
+    let configuration = fresh_configuration(root.path());
 
     let snapshot = snapshot(&configuration, Some(&workspace));
     assert!(snapshot.complete, "{:?}", snapshot.warnings);

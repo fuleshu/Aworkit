@@ -188,6 +188,9 @@ pub(crate) fn environment(explicit: &BTreeMap<String, String>) -> BTreeMap<Strin
 /// cmd.exe parses command text itself, rather than the C runtime argv convention.
 /// /S removes our outer quotes; inner quotes, percent expansion and operators stay verbatim.
 pub(crate) fn command_arguments(command: &mut Command, program: &Path, arguments: &[String]) {
+    // `program` only selects the Windows cmd.exe quoting path below.
+    #[cfg(not(windows))]
+    let _ = program;
     #[cfg(windows)]
     if dialect(program) == "cmd" && arguments.len() == 4 && arguments[..3] == ["/D", "/S", "/C"] {
         use std::os::windows::process::CommandExt;

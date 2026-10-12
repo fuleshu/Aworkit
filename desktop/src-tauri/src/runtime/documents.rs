@@ -2230,7 +2230,6 @@ const MAXIMUM_DECLARED_LOOP_ITERATIONS: u64 = u32::MAX as u64;
 /// feedback edge that closes its region, and the enclosed nodes.
 #[derive(Clone, Debug)]
 pub(crate) struct LoopRegionV1 {
-    pub header_id: String,
     pub body_edge: usize,
     pub exit_edge: usize,
     pub fallback_edge: usize,
@@ -2428,7 +2427,6 @@ pub(crate) fn analyze_loop_regions(
         regions.insert(
             header.to_string(),
             LoopRegionV1 {
-                header_id: header.to_string(),
                 body_edge,
                 exit_edge: declared["exit"],
                 fallback_edge: declared["fallback"],
