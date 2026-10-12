@@ -1,9 +1,9 @@
 {
   "collection": "agent_tasks",
   "data": {
-    "changed_files": "[\"crates/aworkit-local-store/src/ledger/queries.rs\",\"desktop/src-tauri/src/runtime/history/feed.rs\",\"desktop/src-tauri/src/runtime/service/snapshot_page.rs\",\"desktop/src-tauri/src/desktop_snapshot.rs\",\"desktop/src/chat/corePort.ts\",\"desktop/src/chat/useOlderChatEvents.ts\"]",
-    "completed_at": "2026-10-12 08:43:41",
-    "completion_memo": "After explaining the read path to the user (it pages 128 events via an indexed range scan, it never loads the whole stream), I sized the interactive history read independently of the recovery page: `LocalHistoryStore::event_window` now takes a `limit` (clamped 1..=4096, bound still by the 4 MiB byte cap), `feed_page`, `ChatFeedReader::page` and the `desktop_chat_events` command thread an optional `limit` (default 128 so recovery/record/stream caches are unchanged), and `useOlderChatEvents` asks for `OLDER_PAGE_LIMIT = 512` per page with the page budget reduced 24→8. That is up to 4x fewer IPC round-trips for the same revealed amount. Note for the record: I did NOT implement the kind-level SQL pushdown the user picked (option B) because investigation showed the modern thinking/tool volume is span-based (`span.*` with spanKind/channel in the payload), so `kind NOT IN (...)` barely helps, and pushing span-level filtering into SQL needs a per-row subquery with no index; doing it correctly means a projected-item read model (option C) or a two-window split with a separate unfiltered Run Details read. That is offered as the next step. Verified: `cargo test --lib feed` (5) and `cargo test -p aworkit-local-store` (77) pass; `pnpm check` clean; `pnpm build` succeeds; `pnpm test:chat` (47 files, 299 tests) passes.",
+    "changed_files": "[\"desktop/src-tauri/src/desktop_snapshot.rs\"]",
+    "completed_at": "2026-10-12 09:24:21",
+    "completion_memo": "Follow-up compile fix: `desktop_chat_snapshot` still called `ChatFeedReader::page` with three arguments after the read gained a `limit`. It now passes the recovery default 128. Root cause of missing it earlier: I compiled with `cargo test --lib`, which builds only the library and not the `aworkit-desktop` bin that owns `desktop_snapshot.rs`. Verified with `cargo check --all-targets` (compiles lib, bin and tests) — clean, exit 0.",
     "confirmation_commit_id": null,
     "confirmed_at": null,
     "created_at": "2026-10-09 15:53:08",
@@ -21,7 +21,7 @@
     },
     "state": "finished",
     "title": "Add a Chat output filter for reasoning (thinking) and tool entries",
-    "updated_at": "2026-10-12 08:43:41"
+    "updated_at": "2026-10-12 09:24:21"
   },
   "deleted": false,
   "identity": "f870ad4d-6e82-4ae9-ad3c-6120fad833be",
