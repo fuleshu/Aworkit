@@ -70,7 +70,7 @@ impl RecordCache {
         }
         while index.head < head {
             let page = store
-                .event_window(chat, branch, index.head, head, false)
+                .event_window(chat, branch, index.head, head, false, 128)
                 .map_err(|e| e.to_string())?;
             if page.is_empty() {
                 return Err("Committed record tail is incomplete".into());

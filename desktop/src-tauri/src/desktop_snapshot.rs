@@ -37,13 +37,15 @@ pub async fn desktop_chat_events(
     before_sequence: Option<u64>,
     through_sequence: u64,
     child_id: Option<String>,
+    limit: Option<u32>,
 ) -> Result<aworkit_desktop::runtime::ChatEventPage, String> {
+    let limit = limit.unwrap_or(128).clamp(1, 4096);
     let host = Arc::clone(runtime.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let reader = host.lock()?.chat_feed_reader(&chat_id)?;
         match child_id {
             Some(child_id) => reader.child_page(&child_id, before_sequence, through_sequence),
-            None => reader.page(after_sequence, before_sequence, through_sequence),
+            None => reader.page(after_sequence, before_sequence, through_sequence, limit),
         }
     })
     .await

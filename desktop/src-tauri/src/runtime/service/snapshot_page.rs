@@ -13,8 +13,9 @@ impl ChatFeedReader {
         after: u64,
         before: Option<u64>,
         head: u64,
+        limit: u32,
     ) -> Result<crate::runtime::ChatEventPage, String> {
-        self.history.feed_page(after, before, head)
+        self.history.feed_page(after, before, head, limit)
     }
 
     /// One delegated child's own evidence from the same canonical history. The

@@ -1862,7 +1862,7 @@ impl ChatHistory {
         while cursor < head {
             let page = self
                 .store
-                .event_window(chat, BRANCH_ID, cursor, head, false)
+                .event_window(chat, BRANCH_ID, cursor, head, false, 128)
                 .map_err(|error| error.to_string())?;
             let Some((last, _)) = page.last() else { break };
             let last = *last;

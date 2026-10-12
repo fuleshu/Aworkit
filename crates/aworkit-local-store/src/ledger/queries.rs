@@ -31,6 +31,10 @@ impl LocalHistoryStore {
 
     /// Exact events in a bounded sequence window, returned in ascending order.
     /// A large individual event is returned intact so every page advances.
+    ///
+    /// `limit` sizes one read. The interactive history feed can ask for more
+    /// than the recovery page so a filtered prefetch needs fewer round-trips;
+    /// the byte cap below still bounds a single response.
     pub fn event_window(
         &self,
         chat: &str,
@@ -38,14 +42,16 @@ impl LocalHistoryStore {
         after: u64,
         through: u64,
         newest_first: bool,
+        limit: u32,
     ) -> Result<Vec<(u64, Event)>, StoreError> {
         validate_id(chat)?;
         validate_id(branch)?;
         let _lease = self.gate.shared()?;
         let connection = self.query_connection()?;
         let order = if newest_first { "DESC" } else { "ASC" };
-        let mut statement = connection.prepare(&format!("SELECT sequence,event_id,kind,payload FROM semantic_events WHERE chat_id=?1 AND branch_id=?2 AND sequence>?3 AND sequence<=?4 ORDER BY sequence {order} LIMIT 128"))?;
-        let mut rows = statement.query(params![chat, branch, to_i64(after)?, to_i64(through)?])?;
+        let limit = limit.clamp(1, 4096);
+        let mut statement = connection.prepare(&format!("SELECT sequence,event_id,kind,payload FROM semantic_events WHERE chat_id=?1 AND branch_id=?2 AND sequence>?3 AND sequence<=?4 ORDER BY sequence {order} LIMIT ?5"))?;
+        let mut rows = statement.query(params![chat, branch, to_i64(after)?, to_i64(through)?, i64::from(limit)])?;
         let mut events = Vec::new();
         let mut bytes = 0usize;
         while let Some(row) = rows.next()? {

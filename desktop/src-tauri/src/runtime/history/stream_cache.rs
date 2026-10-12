@@ -72,7 +72,7 @@ impl StreamCache {
         }
         while self.head < head {
             let page = store
-                .event_window(chat, BRANCH_ID, self.head, head, false)
+                .event_window(chat, BRANCH_ID, self.head, head, false, 128)
                 .map_err(|e| format!("cannot read committed Chat tail: {e}"))?;
             if page.is_empty() {
                 return Err("Committed Chat tail is incomplete".into());

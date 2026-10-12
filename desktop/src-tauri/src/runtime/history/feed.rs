@@ -9,6 +9,7 @@ impl ChatHistory {
         after: u64,
         before: Option<u64>,
         head: u64,
+        limit: u32,
     ) -> Result<ChatEventPage, String> {
         let identity = self.selected_identity()?;
         if head > self.head_for_chat(&identity.chat_id)? || after > head || before == Some(0) {
@@ -21,7 +22,7 @@ impl ChatHistory {
             .min(head);
         let rows = self
             .store
-            .event_window(chat, BRANCH_ID, after.min(through), through, after == 0)
+            .event_window(chat, BRANCH_ID, after.min(through), through, after == 0, limit)
             .map_err(|e| e.to_string())?;
         let first = rows.first().map_or(through.saturating_add(1), |row| row.0);
         let last = rows.last().map_or(through, |row| row.0);
@@ -261,7 +262,7 @@ mod tests {
             serde_json::to_value(full.history).unwrap()
         );
         commit(305, vec![("message.user", json!({"body":"later"}))]);
-        let page = history.feed_page(0, None, 305).unwrap();
+        let page = history.feed_page(0, None, 305, 128).unwrap();
         assert_eq!(page.events.len(), 128);
         assert_eq!(page.window.first_sequence, 178);
         assert_eq!(page.window.last_sequence, 305);
@@ -270,7 +271,7 @@ mod tests {
         let mut recovered = page.events;
         while recovered[0].sequence > 1 {
             let mut older = history
-                .feed_page(0, Some(recovered[0].sequence), 305)
+                .feed_page(0, Some(recovered[0].sequence), 305, 128)
                 .unwrap()
                 .events;
             assert!(!older.is_empty());
@@ -279,9 +280,9 @@ mod tests {
             recovered = older;
         }
         assert_eq!(recovered, full.events);
-        assert!(history.feed_page(305, None, 305).unwrap().events.is_empty());
-        assert!(history.feed_page(0, None, 307).is_err());
-        assert!(history.feed_page(306, None, 305).is_err());
+        assert!(history.feed_page(305, None, 305, 128).unwrap().events.is_empty());
+        assert!(history.feed_page(0, None, 307, 128).is_err());
+        assert!(history.feed_page(306, None, 305, 128).is_err());
     }
 
     #[test]

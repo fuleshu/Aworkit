@@ -168,7 +168,7 @@ export interface RuntimeReceipt {
   readonly reason: string | null;
 }
 export interface ChatCorePort {
-  olderEvents?(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage>;
+  olderEvents?(chatId: string, beforeSequence: number, throughSequence: number, limit?: number): Promise<ChatEventPage>;
   /** One delegated child's own evidence from the same canonical Run history. */
   subagentEvents?(
     chatId: string,
@@ -332,8 +332,8 @@ export class TauriChatCorePort implements ChatCorePort {
     }
     return { ...snapshot, events, ...(snapshot.eventWindow ? { eventWindow: { ...snapshot.eventWindow, lastSequence: cursor, supportingEvents: support } } : {}) };
   }
-  public async olderEvents(chatId: string, beforeSequence: number, throughSequence: number): Promise<ChatEventPage> {
-    return eventPageSchema.parse(await invoke("desktop_chat_events", { chatId, afterSequence: 0, beforeSequence, throughSequence }));
+  public async olderEvents(chatId: string, beforeSequence: number, throughSequence: number, limit?: number): Promise<ChatEventPage> {
+    return eventPageSchema.parse(await invoke("desktop_chat_events", { chatId, afterSequence: 0, beforeSequence, throughSequence, limit: limit ?? null }));
   }
   public async subagentEvents(
     chatId: string,

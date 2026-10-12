@@ -15,7 +15,14 @@ import { conversationFeed } from "./conversationFeed";
 export const FILTERED_OLDER_TARGET = 32;
 
 /** Raw pages one read may scan before it yields, so no hidden stretch stalls it. */
-const OLDER_PAGE_BUDGET = 24;
+const OLDER_PAGE_BUDGET = 8;
+
+/**
+ * Events one older read asks for. The recovery window keeps its 128-event
+ * page, but an interactive history read asks for more so a filtered prefetch
+ * needs far fewer IPC round-trips.
+ */
+const OLDER_PAGE_LIMIT = 512;
 
 /** Older reads are independent of navigation and cannot replace a newer Chat. */
 export function useOlderChatEvents(port: ChatCorePort,
@@ -47,7 +54,7 @@ export function useOlderChatEvents(port: ChatCorePort,
       const supports: RuntimeEvent[][] = [];
       let shown = 0, scanned = 0;
       do {
-        const page = await port.olderEvents(current.chat.chatId, before, current.throughSequence);
+        const page = await port.olderEvents(current.chat.chatId, before, current.throughSequence, OLDER_PAGE_LIMIT);
         if (generation.current !== owner || request.current !== ticket) return;
         if (!page.events.length || page.window.lastSequence !== before - 1 || page.window.firstSequence >= before || [...page.events, ...page.window.supportingEvents].some(e => e.streamId !== current.chat.chatId || e.branchId !== "main" || e.sequence > current.throughSequence)) throw new Error("Older activity did not join the loaded Chat");
         scanned += 1;
