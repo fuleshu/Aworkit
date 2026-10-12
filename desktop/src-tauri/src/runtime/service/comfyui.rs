@@ -302,8 +302,15 @@ fn authoring_parameters(model_parameters: &BTreeMap<String, Value>) -> BTreeMap<
 }
 
 /// Derives a stable identifier from a workflow file name.
+///
+/// Both path separators are recognised on every platform, so a workflow path
+/// frozen on Windows derives the same identifier when it is read elsewhere.
 fn fallback_tool_id(workflow_path: &str) -> String {
-    let stem = Path::new(workflow_path)
+    let file_name = workflow_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(workflow_path);
+    let stem = Path::new(file_name)
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("comfyui-workflow");
@@ -329,6 +336,15 @@ mod tests {
     fn fallback_ids_are_identifier_safe_and_bounded() {
         assert_eq!(
             fallback_tool_id("D:\\wf\\Krea-2_Turbo_T2I_Upscale_API.json"),
+            "krea-2-turbo-t2i-upscale-api"
+        );
+        assert_eq!(
+            fallback_tool_id("/home/me/wf/Krea-2_Turbo_T2I_Upscale_API.json"),
+            "krea-2-turbo-t2i-upscale-api"
+        );
+        // A bare file name derives the same identifier.
+        assert_eq!(
+            fallback_tool_id("Krea-2_Turbo_T2I_Upscale_API.json"),
             "krea-2-turbo-t2i-upscale-api"
         );
         assert_eq!(fallback_tool_id(":::"), "comfyui-workflow");

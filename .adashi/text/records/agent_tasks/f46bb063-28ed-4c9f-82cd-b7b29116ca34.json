@@ -1,0 +1,28 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/service/comfyui.rs\"]",
+    "completed_at": "2026-10-12 15:18:24",
+    "completion_memo": "Made `fallback_tool_id` platform-independent. It now takes the final path component by splitting on both `/` and `\\` (`workflow_path.rsplit(['/', '\\\\']).next()`) and derives the stem from that component, so `D:\\wf\\Krea-2_Turbo_T2I_Upscale_API.json`, `/home/me/wf/Krea-2_Turbo_T2I_Upscale_API.json` and a bare `Krea-2_Turbo_T2I_Upscale_API.json` all yield `krea-2-turbo-t2i-upscale-api` on every OS. The test now asserts all three forms plus the existing no-name and 64-char bound cases. Verified: `cargo test --lib fallback_ids_are_identifier_safe_and_bounded` passes on Linux, `cargo check --all-targets` reports no warnings, and the full desktop `cargo test --lib` suite is now 629 passed / 0 failed / 1 ignored (the previously failing platform test is green).",
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-12 15:18:07",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "`fallback_tool_id` in desktop/src-tauri/src/runtime/service/comfyui.rs derived the id with `Path::new(workflow_path).file_stem()`. That only treats `\\` as a separator on Windows, so a Windows workflow path read on Linux produced `d-wf-krea-...` instead of `krea-...`; the unit test `fallback_ids_are_identifier_safe_and_bounded` therefore always failed on non-Windows.\n",
+        "Fix: split the path on both `/` and `\\` on every platform (`rsplit(['/', '\\\\'])`) and derive the stem from the final component, so a path frozen on any platform yields the same id. Extend the test with a POSIX path and a bare file name that must both match the Windows case, and keep the no-name and 64-char bound cases."
+      ]
+    },
+    "id": 116401671696,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make the ComfyUI fallback tool id derive the same id from any platform's path",
+    "updated_at": "2026-10-12 15:18:24"
+  },
+  "deleted": false,
+  "identity": "f46bb063-28ed-4c9f-82cd-b7b29116ca34",
+  "schemaVersion": 1
+}
