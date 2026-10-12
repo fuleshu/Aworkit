@@ -46,6 +46,10 @@ interface SpanProjection {
   hasInput: boolean;
   hasOutput: boolean;
   body: string;
+  /** Streamed delta parts, joined into the fields below once per projection. */
+  reasoningParts: string[];
+  progressParts: string[];
+  assistantOutputParts: string[];
   reasoning: string;
   progress: string;
   assistantOutput: string;
@@ -106,19 +110,45 @@ export function projectSemanticTimeline(
     if (item !== undefined) facts.push(item);
   }
 
+  // Join the streamed delta parts once, after every span is complete.
+  for (const span of spans.values()) {
+    span.reasoning = span.reasoningParts.join("");
+    span.progress = span.progressParts.join("");
+    span.assistantOutput = span.assistantOutputParts.join("");
+  }
+
+  // One linear pass over the messages replaces a per-span rescan of every
+  // event, which made this projection O(spans × events) on long Chats.
+  const messageKinds: { sequence: number; assistant: boolean }[] = [];
+  for (const event of ordered) {
+    if (event.kind === "message.user")
+      messageKinds.push({ sequence: event.sequence, assistant: false });
+    else if (event.kind === "message.assistant")
+      messageKinds.push({ sequence: event.sequence, assistant: true });
+  }
+  const hasFollowingAssistant = (afterSequence: number): boolean => {
+    let low = 0;
+    let high = messageKinds.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (messageKinds[mid].sequence > afterSequence) high = mid;
+      else low = mid + 1;
+    }
+    return low < messageKinds.length ? messageKinds[low].assistant : false;
+  };
+
   const belongsToWindow = (span: SpanProjection) => shouldRenderSpan(span) && span.sourceEvents.some(event => event.sequence >= firstSequence);
-  const visibleSpanIds = new Set([...spans.values()].filter(belongsToWindow).map(span => span.spanId));
-  const spanItems = [...spans.values()]
-    .filter(belongsToWindow)
-    .map((span) =>
-      spanItem(
-        span,
-        visibleDepth(span, spans, visibleSpanIds),
-        hasFollowingAssistantMessage(span, ordered),
-        spanActor(span, spans),
-        workflowNodeContext(span, spans),
-      ),
-    );
+  const windowSpans = [...spans.values()].filter(belongsToWindow);
+  const visibleSpanIds = new Set(windowSpans.map(span => span.spanId));
+  const spanItems = windowSpans.map((span) =>
+    spanItem(
+      span,
+      visibleDepth(span, spans, visibleSpanIds),
+      hasFollowingAssistant(span.firstSequence),
+      spanActor(span, spans),
+      workflowNodeContext(span, spans),
+    ),
+  );
   return [...foldChildActivity(facts), ...spanItems].sort(
     (left, right) =>
       (left.sequence ?? Number.MAX_SAFE_INTEGER) -
@@ -179,6 +209,9 @@ function reduceSpan(
       hasInput: fact.hasInput === true,
       hasOutput: fact.hasOutput === true,
       body: string(fact.body) ?? "",
+      reasoningParts: [],
+      progressParts: [],
+      assistantOutputParts: [],
       reasoning: "",
       progress: "",
       assistantOutput: "",
@@ -208,13 +241,15 @@ function reduceSpan(
     const append = string(fact.append) ?? string(fact.body) ?? "";
     const channel = string(fact.channel);
     if (channel === "reasoning") {
-      span.reasoning += append;
+      // Collect parts. Repeated `+=` on a growing string is quadratic over a
+      // long streamed reply; the parts are joined once after the event loop.
+      span.reasoningParts.push(append);
       span.reasoningCategory = reasoningCategory(fact.sourceClassification);
     } else if (channel === "progress") {
-      span.progress += append;
+      span.progressParts.push(append);
       span.reasoningCategory ??= "progress";
     } else if (channel === "assistant_output") {
-      span.assistantOutput += append;
+      span.assistantOutputParts.push(append);
     }
   }
 }
@@ -432,18 +467,6 @@ function spanTimelineKind(span: SpanProjection): TimelineKind {
     return "step";
   }
   return span.status === "failed" ? "error" : "unknown";
-}
-
-function hasFollowingAssistantMessage(
-  span: SpanProjection,
-  events: readonly RuntimeEvent[],
-): boolean {
-  for (const event of events) {
-    if (event.sequence <= span.firstSequence) continue;
-    if (event.kind === "message.user") return false;
-    if (event.kind === "message.assistant") return true;
-  }
-  return false;
 }
 
 function projectFact(
