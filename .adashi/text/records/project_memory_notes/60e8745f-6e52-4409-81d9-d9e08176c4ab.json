@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "MCP reachability is no longer a capability gate (2026-10-14; servers like the Unreal Editor are closed/opened all day). Before, a Chat whose server was down at start never offered its tools: the first-input freeze dropped the binding and every later pass re-dropped it. Now discover_workflow_mcp freezes a manifest for every prepared connection whether or not the session opened and falls back to preview_mcp_definitions (saved Settings catalog, enabled tools only) for unreachable servers; a connection that could not be prepared at all (missing credential, unverified pin) is still dropped with a warning; RestoredFrozenMcpV1 has no unavailable list and service.rs keeps every frozen MCP binding. McpToolRuntimeV1::invoke now returns McpDispatchErrorV1 (Unreachable|Rejected) so run_mcp_tool names the outage and asks the model to start the server; the next call reconnects. cargo test --lib 631 passed; design aworkit.trusted_core + snapshot_freezer updated. Not verified: real Unreal MCP E2E.",
+    "created_at": "2026-10-14 15:56:25",
+    "id": 57648024734,
+    "note_id": "mcp-reachability-not-a-gate-20261014",
+    "operation_id": "mem-mcp-reachability-20261014",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "mem-mcp-reachability-20261014",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "60e8745f-6e52-4409-81d9-d9e08176c4ab",
+  "schemaVersion": 1
+}

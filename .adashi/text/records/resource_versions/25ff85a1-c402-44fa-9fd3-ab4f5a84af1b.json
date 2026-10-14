@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "mcp-reachability-not-a-gate-20261014",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-14 15:56:25",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "25ff85a1-c402-44fa-9fd3-ab4f5a84af1b",
+  "schemaVersion": 1
+}
