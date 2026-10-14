@@ -60,6 +60,34 @@ struct McpToolRuntimeStateV1 {
     dispatch_tokens: BTreeMap<String, CancellationToken>,
 }
 
+/// Why one MCP call could not be dispatched.
+///
+/// The distinction is the whole point of the type: a server that is not running
+/// (or that stopped responding) is a condition a human — or the model — fixes by
+/// starting it, so the model-facing result says exactly that. Anything else is a
+/// refused call whose own error is the useful information. Both keep the tool in
+/// the Chat's offered set, so neither is a revoked capability.
+#[derive(Debug)]
+pub(crate) enum McpDispatchErrorV1 {
+    /// No session could be opened, or the open one lost its transport and could
+    /// not be reconnected: the server is not reachable right now.
+    Unreachable(String),
+    /// The session is open and refused this call; the error names why.
+    Rejected(String),
+}
+
+impl McpDispatchErrorV1 {
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Unreachable(error) | Self::Rejected(error) => error,
+        }
+    }
+
+    pub(crate) fn is_unreachable(&self) -> bool {
+        matches!(self, Self::Unreachable(_))
+    }
+}
+
 /// Per-Run production sessions and frozen catalog state, plus a scripted test port.
 pub(crate) struct McpToolRuntimeV1 {
     generation: ProcessGeneration,
@@ -199,17 +227,20 @@ impl McpToolRuntimeV1 {
         run_id: &StableId,
         server_id: &StableId,
         call: &McpCallV1,
-    ) -> Result<McpCallOutcomeV1, String> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| "MCP tool runtime lock poisoned")?;
+    ) -> Result<McpCallOutcomeV1, McpDispatchErrorV1> {
+        let state = self.state.lock().map_err(|_| {
+            McpDispatchErrorV1::Rejected("MCP tool runtime lock poisoned".to_owned())
+        })?;
         let manager = state
             .production_runs
             .get(run_id.as_str())
             .or(state.manager.as_ref())
             .cloned()
-            .ok_or("no MCP transport peer is installed for this Run")?;
+            .ok_or_else(|| {
+                McpDispatchErrorV1::Rejected(
+                    "no MCP transport peer is installed for this Run".to_owned(),
+                )
+            })?;
         drop(state);
         match manager.invoke(server_id, call) {
             Ok(outcome) => Ok(outcome),
@@ -218,15 +249,19 @@ impl McpToolRuntimeV1 {
             // and retry this call, which had not started, so one slow or flaky
             // server cannot brick the Run until the application restarts. The
             // call that lost the transport is never replayed.
-            Err(McpSessionError::SessionDegraded) => {
-                manager
-                    .reconnect(server_id)
-                    .map_err(|error| format!("MCP reconnect failed: {error}"))?;
-                manager
-                    .invoke(server_id, call)
-                    .map_err(|error| format!("MCP call failed: {error}"))
-            }
-            Err(error) => Err(format!("MCP call failed: {error}")),
+            Err(McpSessionError::SessionDegraded) => match manager.reconnect(server_id) {
+                Ok(_) => manager.invoke(server_id, call).map_err(|error| {
+                    McpDispatchErrorV1::Rejected(format!("MCP call failed: {error}"))
+                }),
+                // The server went away and could not be brought back: it is not
+                // reachable right now, which the model can act on by starting it.
+                Err(error) => Err(McpDispatchErrorV1::Unreachable(format!(
+                    "MCP reconnect failed: {error}"
+                ))),
+            },
+            Err(error) => Err(McpDispatchErrorV1::Rejected(format!(
+                "MCP call failed: {error}"
+            ))),
         }
     }
 

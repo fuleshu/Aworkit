@@ -49,22 +49,31 @@ pub(super) fn freeze_graph_bindings(
                 continue;
             }
             if tool_id.starts_with(MCP_CAPABILITY_PREFIX) {
-                let Some(discovered) = mcp_definitions.get(&tool_id) else {
-                    warnings.push(format!("MCP tool '{tool_id}' is unavailable for this pass"));
-                    continue;
-                };
-                let definition = discovered.definition.clone();
-                let (server_id, tool) = split_mcp_capability(&tool_id).map_err(|error| error)?;
+                let (server_id, tool) = split_mcp_capability(&tool_id)?;
                 let configured_server = settings
                     .mcp_servers
                     .iter()
                     .find(|server| server.id == server_id);
                 let saved_tool = configured_server
                     .and_then(|server| server.tools.iter().find(|entry| entry.name == tool));
+                // Settings decides whether a function may be called; discovery
+                // only decides what its interface is. A disabled function is
+                // never offered, whether or not its server is running.
                 if saved_tool.is_some_and(|entry| !entry.enabled) {
                     warnings.push(format!("MCP tool '{tool_id}' is disabled in Settings"));
                     continue;
                 }
+                let Some(discovered) = mcp_definitions.get(&tool_id) else {
+                    // The live catalog and the saved catalog both failed to
+                    // describe it, so the Chat has no connection to offer. A
+                    // server that is merely closed is described from Settings
+                    // and never reaches this branch.
+                    warnings.push(format!(
+                        "MCP tool '{tool_id}' could not be prepared from Settings → MCP; the pass continues without it"
+                    ));
+                    continue;
+                };
+                let definition = discovered.definition.clone();
                 // Descriptions already travel in the frozen tool definition. Only
                 // explicitly configured instructions belong in the system prompt.
                 let options = saved_tool

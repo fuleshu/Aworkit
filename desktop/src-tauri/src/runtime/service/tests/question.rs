@@ -176,6 +176,9 @@ struct QuestionPipeline {
     /// edit the server between two application generations.
     mcp_tool_name: Mutex<String>,
     mcp_input_schema: Mutex<Value>,
+    /// Whether the fixture server is currently closed. A development server is
+    /// started and stopped while a Chat lives; its tools must survive that.
+    mcp_closed: AtomicBool,
     /// Every preflighted request, so a test can inspect the interface the pass
     /// was actually offered.
     preflight_requests: Mutex<Vec<WorkflowExecutionRequestV1>>,
@@ -191,6 +194,7 @@ impl QuestionPipeline {
             mcp_preparations: Mutex::new(Vec::new()),
             mcp_tool_name: Mutex::new("echo".into()),
             mcp_input_schema: Mutex::new(fixture_mcp_input_schema()),
+            mcp_closed: AtomicBool::new(false),
             preflight_requests: Mutex::new(Vec::new()),
         }
     }
@@ -244,6 +248,22 @@ impl WorkflowPipelinePort for QuestionPipeline {
             .lock()
             .unwrap()
             .push(run_id.as_str().to_owned());
+        if self.mcp_closed.load(Ordering::SeqCst) {
+            // A closed server cannot be opened, which is exactly what the
+            // production pipeline reports. The Chat keeps its tools.
+            return Ok((
+                Vec::new(),
+                servers
+                    .iter()
+                    .map(|server| {
+                        format!(
+                            "MCP server '{}' is not currently reachable (scripted closed server); its tools remain available and a call reports this",
+                            server.manifest.server_id
+                        )
+                    })
+                    .collect(),
+            ));
+        }
         let tool_name = self.mcp_tool_name.lock().unwrap().clone();
         let input_schema = self.mcp_input_schema.lock().unwrap().clone();
         Ok((servers
@@ -469,12 +489,38 @@ fn started_mcp_chat(
     FrozenChatExecutionRecordV1,
     String,
 ) {
+    started_mcp_chat_with(root, false)
+}
+
+/// The same Chat, started while the fixture server is closed: the process that
+/// hosts the bound tool is simply not running at the moment of the first message.
+fn started_mcp_chat_with_closed_server(
+    root: &TempDir,
+) -> (
+    DesktopRuntime,
+    Arc<QuestionPipeline>,
+    FrozenChatExecutionRecordV1,
+    String,
+) {
+    started_mcp_chat_with(root, true)
+}
+
+fn started_mcp_chat_with(
+    root: &TempDir,
+    closed: bool,
+) -> (
+    DesktopRuntime,
+    Arc<QuestionPipeline>,
+    FrozenChatExecutionRecordV1,
+    String,
+) {
     let provider = Arc::new(FixtureProvider::new());
     let mut core = runtime(root, provider.clone());
     configure(&mut core);
     let pipeline = Arc::new(QuestionPipeline::new(provider));
     core.pipeline = pipeline.clone();
     configure_mcp_chat(&mut core);
+    pipeline.mcp_closed.store(closed, Ordering::SeqCst);
     core.command(send("mcp.metadata-start", 0, "Ask me"))
         .unwrap();
     let frozen = core.history.current_frozen_context().unwrap().unwrap();
@@ -521,10 +567,11 @@ fn a_changed_mcp_tool_interface_is_adopted_for_the_chat() {
     assert_eq!(restored.manifests.len(), frozen.context.mcp_manifests.len());
 }
 
-/// A tool the server no longer advertises is a missing capability, not metadata
-/// drift: it warns and leaves other capabilities available.
+/// A tool the server no longer advertises is a changed interface, not a revoked
+/// capability: it warns, keeps other capabilities available, and stays offered
+/// with the definition the Chat froze — the call reports the error.
 #[test]
-fn an_mcp_tool_the_server_no_longer_provides_warns_and_continues() {
+fn an_mcp_tool_the_server_no_longer_provides_warns_and_stays_offered() {
     let root = TempDir::new().unwrap();
     let (mut core, pipeline, frozen, _) = started_mcp_chat(&root);
     *pipeline.mcp_tool_name.lock().unwrap() = "echo.renamed".into();
@@ -532,9 +579,67 @@ fn an_mcp_tool_the_server_no_longer_provides_warns_and_continues() {
     let restored = core
         .restore_frozen_mcp(&frozen.context)
         .expect("a vanished MCP tool must not block execution");
-    assert!(restored.warnings.iter().any(|w| w.contains("no longer provided")));
-    assert_eq!(restored.unavailable.len(), 1);
-    assert!(restored.definitions.is_empty());
+    assert!(
+        restored
+            .warnings
+            .iter()
+            .any(|w| w.contains("no longer provides"))
+    );
+    assert!(
+        restored.definitions.is_empty(),
+        "no live interface was discovered for the vanished tool"
+    );
+}
+
+/// A Chat started while its MCP server is closed still freezes the connection
+/// and offers the server's tools. A development server is started and stopped
+/// all day; the Chat must not lose the capability, or even the tool listing,
+/// because the process happened to be down when the first message arrived.
+#[test]
+fn a_chat_started_while_the_mcp_server_is_closed_still_offers_its_tools() {
+    let root = TempDir::new().unwrap();
+    let (core, pipeline, frozen, capability) = started_mcp_chat_with_closed_server(&root);
+
+    // The connection and the tool were frozen from Settings anyway.
+    assert_eq!(frozen.context.mcp_manifests.len(), 1);
+    assert_eq!(frozen.context.mcp_configurations.len(), 1);
+    let binding = frozen
+        .context
+        .tools
+        .iter()
+        .find(|tool| tool.tool_id == capability)
+        .expect("the closed server's tool is frozen with the Chat");
+    assert!(
+        binding.definition.is_some(),
+        "an offered tool always carries the interface the model is shown"
+    );
+
+    // The pass the model actually received still lists the tool, together with
+    // the frozen connection that will retry it.
+    let offered = pipeline.preflight_requests.lock().unwrap();
+    let last = offered.last().expect("the start pass was preflighted");
+    assert!(
+        last.tools
+            .iter()
+            .any(|tool| tool.capability_id == capability && tool.definition.is_some()),
+        "the closed server's tool must still be offered to the model"
+    );
+    assert_eq!(
+        last.mcp_servers.len(),
+        1,
+        "the frozen connection travels with every pass"
+    );
+    let warnings = last.workflow_snapshot["capabilityWarnings"]
+        .as_array()
+        .expect("the pass reports the outage");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or_default().contains("not currently reachable")),
+        "{warnings:?}"
+    );
+    drop(offered);
+    drop(core);
 }
 
 /// The whole point: after the server changes, the next pass of the same Chat is

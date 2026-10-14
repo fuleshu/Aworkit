@@ -4,6 +4,7 @@
 use super::*;
 use aworkit_capability_host::{McpToolAnnotationsV1, McpToolDescriptorV1};
 
+#[derive(Clone)]
 pub(super) struct DiscoveredMcpDefinition {
     pub definition: ModelToolDefinitionV1,
     pub annotations: Option<McpToolAnnotationsV1>,

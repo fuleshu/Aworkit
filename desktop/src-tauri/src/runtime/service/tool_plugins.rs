@@ -3,15 +3,20 @@ use super::*;
 
 /// One frozen Chat's MCP connections plus the live model-facing definitions for
 /// the MCP capabilities it holds.
+///
+/// A connection is restored, never re-decided: the Chat offers every MCP tool it
+/// froze. `definitions` therefore only ever *refreshes* an interface — a tool
+/// whose server is closed keeps the definition it was frozen with, and a
+/// restored server replaces it with what the live session advertises.
 #[derive(Debug)]
 pub(super) struct RestoredFrozenMcpV1 {
     /// The core-attested manifests opened for this Run.
     pub manifests: Vec<aworkit_capability_host::McpServerManifestV1>,
     /// The interface each bound MCP tool actually advertises in the session this
     /// application generation opened, keyed by `mcp://<server>/<tool>` id.
+    /// Absent for a tool whose server is not running right now.
     pub definitions: BTreeMap<String, ModelToolDefinitionV1>,
     pub warnings: Vec<String>,
-    pub unavailable: Vec<String>,
 }
 
 impl DesktopRuntime {
@@ -22,8 +27,14 @@ impl DesktopRuntime {
     /// authorised with are reconnected. Their metadata comes from this
     /// generation's session, so an improved server reaches the very next pass
     /// instead of locking the Chat out (`snapshot_freezer`, "Existing Chat
-    /// continuation"). A tool the server no longer advertises is a missing
-    /// capability, so it produces a warning and is omitted from this pass.
+    /// continuation").
+    ///
+    /// Reachability is **not** authority. A server that is closed right now —
+    /// an editor or bridge the user starts and stops during development —
+    /// produces a warning and is retried, but its tools stay in the Chat's
+    /// offered set with the interface they were frozen with, and the call that
+    /// arrives while it is down reports the outage. Dropping the tool here made
+    /// a Chat permanently unable to see a server that was merely stopped.
     pub(super) fn restore_frozen_mcp(
         &mut self,
         context: &FrozenChatExecutionContextV1,
@@ -33,7 +44,6 @@ impl DesktopRuntime {
                 manifests: context.mcp_manifests.values().cloned().collect(),
                 definitions: BTreeMap::new(),
                 warnings: Vec::new(),
-                unavailable: Vec::new(),
             });
         }
         let mut preparations = Vec::new();
@@ -63,7 +73,6 @@ impl DesktopRuntime {
             }
         };
         let mut definitions = BTreeMap::new();
-        let mut unavailable = Vec::new();
         for tool in context
             .tools
             .iter()
@@ -75,8 +84,19 @@ impl DesktopRuntime {
                 .find(|snapshot| snapshot.server_id.as_str() == server)
                 .and_then(|snapshot| snapshot.catalog.tools.iter().find(|tool| tool.name == name));
             let Some(descriptor) = descriptor else {
-                warnings.push(format!("MCP tool '{}' is no longer provided by server '{server}'", tool.tool_id));
-                unavailable.push(tool.tool_id.clone());
+                // No live interface this pass. The tool is *kept*: the caller
+                // falls back to the definition the Chat froze with, and a call
+                // reports why it could not run. A server that did open without
+                // the tool is worth naming; a server that never opened already
+                // warned through `prepare_mcp_sessions`.
+                if snapshots
+                    .iter()
+                    .any(|snapshot| snapshot.server_id.as_str() == server)
+                {
+                    warnings.push(format!(
+                        "MCP server '{server}' no longer provides tool '{name}'; the tool stays offered and a call reports the error"
+                    ));
+                }
                 continue;
             };
             // The alias is rebuilt from the Chat's own frozen server label, so
@@ -109,7 +129,6 @@ impl DesktopRuntime {
                 .collect(),
             definitions,
             warnings,
-            unavailable,
         })
     }
 }

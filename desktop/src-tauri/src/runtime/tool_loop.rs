@@ -3803,6 +3803,12 @@ impl FileToolDispatcherV1 {
     /// per-invocation dedup); transport loss or schema drift surfaces as a
     /// failed call and is never replayed. The dispatch-scoped cancellation
     /// token fails the call closed before execution when already cancelled.
+    ///
+    /// A server that is not running right now is reported as exactly that, with
+    /// what to do about it, because a development server — an editor or bridge
+    /// process — is expected to be started and stopped while the Chat is alive.
+    /// The Chat keeps the tool either way; starting the server is enough for the
+    /// next call to reconnect.
     fn run_mcp_tool(
         &self,
         envelope: &ApprovedInvocationEnvelopeV1,
@@ -3816,7 +3822,9 @@ impl FileToolDispatcherV1 {
         }
         let server = stable(server_id).map_err(|error| error.to_string())?;
         let manifest = self.context.mcp_manifests.get(server_id).ok_or_else(|| {
-            format!("MCP server '{server_id}' has no frozen manifest for this Run")
+            format!(
+                "MCP server '{server_id}' has no frozen connection in this Chat, so '{tool_name}' cannot be called. Enable that server in Settings → MCP, then start a New Chat so it is frozen with the Chat."
+            )
         })?;
         // Approval checkpoints retain the original host generation. The core
         // has restored the exact frozen transport in the current generation;
@@ -3826,7 +3834,14 @@ impl FileToolDispatcherV1 {
         self.runtime
             .mcp
             .open_frozen(&self.record.proposal.run_id, &manifest)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                // Opening is the step that reaches the server: a closed editor
+                // or bridge fails here, and the same manifest opens on the next
+                // call, so the model is told to start the server and retry.
+                format!(
+                    "MCP server '{server_id}' is not currently reachable, so '{tool_name}' was not called ({error}). If that server is not running, start it (open the application it belongs to) and call this tool again; the Chat keeps the tool and reconnects automatically."
+                )
+            })?;
         let outcome = self
             .runtime
             .mcp
@@ -3841,7 +3856,15 @@ impl FileToolDispatcherV1 {
                     arguments: self.record.call.arguments.clone(),
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                if error.is_unreachable() {
+                    return format!(
+                        "MCP server '{server_id}' stopped responding while calling '{tool_name}' ({}); it may have been closed. Start it again and call this tool; the Chat keeps the tool and reconnects automatically.",
+                        error.message()
+                    );
+                }
+                format!("MCP {server_id}/{tool_name} failed: {}", error.message())
+            })?;
         match outcome.result {
             Some(result) => {
                 let value = json!({

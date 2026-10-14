@@ -1,4 +1,12 @@
-//! Discover available MCP tools independently; failures degrade one capability.
+//! Discover available MCP tools independently; a closed server degrades nothing.
+//!
+//! A server that is not running right now is never treated as an absent
+//! capability. Its frozen connection and every tool interface it offers are
+//! taken from saved Settings, so the tool stays in the Chat's offered set and
+//! the session is retried on each pass and on each call. Development servers —
+//! an editor or a bridge process that is stopped and started all day — therefore
+//! never vanish from a Chat. A call made while the server is down settles as a
+//! bounded result that names the outage and tells the model to start it.
 use super::*;
 use crate::runtime::workflow_capabilities::warn;
 
@@ -43,34 +51,34 @@ impl DesktopRuntime {
                 Err(error) => warn(workflow, error),
             }
         }
-        if preparations.is_empty() {
-            return (definitions, manifests);
-        }
-        let snapshots = match self
-            .pipeline
-            .prepare_mcp_sessions(run_id, &mut preparations)
-        {
-            Ok((snapshots, warnings)) => {
-                for warning in warnings {
-                    warn(workflow, warning);
+        let snapshots = if preparations.is_empty() {
+            Vec::new()
+        } else {
+            match self
+                .pipeline
+                .prepare_mcp_sessions(run_id, &mut preparations)
+            {
+                Ok((snapshots, warnings)) => {
+                    for warning in warnings {
+                        warn(workflow, warning);
+                    }
+                    snapshots
                 }
-                snapshots
-            }
-            Err(error) => {
-                warn(workflow, format!("MCP connections unavailable: {error}"));
-                Vec::new()
+                Err(error) => {
+                    warn(workflow, format!("MCP connections unavailable: {error}"));
+                    Vec::new()
+                }
             }
         };
+        // Every connection this pass prepared is frozen whether or not its
+        // session opened: the Chat keeps exactly the authority it started with
+        // and retries the transport, instead of reading a closed server as a
+        // capability that no longer exists.
         for preparation in preparations {
-            if snapshots
-                .iter()
-                .any(|s| s.server_id == preparation.manifest.server_id)
-            {
-                manifests.insert(
-                    preparation.manifest.server_id.to_string(),
-                    preparation.manifest,
-                );
-            }
+            manifests.insert(
+                preparation.manifest.server_id.to_string(),
+                preparation.manifest,
+            );
         }
         for id in ids {
             let Ok((server_id, tool)) = split_mcp_capability(&id) else {
@@ -81,10 +89,17 @@ impl DesktopRuntime {
                 .find(|s| s.server_id.as_str() == server_id)
                 .and_then(|s| s.catalog.tools.iter().find(|t| t.name == tool));
             let Some(descriptor) = descriptor else {
-                warn(
-                    workflow,
-                    format!("MCP tool '{id}' was not discovered and is unavailable"),
-                );
+                // A server that never opened already reported its own warning.
+                // A server that did open but no longer advertises the tool is
+                // worth naming: the tool stays offered either way.
+                if snapshots.iter().any(|s| s.server_id.as_str() == server_id) {
+                    warn(
+                        workflow,
+                        format!(
+                            "MCP server '{server_id}' no longer provides '{tool}'; the tool stays offered and a call reports the error"
+                        ),
+                    );
+                }
                 continue;
             };
             let label = settings
@@ -97,6 +112,21 @@ impl DesktopRuntime {
                 id.clone(),
                 DiscoveredMcpDefinition::from_descriptor(&id, server_id, label, descriptor),
             );
+        }
+        // A server that is unreachable right now still offers the interfaces
+        // saved in Settings. Live discovery above wins wherever it produced a
+        // descriptor, so an edited server reaches the model immediately while a
+        // closed one only falls back to its last saved catalog. Only servers
+        // this pass actually prepared a frozen connection for qualify: a tool
+        // whose connection could not be frozen at all (a missing credential or
+        // an unverified plugin) is still dropped with its warning, because no
+        // call could ever reach it.
+        for (id, definition) in preview_mcp_definitions(workflow, &settings).unwrap_or_default() {
+            let reachable = split_mcp_capability(&id)
+                .is_ok_and(|(server, _)| manifests.contains_key(server));
+            if reachable {
+                definitions.entry(id).or_insert(definition);
+            }
         }
         (definitions, manifests)
     }

@@ -1332,10 +1332,15 @@ impl DesktopRuntime {
         let (mut requested_tools, binding_warnings) = request_tool_bindings(pass_tools);
         let mut pass_warnings = binding_warnings;
         let mcp = self.restore_frozen_mcp(context)?;
-        requested_tools.retain(|tool| !mcp.unavailable.contains(&tool.capability_id));
-        // The Chat keeps the MCP capabilities it holds; each tool's interface is
-        // whatever the reconnected session advertises, so an edited server
-        // reaches this pass instead of rejecting the Chat over changed metadata.
+        // Every MCP capability the Chat holds stays offered, whether or not its
+        // server is running right now. A closed server is a transient transport
+        // state, not a revoked capability: the tool keeps the frozen interface,
+        // the session is retried on the next pass and on every call, and a call
+        // that arrives while the server is down returns a bounded result naming
+        // the outage. The Chat keeps the MCP capabilities it holds; each tool's
+        // interface is whatever the reconnected session advertises, so an edited
+        // server reaches this pass instead of rejecting the Chat over changed
+        // metadata.
         for tool in &mut requested_tools {
             if let Some(definition) = mcp.definitions.get(&tool.capability_id) {
                 tool.definition = Some(definition.clone());

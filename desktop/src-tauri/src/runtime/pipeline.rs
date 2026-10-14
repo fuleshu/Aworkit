@@ -1206,7 +1206,15 @@ impl WorkflowExecutionPipeline {
                 .open_frozen(run_id, &server.manifest);
             match snapshot {
                 Ok(snapshot) => snapshots.push(snapshot),
-                Err(error) => warnings.push(format!("MCP server '{}' is unavailable: {error}", server.manifest.server_id)),
+                // A server that is not running right now is not a missing
+                // capability: its tools stay offered to the model, the session
+                // is retried on the next pass and on every call, and a call
+                // made while it is down reports the outage the model can act
+                // on. Only the transport failed here; nothing is revoked.
+                Err(error) => warnings.push(format!(
+                    "MCP server '{}' is not currently reachable ({error}); its tools remain available and a call reports this",
+                    server.manifest.server_id
+                )),
             }
         }
         Ok((snapshots, warnings))
@@ -6640,6 +6648,9 @@ mod tests {
         OversizedResult,
         DuplicatedResult,
         ToolError,
+        /// The server process is gone: it cannot even be initialized, exactly as
+        /// a closed editor or bridge reports itself to a Chat that keeps it.
+        ServerClosed,
     }
 
     struct ScriptedMcpPeer {
@@ -6654,6 +6665,14 @@ mod tests {
             _manifest: &McpServerManifestV1,
             _request: &McpInitializeRequestV1,
         ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+            if matches!(self.behavior, ScriptedMcpBehavior::ServerClosed) {
+                return Err(McpPeerErrorV1 {
+                    code: "transport_lost".into(),
+                    message: "scripted MCP server is not running".into(),
+                    dispatch: aworkit_capability_host::McpDispatchMilestoneV1::DefinitelyNotStarted,
+                    transport_lost: true,
+                });
+            }
             let schema = serde_json::to_vec(&mcp_echo_schema()).unwrap_or_default();
             Ok(McpInitializeResponseV1 {
                 server_id: stable(MCP_FIXTURE_SERVER).expect("server id"),
@@ -6726,6 +6745,15 @@ mod tests {
                         progress: Vec::new(),
                     })
                 }
+                // A closed server never reaches dispatch: `initialize` fails
+                // first. Stated explicitly rather than silently echoing, so the
+                // fixture cannot pretend a dead server answered.
+                ScriptedMcpBehavior::ServerClosed => Err(McpPeerErrorV1 {
+                    code: "transport_lost".into(),
+                    message: "scripted MCP server is not running".into(),
+                    dispatch: aworkit_capability_host::McpDispatchMilestoneV1::DefinitelyNotStarted,
+                    transport_lost: true,
+                }),
             }
         }
 
@@ -6978,9 +7006,47 @@ mod tests {
         assert_eq!(result.tool_activity[0].status, "failed");
     }
 
+    /// A development MCP server is stopped while the Chat lives — an editor or a
+    /// bridge process. The call that arrives while it is closed must still find
+    /// the tool offered and must be told the server is not running and to start
+    /// it, instead of the capability silently disappearing.
     #[test]
-    fn mcp_oversized_result_becomes_a_bounded_output_without_crashing_the_pass() {
+    fn mcp_tool_call_while_the_server_is_closed_asks_the_model_to_start_it() {
         let root = TempDir::new().expect("temporary directory");
+        let (pipeline, metadata, peer_calls, _arguments, observed_results) =
+            setup_mcp_pipeline(&root, ScriptedMcpBehavior::ServerClosed);
+        let result = pipeline
+            .execute(mcp_graph_request(&pipeline, metadata))
+            .expect("a closed MCP server must not end the pass");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(
+            peer_calls.load(Ordering::SeqCst),
+            0,
+            "a session that cannot open never reaches the server"
+        );
+        let results = observed_results.lock().expect("results");
+        assert_eq!(results.len(), 1);
+        let error = results[0]["error"]
+            .as_str()
+            .expect("the model is told why the call did not run");
+        assert!(
+            error.contains("is not currently reachable"),
+            "the outage must be named: {error}"
+        );
+        assert!(
+            error.contains("start it") && error.contains("call this tool again"),
+            "the model must be told how to recover: {error}"
+        );
+        assert_eq!(result.tool_activity[0].status, "failed");
+        assert_eq!(
+            result.tool_activity[0].capability_id,
+            MCP_FIXTURE_CAPABILITY,
+            "the tool keeps its identity while its server is down"
+        );
+    }
+
+    #[test]
+    fn mcp_oversized_result_becomes_a_bounded_output_without_crashing_the_pass() {        let root = TempDir::new().expect("temporary directory");
         let (pipeline, metadata, peer_calls, _arguments, observed_results) =
             setup_mcp_pipeline(&root, ScriptedMcpBehavior::OversizedResult);
         let request = mcp_graph_request(&pipeline, metadata);
