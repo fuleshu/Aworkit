@@ -6,8 +6,8 @@
     },
     "resource_id": "aworkit.trusted_core.snapshot_freezer",
     "resource_kind": "design.element",
-    "updated_at": "2026-10-14 15:55:40",
-    "version": 4
+    "updated_at": "2026-10-15 07:35:41",
+    "version": 5
   },
   "deleted": false,
   "identity": "43e30374-5946-8fcb-8077-2b982f93885b",
