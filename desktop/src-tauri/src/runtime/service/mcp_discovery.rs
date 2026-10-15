@@ -1,12 +1,15 @@
 //! Discover available MCP tools independently; a closed server degrades nothing.
 //!
 //! A server that is not running right now is never treated as an absent
-//! capability. Its frozen connection and every tool interface it offers are
-//! taken from saved Settings, so the tool stays in the Chat's offered set and
-//! the session is retried on each pass and on each call. Development servers —
-//! an editor or a bridge process that is stopped and started all day — therefore
-//! never vanish from a Chat. A call made while the server is down settles as a
-//! bounded result that names the outage and tells the model to start it.
+//! capability, and assembling a pass never waits for one. Its frozen connection
+//! is taken from saved Settings and every tool interface it offers is taken from
+//! the catalog saved with that connection, so the tool stays in the Chat's
+//! offered set without contacting anything. Development servers — an editor or a
+//! bridge process that is stopped and started all day — therefore never vanish
+//! from a Chat and never delay one. The session opens on the first call and is
+//! retried on every later call; a call made while the server is down settles as a
+//! bounded result that names the outage and tells the model to start it, and from
+//! the first successful call onward the live interface replaces the saved one.
 use super::*;
 use crate::runtime::workflow_capabilities::warn;
 
@@ -70,10 +73,9 @@ impl DesktopRuntime {
                 }
             }
         };
-        // Every connection this pass prepared is frozen whether or not its
-        // session opened: the Chat keeps exactly the authority it started with
-        // and retries the transport, instead of reading a closed server as a
-        // capability that no longer exists.
+        // Every prepared connection is frozen, with no session opened here: the
+        // Chat keeps exactly the authority it started with and reaches the server
+        // on the first call instead of making every pass wait for it.
         for preparation in preparations {
             manifests.insert(
                 preparation.manifest.server_id.to_string(),
@@ -89,9 +91,10 @@ impl DesktopRuntime {
                 .find(|s| s.server_id.as_str() == server_id)
                 .and_then(|s| s.catalog.tools.iter().find(|t| t.name == tool));
             let Some(descriptor) = descriptor else {
-                // A server that never opened already reported its own warning.
-                // A server that did open but no longer advertises the tool is
-                // worth naming: the tool stays offered either way.
+                // Only a session a call already opened can say anything about a
+                // tool's live interface; a server nobody has called yet is
+                // described from Settings below. A session that dropped the tool
+                // is worth naming: the tool stays offered and the call reports it.
                 if snapshots.iter().any(|s| s.server_id.as_str() == server_id) {
                     warn(
                         workflow,
@@ -113,14 +116,13 @@ impl DesktopRuntime {
                 DiscoveredMcpDefinition::from_descriptor(&id, server_id, label, descriptor),
             );
         }
-        // A server that is unreachable right now still offers the interfaces
-        // saved in Settings. Live discovery above wins wherever it produced a
-        // descriptor, so an edited server reaches the model immediately while a
-        // closed one only falls back to its last saved catalog. Only servers
-        // this pass actually prepared a frozen connection for qualify: a tool
-        // whose connection could not be frozen at all (a missing credential or
-        // an unverified plugin) is still dropped with its warning, because no
-        // call could ever reach it.
+        // A tool whose server nobody has called yet is described by the catalog
+        // saved with its Settings connection, which is what the user last
+        // connected with; a session an earlier call opened wins above. Only
+        // servers this pass froze a connection for qualify: a tool whose
+        // connection could not be frozen at all (a missing credential or an
+        // unverified plugin) is still dropped with its warning, because no call
+        // could ever reach it.
         for (id, definition) in preview_mcp_definitions(workflow, &settings).unwrap_or_default() {
             let reachable = split_mcp_capability(&id)
                 .is_ok_and(|(server, _)| manifests.contains_key(server));

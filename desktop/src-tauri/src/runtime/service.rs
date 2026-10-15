@@ -1758,7 +1758,9 @@ impl DesktopRuntime {
         }
         if approved {
             // A persisted approval may be resolved in a new app generation.
-            // Reconnect only the Chat's frozen endpoints before accepting work.
+            // Install only this Chat's frozen MCP transports before accepting
+            // work; no server is contacted here, so an approval never waits on
+            // one.
             self.restore_frozen_mcp(&frozen.context)?;
         }
         self.history.stage_effect_command(PendingChatCommandV1 {
@@ -1847,10 +1849,11 @@ impl DesktopRuntime {
             )?;
         }
         // A question answered in a new application generation resumes the pass
-        // in a process that never opened this Chat's frozen endpoints — exactly
-        // the case complete_approval already handles. The resumed pass can call
-        // any tool, so reconnect the frozen MCP transport before accepting work;
-        // a Chat without frozen MCP connections is untouched.
+        // in a process that never installed this Chat's frozen MCP transports —
+        // exactly the case complete_approval already handles. The resumed pass
+        // can call any tool, so install them before accepting work; no server is
+        // contacted here, so answering a question never waits on one. A Chat
+        // without frozen MCP connections is untouched.
         self.restore_frozen_mcp(&frozen.context)?;
         self.history.stage_effect_command(PendingChatCommandV1 {
             schema_version: 1,

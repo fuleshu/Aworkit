@@ -226,6 +226,7 @@ fn subagent_inherits_exact_parent_selection_and_executes_write_edit_shell_python
         .install_mcp_peer(Arc::new(ScriptedMcpPeer {
             behavior: ScriptedMcpBehavior::Echo,
             calls: peer_calls.clone(),
+            initializations: Arc::default(),
             observed_arguments: Arc::default(),
         }))
         .unwrap();
@@ -427,6 +428,7 @@ fn subagent_read_only_filters_effects_and_uses_mcp_hints_not_auto_approve() {
             .install_mcp_peer(Arc::new(ScriptedMcpPeer {
                 behavior: ScriptedMcpBehavior::Echo,
                 calls: Arc::default(),
+                initializations: Arc::default(),
                 observed_arguments: Arc::default(),
             }))
             .unwrap();

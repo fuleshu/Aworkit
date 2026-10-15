@@ -20,21 +20,23 @@ pub(super) struct RestoredFrozenMcpV1 {
 }
 
 impl DesktopRuntime {
-    /// Reconnects the Chat's frozen MCP endpoints and resolves the live
-    /// interface of every MCP tool it holds.
+    /// Resolves the Chat's frozen MCP endpoints and the interfaces of the MCP
+    /// tools it holds.
     ///
     /// Authority stays frozen: only the servers and tool identities the Chat was
-    /// authorised with are reconnected. Their metadata comes from this
-    /// generation's session, so an improved server reaches the very next pass
+    /// authorised with are installed. Their metadata comes from this
+    /// generation's live sessions, so an improved server reaches a later pass
     /// instead of locking the Chat out (`snapshot_freezer`, "Existing Chat
     /// continuation").
     ///
-    /// Reachability is **not** authority. A server that is closed right now —
-    /// an editor or bridge the user starts and stops during development —
-    /// produces a warning and is retried, but its tools stay in the Chat's
-    /// offered set with the interface they were frozen with, and the call that
-    /// arrives while it is down reports the outage. Dropping the tool here made
-    /// a Chat permanently unable to see a server that was merely stopped.
+    /// **This never contacts a server**, and reachability is not authority. A
+    /// pass has to be immediate, so a session that an earlier call opened is read
+    /// from the Run's cache and a server nobody has called yet simply contributes
+    /// no live interface — the caller keeps the definition the Chat froze with or
+    /// the one saved in Settings. A server that is closed right now — an editor
+    /// or bridge the user starts and stops during development — therefore costs
+    /// the pass nothing, and the call that actually needs it reports the outage
+    /// and reconnects.
     pub(super) fn restore_frozen_mcp(
         &mut self,
         context: &FrozenChatExecutionContextV1,
@@ -86,9 +88,8 @@ impl DesktopRuntime {
             let Some(descriptor) = descriptor else {
                 // No live interface this pass. The tool is *kept*: the caller
                 // falls back to the definition the Chat froze with, and a call
-                // reports why it could not run. A server that did open without
-                // the tool is worth naming; a server that never opened already
-                // warned through `prepare_mcp_sessions`.
+                // reports why it could not run. Only a session an earlier call
+                // opened can report that the server dropped the tool.
                 if snapshots
                     .iter()
                     .any(|snapshot| snapshot.server_id.as_str() == server)

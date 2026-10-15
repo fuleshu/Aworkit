@@ -3648,8 +3648,10 @@ impl FileToolDispatcherV1 {
                 StoredFileToolLimitV1::Mcp {
                     server_id,
                     tool_name,
-                    schema_hash,
-                } => self.run_mcp_tool(envelope, server_id, tool_name, schema_hash, cancellation),
+                    // The stored hash records the interface this Chat was offered;
+                    // dispatch uses the one the answering session advertises now.
+                    schema_hash: _,
+                } => self.run_mcp_tool(envelope, server_id, tool_name, cancellation),
                 StoredFileToolLimitV1::ComfyUi {
                     endpoint,
                     workflow_path,
@@ -3814,7 +3816,6 @@ impl FileToolDispatcherV1 {
         envelope: &ApprovedInvocationEnvelopeV1,
         server_id: &str,
         tool_name: &str,
-        schema_hash: &str,
         cancellation: &CancellationToken,
     ) -> Result<(Value, String), String> {
         if cancellation.is_cancelled() {
@@ -3831,6 +3832,9 @@ impl FileToolDispatcherV1 {
         // rebind only this ephemeral host identity, keeping its binding hash.
         let mut manifest = manifest.clone();
         manifest.host_generation = self.runtime.generation;
+        // The Chat does not contact a server while preparing a pass, so this is
+        // the moment it is reached: the session opens here, retried on every
+        // later call.
         self.runtime
             .mcp
             .open_frozen(&self.record.proposal.run_id, &manifest)
@@ -3840,6 +3844,19 @@ impl FileToolDispatcherV1 {
                 // call, so the model is told to start the server and retry.
                 format!(
                     "MCP server '{server_id}' is not currently reachable, so '{tool_name}' was not called ({error}). If that server is not running, start it (open the application it belongs to) and call this tool again; the Chat keeps the tool and reconnects automatically."
+                )
+            })?;
+        // Dispatch against the interface the session advertises now. A server
+        // the Chat had not reached until this call, or one whose tool changed
+        // while the Chat lived, is called with its current schema instead of
+        // being refused for differing from the stored copy.
+        let schema_hash = self
+            .runtime
+            .mcp
+            .advertised_schema_hash(&self.record.proposal.run_id, &server, tool_name)
+            .ok_or_else(|| {
+                format!(
+                    "MCP server '{server_id}' is running but no longer provides tool '{tool_name}'"
                 )
             })?;
         let outcome = self
@@ -3852,7 +3869,7 @@ impl FileToolDispatcherV1 {
                     invocation_id: envelope.invocation_id.clone(),
                     kind: McpCallKindV1::Tool,
                     name: tool_name.to_owned(),
-                    expected_schema_hash: Some(schema_hash.to_owned()),
+                    expected_schema_hash: Some(schema_hash),
                     arguments: self.record.call.arguments.clone(),
                 },
             )

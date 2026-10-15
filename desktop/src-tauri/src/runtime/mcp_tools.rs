@@ -221,6 +221,62 @@ impl McpToolRuntimeV1 {
         Ok(snapshot)
     }
 
+    /// The discovery snapshots this Run already holds, without contacting any
+    /// server.
+    ///
+    /// Freezing a Chat and assembling a pass have to be immediate, so they read
+    /// whatever an earlier call already opened instead of opening anything:
+    /// opening a session spawns a process or a socket and may wait for a server
+    /// that is slow, asleep or gone, and a development server such as an editor
+    /// is started and stopped all day. A server that has not been called yet
+    /// therefore contributes no live interface, and the Chat describes it from
+    /// the catalog saved in Settings until one exists.
+    pub(crate) fn cached_snapshots(&self, run_id: &StableId) -> Vec<McpCapabilitySnapshotV1> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| {
+                state
+                    .frozen
+                    .get(run_id.as_str())
+                    .map(|sessions| sessions.values().cloned().collect())
+            })
+            .unwrap_or_default()
+    }
+
+    /// The schema hash the session for one server advertises for one tool, or
+    /// `None` when that session does not provide the tool.
+    ///
+    /// Read after `open_frozen`, so it names the session that will answer the
+    /// call. The interface a call is dispatched against is the one the server
+    /// advertises now: a server this Chat had not reached yet, or one whose tool
+    /// changed while the Chat lived, is called with its current schema instead of
+    /// being refused for differing from a stored copy.
+    pub(crate) fn advertised_schema_hash(
+        &self,
+        run_id: &StableId,
+        server_id: &StableId,
+        tool_name: &str,
+    ) -> Option<String> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| {
+                state
+                    .frozen
+                    .get(run_id.as_str())
+                    .and_then(|sessions| sessions.get(server_id.as_str()))
+                    .and_then(|snapshot| {
+                        snapshot
+                            .catalog
+                            .tools
+                            .iter()
+                            .find(|tool| tool.name == tool_name)
+                    })
+                    .map(|tool| tool.input_schema_hash.clone())
+            })
+    }
+
     /// Invokes exactly one discovered operation on the frozen session.
     pub(crate) fn invoke(
         &self,
@@ -524,6 +580,46 @@ mod tests {
             "a lost transport returns no result for the interrupted call"
         );
         (runtime, run_id, server_id, snapshot, peer)
+    }
+
+    #[test]
+    fn assembling_a_run_never_contacts_the_server_and_a_call_does() {
+        let generation = ProcessGeneration(9);
+        let runtime = McpToolRuntimeV1::new(generation);
+        let peer = Arc::new(LossOncePeer::new());
+        runtime
+            .install_scripted_peer(peer.clone())
+            .expect("scripted peer");
+        let run_id = StableId::parse("run.mcp-no-contact".to_owned()).expect("run id");
+        let manifest = manifest(generation);
+
+        // Installing a Run's transport set is local work, and nothing is known
+        // about a server no call has reached.
+        runtime
+            .prepare_production_run(&run_id, &mut [])
+            .expect("install the Run");
+        assert!(runtime.cached_snapshots(&run_id).is_empty());
+        assert_eq!(
+            peer.initializations.load(Ordering::SeqCst),
+            0,
+            "assembling a pass must not contact a server"
+        );
+
+        // The first call is what opens the session, and what it advertises is
+        // then readable for the pass that follows.
+        let snapshot = runtime
+            .open_frozen(&run_id, &manifest)
+            .expect("the call opens the session");
+        assert_eq!(peer.initializations.load(Ordering::SeqCst), 1);
+        assert_eq!(runtime.cached_snapshots(&run_id).len(), 1);
+        assert_eq!(
+            runtime.advertised_schema_hash(&run_id, &manifest.server_id, TOOL),
+            Some(snapshot.catalog.tools[0].input_schema_hash.clone())
+        );
+        assert_eq!(
+            runtime.advertised_schema_hash(&run_id, &manifest.server_id, "missing"),
+            None
+        );
     }
 
     #[test]

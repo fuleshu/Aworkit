@@ -1181,11 +1181,21 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority.mcp.reconnect(server_id)
     }
 
-    /// Prepares production MCP sessions for one frozen Run: installs that
-    /// Run's production peer on first use, stages every server's materialized
-    /// credential slots, opens the exact core-attested sessions, and returns
-    /// their discovery snapshots. Binding drift fails closed without touching
-    /// an active session.
+    /// Installs one frozen Run's production MCP transport set and reports the
+    /// discovery snapshots that Run already holds.
+    ///
+    /// **This never contacts a server.** It prepares the Run's peer, its
+    /// materialized credential slots and the exact core-attested manifests, then
+    /// returns the snapshots an earlier *call* left behind. Opening a session is
+    /// what spawns a process or opens a socket and waits — up to the
+    /// initialization timeout — for a server that may be slow, asleep or gone,
+    /// and a development server such as an editor is closed and reopened all day.
+    /// Freezing a Chat and assembling a pass must therefore stay immediate: a
+    /// session opens on the first call that actually needs it
+    /// ([`FileToolDispatcherV1::run_mcp_tool`]), and the interface it advertises
+    /// refreshes the model's tool definitions from then on. The manifest was
+    /// frozen from Settings, so nothing about authority depends on reaching a
+    /// server here.
     pub(crate) fn prepare_mcp_sessions(
         &self,
         run_id: &StableId,
@@ -1194,30 +1204,14 @@ impl WorkflowExecutionPipeline {
         self.file_tool_authority
             .mcp
             .prepare_production_run(run_id, servers)?;
-        let mut snapshots = Vec::with_capacity(servers.len());
-        let mut warnings = Vec::new();
-        for server in servers {
+        for server in servers.iter_mut() {
             // This service-owned preparation is attested for the actual live
             // host generation, not the one-shot Settings probe generation.
             server.manifest.host_generation = self.generation;
-            let snapshot = self
-                .file_tool_authority
-                .mcp
-                .open_frozen(run_id, &server.manifest);
-            match snapshot {
-                Ok(snapshot) => snapshots.push(snapshot),
-                // A server that is not running right now is not a missing
-                // capability: its tools stay offered to the model, the session
-                // is retried on the next pass and on every call, and a call
-                // made while it is down reports the outage the model can act
-                // on. Only the transport failed here; nothing is revoked.
-                Err(error) => warnings.push(format!(
-                    "MCP server '{}' is not currently reachable ({error}); its tools remain available and a call reports this",
-                    server.manifest.server_id
-                )),
-            }
         }
-        Ok((snapshots, warnings))
+        // Opening a session is retried on each call and each later pass, so a
+        // server that is down now costs the pass nothing.
+        Ok((self.file_tool_authority.mcp.cached_snapshots(run_id), Vec::new()))
     }
 
     fn prepare_pending_leases(
@@ -6656,6 +6650,7 @@ mod tests {
     struct ScriptedMcpPeer {
         behavior: ScriptedMcpBehavior,
         calls: Arc<AtomicUsize>,
+        initializations: Arc<AtomicUsize>,
         observed_arguments: Arc<Mutex<Vec<Value>>>,
     }
 
@@ -6665,6 +6660,7 @@ mod tests {
             _manifest: &McpServerManifestV1,
             _request: &McpInitializeRequestV1,
         ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+            self.initializations.fetch_add(1, Ordering::SeqCst);
             if matches!(self.behavior, ScriptedMcpBehavior::ServerClosed) {
                 return Err(McpPeerErrorV1 {
                     code: "transport_lost".into(),
@@ -6920,6 +6916,25 @@ mod tests {
         Arc<Mutex<Vec<Value>>>,
         Arc<Mutex<Vec<Value>>>,
     ) {
+        let (pipeline, metadata, peer_calls, observed_arguments, observed_results, _) =
+            setup_mcp_pipeline_counting(root, behavior, Arc::new(AtomicUsize::new(0)));
+        (pipeline, metadata, peer_calls, observed_arguments, observed_results)
+    }
+
+    /// The same pipeline, with the session-initialization counter supplied so a
+    /// test can prove the message path never opens a session.
+    fn setup_mcp_pipeline_counting(
+        root: &TempDir,
+        behavior: ScriptedMcpBehavior,
+        initializations: Arc<AtomicUsize>,
+    ) -> (
+        WorkflowExecutionPipeline,
+        CredentialMetadataV1,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<AtomicUsize>,
+    ) {
         let credential_store = Arc::new(MemoryCredentialStore::default());
         let mut secret_broker = SecretBroker::with_store(credential_store.clone());
         let metadata = secret_broker
@@ -6945,6 +6960,7 @@ mod tests {
             .install_mcp_peer(Arc::new(ScriptedMcpPeer {
                 behavior,
                 calls: peer_calls.clone(),
+                initializations: initializations.clone(),
                 observed_arguments: observed_arguments.clone(),
             }))
             .expect("scripted MCP peer");
@@ -6954,7 +6970,92 @@ mod tests {
             peer_calls,
             observed_arguments,
             observed_results,
+            initializations,
         )
+    }
+
+    /// Assembling a Chat's MCP transports is local work and must stay that way:
+    /// opening a session spawns a process or a socket and can wait the whole
+    /// initialization timeout, so a server that is slow, asleep or gone would
+    /// otherwise delay every message — and a new Chat most of all. The call that
+    /// needs the server is what opens it.
+    #[test]
+    fn assembling_mcp_transports_never_contacts_the_server() {
+        let root = TempDir::new().expect("temporary directory");
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let (pipeline, metadata, peer_calls, _arguments, _results, initializations) =
+            setup_mcp_pipeline_counting(&root, ScriptedMcpBehavior::Echo, initializations);
+        let request = mcp_graph_request(&pipeline, metadata);
+        let run_id = request.run_id.clone();
+        let mut servers = request
+            .mcp_servers
+            .iter()
+            .map(|manifest| McpRunServerPreparationV1 {
+                manifest: manifest.clone(),
+                endpoint: aworkit_capability_host::McpTransportEndpointV1::StreamableHttp(
+                    aworkit_capability_host::McpStreamableHttpTransportConfigV1 {
+                        endpoint: "http://127.0.0.1:9/mcp".into(),
+                        allow_stateless: true,
+                        maximum_sse_event_bytes: 1024,
+                        bearer_token_secret_slot: None,
+                    },
+                ),
+                materialization: None,
+            })
+            .collect::<Vec<_>>();
+
+        let (snapshots, warnings) = pipeline
+            .prepare_mcp_sessions(&run_id, &mut servers)
+            .expect("installing a Run's transports is local work");
+        assert!(
+            snapshots.is_empty(),
+            "a server no call has reached contributes no live interface"
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(
+            initializations.load(Ordering::SeqCst),
+            0,
+            "assembling a pass must not contact an MCP server"
+        );
+        assert_eq!(peer_calls.load(Ordering::SeqCst), 0);
+
+        // The pass runs, and its tool call is what reaches the server.
+        let result = pipeline.execute(request).expect("mcp pass");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(
+            initializations.load(Ordering::SeqCst),
+            1,
+            "the call that needs the server opens the session"
+        );
+    }
+
+    /// The interface a call is dispatched against is the one the server
+    /// advertises now. A Chat that can only describe an MCP tool from the catalog
+    /// saved in Settings — because it started while the server was closed, or
+    /// because the server changed since — calls the server instead of being
+    /// refused for differing from the stored schema.
+    #[test]
+    fn a_call_uses_the_interface_the_server_advertises_now() {
+        let root = TempDir::new().expect("temporary directory");
+        let (pipeline, metadata, peer_calls, _arguments, observed_results) =
+            setup_mcp_pipeline(&root, ScriptedMcpBehavior::Echo);
+        let mut request = mcp_graph_request(&pipeline, metadata);
+        // What this Chat was offered is a saved catalog that no longer matches
+        // the interface the running server advertises.
+        request.tools[0].definition = Some(ModelToolDefinitionV1 {
+            capability_id: MCP_FIXTURE_CAPABILITY.into(),
+            name: MCP_FIXTURE_NAME.into(),
+            description: "Echo the given text.".into(),
+            input_schema: json!({"type": "object", "additionalProperties": true}),
+        });
+
+        let result = pipeline
+            .execute(request)
+            .expect("a stale offered schema must not fail the call");
+        assert_eq!(result.status, WorkflowExecutionStatusV1::Succeeded);
+        assert_eq!(peer_calls.load(Ordering::SeqCst), 1);
+        let results = observed_results.lock().expect("results");
+        assert_eq!(results[0]["result"]["echo"], "hello");
     }
 
     #[test]
@@ -7100,6 +7201,7 @@ mod tests {
             .install_scripted_peer(Arc::new(ScriptedMcpPeer {
                 behavior: ScriptedMcpBehavior::Echo,
                 calls: Arc::new(AtomicUsize::new(0)),
+                initializations: Arc::new(AtomicUsize::new(0)),
                 observed_arguments: Arc::new(Mutex::new(Vec::new())),
             }))
             .expect("scripted peer");
@@ -7109,6 +7211,7 @@ mod tests {
                 .install_scripted_peer(Arc::new(ScriptedMcpPeer {
                     behavior: ScriptedMcpBehavior::Echo,
                     calls: Arc::new(AtomicUsize::new(0)),
+                    initializations: Arc::new(AtomicUsize::new(0)),
                     observed_arguments: Arc::new(Mutex::new(Vec::new())),
                 }))
                 .is_err()
