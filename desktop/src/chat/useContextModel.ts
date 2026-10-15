@@ -5,12 +5,13 @@ import type { ContextModel } from "./contextProjection";
 /**
  * Resolve missing capacity once per visible Chat/workflow and discard stale responses.
  *
- * The trusted core's projection names the exact model a frozen Chat will use, so
- * that name always wins: a tier resolved before a Settings change must never
- * outlive it and make the surface report the previous provider/model. A draft
- * Chat has no authoritative name yet, so it re-resolves whenever the surface
- * becomes active again — returning from Settings refreshes the tier that the next
- * Run will resolve.
+ * The trusted core's projection names the model the Chat's next pass will use
+ * (a later pass re-resolves the tiers from current Settings), so that name
+ * always wins: a resolution made before a Settings change must never outlive it
+ * and make the surface report the previous provider/model. A draft Chat has no
+ * authoritative name yet, so it re-resolves whenever the surface becomes active
+ * again — returning from Settings refreshes the tier that the next Run will
+ * resolve.
  */
 export function useContextModel(read: ChatCorePort["contextModel"], chatId: string | undefined,
   workflowId: string | null, fallback: ContextModel | null | undefined, active = true) {

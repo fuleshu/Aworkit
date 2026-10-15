@@ -24,7 +24,28 @@ impl DesktopRuntime {
             return Err("context query targets a different Chat".into());
         }
         let (provider, model) = if let Some(frozen) = self.history.current_frozen_context()? {
-            (frozen.context.provider_snapshot, frozen.context.model_snapshot)
+            // A later pass re-resolves the model tiers from the current workflow
+            // and Settings, so report the binding that pass will actually use.
+            // When the tiers no longer resolve the pass keeps the frozen binding,
+            // and this display must match it.
+            let saved = self
+                .documents
+                .workflow_snapshot_for(&frozen.context.workflow_id)
+                .document;
+            let resolved = if saved.is_null() {
+                None
+            } else {
+                super::resolve_single_model_binding(self.documents.settings(), &saved)
+                    .ok()
+                    .flatten()
+            };
+            match resolved {
+                Some(resolved) => (resolved.provider, resolved.model),
+                None => (
+                    frozen.context.provider_snapshot,
+                    frozen.context.model_snapshot,
+                ),
+            }
         } else {
             let Some(workflow_id) = workflow_id else { return Ok(None); };
             let workflow = self.documents.workflow_snapshot_for(workflow_id);

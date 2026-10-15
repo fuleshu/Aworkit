@@ -1244,26 +1244,67 @@ impl DesktopRuntime {
         // A later pass runs the documents as they are now, so a workflow,
         // Settings or capability edit reaches this pass of the same Chat. A
         // first input keeps the configuration it just froze.
-        let pass = if input.action == "start" {
+        let mut pass = if input.action == "start" {
             None
         } else {
             Some(self.resolve_current_pass(context)?)
         };
+        // The acting model follows the same rule as the graph and tools: a later
+        // pass re-resolves the model tiers from saved Settings, so remapping a
+        // tier reaches the very next message of this Chat instead of pinning the
+        // model for the Chat's whole life. The frozen record is never rewritten —
+        // it stays the evidence of what the Chat started with — and a tier this
+        // build can no longer resolve leaves the pass on the binding the Chat
+        // froze with a notice, rather than ending the Chat.
+        let mut pass_model: Option<ResolvedWorkflowModel> = None;
+        let mut pass_model_notice: Option<String> = None;
+        if let Some(config) = pass.as_ref() {
+            match self.resolve_pass_model(context, &config.document, &config.tools) {
+                Ok(resolved) => pass_model = Some(resolved),
+                Err(reason) => {
+                    pass_model_notice = Some(format!(
+                        "the model tier no longer resolves ({reason}); this pass keeps the provider and model the Chat froze"
+                    ));
+                }
+            }
+        }
+        if let (Some(config), Some(notice)) = (pass.as_mut(), pass_model_notice) {
+            super::workflow_capabilities::warn(&mut config.document, notice);
+        }
+        let acting = match pass_model.as_ref() {
+            Some(resolved) => {
+                let mut acting = ActingModelV1::resolved(resolved);
+                // A key rotation on the same provider endpoint does not re-point
+                // a running Chat: it keeps the credential its frozen record names
+                // until a New Chat, which is what the credential journal's
+                // retention rule expects while this Chat is active. A tier that
+                // moves to a different provider takes that provider's own
+                // credential.
+                if acting.provider.id == context.provider_id
+                    && acting.provider.base_url == context.provider_base_url
+                    && acting.provider.kind == context.provider_kind
+                {
+                    acting.credential = ActingModelV1::frozen(context).credential;
+                }
+                acting
+            }
+            None => ActingModelV1::frozen(context),
+        };
         if conversation
             .iter()
             .any(|message| !message.images.is_empty())
-            && !context
-                .model_snapshot
+            && !acting
+                .model
                 .capabilities
                 .iter()
                 .any(|capability| capability == "vision")
         {
             return Err(format!(
-                "Model '{}' is not configured for vision. Enable Vision in Settings for a compatible model, then start a New Chat.",
-                context.model_name
+                "Model '{}' is not configured for vision. Enable Vision for the model this Chat's tier resolves to in Settings → Models, then send again.",
+                acting.model.name
             ));
         }
-        let provider_runtime_limits = context.provider_snapshot.runtime_limits()?;
+        let provider_runtime_limits = acting.provider.runtime_limits()?;
         // Ordinary invocations retain their existing graph input. Oversized
         // history is restored from the semantic ledger at model admission.
         let provider_messages = conversation
@@ -1279,19 +1320,12 @@ impl DesktopRuntime {
             context.identity.chat_id.clone(),
             context.identity.run_id.clone(),
             WorkflowProviderBindingV1 {
-                kind: context.provider_kind.clone(),
-                base_url: context.provider_base_url.clone(),
-                model: context.remote_model_id.clone(),
+                kind: acting.provider.kind.clone(),
+                base_url: acting.provider.base_url.clone(),
+                model: acting.model.remote_id.clone(),
                 request_timeout_seconds: provider_runtime_limits.request_timeout_seconds,
                 maximum_tool_output_bytes: provider_runtime_limits.maximum_tool_output_bytes,
-                credential: context
-                    .credential
-                    .as_ref()
-                    .map(|credential| CredentialMetadataV1 {
-                        credential: CredentialRef(credential.credential_ref.clone()),
-                        field_names: credential.field_names.clone(),
-                        revision: credential.revision,
-                    }),
+                credential: acting.credential.clone(),
             },
             provider_messages,
             current_epoch_millis()?,
@@ -1309,9 +1343,9 @@ impl DesktopRuntime {
                 .as_ref()
                 .map(|project| project.project_name.clone()),
         };
-        execution_request.model_parameters = context.model_snapshot.parameters.clone();
+        execution_request.model_parameters = acting.model.parameters.clone();
         if context.compaction_version.is_some() {
-            execution_request.model_context = json!({"imageInput":context.model_snapshot.capabilities.iter().any(|c|c == "vision"),"contextWindow":context.model_snapshot.context_window,"maxOutputTokens":context.model_snapshot.max_output_tokens,"policy":context.model_snapshot.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
+            execution_request.model_context = json!({"imageInput":acting.model.capabilities.iter().any(|c|c == "vision"),"contextWindow":acting.model.context_window,"maxOutputTokens":acting.model.max_output_tokens,"policy":acting.model.compaction.clone().unwrap_or_else(||json!({})),"summaryTarget":context.summary_target});
         }
         if manual {
             execution_request.compact_node = Some(string_field(&input.payload, "nodeId")?.into());
@@ -1461,7 +1495,7 @@ impl DesktopRuntime {
                     "createdAt": created_at,
                     "hasInput": true,
                     "input": user_input,
-                    "contextModel": { "name":context.model_name, "contextWindow":context.model_snapshot.context_window },
+                    "contextModel": { "name":acting.model.name, "contextWindow":acting.model.context_window },
                 }),
             ));
             self.history.begin_effect_command(
@@ -1504,12 +1538,12 @@ impl DesktopRuntime {
                     object.insert("commandId".into(), Value::String(input.command_id.clone()));
                     object.insert(
                         "providerId".into(),
-                        Value::String(context.provider_id.clone()),
+                        Value::String(acting.provider.id.clone()),
                     );
-                    object.insert("modelId".into(), Value::String(context.model_id.clone()));
+                    object.insert("modelId".into(), Value::String(acting.model.id.clone()));
                     object.insert(
                         "modelTierId".into(),
-                        Value::String(context.model_tier_id.clone()),
+                        Value::String(acting.tier_id.clone()),
                     );
                     object.insert(
                         "frozenContextHash".into(),
@@ -1537,7 +1571,7 @@ impl DesktopRuntime {
                     object.insert("replayed".into(), Value::Bool(result.replayed));
                 }
                 let _ = self.record_provider_health(
-                    &context.provider_snapshot,
+                    &acting.provider,
                     ProviderHealth::ready(format!(
                         "Last authority-checked completion succeeded with '{}'.",
                         result.model
@@ -1602,7 +1636,7 @@ impl DesktopRuntime {
                     "The authority pipeline did not produce a conclusive assistant response.".into()
                 });
                 let _ = self.record_provider_health(
-                    &context.provider_snapshot,
+                    &acting.provider,
                     ProviderHealth::error(
                         "Last authority-checked completion failed. Inspect Run details for more information.",
                     ),
@@ -1633,9 +1667,9 @@ impl DesktopRuntime {
                         "cachedInputUnits":result.cached_input_units,
                         "uncachedInputUnits":result.uncached_input_units,
                         "body": error,
-                        "providerId": context.provider_id,
-                        "modelId": context.model_id,
-                        "modelTierId": context.model_tier_id,
+                        "providerId": acting.provider.id,
+                        "modelId": acting.model.id,
+                        "modelTierId": acting.tier_id,
                         "frozenContextHash": frozen.context_hash,
                         "snapshotId": result.snapshot_id,
                         "snapshotHash": result.snapshot_hash,
@@ -2137,25 +2171,8 @@ impl DesktopRuntime {
         // v1 model resolution: every referenced tier must resolve to the same
         // provider/model binding so the single frozen secret lease covers the
         // whole pass.
-        let mut resolved: Option<ResolvedWorkflowModel> = None;
-        for tier_id in graph_model_tier_ids(&workflow.document) {
-            let candidate = resolve_workflow_model(self.documents.settings(), &tier_id)?;
-            match &resolved {
-                None => resolved = Some(candidate),
-                Some(previous)
-                    if previous.provider.id == candidate.provider.id
-                        && previous.model.id == candidate.model.id =>
-                {
-                    resolved = Some(candidate);
-                }
-                Some(previous) => {
-                    return Err(format!(
-                        "workflow '{workflow_id}' references model tiers resolving to different provider/model bindings ('{}' vs '{}'); v1 graph execution requires one resolved binding",
-                        previous.model.name, candidate.model.name
-                    ));
-                }
-            }
-        }
+        let resolved = resolve_single_model_binding(self.documents.settings(), &workflow.document)
+            .map_err(|reason| format!("workflow '{workflow_id}' {reason}"))?;
         // A graph with no model-consuming node cannot run and is refused here
         // with the fix, exactly like the readiness verdict reports it: reaching
         // this with no resolved tier is a configuration state, never a panic.
@@ -4437,6 +4454,81 @@ struct ResolvedWorkflowModel {
     provider: ProviderConfigurationV2,
     model: ModelConfigurationV2,
     credential: Option<CredentialMetadataV1>,
+}
+
+/// The provider and model one pass of a Chat actually runs with.
+///
+/// A first pass runs the binding the execution context froze. A later pass
+/// re-resolves the workflow's model tiers from saved Settings, exactly as it
+/// already re-resolves the graph and tool bindings, so remapping a tier in
+/// Settings reaches the very next message of an existing Chat. The frozen
+/// record is never rewritten and committed turns keep the revision they ran
+/// under; only the acting binding of the next pass moves.
+struct ActingModelV1 {
+    tier_id: String,
+    provider: ProviderConfigurationV2,
+    model: ModelConfigurationV2,
+    credential: Option<CredentialMetadataV1>,
+}
+
+impl ActingModelV1 {
+    /// The binding frozen with the Chat: the only one a first pass may use, and
+    /// the fallback when the current tiers cannot be resolved.
+    fn frozen(context: &FrozenChatExecutionContextV1) -> Self {
+        Self {
+            tier_id: context.model_tier_id.clone(),
+            provider: context.provider_snapshot.clone(),
+            model: context.model_snapshot.clone(),
+            credential: context
+                .credential
+                .as_ref()
+                .map(|credential| CredentialMetadataV1 {
+                    credential: CredentialRef(credential.credential_ref.clone()),
+                    field_names: credential.field_names.clone(),
+                    revision: credential.revision,
+                }),
+        }
+    }
+
+    fn resolved(resolved: &ResolvedWorkflowModel) -> Self {
+        Self {
+            tier_id: resolved.tier.id.clone(),
+            provider: resolved.provider.clone(),
+            model: resolved.model.clone(),
+            credential: resolved.credential.clone(),
+        }
+    }
+}
+
+/// Resolves the one provider/model binding a graph's model tiers name.
+///
+/// v1 graph execution issues one secret lease per pass, so every referenced
+/// tier must resolve to the same provider/model. `Ok(None)` means the graph
+/// references no model-consuming node; the caller words that for its own path.
+fn resolve_single_model_binding(
+    settings: &SettingsDocument,
+    workflow: &Value,
+) -> Result<Option<ResolvedWorkflowModel>, String> {
+    let mut resolved: Option<ResolvedWorkflowModel> = None;
+    for tier_id in graph_model_tier_ids(workflow) {
+        let candidate = resolve_workflow_model(settings, &tier_id)?;
+        match &resolved {
+            None => resolved = Some(candidate),
+            Some(previous)
+                if previous.provider.id == candidate.provider.id
+                    && previous.model.id == candidate.model.id =>
+            {
+                resolved = Some(candidate);
+            }
+            Some(previous) => {
+                return Err(format!(
+                    "references model tiers resolving to different provider/model bindings ('{}' vs '{}'); v1 graph execution requires one resolved binding",
+                    previous.model.name, candidate.model.name
+                ));
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 fn resolve_workflow_model(
@@ -9302,11 +9394,10 @@ mod tests {
     }
 
     /// A later pass of an existing Chat adopts the current documents — node, edge
-    /// and agent tool ids and the bound tool set — so a capability the user
-    /// enabled in response to what the model reported missing reaches the very
-    /// next pass without a New Chat. Chat identity, the authority ceiling and the
-    /// frozen provider carry over; a Settings edit that is not document-derived
-    /// still feeds only the next Chat.
+    /// and agent tool ids, the bound tool set and the model tiers — so a
+    /// capability or model the user changed while the Chat waited reaches the
+    /// very next pass without a New Chat. Chat identity, the authority ceiling
+    /// and the frozen record carry over.
     #[test]
     fn later_pass_adopts_the_current_document_while_chat_identity_stays_frozen() {
         let root = TempDir::new().unwrap();
@@ -9399,8 +9490,10 @@ mod tests {
             requests[0].frozen_context_hash,
             requests[1].frozen_context_hash
         );
+        // The first turn keeps the binding frozen with the Chat; the later pass
+        // re-resolves the tier, so the model the Chat now points at acts.
         assert_eq!(requests[0].provider.model, "fixture-model");
-        assert_eq!(requests[1].provider.model, "fixture-model");
+        assert_eq!(requests[1].provider.model, "future-model");
         // The pass runs the current document and offers the newly bound tool.
         assert_eq!(
             requests[1].workflow_snapshot["nodes"]
@@ -9454,6 +9547,93 @@ mod tests {
             runtime.snapshot(0).unwrap().chat.workflow_name.as_deref(),
             Some("Future Simple Chat")
         );
+    }
+
+    /// Remapping a model tier in Settings reaches the next message of the same
+    /// Chat: the acting provider and model are re-resolved from the current
+    /// tiers, exactly like the graph and the tool bindings, while the frozen
+    /// execution context and committed evidence stay untouched.
+    #[test]
+    fn later_pass_re_resolves_the_model_from_a_remapped_tier() {
+        let root = TempDir::new().unwrap();
+        let provider = Arc::new(FixtureProvider::new());
+        let mut runtime = runtime(&root, provider.clone());
+        configure(&mut runtime);
+        runtime
+            .command(send("chat.remap.start", 0, "hello"))
+            .unwrap();
+        let first = runtime.snapshot(0).unwrap().chat;
+        let frozen_context_hash = provider.execution_requests.lock().unwrap()[0]
+            .frozen_context_hash
+            .clone();
+        assert_eq!(
+            provider.execution_requests.lock().unwrap()[0].provider.model,
+            "fixture-model"
+        );
+
+        // The user points tier:balanced at a second provider/model while the
+        // Chat waits, without touching the workflow document.
+        let mut settings = runtime.settings_v2_snapshot();
+        settings.settings.providers.push(ProviderConfigurationV2 {
+            id: "provider.switched".into(),
+            name: "Switched provider".into(),
+            kind: "openai_compatible".into(),
+            base_url: "http://127.0.0.1:9998/v1".into(),
+            enabled: true,
+            credential_ref: None,
+            models: vec![ModelConfigurationV2 {
+                id: "model.switched".into(),
+                name: "Switched model".into(),
+                remote_id: "switched-model".into(),
+                enabled: true,
+                context_window: None,
+                max_output_tokens: None,
+                compaction: None,
+                capabilities: vec!["text".into(), "tools".into()],
+                parameters: BTreeMap::new(),
+            }],
+            configuration: BTreeMap::new(),
+        });
+        settings
+            .settings
+            .model_tiers
+            .iter_mut()
+            .find(|tier| tier.id == "tier:balanced")
+            .unwrap()
+            .resolution = ModelTierResolutionV2::Exact {
+            target: ModelTargetV2 {
+                provider_id: "provider.switched".into(),
+                model_id: "model.switched".into(),
+            },
+        };
+        runtime
+            .settings_v2_commit(SettingsV2CommitInput {
+                command_id: "midchat.remap.tier".into(),
+                expected_version: settings.version,
+                settings: settings.settings,
+            })
+            .unwrap();
+
+        runtime
+            .command(UiCommandInput {
+                schema_version: 1,
+                command_id: "chat.remap.follow-up".into(),
+                expected_version: runtime.snapshot(0).unwrap().version,
+                action: "enqueue".into(),
+                target_id: Some(first.chat_id.clone()),
+                payload: json!({"input":"again"}),
+            })
+            .unwrap();
+
+        let requests = provider.execution_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // Same Chat and same frozen evidence, a different acting binding.
+        assert_eq!(requests[0].chat_id, requests[1].chat_id);
+        assert_eq!(requests[0].run_id, requests[1].run_id);
+        assert_eq!(requests[1].frozen_context_hash, frozen_context_hash);
+        assert_eq!(requests[1].provider.model, "switched-model");
+        assert_eq!(requests[1].provider.base_url, "http://127.0.0.1:9998/v1");
+        assert_eq!(requests[1].provider.kind, "openai_compatible");
     }
 
     /// Deleting the saved workflow a Chat started from must not end that Chat:

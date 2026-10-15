@@ -54,6 +54,7 @@ parallel work, user gates and delegation.
 
 Workflows reference models and tools by portable logical names — a model tier
 such as `tier:balanced` and tools by id. Swap the provider or model behind a tier
-in Settings and every workflow keeps working unchanged.
+in Settings and every workflow keeps working unchanged — including a Chat
+already in progress, which picks up the new model on its next message.
 
 Deep dive: [design work in the repository](further-reading.md).

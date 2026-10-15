@@ -101,6 +101,46 @@ impl DesktopRuntime {
             tools,
         })
     }
+
+    /// Resolves the provider/model binding a later pass runs with.
+    ///
+    /// The same rule the first-input freeze applies is reused, so a later pass
+    /// adopts a remapped tier instead of re-deriving it differently. Nothing
+    /// here ends the pass: a tier this build can no longer resolve is the
+    /// caller's cue to keep the frozen binding and report a notice.
+    pub(super) fn resolve_pass_model(
+        &mut self,
+        context: &FrozenChatExecutionContextV1,
+        workflow: &Value,
+        tools: &[FrozenToolBindingV1],
+    ) -> Result<super::ResolvedWorkflowModel, String> {
+        let requires_tools = tools
+            .iter()
+            .any(|tool| super::super::tool_registry::is_callable(&tool.tool_snapshot.id));
+        let mut resolved =
+            super::resolve_single_model_binding(self.documents.settings(), workflow)?
+                .ok_or_else(|| "the workflow has no model-consuming node".to_owned())?;
+        super::validate_model_capabilities(&resolved.provider, &resolved.model, requires_tools)?;
+        super::validate_workflow_model_parameters(workflow, &resolved.provider, &resolved.model)?;
+        if resolved.model.context_window.is_none() {
+            // The frozen record already learned this exact binding's capacity, so
+            // an unchanged binding reuses it instead of paying for discovery again
+            // on the command path. A genuinely different model is discovered, the
+            // same way a first input learns it.
+            if resolved.provider.id == context.provider_id
+                && resolved.provider.base_url == context.provider_base_url
+                && resolved.provider.kind == context.provider_kind
+                && resolved.model.remote_id == context.remote_model_id
+            {
+                resolved.model.context_window = context.model_snapshot.context_window;
+            }
+            if resolved.model.context_window.is_none() {
+                resolved.model.context_window =
+                    self.discover_context_window(&resolved.provider, &resolved.model.remote_id);
+            }
+        }
+        Ok(resolved)
+    }
 }
 
 /// Freezes the graph's bound tool set for a later pass of an existing Chat.
