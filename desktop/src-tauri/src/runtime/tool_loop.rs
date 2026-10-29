@@ -15,6 +15,7 @@ mod file_operations;
 mod goal;
 pub(crate) mod question;
 mod image_tools;
+mod line_endings;
 mod comfyui_tool;
 #[path = "compression/runtime.rs"]
 mod result_compression;

@@ -134,7 +134,7 @@
       "id": "tool.files.edit",
       "name": "File edit",
       "description": "Replace one exact text range in a file.",
-      "instructions": "Use edit_file for targeted changes to existing UTF-8 text files; it replaces literal old_string with new_string. Choose an old_string that identifies exactly one location, and include more surrounding text when it is ambiguous. Read relevant content before editing. Apply changes within the requested scope and verify the resulting behavior when appropriate. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
+      "instructions": "Use edit_file for targeted changes to existing UTF-8 text files; it replaces literal old_string with new_string. Choose an old_string that identifies exactly one location, and include more surrounding text when it is ambiguous. Line endings are matched tolerantly, so a CRLF file still accepts a quote written with LF, and inserted lines take the file's own endings. Read relevant content before editing. Apply changes within the requested scope and verify the resulting behavior when appropriate. Paths may be absolute or relative to the Chat workspace. File access inside the workspace needs no approval; external paths use the selected approval policy.",
       "executor": "files.edit",
       "requiresProject": false,
       "execution": "native",

@@ -3,9 +3,11 @@
 //! "old_string was not found in the file" is true but robs the model of every
 //! fact the tool already holds: the file it just read, its current size and
 //! hash, whether the content changed since this Run last saw it, and whether the
-//! quoted text is present modulo line endings or indentation. Those facts decide
-//! the next move — re-read a stale copy, re-quote the whitespace, or accept that
-//! the text is simply wrong — so a miss reports them instead of a dead end.
+//! quoted text is present modulo indentation. Those facts decide the next move —
+//! re-read a stale copy, re-quote the whitespace, or accept that the text is
+//! simply wrong — so a miss reports them instead of a dead end. Line-ending
+//! differences are not a miss: the edit applies them as the same text before
+//! this function is reached.
 //! The message is read inside a bounded tool-error field, so it stays terse and
 //! puts the cause before the supporting detail.
 use super::*;
@@ -32,14 +34,15 @@ pub(super) struct EditMissContext<'a> {
 
 /// Builds the failure message for one edit whose `old_string` matched nothing.
 pub(super) fn describe_miss(text: &str, old_string: &str, context: &EditMissContext<'_>) -> String {
-    // A normalised match is the most actionable outcome: the text is present,
-    // only the quote's shape is wrong, so the model must not be told "not found".
-    if let Some(difference) = normalised_difference(text, old_string) {
+    // A shape-only match is the most actionable outcome: the text is present,
+    // only the quote's leading whitespace is wrong, so the model must not be
+    // told "not found". Line-ending differences never reach here — the edit
+    // applies them as the same text before this diagnostic is considered.
+    if across_indentation(text, old_string) {
         return format!(
-            "old_string does not match {path} byte for byte, but the same text is present {difference}. \
+            "old_string does not match {path} byte for byte, but the same text is present after ignoring leading whitespace. \
              The search started with {excerpt}. Re-quote the exact current text (the file is {bytes} bytes with content hash {hash}) and retry.",
             path = context.path,
-            difference = difference.describe(),
             excerpt = excerpt(old_string),
             bytes = context.current_bytes,
             hash = context.current_hash,
@@ -83,40 +86,15 @@ pub(super) fn describe_miss(text: &str, old_string: &str, context: &EditMissCont
     message
 }
 
-/// How the quoted text differs from the file when shape is normalised away.
-enum NormalisedDifference {
-    LineEndings,
-    Indentation,
-}
-
-impl NormalisedDifference {
-    fn describe(&self) -> &'static str {
-        match self {
-            Self::LineEndings => "after normalising CRLF or lone CR line endings to LF",
-            Self::Indentation => "after ignoring leading whitespace",
-        }
-    }
-}
-
-/// The first way the text matches after normalisation, if it matches at all.
-fn normalised_difference(text: &str, old_string: &str) -> Option<NormalisedDifference> {
-    if (text.contains('\r') || old_string.contains('\r'))
-        && normalise_line_endings(text).contains(&normalise_line_endings(old_string))
-    {
-        return Some(NormalisedDifference::LineEndings);
-    }
-    if without_leading_whitespace(text).contains(&without_leading_whitespace(old_string)) {
-        return Some(NormalisedDifference::Indentation);
-    }
-    None
-}
-
-fn normalise_line_endings(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+/// Whether the quoted text occurs in the file once leading whitespace is
+/// ignored on every line. The caller has already ruled out an exact and a
+/// line-ending-only match, so this is the last way the text can be present.
+fn across_indentation(text: &str, old_string: &str) -> bool {
+    without_leading_whitespace(text).contains(&without_leading_whitespace(old_string))
 }
 
 /// `str::lines` already drops a trailing CR, so only leading whitespace is
-/// normalised here; the caller checks line endings before this.
+/// normalised here.
 fn without_leading_whitespace(text: &str) -> String {
     text.lines()
         .map(str::trim_start)
@@ -258,20 +236,6 @@ mod tests {
     }
 
     #[test]
-    fn a_crlf_only_mismatch_reports_the_normalised_match() {
-        let message = describe_miss(
-            "fn main() {\r\n    run();\r\n}\r\n",
-            "fn main() {\n    run();\n}",
-            &context(&hash('c'), Some(observation(&hash('c'), 26))),
-        );
-        assert!(
-            message.contains("after normalising CRLF or lone CR line endings to LF"),
-            "{message}"
-        );
-        assert!(!message.contains(NOT_FOUND), "{message}");
-    }
-
-    #[test]
     fn an_indentation_only_mismatch_reports_the_normalised_match() {
         let message = describe_miss(
             "fn main() {\n    run();\n}\n",
@@ -323,7 +287,7 @@ mod tests {
             ),
             describe_miss(
                 "line\r\n",
-                "line\n",
+                "  line",
                 &context(&hash('b'), Some(observation(&hash('b'), 6))),
             ),
         ];

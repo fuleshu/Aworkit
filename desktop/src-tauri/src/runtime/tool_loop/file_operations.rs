@@ -218,41 +218,44 @@ impl FileToolDispatcherV1 {
                 let new_string = self.record.call.arguments["new_string"]
                     .as_str()
                     .ok_or_else(|| "new_string is invalid".to_owned())?;
-                let current = files
-                    .read(file_path.to_owned())
-                    .map_err(|error| error.to_string())?;
+                let current = files.read(file_path).map_err(|error| error.to_string())?;
                 let text = String::from_utf8(current.clone())
                     .map_err(|_| "file is not UTF-8 text".to_owned())?;
                 let current_hash = content_hash_local(&current);
-                let occurrences = text.match_indices(old_string).count();
-                if occurrences == 0 {
-                    // The miss names what the Run already knows: the file's
-                    // current hash and size, how it differs from the last
-                    // observation, and any normalised or near match.
-                    let observed = self
-                        .records
-                        .file_observation(
-                            &self.record.proposal.run_id,
-                            &observed_file_path(&self.record, path),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    return Err(file_edit_miss::describe_miss(
-                        &text,
-                        old_string,
-                        &file_edit_miss::EditMissContext {
-                            path,
-                            current_bytes: current.len(),
-                            current_hash: &current_hash,
-                            observed,
-                        },
-                    ));
-                }
-                if occurrences > 1 {
-                    return Err("old_string matched more than once; make it unique".to_owned());
-                }
-                let replacement = text.replacen(old_string, new_string, 1).into_bytes();
+                // A quote whose line endings differ from the file is the same
+                // text: the provider re-emits the newline it was trained on, so
+                // matching it byte for byte rejects an edit the user asked for.
+                let applied = match line_endings::replace_once(&text, old_string, new_string) {
+                    line_endings::EditMatch::Applied(applied) => applied,
+                    line_endings::EditMatch::Ambiguous => {
+                        return Err("old_string matched more than once; make it unique".to_owned())
+                    }
+                    line_endings::EditMatch::NotFound => {
+                        // The miss names what the Run already knows: the file's
+                        // current hash and size, how it differs from the last
+                        // observation, and any normalised or near match.
+                        let observed = self
+                            .records
+                            .file_observation(
+                                &self.record.proposal.run_id,
+                                &observed_file_path(&self.record, path),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        return Err(file_edit_miss::describe_miss(
+                            &text,
+                            old_string,
+                            &file_edit_miss::EditMissContext {
+                                path,
+                                current_bytes: current.len(),
+                                current_hash: &current_hash,
+                                observed,
+                            },
+                        ));
+                    }
+                };
+                let replacement = applied.bytes;
                 files
-                    .edit_hash(&file_path.to_owned(), &current_hash, &replacement)
+                    .edit_hash(file_path, &current_hash, &replacement)
                     .map_err(|error| error.to_string())?;
                 let value = json!({
                     "path": path,
@@ -260,6 +263,8 @@ impl FileToolDispatcherV1 {
                     "newString": new_string,
                     "contentHash": content_hash_local(&replacement),
                     "bytesWritten": replacement.len(),
+                    "lineEnding": applied.line_ending.label(),
+                    "lineEndingsReconciled": applied.reconciled_line_endings,
                 });
                 Ok((
                     value,

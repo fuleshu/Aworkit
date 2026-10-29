@@ -663,23 +663,86 @@ fn an_unchanged_read_edit_keeps_the_plain_not_found_message() {
     assert_eq!(error, "old_string was not found in the file");
 }
 
-/// A quote that only differs in line endings is present in the file; the miss
-/// reports the normalised match instead of a dead end.
+/// A quote that only differs in line endings is the same edit. A provider that
+/// read a CRLF file re-emits LF, so applying it is what the user asked for; the
+/// file keeps its own endings, including the untouched lines.
 #[test]
-fn a_crlf_only_quote_reports_the_normalised_match() {
+fn an_lf_quote_edits_a_crlf_file_and_keeps_crlf() {
     let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
-    std::fs::write(
-        f.authority.context.workspace.root.join("src/file.txt"),
-        "alpha\r\nbeta\r\n",
-    )
-    .unwrap();
+    let file = f.authority.context.workspace.root.join("src/file.txt");
+    std::fs::write(&file, "alpha\r\nbeta\r\ngamma\r\n").unwrap();
 
-    let error = edit_error(&f, "outer.crlf", "src/file.txt", "alpha\nbeta", "gamma");
-    assert!(
-        error.contains("after normalising CRLF or lone CR line endings to LF"),
-        "{error}"
+    let settled = f
+        .authority
+        .invoke_v1(
+            &stable("outer.crlf-quote").unwrap(),
+            1,
+            &call(
+                &f,
+                FILE_EDIT_CAPABILITY_ID,
+                json!({
+                    "path":"src/file.txt",
+                    "old_string":"alpha\nbeta",
+                    "new_string":"one\ntwo",
+                }),
+            ),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+
+    assert!(!settled.result.is_error, "{:?}", settled.result);
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"one\r\ntwo\r\ngamma\r\n".to_vec()
     );
-    assert!(!error.contains("old_string was not found in the file"), "{error}");
+    assert_eq!(settled.result.content["lineEnding"].as_str(), Some("crlf"));
+    assert_eq!(
+        settled.result.content["lineEndingsReconciled"].as_bool(),
+        Some(true)
+    );
+}
+
+/// The mirror case: a CRLF quote against an LF file is applied, and the LF file
+/// stays LF instead of picking up one CRLF line.
+#[test]
+fn a_crlf_quote_edits_an_lf_file_and_keeps_lf() {
+    let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
+    let file = f.authority.context.workspace.root.join("src/file.txt");
+    std::fs::write(&file, "alpha\nbeta\n").unwrap();
+
+    let settled = f
+        .authority
+        .invoke_v1(
+            &stable("outer.lf-quote").unwrap(),
+            1,
+            &call(
+                &f,
+                FILE_EDIT_CAPABILITY_ID,
+                json!({
+                    "path":"src/file.txt",
+                    "old_string":"alpha\r\nbeta",
+                    "new_string":"one\r\ntwo",
+                }),
+            ),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+
+    assert!(!settled.result.is_error, "{:?}", settled.result);
+    assert_eq!(std::fs::read(&file).unwrap(), b"one\ntwo\n".to_vec());
+    assert_eq!(settled.result.content["lineEnding"].as_str(), Some("lf"));
+}
+
+/// Ignoring line endings must not turn a repeated block into an arbitrary
+/// choice: a normalised match that occurs twice is rejected like an exact one.
+#[test]
+fn an_ambiguous_normalised_quote_is_rejected() {
+    let f = Fixture::with_tools(&[FILE_EDIT_CAPABILITY_ID]);
+    let file = f.authority.context.workspace.root.join("src/file.txt");
+    std::fs::write(&file, "a\r\nb\r\na\r\nb\r\n").unwrap();
+
+    let error = edit_error(&f, "outer.crlf-ambiguous", "src/file.txt", "a\nb", "x");
+    assert_eq!(error, "old_string matched more than once; make it unique");
 }
 
 /// The multi-match remedy is already actionable and must not change.
