@@ -1,0 +1,18 @@
+{
+  "collection": "project_memory_notes",
+  "data": {
+    "body": "files.edit line-ending rule (task 214). `edit_file` matches line endings tolerantly: an exact byte match first, then a unique match with CRLF/lone CR normalised to LF, and a normalised match that occurs twice is still refused as ambiguous. Indentation is not normalised because it is semantic. The written file keeps its own convention - untouched bytes are byte-identical and inserted lines adopt the ending of the line they join - and the result reports `lineEnding` and `lineEndingsReconciled`. `write_file` is unchanged and still writes exactly the content it is given. The old \"byte for byte ... after normalising CRLF\" miss message is gone, so it no longer indicates a code path; a miss now means the text really is absent or differs in something other than line endings. Module: desktop/src-tauri/src/runtime/tool_loop/line_endings.rs.",
+    "created_at": "2026-10-29 19:24:11",
+    "id": 64634737361,
+    "note_id": "note.files-edit-line-endings",
+    "operation_id": "memory.append.files-edit-line-endings.20261029",
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "run_id": "memory.append.files-edit-line-endings.20261029",
+    "task_id": null
+  },
+  "deleted": false,
+  "identity": "443f53a8-5938-4b50-b636-90e9ae52c8a1",
+  "schemaVersion": 1
+}

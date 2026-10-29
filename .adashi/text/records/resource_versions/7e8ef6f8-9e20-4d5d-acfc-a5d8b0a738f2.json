@@ -1,0 +1,15 @@
+{
+  "collection": "resource_versions",
+  "data": {
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "resource_id": "note.files-edit-line-endings",
+    "resource_kind": "memory.note",
+    "updated_at": "2026-10-29 19:24:11",
+    "version": 1
+  },
+  "deleted": false,
+  "identity": "7e8ef6f8-9e20-4d5d-acfc-a5d8b0a738f2",
+  "schemaVersion": 1
+}

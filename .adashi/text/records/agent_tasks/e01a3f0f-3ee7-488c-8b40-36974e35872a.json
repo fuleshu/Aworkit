@@ -1,0 +1,31 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop/line_endings.rs\",\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_operations.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_edit_miss.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_access_tests.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\"]",
+    "completed_at": "2026-10-29 19:27:23",
+    "completion_memo": {
+      "lines": [
+        "Delivered. Commit 56a55c4 \"Match a quote across line endings when editing a file\" (6 files, +463/-99) is on main and pushed to origin/main (7e6f799..56a55c4).\n",
+        "\n",
+        "The commit carries the line-ending matcher, the broker tests, the trimmed miss diagnostics and the bundled edit_file instruction change as one reviewable change. Tests were re-run after the final edits: 19 file_access_tests and 11 line_endings tests pass; the full desktop lib suite was 646 passed / 0 failed / 1 ignored, and clippy reports nothing in the new or changed files.\n",
+        "\n",
+        "The Adashi records this work produced (task #214, the files.edit memory note, task #215 itself) follow in the record-sync commit on the same branch."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-29 19:26:37",
+    "created_files": "[]",
+    "description": "Deliver task #214 to origin/main: commit the line-ending matcher, its broker tests and the bundled edit_file instruction change as one reviewable change, then sync the Adashi records it produced (task #214, memory note) in the project's usual record-sync commit and push both.",
+    "id": 122450733528,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Commit and push the files.edit line-ending fix",
+    "updated_at": "2026-10-29 19:27:23"
+  },
+  "deleted": false,
+  "identity": "e01a3f0f-3ee7-488c-8b40-36974e35872a",
+  "schemaVersion": 1
+}

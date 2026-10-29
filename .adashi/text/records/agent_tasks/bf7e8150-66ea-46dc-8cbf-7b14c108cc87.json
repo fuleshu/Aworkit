@@ -1,0 +1,55 @@
+{
+  "collection": "agent_tasks",
+  "data": {
+    "changed_files": "[\"desktop/src-tauri/src/runtime/tool_loop.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_operations.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_edit_miss.rs\",\"desktop/src-tauri/src/runtime/tool_loop/file_access_tests.rs\",\"desktop/tool-plugins/aworkit-native/tool-plugin.json\"]",
+    "completed_at": "2026-10-29 19:24:02",
+    "completion_memo": {
+      "lines": [
+        "Settled: the recurring \"old_string does not match ... byte for byte\" failures were a matching defect in `files.edit`, not stale reads or a model problem.\n",
+        "\n",
+        "Evidence\n",
+        "- 68 recorded `span.failed` results across 23 Chats carry that exact message; the last Hopiv Chat (chat.c3b0b9f56400f55af9bdd977dfb2ff216a67d113) hit it 6 times, and four more Hopiv Chats hit it 2-8 times each.\n",
+        "- `read_file` returns the file's raw bytes, so a CRLF file arrives with CRLF (verified from the recorded read of TiFileMetadata.h: 113 line breaks, all CRLF). The provider re-emits the quote with LF, and `text.match_indices(old_string)` rejected text that was genuinely present.\n",
+        "\n",
+        "Change\n",
+        "- New `runtime/tool_loop/line_endings.rs` owns the matching rule. Exact bytes stay the fast path; only a quote that matches nothing is compared again with CRLF and lone CR normalised to LF, and that match must also be unique. Indentation is deliberately not normalised: it is semantic, and the existing diagnostic keeps naming it.\n",
+        "- Both paths splice into the original bytes, so untouched content is byte-identical and inserted lines adopt the ending of the line they join (falling back to the file's majority at EOF). An edit can no longer leave a CRLF file with mixed endings.\n",
+        "- The edit result now reports `lineEnding` and `lineEndingsReconciled`, so the transcript shows what the tool did. The bundled `edit_file` instructions state the tolerance.\n",
+        "- `file_edit_miss.rs` lost its line-ending branch: a miss can no longer be a line-ending-only difference, so that message is gone rather than left unreachable. The indentation and stale-copy diagnostics are unchanged.\n",
+        "- `files.write` is untouched: a whole-content replacement still writes exactly what it is given.\n",
+        "\n",
+        "Verification\n",
+        "- 11 unit tests for the matcher (exact, LF quote into CRLF, CRLF quote into LF, per-line adoption, EOF adoption, ambiguous normalised match, indentation still required, offset walk, dominant ending, surroundings byte-identical).\n",
+        "- Broker-level tests through the real durable authority: an LF quote edits a CRLF file and the file stays `one\\r\\ntwo\\r\\ngamma\\r\\n`; the mirror case stays LF; an ambiguous normalised quote still returns \"old_string matched more than once; make it unique\".\n",
+        "- Full desktop lib suite: 646 passed, 0 failed, 1 ignored. `cargo clippy --lib --tests` reports no warning in the new or changed files (the package's 278 pre-existing warnings are unchanged, and the two `unnecessary_to_owned`/`needless_borrow` warnings in the edited arm are fixed)."
+      ]
+    },
+    "confirmation_commit_id": null,
+    "confirmed_at": null,
+    "created_at": "2026-10-29 19:16:41",
+    "created_files": "[]",
+    "description": {
+      "lines": [
+        "Evidence: 23 recorded Chats produced 68 `span.failed` results from `tool.files.edit` whose text was \"old_string does not match ... byte for byte, but the same text is present after normalising CRLF or lone CR line endings to LF\". The last Hopiv Chat (chat.c3b0b9f56400f55af9bdd977dfb2ff216a67d113) alone hit it six times: read_file returns the file's raw CRLF bytes, the provider re-emits the quote with LF, and the byte-exact search rejects text that is genuinely present. Each miss costs a re-read and a retry, and the retry can fail the same way.\n",
+        "\n",
+        "Cause: `FileToolDispatcherV1::execute_file` (Edit arm) searches `text.match_indices(old_string)` byte for byte. Nothing reconciles the quote's newlines with the file's, and the successful path splices `new_string` verbatim, so an LF quote or an LF replacement can also leave a CRLF file with mixed endings.\n",
+        "\n",
+        "Fix: a line-ending-aware matcher. Exact match stays the fast path. When it finds nothing, compare with CRLF and lone CR normalised to LF; a unique normalised match applies the edit instead of reporting a miss, and indentation still has to match because it is semantic. The written bytes keep the file's own convention: untouched bytes stay byte-identical and inserted lines take the ending of the line they join. The result reports the ending used and whether the quote's endings had to be reconciled.\n",
+        "\n",
+        "Scope: edit only. `files.write` remains a whole-content replacement, so it keeps writing exactly what it is given.\n",
+        "\n",
+        "Verification: unit tests for the normalisation, offset mapping and ending adoption; broker tests proving an LF quote edits a CRLF file, the file stays CRLF, a CRLF quote edits an LF file, an ambiguous normalised match still fails, and a miss still reports the diagnostic."
+      ]
+    },
+    "id": 119618779321,
+    "project_id": {
+      "ref": "d2823a88-fb91-87da-9795-1e7edc3bce1a"
+    },
+    "state": "finished",
+    "title": "Make files.edit match across line-ending differences and keep the file's own line endings",
+    "updated_at": "2026-10-29 19:24:02"
+  },
+  "deleted": false,
+  "identity": "bf7e8150-66ea-46dc-8cbf-7b14c108cc87",
+  "schemaVersion": 1
+}
