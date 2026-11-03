@@ -25,6 +25,33 @@ function snapshot(id: string, head = 1): RuntimeSnapshot {
 }
 
 describe("independent Chat projections", () => {
+  it("delivers Stop immediately while the Chat projection is stale", async () => {
+    let offline = false;
+    const stop = deferred<void>();
+    const calls: string[] = [];
+    const port: ChatCorePort = {
+      async snapshot() {
+        if (offline) throw new Error("projection disconnected");
+        return snapshot("chat.a");
+      },
+      async command(intent, version) {
+        calls.push(`${intent.type}:${intent.targetId}:${version}`);
+        await stop.promise;
+        return { accepted: true, commandId: intent.commandId, currentVersion: version, reason: null };
+      },
+    };
+    const { result } = renderHook(() => useChatRuntime(port, 60_000));
+    await waitFor(() => expect(result.current.snapshot?.chat.chatId).toBe("chat.a"));
+    offline = true;
+    await act(async () => { await result.current.resynchronize(); });
+    expect(result.current.stale).toBe(true);
+    let pending!: Promise<boolean>;
+    act(() => { pending = result.current.dispatch({ type: "cancel", commandId: "stop.a", targetId: "chat.a" }); });
+    await waitFor(() => expect(calls).toEqual(["cancel:chat.a:1"]));
+    offline = false;
+    await act(async () => { stop.resolve(); expect(await pending).toBe(true); });
+  });
+
   it("keeps two pending commands separate and ignores foreign events and late completion", async () => {
     let selected = "chat.a", receive!: (event: RuntimeEvent) => void;
     const a = deferred<void>(), b = deferred<void>();

@@ -93,15 +93,25 @@ impl WorkflowCancellationController {
     /// `false` means no workflow was active; suspended approvals are settled by
     /// the normal runtime command after it acquires the mutex.
     pub fn request_stop(&self, chat_id: &str, command_id: &str) -> Result<bool, String> {
+        let (active, stop_jobs) = self.signal_stop(chat_id, command_id)?;
+        if let Some(stop) = stop_jobs {
+            stop(chat_id);
+        }
+        Ok(active)
+    }
+
+    /// Signal the live pass before entering the job registry, with no
+    /// cancellation-controller lock held during process cleanup.
+    fn signal_stop(&self, chat_id: &str, command_id: &str) -> Result<(bool, Option<JobStopper>), String> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| "workflow cancellation state is unavailable".to_owned())?;
-        if let Some(stop) = &state.stop_jobs { stop(chat_id); }
+        let stop_jobs = state.stop_jobs.clone();
         let Some(active) = state.active.get(chat_id) else {
             if let Some(pending) = state.pending.get(chat_id) {
                 return if pending.command_id == command_id && pending.chat_id == chat_id {
-                    Ok(false)
+                    Ok((false, stop_jobs))
                 } else {
                     Err("another Stop request is already pending".into())
                 };
@@ -114,7 +124,7 @@ impl WorkflowCancellationController {
                 command_id: command_id.to_owned(),
                 chat_id: chat_id.to_owned(),
             });
-            return Ok(false);
+            return Ok((false, stop_jobs));
         };
         let request = StopRequestV1 {
             command_id: command_id.to_owned(),
@@ -123,8 +133,8 @@ impl WorkflowCancellationController {
         };
         active.cancellation.cancel();
         let run_id = active.run_id.clone();
-        state.requested.insert(run_id, request);
-        Ok(true)
+        state.requested.entry(run_id).or_insert(request);
+        Ok((true, stop_jobs))
     }
 
     /// Removes an unclaimed early request after the ordinary Stop command has

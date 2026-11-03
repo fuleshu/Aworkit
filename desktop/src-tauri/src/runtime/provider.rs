@@ -62,11 +62,14 @@ pub(crate) fn installed_model_capabilities(kind: &str) -> Vec<String> {
     if provider_supports_tool_calls(kind) {
         capabilities.push("tools".to_owned());
     }
+    if kind == "xiaomi_mimo" {
+        capabilities.push("thinking_toggle".to_owned());
+    }
     capabilities
 }
 
 pub(crate) fn provider_supports_tool_calls(kind: &str) -> bool {
-    matches!(kind, "openai_compatible" | "anthropic" | "gemini")
+    matches!(kind, "openai_compatible" | "xiaomi_mimo" | "anthropic" | "gemini")
 }
 
 pub(crate) trait ProviderPort: Send + Sync {
@@ -133,7 +136,7 @@ impl ProviderPort for BuiltInProviderPort {
         request_timeout: Duration,
     ) -> Result<(), String> {
         match kind {
-            "openai_compatible" => {
+            "openai_compatible" | "xiaomi_mimo" => {
                 openai_provider(base_url, model, None, request_timeout).map(|_| ())
             }
             "anthropic" => anthropic_provider(base_url, model, None, request_timeout).map(|_| ()),
@@ -153,13 +156,14 @@ impl ProviderPort for BuiltInProviderPort {
         request_timeout: Duration,
     ) -> ProviderTestResult {
         let result = match kind {
-            "openai_compatible" => openai_provider(base_url, model, api_key, request_timeout)
-                .and_then(|provider| {
+            "openai_compatible" | "xiaomi_mimo" => {
+                openai_provider(base_url, model, api_key, request_timeout).and_then(|provider| {
                     provider
                         .test_connection()
                         .map(|test| (test.models, test.configured_model_available))
                         .map_err(|error| error.to_string())
-                }),
+                })
+            }
             "anthropic" => {
                 anthropic_provider(base_url, model, api_key, request_timeout).and_then(|provider| {
                     provider
@@ -231,10 +235,16 @@ impl ProviderPort for BuiltInProviderPort {
         }
         let (binding_id, version_hash, engine): (&str, &str, Box<dyn ProviderEnginePortV1>) =
             match kind {
-                "openai_compatible" => (
+                "openai_compatible" | "xiaomi_mimo" => (
                     OPENAI_BINDING_ID,
                     OPENAI_VERSION_HASH,
-                    Box::new(openai_utility_provider(base_url, model, api_key, request_timeout)?),
+                    Box::new(openai_utility_provider(
+                        kind,
+                        base_url,
+                        model,
+                        api_key,
+                        request_timeout,
+                    )?),
                 ),
                 "anthropic" => (
                     ANTHROPIC_BINDING_ID,
@@ -348,7 +358,7 @@ impl ProviderPort for BuiltInProviderPort {
         request_timeout: Duration,
     ) -> Result<Vec<DiscoveredProviderModel>, String> {
         match kind {
-            "openai_compatible" => {
+            "openai_compatible" | "xiaomi_mimo" => {
                 let connection =
                     openai_provider(base_url, "aworkit-discovery", api_key, request_timeout)?
                         .test_connection()
@@ -485,6 +495,7 @@ fn gemini_provider(
 /// uses the adapter's maximum so a long streamed answer is delivered as
 /// content rather than reported as a size-bound failure of the action.
 fn openai_utility_provider(
+    kind: &str,
     base_url: &str,
     model: &str,
     api_key: Option<String>,
@@ -502,7 +513,8 @@ fn openai_utility_provider(
             ..OpenAiCompatibleLimitsV1::default()
         },
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.to_string())?
+    .with_xiaomi_mimo(kind == "xiaomi_mimo");
     OpenAiCompatibleProvider::new(config).map_err(|error| error.to_string())
 }
 
@@ -630,6 +642,14 @@ mod tests {
                 "fixture-model",
             ),
             (
+                "xiaomi_mimo",
+                "/v1/models",
+                "/v1",
+                "authorization: bearer desktop-secret",
+                json!({"data":[{"id":"fixture-model"}]}),
+                "fixture-model",
+            ),
+            (
                 "anthropic",
                 "/v1/models?limit=100",
                 "",
@@ -692,6 +712,8 @@ mod tests {
                         "tools",
                     ]
                 );
+            } else if kind == "xiaomi_mimo" {
+                assert_eq!(discovered[0].capabilities, vec!["text", "thinking_toggle", "tools"]);
             } else {
                 assert_eq!(discovered[0].capabilities, vec!["text", "tools"]);
             }

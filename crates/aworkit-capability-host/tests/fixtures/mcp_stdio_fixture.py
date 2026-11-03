@@ -100,6 +100,10 @@ def main():
                 )
             arguments = params.get("arguments", {})
             message_text = arguments.get("message", "")
+            if message_text == "__hold__" and "--hold-marker" in sys.argv:
+                with open(sys.argv[sys.argv.index("--hold-marker") + 1], "w", encoding="utf-8"):
+                    pass
+                continue
             if message_text == "__console_probe__":
                 message_text = json.dumps(console_state())
             response(

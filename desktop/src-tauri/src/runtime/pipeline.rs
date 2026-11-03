@@ -9,6 +9,7 @@
 mod compaction_provider;
 mod frozen_tools;
 mod continuation;
+mod model_binding;
 mod steering;
 
 use std::{
@@ -121,16 +122,23 @@ const MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1: u64 = 3_600;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum ProviderProtocolV1 {
     OpenAiCompatible,
+    XiaomiMiMo,
     Anthropic,
     Gemini,
 }
 
 impl ProviderProtocolV1 {
-    const ALL: [Self; 3] = [Self::OpenAiCompatible, Self::Anthropic, Self::Gemini];
+    const ALL: [Self; 4] = [
+        Self::OpenAiCompatible,
+        Self::XiaomiMiMo,
+        Self::Anthropic,
+        Self::Gemini,
+    ];
 
     fn parse(kind: &str) -> Result<Self, WorkflowPipelineError> {
         match kind {
             "openai_compatible" => Ok(Self::OpenAiCompatible),
+            "xiaomi_mimo" => Ok(Self::XiaomiMiMo),
             "anthropic" => Ok(Self::Anthropic),
             "gemini" => Ok(Self::Gemini),
             _ => Err(WorkflowPipelineError::InvalidInput(format!(
@@ -139,17 +147,10 @@ impl ProviderProtocolV1 {
         }
     }
 
-    const fn kind(self) -> &'static str {
-        match self {
-            Self::OpenAiCompatible => "openai_compatible",
-            Self::Anthropic => "anthropic",
-            Self::Gemini => "gemini",
-        }
-    }
-
     const fn capability_id(self) -> &'static str {
         match self {
             Self::OpenAiCompatible => "model.openai-compatible",
+            Self::XiaomiMiMo => "model.xiaomi-mimo",
             Self::Anthropic => "model.anthropic-messages",
             Self::Gemini => "model.google-gemini",
         }
@@ -158,6 +159,7 @@ impl ProviderProtocolV1 {
     const fn adapter_id(self) -> &'static str {
         match self {
             Self::OpenAiCompatible => "adapter.openai-compatible",
+            Self::XiaomiMiMo => "adapter.xiaomi-mimo",
             Self::Anthropic => "adapter.anthropic-messages",
             Self::Gemini => "adapter.google-gemini",
         }
@@ -165,7 +167,7 @@ impl ProviderProtocolV1 {
 
     const fn api_key_header(self) -> &'static str {
         match self {
-            Self::OpenAiCompatible => "Authorization",
+            Self::OpenAiCompatible | Self::XiaomiMiMo => "Authorization",
             Self::Anthropic => "x-api-key",
             Self::Gemini => "x-goog-api-key",
         }
@@ -184,7 +186,7 @@ pub struct WorkflowMessageV1 {
 /// Frozen binding for an installed native provider protocol.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkflowProviderBindingV1 {
-    /// Exact protocol kind: `openai_compatible`, `anthropic`, or `gemini`.
+    /// Exact installed provider protocol kind.
     pub kind: String,
     pub base_url: String,
     pub model: String,
@@ -197,6 +199,8 @@ pub struct WorkflowProviderBindingV1 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkflowExecutionRequestV1 {
     pub(crate) approvals: super::approvals::ApprovalContext,
+    /// The trusted core resolved the acting model from current saved Settings.
+    pub(crate) use_current_model_binding: bool,
     pub request_id: StableId,
     pub chat_id: StableId,
     pub run_id: StableId,
@@ -253,6 +257,7 @@ impl WorkflowExecutionRequestV1 {
             compact_node: None,
             steer_from_request_id: None,
             approvals: Default::default(),
+            use_current_model_binding: false,
             frozen_context_hash: DEFAULT_FROZEN_CONTEXT_HASH.to_owned(),
             workspace: None,
             project_branch: None,
@@ -600,7 +605,8 @@ impl WorkflowExecutionPipeline {
             .records
             .execution_for_chat_or_run(&request.chat_id, &request.run_id)?
         {
-            return continuation::prepare(request, existing_run).map(|prepared| (prepared, false));
+            return continuation::prepare(request, existing_run, &self.descriptors)
+                .map(|prepared| (prepared, false));
         }
         let protocol = ProviderProtocolV1::parse(&request.provider.kind)?;
         let descriptor = self
@@ -1244,21 +1250,7 @@ impl WorkflowExecutionPipeline {
         existing_run: Option<&PreparedExecutionRecordV1>,
     ) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
         let capability_id = stable(protocol.capability_id())?;
-        let secret = request
-            .provider
-            .credential
-            .as_ref()
-            .map(StoredSecretBindingV1::from_metadata)
-            .transpose()?;
-        let provider = StoredProviderBindingV1 {
-            kind: protocol.kind().to_owned(),
-            base_url: request.provider.base_url.clone(),
-            model: request.provider.model.clone(),
-            parameters: request.model_parameters.clone(),
-            model_context: request.model_context.clone(),
-            request_timeout_seconds: request.provider.request_timeout_seconds,
-            maximum_tool_output_bytes: request.provider.maximum_tool_output_bytes,
-        };
+        let (provider, secret) = StoredProviderBindingV1::from_request(request)?;
         let tool_bindings = frozen_tools::effective(
             &request.tools,
             existing_run.map(|existing| existing.tool_bindings.as_slice()),
@@ -1282,18 +1274,6 @@ impl WorkflowExecutionPipeline {
             Ok,
         )?;
         revalidate_optional_project_branch(&workspace, request.project_branch.as_deref())?;
-        let model_binding = CapabilityBindingV1 {
-            capability_id: capability_id.clone(),
-            adapter_id: stable(protocol.adapter_id())?,
-            adapter_version: descriptor.version.clone(),
-            descriptor_hash: descriptor.version_hash.clone(),
-            extension: None,
-            required_isolation_profile: descriptor.required_isolation.clone(),
-            enabled: true,
-            compatible: true,
-            approval: ApprovalRequirement::Never,
-            allowed_node_types: vec!["agent".to_owned(), "model_call".to_owned()],
-        };
         let mut dynamic_descriptors = BTreeMap::new();
         for tool in &tool_bindings {
             if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
@@ -1311,26 +1291,7 @@ impl WorkflowExecutionPipeline {
                 );
             }
         }
-        let mut capability_bindings = vec![model_binding.clone()];
-        let metadata: super::compaction::Metadata =
-            serde_json::from_value(provider.model_context.clone()).map_err(json_error)?;
-        if let Some(target) = metadata.summary_target {
-            let summary_protocol = ProviderProtocolV1::parse(&target.provider.kind)?;
-            if summary_protocol != protocol {
-                let descriptor = self
-                    .descriptors
-                    .get(&summary_protocol)
-                    .ok_or(WorkflowPipelineError::IncompleteEvidence)?;
-                capability_bindings.push(CapabilityBindingV1 {
-                    capability_id: stable(summary_protocol.capability_id())?,
-                    adapter_id: stable(summary_protocol.adapter_id())?,
-                    adapter_version: descriptor.version.clone(),
-                    descriptor_hash: descriptor.version_hash.clone(),
-                    required_isolation_profile: descriptor.required_isolation.clone(),
-                    ..model_binding
-                });
-            }
-        }
+        let mut capability_bindings = provider.capability_bindings(protocol, &self.descriptors)?;
         for tool in &tool_bindings {
             let descriptor_key = if tool.capability_id.starts_with(MCP_CAPABILITY_PREFIX) {
                 &tool.internal_id
@@ -1783,7 +1744,7 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
         }
         let api_key = api_key.map(|mut value| std::mem::take(&mut *value));
         match protocol {
-            ProviderProtocolV1::OpenAiCompatible => {
+            ProviderProtocolV1::OpenAiCompatible | ProviderProtocolV1::XiaomiMiMo => {
                 let limits = OpenAiCompatibleLimitsV1 {
                     request_timeout: Duration::from_secs(provider.request_timeout_seconds),
                     maximum_response_bytes: usize::MAX,
@@ -1798,7 +1759,8 @@ impl ProviderFactoryV1 for BuiltInProviderFactory {
                     limits,
                 )
                 .and_then(|config| config.with_request_parameters(&provider.parameters))
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())?
+                .with_xiaomi_mimo(protocol == ProviderProtocolV1::XiaomiMiMo);
                 OpenAiCompatibleProvider::new(config)
                     .map(|provider| Box::new(provider) as Box<dyn ProviderEnginePortV1>)
                     .map_err(|error| error.to_string())
@@ -3492,9 +3454,6 @@ fn validate_request(
     })?;
     let frozen_tools = freeze_file_tool_bindings(&request.tools)?;
     if request.maximum_timeout_recoveries > PROVIDER_TIMEOUT_RECOVERIES_V1
-        || request.provider.request_timeout_seconds == 0
-        || request.provider.request_timeout_seconds > MAXIMUM_PROVIDER_REQUEST_TIMEOUT_SECONDS_V1
-        || !(1024..=512 * 1024).contains(&request.provider.maximum_tool_output_bytes)
         || frozen_tools.len() != request.tools.len()
     {
         return Err(WorkflowPipelineError::InvalidInput(
@@ -3545,48 +3504,7 @@ fn validate_request(
             "saved workflow snapshot exceeds the executable persistence bound".to_owned(),
         ));
     }
-    if descriptor.capability_id != protocol.capability_id() {
-        return Err(WorkflowPipelineError::IncompleteEvidence);
-    }
-    match protocol {
-        ProviderProtocolV1::OpenAiCompatible => {
-            OpenAiCompatibleProviderConfig::new(
-                protocol.capability_id(),
-                descriptor.version_hash.clone(),
-                &request.provider.base_url,
-                request.provider.model.clone(),
-                None,
-                OpenAiCompatibleLimitsV1::default(),
-            )
-            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
-        }
-        ProviderProtocolV1::Anthropic => {
-            AnthropicMessagesProviderConfig::new(
-                protocol.capability_id(),
-                descriptor.version_hash.clone(),
-                &request.provider.base_url,
-                request.provider.model.clone(),
-                None,
-                AnthropicMessagesLimitsV1::default(),
-            )
-            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
-        }
-        ProviderProtocolV1::Gemini => {
-            GoogleGeminiProviderConfig::new(
-                protocol.capability_id(),
-                descriptor.version_hash.clone(),
-                &request.provider.base_url,
-                request.provider.model.clone(),
-                None,
-                GoogleGeminiLimitsV1::default(),
-            )
-            .map_err(|error| WorkflowPipelineError::InvalidInput(error.to_string()))?;
-        }
-    }
-    if let Some(metadata) = &request.provider.credential {
-        StoredSecretBindingV1::from_metadata(metadata)?;
-    }
-    Ok(())
+    model_binding::validate_provider_binding(&request.provider, protocol, descriptor)
 }
 
 fn model_descriptor(
@@ -3600,7 +3518,10 @@ fn model_descriptor(
     )
     .map_err(|error| WorkflowPipelineError::Host(error.to_string()))?;
     descriptor.guarantees_same_id_deduplication = false;
-    descriptor.supports_streaming = matches!(protocol, ProviderProtocolV1::OpenAiCompatible);
+    descriptor.supports_streaming = matches!(
+        protocol,
+        ProviderProtocolV1::OpenAiCompatible | ProviderProtocolV1::XiaomiMiMo
+    );
     descriptor.supports_cancellation = false;
     descriptor.allowed_scopes = vec![MODEL_SCOPE.to_owned()];
     descriptor.secret_slots = vec![API_KEY_FIELD.to_owned()];
@@ -5161,6 +5082,12 @@ mod tests {
                 "adapter.openai-compatible",
             ),
             (
+                "xiaomi_mimo",
+                "http://127.0.0.1:9876/v1",
+                "model.xiaomi-mimo",
+                "adapter.xiaomi-mimo",
+            ),
+            (
                 "anthropic",
                 "http://127.0.0.1:9876",
                 "model.anthropic-messages",
@@ -5213,8 +5140,8 @@ mod tests {
             assert_eq!(binding.descriptor_hash, descriptor.version_hash);
             descriptor_hashes.insert(binding.descriptor_hash.clone());
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
-        assert_eq!(descriptor_hashes.len(), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(descriptor_hashes.len(), 4);
 
         let mut changed_protocol = request(metadata);
         changed_protocol.request_id =
@@ -5224,7 +5151,7 @@ mod tests {
         changed_protocol.provider.kind = "anthropic".to_owned();
         changed_protocol.provider.base_url = "http://127.0.0.1:9876".to_owned();
         assert!(pipeline.execute(changed_protocol).unwrap().replayed);
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
     #[test]
@@ -7218,7 +7145,7 @@ mod tests {
         );
         let run_id = stable("run.mcp-cancel").expect("run");
         let snapshot = runtime
-            .open_frozen(&run_id, &mcp_fixture_manifest(generation))
+            .open_frozen(&run_id, &mcp_fixture_manifest(generation), &CancellationToken::default())
             .expect("open frozen session");
         assert_eq!(snapshot.catalog.tools.len(), 1);
 
@@ -7226,7 +7153,7 @@ mod tests {
         changed.binding_hash = format!("sha256:{}", "f".repeat(64));
         assert!(
             runtime
-                .open_frozen(&run_id, &changed)
+                .open_frozen(&run_id, &changed, &CancellationToken::default())
                 .unwrap_err()
                 .contains("binding drift")
         );

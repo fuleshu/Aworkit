@@ -12,6 +12,9 @@ pub(crate) struct StoppedGraphPassV1 {
     /// Active loop iterations, outermost first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loop_frames: Vec<LoopFrameStateV1>,
+    /// Last uncorrected provider tool-call diagnostic, scoped to this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub malformed_call_reason: Option<String>,
 }
 
 impl PassMachine<'_> {
@@ -51,6 +54,7 @@ impl PassMachine<'_> {
             .map(|frame| frame.header_id.clone())
             .collect();
         self.steered_node = Some(stopped.node_id.clone());
+        self.stopped_agent_malformed_call = stopped.malformed_call_reason.clone();
         Ok(())
     }
 
@@ -75,6 +79,7 @@ impl PassMachine<'_> {
             completed: self.completed.clone(),
             active_edges: self.active_edges.clone(),
             loop_frames: self.persisted_loop_frames(),
+            malformed_call_reason: self.stopped_agent_malformed_call.take(),
         });
         outcome
     }

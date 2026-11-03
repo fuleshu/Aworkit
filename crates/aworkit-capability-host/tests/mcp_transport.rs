@@ -10,10 +10,10 @@ use std::{
 };
 
 use aworkit_capability_host::{
-    InjectionTargetV1, MCP_PROTOCOL_2025_11_25, MCP_PROTOCOL_2026_07_28, McpCallKindV1, McpCallV1,
+    CancellationToken, InjectionTargetV1, MCP_PROTOCOL_2025_11_25, MCP_PROTOCOL_2026_07_28, McpCallKindV1, McpCallV1,
     McpPeerTransportConfigV1, McpServerManifestV1, McpSessionManager, McpStdioTransportConfigV1,
     McpStreamableHttpTransportConfigV1, McpTransportEndpointV1, McpTransportKindV1,
-    ProductionMcpPeer, RedeemLeaseRequestV1, SecretDeliveryV1, SecretFieldPlanV1,
+    OutcomeDispositionV1, ProductionMcpPeer, RedeemLeaseRequestV1, RetrySafetyV1, SecretDeliveryV1, SecretFieldPlanV1,
     SecretLeaseClientV1, SecretLeaseHandleV1, SecretMaterializationError,
     SecretMaterializationPlanV1, SecretMaterializer,
 };
@@ -75,18 +75,24 @@ fn manifest(
 
 #[test]
 fn real_stdio_peer_negotiates_legacy_discovers_and_calls_a_tool() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("held");
     let config = McpPeerTransportConfigV1 {
         server_id: stable_id("mcp.fixture"),
         binding_hash: BINDING_HASH.into(),
         endpoint: McpTransportEndpointV1::Stdio(McpStdioTransportConfigV1 {
             executable: python_executable(),
-            arguments: vec![fixture_script().display().to_string()],
+            arguments: vec![
+                fixture_script().display().to_string(),
+                "--hold-marker".into(),
+                marker.display().to_string(),
+            ],
             working_directory: None,
             public_environment: BTreeMap::new(),
         }),
     };
     let peer = Arc::new(ProductionMcpPeer::new(vec![config]).expect("production MCP peer"));
-    let manager = McpSessionManager::new(ProcessGeneration(17), peer);
+    let manager = Arc::new(McpSessionManager::new(ProcessGeneration(17), peer));
 
     let snapshot = manager
         .open(manifest(
@@ -129,6 +135,35 @@ fn real_stdio_peer_negotiates_legacy_discovers_and_calls_a_tool() {
     );
     assert_eq!(outcome.progress.len(), 1);
     assert_eq!(outcome.progress[0].message, "echoed");
+
+    // A server that ignores cancellation must release the local wait without
+    // making it safe to assume the tool had no effects or to replay it.
+    let cancellation = CancellationToken::default();
+    let tool = McpCallV1 {
+        invocation_id: stable_id("invocation.fixture-hold"),
+        kind: McpCallKindV1::Tool,
+        name: "echo".into(),
+        expected_schema_hash: Some(snapshot.catalog.tools[0].input_schema_hash.clone()),
+        arguments: serde_json::json!({"message": "__hold__"}),
+    };
+    let (finished, result) = std::sync::mpsc::channel();
+    let worker = {
+        let manager = manager.clone();
+        let token = cancellation.clone();
+        thread::spawn(move || {
+            finished.send(manager.invoke_cancellable(&stable_id("mcp.fixture"), &tool, &token)).unwrap();
+        })
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !marker.is_file() && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(marker.is_file(), "the MCP server received the hanging request");
+    cancellation.cancel();
+    let outcome = result.recv_timeout(Duration::from_secs(2)).expect("Stop releases the local wait").unwrap();
+    assert_eq!(outcome.outcome.disposition, OutcomeDispositionV1::OutcomeUncertain);
+    assert_eq!(outcome.outcome.retry_safety, RetrySafetyV1::NotSafe);
+    worker.join().unwrap();
     manager.close(&stable_id("mcp.fixture")).expect("close");
 }
 

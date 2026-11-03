@@ -865,8 +865,10 @@ impl DesktopRuntime {
                         )],
                     );
                 }
-                self.history.ensure_expected(input.expected_version)?;
                 self.history.ensure_cancellable()?;
+                // A Stop on a suspended turn may arrive with a stale renderer
+                // projection. Scope it to the targeted Chat's current live turn.
+                let head = self.history.head()?;
                 let created_at = now_label();
                 let mut facts = self
                     .history
@@ -890,7 +892,7 @@ impl DesktopRuntime {
                 self.history.append(
                     &input.command_id,
                     &fingerprint,
-                    input.expected_version,
+                    head,
                     facts,
                 )
             }
@@ -1331,6 +1333,7 @@ impl DesktopRuntime {
             current_epoch_millis()?,
         );
         execution_request.frozen_context_hash = frozen.context_hash.clone();
+        execution_request.use_current_model_binding = pass_model.is_some();
         execution_request.steer_from_request_id = self.steering_request_id(&input)?;
         execution_request.approvals = super::approvals::ApprovalContext {
             mode: context.approval_mode.unwrap_or_default(),
@@ -4428,13 +4431,14 @@ fn validate_workflow_model_parameters(
             continue;
         }
         let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        if provider.kind != "openai_compatible" {
+        if !matches!(provider.kind.as_str(), "openai_compatible" | "xiaomi_mimo") {
             return Err(format!(
                 "workflow node '{node_id}' sets OpenAI-compatible reasoning controls, but tier resolution selected the '{}' provider adapter",
                 provider.kind
             ));
         }
-        if let Some(effort) = configuration.get("reasoningEffort").and_then(Value::as_str)
+        if provider.kind == "openai_compatible"
+            && let Some(effort) = configuration.get("reasoningEffort").and_then(Value::as_str)
             && !advertised_efforts.is_empty()
             && !advertised_efforts.contains(effort)
         {
@@ -4573,7 +4577,7 @@ fn resolve_workflow_model(
         })?;
     if !matches!(
         provider.kind.as_str(),
-        "openai_compatible" | "anthropic" | "gemini"
+        "openai_compatible" | "xiaomi_mimo" | "anthropic" | "gemini"
     ) {
         return Err(format!(
             "provider '{}' uses protocol '{}', but no native workflow adapter is installed",
@@ -4852,7 +4856,7 @@ fn validate_provider_operation_draft(provider: &ProviderConfigurationV2) -> Resu
     }
     if !matches!(
         provider.kind.as_str(),
-        "openai_compatible" | "anthropic" | "gemini"
+        "openai_compatible" | "xiaomi_mimo" | "anthropic" | "gemini"
     ) {
         return Err(format!(
             "provider protocol '{}' is not recognized",
@@ -4885,7 +4889,7 @@ fn validate_consumed_model_parameters(
     if model.parameters.is_empty() {
         return Ok(());
     }
-    if provider.kind != "openai_compatible" {
+    if !matches!(provider.kind.as_str(), "openai_compatible" | "xiaomi_mimo") {
         return Err(format!(
             "model '{}:{}' has parameters, but the '{}' adapter has no consumer for those fields",
             provider.id, model.id, provider.kind
@@ -7007,7 +7011,7 @@ mod tests {
             .command(UiCommandInput {
                 schema_version: 1,
                 command_id: "chat.lifecycle.cancel".into(),
-                expected_version: 7,
+                expected_version: 6,
                 action: "cancel".into(),
                 target_id: Some(selected_chat),
                 payload: json!({}),
@@ -9634,6 +9638,7 @@ mod tests {
         assert_eq!(requests[0].chat_id, requests[1].chat_id);
         assert_eq!(requests[0].run_id, requests[1].run_id);
         assert_eq!(requests[1].frozen_context_hash, frozen_context_hash);
+        assert!(requests[1].use_current_model_binding);
         assert_eq!(requests[1].provider.model, "switched-model");
         assert_eq!(requests[1].provider.base_url, "http://127.0.0.1:9998/v1");
         assert_eq!(requests[1].provider.kind, "openai_compatible");

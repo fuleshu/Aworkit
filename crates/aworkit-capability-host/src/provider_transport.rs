@@ -1,14 +1,18 @@
-//! Shared bounded blocking JSON transport for built-in model providers.
+//! Cancellable HTTP transport for the synchronous model worker.
 
-use std::{io::Read, time::Duration};
-
-use reqwest::{
-    Url,
-    blocking::{Client, RequestBuilder},
-    redirect::Policy,
+use std::{
+    future::Future,
+    io::{self, Read},
+    sync::OnceLock,
+    time::Duration,
 };
+
+use reqwest::{Client, RequestBuilder, Response, Url, redirect::Policy};
 use serde::Deserialize;
 use thiserror::Error;
+use tokio::runtime::Runtime;
+
+use crate::CancellationToken;
 
 pub(crate) const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -81,40 +85,125 @@ impl BoundedJsonClient {
     pub(crate) fn send<T: for<'de> Deserialize<'de>>(
         &self,
         request: RequestBuilder,
+        cancellation: &CancellationToken,
     ) -> Result<T, BoundedJsonError> {
-        let response = request.send().map_err(|error| {
-            if error.is_timeout() {
-                BoundedJsonError::RequestTimedOut
-            } else {
-                BoundedJsonError::Transport
-            }
-        })?;
-        if !response.status().is_success() {
-            let (status, overflow, detail) = context_overflow_response(response);
+        ProviderResponse::send(request, cancellation)?.decode_json(self.maximum_response_bytes)
+    }
+}
+
+/// Runs provider I/O on one shared reactor. Cancelling drops the actual HTTP
+/// future, so the Chat worker can settle without a detached blocking request.
+fn wait_for_io<T>(
+    cancellation: &CancellationToken,
+    operation: impl Future<Output = Result<T, reqwest::Error>>,
+) -> Result<T, BoundedJsonError> {
+    static RUNTIME: OnceLock<Result<Runtime, io::Error>> = OnceLock::new();
+    let runtime = RUNTIME
+        .get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build())
+        .as_ref()
+        .map_err(|_| BoundedJsonError::ClientConstruction)?;
+    runtime.block_on(async {
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(BoundedJsonError::Cancelled),
+            result = operation => result.map_err(|error| {
+                if error.is_timeout() {
+                    BoundedJsonError::RequestTimedOut
+                } else {
+                    BoundedJsonError::Transport
+                }
+            }),
+        }
+    })
+}
+
+/// A cancellable reader so streaming parsing stays on the Chat worker and
+/// publishes chunks in order. Each read can interrupt a silent response body.
+pub(crate) struct ProviderResponse<'a> {
+    response: Response,
+    cancellation: &'a CancellationToken,
+    remainder: io::Cursor<Vec<u8>>,
+}
+
+impl<'a> ProviderResponse<'a> {
+    pub(crate) fn send(
+        request: RequestBuilder,
+        cancellation: &'a CancellationToken,
+    ) -> Result<Self, BoundedJsonError> {
+        let response = wait_for_io(cancellation, async { request.send().await })?;
+        Ok(Self {
+            response,
+            cancellation,
+            remainder: io::Cursor::default(),
+        })
+    }
+
+    pub(crate) fn success(self, limit: usize) -> Result<Self, BoundedJsonError> {
+        let status = self.response.status();
+        if !status.is_success() {
+            let status = status.as_u16();
+            // Preserve the status even if the bounded diagnostic cannot be read.
+            let detail = match self.read_bounded(64 * 1024) {
+                Ok(bytes) => bytes,
+                Err(BoundedJsonError::Cancelled) => return Err(BoundedJsonError::Cancelled),
+                Err(_) => Vec::new(),
+            };
+            let (overflow, excerpt) = context_overflow_detail(status, &detail);
             return Err(if overflow {
                 BoundedJsonError::ContextWindowExceeded
             } else {
                 BoundedJsonError::HttpStatus {
                     status,
-                    detail: http_status_detail(detail.as_deref()),
+                    detail: http_status_detail(excerpt.as_deref()),
                 }
             });
         }
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.maximum_response_bytes as u64)
-        {
+        if self.response.content_length().is_some_and(|bytes| bytes > limit as u64) {
             return Err(BoundedJsonError::ResponseTooLarge);
         }
-        let mut bytes = Vec::new();
-        response
-            .take((self.maximum_response_bytes as u64).saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|_| BoundedJsonError::Transport)?;
-        if bytes.len() > self.maximum_response_bytes {
-            return Err(BoundedJsonError::ResponseTooLarge);
-        }
+        Ok(self)
+    }
+
+    pub(crate) fn decode_json<T: for<'de> Deserialize<'de>>(self, limit: usize) -> Result<T, BoundedJsonError> {
+        let bytes = self.success(limit)?.read_bounded(limit)?;
         serde_json::from_slice(&bytes).map_err(|_| BoundedJsonError::InvalidJson)
+    }
+
+    fn read_bounded(self, limit: usize) -> Result<Vec<u8>, BoundedJsonError> {
+        let mut bytes = Vec::new();
+        self.take((limit as u64).saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|error| match error.kind() {
+                io::ErrorKind::ConnectionAborted => BoundedJsonError::Cancelled,
+                io::ErrorKind::TimedOut => BoundedJsonError::RequestTimedOut,
+                _ => BoundedJsonError::Transport,
+            })?;
+        if bytes.len() > limit {
+            return Err(BoundedJsonError::ResponseTooLarge);
+        }
+        Ok(bytes)
+    }
+}
+
+impl Read for ProviderResponse<'_> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if self.cancellation.is_cancelled() {
+            return Err(io::ErrorKind::ConnectionAborted.into());
+        }
+        let copied = self.remainder.read(output)?;
+        if copied != 0 || output.is_empty() {
+            return Ok(copied);
+        }
+        let chunk = wait_for_io(self.cancellation, self.response.chunk()).map_err(|error| match error {
+            BoundedJsonError::Cancelled => io::ErrorKind::ConnectionAborted,
+            BoundedJsonError::RequestTimedOut => io::ErrorKind::TimedOut,
+            _ => io::ErrorKind::Other,
+        })?;
+        let Some(chunk) = chunk else { return Ok(0); };
+        let copied = output.len().min(chunk.len());
+        output[..copied].copy_from_slice(&chunk[..copied]);
+        self.remainder = io::Cursor::new(chunk[copied..].to_vec());
+        Ok(copied)
     }
 }
 
@@ -122,6 +211,8 @@ impl BoundedJsonClient {
 /// retained in errors.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub(crate) enum BoundedJsonError {
+    #[error("provider request cancelled")]
+    Cancelled,
     #[error("provider context window exceeded")]
     ContextWindowExceeded,
     #[error("provider base URL is invalid")]
@@ -191,24 +282,12 @@ pub(crate) fn http_status_detail(detail: Option<&str>) -> String {
 /// return the provider's own bounded diagnostic when it sent one.
 /// An arbitrary 400/413, network error, quota error or output-limit failure is
 /// never proof that shortening conversation can repair the request.
-pub(crate) fn context_overflow_response(
-    response: reqwest::blocking::Response,
-) -> (u16, bool, Option<String>) {
-    let status = response.status().as_u16();
-    let mut bytes = Vec::new();
-    let read = response
-        .take(64 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .is_ok()
-        && bytes.len() <= 64 * 1024;
-    if !read {
-        return (status, false, None);
-    }
+fn context_overflow_detail(status: u16, bytes: &[u8]) -> (bool, Option<String>) {
     let overflow = matches!(status, 400 | 413 | 422)
-        && serde_json::from_slice(&bytes)
+        && serde_json::from_slice(bytes)
             .ok()
             .is_some_and(|value| is_context_overflow(&value));
-    (status, overflow, provider_error_excerpt(&bytes))
+    (overflow, provider_error_excerpt(bytes))
 }
 
 fn is_context_overflow(value: &serde_json::Value) -> bool {

@@ -648,6 +648,7 @@ struct PassMachine<'a> {
     pending_tool_approval: Option<(GraphApprovalRequestV1, AgentLoopSuspensionV1)>,
     resume_agent_suspension: Option<(AgentLoopSuspensionV1, Option<bool>)>,
     steered_node: Option<String>,
+    stopped_agent_malformed_call: Option<String>,
     activity_observer: Option<&'a dyn Fn(&GraphNodeActivityV1)>,
     /// Active loop iterations by header, outermost first in `loop_stack`.
     loop_frames: BTreeMap<String, LoopFrameStateV1>,
@@ -1285,8 +1286,20 @@ impl<'a> PassMachine<'a> {
             &self.conversation,
             self.tool_authority.project_context(),
         );
-        let initial_context =
+        let mut initial_context =
             context::agent_turn_context(value_text(&self.incoming_agent_context(&node.id)));
+        if self.steered_node.as_deref() == Some(node.id.as_str())
+            && let Some(reason) = self.stopped_agent_malformed_call.take()
+        {
+            initial_context.push(aworkit_capability_host::ModelToolContextV1 {
+                role: Some("user".into()),
+                content: format!(
+                    "Aworkit record from the previous stopped response. The provider returned a \
+                     malformed tool call ({reason}). No tools from the rejected response ran."
+                ),
+                ..Default::default()
+            });
+        }
         let context = json!({"messages": messages});
         let definitions = node
             .tool_bindings
@@ -1401,6 +1414,7 @@ impl<'a> PassMachine<'a> {
                 Ok(Value::Null)
             }
             Err(failure) => {
+                self.stopped_agent_malformed_call = failure.malformed_call_reason.map(str::to_owned);
                 self.attempted_model_turns = self
                     .attempted_model_turns
                     .saturating_add(failure.attempted_model_turns);
@@ -1682,6 +1696,7 @@ impl<'a> PassMachine<'a> {
                 )
             }
             Err(failure) => {
+                self.stopped_agent_malformed_call = failure.malformed_call_reason.map(str::to_owned);
                 self.attempted_model_turns = self
                     .attempted_model_turns
                     .saturating_add(failure.attempted_model_turns);
@@ -2017,6 +2032,7 @@ pub(crate) fn execute_graph_pass_observed(
         pending_tool_approval: None,
         resume_agent_suspension: None,
         steered_node: None,
+        stopped_agent_malformed_call: None,
         activity_observer,
         // A suspended pass resumes the iterations it was inside.
         loop_frames: pending

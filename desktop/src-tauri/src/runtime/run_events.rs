@@ -1291,10 +1291,15 @@ impl ModelEventObserverV1 for ModelRunEventObserver {
             .current_model_span
             .take();
         if let Some(span_id) = current {
+            let body = output
+                .get("error")
+                .filter(|_| status == "failed")
+                .and_then(Value::as_str)
+                .unwrap_or("Canonical model result settled.");
             self.stream.terminal_span(
                 &span_id,
                 status,
-                "Canonical model result settled.".to_owned(),
+                body.to_owned(),
                 Some(output.clone()),
                 Value::Null,
             );

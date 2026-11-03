@@ -766,9 +766,6 @@ impl ChatHistory {
         if current.iter().any(|event| event.kind == "chat.cancelled") {
             return Err("the current Chat is already cancelled".into());
         }
-        if current.iter().any(|event| event.kind == "execution.failed") {
-            return Err("the current Chat already failed and cannot be cancelled".into());
-        }
         let open_spans = current
             .iter()
             .filter(|event| event.kind == "span.started")
@@ -2694,7 +2691,7 @@ fn validate_frozen_context_record(
         || context.remote_model_id.is_empty()
         || !matches!(
             context.provider_kind.as_str(),
-            "openai_compatible" | "anthropic" | "gemini"
+            "openai_compatible" | "xiaomi_mimo" | "anthropic" | "gemini"
         )
         || !is_sha256(&context.workflow_snapshot_hash)
         || !is_sha256(&context.start_command_hash)

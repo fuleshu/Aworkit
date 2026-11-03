@@ -220,6 +220,7 @@ export function ProvidersModelsSection({
                   }
                 >
                   <option value="openai_compatible">OpenAI-compatible</option>
+                  <option value="xiaomi_mimo">Xiaomi MiMo</option>
                   <option value="anthropic">Anthropic Messages</option>
                   <option value="gemini">Google Gemini</option>
                 </select>
@@ -649,18 +650,40 @@ function ModelEditor({
           onChange={(event) => onChange({ ...model, capabilities: event.target.checked ? [...new Set([...model.capabilities, "vision"])] : model.capabilities.filter((capability) => capability !== "vision") })} />
         Vision (image input)
       </label>
-      <JsonObjectField
-        id={`${provider.id}-${model.id}-parameters`}
-        label="Provider parameters"
-        title="Non-secret model request JSON. OpenAI-compatible execution accepts reasoningEffort (none, minimal, low, medium, high, xhigh, max), enableThinking, and preserveThinking"
-        value={model.parameters}
-        onChange={(parameters) => onChange({ ...model, parameters })}
-      />
-      <p className="field-warning">
-        Provider parameters are preserved for future adapters but are not
-        silently ignored: current Test operations require an empty object.
-        Maximum output above is discovery metadata only.
-      </p>
+      {provider.kind === "xiaomi_mimo" ? (
+        <label className="settings-field" htmlFor={`${provider.id}-${model.id}-thinking`}>
+          Thinking
+          <select
+            id={`${provider.id}-${model.id}-thinking`}
+            title="Set Xiaomi MiMo thinking for this model. Provider default uses Xiaomi's default."
+            value={
+              typeof model.parameters.enableThinking === "boolean"
+                ? String(model.parameters.enableThinking)
+                : ""
+            }
+            onChange={(event) => {
+              const parameters = { ...model.parameters };
+              const choice = event.target.value;
+              if (choice === "") delete parameters.enableThinking;
+              else parameters.enableThinking = choice === "true";
+              onChange({ ...model, parameters });
+            }}
+          >
+            <option value="">Provider default</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </label>
+      ) : (
+        <JsonObjectField
+          id={`${provider.id}-${model.id}-parameters`}
+          label="Provider parameters"
+          title="Non-secret model request JSON. OpenAI-compatible execution accepts reasoningEffort (none, minimal, low, medium, high, xhigh, max), enableThinking, and preserveThinking"
+          value={model.parameters}
+          onChange={(parameters) => onChange({ ...model, parameters })}
+        />
+      )}
+      <p className="field-warning">Maximum output above is discovery metadata only.</p>
     </section>
   );
 }

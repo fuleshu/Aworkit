@@ -453,8 +453,9 @@ export function ChatWorkspaceScreen({
     setSelectedTimelineId(null);
   }, [tabState.active]);
   const liveTurnRunning = useMemo(
-    () => snapshot !== null && hasOpenSemanticSpan(runtime.events)
-      && (snapshot.chat.phase !== "awaiting_approval" || runtime.pendingCommandIds.size > 0),
+    () => snapshot !== null && (snapshot.activeChatIds?.includes(snapshot.chat.chatId) === true
+      || (hasOpenSemanticSpan(runtime.events)
+        && (snapshot.chat.phase !== "awaiting_approval" || runtime.pendingCommandIds.size > 0))),
     [runtime.events, snapshot, runtime.pendingCommandIds.size],
   );
   const inspect = () => {
@@ -673,20 +674,11 @@ export function ChatWorkspaceScreen({
   const visibleChat = liveTurnRunning && !chat.recoveryPending
     ? { ...chat, phase: "running" as const }
     : chat;
-  const control = (type: "cancel") => {
-    // Stop is the safety control for a live turn: it must stay usable while the
-    // model is working, including while the projection is stale, and it must not
-    // latch itself off when a slow turn ignores the first cancellation. A stale
-    // projection is resynchronized first so the cancel carries a current fence.
+  const canStop = controlsFor(visibleChat).includes("cancel") && !chat.recoveryPending;
+  const stop = () => {
+    if (stopPending) return;
     setStopPending(true);
-    void (async () => {
-      try {
-        if (runtime.stale) await runtime.resynchronize();
-        await runtime.dispatch(commandIds.createIntent(type, chat.chatId));
-      } finally {
-        setStopPending(false);
-      }
-    })();
+    void runtime.dispatch(commandIds.createIntent("cancel", chat.chatId)).finally(() => setStopPending(false));
   };
   const cardAction = (
     action: NonNullable<TimelineItem["action"]>,
@@ -741,6 +733,11 @@ export function ChatWorkspaceScreen({
             </div>
           </div>
           <div className="run-actions">
+            {activeChild !== null && canStop && (
+              <button type="button" title="Stop the current Chat response and its work" onClick={stop}>
+                {stopPending ? "Stopping response" : "Stop response"}
+              </button>
+            )}
             <ChatOutputFilter value={outputFilter} onChange={setOutputFilter} />
             <button
               aria-pressed={inspectorOpen}
@@ -862,7 +859,7 @@ export function ChatWorkspaceScreen({
             disabled={runtime.stale || runtime.pendingCommandIds.size > 0 || liveTurnRunning || chat.recoveryPending}
             onChange={mode => void runtime.dispatch({ type: "approval_mode", commandId: commandIds.createIntent("approval_mode").commandId, targetId: chat.chatId, mode })} />}
           status={<span role="status" className={`run-status ${visibleChat.phase}`}><i />{chat.recoveryPending ? "Reply interrupted" : label(visibleChat.phase)}</span>}
-          onStop={controlsFor(visibleChat).includes("cancel") ? () => control("cancel") : undefined}
+          onStop={controlsFor(visibleChat).includes("cancel") ? stop : undefined}
           stopDisabled={chat.recoveryPending}
           stopRequested={stopPending}
             chat={{...chat,queuedInputs:[...chat.queuedInputs,...runtime.queuedMaintenanceInputs]}}

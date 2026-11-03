@@ -1,4 +1,4 @@
-//! Blocking OpenAI-compatible provider transport with explicit resource bounds.
+//! OpenAI-compatible provider transport with explicit resource bounds.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -6,8 +6,7 @@ use std::io::{BufReader, Read};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use reqwest::Url;
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::{Client, RequestBuilder, Url};
 use reqwest::header::{ACCEPT, HeaderValue};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
@@ -19,6 +18,7 @@ use crate::{
     CancellationToken, ModelEventV1, ModelRequestV1, ModelToolEventV1, ModelToolRequestV1,
     ProviderAcceptanceV1, ProviderEnginePortV1, ProviderError,
     model_tools::validate_tool_request,
+    provider_transport::{BoundedJsonError, ProviderResponse},
     provider_tools::{
         OpenAiRequestParametersV1, consume_openai_stream, openai_tool_request_body,
         prompt_first_body,
@@ -124,9 +124,17 @@ impl OpenAiCompatibleProviderConfig {
         mut self,
         parameters: &BTreeMap<String, Value>,
     ) -> Result<Self, OpenAiCompatibleProviderError> {
-        self.request_parameters = OpenAiRequestParametersV1::from_settings(parameters)
+        let mut parsed = OpenAiRequestParametersV1::from_settings(parameters)
             .map_err(|()| OpenAiCompatibleProviderError::InvalidRequestParameters)?;
+        parsed.xiaomi_mimo = self.request_parameters.xiaomi_mimo;
+        self.request_parameters = parsed;
         Ok(self)
+    }
+
+    /// Uses Xiaomi's hosted Chat Completions request parameters.
+    pub fn with_xiaomi_mimo(mut self, enabled: bool) -> Self {
+        self.request_parameters.xiaomi_mimo = enabled;
+        self
     }
 
     #[must_use]
@@ -265,8 +273,9 @@ impl OpenAiCompatibleProvider {
 
     /// Tests connectivity and returns the provider's bounded model catalog.
     pub fn test_connection(&self) -> Result<OpenAiConnectionTestV1, OpenAiCompatibleProviderError> {
-        let response = self.send(self.client.get(self.models_url.clone()), "application/json")?;
-        let catalog: ModelsResponse = self.decode_success(response)?;
+        let cancellation = CancellationToken::default();
+        let response = self.send(self.client.get(self.models_url.clone()), "application/json", &cancellation)?;
+        let catalog: ModelsResponse = response.decode_json(self.config.limits.maximum_response_bytes)?;
         let mut model_details = catalog
             .data
             .into_iter()
@@ -291,10 +300,11 @@ impl OpenAiCompatibleProvider {
     /// The body is written once, prompt first, and those exact bytes are sent:
     /// the measurement and the wire cannot drift, and a parameter that sorts
     /// before `messages` cannot hide the reusable prompt prefix.
-    fn streaming_completion_response(
+    fn streaming_completion_response<'a>(
         &self,
         request: &ModelRequestV1,
-    ) -> Result<(Response, SentRequestV1), OpenAiCompatibleProviderError> {
+        cancellation: &'a CancellationToken,
+    ) -> Result<(ProviderResponse<'a>, SentRequestV1), OpenAiCompatibleProviderError> {
         let messages = normalize_messages(&request.input)?;
         let mut body = serde_json::to_value(ChatCompletionRequest {
             model: &self.config.model,
@@ -313,23 +323,16 @@ impl OpenAiCompatibleProvider {
         let body =
             prompt_first_body(&body).map_err(|_| OpenAiCompatibleProviderError::InvalidRequest)?;
         let sent = self.record_sent_body(&body);
-        let response = self.successful_stream(
-            self.send(
-                self.client
-                    .post(self.completions_url.clone())
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
-                    .body(body),
-                "text/event-stream",
-            )?,
-        )?;
+        let response = self.send_completion(body, cancellation)?;
         Ok((response, sent))
     }
 
     /// Sends one streaming tool request and reports the exact body size sent.
-    fn streaming_tool_response(
+    fn streaming_tool_response<'a>(
         &self,
         request: &ModelToolRequestV1,
-    ) -> Result<(Response, SentRequestV1), ProviderError> {
+        cancellation: &'a CancellationToken,
+    ) -> Result<(ProviderResponse<'a>, SentRequestV1), ProviderError> {
         validate_tool_request(request)?;
         let parameters = self
             .config
@@ -338,26 +341,32 @@ impl OpenAiCompatibleProvider {
             .map_err(|()| ProviderError::Failed("OpenAI request parameters are invalid".into()))?;
         let body = openai_tool_request_body(&self.config.model, request, &parameters)?;
         let sent = self.record_sent_body(&body);
-        let response = self
-            .send(
-                self.client
-                    .post(self.completions_url.clone())
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
-                    .body(body),
-                "text/event-stream",
-            )
-            .map_err(ProviderError::from)?;
-        let response = self
-            .successful_stream(response)
-            .map_err(ProviderError::from)?;
+        let response = self.send_completion(body, cancellation)?;
         Ok((response, sent))
     }
 
-    fn send(
+    fn send_completion<'a>(
+        &self,
+        body: Vec<u8>,
+        cancellation: &'a CancellationToken,
+    ) -> Result<ProviderResponse<'a>, OpenAiCompatibleProviderError> {
+        let response = self.send(
+            self.client
+                .post(self.completions_url.clone())
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body),
+            "text/event-stream",
+            cancellation,
+        )?;
+        Ok(response.success(self.config.limits.maximum_response_bytes)?)
+    }
+
+    fn send<'a>(
         &self,
         request: RequestBuilder,
         accept: &'static str,
-    ) -> Result<Response, OpenAiCompatibleProviderError> {
+        cancellation: &'a CancellationToken,
+    ) -> Result<ProviderResponse<'a>, OpenAiCompatibleProviderError> {
         let request = request.header(ACCEPT, accept);
         let request = if let Some(api_key) = &self.config.api_key {
             let mut authorization = HeaderValue::from_str(
@@ -369,71 +378,7 @@ impl OpenAiCompatibleProvider {
         } else {
             request
         };
-        request.send().map_err(|error| {
-            if error.is_timeout() {
-                OpenAiCompatibleProviderError::RequestTimedOut
-            } else {
-                OpenAiCompatibleProviderError::Transport
-            }
-        })
-    }
-
-    fn successful_stream(
-        &self,
-        response: Response,
-    ) -> Result<Response, OpenAiCompatibleProviderError> {
-        if !response.status().is_success() {
-            let (status, overflow, detail) =
-                crate::provider_transport::context_overflow_response(response);
-            return Err(if overflow {
-                OpenAiCompatibleProviderError::ContextWindowExceeded
-            } else {
-                OpenAiCompatibleProviderError::HttpStatus {
-                    status,
-                    detail: crate::provider_transport::http_status_detail(detail.as_deref()),
-                }
-            });
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.config.limits.maximum_response_bytes as u64)
-        {
-            return Err(OpenAiCompatibleProviderError::ResponseTooLarge);
-        }
-        Ok(response)
-    }
-
-    fn decode_success<T: for<'de> Deserialize<'de>>(
-        &self,
-        response: Response,
-    ) -> Result<T, OpenAiCompatibleProviderError> {
-        if !response.status().is_success() {
-            let (status, overflow, detail) =
-                crate::provider_transport::context_overflow_response(response);
-            return Err(if overflow {
-                OpenAiCompatibleProviderError::ContextWindowExceeded
-            } else {
-                OpenAiCompatibleProviderError::HttpStatus {
-                    status,
-                    detail: crate::provider_transport::http_status_detail(detail.as_deref()),
-                }
-            });
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.config.limits.maximum_response_bytes as u64)
-        {
-            return Err(OpenAiCompatibleProviderError::ResponseTooLarge);
-        }
-        let mut bytes = Vec::new();
-        response
-            .take((self.config.limits.maximum_response_bytes as u64).saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|_| OpenAiCompatibleProviderError::Transport)?;
-        if bytes.len() > self.config.limits.maximum_response_bytes {
-            return Err(OpenAiCompatibleProviderError::ResponseTooLarge);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| OpenAiCompatibleProviderError::InvalidJson)
+        Ok(ProviderResponse::send(request, cancellation)?)
     }
 }
 
@@ -484,7 +429,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
             return Err(ProviderError::Cancelled);
         }
         let (response, sent) = self
-            .streaming_completion_response(request)
+            .streaming_completion_response(request, cancellation)
             .map_err(ProviderError::from)?;
         let limit = self.config.limits.maximum_response_bytes;
         let mut bridge = |event| match event {
@@ -531,7 +476,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let (response, sent) = self.streaming_tool_response(request)?;
+        let (response, sent) = self.streaming_tool_response(request, cancellation)?;
         let limit = self.config.limits.maximum_response_bytes;
         let mut bridge = |mut event: ModelToolEventV1| {
             if let ModelToolEventV1::Usage { cache, .. } = &mut event {
@@ -555,6 +500,7 @@ impl ProviderEnginePortV1 for OpenAiCompatibleProvider {
 impl From<OpenAiCompatibleProviderError> for ProviderError {
     fn from(error: OpenAiCompatibleProviderError) -> Self {
         match error {
+            OpenAiCompatibleProviderError::Cancelled => Self::Cancelled,
             OpenAiCompatibleProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             OpenAiCompatibleProviderError::RequestTimedOut => Self::RequestTimedOut,
             OpenAiCompatibleProviderError::Transport => Self::TransportFailed,
@@ -563,10 +509,29 @@ impl From<OpenAiCompatibleProviderError> for ProviderError {
     }
 }
 
+impl From<BoundedJsonError> for OpenAiCompatibleProviderError {
+    fn from(error: BoundedJsonError) -> Self {
+        match error {
+            BoundedJsonError::Cancelled => Self::Cancelled,
+            BoundedJsonError::ContextWindowExceeded => Self::ContextWindowExceeded,
+            BoundedJsonError::InvalidBaseUrl => Self::InvalidBaseUrl,
+            BoundedJsonError::InvalidLimits => Self::InvalidLimits,
+            BoundedJsonError::ClientConstruction => Self::ClientConstruction,
+            BoundedJsonError::RequestTimedOut => Self::RequestTimedOut,
+            BoundedJsonError::Transport => Self::Transport,
+            BoundedJsonError::HttpStatus { status, detail } => Self::HttpStatus { status, detail },
+            BoundedJsonError::ResponseTooLarge => Self::ResponseTooLarge,
+            BoundedJsonError::InvalidJson => Self::InvalidJson,
+        }
+    }
+}
+
 /// Configuration and bounded transport failures. Messages never include an API
 /// key, authorization header, response body, or complete request body.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum OpenAiCompatibleProviderError {
+    #[error("provider request cancelled")]
+    Cancelled,
     #[error("provider context window exceeded")]
     ContextWindowExceeded,
     #[error("provider binding id is invalid")]
@@ -938,6 +903,49 @@ mod tests {
             limits,
         )
         .expect("provider config")
+    }
+
+    #[test]
+    fn cancellation_closes_a_silent_provider_connection() {
+        for headers in [
+            "",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 1024\r\n\r\n",
+            "HTTP/1.1 503 Unavailable\r\nContent-Length: 1024\r\n\r\n",
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/v1", listener.local_addr().unwrap());
+            let (received, in_flight) = std::sync::mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_request(&mut stream);
+                stream.write_all(headers.as_bytes()).unwrap();
+                received.send(()).unwrap();
+                // The test server never finishes the response. A local Stop
+                // must close the connection before the configured HTTP timeout.
+                let result = stream.read(&mut [0]);
+                assert!(matches!(result, Ok(0))
+                    || result.is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset));
+            });
+            let provider = OpenAiCompatibleProvider::new(config(&url, None, OpenAiCompatibleLimitsV1::default())).unwrap();
+            let request = ModelRequestV1 {
+                input: json!({"messages":[{"role":"user","content":"hello"}]}),
+                parameters: BTreeMap::new(),
+            };
+            let token = CancellationToken::default();
+            let cancelling = token.clone();
+            let stop = thread::spawn(move || {
+                in_flight.recv_timeout(Duration::from_secs(2)).unwrap();
+                cancelling.cancel();
+            });
+            let (done, settled) = std::sync::mpsc::channel();
+            let call = thread::spawn(move || {
+                done.send(provider.execute_cancellable(&request, &token, &mut |_| Ok(()))).unwrap();
+            });
+            assert!(matches!(settled.recv_timeout(Duration::from_secs(2)).unwrap(), Err(ProviderError::Cancelled)));
+            stop.join().unwrap();
+            call.join().unwrap();
+            server.join().unwrap();
+        }
     }
 
     #[test]

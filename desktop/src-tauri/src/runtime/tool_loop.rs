@@ -3178,7 +3178,8 @@ impl AdmittedInvocationDispatcherV1 for FileToolDispatcherV1 {
         _admission: &AdmissionReceipt,
         cancellation: &CancellationToken,
     ) -> Self::Output {
-        let outcome = self.execute(envelope, cancellation);
+        let cancellation = cancellation.linked_to(&self.context.cancellation);
+        let outcome = self.execute(envelope, &cancellation);
         self.records.record_outcome(&outcome)?;
         self.runtime.jobs.acknowledge(&self.context.chat_id, &outcome.result).map_err(WorkflowPipelineError::Store)?;
         Ok(outcome)
@@ -3300,7 +3301,8 @@ impl FileToolHostPortV1 {
                 }
             })
         };
-        let outcome = dispatcher.execute(&envelope, &cancellation);
+        let linked = cancellation.linked_to(&self.context.cancellation);
+        let outcome = dispatcher.execute(&envelope, &linked);
         cancellation.cancel();
         self.runtime
             .mcp
@@ -3392,26 +3394,7 @@ impl FileToolHostPortV1 {
                 authority: self.runtime.lease_authority.clone(),
             },
         };
-        // A Run cancellation aborts the in-flight queue wait instead of leaving
-        // the call to the poll bound; on normal completion the watcher exits.
-        let cancellation = CancellationToken::default();
-        let watcher = {
-            let pass_cancellation = self.context.cancellation.clone();
-            let scoped = cancellation.clone();
-            std::thread::spawn(move || loop {
-                if pass_cancellation.is_cancelled() {
-                    scoped.cancel();
-                    return;
-                }
-                if scoped.is_cancelled() {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            })
-        };
-        let outcome = dispatcher.execute(&envelope, &cancellation);
-        cancellation.cancel();
-        let _ = watcher.join();
+        let outcome = dispatcher.execute(&envelope, &self.context.cancellation);
         dispatcher
             .records
             .record_outcome(&outcome)
@@ -3434,6 +3417,9 @@ impl FileToolDispatcherV1 {
             .and_then(Value::as_str)
             .unwrap_or("-")
             .to_owned();
+        if cancellation.is_cancelled() {
+            return self.failed_outcome(envelope, path, "Tool invocation stopped before execution.".into());
+        }
         let materialized = match self.materialize_secret(envelope) {
             Ok(value) => value,
             Err(error) => {
@@ -3838,7 +3824,7 @@ impl FileToolDispatcherV1 {
         // later call.
         self.runtime
             .mcp
-            .open_frozen(&self.record.proposal.run_id, &manifest)
+            .open_frozen(&self.record.proposal.run_id, &manifest, cancellation)
             .map_err(|error| {
                 // Opening is the step that reaches the server: a closed editor
                 // or bridge fails here, and the same manifest opens on the next
@@ -3873,6 +3859,7 @@ impl FileToolDispatcherV1 {
                     expected_schema_hash: Some(schema_hash),
                     arguments: self.record.call.arguments.clone(),
                 },
+                cancellation,
             )
             .map_err(|error| {
                 if error.is_unreachable() {

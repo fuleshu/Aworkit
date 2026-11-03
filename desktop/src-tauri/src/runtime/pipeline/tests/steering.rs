@@ -6,6 +6,7 @@ use crate::runtime::semantic_events::{SemanticEventCommitter, SemanticEventDraft
 struct SteeringControl {
     stop_at: AtomicUsize,
     inputs: Mutex<Vec<Value>>,
+    providers: Mutex<Vec<(StoredProviderBindingV1, bool)>>,
 }
 struct SteeringFactory(Arc<SteeringControl>);
 struct SteeringProvider {
@@ -17,9 +18,15 @@ impl ProviderFactoryV1 for SteeringFactory {
     fn create(
         &self,
         descriptor: &CapabilityDescriptor,
-        _: &StoredProviderBindingV1,
-        _: Option<Zeroizing<String>>,
+        provider: &StoredProviderBindingV1,
+        api_key: Option<Zeroizing<String>>,
     ) -> Result<Box<dyn ProviderEnginePortV1>, String> {
+        self.0.providers.lock().unwrap().push((
+            provider.clone(),
+            api_key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == "replacement-test-secret"),
+        ));
         Ok(Box::new(SteeringProvider {
             binding: descriptor.capability_id.clone(),
             version: descriptor.version_hash.clone(),
@@ -122,7 +129,9 @@ fn verify_steering(stop_at: usize, node_id: &str) {
     assert!(pipeline.preflight(&foreign).is_err());
     let mut changed = steer.clone();
     changed.frozen_context_hash = format!("sha256:{}", "c".repeat(64));
-    pipeline.preflight(&changed).expect("stopped Chat uses saved configuration despite echoed metadata drift");
+    pipeline
+        .preflight(&changed)
+        .expect("stopped Chat uses saved configuration despite echoed metadata drift");
     record_message(&events, "Steer once");
     control.stop_at.store(stop_at + 1, Ordering::SeqCst);
     let interrupted_again = pipeline.execute(steer.clone()).unwrap();
@@ -218,4 +227,128 @@ fn stopped_agent_resumes_without_replanning_after_restart_and_repeated_stop() {
 #[test]
 fn stopped_planner_receives_steering_before_continuing_the_workflow() {
     verify_steering(1, "plan.1");
+}
+
+#[test]
+fn stopped_agent_dispatches_with_the_current_provider_and_its_credential() {
+    let root = TempDir::new().unwrap();
+    let (initial, credentials, metadata, _, _) = setup(&root, ScriptedBehavior::Succeed);
+    let events = initial.event_committer.clone();
+    drop(initial);
+    let switched_credential = SecretBroker::with_store(credentials.clone())
+        .put_credential(
+            CredentialRef(stable("credential.replacement").unwrap()),
+            BTreeMap::from([(API_KEY_FIELD.into(), b"replacement-test-secret".to_vec())]),
+        )
+        .unwrap();
+    let control = Arc::new(SteeringControl::default());
+    control.stop_at.store(2, Ordering::SeqCst);
+    let pipeline = WorkflowExecutionPipeline::compose(
+        root.path(),
+        credentials,
+        Arc::new(SteeringFactory(control.clone())),
+    )
+    .unwrap()
+    .with_chat_events(events.clone());
+
+    let first = graph_request(metadata);
+    record_message(&events, &first.messages[0].content);
+    let stopped = pipeline.execute(first.clone()).unwrap();
+    assert_eq!(
+        pipeline.stopped_node(&first.request_id).unwrap().as_deref(),
+        Some("agent.1")
+    );
+
+    let mut steer = first.clone();
+    steer.request_id = stable("command.steer-provider-change").unwrap();
+    steer.steer_from_request_id = Some(first.request_id.clone());
+    steer.use_current_model_binding = true;
+    steer.provider.kind = "xiaomi_mimo".into();
+    steer.provider.base_url = "http://127.0.0.1:9877/v1".into();
+    steer.provider.model = "mimo-v2.6-pro".into();
+    steer.provider.credential = Some(switched_credential);
+    steer.provider.request_timeout_seconds = 75;
+    steer.provider.maximum_tool_output_bytes = 32 * 1024;
+    steer
+        .model_parameters
+        .insert("enableThinking".into(), json!(false));
+    steer.model_context = json!({"contextWindow":65536});
+    steer.messages.push(WorkflowMessageV1 {
+        role: "user".into(),
+        content: "Continue on the new provider".into(),
+        images: vec![],
+    });
+    record_message(&events, &steer.messages.last().unwrap().content);
+    let resumed = pipeline.execute(steer.clone()).unwrap();
+    assert_eq!(
+        resumed.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        resumed.error
+    );
+    assert_eq!(resumed.chat_id, stopped.chat_id);
+    assert_eq!(resumed.run_id, stopped.run_id);
+    assert_eq!(resumed.snapshot_hash, stopped.snapshot_hash);
+    assert_eq!(resumed.model, steer.provider.model);
+    assert_eq!(
+        resumed
+            .node_activity
+            .iter()
+            .find(|a| a.status == "started")
+            .unwrap()
+            .node_id,
+        "agent.1"
+    );
+    {
+        let providers = control.providers.lock().unwrap();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].0.model, first.provider.model);
+        let (provider, used_replacement_key) = &providers[1];
+        assert!(*used_replacement_key);
+        assert_eq!(provider.kind, "xiaomi_mimo");
+        assert_eq!(provider.base_url, steer.provider.base_url);
+        assert_eq!(provider.request_timeout_seconds, 75);
+        assert_eq!(provider.maximum_tool_output_bytes, 32 * 1024);
+        assert_eq!(provider.parameters, steer.model_parameters);
+        assert_eq!(provider.model_context, steer.model_context);
+    }
+
+    // A retry returns the settled pass even after Settings changes again.
+    steer.provider.kind = "anthropic".into();
+    steer.provider.base_url = "http://127.0.0.1:9878".into();
+    steer.provider.model = "other-protocol-model".into();
+    steer.provider.credential = None;
+    let replay = pipeline.execute(steer.clone()).unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.model, resumed.model);
+    assert_eq!(control.providers.lock().unwrap().len(), 2);
+
+    // A fresh follow-up changes the broker capability along with the route.
+    steer.request_id = stable("command.follow-up-provider-change").unwrap();
+    steer.steer_from_request_id = None;
+    steer.messages.last_mut().unwrap().content = "Start another pass".into();
+    record_message(&events, &steer.messages.last().unwrap().content);
+    let follow_up = pipeline.execute(steer.clone()).unwrap();
+    assert_eq!(
+        follow_up.status,
+        WorkflowExecutionStatusV1::Succeeded,
+        "{:?}",
+        follow_up.error
+    );
+    assert_eq!(follow_up.model, steer.provider.model);
+    assert_eq!(follow_up.snapshot_hash, stopped.snapshot_hash);
+    assert_ne!(
+        follow_up.authority_manifest_id,
+        resumed.authority_manifest_id
+    );
+    let prepared = pipeline
+        .records
+        .execution(&steer.request_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        prepared.broker_proposal.capability_id.as_str(),
+        "model.anthropic-messages"
+    );
+    assert!(prepared.secret.is_none());
 }

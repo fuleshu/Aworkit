@@ -70,6 +70,10 @@ struct ProviderRecoveryBudget {
     /// The last failure text, and how many times it has repeated in a row.
     last_failure: Option<String>,
     identical_failures: u32,
+    malformed_call_reason: Option<&'static str>,
+    /// Once a correction also yields a malformed call, ask for a final text
+    /// response with the settled history still available.
+    tools_withheld_reason: Option<&'static str>,
 }
 
 impl ProviderRecoveryBudget {
@@ -97,7 +101,7 @@ impl ProviderRecoveryBudget {
             self.reported.clear();
         }
         let repeated = !self.reported.insert(error.to_string());
-        let notice = if repeated {
+        let notice = if repeated && !matches!(error, ProviderError::InvalidToolCall(_)) {
             format!(
                 "Aworkit recovery notice: the same provider failure repeated ({error}). The request \
                  has not changed since the previous attempt, so the same outcome is expected. Take \
@@ -119,6 +123,7 @@ impl ProviderRecoveryBudget {
     fn progressed(&mut self) {
         self.last_failure = None;
         self.identical_failures = 0;
+        self.malformed_call_reason = None;
     }
 
     /// Whether the provider has refused this exact failure too many times in a
@@ -463,6 +468,11 @@ pub(crate) enum ModelToolLoopErrorV1 {
 }
 
 impl ModelToolLoopFailureV1 {
+    fn with_recovery(mut self, recovery: &ProviderRecoveryBudget) -> Self {
+        self.malformed_call_reason = recovery.malformed_call_reason;
+        self
+    }
+
     /// Cache counters the turns before the failure reported.
     pub(crate) fn cache_totals(&self) -> ModelCacheTotalsV1 {
         ModelCacheTotalsV1 {
@@ -476,6 +486,7 @@ impl ModelToolLoopFailureV1 {
 #[error("{error}")]
 pub(crate) struct ModelToolLoopFailureV1 {
     pub error: ModelToolLoopErrorV1,
+    pub malformed_call_reason: Option<&'static str>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: Option<u64>,
@@ -551,6 +562,7 @@ pub(crate) fn execute_model_tool_loop_v1(
                 &exchanges,
                 &activities,
             )
+            .with_recovery(&recovery)
         })?;
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
@@ -693,6 +705,7 @@ fn failure(
 ) -> ModelToolLoopFailureV1 {
     ModelToolLoopFailureV1 {
         error,
+        malformed_call_reason: None,
         input_tokens,
         output_tokens,
         cached_input_tokens: cache.cached_input_tokens,
@@ -773,6 +786,9 @@ fn execute_tool_turn_with_timeout_recovery(
             )],
         ),
     }
+    if let Some(reason) = recovery.tools_withheld_reason {
+        append_runtime_notices(&mut retry_notice, vec![malformed_call_final_notice(reason)]);
+    }
     let mut provider_request = ModelToolRequestV1 {
         context_messages: request
             .initial_context
@@ -831,6 +847,9 @@ fn execute_tool_turn_with_timeout_recovery(
         *attempted_model_turns = attempted_model_turns.saturating_add(1);
         // A background child supplies its own evidence observer; every other
         // invocation keeps the gateway's frozen observer.
+        let withheld_tools = recovery
+            .tools_withheld_reason
+            .map(|_| std::mem::take(&mut provider_request.tools));
         let turn = match authority.model_observer() {
             Some(observer) => gateway.execute_tool_turn_with_observer(
                 plan,
@@ -840,6 +859,10 @@ fn execute_tool_turn_with_timeout_recovery(
             ),
             None => gateway.execute_tool_turn_cancellable(plan, &provider_request, cancellation),
         };
+        // Context recovery still needs the frozen catalog to resolve history.
+        if turn.is_err() && let Some(tools) = withheld_tools {
+            provider_request.tools = tools;
+        }
         match turn {
             Err(error) if is_context_overflow(&error)
                 && overflow_retries < preparation.max_overflow_retries =>
@@ -883,6 +906,18 @@ fn execute_tool_turn_with_timeout_recovery(
                     *exchanges = provider_request.exchanges.clone();
                 }
                 overflow_retries += 1;
+            }
+            Err(error @ ProviderError::InvalidToolCall(reason))
+                if recovery.tools_withheld_reason.is_none() =>
+            {
+                recovery.note(&error, &mut provider_request);
+                if recovery.malformed_call_reason.replace(reason).is_some() {
+                    recovery.tools_withheld_reason = Some(reason);
+                    append_runtime_notices(
+                        &mut provider_request.retry_notice,
+                        vec![malformed_call_final_notice(reason)],
+                    );
+                }
             }
             Err(error) if provider_recovery_notice(&error).is_some() => {
                 // Every provider failure that is not cancellation becomes the
@@ -933,6 +968,17 @@ fn execute_tool_turn_with_timeout_recovery(
             }
         }
     }
+}
+
+/// Gives the model an actionable exit from tool-call recovery without
+/// replaying the failed response or granting any new tool authority.
+fn malformed_call_final_notice(reason: &str) -> String {
+    format!(
+        "Aworkit recovery notice: the corrected attempt also returned a malformed tool call \
+         ({reason}). No tools from either failed attempt ran. Tools are unavailable for the \
+         rest of this response. Answer in plain text using the settled results and explain \
+         which work is blocked."
+    )
 }
 
 /// A provider turn can reject the request because the model's context window
@@ -1064,6 +1110,7 @@ pub(crate) fn execute_model_tool_loop_approval_v1(
                 &exchanges,
                 &activities,
             )
+            .with_recovery(&recovery)
         })?;
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);
@@ -1281,6 +1328,7 @@ pub(crate) fn resume_model_tool_loop_v1(
                 &exchanges,
                 &activities,
             )
+            .with_recovery(&recovery)
         })?;
         let turn_output = project_model_tool_events(&evidence.events);
         input_tokens = input_tokens.saturating_add(turn_output.input_tokens);

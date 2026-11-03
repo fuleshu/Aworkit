@@ -86,6 +86,15 @@ impl McpSessionManager {
         &self,
         manifest: McpServerManifestV1,
     ) -> Result<McpCapabilitySnapshotV1, McpSessionError> {
+        self.open_cancellable(manifest, &crate::CancellationToken::default())
+    }
+
+    /// Opens the attested binding while observing the calling tool's Stop.
+    pub fn open_cancellable(
+        &self,
+        manifest: McpServerManifestV1,
+        cancellation: &crate::CancellationToken,
+    ) -> Result<McpCapabilitySnapshotV1, McpSessionError> {
         validate_manifest(&manifest, self.generation)?;
         let key = manifest.server_id.as_str().to_owned();
         let sessions = self
@@ -125,7 +134,7 @@ impl McpSessionManager {
         drop(initializing);
         drop(sessions);
 
-        let initialized = initialize_snapshot(self.peer.as_ref(), &manifest, None);
+        let initialized = initialize_snapshot(self.peer.as_ref(), &manifest, None, cancellation);
         let mut sessions = self
             .sessions
             .lock()
@@ -165,6 +174,15 @@ impl McpSessionManager {
         &self,
         server_id: &StableId,
     ) -> Result<McpCapabilitySnapshotV1, McpSessionError> {
+        self.reconnect_cancellable(server_id, &crate::CancellationToken::default())
+    }
+
+    /// Reconnects for one active tool call with the same cancellation scope.
+    pub fn reconnect_cancellable(
+        &self,
+        server_id: &StableId,
+        cancellation: &crate::CancellationToken,
+    ) -> Result<McpCapabilitySnapshotV1, McpSessionError> {
         let (manifest, expected_catalog_hash) = {
             let mut sessions = self
                 .sessions
@@ -194,8 +212,9 @@ impl McpSessionManager {
                 session.snapshot.catalog_hash.clone(),
             )
         };
-        let initialized =
-            initialize_snapshot(self.peer.as_ref(), &manifest, Some(&expected_catalog_hash));
+        let initialized = initialize_snapshot(
+            self.peer.as_ref(), &manifest, Some(&expected_catalog_hash), cancellation,
+        );
         let mut sessions = self
             .sessions
             .lock()
@@ -233,6 +252,17 @@ impl McpSessionManager {
         &self,
         server_id: &StableId,
         call: &McpCallV1,
+    ) -> Result<McpCallOutcomeV1, McpSessionError> {
+        self.invoke_cancellable(server_id, call, &crate::CancellationToken::default())
+    }
+
+    /// Settles one call, including a locally interrupted wait, through the
+    /// same conservative effect classification as a transport failure.
+    pub fn invoke_cancellable(
+        &self,
+        server_id: &StableId,
+        call: &McpCallV1,
+        cancellation: &crate::CancellationToken,
     ) -> Result<McpCallOutcomeV1, McpSessionError> {
         let (manifest, snapshot, reconnect_count) = {
             let mut sessions = self
@@ -278,7 +308,7 @@ impl McpSessionManager {
             )
         };
 
-        let peer_result = self.peer.invoke(&manifest, call);
+        let peer_result = self.peer.invoke_cancellable(&manifest, call, cancellation);
         let mut sessions = self
             .sessions
             .lock()
@@ -555,8 +585,9 @@ fn initialize_snapshot(
     peer: &dyn McpPeerPort,
     manifest: &McpServerManifestV1,
     expected_catalog_hash: Option<&str>,
+    cancellation: &crate::CancellationToken,
 ) -> Result<McpCapabilitySnapshotV1, McpSessionError> {
-    let response = peer.initialize(
+    let response = peer.initialize_cancellable(
         manifest,
         &McpInitializeRequestV1 {
             server_id: manifest.server_id.clone(),
@@ -564,6 +595,7 @@ fn initialize_snapshot(
             minimum_protocol_version: manifest.minimum_protocol_version,
             maximum_protocol_version: manifest.maximum_protocol_version,
         },
+        cancellation,
     )?;
     if response.server_id != manifest.server_id {
         return Err(McpSessionError::IdentityDrift);

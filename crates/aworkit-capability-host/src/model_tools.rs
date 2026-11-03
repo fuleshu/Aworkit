@@ -486,14 +486,16 @@ fn validate_context_request(request: &ModelToolRequestV1) -> Result<(), Provider
         .map(|tool| (tool.name.as_str(), tool.capability_id.as_str()))
         .collect::<BTreeMap<_, _>>();
     for exchange in &request.exchanges {
-        validate_exchange(exchange, &definitions)?;
+        // A text-only recovery request still carries previously settled calls
+        // and their results. Only the current catalog authorizes new calls.
+        validate_exchange(exchange, (!definitions.is_empty()).then_some(&definitions))?;
     }
     Ok(())
 }
 
 fn validate_exchange(
     exchange: &ModelToolExchangeV1,
-    definitions: &BTreeMap<&str, &str>,
+    definitions: Option<&BTreeMap<&str, &str>>,
 ) -> Result<(), ProviderError> {
     let calls = exchange
         .assistant_content
@@ -551,14 +553,18 @@ fn validate_exchange(
 
 fn validate_call(
     call: &ModelToolCallV1,
-    definitions: &BTreeMap<&str, &str>,
+    definitions: Option<&BTreeMap<&str, &str>>,
 ) -> Result<(), ProviderError> {
     if !valid_identifier(&call.call_id, MAX_CALL_ID_BYTES)
         || call
             .provider_call_id
             .as_deref()
             .is_some_and(|id| !valid_identifier(id, MAX_CALL_ID_BYTES))
-        || definitions.get(call.name.as_str()).copied() != Some(call.capability_id.as_str())
+        || !valid_tool_name(&call.name)
+        || !valid_identifier(&call.capability_id, MAX_CAPABILITY_ID_BYTES)
+        || definitions.is_some_and(|definitions| {
+            definitions.get(call.name.as_str()).copied() != Some(call.capability_id.as_str())
+        })
         || !call.arguments.is_object()
         || json_depth(&call.arguments, 0) > MAX_JSON_DEPTH
         || call
@@ -583,9 +589,9 @@ pub(crate) fn normalize_tool_call(
     let definition = tools
         .iter()
         .find(|tool| tool.name == name)
-        .ok_or_else(invalid_tool_response)?;
+        .ok_or(ProviderError::InvalidToolCall("tool name is absent from the offered catalog"))?;
     if !arguments.is_object() || json_depth(&arguments, 0) > MAX_JSON_DEPTH {
-        return Err(invalid_tool_response());
+        return Err(ProviderError::InvalidToolCall("arguments must be a JSON object within the supported nesting depth"));
     }
     if provider_call_id
         .as_deref()
@@ -594,7 +600,7 @@ pub(crate) fn normalize_tool_call(
             .as_ref()
             .is_some_and(|context| context.is_empty())
     {
-        return Err(invalid_tool_response());
+        return Err(ProviderError::InvalidToolCall("invalid call identifier or provider metadata"));
     }
     let call_id = provider_call_id.clone().unwrap_or_else(|| {
         let mut digest = Sha256::new();
@@ -649,7 +655,7 @@ pub(crate) fn validate_tool_events(
                 has_content = true;
             }
             ModelToolEventV1::ToolCall { call } => {
-                validate_call(call, &definitions).map_err(|_| invalid_tool_response())?;
+                validate_call(call, Some(&definitions)).map_err(|_| invalid_tool_response())?;
                 if !calls.insert(call.call_id.as_str()) {
                     return Err(invalid_tool_response());
                 }

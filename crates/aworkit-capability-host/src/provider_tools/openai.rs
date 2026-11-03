@@ -197,6 +197,7 @@ pub(crate) struct OpenAiRequestParametersV1 {
     reasoning_effort: Option<String>,
     enable_thinking: Option<bool>,
     preserve_thinking: Option<bool>,
+    pub(crate) xiaomi_mimo: bool,
 }
 
 impl OpenAiRequestParametersV1 {
@@ -234,6 +235,7 @@ impl OpenAiRequestParametersV1 {
             reasoning_effort,
             enable_thinking,
             preserve_thinking,
+            xiaomi_mimo: false,
         })
     }
 
@@ -249,6 +251,7 @@ impl OpenAiRequestParametersV1 {
                 .or_else(|| self.reasoning_effort.clone()),
             enable_thinking: overrides.enable_thinking.or(self.enable_thinking),
             preserve_thinking: overrides.preserve_thinking.or(self.preserve_thinking),
+            xiaomi_mimo: self.xiaomi_mimo,
         })
     }
 
@@ -258,6 +261,13 @@ impl OpenAiRequestParametersV1 {
         };
         if let Some(cap) = self.max_output_tokens {
             body.insert("max_tokens".into(), json!(cap));
+        }
+        if self.xiaomi_mimo {
+            if let Some(enabled) = self.enable_thinking {
+                let mode = if enabled { "enabled" } else { "disabled" };
+                body.insert("thinking".into(), json!({ "type": mode }));
+            }
+            return;
         }
         if let Some(reasoning_effort) = &self.reasoning_effort {
             body.insert(
@@ -306,6 +316,27 @@ mod tests {
         assert_eq!(body["reasoning_effort"], "medium");
         assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
         assert_eq!(body["chat_template_kwargs"]["preserve_thinking"], false);
+    }
+
+    #[test]
+    fn xiaomi_thinking_uses_its_native_field_and_honors_turn_overrides() {
+        let mut defaults = OpenAiRequestParametersV1::default();
+        defaults.xiaomi_mimo = true;
+        for (setting, expected) in [(None, None), (Some(true), Some("enabled")), (Some(false), Some("disabled"))] {
+            let mut overrides = BTreeMap::from([
+                ("reasoningEffort".into(), json!("high")),
+                ("preserveThinking".into(), json!(true)),
+            ]);
+            if let Some(enabled) = setting {
+                overrides.insert("enableThinking".into(), json!(enabled));
+            }
+            let parameters = defaults.with_overrides(&overrides).expect("MiMo parameters");
+            let mut body = json!({});
+            parameters.apply(&mut body);
+            assert_eq!(body.pointer("/thinking/type").and_then(Value::as_str), expected);
+            assert!(body.get("reasoning_effort").is_none());
+            assert!(body.get("chat_template_kwargs").is_none());
+        }
     }
 
     #[test]

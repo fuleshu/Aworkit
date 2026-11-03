@@ -13,16 +13,11 @@ use super::*;
 pub(super) fn prepare(
     request: &WorkflowExecutionRequestV1,
     mut saved: PreparedExecutionRecordV1,
+    descriptors: &BTreeMap<ProviderProtocolV1, CapabilityDescriptor>,
 ) -> Result<PreparedExecutionRecordV1, WorkflowPipelineError> {
     let workflow = current_workflow_document(request, &saved)?;
     saved.request_id = request.request_id.clone();
     saved.approvals.mode = request.approvals.mode;
-    let budget = &saved.snapshot.budget;
-    saved.deadline_epoch_millis = if budget.deadline_ms == NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS {
-        NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
-    } else {
-        request.now_epoch_millis.saturating_add(budget.deadline_ms)
-    };
     // The capabilities this pass may call are the ones the current document
     // binds. The saved set supplies authority only: a capability the Run already
     // held keeps its frozen approval class, executable identity and credential
@@ -38,10 +33,22 @@ pub(super) fn prepare(
             "current workflow document is not executable: {error}"
         ))
     })?;
+    extend_manifest_capability_bindings(&mut saved)?;
+    if request.use_current_model_binding {
+        model_binding::adopt_current_model(&mut saved, request, descriptors)?;
+    }
+    let budget = &saved.snapshot.budget;
+    saved.deadline_epoch_millis = if budget.deadline_ms == NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS {
+        NO_AGGREGATE_RUN_DEADLINE_EPOCH_MILLIS
+    } else {
+        request.now_epoch_millis.saturating_add(budget.deadline_ms)
+    };
     let budget_ref = digest_id("budget", request.request_id.as_str())?;
     let mut config = saved.agent_checkpoint.config.clone();
     config.loop_id = digest_id("agent.loop", request.request_id.as_str())?;
     config.budget_ref = budget_ref.clone();
+    config.model_capability_ref = saved.worker_proposal.capability_ref.clone();
+    config.authority_manifest_ref = saved.manifest.manifest_id.clone();
     // A capability this pass may now call must be listed for the worker exactly
     // as it would have been listed at first-input freeze.
     for capability_id in tool_capability_refs(&saved.tool_bindings)? {
@@ -87,7 +94,6 @@ pub(super) fn prepare(
     saved.worker_proposal.payload["config"] = json!({"workflow": workflow});
     saved.broker_proposal.proposal_id = saved.worker_proposal.invocation_id.clone();
     saved.broker_proposal.payload_hash = canonical_hash(&saved.worker_proposal.payload)?;
-    extend_manifest_capability_bindings(&mut saved)?;
     enforce_serialized_bound(
         &saved,
         MAXIMUM_PREPARED_RECORD_BYTES,

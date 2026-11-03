@@ -107,6 +107,18 @@ fn retained_reasoning_replays_as_reasoning_content() {
 }
 
 #[test]
+fn text_only_recovery_keeps_settled_calls_without_offering_tools() {
+    let mut request = request(Some("Read the file first."));
+    request.tools.clear();
+    crate::model_tools::validate_tool_request(&request).expect("settled history is valid");
+    let body = render(&request);
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert_eq!(assistant_message(&body)["tool_calls"][0]["id"], "call.read");
+    assert_eq!(body["messages"][3]["tool_call_id"], "call.read");
+}
+
+#[test]
 fn a_turn_without_reasoning_sends_no_reasoning_content() {
     let body = render(&request(None));
     let assistant = assistant_message(&body);

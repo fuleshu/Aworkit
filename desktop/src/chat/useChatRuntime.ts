@@ -331,13 +331,14 @@ export function useChatRuntime(
   const execute = useCallback(
     async (intent: ChatIntent, expectedVersion?: number): Promise<boolean> => {
       const current = snapshotRef.current;
+      const stopping = intent.type === "cancel";
       // A question answer is a one-shot user decision addressed to one durable
       // question, so it is never gated on this projection's optimism: the core
       // validates it against the durable question and enforces exactly-once, and
       // a stale or unhappy projection must not swallow what the user chose.
-      if (current === null || (stale && !replacesSelectedChat(intent) && intent.type !== "question")) return false;
+      if (current === null || (stale && !stopping && !replacesSelectedChat(intent) && intent.type !== "question")) return false;
       const navigation = replacesSelectedChat(intent);
-      if (navigatingRef.current && !navigation) return false;
+      if (navigatingRef.current && !navigation && !stopping) return false;
       const chatId = intent.targetId ?? current.chat.chatId;
       pendingRef.current.set(intent.commandId, chatId);
       if (intent.type === "resume" || intent.type === "abandon_recovery") recoveryRef.current.set(intent.commandId, intent.type);
@@ -362,14 +363,22 @@ export function useChatRuntime(
         if (snapshotRef.current?.chat.chatId === chatId) setError(notice);
       };
       try {
-        await eventReadyRef.current;
-        const version = expectedVersion ?? (navigation || chatId === current.chat.chatId ? current.version : (await port.snapshot(0, chatId)).version);
+        // Stop targets the Chat directly and must reach native cancellation even
+        // when projection queries or listener setup are stalled.
+        if (!stopping) await eventReadyRef.current;
+        const version = expectedVersion ?? (stopping || navigation || chatId === current.chat.chatId ? current.version : (await port.snapshot(0, chatId)).version);
         const receiptPromise = navigation ? navigationTail.current.then(() => port.command(intent, version)) : port.command(intent, version);
         if (navigation) navigationTail.current = receiptPromise.then(() => {}, () => {});
         const receipt = await receiptPromise;
         if (generation !== generationRef.current) {
           if (!receipt.accepted) commandError(receipt.reason ?? "Couldn’t complete this action.");
           else if (!navigation) errorsRef.current.delete(chatId);
+          return receipt.accepted;
+        }
+        if (stopping) {
+          if (receipt.accepted) errorsRef.current.delete(chatId);
+          else commandError(receipt.reason ?? "Couldn’t stop this response.");
+          void resynchronize();
           return receipt.accepted;
         }
         if (!receipt.accepted) {
@@ -384,6 +393,11 @@ export function useChatRuntime(
         return true;
       } catch (failure) {
         if (generation !== generationRef.current) { commandError(failure); return false; }
+        if (stopping) {
+          commandError(failure);
+          void resynchronize();
+          return false;
+        }
         const failureMessage = message(failure);
         // The command response can be lost after a stream-changing mutation
         // committed. Recovery must accept the newly selected stream even when

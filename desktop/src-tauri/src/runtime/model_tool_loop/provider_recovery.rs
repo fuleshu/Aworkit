@@ -29,12 +29,11 @@ pub(crate) fn provider_recovery_notice(error: &ProviderError) -> Option<String> 
              conversation and completed tool results available here."
                 .to_owned()
         }
-        ProviderError::InvalidToolCall => {
-            "Aworkit recovery notice: the previous response contained a tool call that does not \
-             match any available tool. Retry using only the exact tool names listed in the tool \
-             definitions, with the arguments each tool expects."
-                .to_owned()
-        }
+        ProviderError::InvalidToolCall(reason) => format!(
+            "Aworkit recovery notice: the previous response contained a malformed tool call \
+             ({reason}). No tools from that response ran. If you retry, use the structured tool \
+             call channel with an offered function name and valid JSON arguments."
+        ),
         // A context rejection that compaction could not resolve is still the
         // model's turn: tell it what happened, that the conversation is intact,
         // and let it finish or narrow the task itself.
@@ -68,7 +67,7 @@ mod tests {
         assert!(provider_recovery_notice(&ProviderError::RequestTimedOut).is_some());
         assert!(provider_recovery_notice(&ProviderError::StreamInterrupted).is_some());
         assert!(provider_recovery_notice(&ProviderError::TransportFailed).is_some());
-        assert!(provider_recovery_notice(&ProviderError::InvalidToolCall).is_some());
+        assert!(provider_recovery_notice(&ProviderError::InvalidToolCall("missing function name")).is_some());
         // A provider's own refusal or failure is reported with its diagnostic.
         let refused = provider_recovery_notice(&ProviderError::Failed("quota exceeded".into()))
             .expect("a provider failure is the model's to handle");

@@ -183,6 +183,7 @@ impl McpToolRuntimeV1 {
         &self,
         run_id: &StableId,
         manifest: &McpServerManifestV1,
+        cancellation: &CancellationToken,
     ) -> Result<McpCapabilitySnapshotV1, String> {
         let mut state = self
             .state
@@ -211,7 +212,7 @@ impl McpToolRuntimeV1 {
                 "no MCP transport peer is installed for this application generation".to_owned()
             })?;
         let snapshot = manager
-            .open(manifest.clone())
+            .open_cancellable(manifest.clone(), cancellation)
             .map_err(|error| format!("MCP session for '{server_key}' failed: {error}"))?;
         state
             .frozen
@@ -283,6 +284,7 @@ impl McpToolRuntimeV1 {
         run_id: &StableId,
         server_id: &StableId,
         call: &McpCallV1,
+        cancellation: &CancellationToken,
     ) -> Result<McpCallOutcomeV1, McpDispatchErrorV1> {
         let state = self.state.lock().map_err(|_| {
             McpDispatchErrorV1::Rejected("MCP tool runtime lock poisoned".to_owned())
@@ -298,15 +300,15 @@ impl McpToolRuntimeV1 {
                 )
             })?;
         drop(state);
-        match manager.invoke(server_id, call) {
+        match manager.invoke_cancellable(server_id, call, cancellation) {
             Ok(outcome) => Ok(outcome),
             // A transport loss degrades the session, and a degraded session
             // refuses every later call before dispatch. Recover it once here
             // and retry this call, which had not started, so one slow or flaky
             // server cannot brick the Run until the application restarts. The
             // call that lost the transport is never replayed.
-            Err(McpSessionError::SessionDegraded) => match manager.reconnect(server_id) {
-                Ok(_) => manager.invoke(server_id, call).map_err(|error| {
+            Err(McpSessionError::SessionDegraded) if !cancellation.is_cancelled() => match manager.reconnect_cancellable(server_id, cancellation) {
+                Ok(_) => manager.invoke_cancellable(server_id, call, cancellation).map_err(|error| {
                     McpDispatchErrorV1::Rejected(format!("MCP call failed: {error}"))
                 }),
                 // The server went away and could not be brought back: it is not
@@ -570,10 +572,10 @@ mod tests {
         let run_id = StableId::parse("run.mcp-reconnect".to_owned()).expect("run id");
         let manifest = manifest(generation);
         let server_id = manifest.server_id.clone();
-        let snapshot = runtime.open_frozen(&run_id, &manifest).expect("open session");
+        let snapshot = runtime.open_frozen(&run_id, &manifest, &CancellationToken::default()).expect("open session");
         let lost_call = call(&snapshot, "invoke.mcp-reconnect.1");
         let lost = runtime
-            .invoke(&run_id, &server_id, &lost_call)
+            .invoke(&run_id, &server_id, &lost_call, &CancellationToken::default())
             .expect("call settles");
         assert!(
             lost.result.is_none(),
@@ -608,7 +610,7 @@ mod tests {
         // The first call is what opens the session, and what it advertises is
         // then readable for the pass that follows.
         let snapshot = runtime
-            .open_frozen(&run_id, &manifest)
+            .open_frozen(&run_id, &manifest, &CancellationToken::default())
             .expect("the call opens the session");
         assert_eq!(peer.initializations.load(Ordering::SeqCst), 1);
         assert_eq!(runtime.cached_snapshots(&run_id).len(), 1);
@@ -627,7 +629,7 @@ mod tests {
         let (runtime, run_id, server_id, snapshot, peer) = degraded_runtime();
         let next = call(&snapshot, "invoke.mcp-reconnect.2");
         let recovered = runtime
-            .invoke(&run_id, &server_id, &next)
+            .invoke(&run_id, &server_id, &next, &CancellationToken::default())
             .expect("the next call recovers the session");
         assert_eq!(recovered.result, Some(json!({"echo": "hello"})));
         assert_eq!(
@@ -644,7 +646,7 @@ mod tests {
         let next = call(&snapshot, "invoke.mcp-reconnect.2");
         assert_eq!(
             runtime
-                .invoke(&run_id, &server_id, &next)
+                .invoke(&run_id, &server_id, &next, &CancellationToken::default())
                 .expect("call after reconnect")
                 .result,
             Some(json!({"echo": "hello"}))

@@ -4,7 +4,7 @@ use std::{fmt, time::Duration};
 
 use reqwest::{
     Url,
-    blocking::RequestBuilder,
+    RequestBuilder,
     header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
@@ -194,7 +194,10 @@ impl AnthropicMessagesProvider {
         &self,
     ) -> Result<AnthropicConnectionTestV1, AnthropicMessagesProviderError> {
         let request = self.authorize(self.transport.get(self.models_url.clone()))?;
-        let catalog: ModelsResponse = self.transport.send(request).map_err(map_transport_error)?;
+        let catalog: ModelsResponse = self
+            .transport
+            .send(request, &CancellationToken::default())
+            .map_err(map_transport_error)?;
         let mut models = catalog
             .data
             .into_iter()
@@ -216,6 +219,7 @@ impl AnthropicMessagesProvider {
     fn complete(
         &self,
         request: &ModelRequestV1,
+        cancellation: &CancellationToken,
     ) -> Result<NormalizedCompletion, AnthropicMessagesProviderError> {
         let (system, messages) = normalize_messages(&request.input)?;
         let body = MessagesRequest {
@@ -232,7 +236,7 @@ impl AnthropicMessagesProvider {
                 .json(&body),
         )?;
         let completion: MessagesResponse =
-            self.transport.send(request).map_err(map_transport_error)?;
+            self.transport.send(request, cancellation).map_err(map_transport_error)?;
         let text = completion
             .content
             .into_iter()
@@ -258,6 +262,7 @@ impl AnthropicMessagesProvider {
     fn complete_tool_turn(
         &self,
         request: &ModelToolRequestV1,
+        cancellation: &CancellationToken,
     ) -> Result<Vec<ModelToolEventV1>, ProviderError> {
         validate_tool_request(request)?;
         let body = anthropic_tool_request(
@@ -275,7 +280,7 @@ impl AnthropicMessagesProvider {
             .map_err(ProviderError::from)?;
         let completion: Value = self
             .transport
-            .send(transport_request)
+            .send(transport_request, cancellation)
             .map_err(map_transport_error)
             .map_err(ProviderError::from)?;
         let events =
@@ -339,7 +344,7 @@ impl ProviderEnginePortV1 for AnthropicMessagesProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let completion = self.complete(request).map_err(ProviderError::from)?;
+        let completion = self.complete(request, cancellation).map_err(ProviderError::from)?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
@@ -361,7 +366,7 @@ impl ProviderEnginePortV1 for AnthropicMessagesProvider {
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let events = self.complete_tool_turn(request)?;
+        let events = self.complete_tool_turn(request, cancellation)?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
@@ -375,6 +380,7 @@ impl ProviderEnginePortV1 for AnthropicMessagesProvider {
 impl From<AnthropicMessagesProviderError> for ProviderError {
     fn from(error: AnthropicMessagesProviderError) -> Self {
         match error {
+            AnthropicMessagesProviderError::Cancelled => Self::Cancelled,
             AnthropicMessagesProviderError::ContextWindowExceeded => Self::ContextWindowExceeded,
             AnthropicMessagesProviderError::RequestTimedOut => Self::RequestTimedOut,
             AnthropicMessagesProviderError::Transport => Self::TransportFailed,
@@ -385,6 +391,8 @@ impl From<AnthropicMessagesProviderError> for ProviderError {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum AnthropicMessagesProviderError {
+    #[error("provider request cancelled")]
+    Cancelled,
     #[error("provider context window exceeded")]
     ContextWindowExceeded,
     #[error("Anthropic provider binding id is invalid")]
@@ -554,6 +562,7 @@ fn map_transport_configuration_error(error: BoundedJsonError) -> AnthropicMessag
 
 fn map_transport_error(error: BoundedJsonError) -> AnthropicMessagesProviderError {
     match error {
+        BoundedJsonError::Cancelled => AnthropicMessagesProviderError::Cancelled,
         BoundedJsonError::InvalidBaseUrl => AnthropicMessagesProviderError::InvalidBaseUrl,
         BoundedJsonError::InvalidLimits => AnthropicMessagesProviderError::InvalidLimits,
         BoundedJsonError::ClientConstruction => AnthropicMessagesProviderError::ClientConstruction,

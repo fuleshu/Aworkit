@@ -354,6 +354,41 @@ describe("Settings v2 workbench", () => {
     expect(added?.enabled).toBe(true);
   });
 
+  it("adds Xiaomi MiMo and saves its model Thinking setting", async () => {
+    const port = new RecordingSettingsV2Port();
+    port.discoveryModels = [
+      {
+        remoteId: "mimo-v2.6-pro",
+        name: "MiMo V2.6 Pro",
+        contextWindow: null,
+        maxOutputTokens: null,
+        capabilities: ["text", "tools"],
+      },
+    ];
+    const user = userEvent.setup();
+    render(<SettingsScreen settingsPort={port} presentation={presentation()} />);
+
+    await user.selectOptions(await screen.findByLabelText("Provider preset"), "xiaomi_mimo");
+    await user.click(screen.getByRole("button", { name: /^Add$/ }));
+    expect(screen.getByLabelText("API protocol")).toHaveValue("xiaomi_mimo");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.xiaomimimo.com/v1");
+    await user.click(screen.getByRole("button", { name: "Discover models" }));
+
+    const thinking = await screen.findByLabelText("Thinking", { exact: true });
+    expect(thinking).toHaveValue("");
+    await user.selectOptions(thinking, "true");
+    await user.selectOptions(thinking, "");
+    await user.selectOptions(thinking, "false");
+    await user.click(screen.getByLabelText("Model enabled"));
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    await waitFor(() => expect(port.commits).toHaveLength(1));
+    expect(port.commits[0]!.settings.providers.find(({ kind }) => kind === "xiaomi_mimo"))
+      .toMatchObject({
+        models: [{ remoteId: "mimo-v2.6-pro", parameters: { enableThinking: false } }],
+      });
+  });
+
   it("keeps a recorded context window and states a known one when discovery omits it", async () => {
     const initial = configuration();
     initial.providers[0]!.models[0] = {

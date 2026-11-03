@@ -13,7 +13,7 @@ use rmcp::{
         CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientInfo,
         ClientRequest, GetPromptRequest, GetPromptRequestParams, JsonRpcMessage,
         PaginatedRequestParams, ProgressNotificationParam, ProgressToken, ProtocolVersion,
-        ReadResourceRequest, ReadResourceRequestParams, RequestId, ServerCapabilities,
+        ReadResourceRequest, ReadResourceRequestParams, ServerCapabilities,
         ServerNotification, ServerResult,
     },
     service::{NotificationContext, PeerRequestOptions, RunningService},
@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use tokio::{process::Command, runtime::Runtime};
 
 use crate::{
-    McpCallKindV1, McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpDispatchMilestoneV1,
+    CancellationToken, McpCallKindV1, McpCallV1, McpCancellationEvidenceV1, McpCatalogV1, McpDispatchMilestoneV1,
     McpFeatureSetV1, McpInitializeRequestV1, McpInitializeResponseV1, McpPeerCallResultV1,
     McpPeerErrorV1, McpPeerPort, McpProgressV1, McpServerManifestV1, McpToolDescriptorV1,
     McpTransportKindV1, SecretMaterializationV1,
@@ -173,6 +173,18 @@ impl McpPeerPort for ProductionMcpPeer {
         manifest: &McpServerManifestV1,
         request: &McpInitializeRequestV1,
     ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+        self.initialize_cancellable(manifest, request, &CancellationToken::default())
+    }
+
+    fn initialize_cancellable(
+        &self,
+        manifest: &McpServerManifestV1,
+        request: &McpInitializeRequestV1,
+        cancellation: &CancellationToken,
+    ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+        if cancellation.is_cancelled() {
+            return Err(not_started("cancelled", "MCP initialization cancelled"));
+        }
         let key = manifest.server_id.as_str().to_owned();
         let config = self.configs.get(&key).cloned().ok_or_else(|| {
             not_started(
@@ -266,15 +278,13 @@ impl McpPeerPort for ProductionMcpPeer {
         let request_owned = request.clone();
         let limits = self.limits.clone();
         let connection_secrets = secrets.clone();
+        let cancellation = cancellation.clone();
         let established = self.run(async move {
-            establish_session(
-                config,
-                manifest_owned,
-                request_owned,
-                connection_secrets,
-                limits,
-            )
-            .await
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => Err(not_started("cancelled", "MCP initialization cancelled")),
+                result = establish_session(config, manifest_owned, request_owned, connection_secrets, limits) => result,
+            }
         });
         let artifact = match established {
             Ok(Ok(artifact)) => artifact,
@@ -311,6 +321,15 @@ impl McpPeerPort for ProductionMcpPeer {
         manifest: &McpServerManifestV1,
         call: &McpCallV1,
     ) -> Result<McpPeerCallResultV1, McpPeerErrorV1> {
+        self.invoke_cancellable(manifest, call, &CancellationToken::default())
+    }
+
+    fn invoke_cancellable(
+        &self,
+        manifest: &McpServerManifestV1,
+        call: &McpCallV1,
+        cancellation: &CancellationToken,
+    ) -> Result<McpPeerCallResultV1, McpPeerErrorV1> {
         let session = self
             .sessions
             .lock()
@@ -323,36 +342,30 @@ impl McpPeerPort for ProductionMcpPeer {
         let invocation_id = call.invocation_id.as_str().to_owned();
         {
             let mut active = session.active.lock().map_err(|_| lock_error())?;
-            if active
-                .insert(invocation_id.clone(), ActiveRequest::default())
-                .is_some()
-            {
+            let Entry::Vacant(entry) = active.entry(invocation_id.clone()) else {
                 return Err(not_started(
                     "duplicate_invocation",
                     "MCP transport invocation is already active",
                 ));
-            }
+            };
+            entry.insert(cancellation.clone());
         }
         let session_for_call = session.clone();
+        let cancellation = cancellation.clone();
         let maximum_progress_events = manifest.maximum_progress_events;
         let timeout = self.limits.request_timeout;
         let wire = self.run(async move {
             execute_call(
                 session_for_call,
-                invocation_id,
                 request,
                 maximum_progress_events,
                 timeout,
+                cancellation,
             )
             .await
         });
-        let wire = match wire {
-            Ok(result) => result?,
-            Err(error) => {
-                session.remove_active(call.invocation_id.as_str());
-                return Err(error);
-            }
-        };
+        session.remove_active(call.invocation_id.as_str());
+        let wire = wire??;
         let mut result = match (call.kind, wire.response) {
             (McpCallKindV1::Tool, ServerResult::CallToolResult(result)) => {
                 serde_json::to_value(result)
@@ -400,51 +413,12 @@ impl McpPeerPort for ProductionMcpPeer {
             .cloned()
             .ok_or_else(|| not_started("unknown_session", "MCP transport session is not open"))?;
         session.validate_manifest(manifest)?;
-        let request_id = {
-            let mut active = session.active.lock().map_err(|_| lock_error())?;
-            let active = active.get_mut(invocation_id.as_str()).ok_or_else(|| {
-                not_started(
-                    "unknown_invocation",
-                    "MCP transport invocation is not active",
-                )
-            })?;
-            active.cancellation_requested = true;
-            if active.cancellation_sent {
-                return Ok(McpCancellationEvidenceV1::Unknown);
-            }
-            let Some(request_id) = active.request_id.clone() else {
-                return Ok(McpCancellationEvidenceV1::Unknown);
-            };
-            active.cancellation_sent = true;
-            request_id
-        };
-        let peer = session.peer.clone();
-        let timeout = self.limits.request_timeout;
-        let cancellation = self.run(async move {
-            tokio::time::timeout(
-                timeout,
-                peer.notify_cancelled(CancelledNotificationParam::new(
-                    Some(request_id),
-                    Some("Aworkit invocation cancelled".to_owned()),
-                )),
-            )
-            .await
+        let active = session.active.lock().map_err(|_| lock_error())?;
+        let cancellation = active.get(invocation_id.as_str()).ok_or_else(|| {
+            not_started("unknown_invocation", "MCP transport invocation is not active")
         })?;
-        match cancellation {
-            Ok(Ok(())) => Ok(McpCancellationEvidenceV1::Unknown),
-            Ok(Err(error)) => Err(service_peer_error(
-                "cancel_failed",
-                "MCP cancellation notification failed",
-                &error,
-                McpDispatchMilestoneV1::Started,
-                &session.secrets,
-            )),
-            Err(_) => Err(started(
-                "cancel_timeout",
-                "MCP cancellation notification timed out",
-                false,
-            )),
-        }
+        cancellation.cancel();
+        Ok(McpCancellationEvidenceV1::Unknown)
     }
 
     fn close(&self, manifest: &McpServerManifestV1) -> Result<(), McpPeerErrorV1> {
@@ -508,7 +482,7 @@ struct LiveMcpSession {
     transport: McpTransportKindV1,
     peer: Peer<RoleClient>,
     service: Mutex<Option<SdkClientService>>,
-    active: Mutex<BTreeMap<String, ActiveRequest>>,
+    active: Mutex<BTreeMap<String, CancellationToken>>,
     progress: Arc<ProgressRegistry>,
     secrets: Arc<MaterializedTransportSecrets>,
 }
@@ -536,13 +510,6 @@ impl LiveMcpSession {
             active.remove(invocation_id);
         }
     }
-}
-
-#[derive(Default)]
-struct ActiveRequest {
-    request_id: Option<RequestId>,
-    cancellation_requested: bool,
-    cancellation_sent: bool,
 }
 
 #[derive(Clone)]
@@ -1058,20 +1025,24 @@ async fn discover_catalog(
 
 async fn execute_call(
     session: Arc<LiveMcpSession>,
-    invocation_id: String,
     request: ClientRequest,
     maximum_progress_events: usize,
     timeout: std::time::Duration,
+    cancellation: CancellationToken,
 ) -> Result<WireCallResult, McpPeerErrorV1> {
+    if cancellation.is_cancelled() {
+        return Err(not_started("cancelled", "MCP invocation cancelled before dispatch"));
+    }
     let options = PeerRequestOptions::with_timeout(timeout).with_max_total_timeout(timeout);
-    let handle = match session
-        .peer
-        .send_cancellable_request(request, options)
-        .await
-    {
+    let handle = match tokio::select! {
+        biased;
+        result = session.peer.send_cancellable_request(request, options) => result,
+        () = cancellation.cancelled() => return Err(started(
+            "cancelled", "MCP dispatch interrupted; the server outcome is unknown", false,
+        )),
+    } {
         Ok(handle) => handle,
         Err(error) => {
-            session.remove_active(&invocation_id);
             return Err(service_peer_error(
                 "dispatch_failed",
                 "MCP request could not be dispatched",
@@ -1088,35 +1059,24 @@ async fn execute_call(
         maximum_progress_events,
         session.secrets.clone(),
     )?;
-    let send_deferred_cancellation = {
-        let mut active = session.active.lock().map_err(|_| lock_error())?;
-        let state = active.get_mut(&invocation_id).ok_or_else(|| {
-            started(
-                "active_state_missing",
-                "MCP invocation state was lost before dispatch",
-                false,
-            )
-        })?;
-        state.request_id = Some(request_id.clone());
-        if state.cancellation_requested && !state.cancellation_sent {
-            state.cancellation_sent = true;
-            true
-        } else {
-            false
-        }
+    let response = tokio::select! {
+        biased;
+        response = handle.await_response() => Some(response),
+        () = cancellation.cancelled() => None,
     };
-    if send_deferred_cancellation {
-        let _ = session
-            .peer
-            .notify_cancelled(CancelledNotificationParam::new(
+    let progress = session.progress.take(&progress_token);
+    let Some(response) = response else {
+        // Notify the server, but never wait for it to stop or report success.
+        // Its effects remain uncertain until independently verified.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            session.peer.notify_cancelled(CancelledNotificationParam::new(
                 Some(request_id),
                 Some("Aworkit invocation cancelled".to_owned()),
-            ))
-            .await;
-    }
-    let response = handle.await_response().await;
-    let progress = session.progress.take(&progress_token);
-    session.remove_active(&invocation_id);
+            )),
+        ).await;
+        return Err(started("cancelled", "MCP wait interrupted; the server outcome is unknown", false));
+    };
     let response = response.map_err(|error| {
         service_peer_error(
             "request_failed",

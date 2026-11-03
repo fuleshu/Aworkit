@@ -1,7 +1,7 @@
 //! Bounded OpenAI-compatible Server-Sent Event normalization.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{self, BufRead},
 };
 
@@ -49,7 +49,13 @@ pub(crate) fn consume_openai_stream<R: BufRead>(
             return Err(ProviderError::Cancelled);
         }
         line.clear();
-        let read = reader.read_line(&mut line).map_err(map_read_error)?;
+        let read = reader.read_line(&mut line).map_err(|error| {
+            if cancellation.is_cancelled() {
+                ProviderError::Cancelled
+            } else {
+                map_read_error(error)
+            }
+        })?;
         total_bytes = total_bytes.saturating_add(read);
         if total_bytes > maximum_response_bytes {
             return Err(invalid_stream("response exceeded the size bound"));
@@ -229,27 +235,27 @@ fn consume_tool_deltas(
     }
     let calls = value
         .as_array()
-        .ok_or_else(|| invalid_stream("contained invalid tool-call deltas"))?;
+        .ok_or(ProviderError::InvalidToolCall("tool_calls must be an array"))?;
     for call in calls {
         let call = call
             .as_object()
-            .ok_or_else(|| invalid_stream("tool-call delta was not an object"))?;
+            .ok_or(ProviderError::InvalidToolCall("tool-call delta must be an object"))?;
         let index = call
             .get("index")
             .and_then(Value::as_u64)
             .and_then(|index| usize::try_from(index).ok())
-            .ok_or_else(|| invalid_stream("tool-call delta omitted its index"))?;
+            .ok_or(ProviderError::InvalidToolCall("tool-call delta has no valid index"))?;
         let pending = state.calls.entry(index).or_default();
         append_optional_string(call, "id", &mut pending.provider_call_id)?;
         if let Some(kind) = call.get("type")
             && kind != "function"
         {
-            return Err(invalid_stream("requested a non-function tool"));
+            return Err(ProviderError::InvalidToolCall("tool type must be function"));
         }
         if let Some(function) = call.get("function") {
             let function = function
                 .as_object()
-                .ok_or_else(|| invalid_stream("tool function delta was invalid"))?;
+                .ok_or(ProviderError::InvalidToolCall("function delta must be an object"))?;
             append_optional_string(function, "name", &mut pending.name)?;
             append_optional_string(function, "arguments", &mut pending.arguments)?;
         }
@@ -274,7 +280,7 @@ fn append_optional_string(
             target.push_str(value);
             Ok(())
         }
-        Some(_) => Err(invalid_stream("contained an invalid tool-call field")),
+        Some(_) => Err(ProviderError::InvalidToolCall("tool-call fields must be strings")),
     }
 }
 
@@ -314,6 +320,11 @@ fn finalize_calls(
         .as_deref()
         .ok_or_else(|| invalid_stream("omitted its finish reason"))?;
     if state.calls.is_empty() {
+        if finish_reason == "tool_calls" {
+            return Err(ProviderError::InvalidToolCall(
+                "stream ended with tool_calls but contained no structured calls",
+            ));
+        }
         // A text answer is complete on `stop`. `length` means the provider hit
         // the output bound: the partial answer is real content, and an output
         // bound must never be reported as a failed request. Anything else is
@@ -323,25 +334,39 @@ fn finalize_calls(
         }
         return Ok(());
     }
-    if finish_reason != "tool_calls" || tools.is_empty() {
-        return Err(invalid_stream("tool calls conflicted with finish evidence"));
+    if tools.is_empty() {
+        return Err(ProviderError::InvalidToolCall("no tools were offered"));
     }
+    if finish_reason != "tool_calls" {
+        return Err(ProviderError::InvalidToolCall("calls conflicted with the finish reason"));
+    }
+    // Validate the whole batch before exposing any call as requested.
+    let mut calls = Vec::with_capacity(state.calls.len());
+    let mut ids = BTreeSet::new();
     for (ordinal, (_, pending)) in std::mem::take(&mut state.calls).into_iter().enumerate() {
-        if pending.name.is_empty() || pending.arguments.is_empty() {
-            return Err(ProviderError::InvalidToolCall);
+        if pending.name.is_empty() {
+            return Err(ProviderError::InvalidToolCall("missing function name"));
+        }
+        if pending.provider_call_id.is_empty() {
+            return Err(ProviderError::InvalidToolCall("missing call identifier"));
+        }
+        if !ids.insert(pending.provider_call_id.clone()) {
+            return Err(ProviderError::InvalidToolCall("duplicate call identifier"));
         }
         let arguments = serde_json::from_str::<Value>(&pending.arguments)
-            .map_err(|_| ProviderError::InvalidToolCall)?;
+            .map_err(|_| ProviderError::InvalidToolCall("function arguments are missing or invalid JSON"))?;
         let call = normalize_tool_call(
             tools,
-            (!pending.provider_call_id.is_empty()).then_some(pending.provider_call_id),
+            Some(pending.provider_call_id),
             pending.name,
             arguments,
             None,
             ordinal,
             provider_namespace,
-        )
-        .map_err(|_| ProviderError::InvalidToolCall)?;
+        )?;
+        calls.push(call);
+    }
+    for call in calls {
         emit(ModelToolEventV1::ToolCall { call })?;
     }
     Ok(())
@@ -433,6 +458,38 @@ mod tests {
     }
 
     struct TimedOutReader;
+
+    #[test]
+    fn malformed_call_batch_reports_the_bad_field_before_emitting_any_call() {
+        let mut state = StreamState {
+            finish_reason: Some("tool_calls".into()),
+            calls: BTreeMap::from([
+                (0, PendingToolCall {
+                    provider_call_id: "call_valid".into(),
+                    name: "read".into(),
+                    arguments: "{}".into(),
+                    ..PendingToolCall::default()
+                }),
+                (1, PendingToolCall {
+                    provider_call_id: "call_broken".into(),
+                    name: "read".into(),
+                    arguments: "{".into(),
+                    ..PendingToolCall::default()
+                }),
+            ]),
+            ..StreamState::default()
+        };
+        let tools = [ModelToolDefinitionV1 {
+            name: "read".into(),
+            capability_id: "tool.read".into(),
+            description: "Read".into(),
+            input_schema: json!({"type":"object"}),
+        }];
+        let error = finalize_calls(&tools, "fixture", &mut state, &mut |_| {
+            panic!("a rejected batch must never emit a tool call")
+        }).expect_err("invalid JSON");
+        assert_eq!(error, ProviderError::InvalidToolCall("function arguments are missing or invalid JSON"));
+    }
 
     #[test]
     fn keepalives_report_waiting_once_and_do_not_prevent_completion() {

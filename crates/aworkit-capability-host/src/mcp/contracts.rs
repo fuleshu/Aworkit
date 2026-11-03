@@ -246,11 +246,30 @@ pub trait McpPeerPort: Send + Sync {
         request: &McpInitializeRequestV1,
     ) -> Result<McpInitializeResponseV1, McpPeerErrorV1>;
 
+    fn initialize_cancellable(
+        &self,
+        manifest: &McpServerManifestV1,
+        request: &McpInitializeRequestV1,
+        _cancellation: &crate::CancellationToken,
+    ) -> Result<McpInitializeResponseV1, McpPeerErrorV1> {
+        self.initialize(manifest, request)
+    }
+
     fn invoke(
         &self,
         manifest: &McpServerManifestV1,
         call: &McpCallV1,
     ) -> Result<McpPeerCallResultV1, McpPeerErrorV1>;
+
+    /// Production peers can interrupt the local wait independently of the server.
+    fn invoke_cancellable(
+        &self,
+        manifest: &McpServerManifestV1,
+        call: &McpCallV1,
+        _cancellation: &crate::CancellationToken,
+    ) -> Result<McpPeerCallResultV1, McpPeerErrorV1> {
+        self.invoke(manifest, call)
+    }
 
     fn cancel(
         &self,

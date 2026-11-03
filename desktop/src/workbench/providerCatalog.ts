@@ -1,5 +1,6 @@
 export type ProviderProtocol =
   | "openai_compatible"
+  | "xiaomi_mimo"
   | "anthropic"
   | "gemini";
 
@@ -68,6 +69,16 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     modelDiscovery: true,
     credentialRequired: true,
     description: "DeepSeek's OpenAI-compatible endpoint.",
+  },
+  {
+    id: "xiaomi_mimo",
+    name: "Xiaomi MiMo",
+    protocol: "xiaomi_mimo",
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    location: "hosted",
+    modelDiscovery: true,
+    credentialRequired: true,
+    description: "Xiaomi's hosted MiMo API with native Thinking controls.",
   },
   {
     id: "groq",

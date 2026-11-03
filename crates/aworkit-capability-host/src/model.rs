@@ -504,8 +504,21 @@ impl FrozenModelGateway {
                     .cloned()
                     .unwrap_or_default();
             }
-            let acceptance =
-                provider.execute_tool_turn_cancellable(&materialized, cancellation, &mut emit)?;
+            let acceptance = match provider.execute_tool_turn_cancellable(
+                &materialized,
+                cancellation,
+                &mut emit,
+            ) {
+                Ok(acceptance) => acceptance,
+                Err(error @ ProviderError::InvalidToolCall(_)) => {
+                    turn_completion.complete(
+                        &serde_json::json!({ "error": error.to_string() }),
+                        "failed",
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             match acceptance {
                 ProviderAcceptanceV1::Accepted => {
                     validate_tool_events(request, &events)?;
@@ -636,9 +649,10 @@ pub enum ProviderError {
     /// The provider transport (connection) failed before a response was read.
     #[error("provider transport failed")]
     TransportFailed,
-    /// The provider emitted a tool call that does not match any bound tool.
-    #[error("provider emitted an unsupported tool call")]
-    InvalidToolCall,
+    /// The response contained an unusable tool call. The reason is a local
+    /// diagnostic, so provider-supplied names and arguments stay out of errors.
+    #[error("provider emitted a malformed tool call ({0})")]
+    InvalidToolCall(&'static str),
     #[error("provider execution was cancelled")]
     Cancelled,
     #[error("an accepted provider result must contain exactly one usage event")]

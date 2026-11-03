@@ -75,6 +75,8 @@ fn user_input() -> Value {
 struct Provider {
     observed: Arc<Mutex<Vec<ModelToolRequestV1>>>,
     dispatches: AtomicUsize,
+    malformed: bool,
+    stop_during_correction: bool,
 }
 
 impl Provider {
@@ -82,6 +84,8 @@ impl Provider {
         Self {
             observed,
             dispatches: AtomicUsize::new(0),
+            malformed: false,
+            stop_during_correction: false,
         }
     }
 }
@@ -103,7 +107,7 @@ impl ProviderEnginePortV1 for Provider {
     fn execute_tool_turn_cancellable(
         &self,
         request: &ModelToolRequestV1,
-        _: &CancellationToken,
+        cancellation: &CancellationToken,
         emit: &mut dyn FnMut(ModelToolEventV1) -> Result<(), ProviderError>,
     ) -> Result<ProviderAcceptanceV1, ProviderError> {
         self.observed.lock().unwrap().push(request.clone());
@@ -112,6 +116,13 @@ impl ProviderEnginePortV1 for Provider {
             // the frozen bound.
             0 => {
                 emit(ModelToolEventV1::ToolCall { call: call("read0") })?;
+            }
+            2 if self.stop_during_correction => {
+                cancellation.cancel();
+                return Err(ProviderError::Cancelled);
+            }
+            1 | 2 if self.malformed => {
+                return Err(ProviderError::InvalidToolCall("missing function name"));
             }
             // Distinct provider failures, each the model's to handle.
             1 => return Err(ProviderError::Failed("quota exceeded".into())),
@@ -393,6 +404,57 @@ impl ProviderEnginePortV1 for Answering {
         })?;
         Ok(ProviderAcceptanceV1::Accepted)
     }
+}
+
+#[test]
+fn malformed_calls_retry_once_then_request_text_with_settled_history() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.malformed").unwrap();
+    let provider = Provider {
+        malformed: true,
+        ..Provider::new(observed.clone())
+    };
+
+    let result = execute_model_tool_loop_approval_v1(
+        &gateway(provider),
+        tool_request(&id, user_input()),
+        &Stuck,
+        &CancellationToken::default(),
+    ).expect("text-only recovery must reach the model with its history");
+    let ModelToolLoopRunV1::Completed(outcome) = result else {
+        panic!("expected completion");
+    };
+    assert_eq!(outcome.settled_tool_calls, 1);
+    let turns = observed.lock().unwrap();
+    assert_eq!(turns.len(), 4);
+    assert_eq!(turns[2].tools.len(), 1);
+    assert!(turns[2].retry_notice.as_deref().unwrap().contains("missing function name"));
+    assert!(turns[3].tools.is_empty());
+    assert!(turns[3].retry_notice.as_deref().unwrap().contains("No tools from either failed attempt ran"));
+    assert_eq!(turns[3].exchanges.len(), 1);
+    assert_eq!(turns[3].exchanges[0].results[0].call_id, "read0");
+}
+
+#[test]
+fn stop_during_malformed_call_recovery_retains_the_diagnostic() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let id = StableId::parse("outer.malformed-stop").unwrap();
+    let provider = Provider {
+        malformed: true,
+        stop_during_correction: true,
+        ..Provider::new(observed)
+    };
+    let Err(failure) = execute_model_tool_loop_approval_v1(
+        &gateway(provider),
+        tool_request(&id, user_input()),
+        &Stuck,
+        &CancellationToken::default(),
+    ) else {
+        panic!("expected cancellation")
+    };
+    assert!(matches!(failure.error, ModelToolLoopErrorV1::Provider(ProviderError::Cancelled)));
+    assert_eq!(failure.malformed_call_reason, Some("missing function name"));
+    assert_eq!(failure.settled_tool_calls, 1);
 }
 
 #[test]
